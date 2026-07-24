@@ -1,8 +1,9 @@
 # Messaging — Handover to the Next Agent
 
 **Written:** 2026-07-24 by kimi-cli, at the end of Step 1 (decision ratification).
-**Updated:** 2026-07-24 by kimi-cli — Step 3a (store seam contract) COMPLETE; next is Step 2.
-**You are:** the agent executing Step 2 (pass-2 schemas) or later. Read this first.
+**Updated:** 2026-07-24 by kimi-cli — Step 3a (store seam contract) COMPLETE.
+**Updated:** 2026-07-24 by kimi-cli — Step 2 (pass-2 schemas) COMPLETE; next is Step 3b.
+**You are:** the agent executing Step 3b (remaining seam contracts) or later. Read this first.
 
 ---
 
@@ -31,7 +32,9 @@ Step 1 of the pass-2 sequence is COMPLETE:
 | `Messaging-Plan.md` | The pass-1 blueprint, §1–§21 (promise, requirements MSG-001..022, DECs, invariants, seams, walkthroughs, slices, traceability, open decisions) | Reference — do not edit without cause |
 | `Messaging-Ratification.md` | The decision gate. Binding. | Step 1 output |
 | `Messaging-Ratification-Review.md` | Adversarial review of the gate | Evidence |
-| `Messaging-Store-Seam.md` | Store seam contract: atomic `commitAcceptance`, sequence ordering, failure vocabulary, recovery support | **Step 3a output — binding** |
+| `Messaging-Store-Seam.md` | Store seam contract: atomic `commitAcceptance`, sequence ordering, failure vocabulary, recovery support. **§11 errata** (Step 2): committed-fact events journaled with sequence; inbox = non-terminal only; `urgentDowngraded` persisted | **Step 3a output — binding** |
+| `contract/messaging-contract.json` | THE single machine-readable source: 10 records, 8 commands, 9 queries, 1 subscription, 4 events, 13 errors, constants, delivery state machine | **Step 2 output — binding** |
+| `Messaging-Schemas.md` | Step 2 rulings doc: R1–R5, R9–R13, R6 closed; review record (15 findings disposed) | **Step 2 output — binding** |
 | `Messaging-Map.html` | Visual module map (open in a browser; 40 modules, animated traces) | Update in Step 4 |
 | `Messaging-Report copy.html` | Second visual variant of the map | Working copy |
 | `Messaging-Report.html` | Older mermaid-based report | Superseded, kept for history |
@@ -58,16 +61,25 @@ Step 1 of the pass-2 sequence is COMPLETE:
   `commitAcceptance`, global sequence ordering with opaque cursors, typed failure
   vocabulary (§6 of that file — Step 2 freezes public error schemas against it),
   recovery-sweep support. R7 CLOSED, R6 store half CLOSED, R8 store side CLOSED.
-- **Step 2 — pass-2 schemas. ← NEXT.** Property-level schemas for every shape: records
-  (Message, Thread, Delivery, Presence, policies, templates), 8 commands, 9 queries,
-  4 events, errors (resolve the 11-vs-12 count at the source), results — from one
-  machine-readable source. Open R-items to close here: R1–R5, R9–R13. Honour A5
-  (`IdempotencyConflict`), A6, R12's template allowlist. O6 settled: 32 KiB
-  serialized Message JSON bytes (R13).
-- **Step 3b — remaining seam contracts** (authority incl. role→grant config per
-  DEC-07 amendment, membership incl. R8 linearization, presence-transport, clock).
+- ~~**Step 2 — pass-2 schemas.**~~ **DONE (2026-07-24)** —
+  `contract/messaging-contract.json` (single machine-readable source, law #3) +
+  `Messaging-Schemas.md` (rulings). **R1–R5, R9–R13, R6 all CLOSED.** Error
+  catalogue resolved at the source: 13 (11 + `IdempotencyConflict` (A5) +
+  `DependencyUnavailable` (R6)); `RateLimited` forward-reserved; O6 = 32 KiB as
+  `constants.messageMaxBytes`. Zero-context adversarial review run (1 SEVERE,
+  7 MEDIUM, 7 LOW — all disposed at the source, incl. 3 store-seam errata now in
+  Store-Seam §11). Notable rulings: R4 room-blocked = per-recipient terminal failed
+  Delivery; R2 subscription push is NOT a Delivery and is not DND-gated; R1 adds
+  the `Subscribe` stream operation with sequence-cursor replay and bounded-buffer
+  backpressure.
+- **Step 3b — remaining seam contracts. ← NEXT.** Authority (incl. role→grant
+  config per DEC-07 amendment), membership (incl. R8 linearization — freeze against
+  `MembershipEvidence` in the contract source), presence-transport (incl. R1's
+  transport half: frames, liveness reporting per R9), clock/ID. Public failure
+  shapes reuse `DependencyUnavailable` — its `dependency` enum extends here.
 - **Step 4 — trace refresh.** Add W4 (Chief subscribe push, MSG-023 — slice **S3**
   per A2) to Plan §16 and a fourth trace to the map; re-run §19 traceability.
+  The map regenerates from `contract/messaging-contract.json`.
 - **Step 5 — S1 build kickoff.** Only after all R-items above are closed.
 
 ## Context you will not find in the files

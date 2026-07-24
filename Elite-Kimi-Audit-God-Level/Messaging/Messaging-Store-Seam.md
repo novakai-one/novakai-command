@@ -237,3 +237,26 @@ store side cannot lose or mutate it.
 
 **Step 3a closes here.** Next: Step 2 (pass-2 schemas) — R1–R5, R9–R13, freezing error
 schemas against §6.
+
+---
+
+## 11. Errata (added by Step 2, 2026-07-24 — same authority as §1–§10)
+
+Three gaps surfaced when Step 2 froze the public contract against this seam. Resolved
+here at the source (law #3):
+
+1. **Committed-fact events are journaled with sequence.** `transitionDelivery`,
+   `appendDeliveryAttempt`-settling transitions, and `putPolicy`/`putTemplate` writes
+   each append a sequenced journal entry (same global sequence, §3) describing the
+   state change — not only `commitAcceptance`. Without this, R1's replay-after-disconnect
+   ("committed-fact events with sequence > cursor") could not deliver `DeliveryUpdated`
+   or `PolicyChanged`, both classified committed-fact in the public contract.
+2. **`getInbox` returns non-terminal Deliveries only.** §4's "held or undelivered only"
+   reads precisely: Deliveries in `pending` or `held`. Terminal states (`delivered`,
+   `failed`) never appear — so a room-send recipient blocked by contact policy (R4,
+   terminal `failed` Delivery) is not served the blocked Message via the inbox.
+3. **`AcceptanceRecord` persists `urgentDowngraded`.** The `duplicate` outcome of
+   `commitAcceptance` (§2) returns the original acceptance *including* this flag, so an
+   idempotent retry of a downgraded urgent send still carries the typed outcome
+   (MSG-010 survives DEC-13 retries). The field is optional in the record schema —
+   absent means no downgrade occurred.
