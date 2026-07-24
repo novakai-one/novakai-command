@@ -118,6 +118,7 @@ Every behaviour: stable ID, observable description, proof obligation.
 | MSG-020 | Sender identity derives from authentication, never from payload fields. | Payload `from` is rejected/ignored; spoof attempt fails. |
 | MSG-021 | Strict TypeScript; all external input parsed from `unknown` at the seam. | `tsc --strict` clean; fuzzed invalid payloads rejected. |
 | MSG-022 | A second host integrates without changing Messaging core code. | Second-host scenario passes (§15, P1). |
+| MSG-023 | A connected principal receives committed-fact events PUSHED over its live Presence in near-real-time; polling is a catch-up fallback after disconnect, never the liveness mechanism. | W4 walkthrough passes (§16): worker commits → `MessageCommitted` pushed to the Chief's Presence without any poll. |
 
 Vague words banned in this catalogue: *reliable, seamless, flexible, fast* — each appears only with a measurable guarantee attached.
 
@@ -125,27 +126,29 @@ Vague words banned in this catalogue: *reliable, seamless, flexible, fast* — e
 
 ## 7. Load-Bearing Decisions
 
-Statuses: **Proposed** · Accepted · Open · Rejected · Deferred. Schemas wait for acceptance.
+Statuses: Proposed · **Accepted** · Open · Rejected · Deferred. Schemas wait for acceptance.
+*(All 17 reconciled to Accepted at Step 4 — `Messaging-Ratification.md` is the gate of
+record, including DEC-18..21 added there.)*
 
 | ID | Question | Status | Chosen direction | Rationale | Invalid if changed |
 |---|---|---|---|---|---|
-| DEC-01 | What is addressable identity? | **Proposed** | The durable **Person** (`person_<id>`). Presence is never an address. | Runtime connections die; identity must not. | Entire addressing model, contact policy |
-| DEC-02 | Is durable identity separate from runtime presence? | **Proposed** | Yes — Person is durable, Presence is ephemeral runtime attachment (multiple allowed). | A Person may have 0 or 2 live runtimes without changing identity. | Presence seam, delivery fan-out |
-| DEC-03 | How are direct conversations identified? | **Proposed** | Deterministic direct Thread from the canonical sorted Person pair — one per pair, forever. | Stable across restarts, projects, runtimes; no lookup race. | Thread model, direct-send path |
-| DEC-04 | How are Team/Mission conversations identified? | **Proposed** | A Room Thread (`thread_<id>`, kind `team`\|`mission`) referencing exactly one external membership authority. | Membership truth stays with its owner. | Recipient snapshots, membership seam |
-| DEC-05 | Group send: one Message or many? | **Proposed** | **One** Message in one Thread + one Delivery per recipient. | No competing history copies (red gate G9). | Delivery model, events |
-| DEC-06 | Who owns conversation history? | **Proposed** | Messaging — Threads and Messages are authoritative here. | One authority per fact. | Ownership map |
-| DEC-07 | Who may override DND? | **Proposed** | Principals holding the `priority.override` grant, verified via the Authority seam. Urgent without the grant downgrades with a typed outcome. | Attention is a permission, not a convention. | DND policy, urgent path |
-| DEC-08 | What does "delivered" mean? | **Proposed** | A real adapter effect occurred for that recipient's live Presence (e.g. bytes into the PTY, frame onto the socket). Never "written to journal". | The audit found "delivered" being settled without an effect; this forbids it (G10). | Delivery state machine |
-| DEC-09 | What is durable acceptance? | **Proposed** | The Message and its recipient snapshot are committed to authoritative storage before any adapter effect runs. | Accept-then-crash loses nothing (MSG-019). | Send pipeline, commit boundary |
-| DEC-10 | Which guarantees belong to the capability vs adapters? | **Proposed** | Capability: acceptance, ordering, idempotency, policy, honest outcomes. Adapters: transport effect only. | Behaviour must not diverge by host. | Seam definitions, adapter suites |
-| DEC-11 | Sender identity source? | **Proposed** | The authenticated principal only. Payload sender fields are rejected. | Trust never crosses the seam from caller data (G3). | Send command shape, auth seam |
-| DEC-12 | Urgency shape? | **Proposed** | A `priority: normal \| urgent` field on SendMessage — not separate commands. | One path, one policy decision point. | Contract catalogue |
-| DEC-13 | Idempotency mechanism? | **Proposed** | Client-supplied `clientMessageId` (unique per sender); a retry returns the original acceptance. | Lost responses are normal; duplicates are not. | Send semantics, storage key |
-| DEC-14 | Contact policy default? | **Proposed** | Per-Person ContactPolicy: allowlist + a default rule (`deny` for unconnected external Persons; members of shared Threads implied-allowed). | External agents must be reachable deliberately, not accidentally. | Contact enforcement point |
-| DEC-15 | Templates bound to what? | **Proposed** | Templates declare fields bound to paths in the Message schema; sending validates against that schema. | Templates can't drift from the contract. | Template commands |
-| DEC-16 | Multi-Presence fan-out? | **Proposed** | Push attempts all live Presences of a recipient; Delivery settles delivered on the first real effect. | A Person on two machines misses nothing. | Delivery state machine |
-| DEC-17 | Standalone protocol? | **Proposed** | Versioned JSON-over-WebSocket protocol + a CLI adapter, both translating into the same core. | External agents are the primary standalone consumer; CLI falls out free. | Protocol adapter, §15 proofs |
+| DEC-01 | What is addressable identity? | **Accepted** | The durable **Person** (`person_<id>`). Presence is never an address. | Runtime connections die; identity must not. | Entire addressing model, contact policy |
+| DEC-02 | Is durable identity separate from runtime presence? | **Accepted** | Yes — Person is durable, Presence is ephemeral runtime attachment (multiple allowed). | A Person may have 0 or 2 live runtimes without changing identity. | Presence seam, delivery fan-out |
+| DEC-03 | How are direct conversations identified? | **Accepted** | Deterministic direct Thread from the canonical sorted Person pair — one per pair, forever. | Stable across restarts, projects, runtimes; no lookup race. | Thread model, direct-send path |
+| DEC-04 | How are Team/Mission conversations identified? | **Accepted** | A Room Thread (`thread_<id>`, kind `team`\|`mission`) referencing exactly one external membership authority. | Membership truth stays with its owner. | Recipient snapshots, membership seam |
+| DEC-05 | Group send: one Message or many? | **Accepted** | **One** Message in one Thread + one Delivery per recipient. | No competing history copies (red gate G9). | Delivery model, events |
+| DEC-06 | Who owns conversation history? | **Accepted** | Messaging — Threads and Messages are authoritative here. | One authority per fact. | Ownership map |
+| DEC-07 | Who may override DND? | **Accepted** | Principals holding the `priority.override` grant, verified via the Authority seam. Urgent without the grant downgrades with a typed outcome. | Attention is a permission, not a convention. | DND policy, urgent path |
+| DEC-08 | What does "delivered" mean? | **Accepted** | A real adapter effect occurred for that recipient's live Presence (e.g. bytes into the PTY, frame onto the socket). Never "written to journal". | The audit found "delivered" being settled without an effect; this forbids it (G10). | Delivery state machine |
+| DEC-09 | What is durable acceptance? | **Accepted** | The Message and its recipient snapshot are committed to authoritative storage before any adapter effect runs. | Accept-then-crash loses nothing (MSG-019). | Send pipeline, commit boundary |
+| DEC-10 | Which guarantees belong to the capability vs adapters? | **Accepted** | Capability: acceptance, ordering, idempotency, policy, honest outcomes. Adapters: transport effect only. | Behaviour must not diverge by host. | Seam definitions, adapter suites |
+| DEC-11 | Sender identity source? | **Accepted** | The authenticated principal only. Payload sender fields are rejected. | Trust never crosses the seam from caller data (G3). | Send command shape, auth seam |
+| DEC-12 | Urgency shape? | **Accepted** | A `priority: normal \| urgent` field on SendMessage — not separate commands. | One path, one policy decision point. | Contract catalogue |
+| DEC-13 | Idempotency mechanism? | **Accepted** | Client-supplied `clientMessageId` (unique per sender); a retry returns the original acceptance. | Lost responses are normal; duplicates are not. | Send semantics, storage key |
+| DEC-14 | Contact policy default? | **Accepted** | Per-Person ContactPolicy: allowlist + a default rule (`deny` for unconnected external Persons; members of shared Threads implied-allowed). | External agents must be reachable deliberately, not accidentally. | Contact enforcement point |
+| DEC-15 | Templates bound to what? | **Accepted** | Templates declare fields bound to paths in the Message schema; sending validates against that schema. | Templates can't drift from the contract. | Template commands |
+| DEC-16 | Multi-Presence fan-out? | **Accepted** | Push attempts all live Presences of a recipient; Delivery settles delivered on the first real effect. | A Person on two machines misses nothing. | Delivery state machine |
+| DEC-17 | Standalone protocol? | **Accepted** | Versioned JSON-over-WebSocket protocol + a CLI adapter, both translating into the same core. | External agents are the primary standalone consumer; CLI falls out free. | Protocol adapter, §15 proofs |
 
 ---
 
@@ -374,7 +377,9 @@ Scenarios that must pass — described as proofs, not code:
 
 ## 16. Risk Walkthroughs
 
-Only flows that test load-bearing decisions. Basic form for pass 1; refinement in pass 2.
+Only flows that test load-bearing decisions. W1–W3 written at pass 1 and refined
+against the frozen contracts; **W4 added at Step 4** (MSG-023, slice S3 per binding
+amendment A2).
 
 ### W1 — Urgent send against DND, without and with override authority
 
@@ -388,21 +393,21 @@ sequenceDiagram
   participant Auth as Authority adapter
   participant PTY as PTY adapter
 
-  Chief->>Door: SendMessage(to: worker, priority: urgent)
-  Door->>Auth: principal + grants
-  Auth-->>Door: Principal (no priority.override)
-  Door->>Core: decide
-  Note over Core: recipient DND is ON<br/>sender lacks override grant
-  Core-->>Chief: SendAccepted + urgentDowngraded: true
-  Note over Core: Message held, still pullable — nothing lost
+  Chief->>Door: SendMessage(address: person:&lt;workerId&gt;, priority: urgent)
+  Door->>Auth: authenticate / revalidate
+  Auth-->>Door: Principal (no priority.override grant)
+  Door->>Core: decideSend — ONE decision point: validate → contacts → priority/DND
+  Note over Core: recipient DND is ON<br/>sender lacks override grant (boolean, global — R10)
+  Core-->>Chief: SendAccepted{urgentDowngraded: true} — persisted on the AcceptanceRecord (§11 errata)
+  Note over Core: Delivery held (R5), still pullable via GetInbox — nothing lost
   Core->>PTY: (no steer — held by policy)
 ```
 
-*With the grant, the same flow ends: Core→PTY steer effect → Delivery settles delivered (I11). Outcome is typed in both directions — never silent (G6).*
+*With the grant, the same flow ends: Core→PTY steer effect → Delivery settles delivered (I11). Outcome is typed in both directions — never silent (G6). Policy is re-evaluated at every attempt decision against CURRENT state (R5) — enabling DND after acceptance still holds the push.*
 
 ### W2 — Accept, crash, retry — durability and idempotency
 
-Tests DEC-09, DEC-13, MSG-018/019.
+Tests DEC-09, DEC-13, DEC-18, DEC-20, MSG-018/019.
 
 ```mermaid
 sequenceDiagram
@@ -412,18 +417,67 @@ sequenceDiagram
   participant ST as Store adapter
 
   Agent->>Door: SendMessage(clientMessageId: abc)
-  Door->>Core: decide + commit
-  Core->>ST: commit Message + recipient snapshot
-  Note over Core: process dies before response
-  Agent->>Door: retry — same clientMessageId
-  Door->>Core: decide
+  Door->>Core: decideSend → commit
+  Core->>ST: commitAcceptance — ONE atomic op (DEC-20): thread get-or-create,<br/>idempotency reservation (key + requestHash, A5), sequence, commit, effectsPending
+  Note over Core: process dies before response —<br/>the acceptance is already durable (MSG-019)
+  Agent->>Door: retry — same clientMessageId, same content
+  Door->>Core: decideSend → commit
+  Core->>ST: commitAcceptance (same key, same requestHash)
+  ST-->>Core: duplicate → original acceptance (incl. urgentDowngraded)
   Core-->>Agent: original SendAccepted (same messageId)
-  Note over Core: exactly one Message exists (I1)
+  Note over Core: exactly one Message exists (I1).<br/>No find-then-append anywhere (DEC-18);<br/>same key + DIFFERENT content → IdempotencyConflict (A5)
 ```
 
 ### W3 — Delivery fails after commit
 
 Tests MSG-016, guarantee 7: commit succeeded; adapter effect fails → `DeliveryUpdated(failed, reason)` is emitted and queryable via `GetDelivery`; retry per adapter policy (pass 3); no agent turn is created to "ack" the failure.
+
+### W4 — Chief subscribe push (MSG-023, slice S3 per A2)
+
+Tests MSG-023, R1, R2, R3, R9, R11; exercises the frozen Step-2/3b contracts. The anti-polling
+law's proof: a connected external Chief is PUSHED TO; polling exists only as the
+reconnect-catch-up path. Precondition for the push leg: the Chief may read the room
+thread (R3) — otherwise no frame is ever queued for them.
+
+```mermaid
+sequenceDiagram
+  actor Chief as Chief (external terminal)
+  actor Worker
+  participant WS as WS protocol adapter (inbound)
+  participant Door as Public contract
+  participant Core as Messaging core
+  participant Auth as Authority seam
+  participant Mem as Membership seam
+  participant ST as Store seam
+  participant TWS as transport-ws (outbound)
+
+  Chief->>WS: connect + authenticate
+  WS->>Auth: authenticate(credential)
+  Auth-->>WS: Principal + grants
+  Chief->>Door: OpenPresence (explicit — auth alone never registers, R9)
+  Chief->>Door: Subscribe{events:[MessageCommitted]} (R1)
+  Worker->>Door: SendMessage(thread: room)
+  Door->>Core: run the single send path
+  Core->>Mem: resolveMembers(room) — revision evidence (R8)
+  Note over Core: sender ∈ members from the SAME resolution
+  Core->>ST: commitAcceptance — atomic; sequence assigned (DEC-19/20)
+  Note over Core: fact is durable from here — emission only after durable
+  Core->>Core: eventBus: MessageCommitted (committed-fact)
+  Core->>Core: subscription pusher: keep only subscribers who may READ this thread (R3)
+  Core->>TWS: push frame — OBSERVATION lane (R2): not a Delivery, not DND-gated
+  TWS-->>Chief: MessageCommitted on the live socket — near-real-time, never polled
+  Note over Chief,TWS: no mailbox scan; the old 20-minute cron is designed out
+  Chief->>TWS: (socket dies)
+  TWS->>Core: onDisconnect → presence closes (R9); PresenceChanged(closed) emitted as an OBSERVATION — live-only, never journaled or replayed (R11); subscription ends (best-effort ended{closed})
+  Chief->>Door: reconnect → Subscribe{since: last cursor}
+  Core->>ST: scanJournal — replay committed-fact events, sequence > cursor (R1, Store-Seam §11)
+  Core->>TWS: replayed events, then live — gap closed without polling
+```
+
+*The addressed lane still runs for the room's recipients in parallel (`deliver` → R5
+machine → per-recipient Delivery state) — the two lanes never share a record (R2).
+"Team finished" aggregation is NOT Messaging's job (Ratification §5 boundary note):
+Messaging guarantees the events arrive; the Chief's own tooling concludes.*
 
 ---
 
@@ -449,7 +503,7 @@ messaging/
 │   ├── transport-pty/       # replaceable
 │   ├── transport-ws/        # replaceable
 │   ├── store-jsonl/         # replaceable
-│   └── store-memory/        # test + standalone default
+│   └── store-memory/        # test/harness only (A4) — never a production default
 ├── protocol/
 │   ├── ws-server/           # standalone mode adapter (inbound)
 │   └── cli/                 # operator CLI (inbound)
@@ -502,6 +556,7 @@ Every requirement reaches an operation, an owner, a guarantee, a proof, and a sl
 | MSG-020 | Authority seam | Authority seam | I4 | §6 proof | S1 |
 | MSG-021 | Schemas at seam | Contract layer | G5 | fuzz tests | S1 |
 | MSG-022 | Whole contract | Capability | G13 | P1 | S3 |
+| MSG-023 | `Subscribe` + presence-transport `push` | Messaging core + transport seam | anti-polling law (Ratification §5); R1 replay | W4 | S3 |
 
 ---
 
@@ -511,13 +566,13 @@ Full ADRs written when each decision is Accepted.
 
 | ADR | Records | Hard to reverse because | Status |
 |---|---|---|---|
-| ADR-1 Person-as-identity | DEC-01/02 | Every address, contact policy, and history key depends on it | Proposed |
-| ADR-2 Canonical direct Threads | DEC-03 | All direct history hangs off the pairing rule | Proposed |
-| ADR-3 One Message, N Deliveries | DEC-05 | Delivery model and events are built on it | Proposed |
-| ADR-4 Commit-before-effect | DEC-09 | Defines the durability contract with consumers | Proposed |
-| ADR-5 Priority as a field, policy at one decision point | DEC-07/12 | The attention model sits on it | Proposed |
-| ADR-6 WS+CLI as the standalone protocol | DEC-17 | External hosts will code to it | Proposed |
-| ADR-7 JSONL as the default store adapter | Store seam | Migration cost once data accumulates | Proposed |
+| ADR-1 Person-as-identity | DEC-01/02 | Every address, contact policy, and history key depends on it | Accepted |
+| ADR-2 Canonical direct Threads | DEC-03 | All direct history hangs off the pairing rule | Accepted |
+| ADR-3 One Message, N Deliveries | DEC-05 | Delivery model and events are built on it | Accepted |
+| ADR-4 Commit-before-effect | DEC-09 | Defines the durability contract with consumers | Accepted |
+| ADR-5 Priority as a field, policy at one decision point | DEC-07/12 | The attention model sits on it | Accepted |
+| ADR-6 WS+CLI as the standalone protocol | DEC-17 | External hosts will code to it | Accepted |
+| ADR-7 JSONL as the default store adapter | Store seam | Migration cost once data accumulates | Accepted |
 
 ---
 

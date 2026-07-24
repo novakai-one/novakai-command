@@ -32,8 +32,12 @@ be interchanged (G2). Verify the counts instead of trusting prose:
 node -e 'const c=require("./contract/messaging-contract.json");console.log({records:Object.keys(c.records).length,commands:c.commands.length,queries:c.queries.length,subscriptions:c.subscriptions.length,events:c.events.length,errors:c.errors.length,constants:Object.keys(c.constants).length})'
 ```
 
-Generators (runtime validators for `public/schemas/`, the contract doc, the Step-4 map)
-read this file. Nothing downstream is hand-written.
+Generators (runtime validators for `public/schemas/`, the human-readable contract
+doc) read this file. The Step-4 map's prose is curated, but every enumeration it
+copies — operation names, event names, the error catalogue, counts — is
+machine-verified against this file by `contract/check-map-drift.mjs`. The drift
+guard IS the mechanism: nothing numeric or enumerative is trusted to hand-copying.
+Run it after any edit to this file or the map.
 
 ---
 
