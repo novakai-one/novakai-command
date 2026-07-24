@@ -298,3 +298,245 @@ Each enforceable at a named boundary:
 | I9 | A DND override requires the explicit `priority.override` grant | Policy decision point |
 | I10 | Historical records are never rewritten by renames, policy changes, template edits, or membership changes | Append-only store discipline |
 | I11 | A Delivery settles `delivered` only on a reported adapter effect | Delivery state machine |
+
+---
+
+## 13. Capability Shape
+
+The private core is one box on purpose. Hosts sit outside the boundary; adapters translate at seams.
+
+```mermaid
+flowchart LR
+    subgraph HOSTS["Hosts — outside the capability"]
+      NC["Novakai Command app"]
+      EX["External terminal agent"]
+      SH["Standalone messenger app (2nd host)"]
+      CL["Operator CLI"]
+    end
+
+    PC(["Public contract<br>commands · queries · events · typed errors"])
+
+    subgraph CORE["Messaging capability — private core (one box)"]
+      DEC["Decision core — deterministic:<br>addressing · policy · idempotency · state machines"]
+      EFF["Effect shell — journal commit,<br>delivery orchestration, event emission"]
+      DEC --> EFF
+    end
+
+    AUTH{{"Adapter: Authority<br>authenticate + grants"}}
+    MEM{{"Adapter: Membership<br>team/mission resolution"}}
+    PTY{{"Adapter: PTY transport"}}
+    WS{{"Adapter: WS transport"}}
+    ST{{"Adapter: Store<br>JSONL · in-memory"}}
+
+    HOSTS --> PC
+    PC --> CORE
+    CORE --- AUTH
+    CORE --- MEM
+    CORE --- PTY
+    CORE --- WS
+    CORE --- ST
+```
+
+*Answers: what is public, what is private, where do effects live? Audience: builders. Status: proposed. Takeaway: one small door, one private core, every effect behind a named adapter.*
+
+---
+
+## 14. Real Integration Seams
+
+Each seam passes the reality test (variability, effect, ownership, or trust boundary). No ceremony interfaces.
+
+| Seam | Responsibility | Why the boundary is real | Crossing information | Dependency | Example adapters |
+|---|---|---|---|---|---|
+| **Authority** | Authenticate principals; verify grants (`priority.override`, `policy.admin`, …) | Trust boundary — identity must come from outside caller data | Credential → Principal + grants | Core ← adapter | Local token authority; future SSO |
+| **Membership** | Resolve team/mission membership at acceptance | External ownership — Team/Mission capabilities own that truth | Thread ID → recipient Person IDs | Core ← adapter | Novakai stores membership; static test roster |
+| **Presence transport** | Produce the actual delivery effect to a live runtime | Environmental effect + independently replaceable infrastructure | Message + Presence → effect report | Core ← adapter | PTY adapter; WebSocket adapter; webhook (future) |
+| **Store** | Durable commit and ordered reads | Independently replaceable infrastructure + required test substitution | Records ↔ journal | Core ← adapter | JSONL file store; in-memory test store; SQLite (future) |
+| **Clock / ID factory** | Time and unique IDs | Required test substitution (deterministic state machines) | timestamps, IDs | Core ← adapter | System clock/UUID; seeded test clock |
+
+Rejection check applied: no seam for "message formatting" (no variation), none for "validation" (core policy), none per-transport business logic (adapters translate; the core decides).
+
+---
+
+## 15. Integration Proofs
+
+Scenarios that must pass — described as proofs, not code:
+
+| # | Scenario | Proves |
+|---|---|---|
+| P1 | **Standalone messenger app** provisions identity, sends, queries, subscribes, renders its own UI from published projections — importing no private code, changing no core code | Second-host composability (G13, MSG-022) |
+| P2 | **External terminal-spawned Chief** (no Novakai Command running) authenticates over the standalone protocol and exchanges Messages | MSG-004 |
+| P3 | **Two externally spawned Chiefs** hold a direct conversation; history survives both disconnecting | MSG-005, MSG-019 |
+| P4 | **Mission Rooms** references Threads/Messages by ID and posts mission events — without owning or copying Messages | Capability-to-capability integrity |
+| P5 | **Adapter swap:** in-memory store ↔ JSONL store, and PTY transport ↔ WS transport, with the shared contract suites passing unchanged | DEC-10, guarantee 10 |
+| P6 | **Independent harness** runs the full capability with in-memory adapters — no production infrastructure, no Novakai Command | §10 verification promise |
+
+---
+
+## 16. Risk Walkthroughs
+
+Only flows that test load-bearing decisions. Basic form for pass 1; refinement in pass 2.
+
+### W1 — Urgent send against DND, without and with override authority
+
+Tests DEC-07, DEC-08, I9, MSG-008/009/010.
+
+```mermaid
+sequenceDiagram
+  actor Chief
+  participant Door as Public contract
+  participant Core as Messaging core
+  participant Auth as Authority adapter
+  participant PTY as PTY adapter
+
+  Chief->>Door: SendMessage(to: worker, priority: urgent)
+  Door->>Auth: principal + grants
+  Auth-->>Door: Principal (no priority.override)
+  Door->>Core: decide
+  Note over Core: recipient DND is ON<br/>sender lacks override grant
+  Core-->>Chief: SendAccepted + urgentDowngraded: true
+  Note over Core: Message held, still pullable — nothing lost
+  Core->>PTY: (no steer — held by policy)
+```
+
+*With the grant, the same flow ends: Core→PTY steer effect → Delivery settles delivered (I11). Outcome is typed in both directions — never silent (G6).*
+
+### W2 — Accept, crash, retry — durability and idempotency
+
+Tests DEC-09, DEC-13, MSG-018/019.
+
+```mermaid
+sequenceDiagram
+  actor Agent
+  participant Door as Public contract
+  participant Core as Messaging core
+  participant ST as Store adapter
+
+  Agent->>Door: SendMessage(clientMessageId: abc)
+  Door->>Core: decide + commit
+  Core->>ST: commit Message + recipient snapshot
+  Note over Core: process dies before response
+  Agent->>Door: retry — same clientMessageId
+  Door->>Core: decide
+  Core-->>Agent: original SendAccepted (same messageId)
+  Note over Core: exactly one Message exists (I1)
+```
+
+### W3 — Delivery fails after commit
+
+Tests MSG-016, guarantee 7: commit succeeded; adapter effect fails → `DeliveryUpdated(failed, reason)` is emitted and queryable via `GetDelivery`; retry per adapter policy (pass 3); no agent turn is created to "ack" the failure.
+
+---
+
+## 17. Repository Ownership Boundary
+
+The Messaging slice only. Public exports are the contract; everything else is private by construction (enforced by package exports + import tests, MSG-013).
+
+```
+messaging/
+├── public/                  # the ONLY importable surface
+│   ├── contract/            #   commands, queries, events, errors, branded IDs
+│   ├── schemas/             #   runtime validators for every contract shape
+│   └── index.ts             #   public entry — nothing else is exported
+├── core/                    # PRIVATE — the capability
+│   ├── decide/              #   deterministic core: addressing, policy, idempotency
+│   ├── effect/              #   commit, delivery orchestration, event emission
+│   └── state/               #   thread/message/delivery state machines
+├── seams/                   # PRIVATE interfaces — authority, membership,
+│                            #   presence-transport, store, clock/ids
+├── adapters/
+│   ├── authority-local/     # replaceable
+│   ├── membership-novakai/  # replaceable
+│   ├── transport-pty/       # replaceable
+│   ├── transport-ws/        # replaceable
+│   ├── store-jsonl/         # replaceable
+│   └── store-memory/        # test + standalone default
+├── protocol/
+│   ├── ws-server/           # standalone mode adapter (inbound)
+│   └── cli/                 # operator CLI (inbound)
+├── tests/
+│   ├── contract/            # every public operation, through the door
+│   ├── adapters/            # ONE shared suite run against every adapter
+│   ├── architecture/        # no private imports, no cycles
+│   └── harness/             # P6 — full capability, in-memory everything
+└── composition/
+    ├── embedded.ts          # composition root: in-process hosts
+    └── standalone.ts        # composition root: WS/CLI mode
+```
+
+Rules: consumers import only `messaging/public`. Composition roots are the only places concrete adapters are chosen. Adapters never import each other.
+
+---
+
+## 18. Delivery Slices
+
+Vertical slices — each ends with behaviour working through the public contract.
+
+| Slice | Capability after slice | Exercises | Evidence | Deleted | Exit condition |
+|---|---|---|---|---|---|
+| **S1 — Direct lane** | Auth + 1-1 send/pull + durable acceptance + idempotent retry, embedded + standalone | DEC-01/02/03/09/11/13 | Contract tests green; W2 walkthrough passes | Old `nvk-msg` dual-write path | P2 + P3 pass |
+| **S2 — Rooms** | Team/mission sends via membership seam + frozen recipient snapshots | DEC-04/05, I5 | MSG-002/003 proofs; snapshot immutability test | Legacy room fan-out copy | P4 passes |
+| **S3 — Attention** | Push subscriptions, DND, urgent + override, contact policy | DEC-07/12/14/16, I9 | W1 both paths; MSG-009/010/015 proofs | Old notification hacks (fake `failed-message` splice) | P1 passes |
+| **S4 — Templates + failure truth** | Template CRUD/send; `DeliveryUpdated` failure stream; `GetDelivery` | DEC-15, guarantee 7 | MSG-016/017 proofs | Old log-only failure handling | Full adapter suite + P5/P6 pass; scorecard re-run |
+
+No horizontal stages. Every slice leaves one authoritative route for its behaviour and removes the path it replaces.
+
+---
+
+## 19. Traceability Map
+
+Every requirement reaches an operation, an owner, a guarantee, a proof, and a slice.
+
+| Req | Contract operation | Owner | Guarantee / invariant | Proof | Slice |
+|---|---|---|---|---|---|
+| MSG-001 | `SendMessage` | Messaging core | G1, I1–I4 | §6 proof | S1 |
+| MSG-002/003 | `SendMessage` (thread address) | Messaging core + Membership seam | G9, I5 | §6 proof | S2 |
+| MSG-004/005 | `OpenPresence` + standalone protocol | Authority seam | I4 | P2, P3 | S1 |
+| MSG-006/007 | `GetMessages`, `GetInbox`, events | Messaging core | G2, G3 | §6 proof | S1 |
+| MSG-008/009/010 | `SendMessage` priority + `SetDndPolicy` | Policy decision point | G6, I9 | W1 | S3 |
+| MSG-011 | Presence transport seam | Adapter | G10, I11 | Adapter suite | S1 |
+| MSG-012/013/014 | Contract + schemas + addressing | Seam + core | G3–G5 | Architecture tests | S1 |
+| MSG-015 | `SetContactPolicy` + send check | Policy decision point | typed `BlockedByContactPolicy` | §6 proof | S3 |
+| MSG-016 | `DeliveryUpdated`, `GetDelivery` | Effect shell | G7 | W3 | S4 |
+| MSG-017 | Template commands | Messaging core | DEC-15 | §6 proof | S4 |
+| MSG-018/019 | `SendMessage` idempotency + commit | Core + Store seam | G2, G3 | W2 | S1 |
+| MSG-020 | Authority seam | Authority seam | I4 | §6 proof | S1 |
+| MSG-021 | Schemas at seam | Contract layer | G5 | fuzz tests | S1 |
+| MSG-022 | Whole contract | Capability | G13 | P1 | S3 |
+
+---
+
+## 20. ADR Catalogue
+
+Full ADRs written when each decision is Accepted.
+
+| ADR | Records | Hard to reverse because | Status |
+|---|---|---|---|
+| ADR-1 Person-as-identity | DEC-01/02 | Every address, contact policy, and history key depends on it | Proposed |
+| ADR-2 Canonical direct Threads | DEC-03 | All direct history hangs off the pairing rule | Proposed |
+| ADR-3 One Message, N Deliveries | DEC-05 | Delivery model and events are built on it | Proposed |
+| ADR-4 Commit-before-effect | DEC-09 | Defines the durability contract with consumers | Proposed |
+| ADR-5 Priority as a field, policy at one decision point | DEC-07/12 | The attention model sits on it | Proposed |
+| ADR-6 WS+CLI as the standalone protocol | DEC-17 | External hosts will code to it | Proposed |
+| ADR-7 JSONL as the default store adapter | Store seam | Migration cost once data accumulates | Proposed |
+
+---
+
+## 21. Open-Decision Register
+
+Nothing here is disguised as settled:
+
+| # | Question | Options | Consequences | Owner | Blocks |
+|---|---|---|---|---|---|
+| O1 | Retention/archival of history | unbounded (v1) · time-based · size-based | Storage growth; query perf | Chris | Pass 3 persistence design |
+| O2 | Rate limits on send | none (v1) · per-sender quota | `RateLimited` error shape exists either way | Chris | Pass 2 error schema |
+| O3 | DND schedules | on/off only (v1) · time windows | Policy schema shape | Chris | Pass 2 policy schema |
+| O4 | Webhook presence transport | defer · include in v1 | One more adapter in the transport suite | Chris | S1 adapter suite size |
+| O5 | Cross-machine federation | out of scope v1 | Single-authority deployment assumption | Chris | Non-goal until raised |
+| O6 | Message content size limit | pick at pass 2 | Validation schema constant | Chief (build) | Pass 2 schema |
+
+---
+
+## Builder test / Reviewer test — self-check
+
+- **Builder:** can implement from §6–§16 without asking about observable behaviour, identity, addressing, authority, ownership, contract semantics, guarantees, failure outcomes, or integration boundaries. Private choices (persistence mechanics, retry algorithms, module decomposition) remain free.
+- **Reviewer:** can score §4, check §5 gates, trace §19, inspect §7 decisions, and see exactly which qualities are `Unproven` (§4 status column) — no implementation code required.
