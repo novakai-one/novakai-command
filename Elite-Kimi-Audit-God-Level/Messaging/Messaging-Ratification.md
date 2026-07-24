@@ -149,7 +149,7 @@ the Chief) is NOT Messaging's job. Messaging guarantees the events arrive; concl
 "the team is finished" is orchestration logic belonging to the Chief's own tooling.
 Recorded so no agent gold-plates it into the capability.
 
-**Slice:** S1 (subscribe + transport-ws + presence already in S1's surface).
+**Slice:** S3 (Attention) — corrected by binding amendment A2 (§9); the earlier "S1" note here was the contradiction the reviewer flagged (#10).
 
 ---
 

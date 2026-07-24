@@ -1,6 +1,7 @@
 # Messaging — Handover to the Next Agent
 
 **Written:** 2026-07-24 by kimi-cli, at the end of Step 1 (decision ratification).
+**Updated:** 2026-07-24 by kimi-cli — Step 3a (store seam contract) COMPLETE; next is Step 2.
 **You are:** the agent executing Step 2 (pass-2 schemas) or later. Read this first.
 
 ---
@@ -30,6 +31,7 @@ Step 1 of the pass-2 sequence is COMPLETE:
 | `Messaging-Plan.md` | The pass-1 blueprint, §1–§21 (promise, requirements MSG-001..022, DECs, invariants, seams, walkthroughs, slices, traceability, open decisions) | Reference — do not edit without cause |
 | `Messaging-Ratification.md` | The decision gate. Binding. | Step 1 output |
 | `Messaging-Ratification-Review.md` | Adversarial review of the gate | Evidence |
+| `Messaging-Store-Seam.md` | Store seam contract: atomic `commitAcceptance`, sequence ordering, failure vocabulary, recovery support | **Step 3a output — binding** |
 | `Messaging-Map.html` | Visual module map (open in a browser; 40 modules, animated traces) | Update in Step 4 |
 | `Messaging-Report copy.html` | Second visual variant of the map | Working copy |
 | `Messaging-Report.html` | Older mermaid-based report | Superseded, kept for history |
@@ -51,9 +53,12 @@ Step 1 of the pass-2 sequence is COMPLETE:
 
 ## What happens next (in order — amended post-review)
 
-- **Step 3a — store seam contract FIRST.** DEC-18/19/20/21 semantics: atomic
-  `commitAcceptance`, sequence ordering (R7), failure vocabulary (R6 feeds Step 2).
-- **Step 2 — pass-2 schemas.** Property-level schemas for every shape: records
+- ~~**Step 3a — store seam contract FIRST.**~~ **DONE (2026-07-24)** —
+  `Messaging-Store-Seam.md`. DEC-18/19/20/21 are now contractual: one atomic
+  `commitAcceptance`, global sequence ordering with opaque cursors, typed failure
+  vocabulary (§6 of that file — Step 2 freezes public error schemas against it),
+  recovery-sweep support. R7 CLOSED, R6 store half CLOSED, R8 store side CLOSED.
+- **Step 2 — pass-2 schemas. ← NEXT.** Property-level schemas for every shape: records
   (Message, Thread, Delivery, Presence, policies, templates), 8 commands, 9 queries,
   4 events, errors (resolve the 11-vs-12 count at the source), results — from one
   machine-readable source. Open R-items to close here: R1–R5, R9–R13. Honour A5
