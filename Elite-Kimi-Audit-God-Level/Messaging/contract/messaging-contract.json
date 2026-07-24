@@ -535,11 +535,11 @@
   "commands": [
     {
       "name": "OpenPresence",
-      "summary": "Register a live connection for this Person (R9: the ONLY registration mechanism — authentication alone never registers).",
+      "summary": "Register a live connection for this Person (R9: the ONLY registration mechanism — authentication alone never registers). Naming a transport with no registered adapter fails ValidationFailed (Messaging-Seams §4 composition rule).",
       "authorization": "any authenticated principal",
       "input": { "$ref": "#/$defs/OpenPresenceInput" },
       "result": { "$ref": "#/$defs/PresenceOpened" },
-      "errors": ["NotAuthenticated", "VersionUnsupported", "DependencyUnavailable"],
+      "errors": ["NotAuthenticated", "VersionUnsupported", "ValidationFailed", "DependencyUnavailable"],
       "rulings": ["R9"]
     },
     {
@@ -745,7 +745,7 @@
     { "name": "VersionUnsupported", "summary": "The client speaks a protocol/contract version this deployment does not serve.", "retryable": false, "fields": { "supported": { "type": "array", "items": { "type": "string" } } } },
     { "name": "RateLimited", "summary": "FORWARD-RESERVED (R13, O2): no send rate limits in v1. The shape exists in the catalogue but appears in no per-operation failure list until O2 activates.", "retryable": true, "reserved": true, "fields": { "retryAfterMs": { "type": "integer", "minimum": 0 } } },
     { "name": "IdempotencyConflict", "summary": "A5: same (senderId, clientMessageId) but different requestHash. Pass-through from the store seam — public by design.", "retryable": false, "fields": { "clientMessageId": { "type": "string" }, "originalMessageId": { "$ref": "#/$defs/MessageId" } } },
-    { "name": "DependencyUnavailable", "summary": "R6: typed public outcome for dependency failure. One umbrella shape; the dependency field names which seam failed. StoreUnavailable/StorageExhausted/StoreCorrupt map here (Store-Seam §6); membership-timeout and authority-failure shapes land with their Step-3b seams and reuse THIS shape. Consumers assume non-retryable unless the instance's retryable field says true; they MUST tolerate unknown dependency values (treat as non-retryable) — the enum extends at Step 3b (e.g. presence-transport, clock).", "retryable": false, "fields": { "dependency": { "type": "string", "enum": ["store", "membership", "authority"], "description": "Extensible at Step 3b; consumers must tolerate unknown values." }, "retryable": { "type": "boolean", "description": "Per-instance flag. false for StoreCorrupt-class failures — operator intervention required. Absent/unknown → assume false." } } }
+    { "name": "DependencyUnavailable", "summary": "R6: typed public outcome for dependency failure. One umbrella shape; the dependency field names which seam failed. StoreUnavailable/StorageExhausted/StoreCorrupt map here (Store-Seam §6); membership-timeout and authority-failure reuse THIS shape (Messaging-Seams §2.2, §3.3); clock/ID halt-class failures use dependency=clock (Messaging-Seams §5.2). presence-transport is DELIBERATELY absent — its failures surface through the Delivery lane as typed state, a richer public outcome (Messaging-Seams §4.2). Consumers assume non-retryable unless the instance's retryable field says true; they MUST tolerate unknown dependency values (treat as non-retryable).", "retryable": false, "fields": { "dependency": { "type": "string", "description": "Known values: store | membership | authority | clock (clock added at Step 3b). Typed as open string, NOT an enum — additive extension is the compatibility rule and consumers MUST tolerate unknown values (treat as non-retryable). presence-transport is deliberately absent (failures surface via the Delivery lane, Messaging-Seams §4.2)." }, "retryable": { "type": "boolean", "description": "Per-instance flag. false for StoreCorrupt-class failures — operator intervention required. Absent/unknown → assume false." } } }
   ],
   "errorNotes": {
     "catalogueSize": 13,

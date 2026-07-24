@@ -2,8 +2,10 @@
 
 **Written:** 2026-07-24 by kimi-cli, at the end of Step 1 (decision ratification).
 **Updated:** 2026-07-24 by kimi-cli — Step 3a (store seam contract) COMPLETE.
-**Updated:** 2026-07-24 by kimi-cli — Step 2 (pass-2 schemas) COMPLETE; next is Step 3b.
-**You are:** the agent executing Step 3b (remaining seam contracts) or later. Read this first.
+**Updated:** 2026-07-24 by kimi-cli — Step 2 (pass-2 schemas) COMPLETE.
+**Updated:** 2026-07-24 by kimi-cli — Step 3b (remaining seam contracts) COMPLETE;
+**all R-items (R1–R13) CLOSED**; next is Step 4.
+**You are:** the agent executing Step 4 (trace refresh + map) or later. Read this first.
 
 ---
 
@@ -35,6 +37,7 @@ Step 1 of the pass-2 sequence is COMPLETE:
 | `Messaging-Store-Seam.md` | Store seam contract: atomic `commitAcceptance`, sequence ordering, failure vocabulary, recovery support. **§11 errata** (Step 2): committed-fact events journaled with sequence; inbox = non-terminal only; `urgentDowngraded` persisted | **Step 3a output — binding** |
 | `contract/messaging-contract.json` | THE single machine-readable source: 10 records, 8 commands, 9 queries, 1 subscription, 4 events, 13 errors, constants, delivery state machine | **Step 2 output — binding** |
 | `Messaging-Schemas.md` | Step 2 rulings doc: R1–R5, R9–R13, R6 closed; review record (15 findings disposed) | **Step 2 output — binding** |
+| `Messaging-Seams.md` | Step 3b seam contracts: authority (incl. DEC-07 role→grant config), membership (R8 linearization), presence-transport (R1 transport half), clock/ID; review record (8 findings disposed) | **Step 3b output — binding** |
 | `Messaging-Map.html` | Visual module map (open in a browser; 40 modules, animated traces) | Update in Step 4 |
 | `Messaging-Report copy.html` | Second visual variant of the map | Working copy |
 | `Messaging-Report.html` | Older mermaid-based report | Superseded, kept for history |
@@ -53,6 +56,13 @@ Step 1 of the pass-2 sequence is COMPLETE:
 4. **Chris is a visual/spatial thinker** — do not hand him long prose to review.
    Decisions get batched with recommendations; silence = accepted. Keep the visual
    map current; it is how he understands the system.
+5. **Skills are mandatory (Chris, 2026-07-24; mirrored in `~/.agents/AGENTS.md`):**
+   every agent on this project invokes the appropriate skills at session start,
+   BEFORE acting — `elite-codebase-engineering` + `codebase-design` for the design
+   discipline; superpowers `verification-before-completion` (no completion claims
+   without fresh evidence) and `requesting-code-review` (zero-context adversarial
+   review before sealing a step; dispose findings at the source); `handoff` when
+   closing a step. Every handoff document states which skills the receiver must apply.
 
 ## What happens next (in order — amended post-review)
 
@@ -72,15 +82,21 @@ Step 1 of the pass-2 sequence is COMPLETE:
   Delivery; R2 subscription push is NOT a Delivery and is not DND-gated; R1 adds
   the `Subscribe` stream operation with sequence-cursor replay and bounded-buffer
   backpressure.
-- **Step 3b — remaining seam contracts. ← NEXT.** Authority (incl. role→grant
-  config per DEC-07 amendment), membership (incl. R8 linearization — freeze against
-  `MembershipEvidence` in the contract source), presence-transport (incl. R1's
-  transport half: frames, liveness reporting per R9), clock/ID. Public failure
-  shapes reuse `DependencyUnavailable` — its `dependency` enum extends here.
-- **Step 4 — trace refresh.** Add W4 (Chief subscribe push, MSG-023 — slice **S3**
-  per A2) to Plan §16 and a fourth trace to the map; re-run §19 traceability.
-  The map regenerates from `contract/messaging-contract.json`.
-- **Step 5 — S1 build kickoff.** Only after all R-items above are closed.
+- ~~**Step 3b — remaining seam contracts.**~~ **DONE (2026-07-24)** —
+  `Messaging-Seams.md`. Authority (grants snapshotted at auth + revalidate with
+  degraded-state ruling; DEC-07 role→grant mapping contractually in adapter config,
+  never core), membership (R8 CLOSED: fresh resolution inside every accept call,
+  revision evidence frozen with the snapshot, sender ∈ members from the SAME
+  resolution), presence-transport (R1 transport half CLOSED: `deliver`/`push`
+  two-lane split, effect-only-on-real-effect G10, liveness callbacks → single
+  presence-close path, push-lane buffer/overflow accounting), clock/ID (halt-class
+  `DependencyUnavailable{clock}`; `dependency` field is open-typed — tolerate-unknown
+  is the compatibility rule). **All R-items (R1–R13) now CLOSED.**
+- **Step 4 — trace refresh. ← NEXT.** Add W4 (Chief subscribe push, MSG-023 — slice
+  **S3** per A2) to Plan §16 and a fourth trace to the map; re-run §19 traceability.
+  The map regenerates from `contract/messaging-contract.json`. Step-4 handoff:
+  `/tmp/messaging-step3b-handoff.md`.
+- **Step 5 — S1 build kickoff.** All R-items closed; Step 4 is the last gate.
 
 ## Context you will not find in the files
 

@@ -179,8 +179,10 @@ once, in the source file:
 
 `DependencyUnavailable` semantics: the catalogue entry is non-retryable BY DEFAULT;
 each instance carries its own `retryable` flag (false = StoreCorrupt-class, operator
-intervention). The `dependency` enum extends at Step 3b (e.g. presence-transport,
-clock) — consumers MUST tolerate unknown values and treat them as non-retryable.
+intervention). The `dependency` enum was finalised at Step 3b as
+`store | membership | authority | clock` — presence-transport is DELIBERATELY absent:
+its failures surface through the Delivery lane as typed state (Messaging-Seams §4.2).
+Consumers MUST tolerate unknown values and treat them as non-retryable.
 
 **Store-Seam §11 errata (same date, same authority):** three gaps found while freezing
 against §6 were resolved at the store seam's source — committed-fact events are
