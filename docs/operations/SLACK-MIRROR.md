@@ -1,22 +1,33 @@
 # Slack Mirror (`scripts/nvk-slack-mirror.mjs`)
 
-A read-only, one-way mirror of the team messaging journal
-(`.novakai-command/messages.jsonl`) into a Slack channel. It only reads the
-journal file and posts to a Slack Incoming Webhook — it never writes to the
-journal, the backend, or any agent state.
+A read-only, one-way mirror of team messaging into a Slack channel via an
+Incoming Webhook. Since N5 (D-N5-2) the mirror is a **client of the messaging
+capability** — there is no journal-file tail and no `--file` flag. It never
+writes to the backend or any agent state.
+
+**Server dependency:** the mirror needs a running backend
+(`NVK_COMMAND_URL`, default `http://127.0.0.1:3031`; `--server <url>`
+overrides). Backlog reads ride the server-owned `/api/messaging/v2/user/*`
+routes; live events ride the browser dialect (`messaging-v2-sub` over `/ws`,
+MessageCommitted + DeliveryUpdated) — the same trust boundary as the
+Messages tab, so no token is needed.
 
 ## What it does
 
-- Tails the journal (polls every 2 s, tracks byte offset, survives
-  truncation/rotation).
-- Posts one Slack message per new envelope:
-  `*from* → *to* · 11:42 · body` (bodies truncated at ~500 chars).
-- Status amendments (same message id, later line) post as a short follow-up
-  line: `↳ msg_… → delivered`, `✗ msg_… → failed` — never a repost of the
-  body. Failed/partial amendments are color-coded red; other status lines are
-  grey.
-- On Slack HTTP failure: retries once after 5 s, then logs and continues. The
-  mirror never crashes because Slack hiccuped.
+- Posts one Slack message per committed message:
+  `🦊 *from* → 📣 *#to* · 11:42` + body (truncated at ~500 chars).
+- Terminal delivery failures post as a short status line:
+  `✗ msg_… → *failed* (sender → lane, 11:42)` — red-coded, never a repost of
+  the body. A failure whose original message left the local cache attributes
+  to a neutral `unknown` sender, never to chris (F7).
+- Roster names and lane labels come from the server and re-resolve every
+  5 min (renames / new lanes pick up without a restart, F7). DM lanes
+  without a server label fall back to the raw threadId (accepted debt).
+- Reconnects with 500 ms → 8 s backoff, resuming the subscription from the
+  last seen sequence cursor (`s_<n>`) — at-least-once; dedupe is by id
+  (in-memory, bounded at 5000 entries; a very late amendment for an evicted
+  id can re-post once).
+- On Slack HTTP failure: retries once after 5 s, then logs and continues.
 - Posts are spaced ~1.1 s apart (Slack webhooks allow ~1 msg/sec).
 
 ## Setup
@@ -34,8 +45,9 @@ journal, the backend, or any agent state.
 ## Run
 
 ```sh
-node scripts/nvk-slack-mirror.mjs --backlog 20     # post last 20 lines, then follow live
-node scripts/nvk-slack-mirror.mjs --backlog 0      # live only, no backlog
+node scripts/nvk-slack-mirror.mjs --backlog 20     # post last 20 messages, then follow live
+node scripts/nvk-slack-mirror.mjs --backlog 0      # LIVE ONLY — cursor seeds at the current
+                                                   # tip, history never replays (F5)
 node scripts/nvk-slack-mirror.mjs --verbose        # log each post
 ```
 
@@ -48,7 +60,6 @@ node scripts/nvk-slack-mirror.mjs --dry-run --backlog 5
 ```
 
 `--dry-run` prints formatted messages to stdout instead of posting.
-`--file <path>` overrides the journal path for fixture testing.
 
 ## Visual language
 
@@ -64,16 +75,17 @@ node scripts/nvk-slack-mirror.mjs --dry-run --backlog 5
   kimi 🌙 · claude 🎻. Unknown senders get a stable pick from
   🤖🛰️📡🧪🦉🐙🌿🔧📐🧵 via the same name hash. Recipients use the same
   mapping, with two special cases: channels (`#team`) 📣 and rooms 🏠.
-- **Status semantics win over sender color:** failed/partial amendments are
-  muted red `#B05A5A`, other amendments are grey `#9E9E9E`. Sender colors
-  apply to new messages only.
+- **Status semantics win over sender color:** failed amendments are muted red
+  `#B05A5A`, other amendments grey `#9E9E9E`. Sender colors apply to new
+  messages only. (The `⚠ partial` formatter branch has no caller: the
+  capability has no partial delivery state — F10 debt.)
 
 ## Known limitations
 
-- Mirror lags by the poll interval (2 s) plus the ~1.1 s per-post spacing —
-  a burst of messages trickles into Slack over seconds.
-- Status amendments are follow-up messages, not edits of the original Slack
-  post (Incoming Webhooks can't edit).
-- No history backfill beyond `--backlog N`; restarting with a large backlog
-  re-posts those lines (seen-id tracking is in-memory only).
-- One-way: nothing typed in Slack reaches the journal.
+- A burst of messages trickles into Slack over seconds (~1.1 s pacing).
+- Status lines are follow-up messages, not edits of the original Slack post
+  (Incoming Webhooks can't edit).
+- Restarting with `--backlog N` re-posts those N messages (seen-id tracking
+  is in-memory only).
+- One-way: nothing typed in Slack reaches the capability (the N7 two-way
+  bridge grows out of `scripts/team/capabilityClient.mjs`).

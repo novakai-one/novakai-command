@@ -44,9 +44,10 @@ port conflicts, crash-respawn backoff, SIGHUP = live snapshot swap),
 `redeploy`. Dep-skew guard: refuses to boot if snapshot lockfile hash ≠
 workspace lockfile hash.
 
-**launchd** (`scripts/*.plist`, both `RunAtLoad` + `KeepAlive`):
-`com.novakai.prod` keeps the pinned-snapshot backend alive;
-`com.novakai.watchdog` runs agent-liveness monitoring (`scripts/nvk-watchdog.mjs`).
+**launchd** (`scripts/com.novakai.prod.plist`, `RunAtLoad` + `KeepAlive`):
+`com.novakai.prod` keeps the pinned-snapshot backend alive. (Agent-liveness
+monitoring moved in-app: `src/backend/terminal/seatWatch`, D-N5-6 — the old
+`com.novakai.watchdog` plist was deleted in N5.)
 
 ## Novakai HQ (`novakai-docs`, `electron/`)
 
