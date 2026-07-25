@@ -151,7 +151,7 @@ describe("queries (R3 matrix, S1-subset behaviours)", () => {
     assert.ok(view.features.includes("direct"));
     assert.ok(view.features.includes("rooms"), "rooms landed in S2 — advertised");
     assert.ok(view.features.includes("subscribe"), "subscribe landed in S1-c — advertised");
-    assert.ok(!view.features.includes("templates"), "templates are S4 — absent, not advertised");
+    assert.ok(view.features.includes("templates"), "templates landed in S4 — advertised");
   });
 
   it("GetInbox for another Person requires policy.admin", async () => {

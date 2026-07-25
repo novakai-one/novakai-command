@@ -13,9 +13,6 @@
  * recipients committing terminal failed inside the acceptance (§11.7).
  */
 
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { describe, it } from "node:test";
 import * as assert from "node:assert/strict";
 
@@ -35,11 +32,10 @@ import type {
   ThreadId,
   Timestamp,
 } from "../../public/contract/index.js";
-import type { AcceptanceInput, MessagingStore } from "../../seams/store.js";
+import type { AcceptanceInput } from "../../seams/store.js";
 import { createSeededClock } from "../../adapters/clock-seeded.js";
 import type { SeededClock } from "../../adapters/clock-seeded.js";
-import { createMemoryStore } from "../../adapters/store-memory.js";
-import { openJsonlStore } from "../../adapters/store-jsonl.js";
+import { storeAdapterFactories } from "./adapterFactories.js";
 
 // --- fixtures -----------------------------------------------------------------
 
@@ -139,55 +135,8 @@ function makeTemplate(clock: SeededClock, revision: number): Template {
 }
 
 // --- parameterised adapter construction -----------------------------------------
-
-interface AdapterHandle {
-  store: MessagingStore;
-  clock: SeededClock;
-  /** store-jsonl only: close and reopen against the same file (restart). */
-  reopen?: () => Promise<MessagingStore>;
-  cleanup: () => void;
-}
-
-interface AdapterFactory {
-  name: string;
-  make: () => Promise<AdapterHandle>;
-}
-
-const adapterFactories: AdapterFactory[] = [
-  {
-    name: "store-memory",
-    make: () => {
-      const clock = createSeededClock({ seed: "mem" });
-      return Promise.resolve({
-        store: createMemoryStore(clock),
-        clock,
-        cleanup: () => {},
-      });
-    },
-  },
-  {
-    name: "store-jsonl",
-    make: async () => {
-      const dir = mkdtempSync(join(tmpdir(), "nvk-messaging-store-"));
-      const path = join(dir, "store.jsonl");
-      const clock = createSeededClock({ seed: "jsonl" });
-      const store = await openJsonlStore(clock, { path });
-      let current = store;
-      return {
-        store,
-        clock,
-        reopen: async () => {
-          await current.close();
-          current = await openJsonlStore(clock, { path });
-          return current;
-        },
-        cleanup: () => {
-          rmSync(dir, { recursive: true, force: true });
-        },
-      };
-    },
-  },
-];
+// The factories live in ./adapterFactories.ts (shared with the P5 manifest —
+// one array, imported by the suite AND the proof, so they can never drift).
 
 let counter = 0;
 function cmid(label: string): ClientMessageId {
@@ -197,7 +146,7 @@ function cmid(label: string): ClientMessageId {
 
 // --- the shared suite -------------------------------------------------------------
 
-for (const factory of adapterFactories) {
+for (const factory of storeAdapterFactories) {
   describe(`store seam contract suite — ${factory.name}`, () => {
     it("acceptance happy path: message + snapshot + deliveries + marker committed atomically", async () => {
       const handle = await factory.make();

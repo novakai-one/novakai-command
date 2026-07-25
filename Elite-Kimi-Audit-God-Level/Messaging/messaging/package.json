@@ -1,7 +1,7 @@
 {
   "name": "@novakai/messaging",
   "version": "0.1.0",
-  "description": "Novakai Messaging capability — S1 (direct lane, durable events + subscriptions, WS standalone) + S2-a (rooms: membership seam, frozen recipient snapshots, room read authorization).",
+  "description": "Novakai Messaging capability — v1 surface sealed through S4: direct lane, rooms (membership seam, frozen snapshots), attention mechanics (DND/urgent, contact policy), the Subscribe stream, and templates (DEC-15); embedded + WS standalone modes; memory/jsonl stores; memory/PTY/WS presence transports.",
   "type": "module",
   "engines": {
     "node": ">=20"

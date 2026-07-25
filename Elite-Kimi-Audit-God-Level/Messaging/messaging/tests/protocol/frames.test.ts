@@ -73,15 +73,18 @@ describe("protocol frame parsing (MSG-021 — from unknown, never throws)", () =
     expectInvalid({ nope: true }, undefined);
   });
 
-  it("S4 command names are rejected honestly (this slice's surface is explicit)", () => {
-    const result = parseClientFrame({
-      kind: "command",
-      requestId: "r5",
-      name: "SendFromTemplate",
-      input: {},
-    });
-    assert.equal(result.ok, false);
-    if (!result.ok) assert.equal(result.error.name, "ValidationFailed");
+  it("the full S4 command/query surface parses; unknown names are rejected honestly", () => {
+    // S4 sealed: the template operations are part of the wire surface.
+    for (const name of ["SendFromTemplate", "UpsertTemplate", "RetireTemplate"]) {
+      const result = parseClientFrame({ kind: "command", requestId: "r5", name, input: {} });
+      assert.equal(result.ok, true, `${name} parses (S4 surface is live)`);
+    }
+    const query = parseClientFrame({ kind: "query", requestId: "r5q", name: "ListTemplates", input: {} });
+    assert.equal(query.ok, true, "ListTemplates parses (S4 surface is live)");
+
+    const rejected = parseClientFrame({ kind: "command", requestId: "r5x", name: "NukeEverything", input: {} });
+    assert.equal(rejected.ok, false);
+    if (!rejected.ok) assert.equal(rejected.error.name, "ValidationFailed");
   });
 
   it("errorFrame serializes the 13-error catalogue names unchanged", () => {

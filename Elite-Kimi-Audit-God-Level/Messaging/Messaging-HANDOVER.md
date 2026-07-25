@@ -17,7 +17,12 @@ Next: slice S3 (Attention — mostly built in S1; exit condition P1) per Plan §
 (`Messaging-S3-Review.md`). Exit condition P1 met. Next: slice S4 (Templates +
 failure truth; exit: full adapter suite + P5/P6 + scorecard re-run) — the LAST slice
 in Plan §18.
-**You are:** the agent executing slice S4 or later. Read this first.
+**Updated:** 2026-07-24 by kimi-cli — slice S4 COMPLETE and SEALED
+(`Messaging-S4-Review.md`). **The Plan §18 program is COMPLETE: S1–S4 all sealed,
+all six proof scenarios (P1–P6) passing, 253/253 tests green, scorecard 97.0/100
+ELITE (`Messaging-Scorecard.md`).** The capability awaits Chris's next direction
+(integration into a host, or new requirements as numbered items per law #2).
+**You are:** the agent picking up post-program work. Read this first.
 
 ---
 
@@ -55,6 +60,8 @@ Step 1 of the pass-2 sequence is COMPLETE:
 | `Messaging-S1-Review.md` | Law-#6 audit of the S1 diff (verdict HIGH pre-fix: 3 severe, 9 moderate, 10 low) + full disposal record | Step 5 evidence |
 | `Messaging-S2-Review.md` | Law-#6 audits of the S2-a/S2-b diffs (S2-a: HIGH pre-fix, R4 made literal via errata §11.7; S2-b: LOW-MODERATE) + disposal records | S2 evidence |
 | `Messaging-S3-Review.md` | Law-#6 audit of the S3 diff (2 moderate, 3 low — all disposed) + MSG-009/010/015 coverage map + P1 proof record | S3 evidence |
+| `Messaging-S4-Review.md` | Law-#6 audit of the S4 diff (2 moderate — prototype-chain defeats of DEC-15/R12, reproduced + fixed; 1 low-moderate; 7 low — all disposed) | S4 evidence |
+| `Messaging-Scorecard.md` | Elite scorecard post-S4: 97.0/100, red gates evidence-checked, unmeasured dimensions marked; dated audit addendum | S4 output |
 | `Messaging-Map.html` | Visual module map (open in a browser; 40 modules, animated traces) | Update in Step 4 |
 | `Messaging-Report copy.html` | Second visual variant of the map | Working copy |
 | `Messaging-Report.html` | Older mermaid-based report | Superseded, kept for history |
@@ -162,11 +169,19 @@ Step 1 of the pass-2 sequence is COMPLETE:
   inbox updating from push with ZERO queries issued (MSG-023), catch-up pull path.
   Law-#6 audit of the diff: 2 moderate + 3 low, all disposed at source. 198/198
   tests green; contract JSON untouched.
-- **Next: slice S4 (Templates + failure truth)** — the LAST slice in Plan §18.
-  DEC-15, MSG-016/017 proofs; the S4-template commands (SendFromTemplate,
-  UpsertTemplate, RetireTemplate, ListTemplates) move from absent-not-stubbed to
-  live; exit: full adapter suite + P5 (adapter swap) + P6 + **scorecard re-run**
-  (elite-scorecard reference from the elite-codebase-engineering skill).
+- ~~**Slice S4 — Templates + failure truth.**~~ **DONE (2026-07-24)** — templates
+  live (R12 allowlist enforced at upsert AND render from codegen; SendFromTemplate
+  crosses the SAME SendMessage door; revision CAS; retire one-way I10), failure
+  truth proven (MSG-016/017: pushed journaled DeliveryUpdated failures + GetDelivery
+  agree, replay re-delivers), PTY transport adapter (§4.3, injectable spawn, real
+  `cat` smoke test), P5 (ONE shared transport suite × memory/PTY/WS + manifest +
+  capability-level swap legs incl. the named PTY↔WS pair), P6 extended (template
+  lifecycle in-memory). Scorecard: `Messaging-Scorecard.md` 97.0/100 ELITE, red
+  gates evidence-checked. Law-#6 audit: 2 moderate (prototype-chain defeats of
+  DEC-15/R12 — both reproduced by the auditor, both fixed with regression tests),
+  1 low-moderate (ListTemplates page bound), 7 low — all disposed at source, record
+  in `Messaging-S4-Review.md`; 253/253 tests green. **Plan §18 program COMPLETE:
+  S1–S4 sealed, P1–P6 all passing, contract JSON never modified after Step 2.**
 
 ## Context you will not find in the files
 

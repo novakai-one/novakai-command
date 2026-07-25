@@ -63,9 +63,11 @@
  *  - Message size (R13): serialized Message JSON must not exceed
  *    constants.messageMaxBytes → ValidationFailed.
  *
- * S1 scope: template handling is NOT here — SendMessageInput carries no
- * template ref (only SendFromTemplate does, and templates are slice S4). The
- * R12 allowlist is enforced at UpsertTemplate when that slice lands.
+ * Template sends (S4, DEC-15): SendFromTemplate renders into a
+ * SendMessageInput upstream (core/templates.ts — R12 allowlist enforcement)
+ * and enters HERE through the same door with an optional TemplateRef, which
+ * is stamped onto the Message verbatim (frozen history, I10). There is no
+ * template-specific policy: a rendered send is decided EXACTLY as SendMessage.
  */
 
 import { constants, schemaVersion } from "../public/contract/index.js";
@@ -80,6 +82,7 @@ import type {
   RecipientSnapshot,
   RequestHash,
   Sequence,
+  TemplateRef,
   Thread,
   ThreadId,
 } from "../public/contract/index.js";
@@ -265,6 +268,8 @@ export async function decideSend(
   input: SendMessageInput,
   requestHash: RequestHash,
   clientMessageId: ClientMessageId,
+  /** DEC-15: present when this send was rendered from a template (S4) — stamped onto the Message verbatim (I10). */
+  templateRef?: TemplateRef,
 ): Promise<SendDecision> {
   const { clock } = deps;
   const senderId = principal.personId;
@@ -284,6 +289,7 @@ export async function decideSend(
     sequence: 0 as Sequence, // assigned by the store inside the transaction (DEC-19)
     priority: input.priority, // the field never rewrites; the flag qualifies it (MSG-010)
     body: input.body,
+    ...(templateRef !== undefined ? { template: templateRef } : {}),
   };
 
   // R13: serialized Message JSON bytes, enforced at validation.

@@ -37,17 +37,20 @@ export const WS_PROTOCOL_VERSION = "1.0.0";
 
 // --- client → server ------------------------------------------------------------
 
-/** S1 slice surface over the wire (SendFromTemplate/Upsert/Retire land in S4). */
+/** The full 8-command surface over the wire (S4 sealed). */
 export const wsCommandNames = [
   "OpenPresence",
   "ClosePresence",
   "SendMessage",
+  "SendFromTemplate",
   "SetDndPolicy",
   "SetContactPolicy",
+  "UpsertTemplate",
+  "RetireTemplate",
 ] as const;
 export type WsCommandName = (typeof wsCommandNames)[number];
 
-/** S2 query surface (GetCapabilities has its own pre-auth frame). */
+/** The full query surface (GetCapabilities has its own pre-auth frame). */
 export const wsQueryNames = [
   "GetThread",
   "ListThreadsForPerson",
@@ -55,6 +58,7 @@ export const wsQueryNames = [
   "GetInbox",
   "GetDelivery",
   "GetPolicy",
+  "ListTemplates",
   "GetPresence",
 ] as const;
 export type WsQueryName = (typeof wsQueryNames)[number];

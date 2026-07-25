@@ -6,10 +6,11 @@
  * session doors (the "no per-mode business logic" law). Composition roots
  * differ ONLY in which adapters they choose and how external input arrives.
  *
- * Wiring (identical to S1-b's embedded root, plus the S1-c/S2 modules):
+ * Wiring (identical to S1-b's embedded root, plus the S1-c/S2/S4 modules):
  *   clock → store → authority → membership → transports → registry → orchestrator
  *   → eventBus (journal tail) → subscriptionManager (R1)
- *   → sendPipeline / policyCommands / presenceCommands / queries → sessions.
+ *   → sendPipeline / sendFromTemplatePipeline / policyCommands / templateCommands
+ *   → presenceCommands / queries → sessions.
  *
  * S2 (rooms): the membership seam wires into the send pipeline (R8 fresh
  * resolution inside the accept call), the queries (R3 room read
@@ -58,9 +59,10 @@ import { createPresenceRegistry } from "../core/presenceRegistry.js";
 import type { PresenceRegistry } from "../core/presenceRegistry.js";
 import { createDeliveryOrchestrator } from "../core/deliveryOrchestrator.js";
 import type { DeliveryOrchestrator } from "../core/deliveryOrchestrator.js";
-import { createSendPipeline } from "../core/sendPipeline.js";
+import { createSendFromTemplatePipeline, createSendPipeline } from "../core/sendPipeline.js";
 import { createPolicyCommands } from "../core/policyCommands.js";
 import { createPresenceCommands } from "../core/presenceCommands.js";
+import { createTemplateCommands } from "../core/templates.js";
 import { capabilityView, createQueries } from "../core/queries.js";
 import { createSession } from "../core/session.js";
 import { createEventBus } from "../core/eventBus.js";
@@ -78,11 +80,14 @@ import {
   parseGetPolicyInput,
   parseGetPresenceInput,
   parseGetThreadInput,
+  parseListTemplatesInput,
   parseListThreadsForPersonInput,
   parseOpenPresenceInput,
+  parseRetireTemplateInput,
   parseSetContactPolicyInput,
   parseSetDndPolicyInput,
   parseSubscribeInput,
+  parseUpsertTemplateInput,
 } from "../core/validate.js";
 import type { ParseResult } from "../core/validate.js";
 
@@ -250,7 +255,18 @@ export function createCoreStack(options: CoreStackOptions): CoreStack {
       ? { effectLegDelayMs: options.effectLegDelayMs }
       : {}),
   });
+  const sendFromTemplate = createSendFromTemplatePipeline({
+    store,
+    clock,
+    provisioning: authority,
+    membership,
+    orchestrator,
+    ...(options.effectLegDelayMs !== undefined
+      ? { effectLegDelayMs: options.effectLegDelayMs }
+      : {}),
+  });
   const policies = createPolicyCommands({ store, clock, orchestrator });
+  const templateCommands = createTemplateCommands({ store, clock });
   const presence = createPresenceCommands({ registry, transports: transportMap });
   const queries = createQueries({ store, clock, registry, membership });
 
@@ -309,10 +325,18 @@ export function createCoreStack(options: CoreStackOptions): CoreStack {
           if (outcome.kind === "rejected") throw outcome.error;
           return outcome.result;
         }),
+      sendFromTemplate: (input: unknown) =>
+        core.run(async (principal) => {
+          const outcome = await sendFromTemplate(principal, input);
+          if (outcome.kind === "rejected") throw outcome.error;
+          return outcome.result;
+        }),
       openPresence: door(parseOpenPresenceInput, presence.openPresence),
       closePresence: door(parseClosePresenceInput, presence.closePresence),
       setDndPolicy: door(parseSetDndPolicyInput, policies.setDndPolicy),
       setContactPolicy: door(parseSetContactPolicyInput, policies.setContactPolicy),
+      upsertTemplate: door(parseUpsertTemplateInput, templateCommands.upsertTemplate),
+      retireTemplate: door(parseRetireTemplateInput, templateCommands.retireTemplate),
 
       getThread: door(parseGetThreadInput, queries.getThread),
       listThreadsForPerson: door(parseListThreadsForPersonInput, queries.listThreadsForPerson),
@@ -320,6 +344,7 @@ export function createCoreStack(options: CoreStackOptions): CoreStack {
       getInbox: door(parseGetInboxInput, queries.getInbox),
       getDelivery: door(parseGetDeliveryInput, queries.getDelivery),
       getPolicy: door(parseGetPolicyInput, queries.getPolicy),
+      listTemplates: door(parseListTemplatesInput, queries.listTemplates),
       getPresence: door(parseGetPresenceInput, queries.getPresence),
 
       subscribe: (input: unknown, sink, binding) =>

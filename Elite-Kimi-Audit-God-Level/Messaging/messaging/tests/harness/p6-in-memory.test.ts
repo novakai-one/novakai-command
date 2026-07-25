@@ -30,10 +30,12 @@ import type {
 } from "../../public/index.js";
 import {
   ALICE,
+  ADMIN,
   BOB,
   CHIEF,
   ManualScheduler,
   TEST_RETRY_POLICY,
+  expectError,
   flushMicrotasks,
   sendInput,
   unwrap,
@@ -59,6 +61,7 @@ function makeP6(): { cap: EmbeddedMessaging } {
         { token: "tok-alice", personId: ALICE, roles: ["Worker"] },
         { token: "tok-bob", personId: BOB, roles: ["Worker"] },
         { token: "tok-chief", personId: CHIEF, roles: ["Chief"] },
+        { token: "tok-admin", personId: ADMIN, grants: ["template.write"] },
       ],
       roleGrants: DEFAULT_ROLE_GRANTS,
     },
@@ -89,7 +92,7 @@ describe("P6 — the full capability on in-memory everything", () => {
     const { cap } = makeP6();
     const capabilities = cap.getCapabilities();
     assert.equal(capabilities.contractVersion, "1.0.0");
-    assert.deepEqual([...capabilities.features].sort(), ["attention", "direct", "rooms", "subscribe"]);
+    assert.deepEqual([...capabilities.features].sort(), ["attention", "direct", "rooms", "subscribe", "templates"]);
 
     assert.equal((await cap.authenticate({ token: "wrong" })).kind, "rejected");
     assert.equal((await cap.authenticate("garbage")).kind, "rejected");
@@ -226,6 +229,71 @@ describe("P6 — the full capability on in-memory everything", () => {
     assert.deepEqual(first, { found: 0, settled: 0, failures: [] });
     const second = await cap.runRecoverySweep();
     assert.deepEqual(second, { found: 0, settled: 0, failures: [] });
+    await cap.close();
+  });
+
+  it("templates end-to-end on in-memory everything (S4): create, send, list, retire — DEC-15/R12/I10", async () => {
+    const { cap } = makeP6();
+    const admin = await session(cap, "tok-admin");
+    const alice = await session(cap, "tok-alice");
+    const bob = await session(cap, "tok-bob");
+    unwrap(await bob.setContactPolicy({ allowlist: [ALICE], defaultRule: "deny" }));
+    await bob.openPresence({ transport: "ws" });
+
+    // Create (template.write grant) — R12: non-bindable paths rejected.
+    assert.equal(
+      expectError(await admin.upsertTemplate({ name: "evil", bindings: [{ field: "x", path: "senderId" }] })).name,
+      "ValidationFailed",
+    );
+    const created = unwrap(
+      await admin.upsertTemplate({
+        name: "standup",
+        bindings: [
+          { field: "summary", path: "body.text" },
+          { field: "ticket", path: "body.fields.ticket" },
+        ],
+      }),
+    );
+
+    // Send from the template — renders and delivers exactly as SendMessage.
+    const sent = unwrap(
+      await alice.sendFromTemplate({
+        address: `person:${BOB}`,
+        templateId: created.templateId,
+        fields: { summary: "p6 shipped", ticket: "P6" },
+        priority: "normal",
+        clientMessageId: "p6-tpl-1",
+      }),
+    );
+    const page = unwrap(await bob.getMessages({ threadId: sent.threadId }));
+    assert.equal(page.messages[0]?.body.text, "p6 shipped");
+    assert.deepEqual(page.messages[0]?.body.fields, { ticket: "P6" });
+    assert.equal(page.messages[0]?.template?.templateId, created.templateId);
+    const delivered = unwrap(await alice.getDelivery({ messageId: sent.messageId }));
+    assert.equal(delivered.deliveries[0]?.state, "delivered");
+
+    // List (any authenticated principal) and retire (I10: history unchanged).
+    assert.equal(unwrap(await alice.listTemplates({})).templates.length, 1);
+    unwrap(await admin.retireTemplate({ templateId: created.templateId }));
+    assert.equal(unwrap(await alice.listTemplates({})).templates.length, 0);
+    assert.equal(unwrap(await alice.listTemplates({ includeRetired: true })).templates.length, 1);
+    assert.equal(
+      expectError(
+        await alice.sendFromTemplate({
+          address: `person:${BOB}`,
+          templateId: created.templateId,
+          fields: { summary: "gone", ticket: "P6" },
+          priority: "normal",
+          clientMessageId: "p6-tpl-2",
+        }),
+      ).name,
+      "TemplateNotFound",
+    );
+    // The historical Message is untouched.
+    assert.equal(
+      unwrap(await bob.getMessages({ threadId: sent.threadId })).messages[0]?.body.text,
+      "p6 shipped",
+    );
     await cap.close();
   });
 });

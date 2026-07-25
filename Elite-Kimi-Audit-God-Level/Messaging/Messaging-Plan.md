@@ -120,6 +120,8 @@ Every behaviour: stable ID, observable description, proof obligation.
 | MSG-022 | A second host integrates without changing Messaging core code. | Second-host scenario passes (§15, P1). |
 | MSG-023 | A connected principal receives committed-fact events PUSHED over its live Presence in near-real-time; polling is a catch-up fallback after disconnect, never the liveness mechanism. | W4 walkthrough passes (§16): worker commits → `MessageCommitted` pushed to the Chief's Presence without any poll. |
 
+> **Errata (2026-07-25, S4 zero-context audit F8):** the MSG-016 row above names a `DeliveryFailed` event; no such event exists. The shipped shape is `DeliveryUpdated` with a failure state and machine-readable reason (as §11 guarantee 7 and §16 W3 correctly state). The catalogue wording is stale; the code and §11 are authoritative.
+
 Vague words banned in this catalogue: *reliable, seamless, flexible, fast* — each appears only with a measurable guarantee attached.
 
 ---

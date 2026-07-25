@@ -1,13 +1,11 @@
 /**
- * Queries — the S2 subset of the 9 contract queries, through the store seam,
- * under the R3 authorization matrix.
+ * Queries — the 9 contract queries, through the store seam, under the R3
+ * authorization matrix.
  *
- * Implemented: GetThread, ListThreadsForPerson (S2), GetMessages, GetInbox,
- * GetDelivery, GetPolicy, GetPresence, GetCapabilities (the latter lives on
- * the composition root — it is pre-authentication discovery).
- *
- * Deliberately ABSENT (not stubbed):
- *   - ListTemplates: templates are slice S4.
+ * Implemented: GetThread, ListThreadsForPerson, GetMessages, GetInbox,
+ * GetDelivery, GetPolicy, ListTemplates (S4), GetPresence, GetCapabilities
+ * (the latter lives on the composition root — it is pre-authentication
+ * discovery).
  *
  * R3 matrix: member-scoped reads distinguish NotAuthorized (exists, not
  * yours) from Unknown* (does not exist) — the accepted existence
@@ -27,6 +25,16 @@
  * GetPolicy has no NotFound in its error list, so an absent policy pair
  * returns the DEC-14 synthesized defaults (view-only, revision 0 — never
  * persisted; the first real write starts at revision 1).
+ *
+ * ListTemplates (S4): any authenticated principal (R3). The frozen seam read
+ * (Store-Seam §4 listTemplates) has no retired-awareness, so the
+ * includeRetired filter lives HERE — the core paginates through the store
+ * stream until it satisfies the limit or the stream ends, so a filtered page
+ * never silently drops below the limit while more visible templates exist.
+ * The limit is a HARD bound (audit F3): an omitted limit is clamped to
+ * constants.pageLimitMax exactly like the other paged queries (one bounded
+ * page, never a store drain), and each store read requests only the
+ * remaining capacity, so a filtered page can never overshoot the limit.
  */
 
 import { constants, contractVersion, schemaVersion } from "../public/contract/index.js";
@@ -38,6 +46,7 @@ import type {
   DndPolicy,
   PersonId,
   PolicyId,
+  Template,
   Thread,
   Timestamp,
 } from "../public/contract/index.js";
@@ -49,10 +58,12 @@ import type {
   GetPolicyInput,
   GetPresenceInput,
   GetThreadInput,
+  ListTemplatesInput,
   ListThreadsForPersonInput,
   MessagePage,
   PolicyView,
   PresenceListResult,
+  TemplatePage,
   ThreadListResult,
   ThreadView,
 } from "../public/contract/index.js";
@@ -274,7 +285,50 @@ export function createQueries(deps: QueriesDeps) {
     return { presences: registry.presencesFor(input.personId) };
   }
 
-  return { getThread, listThreadsForPerson, getMessages, getInbox, getDelivery, getPolicy, getPresence };
+  async function listTemplates(
+    _principal: Principal, // any authenticated principal (R3)
+    input: ListTemplatesInput,
+  ): Promise<TemplatePage> {
+    const includeRetired = input.includeRetired ?? false;
+    // The §4 seam read has no retired-awareness — the includeRetired filter
+    // is contract policy and lives HERE. With the filter on, paginate through
+    // the store stream until the limit is satisfied or the stream ends.
+    // Audit F3: the limit is a HARD bound — clamped to pageLimitMax like the
+    // other paged queries (an omitted limit is one bounded page, never a
+    // store drain), and each store read requests only the remaining capacity,
+    // so a filtered page can never overshoot the limit. Because the store
+    // page never exceeds the remaining capacity, every visible template in a
+    // page is returned, so the store's nextCursor always points past the last
+    // RETURNED template — no loss, no duplication.
+    const wanted = Math.min(
+      Math.max(input.limit ?? constants.pageLimitMax, 1),
+      constants.pageLimitMax,
+    );
+    const templates: Template[] = [];
+    let cursor = input.cursor;
+    let nextCursor: Cursor | undefined;
+    for (;;) {
+      const page = await store.listTemplates({
+        ...(cursor !== undefined ? { cursor } : {}),
+        limit: wanted - templates.length,
+      });
+      if (page.kind === "error") {
+        // As getInbox (L9): this read filters, it never resolves a record —
+        // no honest Unknown* mapping exists. CursorInvalid → ValidationFailed.
+        if (page.error.name === "CursorInvalid") throw cursorInvalidError(page.error.cursor as Cursor);
+        throw storeDependencyError(page.error);
+      }
+      for (const template of page.value.templates) {
+        if (includeRetired || !template.retired) templates.push(template);
+      }
+      nextCursor = page.value.nextCursor;
+      if (nextCursor === undefined || templates.length >= wanted) break;
+      cursor = nextCursor;
+    }
+    return { templates, ...(nextCursor !== undefined ? { nextCursor } : {}) };
+  }
+
+  return { getThread, listThreadsForPerson, getMessages, getInbox, getDelivery, getPolicy, getPresence, listTemplates };
 }
 
 export type Queries = ReturnType<typeof createQueries>;
@@ -286,11 +340,11 @@ export function capabilityView(protocolVersion: string) {
     // never a hand-copied literal.
     contractVersion,
     protocolVersion,
-    // S2 surface: the direct lane + rooms (membership-resolved sends, frozen
-    // snapshots, room read authorization) + attention mechanics (DND
-    // hold/release, urgent + override, contact policy) + the Subscribe
-    // stream (R1, MSG-023). Templates (S4) are absent, not hidden.
-    features: ["direct", "rooms", "attention", "subscribe"] as CapabilityViewFeatures[],
+    // The full v1 surface (S4 sealed): the direct lane + rooms
+    // (membership-resolved sends, frozen snapshots, room read authorization)
+    // + attention mechanics (DND hold/release, urgent + override, contact
+    // policy) + the Subscribe stream (R1, MSG-023) + templates (DEC-15).
+    features: ["direct", "rooms", "attention", "subscribe", "templates"] as CapabilityViewFeatures[],
     limits: {
       messageMaxBytes: constants.messageMaxBytes,
       pageLimitMax: constants.pageLimitMax,

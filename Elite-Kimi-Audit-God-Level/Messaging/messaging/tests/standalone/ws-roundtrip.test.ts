@@ -137,6 +137,7 @@ async function startServer(): Promise<StandaloneMessaging> {
       principals: [
         { token: "tok-chief", personId: CHIEF as never, roles: ["Chief"] },
         { token: "tok-worker", personId: WORKER as never, roles: ["Worker"] },
+        { token: "tok-admin", personId: "person_admin" as never, grants: ["template.write"] },
       ],
       roleGrants: DEFAULT_ROLE_GRANTS,
     },
@@ -427,6 +428,83 @@ describe("standalone WS round-trip (DEC-17, real sockets)", () => {
       assert.deepEqual(texts, ["ping", "pong"], "MSG-019: the conversation survives both principals");
 
       await chief2.close();
+    } finally {
+      await stopServer();
+    }
+  });
+
+  it("S4 templates over the wire: UpsertTemplate, SendFromTemplate (pushed render), ListTemplates, RetireTemplate → TemplateNotFound", async () => {
+    const srv = await startServer();
+    try {
+      const admin = await TestClient.connect(srv.port);
+      const chief = await TestClient.connect(srv.port);
+      const worker = await TestClient.connect(srv.port);
+      await admin.authenticate("tok-admin");
+      await chief.authenticate("tok-chief");
+      await worker.authenticate("tok-worker");
+      await chief.openPresence();
+      await command(chief, "tpl-cp", "SetContactPolicy", { allowlist: [WORKER], defaultRule: "deny" });
+
+      // template.write is enforced over the wire: a Worker cannot upsert.
+      const denied = await command(worker, "tpl-denied", "UpsertTemplate", {
+        name: "nope",
+        bindings: [{ field: "text", path: "body.text" }],
+      });
+      assert.equal((denied["error"] as { name: string }).name, "NotAuthorized");
+
+      const created = await command(admin, "tpl-create", "UpsertTemplate", {
+        name: "wire-report",
+        bindings: [
+          { field: "text", path: "body.text" },
+          { field: "ticket", path: "body.fields.ticket" },
+        ],
+      });
+      assert.equal(created["kind"], "command-result", JSON.stringify(created));
+      const templateId = (created["result"] as { templateId: string }).templateId;
+
+      // The rendered send crosses the same door; the chief is pushed the
+      // RENDERED message with its TemplateRef (DEC-15).
+      const sent = await command(worker, "tpl-send", "SendFromTemplate", {
+        address: `person:${CHIEF}`,
+        templateId,
+        fields: { text: "rendered over the wire", ticket: "S4" },
+        priority: "normal",
+        clientMessageId: "tpl-ws-1",
+      });
+      assert.equal(sent["kind"], "command-result", JSON.stringify(sent));
+      const delivery = await chief.waitFor((frame) => frame["kind"] === "delivery");
+      const pushedMessage = delivery["message"] as {
+        body: { text: string; fields?: Record<string, unknown> };
+        template?: { templateId: string };
+      };
+      assert.equal(pushedMessage.body.text, "rendered over the wire");
+      assert.deepEqual(pushedMessage.body.fields, { ticket: "S4" });
+      assert.equal(pushedMessage.template?.templateId, templateId);
+
+      // ListTemplates over the wire (any authenticated principal).
+      const listed = await worker.request({
+        kind: "query",
+        requestId: "tpl-list",
+        name: "ListTemplates",
+        input: {},
+      });
+      const templates = (listed["result"] as { templates: { id: string; name: string }[] }).templates;
+      assert.deepEqual(templates.map((template) => template.name), ["wire-report"]);
+
+      // Retire → new sends fail with the typed error frame; history stands.
+      await command(admin, "tpl-retire", "RetireTemplate", { templateId });
+      const retired = await command(worker, "tpl-send-2", "SendFromTemplate", {
+        address: `person:${CHIEF}`,
+        templateId,
+        fields: { text: "too late", ticket: "S4" },
+        priority: "normal",
+        clientMessageId: "tpl-ws-2",
+      });
+      assert.equal((retired["error"] as { name: string }).name, "TemplateNotFound");
+
+      await admin.close();
+      await chief.close();
+      await worker.close();
     } finally {
       await stopServer();
     }

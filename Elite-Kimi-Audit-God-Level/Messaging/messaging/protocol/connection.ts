@@ -212,6 +212,9 @@ export function createProtocolConnection(deps: ProtocolConnectionDeps): Protocol
       case "SendMessage":
         outcome = await session.sendMessage(frame.input);
         break;
+      case "SendFromTemplate":
+        outcome = await session.sendFromTemplate(frame.input);
+        break;
       case "OpenPresence": {
         const opened = await session.openPresence(frame.input);
         if (opened.kind === "ok") {
@@ -254,6 +257,12 @@ export function createProtocolConnection(deps: ProtocolConnectionDeps): Protocol
       case "SetContactPolicy":
         outcome = await session.setContactPolicy(frame.input);
         break;
+      case "UpsertTemplate":
+        outcome = await session.upsertTemplate(frame.input);
+        break;
+      case "RetireTemplate":
+        outcome = await session.retireTemplate(frame.input);
+        break;
     }
     if (outcome.kind === "ok") {
       send({ kind: "command-result", requestId: frame.requestId, name: frame.name, result: outcome.value });
@@ -283,6 +292,9 @@ export function createProtocolConnection(deps: ProtocolConnectionDeps): Protocol
         break;
       case "GetPolicy":
         outcome = await session.getPolicy(frame.input);
+        break;
+      case "ListTemplates":
+        outcome = await session.listTemplates(frame.input);
         break;
       case "GetPresence":
         outcome = await session.getPresence(frame.input);

@@ -9,10 +9,9 @@
  * Identity rule (DEC-11, G3): no method takes a sender/from — every command
  * executes as the session's authenticated Principal.
  *
- * S2 surface: the direct lane + rooms (membership-resolved sends, frozen
- * recipient snapshots, room read authorization, ListThreadsForPerson) + the
- * Subscribe stream (R1). Absent (not stubbed): SendFromTemplate,
- * UpsertTemplate, RetireTemplate, ListTemplates (S4).
+ * The full v1 surface (S4 sealed): the direct lane, rooms, the Subscribe
+ * stream, and templates (DEC-15 — SendFromTemplate, UpsertTemplate,
+ * RetireTemplate, ListTemplates).
  */
 
 import type { MessagingError } from "./contract/index.js";
@@ -26,6 +25,9 @@ import type {
   PresenceListResult,
   PresenceOpened,
   SendAccepted,
+  TemplatePage,
+  TemplateRetired,
+  TemplateUpserted,
   ThreadListResult,
   ThreadView,
 } from "./contract/index.js";
@@ -88,20 +90,24 @@ export interface MessagingSession {
   /** Explicit revalidation trigger (§2.1: the composition root owns revalidation). */
   revalidate(): Promise<SessionState>;
 
-  // --- commands (S1-b) -------------------------------------------------------
+  // --- commands ------------------------------------------------------------------
   sendMessage(input: unknown): Promise<Outcome<SendAccepted>>;
+  sendFromTemplate(input: unknown): Promise<Outcome<SendAccepted>>;
   openPresence(input: unknown): Promise<Outcome<PresenceOpened>>;
   closePresence(input: unknown): Promise<Outcome<PresenceClosed>>;
   setDndPolicy(input: unknown): Promise<Outcome<PolicyUpdated>>;
   setContactPolicy(input: unknown): Promise<Outcome<PolicyUpdated>>;
+  upsertTemplate(input: unknown): Promise<Outcome<TemplateUpserted>>;
+  retireTemplate(input: unknown): Promise<Outcome<TemplateRetired>>;
 
-  // --- queries (S2: 7 of the 9; ListTemplates lands in S4) ---------------------
+  // --- queries (the full 9: 8 here + pre-auth GetCapabilities on the root) ---------
   getThread(input: unknown): Promise<Outcome<ThreadView>>;
   listThreadsForPerson(input: unknown): Promise<Outcome<ThreadListResult>>;
   getMessages(input: unknown): Promise<Outcome<MessagePage>>;
   getInbox(input: unknown): Promise<Outcome<MessagePage>>;
   getDelivery(input: unknown): Promise<Outcome<DeliveryListResult>>;
   getPolicy(input: unknown): Promise<Outcome<PolicyView>>;
+  listTemplates(input: unknown): Promise<Outcome<TemplatePage>>;
   getPresence(input: unknown): Promise<Outcome<PresenceListResult>>;
 
   // --- the Subscribe stream (R1, S1-c) -----------------------------------------

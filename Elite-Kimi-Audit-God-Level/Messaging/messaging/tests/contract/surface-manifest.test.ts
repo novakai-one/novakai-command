@@ -1,17 +1,18 @@
 /**
- * S2 surface manifest (law: tests cross the public contract). This test IS
- * the surface map for slice S2 (Rooms): it machine-reads the frozen contract
- * source (contract/messaging-contract.json, law #3) and asserts
+ * Surface manifest (law: tests cross the public contract). This test IS the
+ * surface map for the capability — updated at S4 (Templates + failure truth),
+ * the last slice in Plan §18. It machine-reads the frozen contract source
+ * (contract/messaging-contract.json, law #3) and asserts
  *   1. the contract still enumerates exactly the frozen catalogue
  *      (8 commands · 9 queries · 1 subscription · 4 events · 10 records ·
  *      13 errors) — drift here fails loudly, at the source;
  *   2. the generated public types mirror that source (errors, constants,
  *      records, feature vocabulary);
- *   3. the embedded composition root exposes EXACTLY the S2 surface — the
- *      S1 direct lane PLUS rooms (ListThreadsForPerson on the door;
- *      thread:-addressed sends ride the existing SendMessage op) plus the
- *      Subscribe stream — and every exposed operation names a contract
- *      operation. S4 operations are absent from the door, not stubbed.
+ *   3. the embedded composition root exposes EXACTLY the full v1 surface —
+ *      the direct lane + rooms + attention + the Subscribe stream + the S4
+ *      template operations (SendFromTemplate, UpsertTemplate, RetireTemplate,
+ *      ListTemplates) — and every exposed operation names a contract
+ *      operation. Post-S4, NOTHING in the frozen catalogue is deferred.
  */
 
 import { describe, it } from "node:test";
@@ -97,34 +98,30 @@ const FROZEN_ERRORS = [
   "DependencyUnavailable",
 ];
 
-/** The S2 door surface: session method → contract operation it crosses. */
-const S2_SESSION_MAP: Record<string, { operation: string; kind: "command" | "query" | "subscription" }> = {
+/** The full v1 door surface (S4 sealed): session method → contract operation it crosses. */
+const SESSION_MAP: Record<string, { operation: string; kind: "command" | "query" | "subscription" }> = {
   sendMessage: { operation: "SendMessage", kind: "command" },
+  sendFromTemplate: { operation: "SendFromTemplate", kind: "command" },
   openPresence: { operation: "OpenPresence", kind: "command" },
   closePresence: { operation: "ClosePresence", kind: "command" },
   setDndPolicy: { operation: "SetDndPolicy", kind: "command" },
   setContactPolicy: { operation: "SetContactPolicy", kind: "command" },
+  upsertTemplate: { operation: "UpsertTemplate", kind: "command" },
+  retireTemplate: { operation: "RetireTemplate", kind: "command" },
   getThread: { operation: "GetThread", kind: "query" },
   listThreadsForPerson: { operation: "ListThreadsForPerson", kind: "query" },
   getMessages: { operation: "GetMessages", kind: "query" },
   getInbox: { operation: "GetInbox", kind: "query" },
   getDelivery: { operation: "GetDelivery", kind: "query" },
   getPolicy: { operation: "GetPolicy", kind: "query" },
+  listTemplates: { operation: "ListTemplates", kind: "query" },
   getPresence: { operation: "GetPresence", kind: "query" },
   subscribe: { operation: "Subscribe", kind: "subscription" },
 };
 
-/** S4 surface: in the contract, deliberately NOT on the S2 door. */
-const DEFERRED_OPERATIONS = [
-  "SendFromTemplate",
-  "UpsertTemplate",
-  "RetireTemplate",
-  "ListTemplates",
-];
-
 const sorted = (values: readonly string[]): string[] => [...values].sort();
 
-describe("S2 surface manifest — the door matches the frozen contract", () => {
+describe("surface manifest — the door matches the frozen contract (S4: full v1 surface)", () => {
   it("the contract source enumerates exactly the frozen catalogue", () => {
     assert.deepEqual(sorted(contract.commands.map((entry) => entry.name)), sorted(FROZEN_COMMANDS));
     assert.deepEqual(sorted(contract.queries.map((entry) => entry.name)), sorted(FROZEN_QUERIES));
@@ -159,7 +156,7 @@ describe("S2 surface manifest — the door matches the frozen contract", () => {
     );
   });
 
-  it("the embedded door exposes EXACTLY the S2 surface, every operation named in the contract", async () => {
+  it("the embedded door exposes EXACTLY the full v1 surface, every operation named in the contract", async () => {
     const cap = createEmbeddedMessaging({
       authority: {
         principals: [{ token: "tok-alice", personId: "person_alice" as never, roles: ["Worker"] }],
@@ -182,11 +179,11 @@ describe("S2 surface manifest — the door matches the frozen contract", () => {
       );
       assert.deepEqual(
         sorted(sessionOps),
-        sorted(Object.keys(S2_SESSION_MAP)),
-        "the door exposes exactly the S2 operation set — no more, no less",
+        sorted(Object.keys(SESSION_MAP)),
+        "the door exposes exactly the full v1 operation set — no more, no less",
       );
       for (const method of sessionOps) {
-        const mapping = S2_SESSION_MAP[method];
+        const mapping = SESSION_MAP[method];
         assert.ok(mapping !== undefined, `${method} is mapped`);
         const catalogue =
           mapping.kind === "command"
@@ -201,18 +198,17 @@ describe("S2 surface manifest — the door matches the frozen contract", () => {
         assert.equal(typeof session[method as keyof typeof session], "function");
       }
 
-      // S4 operations are in the contract but NOT on the S2 door.
-      for (const deferred of DEFERRED_OPERATIONS) {
-        const inContract =
-          contractCommandNames.includes(deferred) || contractQueryNames.includes(deferred);
-        assert.ok(inContract, `${deferred} is a known (deferred) contract operation`);
+      // Post-S4: every frozen command and query is live on the door — the
+      // only unsurfaced catalogue entry is GetCapabilities, which is the
+      // pre-auth discovery op on the composition root (asserted below).
+      for (const command of contractCommandNames) {
         assert.ok(
-          !sessionOps.some((method) => S2_SESSION_MAP[method]?.operation === deferred),
-          `${deferred} is absent from the S2 door (not stubbed)`,
+          Object.values(SESSION_MAP).some((mapping) => mapping.operation === command),
+          `${command} is live on the door (nothing deferred post-S4)`,
         );
       }
 
-      // GetCapabilities is the pre-auth discovery op (the 8th surfaced query).
+      // GetCapabilities is the pre-auth discovery op (the 9th query).
       const capabilities = cap.getCapabilities();
       assert.ok(contractQueryNames.includes("GetCapabilities"));
       assert.equal(capabilities.contractVersion, "1.0.0");
@@ -222,7 +218,7 @@ describe("S2 surface manifest — the door matches the frozen contract", () => {
     }
   });
 
-  it("GetCapabilities advertises the S2 feature set with contract limits", () => {
+  it("GetCapabilities advertises the full v1 feature set with contract limits", () => {
     const cap = createEmbeddedMessaging({
       authority: {
         principals: [{ token: "tok-alice", personId: "person_alice" as never, roles: ["Worker"] }],
@@ -232,8 +228,8 @@ describe("S2 surface manifest — the door matches the frozen contract", () => {
     const capabilities = cap.getCapabilities();
     assert.deepEqual(
       sorted(capabilities.features),
-      sorted(["direct", "rooms", "attention", "subscribe"]),
-      "S2 feature set: direct lane + rooms + attention mechanics + the Subscribe stream",
+      sorted(["direct", "rooms", "attention", "subscribe", "templates"]),
+      "full v1 feature set: direct lane + rooms + attention + the Subscribe stream + templates (S4)",
     );
     for (const feature of capabilities.features) {
       assert.ok(

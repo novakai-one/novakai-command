@@ -26,6 +26,7 @@ import type {
   MessageId,
   PersonId,
   PresenceId,
+  TemplateId,
   ThreadId,
   TransportKind,
   ValidationIssue,
@@ -34,13 +35,16 @@ import type {
   ClosePresenceInput,
   ListThreadsForPersonInput,
   OpenPresenceInput,
+  SendFromTemplateInput,
   SendMessageInput,
   SetContactPolicyInput,
   SetDndPolicyInput,
   SubscribeInput,
   SubscribeInputEvents,
+  RetireTemplateInput,
+  UpsertTemplateInput,
 } from "../public/contract/index.js";
-import type { MessageBody } from "../public/contract/index.js";
+import type { MessageBody, TemplateBinding } from "../public/contract/index.js";
 import type {
   GetDeliveryInput,
   GetInboxInput,
@@ -48,17 +52,21 @@ import type {
   GetPolicyInput,
   GetPresenceInput,
   GetThreadInput,
+  ListTemplatesInput,
 } from "../public/contract/index.js";
 
 export type ParseResult<T> = { ok: true; value: T } | { ok: false; error: MessagingError };
 
-function validationFailed(issues: ValidationIssue[]): MessagingError {
+/** The shared ValidationFailed constructor — door parsers AND core policy rejections (R12) use it. */
+export function validationFailedError(issues: ValidationIssue[]): MessagingError {
   return new MessagingError("ValidationFailed", {
     message: `validation failed: ${issues.map((issue) => `${issue.path}: ${issue.message}`).join("; ")}`,
     retryable: false,
     fields: { issues },
   });
 }
+
+const validationFailed = validationFailedError;
 
 function issue(path: string, message: string): ValidationIssue {
   return { path, message };
@@ -108,6 +116,7 @@ const readPersonId = readPattern<PersonId>(new RegExp(idPatterns.PersonId), "Per
 const readPresenceId = readPattern<PresenceId>(new RegExp(idPatterns.PresenceId), "PresenceId (presence_…)");
 const readThreadId = readPattern<ThreadId>(new RegExp(idPatterns.ThreadId), "ThreadId (thread_…)");
 const readMessageId = readPattern<MessageId>(new RegExp(idPatterns.MessageId), "MessageId (message_…)");
+const readTemplateId = readPattern<TemplateId>(new RegExp(idPatterns.TemplateId), "TemplateId (template_…)");
 const readCursor = readPattern<Cursor>(new RegExp(idPatterns.Cursor), "cursor (s_<n>)");
 const readTransport = readEnum<TransportKind>(transportKindValues, transportKindValues.join(" | "));
 const readPriority = readEnum(priorityValues, priorityValues.join(" | "));
@@ -282,6 +291,101 @@ export function parseSetContactPolicyInput(input: unknown): ParseResult<SetConta
   }));
 }
 
+// --- template command inputs (S4, DEC-15) --------------------------------------
+
+function readNonEmptyString(value: unknown, path: string): { value?: string; issue?: ValidationIssue } {
+  if (typeof value !== "string" || value.length < 1) {
+    return { issue: issue(path, "expected string of length >= 1") };
+  }
+  return { value };
+}
+
+function readTemplateBinding(value: unknown, path: string): { value?: TemplateBinding; issue?: ValidationIssue } {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return { issue: issue(path, "expected object") };
+  }
+  const record = value as Record<string, unknown>;
+  const unknownKeys = Object.keys(record).filter((key) => !["field", "path"].includes(key));
+  if (unknownKeys.length > 0) {
+    return { issue: issue(path, `unknown keys: ${unknownKeys.join(", ")}`) };
+  }
+  const fieldRead = readNonEmptyString(record["field"], `${path}.field`);
+  if (fieldRead.issue) return { issue: fieldRead.issue };
+  const pathRead = readNonEmptyString(record["path"], `${path}.path`);
+  if (pathRead.issue) return { issue: pathRead.issue };
+  // R12 allowlist membership is core policy, enforced in core/templates.ts —
+  // the door checks shape only.
+  return { value: { field: fieldRead.value as string, path: pathRead.value as string } };
+}
+
+function readBindings(value: unknown, path: string, issues: ValidationIssue[]): TemplateBinding[] | undefined {
+  if (value === undefined) {
+    issues.push(issue(path, "required"));
+    return undefined;
+  }
+  if (!Array.isArray(value) || value.length < 1) {
+    issues.push(issue(path, "expected non-empty array of bindings (minItems: 1)"));
+    return undefined;
+  }
+  const bindings: TemplateBinding[] = [];
+  value.forEach((entry, index) => {
+    const read = readTemplateBinding(entry, `${path}[${index}]`);
+    if (read.issue) {
+      issues.push(read.issue);
+    } else {
+      bindings.push(read.value as TemplateBinding);
+    }
+  });
+  return bindings;
+}
+
+export function parseSendFromTemplateInput(input: unknown): ParseResult<SendFromTemplateInput> {
+  const { record, issues } = frame(input, ["address", "templateId", "fields", "priority", "clientMessageId"]);
+  if (!record) return { ok: false, error: validationFailed(issues) };
+  const address = field(record, "address", readAddress, issues, true);
+  const templateId = field(record, "templateId", readTemplateId, issues, true);
+  const priority = field(record, "priority", readPriority, issues, true);
+  const clientMessageId = field(record, "clientMessageId", readClientMessageId, issues, true);
+  let fields: Record<string, unknown> | undefined;
+  const rawFields = record["fields"];
+  if (rawFields === undefined) {
+    issues.push(issue("fields", "required"));
+  } else if (typeof rawFields !== "object" || rawFields === null || Array.isArray(rawFields)) {
+    issues.push(issue("fields", "expected object"));
+  } else {
+    fields = rawFields as Record<string, unknown>;
+  }
+  return finish(issues, () => ({
+    address: address as Address,
+    templateId: templateId as TemplateId,
+    fields: fields as Record<string, unknown>,
+    priority: priority as SendFromTemplateInput["priority"],
+    clientMessageId: clientMessageId as ClientMessageId,
+  }));
+}
+
+export function parseUpsertTemplateInput(input: unknown): ParseResult<UpsertTemplateInput> {
+  const { record, issues } = frame(input, ["templateId", "name", "description", "bindings"]);
+  if (!record) return { ok: false, error: validationFailed(issues) };
+  const templateId = field(record, "templateId", readTemplateId, issues, false);
+  const name = field(record, "name", readNonEmptyString, issues, true);
+  const description = field(record, "description", readString, issues, false);
+  const bindings = readBindings(record["bindings"], "bindings", issues);
+  return finish(issues, () => ({
+    ...(templateId !== undefined ? { templateId } : {}),
+    name: name as string,
+    ...(description !== undefined ? { description } : {}),
+    bindings: bindings as TemplateBinding[],
+  }));
+}
+
+export function parseRetireTemplateInput(input: unknown): ParseResult<RetireTemplateInput> {
+  const { record, issues } = frame(input, ["templateId"]);
+  if (!record) return { ok: false, error: validationFailed(issues) };
+  const templateId = field(record, "templateId", readTemplateId, issues, true);
+  return finish(issues, () => ({ templateId: templateId as TemplateId }));
+}
+
 // --- query inputs ---------------------------------------------------------------
 
 export function parseGetThreadInput(input: unknown): ParseResult<GetThreadInput> {
@@ -343,6 +447,19 @@ export function parseGetPresenceInput(input: unknown): ParseResult<GetPresenceIn
   if (!record) return { ok: false, error: validationFailed(issues) };
   const personId = field(record, "personId", readPersonId, issues, true);
   return finish(issues, () => ({ personId: personId as PersonId }));
+}
+
+export function parseListTemplatesInput(input: unknown): ParseResult<ListTemplatesInput> {
+  const { record, issues } = frame(input, ["includeRetired", "cursor", "limit"]);
+  if (!record) return { ok: false, error: validationFailed(issues) };
+  const includeRetired = field(record, "includeRetired", readBoolean, issues, false);
+  const cursor = field(record, "cursor", readCursor, issues, false);
+  const limit = field(record, "limit", readLimit, issues, false);
+  return finish(issues, () => ({
+    ...(includeRetired !== undefined ? { includeRetired } : {}),
+    ...(cursor !== undefined ? { cursor } : {}),
+    ...(limit !== undefined ? { limit } : {}),
+  }));
 }
 
 // --- subscription input (R1) ----------------------------------------------------
