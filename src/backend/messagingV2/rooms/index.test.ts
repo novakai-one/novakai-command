@@ -327,5 +327,30 @@ await handle.close();
   console.log('replay-seed + ended-logging tests passed');
 }
 
+// --- self-minted human token (N3 live-verification fix): no humanToken dep →
+// the human principal STILL exists and #team posts work (production 503'd when
+// the env var was unset — the app is the human session's only consumer, so an
+// ops-required env var was ceremony). ------------------------------------------
+
+{
+  const noTokenLogs: string[] = [];
+  const noToken = await startMessagingV2({
+    objectModel: model,
+    storePath: path.join(mkdtempSync(path.join(tmpdir(), 'nvk-mv2-notoken-journal-')), 'journal.jsonl'),
+    terminals: new FakeTerminalRuntime([]),
+    'log': (line) => noTokenLogs.push(line),
+  });
+  assert.ok(
+    noTokenLogs.some((line) => line.includes('principals=5')),
+    `self-minted human counts as a principal (4 active agents + human), got: ${JSON.stringify(noTokenLogs)}`,
+  );
+  const noTokenRooms = noToken.rooms;
+  assert.ok(noTokenRooms, 'the rooms glue boots without a configured humanToken');
+  const posted = await noTokenRooms.post('no-env-token post');
+  assert.equal(posted.to, '#team', 'the human #team lane works with the self-minted token');
+  await noToken.close();
+  console.log('self-minted human token test passed');
+}
+
 rmSync(scratch, { recursive: true, force: true });
 console.log('messagingV2 rooms glue tests passed');

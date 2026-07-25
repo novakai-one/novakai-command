@@ -26,6 +26,7 @@
  */
 
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { createEmbeddedMessaging } from '../../../packages/messaging/composition/embedded.js';
 import type { EmbeddedMessaging } from '../../../packages/messaging/composition/embedded.js';
 import { createSystemClock } from '../../../packages/messaging/adapters/clock-system.js';
@@ -73,7 +74,9 @@ export interface StartMessagingV2Deps {
   objectModel: ObjectModel;
   /** Journal path; defaults to .novakai-command/messaging-v2/journal.jsonl. */
   storePath?: string;
-  /** When set, provisions the human principal (person_user-chris, role Human). */
+  /** Human principal credential (person_user-chris, role Human). Optional —
+   * unset self-mints a boot-random token that never leaves the process (the
+   * app is the human session's only consumer); set only to pin it for ops. */
   humanToken?: string;
   /**
    * N2: the terminal runtime the 'pty' presence transport binds to. Absent =
@@ -102,13 +105,14 @@ async function closeQuietly(embedded: EmbeddedMessaging): Promise<void> {
 async function bootGuarded(
   embedded: EmbeddedMessaging,
   deps: StartMessagingV2Deps,
+  humanToken: string,
   config: NovakaiAuthorityConfig,
   storePath: string,
   transport: ReturnType<typeof createTerminalHostTransport> | null,
   directory: ReturnType<typeof createRoomDirectory>,
 ): Promise<MessagingV2Handle> {
   try {
-    return await bootServing(embedded, deps, config, storePath, transport, directory);
+    return await bootServing(embedded, deps, humanToken, config, storePath, transport, directory);
   } catch (error) {
     await closeQuietly(embedded);
     throw error;
@@ -119,6 +123,7 @@ async function bootGuarded(
 async function bootServing(
   embedded: EmbeddedMessaging,
   deps: StartMessagingV2Deps,
+  humanToken: string,
   config: NovakaiAuthorityConfig,
   storePath: string,
   transport: ReturnType<typeof createTerminalHostTransport> | null,
@@ -127,9 +132,14 @@ async function bootServing(
   const principals = countPrincipals(deps.objectModel, config);
   // DEC-21/F10: the recovery sweep runs BEFORE serving (inside start()).
   await embedded.start();
-  const booted = await bootLanes(embedded, deps, transport, directory);
+  const booted = await bootLanes(embedded, deps, humanToken, transport, directory);
   const announce = deps.log ?? console.log;
   announce(`[messaging-v2] capability booted (store=${storePath}, principals=${principals})`);
+  return serveHandle(embedded, booted);
+}
+
+/** The public handle over the booted stack + glue. */
+function serveHandle(embedded: EmbeddedMessaging, booted: BootedGlue | null): MessagingV2Handle {
   return {
     embedded,
     lanes: booted?.lanes ?? null,
@@ -146,6 +156,7 @@ interface BootedGlue {
 function makeLaneGlue(
   embedded: EmbeddedMessaging,
   deps: StartMessagingV2Deps,
+  humanToken: string,
   transport: NonNullable<ReturnType<typeof createTerminalHostTransport>>,
 ): AgentLaneGlue {
   return createAgentLaneGlue({
@@ -153,7 +164,7 @@ function makeLaneGlue(
     transport,
     terminals: deps.terminals as TerminalRuntime,
     objectModel: deps.objectModel,
-    ...(deps.humanToken !== undefined ? { humanToken: deps.humanToken } : {}),
+    humanToken,
     ...(deps.log !== undefined ? { 'log': deps.log } : {}),
   });
 }
@@ -181,11 +192,12 @@ function makeRoomsGlue(
 async function bootLanes(
   embedded: EmbeddedMessaging,
   deps: StartMessagingV2Deps,
+  humanToken: string,
   transport: ReturnType<typeof createTerminalHostTransport> | null,
   directory: ReturnType<typeof createRoomDirectory>,
 ): Promise<BootedGlue | null> {
   if (transport === null || deps.terminals === undefined) return null;
-  const lanes = makeLaneGlue(embedded, deps, transport);
+  const lanes = makeLaneGlue(embedded, deps, humanToken, transport);
   const rooms = makeRoomsGlue(embedded, deps, directory, lanes);
   // audit #9: subscribe launches BEFORE the boot sweep so a spawn landing
   // mid-sweep is never missed — openLane's registry-keyed idempotence
@@ -234,15 +246,17 @@ function makeTransport(
 export async function startMessagingV2(deps: StartMessagingV2Deps): Promise<MessagingV2Handle> {
   const clock = createSystemClock();
   const storePath = deps.storePath ?? path.resolve('.novakai-command/messaging-v2/journal.jsonl');
-  const config = humanConfig(deps.humanToken);
+  // The human principal must ALWAYS exist: the app is its only consumer
+  // (server-owned routes — nothing external authenticates as the human), so an
+  // ops-required env var was ceremony that 503'd #team in production (N3 live
+  // verification). Unset env → self-mint a boot-random token; it never leaves
+  // the process. NVK_MESSAGING_V2_HUMAN_TOKEN remains an override.
+  const humanToken = deps.humanToken ?? `human_${randomUUID()}`;
+  const config = humanConfig(humanToken);
   // Pure adapters first — no resources to leak if construction throws.
   const authority = createNovakaiAuthority(deps.objectModel, clock, config);
   // D-N3-1: the human principal rides EVERY roster the membership adapter serves.
-  const membership = createNovakaiMembership(
-    deps.objectModel,
-    clock,
-    deps.humanToken === undefined ? undefined : HUMAN_PERSON_ID,
-  );
+  const membership = createNovakaiMembership(deps.objectModel, clock, HUMAN_PERSON_ID);
   const store = await openJsonlStore(clock, { path: storePath });
   const directory = createRoomDirectory();
   const transport = makeTransport(deps, directory);
@@ -251,5 +265,5 @@ export async function startMessagingV2(deps: StartMessagingV2Deps): Promise<Mess
     busPollIntervalMs: 500, sweepIntervalMs: 60_000,
     ...(transport === null ? {} : { transports: [transport] }),
   });
-  return bootGuarded(embedded, deps, config, storePath, transport, directory);
+  return bootGuarded(embedded, deps, humanToken, config, storePath, transport, directory);
 }
