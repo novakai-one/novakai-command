@@ -1,7 +1,8 @@
 // Send API (docs/agent-messaging.md §3): wraps a SendMessage into a
 // MessageEnvelope and submits it to the router. HTTP has no ambient identity,
-// so `from` rides alongside the doc's SendMessage shape (the CLI supplies it
-// via --from / NVK_AGENT).
+// so `from` rides alongside the doc's SendMessage shape — supplied by
+// server-owned callers (the Chris lane /api/user/messages, ExternalSessionsHub)
+// since N2 deleted the agent-originated route and its self-claimed `from`.
 import { randomUUID } from 'node:crypto';
 import { MessageRouter, ChannelInterruptError } from '../router/index.js';
 import { isChannel, isRoom } from '../types.js';

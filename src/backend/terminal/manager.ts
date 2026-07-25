@@ -97,7 +97,9 @@ export class TerminalManager {
   /** One serialized submission lane per agent (correction C2). */
   private readonly submitLanes = new Map<string, Promise<void>>();
   private dataCallback: ((agentId: string, data: string) => void) | null = null;
-  private exitCallback: ((agentId: string, exitCode: number | null) => void) | null = null;
+  /** Multi-listener (N2): the messaging-v2 presence transport subscribes
+   * alongside AgentsHub — neither may steal the other's exit truth. */
+  private readonly exitCallbacks: Array<(agentId: string, exitCode: number | null) => void> = [];
   private sessionCallback: ((info: AgentInfo) => void) | null = null;
 
   constructor(
@@ -154,7 +156,7 @@ export class TerminalManager {
     const agentId = options.agentId ?? `agent_${randomUUID()}`;
     if (this.agents.has(agentId)) throw new Error(`agentId "${agentId}" already exists in the terminal registry`);
     const requestedSessionId = randomUUID();
-    const launched = this.launcher(options.provider || 'claude', options.cwd, requestedSessionId);
+    const launched = this.launcher(options.provider || 'claude', options.cwd, requestedSessionId, agentId);
     const provider = options.provider || 'claude';
     const info = buildAgentInfo(agentId, provider === 'claude' ? requestedSessionId : '', options, launched.process.pid);
     const buffer = new AgentBuffer();
@@ -200,7 +202,7 @@ export class TerminalManager {
         `${record.info.provider} exited (code ${exitCode}) before its session was discovered`,
       );
       this.saveRegistry();
-      this.exitCallback?.(agentId, exitCode);
+      for (const callback of this.exitCallbacks) callback(agentId, exitCode);
     });
   }
 
@@ -222,8 +224,11 @@ export class TerminalManager {
    * variant is what survives backend restarts.
    */
   submit(submission: { agentId: string; messageId: string; text: string; settleMs: number; flushMs?: number; leadIn?: { data: string; settleMs: number } }): boolean {
+    // Liveness BEFORE dedupe (audit #3): a duplicate messageId against a dead
+    // lane must read as refused (presence-gone), never true-against-a-corpse.
+    const record = this.agents.get(submission.agentId);
+    if (record?.ptyProcess === undefined || record.info.status !== 'running') return false;
     if (this.submittedMessageIds.has(submission.messageId)) return true;
-    if (!this.agents.get(submission.agentId)?.ptyProcess) return false;
     this.rememberSubmitted(submission.messageId);
     const lane = this.submitLanes.get(submission.agentId) ?? Promise.resolve();
     const chained = lane.then(() => this.runSubmission(submission));
@@ -307,7 +312,7 @@ export class TerminalManager {
   }
 
   onExit(callback: (agentId: string, exitCode: number | null) => void): void {
-    this.exitCallback = callback;
+    this.exitCallbacks.push(callback);
   }
 
   onSession(callback: (info: AgentInfo) => void): void {

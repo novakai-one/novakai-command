@@ -39,7 +39,9 @@ export class TerminalHostClient implements TerminalRuntime {
   private connectedHostPid: number | null = null;
   private connectedSnapshotId: string | null = null;
   private dataCallback: ((agentId: string, data: string) => void) | null = null;
-  private exitCallback: ((agentId: string, exitCode: number | null) => void) | null = null;
+  /** Multi-listener (N2): the messaging-v2 presence transport subscribes
+   * alongside AgentsHub — neither may steal the other's exit truth. */
+  private readonly exitCallbacks: Array<(agentId: string, exitCode: number | null) => void> = [];
   private sessionCallback: ((info: AgentInfo) => void) | null = null;
 
   private constructor(private readonly socketPath: string) {}
@@ -109,7 +111,7 @@ export class TerminalHostClient implements TerminalRuntime {
   }
 
   onExit(callback: (agentId: string, exitCode: number | null) => void): void {
-    this.exitCallback = callback;
+    this.exitCallbacks.push(callback);
   }
 
   onSession(callback: (info: AgentInfo) => void): void {
@@ -270,7 +272,7 @@ export class TerminalHostClient implements TerminalRuntime {
   private handleExit(frame: Extract<HostFrame, { type: 'exit' }>): void {
     const record = this.agents.get(frame.agentId);
     if (record) record.info = { ...record.info, status: 'exited' };
-    this.exitCallback?.(frame.agentId, frame.exitCode);
+    for (const callback of this.exitCallbacks) callback(frame.agentId, frame.exitCode);
   }
 
   private handleSession(info: AgentInfo): void {

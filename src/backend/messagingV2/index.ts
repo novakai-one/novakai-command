@@ -4,10 +4,15 @@
  * app's identity/membership authority (ObjectModel) through the Novakai
  * adapters in ./authority and ./membership.
  *
- * N1 scope: ADDITIVE. No consumers yet — nothing calls the returned handle;
- * the old messaging surface (src/backend/messaging/) is untouched and keeps
- * serving. A boot failure must never take the app down (the server catches
- * and logs it LOUD, then continues without the capability).
+ * N2 (agent direct lane): when a TerminalRuntime is injected, the terminal-
+ * host 'pty' presence transport (./transport) is registered and the presence
+ * glue (./presence) opens+binds a lane per durable agent — on launch and at
+ * boot for already-running live agents. The event bus tails on
+ * busPollIntervalMs (500 ms) once start() runs — that IS the event-pump
+ * interval; no separate manual pumpEvents loop is wired. The old messaging
+ * surface keeps serving what N3/N4 hasn't replaced (the human lane, rooms,
+ * history reads). A boot failure must never take the app down (the server
+ * catches and logs it LOUD, then continues without the capability).
  *
  * Room Thread provisioning note (composition/coreStack.ts): passing a READY
  * MembershipSource means the coreStack provisions NOTHING — the HOST owns
@@ -26,13 +31,20 @@ import { createSystemClock } from '../../../packages/messaging/adapters/clock-sy
 import { openJsonlStore } from '../../../packages/messaging/adapters/store-jsonl.js';
 import type { PersonId } from '../../../packages/messaging/public/contract/index.js';
 import type { ObjectModel } from '../objectModel/index.js';
+import type { AgentInfo } from '../terminal/manager.js';
+import type { TerminalRuntime } from '../terminal/runtime/index.js';
 import { createNovakaiAuthority, isActiveAgent } from './authority/index.js';
 import type { NovakaiAuthorityConfig } from './authority/index.js';
 import { createNovakaiMembership } from './membership/index.js';
+import { createTerminalHostTransport } from './transport/index.js';
+import { createAgentLaneGlue } from './presence/index.js';
+import type { AgentLaneGlue } from './presence/index.js';
 
 export interface MessagingV2Handle {
   /** The full embedded capability handle, held for N2+ consumers. */
   readonly embedded: EmbeddedMessaging;
+  /** N2: pty presence lanes for durable agents; null without a terminal runtime. */
+  readonly lanes: AgentLaneGlue | null;
   close(): Promise<void>;
 }
 
@@ -54,7 +66,23 @@ export interface StartMessagingV2Deps {
   storePath?: string;
   /** When set, provisions the human principal (person_user-chris, role Human). */
   humanToken?: string;
+  /**
+   * N2: the terminal runtime the 'pty' presence transport binds to. Absent =
+   * the N1 posture (default in-memory 'ws' transport, no agent lanes).
+   */
+  terminals?: TerminalRuntime;
+  /** N2: launch subscription hook (AgentsHub.onLaunch in the app composition). */
+  onLaunch?: (listener: (info: AgentInfo) => void) => void;
   log?: (message: string) => void;
+}
+
+/** A close failure must never mask the boot failure it cleans up after. */
+async function closeQuietly(embedded: EmbeddedMessaging): Promise<void> {
+  try {
+    await embedded.close();
+  } catch {
+    // The boot failure stands.
+  }
 }
 
 /** Boot + announce, guarded: any failure closes the half-built capability
@@ -65,22 +93,48 @@ async function bootGuarded(
   deps: StartMessagingV2Deps,
   config: NovakaiAuthorityConfig,
   storePath: string,
+  transport: ReturnType<typeof createTerminalHostTransport> | null,
 ): Promise<MessagingV2Handle> {
   try {
     const principals = countPrincipals(deps.objectModel, config);
     // DEC-21/F10: the recovery sweep runs BEFORE serving (inside start()).
     await embedded.start();
+    const lanes = await bootLanes(embedded, deps, transport);
     const announce = deps.log ?? console.log;
     announce(`[messaging-v2] capability booted (store=${storePath}, principals=${principals})`);
-    return { embedded, close: () => embedded.close() };
+    return { embedded, lanes, close: () => closeAll(embedded, lanes) };
   } catch (error) {
-    try {
-      await embedded.close();
-    } catch {
-      // The boot failure stands; a close failure must not mask it.
-    }
+    await closeQuietly(embedded);
     throw error;
   }
+}
+
+/** N2: open pty lanes for already-running agents and wire the launch hook. */
+async function bootLanes(
+  embedded: EmbeddedMessaging,
+  deps: StartMessagingV2Deps,
+  transport: ReturnType<typeof createTerminalHostTransport> | null,
+): Promise<AgentLaneGlue | null> {
+  if (transport === null || deps.terminals === undefined) return null;
+  const lanes = createAgentLaneGlue({
+    embedded,
+    transport,
+    terminals: deps.terminals,
+    objectModel: deps.objectModel,
+    ...(deps.humanToken !== undefined ? { humanToken: deps.humanToken } : {}),
+    ...(deps.log !== undefined ? { 'log': deps.log } : {}),
+  });
+  // audit #9: subscribe launches BEFORE the boot sweep so a spawn landing
+  // mid-sweep is never missed — openLane's registry-keyed idempotence
+  // dedupes any overlap between the two paths.
+  deps.onLaunch?.((info) => lanes.handleAgentLaunched(info));
+  await lanes.openBootLanes();
+  return lanes;
+}
+
+async function closeAll(embedded: EmbeddedMessaging, lanes: AgentLaneGlue | null): Promise<void> {
+  await lanes?.close();
+  await embedded.close();
 }
 
 export async function startMessagingV2(deps: StartMessagingV2Deps): Promise<MessagingV2Handle> {
@@ -91,11 +145,15 @@ export async function startMessagingV2(deps: StartMessagingV2Deps): Promise<Mess
   const authority = createNovakaiAuthority(deps.objectModel, clock, config);
   const membership = createNovakaiMembership(deps.objectModel, clock);
   const store = await openJsonlStore(clock, { path: storePath });
-  // No `transports`: the default in-memory 'ws' transport is correct for N1
-  // (the PTY/app-ws presence transports are slices N2/N4).
+  // N2: with a terminal runtime, the ONLY registered transport is the
+  // terminal-host 'pty' lane; without one, the default in-memory 'ws'
+  // transport keeps the N1 posture (OpenPresence names a registered kind or
+  // fails ValidationFailed — Seams §4 composition rule).
+  const transport = deps.terminals === undefined ? null : createTerminalHostTransport(deps.terminals);
   const embedded = createEmbeddedMessaging({
     clock, store, authority, membership,
     busPollIntervalMs: 500, sweepIntervalMs: 60_000,
+    ...(transport === null ? {} : { transports: [transport] }),
   });
-  return bootGuarded(embedded, deps, config, storePath);
+  return bootGuarded(embedded, deps, config, storePath, transport);
 }

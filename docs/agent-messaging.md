@@ -1,5 +1,10 @@
 # Agent Messaging — Design
 
+> **SUPERSEDED** — the agent messaging contract is being replaced by the
+> @novakai/messaging capability (N-program). POST /api/messages and --from are
+> deleted as of N2; agents use `nvk-msg` with the NVK_AGENT_ID token. See
+> Elite-Kimi-Audit-God-Level/Messaging/Messaging-Integration-Plan.md.
+
 Agents running inside Novakai Command (Claude and Codex sessions) can send each
 other direct messages and post to a shared team channel. The sender decides
 urgency: a `normal` message queues into the recipient's current turn; an

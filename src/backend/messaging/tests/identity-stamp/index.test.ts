@@ -93,6 +93,9 @@ const agents: AgentInfo[] = [
 }
 
 // --- through the hub: thread link, room stamping, missionId history ----------
+// N2: POST /api/messages is gone — sends ride the same SendApi seam the old
+// route wrapped (the route also dropped client-supplied missionId; SendApi
+// never accepted it, so server derivation is the only missionId source).
 
 const messagingHub = new MessagingHub(
   { list: () => agents, write: () => true },
@@ -101,7 +104,6 @@ const messagingHub = new MessagingHub(
     storePath: join(mkdtempSync(join(tmpdir(), 'nvk-identity-store-')), 'messages.jsonl'),
     roomsStorePath: join(mkdtempSync(join(tmpdir(), 'nvk-identity-rooms-')), 'rooms.jsonl'),
     timings: { interruptSettleMs: 0, submitDelayMs: 0 },
-    serverPort: 0,
     missionGraph: model,
   },
 );
@@ -129,13 +131,11 @@ assert.equal((await post('/api/threads', { roomId, missionId: 'mission_alpha' })
 assert.equal((await post('/api/threads', { roomId, missionId: 'mission_beta' })).status, 409, 'a room links to one mission');
 assert.equal((await post('/api/threads', { roomId: 'room_ghost', missionId: 'mission_alpha' })).status, 404);
 
-const roomSend = await post('/api/messages', { from: 'worker-1', 'to': roomId, body: 'room ping' });
-assert.equal(roomSend.status, 201);
-assert.equal((roomSend.json.envelope as MessageEnvelope).missionId, 'mission_alpha', 'room send carries the linked mission');
+const roomEnvelope = await messagingHub.send.send('worker-1', { 'to': roomId, delivery: 'normal', body: 'room ping' });
+assert.equal(roomEnvelope.missionId, 'mission_alpha', 'room send carries the linked mission');
 
-const dmSend = await post('/api/messages', { from: 'worker-1', 'to': 'manager-1', body: 'dm ping', missionId: 'mission_beta' });
-assert.equal(dmSend.status, 201);
-assert.equal((dmSend.json.envelope as MessageEnvelope).missionId, 'mission_alpha', 'client-supplied missionId is ignored — server derivation wins');
+const dmEnvelope = await messagingHub.send.send('worker-1', { 'to': 'manager-1', delivery: 'normal', body: 'dm ping' });
+assert.equal(dmEnvelope.missionId, 'mission_alpha', 'server derivation is the only missionId source');
 
 const history = await fetch(`${base}/api/messages?missionId=mission_alpha`);
 const messages = (await history.json() as { messages: MessageEnvelope[] }).messages;

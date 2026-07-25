@@ -24,6 +24,7 @@ import { MissionViewHub } from '../missionView/index.js';
 import { ObjectModel } from '../objectModel/index.js';
 import { startMessagingV2 } from '../messagingV2/index.js';
 import type { MessagingV2Handle } from '../messagingV2/index.js';
+import { registerMessagingV2Routes } from '../messagingV2/routes/index.js';
 import { ExternalSessionsHub } from '../externalSessions/index.js';
 import { PeopleHub } from '../people/index.js';
 import type { TerminalRuntime } from '../terminal/runtime/index.js';
@@ -150,15 +151,15 @@ export class ServerController {
 
   /**
    * Agent messaging tunnel (docs/agent-messaging.md): envelopes broadcast on
-   * the shared ws so the Messages view can build a live feed; new agents get
-   * their spawn briefing typed into their PTY.
+   * the shared ws so the Messages view can build a live feed. N2: the spawn
+   * briefing moved to the messagingV2 presence glue (wired in start()).
    */
   private buildMessagingHub(): MessagingHub {
-    const messagingHub = new MessagingHub(
+    return new MessagingHub(
       this.agentsHub.terminals,
       (event, payload) => this.broadcastEvent(event, payload),
       {
-        serverPort: this.port, mailboxRegistry: this.mailboxRegistry, missionGraph: this.objectModel,
+        mailboxRegistry: this.mailboxRegistry, missionGraph: this.objectModel,
         // NVK_MESSAGE_STORE pins the journal for non-Live stacks (same
         // discipline as NVK_MISSION_STORES_DIR — scratch evidence stays real).
         storePath: process.env.NVK_MESSAGE_STORE || undefined,
@@ -168,8 +169,6 @@ export class ServerController {
         reconcileOnStart: process.env.NVK_RECONCILE_ON_START !== 'off',
       },
     );
-    this.agentsHub.onLaunch((info) => messagingHub.handleAgentSpawned(info));
-    return messagingHub;
   }
 
   /**
@@ -293,6 +292,11 @@ export class ServerController {
     this.analyticsHub.registerRoutes(this.app);
     this.designHub.registerRoutes(this.app);
     this.messagingHub.registerRoutes(this.app);
+    registerMessagingV2Routes(this.app, {
+      getHandle: () => this.messagingV2,
+      terminals: this.agentsHub.terminals,
+      objectModel: this.objectModel,
+    });
     this.missionViewHub.registerRoutes(this.app);
     this.externalSessionsHub.registerRoutes(this.app);
     new PeopleHub(this.objectModel, () => this.agentsHub.terminals.list(), process.env.NVK_MISSION_ROOMS ?? path.resolve('.novakai-command/rooms.jsonl'), { journalPath: process.env.NVK_MISSION_JOURNAL ?? path.resolve('.novakai-command/messages.jsonl') }).registerRoutes(this.app);
@@ -548,10 +552,14 @@ export class ServerController {
         objectModel: this.objectModel,
         storePath: process.env.NVK_MESSAGING_V2_STORE || undefined,
         humanToken: process.env.NVK_MESSAGING_V2_HUMAN_TOKEN || undefined,
+        // N2: the agent direct lane — pty presence transport over the terminal
+        // runtime; the glue opens lanes for live agents and briefs new spawns.
+        terminals: this.agentsHub.terminals,
+        onLaunch: (listener) => this.agentsHub.onLaunch(listener),
       });
     } catch (error) {
-      // N1 is additive with zero consumers — a v2 boot failure must never take
-      // down the app (the old surface still serves). Fail LOUD, continue.
+      // A v2 boot failure must never take down the app (the old surface still
+      // serves). Fail LOUD, continue — the v2 routes answer 503 this run.
       console.error('[messaging-v2] boot failed — capability disabled this run:', error);
     }
   }

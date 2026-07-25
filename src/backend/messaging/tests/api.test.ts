@@ -1,5 +1,7 @@
-// MessagingHub REST + broadcast + spawn-briefing tests over a real express
-// app (agent-messaging phases 1–5). Run with
+// MessagingHub REST + broadcast tests over a real express app — the SURVIVING
+// surface (user sends, history reads, identity, rooms, AgentsHub spawns).
+// N2 deleted the agent-originated POST /api/messages route, handleSend, and
+// the spawn briefing; their tests went with them. Run with
 // `npx tsx src/backend/messaging/tests/api.test.ts`.
 import assert from 'node:assert/strict';
 import { mkdtempSync } from 'node:fs';
@@ -38,8 +40,6 @@ const messagingHub = new MessagingHub(
   {
     storePath: join(mkdtempSync(join(tmpdir(), 'nvk-api-')), 'messages.jsonl'),
     timings: { interruptSettleMs: 0, submitDelayMs: 0 },
-    spawnBriefingDelayMs: 5,
-    serverPort: 3031,
     // Fake sessionIds — the real transcript confirmer would poll for files
     // that never exist. null disables confirmation; sends note it honestly.
     effectConfirmer: null,
@@ -54,13 +54,6 @@ const server: Server = await new Promise((resolve) => {
 });
 const baseUrl = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
 
-async function post(body: unknown): Promise<{ status: number; json: any }> {
-  const response = await fetch(`${baseUrl}/api/messages`, {
-    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
-  });
-  return { status: response.status, json: await response.json() };
-}
-
 async function postAsUser(body: unknown): Promise<{ status: number; json: any }> {
   const response = await fetch(`${baseUrl}/api/user/messages`, {
     method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
@@ -73,91 +66,15 @@ async function getMessages(query: string): Promise<MessageEnvelope[]> {
   return (await response.json()).messages;
 }
 
-async function testSendAcceptsAndBroadcasts(): Promise<void> {
-  const { status, json } = await post({ from: 'claude-1', 'to': 'codex-1', body: 'ship it' });
-  assert.equal(status, 201);
-  assert.equal(json.envelope.status, 'accepted', 'bytes written claim accepted, never delivered (D1 honesty)');
-  assert.match(String(json.envelope.outcome?.note), /effect unverifiable/, 'no confirmer in this rig — noted honestly');
-  assert.match(json.envelope.id, /^msg_/);
-  assert.equal(writes[0]?.agentId, 'agent_2');
-  assert.equal(writes[0]?.data, `[nvk-msg from claude-1 id ${json.envelope.id}] ship it`);
-  assert.equal(writes[1]?.data, '\r');
-  assert.deepEqual(
-    broadcasts.map((entry) => `${entry.event}:${entry.payload.status}`),
-    ['message-envelope:queued', 'message-envelope:accepted', 'message-envelope:accepted'],
-    'every appended envelope reaches the ws broadcast (accepted + honest note amendment)',
-  );
-}
-
 async function testHistoryQueryFilters(): Promise<void> {
-  await post({ from: 'codex-1', 'to': 'claude-1', body: 'done', threadId: 'thread-a' });
-  await post({ from: 'claude-1', 'to': TEAM_CHANNEL, body: 'status: green' });
-  assert.equal((await getMessages('')).length, 3);
+  await postAsUser({ 'to': 'codex-1', body: 'done', threadId: 'thread-a' });
+  await postAsUser({ 'to': TEAM_CHANNEL, body: 'status: green' });
+  assert.equal((await getMessages('')).length, 2);
   const channel = await getMessages(`?withAgent=${encodeURIComponent(TEAM_CHANNEL)}`);
   assert.equal(channel.length, 1, 'channel read via withAgent=#team');
   assert.equal(channel[0]?.body, 'status: green');
   assert.equal((await getMessages('?threadId=thread-a'))[0]?.threadId, 'thread-a');
   assert.equal((await getMessages('?limit=1')).length, 1);
-}
-
-async function testInvalidSendsRejectedBeforeRecording(): Promise<void> {
-  assert.equal((await post({ from: 'claude-1', 'to': 'codex-1' })).status, 400, 'missing body');
-  assert.equal((await post({ from: '', 'to': 'codex-1', body: 'x' })).status, 400, 'missing from');
-  assert.equal((await post({ from: 'claude-1', 'to': 'codex-1', body: 'x', delivery: 'shout' })).status, 400);
-  const channelInterrupt = await post({ from: 'claude-1', 'to': TEAM_CHANNEL, body: 'x', delivery: 'interrupt' });
-  assert.equal(channelInterrupt.status, 400, 'interrupt to #team rejected');
-  assert.equal((await getMessages('')).length, 3, 'rejected sends never enter the audit record');
-}
-
-async function testFailureStatusCodes(): Promise<void> {
-  const missing = await post({ from: 'claude-1', 'to': 'codex-9', body: 'x' });
-  assert.equal(missing.status, 404);
-  assert.deepEqual(missing.json.roster.map((entry: { name: string }) => entry.name), ['claude-1', 'codex-1'],
-    'not-found failure returns the live roster');
-  assert.deepEqual(
-    missing.json.mailboxes.map((entry: { memberName: string }) => entry.memberName),
-    ['chris', 'kimi'],
-    'not-found failure also returns durable mailbox addresses',
-  );
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    await post({ from: 'claude-1', 'to': 'codex-1', body: 'urgent', delivery: 'interrupt' });
-  }
-  const capped = await post({ from: 'claude-1', 'to': 'codex-1', body: 'urgent', delivery: 'interrupt' });
-  assert.equal(capped.status, 429, 'fourth interrupt in a minute is capped');
-}
-
-async function testSpawnBriefingTypedIntoNewAgentPty(): Promise<void> {
-  writes.length = 0;
-  messagingHub.handleAgentSpawned(agents[0]!);
-  await new Promise((resolve) => setTimeout(resolve, 40));
-  assert.equal(writes.length, 2, 'briefing line + submit');
-  assert.equal(writes[0]?.agentId, 'agent_1');
-  assert.match(writes[0]?.data ?? '', /^\[nvk-msg briefing\] You are agent "claude-1"/);
-  assert.match(writes[0]?.data ?? '', /codex-1 \(codex\)/, 'roster excludes self, lists peers');
-  assert.equal(writes[1]?.data, '\r');
-}
-
-async function testDeadAgentIsNeverBriefed(): Promise<void> {
-  writes.length = 0;
-  messagingHub.handleAgentSpawned(agent({ agentId: 'agent_gone', title: 'claude-9' }));
-  await new Promise((resolve) => setTimeout(resolve, 40));
-  assert.equal(writes.length, 0, 'no briefing typed for an agent missing from the roster');
-}
-
-async function testChrisDirectMessageQueuedViaUi(): Promise<void> {
-  writes.length = 0;
-  broadcasts.length = 0;
-  const { status, json } = await post({ from: 'claude-1', 'to': 'chris', body: 'boss ping' });
-  assert.equal(status, 201, 'DM to chris is a first-class send');
-  assert.equal(json.envelope.status, 'queued', 'mailbox recipients honestly stay queued — the record IS the delivery (R1)');
-  assert.equal(writes.length, 0, 'nothing is typed into a PTY for the human');
-  assert.deepEqual(
-    broadcasts.map((entry) => `${entry.event}:${entry.payload.status}`),
-    ['message-envelope:queued'],
-    'one append, one broadcast — no status amendment claims an unprovable effect',
-  );
-  const inbox = await getMessages('?withAgent=chris');
-  assert.equal(inbox[0]?.body, 'boss ping', 'chris reads his inbox from the log');
 }
 
 /** AgentsHub over a fake runtime — reserved names 409 before any spawn happens. */
@@ -272,17 +189,17 @@ async function testOwnerTeamPostReachesEveryLiveAgent(): Promise<void> {
   }
 }
 
-async function testAgentsCanReplyToUserInbox(): Promise<void> {
-  const reply = await post({ from: 'codex-1', 'to': 'chris', body: 'Reply visible in Mission Control.' });
-  assert.equal(reply.status, 201, 'Chris is a registered recipient even though he has no PTY');
-  assert.equal(reply.json.envelope.status, 'queued', 'mailbox honesty: queued is the terminal state (R1)');
+async function testAgentsCanReplyToUserInboxIsGone(): Promise<void> {
+  // N2: the agent-originated route is deleted — it now answers 404 (agent
+  // sends authenticate through the v2 routes instead).
+  const reply = await fetch(`${baseUrl}/api/messages`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ from: 'codex-1', 'to': 'chris', body: 'x' }),
+  });
+  assert.equal(reply.status, 404, 'POST /api/messages is gone (N2)');
 }
 
 async function testOpenBrowserTabsUpgradeToRegisteredIdentity(): Promise<void> {
-  const legacySend = await post({ from: 'chris', 'to': 'codex-1', body: 'legacy tab send' });
-  assert.equal(legacySend.status, 201);
-  assert.equal(legacySend.json.envelope.from, 'chris');
-
   const roomResponse = await fetch(`${baseUrl}/api/rooms`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -299,19 +216,13 @@ async function testOpenBrowserTabsUpgradeToRegisteredIdentity(): Promise<void> {
 }
 
 try {
-  await testSendAcceptsAndBroadcasts();
   await testHistoryQueryFilters();
-  await testInvalidSendsRejectedBeforeRecording();
-  await testFailureStatusCodes();
-  await testSpawnBriefingTypedIntoNewAgentPty();
-  await testDeadAgentIsNeverBriefed();
-  await testChrisDirectMessageQueuedViaUi();
   await testReservedNamesRejected();
   await testProviderValidation();
   await testRegisteredUserIdentityOwnsBrowserSends();
   await testOwnerIdentitySendsToAnyMissionRoom();
   await testOwnerTeamPostReachesEveryLiveAgent();
-  await testAgentsCanReplyToUserInbox();
+  await testAgentsCanReplyToUserInboxIsGone();
   await testOpenBrowserTabsUpgradeToRegisteredIdentity();
   console.log('PASS');
 } finally {
