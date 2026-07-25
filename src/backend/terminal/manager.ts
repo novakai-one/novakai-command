@@ -224,8 +224,11 @@ export class TerminalManager {
    * variant is what survives backend restarts.
    */
   submit(submission: { agentId: string; messageId: string; text: string; settleMs: number; flushMs?: number; leadIn?: { data: string; settleMs: number } }): boolean {
+    // Liveness BEFORE dedupe (audit #3): a duplicate messageId against a dead
+    // lane must read as refused (presence-gone), never true-against-a-corpse.
+    const record = this.agents.get(submission.agentId);
+    if (record?.ptyProcess === undefined || record.info.status !== 'running') return false;
     if (this.submittedMessageIds.has(submission.messageId)) return true;
-    if (!this.agents.get(submission.agentId)?.ptyProcess) return false;
     this.rememberSubmitted(submission.messageId);
     const lane = this.submitLanes.get(submission.agentId) ?? Promise.resolve();
     const chained = lane.then(() => this.runSubmission(submission));

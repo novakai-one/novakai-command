@@ -24,9 +24,19 @@ import type { MessagingSession } from '../../../../packages/messaging/public/cap
 import type { AgentBlock, ObjectModel } from '../../objectModel/index.js';
 import { isActiveAgent, personIdForAgentId } from '../authority/index.js';
 
+export interface PolicySyncFailure {
+  personId: string;
+  detail: string;
+}
+
 export interface ContactBootstrap {
-  /** Recompute and union-set the allowlist for every held session. */
-  sync(sessions: ReadonlyMap<string, MessagingSession>, human: MessagingSession | null): Promise<void>;
+  /**
+   * Recompute and union-set the allowlist for every held session. NEVER
+   * throws for a per-session write failure (audit #6): failures are
+   * collected and returned so one poisoned session cannot starve the others
+   * — the sync is host policy, never a lane gate.
+   */
+  sync(sessions: ReadonlyMap<string, MessagingSession>, human: MessagingSession | null): Promise<PolicySyncFailure[]>;
 }
 
 /** The refs that define team co-membership (union semantics). */
@@ -49,16 +59,25 @@ async function currentAllowlist(session: MessagingSession): Promise<PersonId[]> 
   return policy.kind === 'ok' ? policy.value.contact.allowlist : [];
 }
 
-/** Union-set one principal's allowlist (deny-by-default preserved). */
-async function growAllowlist(session: MessagingSession, added: PersonId[]): Promise<void> {
-  const allowlist = [...new Set([...(await currentAllowlist(session)), ...added])];
-  await session.setContactPolicy({ allowlist, defaultRule: 'deny' });
+/** Union-set one principal's allowlist (deny-by-default preserved). Returns
+ * the failure detail, or null on success — a throw OR an error outcome is a
+ * failure (honesty both ways), never a propagated exception (audit #6). */
+async function growAllowlist(session: MessagingSession, added: PersonId[]): Promise<string | null> {
+  try {
+    const allowlist = [...new Set([...(await currentAllowlist(session)), ...added])];
+    const outcome = await session.setContactPolicy({ allowlist, defaultRule: 'deny' });
+    if (outcome.kind === 'ok') return null;
+    return `${outcome.error.name}: ${outcome.error.message}`;
+  } catch (cause) {
+    return cause instanceof Error ? cause.message : String(cause);
+  }
 }
 
 async function syncAgents(
   blocks: AgentBlock[],
   sessions: ReadonlyMap<string, MessagingSession>,
   humanPersonId: PersonId | undefined,
+  failures: PolicySyncFailure[],
 ): Promise<void> {
   for (const [agentId, session] of sessions) {
     const self = blocks.find((block) => block.id === agentId);
@@ -67,18 +86,23 @@ async function syncAgents(
       .filter((block) => isCoMember(self, block))
       .map((block) => personIdForAgentId(block.id));
     if (humanPersonId !== undefined) added.push(humanPersonId);
-    await growAllowlist(session, added);
+    const detail = await growAllowlist(session, added);
+    if (detail !== null) failures.push({ personId: personIdForAgentId(agentId), detail });
   }
 }
 
 export function createContactBootstrap(objectModel: ObjectModel): ContactBootstrap {
   return {
     async sync(sessions, human) {
+      const failures: PolicySyncFailure[] = [];
       const blocks = objectModel.listAgents().filter(isActiveAgent);
-      await syncAgents(blocks, sessions, human?.principal.personId);
+      await syncAgents(blocks, sessions, human?.principal.personId, failures);
       if (human !== null) {
-        await growAllowlist(human, blocks.map((block) => personIdForAgentId(block.id)));
+        const added = blocks.map((block) => personIdForAgentId(block.id));
+        const detail = await growAllowlist(human, added);
+        if (detail !== null) failures.push({ personId: human.principal.personId, detail });
       }
+      return failures;
     },
   };
 }

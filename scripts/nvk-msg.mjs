@@ -59,9 +59,19 @@ if (cmd === 'send') {
   const interrupt = flag('--interrupt');
   const to = opt('--to');
   const threadId = opt('--thread');
+  // audit #4: stale flags must fail loudly — never misdeliver "--from X hi"
+  // as the body. Sender identity comes from NVK_AGENT_ID; there is no --from.
+  const unknown = args.find((token) => token.startsWith('--'));
+  if (unknown) {
+    console.error(`nvk-msg: unknown flag "${unknown}" — sender identity comes from NVK_AGENT_ID (there is no --from); run: nvk-msg send --to <name> "body"`);
+    process.exit(1);
+  }
+  if (threadId) {
+    console.error('nvk-msg: --thread is not supported by the v2 direct lane — threads land in N3');
+    process.exit(1);
+  }
   const body = args.join(' ').trim();
   if (!to || !body) { console.error('usage: nvk-msg send --to <name> [--interrupt] [--thread <id>] "body"'); process.exit(1); }
-  if (threadId) console.error('nvk-msg: note — --thread is ignored by the v2 direct lane (thread-aware sends land in N3)');
   const result = await api('/api/messaging/v2/send', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -92,6 +102,9 @@ if (cmd === 'send') {
   if (!visible.length) { console.log('(no messages)'); process.exit(0); }
   const nameFor = (personId) => names.get(personId) ?? personId;
   for (const message of visible) printV2Message(message, nameFor);
+  // The v2 route exposes no cursor — a full page (contract pageLimitMax 200)
+  // means older history exists beyond this read; say so honestly.
+  if (messages.length >= 200) console.log('(page is full at 200 — older messages exist beyond this read)');
 
 } else if (cmd === 'names') {
   const { agents = [] } = await api('/api/messaging/v2/address-book');

@@ -211,6 +211,24 @@ await new Promise((resolve) => setTimeout(resolve, 60));
 assert.equal(terminals.submissions.length, before, 'no briefing typed for an agent missing from the roster');
 console.log('dead-agent briefing test passed');
 
+// --- audit #6: a policy-sync failure must never flip a live lane's briefing --------------
+
+terminals.restore(bobInfo); // bob is live again; his lane re-opens on launch
+glue.handleAgentLaunched(bobInfo);
+await new Promise((resolve) => setTimeout(resolve, 60));
+const realListAgents = model.listAgents.bind(model);
+model.listAgents = (() => { throw new Error('stores on fire'); }) as typeof model.listAgents;
+glue.handleAgentLaunched(bobInfo); // openLane: registry hit → true; the sync then throws
+await new Promise((resolve) => setTimeout(resolve, 60));
+model.listAgents = realListAgents;
+const resilientBriefing = terminals.submissions.at(-1)?.text ?? '';
+assert.match(resilientBriefing, /\[nvk-msg briefing\] You are agent "worker-b"/);
+assert.ok(
+  resilientBriefing.includes('send --to'),
+  'a policy-sync failure must NOT flip the briefing to "messaging unavailable" — the lane is open',
+);
+console.log('policy-failure lane resilience test passed');
+
 await glue.close();
 await embedded.close();
 rmSync(scratch, { recursive: true, force: true });

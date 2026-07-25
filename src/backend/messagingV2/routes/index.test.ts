@@ -17,9 +17,14 @@ import type { Server } from 'node:http';
 import type { SubmitJob } from '../../terminal/host/protocol/index.js';
 import type { AgentInfo } from '../../terminal/manager.js';
 import type { TerminalRuntime } from '../../terminal/runtime/index.js';
+import { createSystemClock } from '../../../../packages/messaging/adapters/clock-system.js';
+import { createMemoryStore } from '../../../../packages/messaging/adapters/store-memory.js';
+import { createEmbeddedMessaging } from '../../../../packages/messaging/composition/embedded.js';
 import { ObjectModel } from '../../objectModel/index.js';
-import { personIdForAgentId } from '../authority/index.js';
+import { createNovakaiAuthority, personIdForAgentId } from '../authority/index.js';
+import { createNovakaiMembership } from '../membership/index.js';
 import { startMessagingV2 } from '../index.js';
+import type { MessagingV2Handle } from '../index.js';
 import { registerMessagingV2Routes } from './index.js';
 
 const STAMP = '2026-07-22T10:00:00+10:00';
@@ -234,6 +239,50 @@ const channel = await v2send(aliceId, { 'to': '#team', body: 'status' });
 assert.equal(channel.status, 400);
 assert.match(String(channel.json['error']), /N3/);
 console.log('channel rejection test passed');
+
+// --- audit #7: GET messages evicts a dead cached session and re-authenticates ------------
+// A 60 ms session TTL poisons the cached session via lazy expiry (§2.1): the
+// first call after expiry ends the session (NotAuthenticated); the route must
+// evict it so the NEXT call re-authenticates instead of 401ing forever.
+
+{
+  const clock = createSystemClock();
+  const ttlEmbedded = createEmbeddedMessaging({
+    clock,
+    store: createMemoryStore(clock),
+    authority: createNovakaiAuthority(model, clock, { sessionTtlMs: 60 }),
+    membership: createNovakaiMembership(model, clock),
+  });
+  await ttlEmbedded.start();
+  let authCalls = 0;
+  const realAuthenticate = ttlEmbedded.authenticate.bind(ttlEmbedded);
+  ttlEmbedded.authenticate = (credential: unknown) => {
+    authCalls += 1;
+    return realAuthenticate(credential);
+  };
+  const ttlHandle: MessagingV2Handle = { embedded: ttlEmbedded, lanes: null, close: () => ttlEmbedded.close() };
+  const ttlApp = express();
+  ttlApp.use(express.json());
+  registerMessagingV2Routes(ttlApp, { getHandle: () => ttlHandle, terminals, objectModel: model });
+  const ttlServer: Server = await new Promise((resolve) => {
+    const listening = ttlApp.listen(0, '127.0.0.1', () => resolve(listening));
+  });
+  const ttlBase = `http://127.0.0.1:${(ttlServer.address() as { port: number }).port}`;
+  const callMessages = () => fetch(`${ttlBase}/api/messaging/v2/messages?with=worker-b`, {
+    headers: { authorization: `Bearer ${aliceId}` },
+  });
+
+  assert.equal((await callMessages()).status, 200, 'first call authenticates and serves');
+  assert.equal(authCalls, 1);
+  await new Promise((resolve) => setTimeout(resolve, 90)); // let the cached session expire
+  assert.equal((await callMessages()).status, 401, 'the poisoned session ends (NotAuthenticated)');
+  assert.equal((await callMessages()).status, 200, 'the evicted session is re-authenticated');
+  assert.equal(authCalls, 2, 'eviction forced exactly one re-authentication');
+
+  await ttlHandle.close();
+  ttlServer.close();
+  console.log('session eviction test passed');
+}
 
 await handle.close();
 server.close();

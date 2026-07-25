@@ -77,10 +77,26 @@ async function ensureHuman(state: GlueState): Promise<void> {
 }
 
 /** D-N2-5: membership-driven contact bootstrap — best-effort host policy;
- * a policy write must never break a lane. */
+ * a policy write must never break a lane. Failures are logged, never thrown. */
 async function syncPolicies(state: GlueState): Promise<void> {
   if (state.sessions.size === 0 && state.human === null) return;
-  await state.bootstrap.sync(state.sessions, state.human);
+  const failures = await state.bootstrap.sync(state.sessions, state.human);
+  const announce = state.deps.log ?? ((): void => {});
+  for (const failure of failures) {
+    announce(`[messaging-v2] contact-policy sync failed for ${failure.personId}: ${failure.detail}`);
+  }
+}
+
+/** audit #6: a sync-level throw (e.g. the membership read itself) is logged,
+ * never propagated — policy is host policy, never a lane or boot gate. */
+async function syncPoliciesSafely(state: GlueState): Promise<void> {
+  try {
+    await syncPolicies(state);
+  } catch (cause) {
+    const announce = state.deps.log ?? ((): void => {});
+    const detail = cause instanceof Error ? cause.message : String(cause);
+    announce(`[messaging-v2] contact-policy sync failed: ${detail}`);
+  }
 }
 
 /** Re-bind surviving registry presences (clientLabel = agentId) to live terminals. */
@@ -117,7 +133,7 @@ async function openBootLanes(state: GlueState): Promise<void> {
   for (const info of running) {
     if (await openLane(state, info.agentId)) opened += 1;
   }
-  await syncPolicies(state);
+  await syncPoliciesSafely(state);
   const announce = state.deps.log ?? ((): void => {});
   announce(`[messaging-v2] pty lanes open for ${opened}/${running.length} live agents`);
 }
@@ -140,10 +156,12 @@ function briefAgent(state: GlueState, info: AgentInfo, messagingAvailable: boole
 }
 
 /** Lane first, then the D-N2-5 policy pass (a new teammate becomes reachable
- * BY existing members and vice versa before the briefing lands). */
+ * BY existing members and vice versa before the briefing lands). audit #6:
+ * a policy failure must NOT reject the lane promise or flip the briefing —
+ * the lane being open is what gates the briefing. */
 async function laneThenSync(state: GlueState, agentId: string): Promise<boolean> {
   const opened = await openLane(state, agentId);
-  if (opened) await syncPolicies(state);
+  if (opened) await syncPoliciesSafely(state);
   return opened;
 }
 

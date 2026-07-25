@@ -14,6 +14,9 @@ import path from 'node:path';
 import type { MessagingSession, Outcome } from '../../../packages/messaging/public/capability.js';
 import { MessagingError } from '../../../packages/messaging/public/contract/index.js';
 import { ObjectModel } from '../objectModel/index.js';
+import type { SubmitJob } from '../terminal/host/protocol/index.js';
+import type { AgentInfo } from '../terminal/manager.js';
+import type { TerminalRuntime } from '../terminal/runtime/index.js';
 import { personIdForAgentId } from './authority/index.js';
 import { startMessagingV2 } from './index.js';
 
@@ -192,3 +195,51 @@ console.log('failed-boot teardown test passed');
 
 rmSync(scratch, { recursive: true, force: true });
 console.log('messagingV2 boot proof passed');
+
+// --- audit #6: a policy-sync failure during openBootLanes must NOT close the capability ---
+
+class FakeTerminalRuntime implements TerminalRuntime {
+  readonly submissions: SubmitJob[] = [];
+  constructor(private readonly agents: AgentInfo[]) {}
+  create(): Promise<AgentInfo> { return Promise.reject(new Error('unused')); }
+  write(): boolean { return true; }
+  submit(submission: SubmitJob): boolean { this.submissions.push(submission); return true; }
+  activity(): null { return null; }
+  resize(): boolean { return true; }
+  rename(): boolean { return true; }
+  kill(): boolean { return true; }
+  archive(): boolean { return true; }
+  snapshot(): string { return ''; }
+  list(): AgentInfo[] { return this.agents; }
+  onData(): void {}
+  onExit(): void {}
+  onSession(): void {}
+}
+
+{
+  const bootScratch = scratchStores();
+  const bootModel = new ObjectModel({ storesDir: bootScratch });
+  const crewId = bootModel.createTeam({ name: 'Boot Crew', missionId: 'mission_alpha' });
+  const laneAgentId = bootModel.createAgent({ name: 'worker-lane', provider: 'claude', teamId: crewId, missionId: 'mission_alpha' });
+  const laneInfo: AgentInfo = {
+    agentId: laneAgentId, title: 'worker-lane', provider: 'claude', sessionId: 'session',
+    projectDir: 'project', cwd: '/tmp/project', status: 'running', createdAt: new Date().toISOString(),
+  };
+  // Reads 1-2 (principal count, authenticate) pass; read 3 (the policy sync) burns.
+  let reads = 0;
+  const realListAgents = bootModel.listAgents.bind(bootModel);
+  bootModel.listAgents = (() => {
+    reads += 1;
+    if (reads > 2) throw new Error('stores on fire');
+    return realListAgents();
+  }) as typeof bootModel.listAgents;
+  const bootJournal = path.join(mkdtempSync(path.join(tmpdir(), 'nvk-mv2-policyfail-')), 'journal.jsonl');
+  const bootHandle = await startMessagingV2({
+    objectModel: bootModel, storePath: bootJournal, terminals: new FakeTerminalRuntime([laneInfo]), 'log': () => {},
+  });
+  assert.ok(bootHandle.lanes, 'the capability booted despite the policy-sync failure');
+  assert.equal(bootHandle.lanes?.laneCount(), 1, 'the lane opened — only the policy pass failed');
+  await bootHandle.close();
+  rmSync(bootScratch, { recursive: true, force: true });
+  console.log('policy-failure boot resilience test passed');
+}

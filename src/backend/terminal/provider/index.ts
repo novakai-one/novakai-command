@@ -124,6 +124,24 @@ export function providerEnvironment(
   return scrubbed;
 }
 
+/** The child env for one spawn: lane-local port + the N2 agent identity. */
+function spawnEnvironment(provider: ProviderId, browserSession: string, agentId?: string): NodeJS.ProcessEnv {
+  const configuration = ConfigManager.load();
+  const serverPort = Number(process.env.NOVAKAI_SERVER_PORT) || configuration.serverPort;
+  return providerEnvironment(provider, browserSession, serverPort, agentId);
+}
+
+/** The configured CLI path, resolved — or a loud not-found error. */
+function resolveProviderCli(provider: ProviderId, configuration: AppConfig): string {
+  const configured = PROVIDERS[provider].cliPath(configuration);
+  const { resolved, exists } = resolveCli(configured || provider);
+  if (!exists) {
+    throw new Error(`${provider} CLI not found (looked for "${configured || provider}"). `
+      + `Set ${provider}CliPath in .novakai-command/config.json or start the backend from a shell with ${provider} on PATH.`);
+  }
+  return resolved;
+}
+
 function spawn(
   provider: ProviderId,
   cwd: string,
@@ -131,20 +149,12 @@ function spawn(
   browserSession: string,
   agentId?: string,
 ): ProviderTerminalProcess {
-  const configuration = ConfigManager.load();
-  const serverPort = Number(process.env.NOVAKAI_SERVER_PORT) || configuration.serverPort;
-  const configured = PROVIDERS[provider].cliPath(configuration);
-  const { resolved, exists } = resolveCli(configured || provider);
-  if (!exists) {
-    throw new Error(`${provider} CLI not found (looked for "${configured || provider}"). `
-      + `Set ${provider}CliPath in .novakai-command/config.json or start the backend from a shell with ${provider} on PATH.`);
-  }
-  return spawnPty(resolved, args, {
+  return spawnPty(resolveProviderCli(provider, ConfigManager.load()), args, {
     name: 'xterm-256color',
     cols: 120,
     rows: 32,
     cwd,
-    env: providerEnvironment(provider, browserSession, serverPort, agentId),
+    env: spawnEnvironment(provider, browserSession, agentId),
   });
 }
 

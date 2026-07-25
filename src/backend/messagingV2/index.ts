@@ -124,8 +124,11 @@ async function bootLanes(
     ...(deps.humanToken !== undefined ? { humanToken: deps.humanToken } : {}),
     ...(deps.log !== undefined ? { 'log': deps.log } : {}),
   });
-  await lanes.openBootLanes();
+  // audit #9: subscribe launches BEFORE the boot sweep so a spawn landing
+  // mid-sweep is never missed — openLane's registry-keyed idempotence
+  // dedupes any overlap between the two paths.
   deps.onLaunch?.((info) => lanes.handleAgentLaunched(info));
+  await lanes.openBootLanes();
   return lanes;
 }
 

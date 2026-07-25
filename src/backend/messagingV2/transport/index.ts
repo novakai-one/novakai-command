@@ -3,10 +3,22 @@
  * the package's PresenceTransport seam (Messaging-Seams §4) implemented over
  * the app's TerminalRuntime submit lane. One Presence binds to one durable
  * agentId; the ADDRESSED lane (deliver) types `[nvk-msg from <name> id <id>]`
- * into the recipient's PTY through the host-owned timed submission (D2), so
- * the effect is REAL bytes into a live terminal lane (G10/DEC-08), never a
- * buffer claim. The OBSERVATION lane (push) is an honest no-op on a live
- * lane: PTY agents consume addressed deliveries, not subscription frames.
+ * into the recipient's lane through the host-owned timed submission (D2).
+ *
+ * EFFECT HONESTY (audit #3): `{kind:'effect'}` here means exactly "accepted
+ * into the live per-agent host lane (submit() returned true)" — the type →
+ * settle → \r lifecycle then runs asynchronously under the PTY-owning
+ * process. It is NOT a claim of "bytes into the PTY": a PTY death inside the
+ * settle window loses the queued job silently (runSubmission's quiet no-op).
+ * That loss window is bounded by liveness — onExit → onDisconnect → the
+ * Delivery stays pending and the presence closes (R5/R9) — and matches the
+ * WS adapter's "frame onto the socket" standard (Seams §4: the effect is the
+ * hand-off to the socket/lane, never end-to-end receipt). There is
+ * deliberately NO transcript confirmer on this lane: the old confirmer dies
+ * in N5, and delivery truth is the transport's (DEC-08/G10).
+ *
+ * The OBSERVATION lane (push) is an honest no-op on a live lane: PTY agents
+ * consume addressed deliveries, not subscription frames.
  *
  * Bind discipline mirrors presence-transport-pty (§4.3): binding is
  * adapter-owned (bind), an unbound lane is a TRANSIENT failure (the
@@ -69,11 +81,20 @@ function presenceGone(detail: string): EffectReport {
   return { kind: 'failure', retryable: false, detail, permanent: 'presence-gone' };
 }
 
-/** personId → agentId: the exact inverse of authority's personIdForAgentId
- * (`person_${agentId.replaceAll('_', '-')}`) for agent principals only. */
-function agentIdForPersonId(personId: string): string | undefined {
-  if (!personId.startsWith('person_agent-')) return undefined;
-  return personId.slice('person_'.length).replace('-', '_');
+/**
+ * personId → agentId candidates: the inverse of authority's
+ * personIdForAgentId (`person_${agentId.replaceAll('_', '-')}`). Both dash
+ * foldings are tried because the fold is lossy — `agent_<uuid>` ids carry
+ * real dashes (only their first underscore folded), while synthetic ids like
+ * `agent_ops_team_lead` folded every underscore (audit #8).
+ * REVERSE-MAPPING IS DEBT: the authority documents the mapping as
+ * one-directional; the right fix is an authority-owned personId→name query
+ * (later slice). Until then, roster-match both candidates.
+ */
+function agentIdCandidates(personId: string): string[] {
+  if (!personId.startsWith('person_agent-')) return [];
+  const suffix = personId.slice('person_'.length);
+  return [suffix.replaceAll('-', '_'), suffix.replace('-', '_')];
 }
 
 /** `[nvk-msg from <displayName> id <messageId>] <body>` on ONE line: raw
@@ -103,11 +124,12 @@ function submitJobFor(info: AgentInfo, payload: DeliverPayload, text: string): S
 }
 
 function displayNameFor(state: TransportState, senderId: string): string {
-  const agentId = agentIdForPersonId(senderId);
-  const title = agentId === undefined
-    ? undefined
-    : state.runtime.list().find((agent) => agent.agentId === agentId)?.title;
-  return title ?? senderId;
+  const roster = state.runtime.list();
+  for (const candidate of agentIdCandidates(senderId)) {
+    const title = roster.find((agent) => agent.agentId === candidate)?.title;
+    if (title !== undefined) return title;
+  }
+  return senderId;
 }
 
 function laneState(state: TransportState, presenceId: PresenceId): { info: AgentInfo } | EffectReport {

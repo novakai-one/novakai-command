@@ -200,7 +200,6 @@ const KIMI_PEER = agentInfo('agent_kimi-peer', 'worker-k', 'kimi');
 }
 
 // --- a lane death raises onDisconnect into the core's single close path (R9) ---------
-
 {
   const terminals = new FakeTerminalRuntime([SENDER, PEER]);
   const transport = createTerminalHostTransport(terminals);
@@ -216,6 +215,23 @@ const KIMI_PEER = agentInfo('agent_kimi-peer', 'worker-k', 'kimi');
   assert.deepEqual(disconnected, [presenceId], 'the adapter reported the death — the core never infers liveness');
   assert.equal(transport.boundCount, 0, 'the binding is dropped with the lane');
   console.log('liveness disconnect test passed');
+}
+
+// --- audit #8: multi-underscore agentIds reverse-map for display names (debt) -----------
+
+{
+  const opsLead = agentInfo('agent_ops_team_lead', 'ops-lead');
+  const terminals = new FakeTerminalRuntime([opsLead, PEER]);
+  const transport = createTerminalHostTransport(terminals);
+  const presenceId = 'presence_ops' as PresenceId;
+  transport.bind(presenceId, PEER.agentId);
+  await transport.deliver(presenceId, { message: makeMessage('standup', 'person_agent-ops-team-lead'), priority: 'normal' });
+  assert.match(
+    terminals.submissions[0]?.text ?? '',
+    /^\[nvk-msg from ops-lead id message_1\]/,
+    'a multi-underscore agentId resolves to its terminal title, not the personId fallback',
+  );
+  console.log('multi-underscore display-name test passed');
 }
 
 console.log('terminal-host transport contract-discipline tests passed');

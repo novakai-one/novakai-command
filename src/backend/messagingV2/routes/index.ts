@@ -173,14 +173,26 @@ function withParam(request: Request, response: Response): string | null {
   return null;
 }
 
+/** Error → HTTP-ready payload, with the same NotAuthenticated eviction as
+ * reply() (audit #7): a dead cached session must not 401 its token forever. */
+function failurePayload(cache: SessionCache, token: string, error: MessagingError): { status: number; payload: Record<string, unknown> } {
+  if (error.name === 'NotAuthenticated') cache.delete(token);
+  return { status: statusForError(error), payload: { error: error.message, name: error.name } };
+}
+
 /** Thread resolution + paged read for ?with=<name>, as an HTTP-ready result. */
-async function messagesResult(session: MessagingSession, peer: AgentInfo): Promise<{ status: number; payload: Record<string, unknown> }> {
+async function messagesResult(
+  cache: SessionCache,
+  token: string,
+  session: MessagingSession,
+  peer: AgentInfo,
+): Promise<{ status: number; payload: Record<string, unknown> }> {
   const threads = await session.listThreadsForPerson({});
-  if (threads.kind !== 'ok') return { status: statusForError(threads.error), payload: { error: threads.error.message } };
+  if (threads.kind !== 'ok') return failurePayload(cache, token, threads.error);
   const threadId = directThreadId(threads.value.threads, session.principal.personId, personIdForAgentId(peer.agentId));
   if (threadId === undefined) return { status: 200, payload: { threadId: null, messages: [] } };
   const page = await session.getMessages({ threadId });
-  if (page.kind !== 'ok') return { status: statusForError(page.error), payload: { error: page.error.message } };
+  if (page.kind !== 'ok') return failurePayload(cache, token, page.error);
   return { status: 200, payload: { threadId, messages: page.value.messages } };
 }
 
@@ -191,7 +203,7 @@ async function handleMessages(deps: MessagingV2RouteDeps, cache: SessionCache, r
   if (withName === null) return;
   const peer = peerOrReply(deps.terminals, withName, response);
   if (peer === null) return;
-  const result = await messagesResult(auth.session, peer);
+  const result = await messagesResult(cache, auth.token, auth.session, peer);
   response.status(result.status).json(result.payload);
 }
 

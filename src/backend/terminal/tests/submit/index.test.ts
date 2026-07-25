@@ -99,4 +99,37 @@ function sleep(milliseconds: number): Promise<void> {
   console.log('queued dedupe test passed');
 }
 
+// --- audit #3b: a duplicate messageId against a DEAD lane is refused -------------------
+// Liveness is judged BEFORE dedupe: true-against-a-corpse is never reported.
+
+{
+  let exitHandler: ((event: { exitCode: number; signal?: number }) => void) | undefined;
+  const launcher: ProviderLauncher = () => ({
+    process: {
+      'pid': 4242,
+      write: () => {},
+      resize: () => {},
+      kill: () => {},
+      onData: () => ({ dispose: () => {} }),
+      onExit: (handler: (event: { exitCode: number; signal?: number }) => void) => {
+        exitHandler = handler;
+        return { dispose: () => {} };
+      },
+    },
+    sessionId: new Promise<string>(() => {}),
+    cancelSessionWait: () => {},
+  });
+  const registryPath = join(mkdtempSync(join(tmpdir(), 'mc-submit-dead-')), 'agents.json');
+  const manager = new TerminalManager(registryPath, launcher);
+  const info = await manager.create({ cwd: '/tmp/fake-dead' });
+  assert.equal(manager.submit({ agentId: info.agentId, messageId: 'dead-1', text: 'first', settleMs: 30 }), true);
+  exitHandler?.({ exitCode: 0 });
+  assert.equal(
+    manager.submit({ agentId: info.agentId, messageId: 'dead-1', text: 'first', settleMs: 30 }),
+    false,
+    'duplicate messageId against a dead lane is refused (presence-gone), never true-against-a-corpse',
+  );
+  console.log('corpse-dedupe refusal test passed');
+}
+
 console.log('PASS');
