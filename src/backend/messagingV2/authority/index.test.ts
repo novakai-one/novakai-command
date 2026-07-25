@@ -40,13 +40,17 @@ function scratchStores(): string {
   return scratch;
 }
 
-/** Flip a durable agent's lifecycle state through the store engine (CAS). */
+/** Flip a durable agent's lifecycle state through the store engine (CAS).
+ * `updated` must move STRICTLY forward — two flips inside one millisecond
+ * collide without the floor+1 guard (the N1 CI-flake class). */
 function setAgentStatus(scratch: string, agentId: string, status: string): void {
   const record = readStoreDir(scratch).files['agents.jsonl'].records
-    .find((entry: { block: { id?: string } }) => entry.block.id === agentId);
+    .find((entry: { block: { id?: string; updated?: unknown } }) => entry.block.id === agentId);
   assert.ok(record, `${agentId} exists in agents.jsonl`);
+  const previousMs = Date.parse(typeof record.block.updated === 'string' ? record.block.updated : '') || 0;
+  const updated = new Date(Math.max(Date.now(), previousMs + 1)).toISOString();
   replaceLine(scratch, 'agents.jsonl', agentId,
-    JSON.stringify({ ...record.block, status, updated: new Date().toISOString() }), { expectedRaw: record.raw });
+    JSON.stringify({ ...record.block, status, updated }), { expectedRaw: record.raw });
 }
 
 const PERSON_PATTERN = new RegExp(idPatterns.PersonId);
