@@ -1,0 +1,23 @@
+{
+  "name": "@novakai/messaging",
+  "version": "0.1.0",
+  "description": "Novakai Messaging capability — v1 surface sealed through S4: direct lane, rooms (membership seam, frozen snapshots), attention mechanics (DND/urgent, contact policy), the Subscribe stream, and templates (DEC-15); embedded + WS standalone modes; memory/jsonl stores; memory/PTY/WS presence transports.",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "generate": "node tools/generate-ts.mjs",
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test \"dist/tests/**/*.test.js\""
+  },
+  "license": "UNLICENSED",
+  "private": true,
+  "devDependencies": {
+    "@types/ws": "^8.18.1",
+    "typescript": "^5.5.0"
+  },
+  "dependencies": {
+    "ws": "^8.21.1"
+  }
+}
