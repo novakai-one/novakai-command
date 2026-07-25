@@ -73,10 +73,13 @@ console.log('mission resolve tests passed');
 // Revision evidence tracks membership (R8/§3.2.3): retire a member, the
 // roster shrinks AND the revision changes; unknown members never linger.
 const record = readStoreDir(scratch).files['agents.jsonl'].records
-  .find((entry: { block: { id?: string } }) => entry.block.id === goneId);
+  .find((entry: { block: { id?: string; updated?: unknown } }) => entry.block.id === goneId);
 assert.ok(record, 'gone agent exists');
+// `updated` must move STRICTLY forward — same-ms flips collide without the
+// floor+1 guard (the N1 CI-flake class).
+const gonePreviousMs = Date.parse(typeof record.block.updated === 'string' ? record.block.updated : '') || 0;
 replaceLine(scratch, 'agents.jsonl', goneId,
-  JSON.stringify({ ...record.block, status: 'retired', updated: new Date().toISOString() }),
+  JSON.stringify({ ...record.block, status: 'retired', updated: new Date(Math.max(Date.now(), gonePreviousMs + 1)).toISOString() }),
   { expectedRaw: record.raw });
 
 const afterRetire = await membership.resolveMembers(missionRoom);
