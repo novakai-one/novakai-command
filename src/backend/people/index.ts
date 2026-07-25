@@ -10,11 +10,14 @@
 // Liveness law (mission_visual-truth, Ruling 3): the durable status is NEVER
 // rendered raw — `liveness` is derived here once (live > external-verified >
 // unverified > exited > retired/failed) and every surface renders that tier.
-import { existsSync, readFileSync } from 'node:fs';
+
 import type { Express, Request, Response } from 'express';
+import { existsSync, readFileSync } from 'node:fs';
 import type { ArchiveResponse, ArchivedLane, PeopleResponse, PersonView } from '../../shared/people/schema.js';
 import type { AgentInfo } from '../terminal/manager.js';
 import type { AgentBlock } from '../objectModel/index.js';
+import { personIdForAgentId } from '../messagingV2/authority/index.js';
+import { lastActivityBySenderId } from '../messagingV2/journal/index.js';
 
 /** The slices of the object model this hub reads. The archive resolvers are
  * optional so the people directory works standalone (tests, minimal wiring). */
@@ -218,13 +221,13 @@ export class PeopleHub {
    * every surface renders this tier (Ruling 3). */
   listPeople(): PeopleResponse {
     const nowMs = this.options.now?.() ?? Date.now();
-    const activity = this.options.journalPath ? lastActivityBySender(this.options.journalPath) : new Map<string, number>();
+    const activity = this.options.journalPath ? lastActivityBySenderId(this.options.journalPath) : new Map<string, number>();
     const runtimeById = new Map(this.runtimeAgents().map((info) => [info.agentId, info]));
     const people: PersonView[] = [];
     for (const block of this.source.listAgents()) {
       const runtime = runtimeById.get(block.id);
       const durableStatus = DURABLE_STATUSES.has(block.status) ? block.status : null;
-      const liveness = livenessFor(durableStatus, runtime ? { status: runtime.status } : null, activity.get(block.name) ?? null, nowMs);
+      const liveness = livenessFor(durableStatus, runtime ? { status: runtime.status } : null, activity.get(personIdForAgentId(block.id)) ?? null, nowMs);
       people.push(durablePerson(block, runtime, liveness));
       runtimeById.delete(block.id);
     }

@@ -8,6 +8,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
 import type { MessageEnvelope } from '../../messaging/types.js';
+import { readJournalEnvelopes } from '../../messagingV2/journal/index.js';
 import type { AgentInfo } from '../../terminal/manager.js';
 import type { ReadIssue, SourceRef } from '../../../shared/missionView/schema.js';
 
@@ -164,22 +165,12 @@ function parseStoreLine(entry: string): Record<string, unknown> | null {
   }
 }
 
-/** The old MessageStore's read semantics: fold by id, last line wins,
- * first-occurrence order, torn lines skipped (N4: the class is deleted). */
-function foldEnvelopes(lines: string[]): MessageEnvelope[] {
-  const byId = new Map<string, MessageEnvelope>();
-  for (const line of lines) {
-    const parsed = parseStoreLine(line);
-    if (parsed === null || typeof parsed['id'] !== 'string') continue;
-    byId.set(parsed['id'] as string, parsed as unknown as MessageEnvelope);
-  }
-  return [...byId.values()];
-}
-
-/** Read-only journal fold — history() only; never append/updateStatus (R3). */
+/** Read-only journal fold — history() only; never append/updateStatus (R3).
+ * N5: reads the CAPABILITY journal (acceptance ops) via the shared
+ * messagingV2/journal reader — the frozen archive has no writers. */
 export function readJournal(journalPath: string): { envelopes: MessageEnvelope[]; problems: ReadIssue[] } {
   if (!existsSync(journalPath)) return { envelopes: [], problems: [issue(`journal missing: ${journalPath}`, [{ store: 'journal', path: journalPath }])] };
-  return { envelopes: foldEnvelopes(readFileSync(journalPath, 'utf8').split('\n')), problems: [] };
+  return { envelopes: readJournalEnvelopes(journalPath) as unknown as MessageEnvelope[], problems: [] };
 }
 
 /**

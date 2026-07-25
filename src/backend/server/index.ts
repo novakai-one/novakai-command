@@ -28,6 +28,7 @@ import type { MessagingV2Handle } from '../messagingV2/index.js';
 import { HUMAN_PERSON_ID } from '../messagingV2/index.js';
 import { registerMessagingV2Routes } from '../messagingV2/routes/index.js';
 import { registerMessagingV2UserRoutes } from '../messagingV2/userRoutes/index.js';
+import { defaultCapabilityJournalPath } from '../messagingV2/journal/index.js';
 import { createMessagingLive } from '../messagingV2/live/index.js';
 import type { MessagingLive } from '../messagingV2/live/index.js';
 import { ExternalSessionsHub } from '../externalSessions/index.js';
@@ -224,7 +225,7 @@ export class ServerController {
     return new MissionViewHub({
       storesDir: process.env.NVK_MISSION_STORES_DIR ?? path.resolve('.novakai/stores'),
       workDir: process.env.NVK_MISSION_WORK_DIR ?? path.resolve('.novakai/work'),
-      journalPath: process.env.NVK_MISSION_JOURNAL ?? path.resolve('.novakai-command/messages.jsonl'),
+      journalPath: defaultCapabilityJournalPath(),
       registryPath: process.env.NVK_MISSION_REGISTRY ?? path.resolve('.novakai-command/agents.json'),
       roomsPath: process.env.NVK_MISSION_ROOMS ?? path.resolve('.novakai-command/rooms.jsonl'),
     });
@@ -340,7 +341,7 @@ export class ServerController {
     });
     this.missionViewHub.registerRoutes(this.app);
     this.externalSessionsHub.registerRoutes(this.app);
-    new PeopleHub(this.objectModel, () => this.agentsHub.terminals.list(), process.env.NVK_MISSION_ROOMS ?? path.resolve('.novakai-command/rooms.jsonl'), { journalPath: process.env.NVK_MISSION_JOURNAL ?? path.resolve('.novakai-command/messages.jsonl') }).registerRoutes(this.app);
+    new PeopleHub(this.objectModel, () => this.agentsHub.terminals.list(), process.env.NVK_MISSION_ROOMS ?? path.resolve('.novakai-command/rooms.jsonl'), { journalPath: defaultCapabilityJournalPath() }).registerRoutes(this.app);
 
     this.app.get('/api/config', (_, res) => {
       res.json(ConfigManager.load());

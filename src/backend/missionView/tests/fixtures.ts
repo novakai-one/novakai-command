@@ -97,11 +97,15 @@ export function requestLine(requestId: string, missionId: string, status: string
     + `"question":"q?","refs":[{"kind":"mission","value":"${missionId}"}]}`;
 }
 
-/** A journal envelope line; folded by id via MessageStore.history(). */
+/** A capability-journal acceptance line (N5): the journal the sources
+ * reader folds. `to` = threadId, `from` = senderId. */
 export function envelopeLine(envelopeId: string, body: string, threadId?: string): string {
-  const thread = threadId ? `,"threadId":"${threadId}"` : '';
-  return `{"id":"${envelopeId}","from":"agent-a","to":"agent-b","delivery":"normal","body":"${body}",`
-    + `"createdAt":"2026-07-21T11:30:00+10:00","status":"delivered"${thread}}`;
+  const thread = threadId ?? 'thread_fixture';
+  return `{"op":"acceptance","thread":{"id":"${thread}","kind":"thread","schemaVersion":1,`
+    + `"createdAt":"2026-07-21T11:30:00+10:00","threadKind":"direct"},`
+    + `"message":{"id":"${envelopeId}","kind":"message","schemaVersion":1,`
+    + `"createdAt":"2026-07-21T11:30:00+10:00","threadId":"${thread}","senderId":"person_agent-agent-a",`
+    + `"clientMessageId":"cm-${envelopeId}","sequence":1,"priority":"normal","body":{"text":"${body}"}}}`;
 }
 
 /** Write the room store from raw JSONL lines. */

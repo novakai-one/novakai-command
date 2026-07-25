@@ -94,25 +94,27 @@ function sinkFor(state: FailureState, session: MessagingSession, agentId: string
   };
 }
 
+function watchSession(state: FailureState, session: MessagingSession, agentId: string): void {
+  const sessionKey = session.principal.sessionId;
+  if (state.watched.has(sessionKey)) return;
+  state.watched.add(sessionKey);
+  void session.subscribe(
+    { events: ['DeliveryUpdated'] },
+    sinkFor(state, session, agentId) as never,
+  ).then((outcome) => {
+    if (outcome.kind === 'error') {
+      announce(state.deps, `[messaging-v2] failure-truth subscribe failed for ${agentId}: ${outcome.error.message}`);
+    }
+    return outcome as SubscriptionHandle | unknown;
+  }).catch(() => {
+    // best-effort glue — a failed subscription never breaks the lane
+  });
+}
+
 export function createFailureTruth(deps: FailureTruthDeps): FailureTruth {
   const state: FailureState = { deps, seen: new Set(), watched: new Set(), typed: 0 };
   return {
-    watchSession(session, agentId) {
-      const key = session.principal.sessionId;
-      if (state.watched.has(key)) return;
-      state.watched.add(key);
-      void session.subscribe(
-        { events: ['DeliveryUpdated'] },
-        sinkFor(state, session, agentId) as never,
-      ).then((outcome) => {
-        if (outcome.kind === 'error') {
-          announce(deps, `[messaging-v2] failure-truth subscribe failed for ${agentId}: ${outcome.error.message}`);
-        }
-        return outcome as SubscriptionHandle | unknown;
-      }).catch(() => {
-        // best-effort glue — a failed subscription never breaks the lane
-      });
-    },
+    watchSession: (session, agentId) => watchSession(state, session, agentId),
     get typedCount(): number {
       return state.typed;
     },
