@@ -47,6 +47,12 @@ export type {
   ConfigAuthority,
   PrincipalConfig,
 } from "../adapters/authority-config.js";
+export { createConfigMembership } from "../adapters/membership-config.js";
+export type {
+  ConfigMembership,
+  MembershipConfig,
+  MembershipRoomConfig,
+} from "../adapters/membership-config.js";
 export { createMemoryPresenceTransport } from "../adapters/presence-transport-memory.js";
 export type {
   MemoryPresenceTransport,
@@ -55,3 +61,6 @@ export type {
 
 // Composition-tuning types (the retry budget is adapter configuration, R5).
 export { DEFAULT_RETRY_POLICY } from "../seams/presenceTransport.js";
+// Membership-seam §3.3 failure constructors — the documented adapter-extension
+// vocabulary (hosts writing a membership adapter reuse these, like authority's).
+export { membershipUnavailable, unknownRoom } from "../seams/membership.js";

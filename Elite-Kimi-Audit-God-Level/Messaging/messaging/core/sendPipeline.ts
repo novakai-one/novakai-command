@@ -42,6 +42,7 @@ import { MessagingError } from "../public/contract/index.js";
 import type { MessageId, ThreadId } from "../public/contract/index.js";
 import type { SendAccepted } from "../public/contract/index.js";
 import type { Principal } from "../seams/authority.js";
+import type { MembershipSource } from "../seams/membership.js";
 import type { MessagingStore } from "../seams/store.js";
 import type { ClockIds } from "../seams/clock.js";
 import type { ProvisioningDirectory } from "../seams/authority.js";
@@ -59,6 +60,7 @@ export interface SendPipelineDeps {
   store: MessagingStore;
   clock: ClockIds;
   provisioning: ProvisioningDirectory;
+  membership: MembershipSource;
   orchestrator: DeliveryOrchestrator;
   /** TEST-ONLY fault injection (F4): delay the commit→settle window. See header. */
   effectLegDelayMs?: number;
@@ -80,7 +82,7 @@ function duplicateResult(
 }
 
 export function createSendPipeline(deps: SendPipelineDeps) {
-  const { store, clock, provisioning, orchestrator } = deps;
+  const { store, clock, provisioning, membership, orchestrator } = deps;
 
   return async function sendMessage(principal: Principal, input: unknown): Promise<SendOutcome> {
     // 1. The door: parse from unknown (MSG-021).
@@ -121,7 +123,7 @@ export function createSendPipeline(deps: SendPipelineDeps) {
 
     // 4. THE single decision point.
     const decision = await decideSend(
-      { store, clock, provisioning },
+      { store, clock, provisioning, membership },
       principal,
       command,
       requestHash,
@@ -159,9 +161,9 @@ export function createSendPipeline(deps: SendPipelineDeps) {
         // F9: RecordNotFound is context-dependent (Store-Seam §6), NOT a
         // dependency failure — storeDependencyError throws on it by design.
         // On the send path a missing record is the room Thread the command
-        // named (rooms land in S2; the store requires the thread to
-        // pre-exist), so the honest typed outcome is SendMessage's own
-        // UnknownThread — never a thrown core bug at the door.
+        // named (the store requires room Threads to pre-exist, §2.1/§11.4),
+        // so the honest typed outcome is SendMessage's own UnknownThread —
+        // never a thrown core bug at the door.
         if (outcome.error.name === "RecordNotFound") {
           return {
             kind: "rejected",
@@ -191,6 +193,10 @@ export function createSendPipeline(deps: SendPipelineDeps) {
       await new Promise((resolve) => setTimeout(resolve, deps.effectLegDelayMs));
     }
     try {
+      // R4 needs nothing here: room-send blocked recipients committed
+      // terminal failed{blocked-by-contact-policy} INSIDE commitAcceptance
+      // (Store-Seam §11.7) — the orchestrator's current-state re-read skips
+      // them, and no commit→settle window can ever expose them as pending.
       await orchestrator.onAcceptance(
         committedMessage,
         decision.deliveries,

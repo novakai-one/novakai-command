@@ -1,22 +1,28 @@
 /**
- * Queries — the S1 subset of the 9 contract queries, through the store seam,
+ * Queries — the S2 subset of the 9 contract queries, through the store seam,
  * under the R3 authorization matrix.
  *
- * Implemented: GetThread, GetMessages, GetInbox, GetDelivery, GetPolicy,
- * GetPresence, GetCapabilities (the latter lives on the composition root —
- * it is pre-authentication discovery).
+ * Implemented: GetThread, ListThreadsForPerson (S2), GetMessages, GetInbox,
+ * GetDelivery, GetPolicy, GetPresence, GetCapabilities (the latter lives on
+ * the composition root — it is pre-authentication discovery).
  *
  * Deliberately ABSENT (not stubbed):
- *   - ListThreadsForPerson: the frozen store seam (§4) has no per-person
- *     thread listing read, and inbox/history reads cannot reconstruct one
- *     faithfully (terminal-delivery and sender-side threads would vanish).
- *     Lands with rooms in S2 when the seam read exists.
  *   - ListTemplates: templates are slice S4.
  *
  * R3 matrix: member-scoped reads distinguish NotAuthorized (exists, not
  * yours) from Unknown* (does not exist) — the accepted existence
- * side-channel (Schemas §5). Room-Thread reads require the membership seam
- * (S2); unwired in S1 → NotAuthorized, never a silent allow.
+ * side-channel (Schemas §5). Room-Thread reads resolve membership through
+ * the membership seam (Seams §3.1 isMember) at REQUEST time (R3: "current
+ * member"): a known non-member → NotAuthorized; a room unknown to the
+ * authority → UnknownThread (§3.3's shared public mapping); membership
+ * unavailable → DependencyUnavailable{membership, retryable: true} — never a
+ * silent allow or deny (G6).
+ *
+ * ListThreadsForPerson (Store-Seam §11.5): the store returns the person's
+ * direct Threads plus ALL room Threads; the core filters rooms through
+ * isMember — membership-unavailable fails the whole query loudly (G6); a
+ * room unknown to the authority is omitted (the authority owns membership
+ * truth — unknown room ⇒ cannot be a member).
  *
  * GetPolicy has no NotFound in its error list, so an absent policy pair
  * returns the DEC-14 synthesized defaults (view-only, revision 0 — never
@@ -26,6 +32,7 @@
 import { constants, contractVersion, schemaVersion } from "../public/contract/index.js";
 import { MessagingError } from "../public/contract/index.js";
 import type {
+  CapabilityViewFeatures,
   ContactPolicy,
   Cursor,
   DndPolicy,
@@ -42,12 +49,15 @@ import type {
   GetPolicyInput,
   GetPresenceInput,
   GetThreadInput,
+  ListThreadsForPersonInput,
   MessagePage,
   PolicyView,
   PresenceListResult,
+  ThreadListResult,
   ThreadView,
 } from "../public/contract/index.js";
 import type { Principal } from "../seams/authority.js";
+import type { MembershipSource } from "../seams/membership.js";
 import type { MessagingStore, StoreError } from "../seams/store.js";
 import type { ClockIds } from "../seams/clock.js";
 import type { PresenceRegistry } from "./presenceRegistry.js";
@@ -57,6 +67,7 @@ export interface QueriesDeps {
   store: MessagingStore;
   clock: ClockIds;
   registry: PresenceRegistry;
+  membership: MembershipSource;
 }
 
 function notAuthorized(detail: string): MessagingError {
@@ -91,18 +102,33 @@ function mapReadError(error: StoreError, onNotFound: () => MessagingError): Mess
 }
 
 export function createQueries(deps: QueriesDeps) {
-  const { store, clock, registry } = deps;
+  const { store, clock, registry, membership } = deps;
 
-  /** R3 member check for a resolved Thread. Throws NotAuthorized. */
-  function assertThreadMember(principal: Principal, thread: Thread): void {
+  /**
+   * R3 member check for a resolved Thread. Throws NotAuthorized / UnknownThread /
+   * DependencyUnavailable. Room Threads resolve membership through the seam at
+   * REQUEST time (R3: current member) — never a cached roster.
+   */
+  async function assertThreadMember(principal: Principal, thread: Thread): Promise<void> {
     if (thread.threadKind === "direct" && thread.direct) {
       const [a, b] = thread.direct.pair;
       if (principal.personId === a || principal.personId === b) return;
       throw notAuthorized(`not a member of direct Thread ${thread.id} (R3)`);
     }
-    // Room Threads: read-time membership resolves through the membership seam
-    // (R3/R8) — slice S2, unwired in S1. Never a silent allow (G6).
-    throw notAuthorized(`room Thread ${thread.id} reads require the membership seam (S2)`);
+    if (!thread.room) {
+      // Contract: room payload present iff threadKind team|mission — halt-class.
+      throw storeDependencyError({
+        name: "StoreCorrupt",
+        message: `room Thread ${thread.id} is missing its room payload`,
+      });
+    }
+    const outcome = await membership.isMember(thread.room, principal.personId);
+    if (outcome.kind === "known") {
+      if (outcome.member) return;
+      throw notAuthorized(`not a current member of room Thread ${thread.id} (R3)`);
+    }
+    if (outcome.kind === "unknown") throw unknownThread(thread.id); // §3.3 shared mapping
+    throw outcome.error; // DependencyUnavailable{membership, retryable: true} — never silent (G6)
   }
 
   function selfOrAdmin(principal: Principal, personId: PersonId | undefined): PersonId {
@@ -116,14 +142,47 @@ export function createQueries(deps: QueriesDeps) {
   async function getThread(principal: Principal, input: GetThreadInput): Promise<ThreadView> {
     const found = await store.getThread(input.threadId);
     if (found.kind === "error") throw mapReadError(found.error, () => unknownThread(input.threadId));
-    assertThreadMember(principal, found.value);
+    await assertThreadMember(principal, found.value);
     return found.value;
+  }
+
+  async function listThreadsForPerson(
+    principal: Principal,
+    input: ListThreadsForPersonInput,
+  ): Promise<ThreadListResult> {
+    const target = selfOrAdmin(principal, input.personId);
+    const listed = await store.listThreadsForPerson(target);
+    if (listed.kind === "error") throw mapReadError(listed.error, () => unknownThread(target));
+    const visible: Thread[] = [];
+    for (const thread of listed.value) {
+      if (thread.threadKind === "direct") {
+        visible.push(thread); // the store already matched the pair (§11.5)
+        continue;
+      }
+      if (!thread.room) {
+        throw storeDependencyError({
+          name: "StoreCorrupt",
+          message: `room Thread ${thread.id} is missing its room payload`,
+        });
+      }
+      // R3: room visibility = current membership, resolved at request time.
+      const outcome = await membership.isMember(thread.room, target);
+      if (outcome.kind === "known") {
+        if (outcome.member) visible.push(thread);
+        continue;
+      }
+      // The authority owns membership truth: an unknown room cannot have the
+      // target as a member — omit. Unavailable fails the whole query (G6).
+      if (outcome.kind === "unknown") continue;
+      throw outcome.error;
+    }
+    return { threads: visible };
   }
 
   async function getMessages(principal: Principal, input: GetMessagesInput): Promise<MessagePage> {
     const thread = await store.getThread(input.threadId);
     if (thread.kind === "error") throw mapReadError(thread.error, () => unknownThread(input.threadId));
-    assertThreadMember(principal, thread.value);
+    await assertThreadMember(principal, thread.value);
     const page = await store.getMessages(input.threadId, {
       ...(input.cursor !== undefined ? { cursor: input.cursor } : {}),
       ...(input.limit !== undefined ? { limit: input.limit } : {}),
@@ -168,7 +227,7 @@ export function createQueries(deps: QueriesDeps) {
     }
     const thread = await store.getThread(message.value.threadId);
     if (thread.kind === "error") throw mapReadError(thread.error, () => unknownThread(message.value.threadId));
-    assertThreadMember(principal, thread.value);
+    await assertThreadMember(principal, thread.value);
     const deliveries = await store.getDeliveries(input.messageId);
     if (deliveries.kind === "error") throw mapReadError(deliveries.error, () => unknownThread(input.messageId));
     return { deliveries: deliveries.value };
@@ -215,7 +274,7 @@ export function createQueries(deps: QueriesDeps) {
     return { presences: registry.presencesFor(input.personId) };
   }
 
-  return { getThread, getMessages, getInbox, getDelivery, getPolicy, getPresence };
+  return { getThread, listThreadsForPerson, getMessages, getInbox, getDelivery, getPolicy, getPresence };
 }
 
 export type Queries = ReturnType<typeof createQueries>;
@@ -227,10 +286,11 @@ export function capabilityView(protocolVersion: string) {
     // never a hand-copied literal.
     contractVersion,
     protocolVersion,
-    // S1-c surface: the direct lane + attention mechanics (DND hold/release,
-    // urgent + override, contact policy) + the Subscribe stream (R1, MSG-023).
-    // Rooms (S2) and templates (S4) are absent, not hidden.
-    features: ["direct", "attention", "subscribe"] as ("direct" | "attention" | "subscribe")[],
+    // S2 surface: the direct lane + rooms (membership-resolved sends, frozen
+    // snapshots, room read authorization) + attention mechanics (DND
+    // hold/release, urgent + override, contact policy) + the Subscribe
+    // stream (R1, MSG-023). Templates (S4) are absent, not hidden.
+    features: ["direct", "rooms", "attention", "subscribe"] as CapabilityViewFeatures[],
     limits: {
       messageMaxBytes: constants.messageMaxBytes,
       pageLimitMax: constants.pageLimitMax,

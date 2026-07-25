@@ -167,4 +167,30 @@ describe("Recovery sweep (DEC-21)", () => {
     }
     await cap.close();
   });
+
+  it("F10: embedded start() sweeps at startup (accept-after-sweep parity with standalone)", async () => {
+    // A torn acceptance exists BEFORE start: the settle leg failed, the
+    // marker is true. The embedded root's start() must run the idempotent
+    // sweep itself — no manual runRecoverySweep call.
+    const { cap } = crashingHarness();
+
+    const alice = await sessionFor(cap, "tok-alice");
+    const bob = await sessionFor(cap, "tok-bob");
+    await allowlist(bob, ALICE);
+    unwrap(await alice.sendMessage(sendInput(`person:${BOB}`, "before start", "m-f10")));
+    const before = await cap.store.listPendingAcceptances();
+    assert.equal(before.kind, "ok");
+    if (before.kind === "ok") {
+      assert.equal(before.value.acceptances.length, 1, "the crash window left the marker true");
+    }
+
+    await cap.start(); // F10: the sweep runs HERE, inside embedded start().
+
+    const after = await cap.store.listPendingAcceptances();
+    assert.equal(after.kind, "ok");
+    if (after.kind === "ok") {
+      assert.equal(after.value.acceptances.length, 0, "embedded start() swept the torn acceptance");
+    }
+    await cap.close();
+  });
 });

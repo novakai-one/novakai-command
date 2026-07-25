@@ -1,5 +1,5 @@
 /**
- * Queries — the S1 subset under the R3 authorization matrix: GetInbox
+ * Queries — the S1-subset tests under the R3 authorization matrix (S2 room authorization lives in rooms.test.ts): GetInbox
  * (non-terminal only, §11.2), GetMessages (sequence-ordered cursor
  * pagination, DEC-19), GetThread/GetDelivery membership, GetPolicy
  * (synthesized DEC-14 defaults; self or policy.admin), GetPresence (any
@@ -24,7 +24,7 @@ import {
   unwrap,
 } from "./helpers.js";
 
-describe("queries (R3 matrix, S1 subset)", () => {
+describe("queries (R3 matrix, S1-subset behaviours)", () => {
   it("GetInbox serves non-terminal deliveries only", async () => {
     const { cap } = makeHarness();
     const alice = await sessionFor(cap, "tok-alice");
@@ -149,8 +149,9 @@ describe("queries (R3 matrix, S1 subset)", () => {
       subscriptionBufferMax: constants.subscriptionBufferMax,
     });
     assert.ok(view.features.includes("direct"));
-    assert.ok(!view.features.includes("rooms"), "rooms are S2 — absent, not advertised");
+    assert.ok(view.features.includes("rooms"), "rooms landed in S2 — advertised");
     assert.ok(view.features.includes("subscribe"), "subscribe landed in S1-c — advertised");
+    assert.ok(!view.features.includes("templates"), "templates are S4 — absent, not advertised");
   });
 
   it("GetInbox for another Person requires policy.admin", async () => {

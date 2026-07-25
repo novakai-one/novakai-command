@@ -23,7 +23,16 @@
  *   §6  typed StoreError outcomes; persist-hook IO failure → StoreUnavailable.
  *   §7  listPendingAcceptances / markEffectsSettled / scanJournal.
  *   §11 journaled delivery/policy/template writes; inbox = non-terminal only;
- *       urgentDowngraded persisted on the AcceptanceRecord.
+ *       urgentDowngraded persisted on the AcceptanceRecord; createRoomThread
+ *       (§11.4: get-or-create by room key, persisted in the op log, NOT
+ *       journaled — no committed-fact event exists for Thread creation);
+ *       listThreadsForPerson (§11.5: direct-for-person + all room Threads —
+ *       membership filtering lives above the store); getSnapshot (§11.6: the
+ *       frozen snapshot by messageId — I5 evidence; its original motivation,
+ *       the sweep's R4 re-drive, was removed by §11.7); §11.7 blocked
+ *       recipients commit TERMINAL failed{blocked-by-contact-policy} INSIDE
+ *       commitAcceptance, each with a journaled DeliveryUpdated in the same
+ *       transaction (MSG-016).
  *
  * Write serialization (Store-Seam §1 rule 3, F1): EVERY mutation runs through
  * a per-store mutation queue, so check-then-act (idempotency reservation,
@@ -71,6 +80,7 @@ import type {
   PageOptions,
   PendingAcceptancePage,
   PolicyPair,
+  RoomThreadSpec,
   StoreError,
   StoreResult,
   TemplatePageOut,
@@ -86,7 +96,16 @@ export type StoreOp =
       snapshot: RecipientSnapshot;
       deliveries: Delivery[];
       acceptance: AcceptanceRecord;
-      journal: JournalEntry;
+      /**
+       * MessageCommitted first, then one DeliveryUpdated per §11.7
+       * terminal-at-commit blocked Delivery (MSG-016 observability — the
+       * failure is a committed fact, journaled in the same transaction).
+       */
+      journal: JournalEntry[];
+    }
+  | {
+      op: "room-thread";
+      thread: Thread;
     }
   | {
       op: "delivery-transition";
@@ -106,6 +125,7 @@ export type StoreOp =
 
 export const storeOpNames = [
   "acceptance",
+  "room-thread",
   "delivery-transition",
   "attempt",
   "policy",
@@ -128,6 +148,8 @@ export interface StoreState {
   threads: Map<string, Thread>;
   /** canonical sorted pair key -> ThreadId */
   directThreads: Map<string, ThreadId>;
+  /** room key (`authority\nexternalId`) -> ThreadId (§11.4) */
+  roomThreads: Map<string, ThreadId>;
   messages: Map<string, Message>;
   snapshots: Map<string, RecipientSnapshot>;
   deliveries: Map<string, Delivery>;
@@ -147,6 +169,7 @@ export function emptyStoreState(): StoreState {
   return {
     threads: new Map(),
     directThreads: new Map(),
+    roomThreads: new Map(),
     messages: new Map(),
     snapshots: new Map(),
     deliveries: new Map(),
@@ -172,6 +195,9 @@ const recordNotFound = (record: string, id: string): StoreError => ({
 const canonicalPairKey = (a: string, b: string): string => [a, b].sort().join("\n");
 const acceptanceKey = (senderId: string, clientMessageId: string): string =>
   `${senderId}\n${clientMessageId}`;
+/** §11.4: the room key is the durable join to the owning capability (G2). */
+const roomKey = (authority: string, externalId: string): string =>
+  `${authority}\n${externalId}`;
 
 const CURSOR_PATTERN = new RegExp(idPatterns.Cursor);
 const CURSOR_PREFIX = "s_";
@@ -274,6 +300,14 @@ export class StoreCore implements MessagingStore {
           const [a, b] = op.thread.direct.pair;
           this.state.directThreads.set(canonicalPairKey(a, b), op.thread.id);
         }
+        if (op.thread.room) {
+          // Defensive: acceptance ops re-set their (pre-existing) room Thread
+          // — keep the room-key index complete under replay either way.
+          this.state.roomThreads.set(
+            roomKey(op.thread.room.authority, op.thread.room.externalId),
+            op.thread.id,
+          );
+        }
         this.state.messages.set(op.message.id, op.message);
         this.state.snapshots.set(op.snapshot.id, op.snapshot);
         for (const delivery of op.deliveries) {
@@ -283,9 +317,26 @@ export class StoreCore implements MessagingStore {
           acceptanceKey(op.acceptance.senderId, op.acceptance.clientMessageId),
           op.acceptance,
         );
-        this.state.journal.push(op.journal);
-        this.observeSequence(op.journal.sequence);
+        // Replay honesty: pre-§11.7 op logs carried a single journal entry
+        // (MessageCommitted only); tolerate both shapes.
+        const entries = Array.isArray(op.journal) ? op.journal : [op.journal];
+        for (const entry of entries) {
+          this.state.journal.push(entry);
+          this.observeSequence(entry.sequence);
+        }
         this.observeSequence(op.message.sequence);
+        return;
+      }
+      case "room-thread": {
+        // §11.4: persisted in the op log, NOT journaled — no committed-fact
+        // event exists for Thread creation.
+        this.state.threads.set(op.thread.id, op.thread);
+        if (op.thread.room) {
+          this.state.roomThreads.set(
+            roomKey(op.thread.room.authority, op.thread.room.externalId),
+            op.thread.id,
+          );
+        }
         return;
       }
       case "delivery-transition": {
@@ -400,11 +451,27 @@ export class StoreCore implements MessagingStore {
     // 3. Sequence assignment (§2.3) — inside the transaction, by the adapter.
     const sequence = this.nextSequence();
     const message: Message = { ...input.message, threadId: thread.id, sequence };
-    const deliveries: Delivery[] = input.deliveries.map((delivery) => ({
-      ...delivery,
-      messageId: message.id,
-      threadId: thread.id,
-    }));
+    // §11.7 (R4 made literal): a recipient on the frozen snapshot's blocked
+    // set commits TERMINAL failed{blocked-by-contact-policy} INSIDE this
+    // transaction — the zero-transition shape of R5's
+    // pending → failed{policy-blocked} ("Terminal AT ACCEPTANCE … no attempts
+    // are ever made"). No pending instant is ever observable: pending-state
+    // re-drives (presence-open, DND release, DEC-21 sweep) can never see,
+    // hold, or deliver a blocked Delivery, and §11.2's inbox (non-terminal
+    // only) never serves it — the commit→settle window carries no R4 hazard.
+    const blockedRecipients = new Set(
+      (input.snapshot.blocked ?? []).map((entry) => entry.personId),
+    );
+    const deliveries: Delivery[] = input.deliveries.map((delivery) => {
+      const stamped: Delivery = { ...delivery, messageId: message.id, threadId: thread.id };
+      if (!blockedRecipients.has(delivery.recipientId)) return stamped;
+      return {
+        ...stamped,
+        state: "failed",
+        stateReason: "blocked-by-contact-policy",
+        updatedAt: this.clock.now(),
+      };
+    });
     const snapshot: RecipientSnapshot = { ...input.snapshot, messageId: message.id };
     const acceptance: AcceptanceRecord = {
       id: this.clock.newId("acceptance"),
@@ -422,7 +489,20 @@ export class StoreCore implements MessagingStore {
         ? { urgentDowngraded: input.urgentDowngraded }
         : {}),
     };
-    const journal: JournalEntry = { sequence, kind: "MessageCommitted", message };
+    // §11.1/§11.7: MessageCommitted, then one journaled DeliveryUpdated per
+    // blocked Delivery so the terminal failure stays an observable committed
+    // fact (MSG-016) — same events the S2-a effect-leg CAS produced, now
+    // inside the commit.
+    const journal: JournalEntry[] = [{ sequence, kind: "MessageCommitted", message }];
+    for (const delivery of deliveries) {
+      if (delivery.state === "failed") {
+        journal.push({
+          sequence: this.nextSequence(),
+          kind: "DeliveryUpdated",
+          delivery,
+        });
+      }
+    }
 
     // 4–5. Single commit: thread + message + snapshot + deliveries + marker + journal.
     const opError = await this.persistAndApply({
@@ -447,6 +527,38 @@ export class StoreCore implements MessagingStore {
     };
   }
 
+  // --- §11.4 room Thread creation ------------------------------------------------
+
+  /**
+   * §11.4: get-or-create keyed by the room key — one Thread per room, forever.
+   * The whole check-then-create runs inside the mutation queue (§1 rule 3), so
+   * two concurrent creates produce exactly one Thread and the loser proceeds
+   * against the existing one (not an error). The threadId is minted HERE via
+   * the clock/ID seam — the caller never supplies it. Not journaled (no
+   * committed-fact event); persisted in the op log by durable adapters.
+   */
+  async createRoomThread(room: RoomThreadSpec): Promise<StoreResult<Thread>> {
+    return this.runMutation(() => this.createRoomThreadSerialized(room));
+  }
+
+  private async createRoomThreadSerialized(room: RoomThreadSpec): Promise<StoreResult<Thread>> {
+    const key = roomKey(room.authority, room.externalId);
+    const existingId = this.state.roomThreads.get(key);
+    const existing = existingId !== undefined ? this.state.threads.get(existingId) : undefined;
+    if (existing) return ok(existing);
+    const thread: Thread = {
+      id: this.clock.newId("thread"),
+      kind: "thread",
+      schemaVersion,
+      createdAt: this.clock.now(),
+      threadKind: room.threadKind,
+      room: { authority: room.authority, externalId: room.externalId },
+    };
+    const opError = await this.persistAndApply({ op: "room-thread", thread });
+    if (opError) return failure(opError);
+    return ok(thread);
+  }
+
   // --- §4 reads -----------------------------------------------------------------
 
   async getThread(threadId: ThreadId): Promise<StoreResult<Thread>> {
@@ -463,6 +575,30 @@ export class StoreCore implements MessagingStore {
   async getMessage(messageId: MessageId): Promise<StoreResult<Message>> {
     const message = this.state.messages.get(messageId);
     return message ? ok(message) : failure(recordNotFound("message", messageId));
+  }
+
+  /**
+   * §11.5: every DIRECT Thread whose pair contains personId, plus EVERY room
+   * Thread. Room membership filtering is NOT the store's truth (DEC-04) — the
+   * core filters through the membership seam at request time (R3). Map
+   * insertion order = creation order (not contractual).
+   */
+  async listThreadsForPerson(personId: PersonId): Promise<StoreResult<Thread[]>> {
+    const threads = [...this.state.threads.values()].filter((thread) => {
+      if (thread.threadKind === "direct" && thread.direct) {
+        return thread.direct.pair.includes(personId);
+      }
+      return thread.threadKind === "team" || thread.threadKind === "mission";
+    });
+    return ok(threads);
+  }
+
+  /** §11.6: the frozen RecipientSnapshot by messageId (I5 evidence; the sweep no longer reads it — §11.7). */
+  async getSnapshot(messageId: MessageId): Promise<StoreResult<RecipientSnapshot>> {
+    const snapshot = [...this.state.snapshots.values()].find(
+      (candidate) => candidate.messageId === messageId,
+    );
+    return snapshot ? ok(snapshot) : failure(recordNotFound("snapshot", messageId));
   }
 
   async getMessages(

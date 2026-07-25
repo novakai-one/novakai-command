@@ -89,7 +89,7 @@ describe("P6 — the full capability on in-memory everything", () => {
     const { cap } = makeP6();
     const capabilities = cap.getCapabilities();
     assert.equal(capabilities.contractVersion, "1.0.0");
-    assert.deepEqual([...capabilities.features].sort(), ["attention", "direct", "subscribe"]);
+    assert.deepEqual([...capabilities.features].sort(), ["attention", "direct", "rooms", "subscribe"]);
 
     assert.equal((await cap.authenticate({ token: "wrong" })).kind, "rejected");
     assert.equal((await cap.authenticate("garbage")).kind, "rejected");

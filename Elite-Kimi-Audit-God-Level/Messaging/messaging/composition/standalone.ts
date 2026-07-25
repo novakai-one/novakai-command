@@ -35,8 +35,10 @@ import type { AddressInfo } from "node:net";
 import { WebSocketServer } from "ws";
 import type { ClockIds } from "../seams/clock.js";
 import type { Authority, ProvisioningDirectory } from "../seams/authority.js";
+import type { MembershipSource } from "../seams/membership.js";
 import type { RetryPolicy } from "../seams/presenceTransport.js";
 import type { AuthorityConfig } from "../adapters/authority-config.js";
+import type { MembershipConfig } from "../adapters/membership-config.js";
 import { createSystemClock } from "../adapters/clock-system.js";
 import { openJsonlStore } from "../adapters/store-jsonl.js";
 import { createWsPresenceTransport } from "../adapters/presence-transport-ws.js";
@@ -60,6 +62,13 @@ export interface StandaloneMessagingOptions {
   authority?: AuthorityConfig | (Authority & ProvisioningDirectory);
   /** …or a JSON file carrying an AuthorityConfig. Exactly one of the two. */
   authorityConfigPath?: string;
+  /**
+   * Injected membership config (Seams §3: the room/roster truth lives here,
+   * never core) OR a ready MembershipSource. Default: no rooms. A
+   * MembershipConfig also provisions each room's Thread at startup
+   * (Store-Seam §11.4).
+   */
+  membership?: MembershipConfig | MembershipSource;
   /** The store-jsonl journal file path (parent directories are created). */
   dataPath: string;
   /** WS listen port (default 8787; 0 = ephemeral, see handle.port). */
@@ -142,6 +151,7 @@ export async function createStandaloneMessaging(
     store,
     transports: [transport],
     busPollIntervalMs: options.busPollIntervalMs ?? DEFAULT_BUS_POLL_INTERVAL_MS,
+    ...(options.membership !== undefined ? { membership: options.membership } : {}),
     ...(options.retryPolicy !== undefined ? { retryPolicy: options.retryPolicy } : {}),
     ...(options.revalidateGraceMs !== undefined
       ? { revalidateGraceMs: options.revalidateGraceMs }

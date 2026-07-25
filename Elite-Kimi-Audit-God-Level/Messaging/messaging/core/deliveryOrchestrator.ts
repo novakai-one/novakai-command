@@ -76,8 +76,18 @@ export interface DeliveryOrchestratorDeps {
 }
 
 export interface DeliveryOrchestrator {
-  /** Acceptance decision point: run the first attempt decision per Delivery. */
-  onAcceptance(message: Message, deliveries: Delivery[], urgentDowngraded: boolean): Promise<void>;
+  /**
+   * Acceptance decision point: run the first attempt decision per Delivery.
+   * Blocked room recipients (R4) need NOTHING here — they committed terminal
+   * failed{blocked-by-contact-policy} inside commitAcceptance (Store-Seam
+   * §11.7), so attemptDecision's current-state re-read skips them like every
+   * other terminal Delivery.
+   */
+  onAcceptance(
+    message: Message,
+    deliveries: Delivery[],
+    urgentDowngraded: boolean,
+  ): Promise<void>;
   /** Presence-open re-trigger: attempt decisions for the person's pending Deliveries. */
   onPresenceOpened(personId: PersonId): Promise<void>;
   /** DND release: held → pending (dnd-released) for the person, then attempts resume. */
@@ -360,7 +370,9 @@ export function createDeliveryOrchestrator(deps: DeliveryOrchestratorDeps): Deli
       // THE authoritative effect leg (send pipeline + DEC-21 sweep): a store
       // failure inside a settle PROPAGATES (L1) so the caller leaves
       // effectsPending true and the sweep re-drives — never a pending
-      // Delivery with effects marked settled.
+      // Delivery with effects marked settled. Blocked room recipients (R4)
+      // are already terminal failed from the commit (Store-Seam §11.7) —
+      // attemptDecision's current-state re-read skips them.
       for (const delivery of deliveries) {
         await attemptDecision(delivery, message, urgentDowngraded);
       }

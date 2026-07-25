@@ -129,9 +129,16 @@ export interface AcceptanceInput {
    * Deliveries at commit.
    */
   message: Message;
-  /** Frozen recipient set (I5); committed atomically with the Message. */
+  /** Frozen recipient set (I5); committed atomically with the Message. Its
+   * `blocked` set (R4) is authoritative AT COMMIT: the store stamps those
+   * recipients' Deliveries terminal failed{blocked-by-contact-policy} inside
+   * the transaction (§11.7). */
   snapshot: RecipientSnapshot;
-  /** One initial record per recipient. */
+  /**
+   * One initial record per recipient (R5 initial state pending). Recipients
+   * on the snapshot's blocked set do NOT stay pending: §11.7 commits them
+   * terminal failed{blocked-by-contact-policy} in the same transaction.
+   */
   deliveries: Delivery[];
   /** §11.3: persisted on the AcceptanceRecord so duplicate retries carry the typed outcome (MSG-010). */
   urgentDowngraded?: boolean;
@@ -158,6 +165,19 @@ export interface PageOptions {
   cursor?: Cursor;
   /** Clamped to constants.pageLimitMax, never rejected (§4). */
   limit?: number;
+}
+
+/**
+ * §11.4 — the room key a Room Thread is created for (get-or-create). The
+ * threadId is minted by the adapter via the clock/ID seam; the caller never
+ * supplies it. The durable join to the owning capability is this key (G2).
+ */
+export interface RoomThreadSpec {
+  threadKind: "team" | "mission";
+  /** Name of the external membership authority (Team or Mission capability). */
+  authority: string;
+  /** The room's ID in that authority. */
+  externalId: string;
 }
 
 /** §4 `getPolicy` — one Person's policy pair; absent halves are simply missing. */
@@ -203,10 +223,34 @@ export interface MessagingStore {
   /** §2 — one atomic operation. All effects commit, or none do. */
   commitAcceptance(input: AcceptanceInput): Promise<AcceptanceOutcome>;
 
+  /**
+   * §11.4 — room Thread creation, get-or-create keyed by the room key
+   * (authority, externalId): one Thread per room, forever; a concurrent or
+   * repeated create proceeds against the existing Thread (not an error). No
+   * public command exists — creation is capability-internal, driven by the
+   * composition root from the membership adapter's room config (P4's
+   * capability-to-capability shape). Not journaled (no committed-fact event
+   * exists for Thread creation); durable adapters persist the op.
+   */
+  createRoomThread(room: RoomThreadSpec): Promise<StoreResult<Thread>>;
+
   // §4 reads (committed state only; ordered results by sequence ascending)
   getThread(threadId: ThreadId): Promise<StoreResult<Thread>>;
   getDirectThread(personA: PersonId, personB: PersonId): Promise<StoreResult<Thread>>;
+  /**
+   * §11.5 — every DIRECT Thread whose pair contains personId, plus EVERY room
+   * Thread. Room membership filtering is the membership seam's truth, applied
+   * by the core above the store (R3). Creation order (not contractual).
+   */
+  listThreadsForPerson(personId: PersonId): Promise<StoreResult<Thread[]>>;
   getMessage(messageId: MessageId): Promise<StoreResult<Message>>;
+  /**
+   * §11.6 — the RecipientSnapshot frozen at acceptance (I5 evidence: the
+   * recipient set, the blocked set, the membership revision). §11.7 note:
+   * the DEC-21 sweep no longer reads it — blocked Deliveries are terminal
+   * from the commit itself.
+   */
+  getSnapshot(messageId: MessageId): Promise<StoreResult<RecipientSnapshot>>;
   getMessages(threadId: ThreadId, options?: PageOptions): Promise<StoreResult<{ messages: Message[]; nextCursor?: Cursor }>>;
   /** §11.2: non-terminal Deliveries only (pending | held). Terminal states never appear. */
   getInbox(personId: PersonId, options?: PageOptions): Promise<StoreResult<{ messages: Message[]; nextCursor?: Cursor }>>;

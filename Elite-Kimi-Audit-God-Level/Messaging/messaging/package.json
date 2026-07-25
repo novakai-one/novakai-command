@@ -1,7 +1,7 @@
 {
   "name": "@novakai/messaging",
   "version": "0.1.0",
-  "description": "Novakai Messaging capability — S1-c: contract/codegen/store/clock (S1-a), core send path (S1-b), durable events + subscriptions + WS standalone mode (S1-c).",
+  "description": "Novakai Messaging capability — S1 (direct lane, durable events + subscriptions, WS standalone) + S2-a (rooms: membership seam, frozen recipient snapshots, room read authorization).",
   "type": "module",
   "engines": {
     "node": ">=20"

@@ -32,6 +32,7 @@ import type {
 } from "../public/contract/index.js";
 import type {
   ClosePresenceInput,
+  ListThreadsForPersonInput,
   OpenPresenceInput,
   SendMessageInput,
   SetContactPolicyInput,
@@ -288,6 +289,13 @@ export function parseGetThreadInput(input: unknown): ParseResult<GetThreadInput>
   if (!record) return { ok: false, error: validationFailed(issues) };
   const threadId = field(record, "threadId", readThreadId, issues, true);
   return finish(issues, () => ({ threadId: threadId as ThreadId }));
+}
+
+export function parseListThreadsForPersonInput(input: unknown): ParseResult<ListThreadsForPersonInput> {
+  const { record, issues } = frame(input, ["personId"]);
+  if (!record) return { ok: false, error: validationFailed(issues) };
+  const personId = field(record, "personId", readPersonId, issues, false);
+  return finish(issues, () => ({ ...(personId !== undefined ? { personId } : {}) }));
 }
 
 export function parseGetMessagesInput(input: unknown): ParseResult<GetMessagesInput> {

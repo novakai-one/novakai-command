@@ -18,10 +18,12 @@
  *    via session.revalidate(). An ended session terminates its subscriptions
  *    (ended{auth-lost}) via the stack's onEnded wiring.
  *  - DEC-21: runRecoverySweep() is exposed as a composition-owned handle;
- *    the host decides when to sweep (standalone runs it at startup). With
- *    sweepIntervalMs set, the stack ALSO sweeps periodically on an unref'd
- *    timer (Store-Seam §7, F11) — standalone sets a 60 s default; embedded
- *    defaults to manual-only so test harnesses stay deterministic.
+ *    start() runs the sweep BEFORE anything else (F10: accept-after-sweep
+ *    parity with the standalone root, which sweeps before accepting
+ *    connections). With sweepIntervalMs set, the stack ALSO sweeps
+ *    periodically on an unref'd timer (Store-Seam §7, F11) — standalone sets
+ *    a 60 s default; embedded defaults to manual-only so test harnesses stay
+ *    deterministic.
  *
  * Embedded consumers Subscribe through session.subscribe(input, sink): the
  * sink is the host's push lane — the same SubscriptionManager serves both
@@ -33,6 +35,7 @@ import type { EmbeddedAuthOutcome } from "../public/capability.js";
 import type { ClockIds } from "../seams/clock.js";
 import type { MessagingStore } from "../seams/store.js";
 import type { Authority, ProvisioningDirectory } from "../seams/authority.js";
+import type { MembershipSource } from "../seams/membership.js";
 import type { PresenceTransport } from "../seams/presenceTransport.js";
 import type { AuthorityConfig, ConfigAuthority } from "../adapters/authority-config.js";
 import type { PresenceRegistry } from "../core/presenceRegistry.js";
@@ -50,6 +53,16 @@ export interface EmbeddedMessaging {
   /** Pre-authentication discovery (R3): versions + limits only. */
   getCapabilities(): CapabilityView;
   authenticate(credential: unknown): Promise<EmbeddedAuthOutcome>;
+  /**
+   * Run the DEC-21 recovery sweep (F10: accept-after-sweep parity with the
+   * standalone root), provision configured room Threads (Store-Seam §11.4)
+   * and start the bus position. Idempotent (the sweep re-drives harmlessly;
+   * createRoomThread is a get-or-create). Hosts with a membership config
+   * MUST call this before serving; without rooms it is a no-op beyond the
+   * sweep and the bus tail position (embedded events still flow via
+   * pumpEvents either way).
+   */
+  start(): Promise<void>;
   /** One journal tail cycle NOW — embedded determinism for the event bus. */
   pumpEvents(): Promise<void>;
   /** DEC-21 recovery sweep, on demand (idempotent; safe with zero pending). */
@@ -59,6 +72,7 @@ export interface EmbeddedMessaging {
   readonly clock: ClockIds;
   readonly store: MessagingStore;
   readonly authority: Authority & ProvisioningDirectory;
+  readonly membership: MembershipSource;
   readonly transports: readonly PresenceTransport[];
   readonly registry: PresenceRegistry;
   readonly bus: EventBus;
@@ -76,6 +90,15 @@ export function createEmbeddedMessaging(options: EmbeddedMessagingOptions): Embe
       return stack.authenticate(credential);
     },
 
+    async start(): Promise<void> {
+      // DEC-21 (F10): the embedded root sweeps at startup too — accept-after-
+      // sweep parity with the standalone root. Idempotent and safe with zero
+      // pending; a torn acceptance from a previous run is re-driven before
+      // the host serves. (The report stays available via runRecoverySweep.)
+      await stack.runRecoverySweep();
+      return stack.start();
+    },
+
     pumpEvents(): Promise<void> {
       return stack.pumpEvents();
     },
@@ -91,6 +114,7 @@ export function createEmbeddedMessaging(options: EmbeddedMessagingOptions): Embe
     clock: stack.clock,
     store: stack.store,
     authority: stack.authority,
+    membership: stack.membership,
     transports: stack.transports,
     registry: stack.registry,
     bus: stack.bus,

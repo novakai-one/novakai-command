@@ -9,10 +9,10 @@
  * Identity rule (DEC-11, G3): no method takes a sender/from — every command
  * executes as the session's authenticated Principal.
  *
- * S1-c surface: the direct lane + the Subscribe stream (R1). Absent (not
- * stubbed): SendFromTemplate, UpsertTemplate, RetireTemplate, ListTemplates
- * (S4), ListThreadsForPerson (S2 — the frozen store seam has no faithful
- * read for it).
+ * S2 surface: the direct lane + rooms (membership-resolved sends, frozen
+ * recipient snapshots, room read authorization, ListThreadsForPerson) + the
+ * Subscribe stream (R1). Absent (not stubbed): SendFromTemplate,
+ * UpsertTemplate, RetireTemplate, ListTemplates (S4).
  */
 
 import type { MessagingError } from "./contract/index.js";
@@ -26,6 +26,7 @@ import type {
   PresenceListResult,
   PresenceOpened,
   SendAccepted,
+  ThreadListResult,
   ThreadView,
 } from "./contract/index.js";
 
@@ -47,6 +48,15 @@ export type {
   RetryPolicy,
   Scheduler,
 } from "../seams/presenceTransport.js";
+// The membership seam (Messaging-Seams §3): room/roster truth crosses HERE,
+// never from core config — adapters are replaceable (Plan §14).
+export type {
+  MembershipSource,
+  RoomRef,
+  ResolveMembersOutcome,
+  IsMemberOutcome,
+  UnknownRoomError,
+} from "../seams/membership.js";
 // The Subscribe stream's host-facing types (R1): the sink is the host's push
 // lane (embedded: a callback; standalone: bound to transport.push — same
 // core, no per-mode business logic).
@@ -85,8 +95,9 @@ export interface MessagingSession {
   setDndPolicy(input: unknown): Promise<Outcome<PolicyUpdated>>;
   setContactPolicy(input: unknown): Promise<Outcome<PolicyUpdated>>;
 
-  // --- queries (S1-b subset of the 9) -----------------------------------------
+  // --- queries (S2: 7 of the 9; ListTemplates lands in S4) ---------------------
   getThread(input: unknown): Promise<Outcome<ThreadView>>;
+  listThreadsForPerson(input: unknown): Promise<Outcome<ThreadListResult>>;
   getMessages(input: unknown): Promise<Outcome<MessagePage>>;
   getInbox(input: unknown): Promise<Outcome<MessagePage>>;
   getDelivery(input: unknown): Promise<Outcome<DeliveryListResult>>;

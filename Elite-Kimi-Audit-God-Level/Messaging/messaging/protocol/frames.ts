@@ -47,9 +47,10 @@ export const wsCommandNames = [
 ] as const;
 export type WsCommandName = (typeof wsCommandNames)[number];
 
-/** S1 query surface (GetCapabilities has its own pre-auth frame). */
+/** S2 query surface (GetCapabilities has its own pre-auth frame). */
 export const wsQueryNames = [
   "GetThread",
+  "ListThreadsForPerson",
   "GetMessages",
   "GetInbox",
   "GetDelivery",

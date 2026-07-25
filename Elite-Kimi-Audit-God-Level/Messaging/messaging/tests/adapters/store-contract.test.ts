@@ -7,7 +7,10 @@
  * different hash → conflict), direct-thread canonicalisation, sequence
  * monotonicity (incl. jsonl restart), inbox non-terminal filtering (§11.2),
  * CAS transition failures, revision conflicts, journal contents after mixed
- * writes (§11.1), and the recovery-sweep flow (DEC-21).
+ * writes (§11.1), the recovery-sweep flow (DEC-21), room Thread creation
+ * (§11.4: get-or-create by room key, unjournaled, durable), per-person
+ * Thread listing (§11.5), the frozen snapshot read (§11.6), and blocked
+ * recipients committing terminal failed inside the acceptance (§11.7).
  */
 
 import { mkdtempSync, rmSync } from "node:fs";
@@ -820,6 +823,280 @@ for (const factory of adapterFactories) {
         if (journal.kind === "ok") {
           assert.equal(journal.value.length, 1);
           assert.equal(journal.value[0]?.kind, "MessageCommitted");
+        }
+      } finally {
+        await store.close();
+        handle.cleanup();
+      }
+    });
+
+    it("createRoomThread (§11.4): get-or-create by room key; minted threadId; NOT journaled; unknown room commit fails", async () => {
+      const handle = await factory.make();
+      try {
+        const spec = { threadKind: "team" as const, authority: "team-capability", externalId: "team-1" };
+        const created = await handle.store.createRoomThread(spec);
+        assert.equal(created.kind, "ok");
+        if (created.kind !== "ok") return;
+        assert.ok(created.value.id.startsWith("thread_"), "the adapter mints the threadId");
+        assert.equal(created.value.threadKind, "team");
+        assert.deepEqual(created.value.room, { authority: "team-capability", externalId: "team-1" });
+
+        // Idempotent by room key: a repeated create proceeds against the
+        // EXISTING Thread (not an error) and never mints a second one.
+        const again = await handle.store.createRoomThread(spec);
+        assert.equal(again.kind, "ok");
+        if (again.kind === "ok") assert.equal(again.value.id, created.value.id);
+
+        // A different room key mints a different Thread.
+        const other = await handle.store.createRoomThread({
+          threadKind: "mission",
+          authority: "team-capability",
+          externalId: "mission-1",
+        });
+        assert.equal(other.kind, "ok");
+        if (other.kind === "ok") assert.notEqual(other.value.id, created.value.id);
+
+        // Concurrent creates race inside the mutation queue → exactly one Thread.
+        const [raceA, raceB] = await Promise.all([
+          handle.store.createRoomThread({ threadKind: "team", authority: "team-capability", externalId: "race" }),
+          handle.store.createRoomThread({ threadKind: "team", authority: "team-capability", externalId: "race" }),
+        ]);
+        assert.equal(raceA.kind, "ok");
+        assert.equal(raceB.kind, "ok");
+        if (raceA.kind === "ok" && raceB.kind === "ok") {
+          assert.equal(raceA.value.id, raceB.value.id, "one Thread per room, forever");
+        }
+
+        // §11.4: Thread creation is NOT journaled (no committed-fact event).
+        const journal = await handle.store.scanJournal();
+        assert.equal(journal.kind, "ok");
+        if (journal.kind === "ok") assert.equal(journal.value.length, 0);
+
+        // §2.1: a room commit against an unknown room Thread fails RecordNotFound.
+        const unknown = makeAcceptanceInput({
+          clock: handle.clock,
+          sender: ALICE,
+          recipient: BOB,
+          clientMessageId: cmid("room-unknown"),
+        });
+        unknown.thread = { kind: "room", threadId: handle.clock.newId("thread") };
+        const failed = await handle.store.commitAcceptance(unknown);
+        assert.equal(failed.kind, "failed");
+        if (failed.kind === "failed") assert.equal(failed.error.name, "RecordNotFound");
+
+        // A room commit against the created Thread succeeds and lands history there.
+        const roomSend = makeAcceptanceInput({
+          clock: handle.clock,
+          sender: ALICE,
+          recipient: BOB,
+          clientMessageId: cmid("room-ok"),
+        });
+        roomSend.thread = { kind: "room", threadId: created.value.id };
+        const accepted = await handle.store.commitAcceptance(roomSend);
+        assert.equal(accepted.kind, "accepted");
+        if (accepted.kind === "accepted") assert.equal(accepted.threadId, created.value.id);
+      } finally {
+        await handle.store.close();
+        handle.cleanup();
+      }
+    });
+
+    it("createRoomThread durability: the Thread and its room-key index survive close + reopen", async () => {
+      const handle = await factory.make();
+      let store = handle.store;
+      try {
+        if (!handle.reopen) return; // A4: store-memory makes no durability claims.
+        const spec = { threadKind: "team" as const, authority: "team-capability", externalId: "team-durable" };
+        const created = await store.createRoomThread(spec);
+        assert.equal(created.kind, "ok");
+        if (created.kind !== "ok") return;
+
+        store = await handle.reopen();
+
+        const thread = await store.getThread(created.value.id);
+        assert.equal(thread.kind, "ok");
+        if (thread.kind === "ok") assert.equal(thread.value.threadKind, "team");
+        // The room-key index survived: re-creating proceeds against the same Thread.
+        const again = await store.createRoomThread(spec);
+        assert.equal(again.kind, "ok");
+        if (again.kind === "ok") assert.equal(again.value.id, created.value.id);
+        const listed = await store.listThreadsForPerson(ALICE);
+        assert.equal(listed.kind, "ok");
+        if (listed.kind === "ok") {
+          assert.ok(listed.value.some((candidate) => candidate.id === created.value.id));
+        }
+      } finally {
+        await store.close();
+        handle.cleanup();
+      }
+    });
+
+    it("listThreadsForPerson (§11.5): direct-for-person + ALL room Threads; committed state only", async () => {
+      const handle = await factory.make();
+      try {
+        const nobody = "person_nobody" as PersonId;
+        const before = await handle.store.listThreadsForPerson(ALICE);
+        assert.equal(before.kind, "ok");
+        if (before.kind === "ok") assert.equal(before.value.length, 0);
+
+        // A direct Thread for alice↔bob and an unrelated one for bob↔nobody.
+        await handle.store.commitAcceptance(
+          makeAcceptanceInput({ clock: handle.clock, sender: ALICE, recipient: BOB, clientMessageId: cmid("lt-1") }),
+        );
+        await handle.store.commitAcceptance(
+          makeAcceptanceInput({ clock: handle.clock, sender: BOB, recipient: nobody, clientMessageId: cmid("lt-2") }),
+        );
+        const room = await handle.store.createRoomThread({
+          threadKind: "team",
+          authority: "team-capability",
+          externalId: "team-lt",
+        });
+        assert.equal(room.kind, "ok");
+
+        const aliceThreads = await handle.store.listThreadsForPerson(ALICE);
+        assert.equal(aliceThreads.kind, "ok");
+        if (aliceThreads.kind === "ok") {
+          assert.equal(aliceThreads.value.filter((t) => t.threadKind === "direct").length, 1, "own direct only");
+          assert.equal(aliceThreads.value.filter((t) => t.threadKind === "team").length, 1, "ALL rooms — membership filtering lives above the store");
+        }
+        const nobodyThreads = await handle.store.listThreadsForPerson(nobody);
+        assert.equal(nobodyThreads.kind, "ok");
+        if (nobodyThreads.kind === "ok") {
+          assert.equal(nobodyThreads.value.filter((t) => t.threadKind === "direct").length, 1);
+          assert.equal(nobodyThreads.value.filter((t) => t.threadKind === "team").length, 1);
+        }
+      } finally {
+        await handle.store.close();
+        handle.cleanup();
+      }
+    });
+
+    it("getSnapshot (§11.6): the frozen snapshot by messageId — membership evidence + blocked; unknown → RecordNotFound", async () => {
+      const handle = await factory.make();
+      let store = handle.store;
+      try {
+        const room = await store.createRoomThread({
+          threadKind: "team",
+          authority: "team-capability",
+          externalId: "team-snap",
+        });
+        assert.equal(room.kind, "ok");
+        if (room.kind !== "ok") return;
+
+        const input = makeAcceptanceInput({
+          clock: handle.clock,
+          sender: ALICE,
+          recipient: BOB,
+          clientMessageId: cmid("snap"),
+        });
+        input.thread = { kind: "room", threadId: room.value.id };
+        input.snapshot.membership = {
+          authority: "team-capability",
+          revision: "rev-42",
+          resolvedAt: handle.clock.now(),
+        };
+        input.snapshot.blocked = [{ personId: BOB, reason: "blocked-by-contact-policy" }];
+        const accepted = await store.commitAcceptance(input);
+        assert.equal(accepted.kind, "accepted");
+        if (accepted.kind !== "accepted") return;
+
+        const snapshot = await store.getSnapshot(accepted.messageId);
+        assert.equal(snapshot.kind, "ok");
+        if (snapshot.kind === "ok") {
+          assert.equal(snapshot.value.messageId, accepted.messageId);
+          assert.equal(snapshot.value.membership?.revision, "rev-42", "evidence frozen verbatim (Store-Seam §9)");
+          assert.deepEqual(snapshot.value.blocked, [{ personId: BOB, reason: "blocked-by-contact-policy" }]);
+        }
+
+        const missing = await store.getSnapshot("message_unknown" as MessageId);
+        assert.equal(missing.kind, "error");
+        if (missing.kind === "error") assert.equal(missing.error.name, "RecordNotFound");
+
+        if (handle.reopen) {
+          store = await handle.reopen();
+          const durable = await store.getSnapshot(accepted.messageId);
+          assert.equal(durable.kind, "ok");
+          if (durable.kind === "ok") {
+            assert.equal(durable.value.membership?.revision, "rev-42");
+          }
+        }
+      } finally {
+        await store.close();
+        handle.cleanup();
+      }
+    });
+
+    it("§11.7: snapshot-blocked recipients commit TERMINAL failed{blocked-by-contact-policy} INSIDE commitAcceptance", async () => {
+      const handle = await factory.make();
+      let store = handle.store;
+      try {
+        const room = await store.createRoomThread({
+          threadKind: "team",
+          authority: "team-capability",
+          externalId: "team-blocked",
+        });
+        assert.equal(room.kind, "ok");
+        if (room.kind !== "ok") return;
+
+        const input = makeAcceptanceInput({
+          clock: handle.clock,
+          sender: ALICE,
+          recipient: BOB,
+          clientMessageId: cmid("blocked-commit"),
+        });
+        input.thread = { kind: "room", threadId: room.value.id };
+        input.snapshot.blocked = [{ personId: BOB, reason: "blocked-by-contact-policy" }];
+        const accepted = await store.commitAcceptance(input);
+        assert.equal(accepted.kind, "accepted");
+        if (accepted.kind !== "accepted") return;
+
+        // Terminal FROM THE COMMIT — no pending instant is ever observable.
+        const deliveries = await store.getDeliveries(accepted.messageId);
+        assert.equal(deliveries.kind, "ok");
+        if (deliveries.kind === "ok") {
+          assert.equal(deliveries.value.length, 1);
+          assert.equal(deliveries.value[0]?.state, "failed");
+          assert.equal(deliveries.value[0]?.stateReason, "blocked-by-contact-policy");
+        }
+
+        // §11.2: the blocked Message never enters the recipient's inbox.
+        const inbox = await store.getInbox(BOB);
+        assert.equal(inbox.kind, "ok");
+        if (inbox.kind === "ok") assert.equal(inbox.value.messages.length, 0);
+
+        // MSG-016 observability preserved: MessageCommitted AND a
+        // DeliveryUpdated for the terminal failure, journaled in the same
+        // commit (§11.1).
+        const journal = await store.scanJournal();
+        assert.equal(journal.kind, "ok");
+        if (journal.kind === "ok") {
+          const kinds = journal.value.map((entry) => entry.kind);
+          assert.deepEqual(kinds, ["MessageCommitted", "DeliveryUpdated"]);
+          const update = journal.value[1];
+          if (update?.kind === "DeliveryUpdated") {
+            assert.equal(update.delivery.state, "failed");
+            assert.equal(update.delivery.stateReason, "blocked-by-contact-policy");
+          }
+        }
+
+        // The terminal truth is durable across restart (jsonl; memory skips).
+        if (handle.reopen) {
+          store = await handle.reopen();
+          const durable = await store.getDeliveries(accepted.messageId);
+          assert.equal(durable.kind, "ok");
+          if (durable.kind === "ok") {
+            assert.equal(durable.value[0]?.state, "failed");
+            assert.equal(durable.value[0]?.stateReason, "blocked-by-contact-policy");
+          }
+          const durableJournal = await store.scanJournal();
+          assert.equal(durableJournal.kind, "ok");
+          if (durableJournal.kind === "ok") {
+            assert.deepEqual(
+              durableJournal.value.map((entry) => entry.kind),
+              ["MessageCommitted", "DeliveryUpdated"],
+              "both journaled entries survive replay",
+            );
+          }
         }
       } finally {
         await store.close();

@@ -11,15 +11,19 @@
  *    the frame). On (re)subscribe, current presence state is sent as fresh
  *    observations (R1).
  *  - R3 per-subscriber payload filtering lives HERE (documented choice — the
- *    manager owns the subscriber's Principal snapshot and the store reads
- *    the membership rule needs): MessageCommitted / DeliveryUpdated only for
- *    threads the subscriber may read (direct-pair member; room Threads deny
- *    until the membership seam lands in S2 — never a silent allow);
- *    PolicyChanged only to the policy owner + policy.admin holders;
- *    PresenceChanged to all authenticated subscribers. Authorization is
- *    decided against the Principal snapshot taken AT SUBSCRIBE TIME (§2.1:
- *    a mid-session grant change takes effect at revalidate; subscriptions
- *    already flowing keep their decided authorization).
+ *    manager owns the subscriber's Principal snapshot and the store/membership
+ *    reads the rule needs): MessageCommitted / DeliveryUpdated only for
+ *    threads the subscriber may read — direct-pair member, or CURRENT room
+ *    member per the membership seam (S2: isMember at fact time; a membership
+ *    outage or unknown room filters the fact out — no push, no leak — and
+ *    replay-after-reconnect is the recovery, R1); PolicyChanged only to the
+ *    policy owner + policy.admin holders; PresenceChanged to all
+ *    authenticated subscribers. Authorization is decided against the
+ *    Principal snapshot taken AT SUBSCRIBE TIME (§2.1: a mid-session grant
+ *    change takes effect at revalidate; subscriptions already flowing keep
+ *    their decided authorization) combined with LIVE membership (R3's
+ *    "current member" — a member removed from a room stops receiving its
+ *    facts without re-subscribing).
  *  - Replay-after-disconnect: `since` cursor → committed-fact events with
  *    sequence > cursor replayed in order from the journal (scanJournal),
  *    then live. The subscription is registered BEFORE the replay scan and
@@ -37,16 +41,17 @@
  *    was delivered (e.g. replay overflow on a stalled lane) the ended path
  *    delivers started first, then ended — a client never sees ended as the
  *    first frame on a live lane.
- *  - Room-Thread starvation is a DELIBERATE S2-scope ruling (L10, G6 tension
- *    recorded): committed facts for room Threads are SILENTLY dropped from
- *    the stream (mayReadThread denies — the membership seam lands in S2).
- *    The loud half of the ruling: an EXPLICIT scope naming a room Thread
- *    fails the whole Subscribe with NotAuthorized, so a client who asks for
- *    a room thread by name hears a refusal; only the unscoped stream
- *    silently omits room facts. This is the accepted v1 tension with G6
- *    (no silent behaviour): the alternative — failing every unscoped
- *    Subscribe because rooms exist — would break the direct lane when rooms
- *    land; the ruling is revisited with the membership seam in S2.
+ *  - Room-Thread authorization (S2 — REVISES the S1 L10 ruling): the S1
+ *    build silently dropped room facts from unscoped streams because the
+ *    membership seam did not exist. With the seam wired, that starvation is
+ *    gone: room facts flow to CURRENT members (isMember at fact time), an
+ *    EXPLICIT scope naming a room Thread the subscriber may not read fails
+ *    the whole Subscribe with NotAuthorized (loud, G6 — unchanged), and an
+ *    unscoped stream filters to readable threads with real membership. A
+ *    membership-UNAVAILABLE resolution on the implicit path filters the fact
+ *    (never a silent allow) but does not end the subscription — the durable
+ *    recovery is replay on re-subscribe; on the EXPLICIT-scope path it fails
+ *    the Subscribe with DependencyUnavailable{membership} (loud, §3.3).
  *  - Backpressure: each subscription has a bounded buffer (default
  *    constants.subscriptionBufferMax; composition may tighten — e.g. tests).
  *    A push-lane transient failure parks the head frame for retry (push lane
@@ -86,6 +91,7 @@ import type {
   ThreadId,
 } from "../public/contract/index.js";
 import type { Principal } from "../seams/authority.js";
+import type { MembershipSource } from "../seams/membership.js";
 import type { MessagingStore } from "../seams/store.js";
 import type { ClockIds } from "../seams/clock.js";
 import type { EffectReport, Scheduler } from "../seams/presenceTransport.js";
@@ -121,6 +127,7 @@ export interface SubscriptionManagerDeps {
   bus: EventBus;
   registry: PresenceRegistry;
   scheduler: Scheduler;
+  membership: MembershipSource;
   /** Per-subscription buffer bound (default constants.subscriptionBufferMax, R1). */
   bufferMax?: number;
   /** Parked-frame retry cadence for transient push failures (default 250 ms). */
@@ -187,17 +194,61 @@ export function sequenceFromCursor(cursor: Cursor): Sequence {
   return Number(cursor.slice(2)) as Sequence;
 }
 
-/** R3 member rule. Room Threads deny until the membership seam lands (S2) — never a silent allow. */
-export function mayReadThread(principal: Principal, thread: Thread): boolean {
+/**
+ * R3 member rule (S2): direct-pair member, or CURRENT room member per the
+ * membership seam. On the implicit filtering path a membership outage or an
+ * unknown room collapses to unreadable — no push, no leak (never a silent
+ * allow); the explicit-scope path uses assertReadable instead, which fails
+ * loudly with the typed outcome.
+ */
+export async function mayReadThread(
+  membership: MembershipSource,
+  principal: Principal,
+  thread: Thread,
+): Promise<boolean> {
   if (thread.threadKind === "direct" && thread.direct) {
     const [a, b] = thread.direct.pair;
     return principal.personId === a || principal.personId === b;
   }
-  return false;
+  if (!thread.room) return false; // corrupt payload — no leak
+  const outcome = await membership.isMember(thread.room, principal.personId);
+  return outcome.kind === "known" && outcome.member;
+}
+
+/** The explicit-scope half of R3 (G6): unreadable scope names fail LOUDLY with the typed outcome. */
+async function assertReadable(
+  membership: MembershipSource,
+  principal: Principal,
+  thread: Thread,
+): Promise<void> {
+  if (thread.threadKind === "direct" && thread.direct) {
+    const [a, b] = thread.direct.pair;
+    if (principal.personId === a || principal.personId === b) return;
+    throw notAuthorized(
+      `subscriber may not read Thread ${thread.id} (R3) — explicit scope fails the whole Subscribe`,
+    );
+  }
+  if (!thread.room) {
+    throw notAuthorized(`explicit Subscribe scope names an unreadable Thread: ${thread.id}`);
+  }
+  const outcome = await membership.isMember(thread.room, principal.personId);
+  if (outcome.kind === "known") {
+    if (outcome.member) return;
+    throw notAuthorized(
+      `subscriber may not read Thread ${thread.id} (R3) — explicit scope fails the whole Subscribe`,
+    );
+  }
+  if (outcome.kind === "unknown") {
+    // §3.3's shared mapping would be UnknownThread, but Subscribe's error
+    // list has no UnknownThread: an unreadable scope name is NotAuthorized
+    // (recorded ambiguity — same ruling as a nonexistent Thread below).
+    throw notAuthorized(`explicit Subscribe scope names an unreadable Thread: ${thread.id}`);
+  }
+  throw outcome.error; // DependencyUnavailable{membership, retryable: true} — loud (G6)
 }
 
 export function createSubscriptionManager(deps: SubscriptionManagerDeps): SubscriptionManager {
-  const { store, clock, bus, registry, scheduler } = deps;
+  const { store, clock, bus, registry, scheduler, membership } = deps;
   const bufferMax = deps.bufferMax ?? constants.subscriptionBufferMax;
   const pushRetryDelayMs = deps.pushRetryDelayMs ?? 250;
 
@@ -239,7 +290,7 @@ export function createSubscriptionManager(deps: SubscriptionManagerDeps): Subscr
     if (sub.threads !== undefined && !sub.threads.includes(threadId)) return false;
     const found = await store.getThread(threadId);
     if (found.kind === "error") return false; // unreadable/gone — no push, no leak
-    return mayReadThread(sub.principal, found.value);
+    return mayReadThread(membership, sub.principal, found.value);
   }
 
   /** Narrowing-safe ended check (enqueue/end mutate state across function calls). */
@@ -448,11 +499,7 @@ export function createSubscriptionManager(deps: SubscriptionManagerDeps): Subscr
           }
           throw storeDependencyError(found.error);
         }
-        if (!mayReadThread(principal, found.value)) {
-          throw notAuthorized(
-            `subscriber may not read Thread ${threadId} (R3) — explicit scope fails the whole Subscribe`,
-          );
-        }
+        await assertReadable(membership, principal, found.value);
       }
 
       const sub: LiveSubscription = {

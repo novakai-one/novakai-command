@@ -269,6 +269,9 @@ export function createProtocolConnection(deps: ProtocolConnectionDeps): Protocol
       case "GetThread":
         outcome = await session.getThread(frame.input);
         break;
+      case "ListThreadsForPerson":
+        outcome = await session.listThreadsForPerson(frame.input);
+        break;
       case "GetMessages":
         outcome = await session.getMessages(frame.input);
         break;

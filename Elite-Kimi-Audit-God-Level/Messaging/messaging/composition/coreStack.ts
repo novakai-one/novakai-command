@@ -6,10 +6,18 @@
  * session doors (the "no per-mode business logic" law). Composition roots
  * differ ONLY in which adapters they choose and how external input arrives.
  *
- * Wiring (identical to S1-b's embedded root, plus the S1-c modules):
- *   clock → store → authority → transports → registry → orchestrator
+ * Wiring (identical to S1-b's embedded root, plus the S1-c/S2 modules):
+ *   clock → store → authority → membership → transports → registry → orchestrator
  *   → eventBus (journal tail) → subscriptionManager (R1)
  *   → sendPipeline / policyCommands / presenceCommands / queries → sessions.
+ *
+ * S2 (rooms): the membership seam wires into the send pipeline (R8 fresh
+ * resolution inside the accept call), the queries (R3 room read
+ * authorization), and the subscription manager (room fact filtering). When
+ * the membership option is a MembershipConfig, start() provisions each
+ * declared room's Thread via the store's createRoomThread (Store-Seam
+ * §11.4) before the bus starts — the get-or-create makes restarts
+ * idempotent, and a provisioning failure fails start loudly (G6).
  *
  * Session wiring notes:
  *  - Every session gets the §2.1 onEnded hook → subscriptions.endForSession
@@ -17,11 +25,11 @@
  *  - The bus is driven per mode: standalone passes busPollIntervalMs;
  *    embedded pumps explicitly (pumpEvents) for test determinism. Either way
  *    event CONTENT is journal-sourced (emit-only-after-durable).
- *  - The DEC-21 recovery sweep is exposed as runRecoverySweep(); the
- *    composition root decides when to run it (standalone: at startup, before
- *    accepting connections). With sweepIntervalMs set, the stack ALSO sweeps
- *    periodically on an unref'd timer (Store-Seam §7, F11) — one wiring,
- *    both roots.
+ *  - The DEC-21 recovery sweep is exposed as runRecoverySweep(); both
+ *    composition roots sweep at startup (standalone: before accepting
+ *    connections; embedded: inside start(), F10). With sweepIntervalMs set,
+ *    the stack ALSO sweeps periodically on an unref'd timer (Store-Seam §7,
+ *    F11) — one wiring, both roots.
  */
 
 import type { CapabilityView } from "../public/contract/index.js";
@@ -41,6 +49,10 @@ import { createSystemClock } from "../adapters/clock-system.js";
 import { createMemoryStore } from "../adapters/store-memory.js";
 import { createConfigAuthority } from "../adapters/authority-config.js";
 import type { AuthorityConfig } from "../adapters/authority-config.js";
+import { createConfigMembership } from "../adapters/membership-config.js";
+import type { MembershipConfig } from "../adapters/membership-config.js";
+import type { MembershipSource } from "../seams/membership.js";
+import { DEFAULT_MEMBERSHIP_DEADLINE_MS, withMembershipDeadline } from "../seams/membership.js";
 import { createMemoryPresenceTransport } from "../adapters/presence-transport-memory.js";
 import { createPresenceRegistry } from "../core/presenceRegistry.js";
 import type { PresenceRegistry } from "../core/presenceRegistry.js";
@@ -57,6 +69,7 @@ import { createSubscriptionManager } from "../core/subscriptions.js";
 import type { SubscriptionManager } from "../core/subscriptions.js";
 import { runRecoverySweep } from "../core/recoverySweep.js";
 import type { RecoverySweepReport } from "../core/recoverySweep.js";
+import { storeDependencyError } from "../core/storeErrors.js";
 import {
   parseClosePresenceInput,
   parseGetDeliveryInput,
@@ -65,6 +78,7 @@ import {
   parseGetPolicyInput,
   parseGetPresenceInput,
   parseGetThreadInput,
+  parseListThreadsForPersonInput,
   parseOpenPresenceInput,
   parseSetContactPolicyInput,
   parseSetDndPolicyInput,
@@ -75,6 +89,16 @@ import type { ParseResult } from "../core/validate.js";
 export interface CoreStackOptions {
   /** AuthorityConfig (the stack builds authority-config; DEC-07 role→grant mapping lives in that config, never core) OR a ready seam pair. */
   authority: AuthorityConfig | (Authority & ProvisioningDirectory);
+  /**
+   * MembershipConfig (the stack builds membership-config; the room/roster
+   * truth lives in that config, never core — Seams §3) OR a ready
+   * MembershipSource. Default: an empty config (no rooms — S1 behaviour).
+   * When a MembershipConfig is passed, start() ALSO provisions each declared
+   * room's Thread via the store's createRoomThread (Store-Seam §11.4 — the
+   * get-or-create makes restarts idempotent). A ready MembershipSource gets
+   * NO provisioning: the host owns room Thread creation.
+   */
+  membership?: MembershipConfig | MembershipSource;
   clock?: ClockIds;
   /** Defaults to store-memory (A4: test/harness only — production passes openJsonlStore). */
   store?: MessagingStore;
@@ -99,12 +123,27 @@ export interface CoreStackOptions {
   sweepIntervalMs?: number;
   /** TEST-ONLY fault injection (F4): delay the commit→settle window in the send pipeline. */
   effectLegDelayMs?: number;
+  /**
+   * Seams §3.3: the bounded per-call deadline on the membership seam,
+   * enforced HERE in ONE place (the withMembershipDeadline wrapper) so both
+   * composition roots and every caller get it. Default 3 s; tests may
+   * tighten it. A breach → DependencyUnavailable{membership, retryable:true}.
+   */
+  membershipDeadlineMs?: number;
 }
 
 export interface CoreStack {
   readonly clock: ClockIds;
   readonly store: MessagingStore;
   readonly authority: Authority & ProvisioningDirectory;
+  /**
+   * The RAW membership adapter handle (composition-owned — adapter-private
+   * controls like setUnavailable/configuredRooms live here). The CORE
+   * consumes this source through the §3.3 deadline wrapper (F8) wired
+   * internally; the wrapper enforces the bounded deadline on every
+   * core-facing call.
+   */
+  readonly membership: MembershipSource;
   readonly transports: readonly PresenceTransport[];
   readonly transportMap: ReadonlyMap<TransportKind, PresenceTransport>;
   readonly registry: PresenceRegistry;
@@ -130,12 +169,36 @@ function isAuthorityAdapter(
   return typeof (value as Authority).authenticate === "function";
 }
 
+function isMembershipSource(
+  value: NonNullable<CoreStackOptions["membership"]>,
+): value is MembershipSource {
+  return typeof (value as MembershipSource).resolveMembers === "function";
+}
+
 export function createCoreStack(options: CoreStackOptions): CoreStack {
   const clock = options.clock ?? createSystemClock();
   const store = options.store ?? createMemoryStore(clock);
   const authority: Authority & ProvisioningDirectory = isAuthorityAdapter(options.authority)
     ? options.authority
     : createConfigAuthority(options.authority, clock);
+  const membershipOption = options.membership ?? { rooms: [] };
+  const rawMembership: MembershipSource = isMembershipSource(membershipOption)
+    ? membershipOption
+    : createConfigMembership(membershipOption, clock);
+  // Seams §3.3 (F8): the bounded per-call deadline is enforced HERE, in the
+  // ONE wiring — no adapter can hang a caller, and every consumer of the seam
+  // (send path, R3 reads, subscriptions) gets the same guarantee. The stack
+  // HANDLE exposes the raw adapter (adapter-private controls); the core
+  // consumes ONLY this wrapped source.
+  const membership: MembershipSource = withMembershipDeadline(
+    rawMembership,
+    options.membershipDeadlineMs ?? DEFAULT_MEMBERSHIP_DEADLINE_MS,
+  );
+  // Store-Seam §11.4 provisioning source: only a MembershipConfig reveals its
+  // rooms to the root; a ready MembershipSource leaves creation to the host.
+  const roomsToProvision: MembershipConfig["rooms"] = isMembershipSource(membershipOption)
+    ? []
+    : membershipOption.rooms;
   const transports: readonly PresenceTransport[] =
     options.transports ?? [createMemoryPresenceTransport({ kind: "ws" })];
   const transportMap = new Map<TransportKind, PresenceTransport>(
@@ -168,6 +231,7 @@ export function createCoreStack(options: CoreStackOptions): CoreStack {
     bus,
     registry,
     scheduler: options.scheduler ?? systemScheduler,
+    membership,
     ...(options.subscriptionBufferMax !== undefined
       ? { bufferMax: options.subscriptionBufferMax }
       : {}),
@@ -180,6 +244,7 @@ export function createCoreStack(options: CoreStackOptions): CoreStack {
     store,
     clock,
     provisioning: authority,
+    membership,
     orchestrator,
     ...(options.effectLegDelayMs !== undefined
       ? { effectLegDelayMs: options.effectLegDelayMs }
@@ -187,7 +252,7 @@ export function createCoreStack(options: CoreStackOptions): CoreStack {
   });
   const policies = createPolicyCommands({ store, clock, orchestrator });
   const presence = createPresenceCommands({ registry, transports: transportMap });
-  const queries = createQueries({ store, clock, registry });
+  const queries = createQueries({ store, clock, registry, membership });
 
   // F11 (DEC-21, Store-Seam §7): the sweep runs on startup (composition
   // roots call runRecoverySweep / accept-after-sweep) AND periodically. The
@@ -250,6 +315,7 @@ export function createCoreStack(options: CoreStackOptions): CoreStack {
       setContactPolicy: door(parseSetContactPolicyInput, policies.setContactPolicy),
 
       getThread: door(parseGetThreadInput, queries.getThread),
+      listThreadsForPerson: door(parseListThreadsForPersonInput, queries.listThreadsForPerson),
       getMessages: door(parseGetMessagesInput, queries.getMessages),
       getInbox: door(parseGetInboxInput, queries.getInbox),
       getDelivery: door(parseGetDeliveryInput, queries.getDelivery),
@@ -269,6 +335,7 @@ export function createCoreStack(options: CoreStackOptions): CoreStack {
     clock,
     store,
     authority,
+    membership: rawMembership, // the handle exposes the raw adapter; the core uses the §3.3-wrapped source (F8)
     transports,
     transportMap,
     registry,
@@ -277,6 +344,20 @@ export function createCoreStack(options: CoreStackOptions): CoreStack {
     subscriptions,
 
     async start(): Promise<void> {
+      // Store-Seam §11.4: provision each configured room's Thread BEFORE
+      // serving (get-or-create by room key — restart-idempotent). A
+      // provisioning failure fails start loudly (G6; never serve a
+      // half-provisioned capability).
+      for (const room of roomsToProvision) {
+        const created = await store.createRoomThread({
+          threadKind: room.threadKind,
+          authority: room.authority,
+          externalId: room.externalId,
+        });
+        if (created.kind === "error") {
+          throw storeDependencyError(created.error);
+        }
+      }
       await bus.start();
     },
 

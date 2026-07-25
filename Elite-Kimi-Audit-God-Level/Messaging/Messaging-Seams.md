@@ -356,3 +356,28 @@ source:
   honesty mechanism) + §3.2.3 revisions never compared across adapters; membership
   seam vocabulary renamed `UnknownRoom` to avoid collision with the store seam's
   `RecordNotFound`.
+
+---
+
+**Amendment record — 2026-07-25 (S2-a audit remediation; §3 text frozen, amended here).**
+
+1. **§3.4 adapter naming:** the v1 static/test membership adapter is
+   **`membership-config`** (config-driven room/roster source, the membership analogue
+   of `authority-config`). §1's table and §3.4's `membership-static` column named a
+   working title; the shipped adapter is `membership-config`. `membership-novakai`
+   still lands with the Team/Mission capabilities.
+2. **§3.3 deadline enforcement:** the bounded 3 s per-call deadline §3.3 promises is
+   enforced in ONE place — a `withMembershipDeadline` wrapper around the seam applied
+   in the composition root (`coreStack`, option `membershipDeadlineMs`, default 3 s),
+   covering both composition roots and every caller. A breach resolves `unavailable`
+   → `DependencyUnavailable{dependency: "membership", retryable: true}`; adapter
+   throws are likewise typed at the seam. Adapters themselves need no timer.
+3. **Room-key hygiene:** room `authority`/`externalId` join into the durable room key
+   (`authority\nexternalId`, here and Store-Seam §11.4). Control characters in either
+   half would collide distinct rooms onto one key; `membership-config` now rejects
+   them fail-fast at construction.
+4. **Tested, not just claimed:** membership revocation mid-subscription (a revoked
+   member stops receiving room facts — live push AND cursor replay re-check,
+   §3.2.4's read-time `isMember`) and the DEC-21 startup sweep in the embedded root
+   (`start()` runs it — accept-after-sweep parity with standalone) are now covered
+   by regression tests.

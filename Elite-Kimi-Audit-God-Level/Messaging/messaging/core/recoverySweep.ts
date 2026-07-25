@@ -60,6 +60,11 @@ export async function runRecoverySweep(deps: RecoverySweepDeps): Promise<Recover
         if (message.kind === "error") throw storeDependencyError(message.error);
         const deliveries = await store.getDeliveries(acceptance.messageId);
         if (deliveries.kind === "error") throw storeDependencyError(deliveries.error);
+        // No blocked-set re-read (F2/§11.7): R4 blocked recipients committed
+        // terminal failed INSIDE commitAcceptance, so the sweep's re-drive
+        // needs only the committed Deliveries — attemptDecision's
+        // current-state re-read skips the terminal ones. §11.6's snapshot
+        // read here (and its RecordNotFound laundering hazard) is gone.
 
         // Re-drive the post-commit effects: the SAME orchestrator entry point
         // the send pipeline uses (R5 attempt decisions; CAS-idempotent), then

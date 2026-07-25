@@ -260,3 +260,89 @@ here at the source (law #3):
    idempotent retry of a downgraded urgent send still carries the typed outcome
    (MSG-010 survives DEC-13 retries). The field is optional in the record schema —
    absent means no downgrade occurred.
+
+---
+
+**Errata 4–6 (added by Step 6 / slice S2-a, 2026-07-25 — same authority as §1–§10).**
+Three further gaps surfaced when slice S2 (Rooms) implemented against this seam.
+Resolved here at the source (law #3); the frozen contract catalogue (8 commands,
+9 queries) is unchanged — all three are seam-level.
+
+4. **Room Thread creation exists as a store op (`createRoomThread`).** §2.1 requires
+   a room Thread to pre-exist, but §1–§10 defined no operation that creates one.
+   Ruling:
+   `createRoomThread(room: { threadKind: "team" | "mission", authority: string, externalId: string }) → StoreResult<Thread>`
+   is a **get-or-create keyed by the room key `(authority, externalId)`** — one Thread
+   per room, forever (the room analogue of DEC-03's canonical pair). Two concurrent
+   creates produce exactly one Thread; the loser proceeds against the existing one
+   (not an error — the same ruling as §2.1's direct get-or-create). The `threadId`
+   is minted by the adapter via the clock/ID seam inside the mutation; the caller
+   never supplies it — the durable join to the owning capability is the room key
+   (G2), and the owner learns the minted threadId through reads (e.g. the S2
+   `ListThreadsForPerson` query). **Failure vocabulary:** §6 unchanged — the only
+   new reachable outcome is `StoreUnavailable` (persist failure); there is no
+   `RecordNotFound` and no idempotency interaction. **Journaling:** the write is
+   **not** journaled — §11.1 journals writes that feed committed-fact events, and no
+   public event exists for Thread creation (subscription replay therefore neither
+   needs nor gets one). Durable adapters persist the write in the op log like every
+   other mutation: the op log is durability, the §11.1 journal is the
+   event-projection feed — the two are distinct. **Who calls it:** no public command
+   exists (the frozen 8-command catalogue stands) — creation is capability-internal,
+   driven by the host capability that owns the room (Plan §15 P4's
+   capability-to-capability shape). In v1 the membership adapter's room config
+   declares the rooms at composition and the composition root provisions their
+   Threads at startup through this op; §2.1's room pre-existence requirement is
+   thereby satisfiable and `SendMessage` to a `thread:` address works unchanged.
+5. **Per-person Thread listing exists as a store read (`listThreadsForPerson`).**
+   The frozen `ListThreadsForPerson` query had no faithful seam read in §4 (the S1-b
+   flag). Ruling: `listThreadsForPerson(personId) → StoreResult<Thread[]>` returns
+   every DIRECT Thread whose canonical pair contains `personId`, plus EVERY room
+   Thread (`threadKind` team|mission). Room membership filtering is **not** the
+   store's truth (DEC-04: membership truth stays with its owner) — the core filters
+   room Threads through the membership seam (`isMember`, Messaging-Seams §3.1) at
+   request time, per R3. Committed state only. Ordering is creation order in the v1
+   adapters and is **not contractual** (Thread carries no sequence field; §3 stays
+   message-scoped).
+6. **The frozen RecipientSnapshot is readable (`getSnapshot`).** Ruling:
+   `getSnapshot(messageId) → StoreResult<RecipientSnapshot>` (`RecordNotFound` when
+   absent). Motivation: the DEC-21 recovery sweep (§7) re-drives R4 room-send
+   blocked settles, and the blocked set is durable ONLY on the committed snapshot —
+   re-deriving it from CURRENT contact policy at sweep time would violate R4's
+   "terminal AT ACCEPTANCE" and I5. The sweep reads the snapshot and settles each
+   blocked Delivery `pending → failed` (`blocked-by-contact-policy`) through the §5
+   CAS — CAS-idempotent under re-drive, and journaled per §11.1 so the failure stays
+   observable (`DeliveryUpdated`, MSG-016).
+
+---
+
+**Erratum 7 (added by the S2-a audit remediation, 2026-07-25 — same authority as
+§1–§10).** The zero-context adversarial audit of slice S2-a found R4 defeated in the
+commit→settle window: blocked room Deliveries committed as ordinary `pending` and
+settled `failed` only in the post-commit effect leg, so TWO ordinary interleavings
+(no crash needed) delivered a blocked recipient — a presence-open re-drive inside
+the window, and a DND-hold inside the window whose later release delivered after the
+effect leg's blocked CAS lost with a swallowed `StateConflict`. The blocked
+recipient's inbox also served the Message during the window. Ruling — R4's
+"terminal AT ACCEPTANCE" is made LITERAL:
+
+7. **Blocked Deliveries commit TERMINAL `failed{blocked-by-contact-policy}` INSIDE
+   `commitAcceptance`.** The store reads the blocked set off the
+   `AcceptanceInput.snapshot` it is already committing and stamps those Deliveries
+   terminal in the same transaction that stamps thread/sequence — the
+   zero-transition shape of the R5 machine's `pending → failed{policy-blocked}`
+   ("Terminal AT ACCEPTANCE … no attempts are ever made"; the frozen contract
+   already names the `blocked-by-contact-policy` reason, and the S2-a effect-leg
+   CAS matched these same semantics — this erratum moves the identical outcome
+   into the commit; the contract JSON and its state machine are unchanged).
+   Consequences: no `pending` instant is ever observable for a blocked Delivery,
+   so pending-state re-drives (presence-open, DND release, the DEC-21 sweep) can
+   never see, hold, or deliver it; §11.2's inbox (non-terminal only) never serves
+   the blocked Message at any instant; the effect leg needs no blocked CAS and the
+   `StateConflict` swallow is gone. **Observability is preserved:** each blocked
+   Delivery's terminal failure is journaled as a `DeliveryUpdated` entry in the
+   same commit (§11.1, MSG-016) — the same committed-fact event the effect-leg
+   CAS produced. **§11.6's motivation is superseded:** the sweep no longer reads
+   the snapshot to re-drive blocked settles (there is nothing to settle — the
+   commit already holds the terminal truth), and with it goes the sweep's
+   `RecordNotFound → blocked=[]` laundering hazard; `getSnapshot` remains in the
+   seam as the I5 evidence read (frozen recipient set + membership revision).
