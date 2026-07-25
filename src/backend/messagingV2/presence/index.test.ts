@@ -189,7 +189,7 @@ assert.equal(
 );
 const aliceBriefing = terminals.submissions.at(-1)?.text ?? '';
 assert.match(aliceBriefing, /\[nvk-msg briefing\] You are agent "chief-kimi"/, 'briefing names the agent');
-assert.match(aliceBriefing, /#team is read-only for agents until the rooms slice/, 'briefing teaches the #team posture');
+assert.match(aliceBriefing, /send --to '#team'/, 'briefing teaches the fleet room post (N3)');
 assert.equal(terminals.submissions.at(-1)?.agentId, aliceId, 'briefing rides the submit lane, never PtyDelivery');
 console.log('launch briefing test passed');
 

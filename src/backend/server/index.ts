@@ -167,6 +167,9 @@ export class ServerController {
         // its roster is empty, so retry/confirmation amendments would falsify
         // envelopes the Live lane can still deliver. Default unchanged.
         reconcileOnStart: process.env.NVK_RECONCILE_ON_START !== 'off',
+        // N3: #team sends/reads delegate to the capability (boots after this
+        // hub — resolved lazily at request time).
+        teamLane: () => this.messagingV2?.rooms ?? null,
       },
     );
   }
@@ -556,6 +559,9 @@ export class ServerController {
         // runtime; the glue opens lanes for live agents and briefs new spawns.
         terminals: this.agentsHub.terminals,
         onLaunch: (listener) => this.agentsHub.onLaunch(listener),
+        // N3: the rooms glue re-broadcasts #team commits as message-envelope
+        // frames for the browser lane (D-N3-4 LIVE shim).
+        broadcast: (event, payload) => this.broadcastEvent(event, payload),
       });
     } catch (error) {
       // A v2 boot failure must never take down the app (the old surface still

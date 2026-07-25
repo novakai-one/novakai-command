@@ -1,17 +1,19 @@
 // Message router — records every envelope, then delivers via the adapter
-// seam: PTY typing for agents, the log+ws record for the human, and channel
-// posts by sender policy — agent posts stay pull-only while chris' team
-// chat is pushed to every live agent (docs/agent-messaging.md §2, §4).
-// Failures are part of the audit record: the envelope is appended first,
-// and every outcome lands as a status amendment.
+// seam: PTY typing for agents, the log+ws record for the human. Failures
+// are part of the audit record: the envelope is appended first, and every
+// outcome lands as a status amendment.
+//
+// N3 deletions: the channel/room arms (routeChannel, routeRoom,
+// deliverRoomMembers) are gone — #team lives in the messaging capability
+// (fleet room; capability delivery does the PTY fan-out) and free rooms are
+// archive-only. The router now serves the human direct lane until N4.
 import { MessageStore } from '../store/index.js';
 import { MailboxDeliveryAdapter, PtyDelivery, PtyDeliveryAdapter } from '../delivery/index.js';
 import { resolveActor } from '../actors/index.js';
 import type { ResolvedActor } from '../actors/index.js';
-import { RoomStore } from '../rooms/index.js';
 import type { EnvelopeIdentity } from '../identity/index.js';
-import { CHRIS_MEMBER, formatInboundMarker, formatRoomInbound, isChannel, isRoom, mailboxIdentityFor } from '../types.js';
-import type { AgentAddress, DeliveryOutcome, DeliveryReceipt, MailboxLookup, MessageEnvelope, Room } from '../types.js';
+import { formatInboundMarker, isChannel, isRoom, mailboxIdentityFor } from '../types.js';
+import type { AgentAddress, DeliveryOutcome, DeliveryReceipt, MailboxLookup, MessageEnvelope } from '../types.js';
 import type { EffectConfirmer } from '../confirm/index.js';
 
 /** Recipient not found / not running — the error carries the live roster (§5). */
@@ -84,7 +86,6 @@ export class MessageRouter {
   constructor(
     private readonly store: MessageStore,
     delivery: PtyDelivery,
-    private readonly rooms: RoomStore,
     private readonly roster: () => AgentAddress[],
     private readonly interruptLimiter = new InterruptRateLimiter(),
     private readonly mailboxLookup: MailboxLookup = mailboxIdentityFor,
@@ -103,63 +104,7 @@ export class MessageRouter {
     // the durable ids from birth (plan v2 §1.5).
     this.identity?.stamp(envelope, this.roster());
     this.store.append(envelope);
-    if (isChannel(envelope.to)) return this.routeChannel(envelope);
-    if (isRoom(envelope.to)) return this.routeRoom(envelope);
     return this.routeDirect(envelope);
-  }
-
-  private async routeRoom(envelope: MessageEnvelope): Promise<DeliveryReceipt> {
-    if (envelope.delivery === 'interrupt') {
-      throw this.fail(envelope, new ChannelInterruptError(envelope.to));
-    }
-    const room = this.rooms.get(envelope.to);
-    if (!room) throw this.fail(envelope, new RoomNotFoundError(envelope.to));
-    if (envelope.from !== CHRIS_MEMBER && !room.members.includes(envelope.from)) {
-      throw this.fail(envelope, new NotARoomMemberError(envelope.from, envelope.to));
-    }
-    const failed = await this.deliverRoomMembers(room, envelope);
-    if (failed.length > 0) {
-      this.settle(envelope, 'partial');
-      return { messageId: envelope.id, deliveredAt: new Date().toISOString(), mode: 'room', failed };
-    }
-    this.settle(envelope, 'delivered');
-    return { messageId: envelope.id, deliveredAt: new Date().toISOString(), mode: 'room' };
-  }
-
-  /** Type into every live member's PTY; the sender and chris read the log instead. */
-  private async deliverRoomMembers(room: Room, envelope: MessageEnvelope): Promise<string[]> {
-    const liveByName = new Map(this.roster().map((address) => [address.name, address]));
-    const failed: string[] = [];
-    for (const member of room.members) {
-      if (member === envelope.from || member === CHRIS_MEMBER) continue;
-      const address = liveByName.get(member);
-      if (!address) continue;
-      try {
-        await this.adapters.agent.deliver({ kind: 'agent', address }, envelope, formatRoomInbound(room, envelope));
-      } catch {
-        failed.push(member);
-      }
-    }
-    return failed;
-  }
-
-  /** Agent channel posts stay pull-only. Chris owns the interactive team chat:
-   * his browser-authored posts are pushed to every live agent immediately. */
-  private async routeChannel(envelope: MessageEnvelope): Promise<DeliveryReceipt> {
-    if (envelope.delivery === 'interrupt') {
-      throw this.fail(envelope, new ChannelInterruptError(envelope.to));
-    }
-    if (envelope.from === CHRIS_MEMBER) {
-      for (const address of this.roster()) {
-        try {
-          await this.adapters.agent.deliver({ kind: 'agent', address }, envelope);
-        } catch {
-          // Team chat fan-out is best-effort; the audit record remains readable.
-        }
-      }
-    }
-    this.settle(envelope, 'delivered');
-    return { messageId: envelope.id, deliveredAt: new Date().toISOString(), mode: 'channel' };
   }
 
   private async routeDirect(envelope: MessageEnvelope): Promise<DeliveryReceipt> {
@@ -246,6 +191,9 @@ export class MessageRouter {
   async reconcile({ windowMs = 30 * 60 * 1000 }: { windowMs?: number } = {}): Promise<void> {
     const since = new Date(Date.now() - windowMs).toISOString();
     for (const envelope of this.store.history({ since })) {
+      // N3: old channel/room lanes are archive — #team lives in the
+      // capability now; never retry-falsify them through the direct lane.
+      if (isChannel(envelope.to) || isRoom(envelope.to)) continue;
       if (envelope.status === 'queued') {
         // Mailbox sends LIVE at 'queued' — the append is the record (R1).
         // Re-routing one would append a duplicate line and re-broadcast it,

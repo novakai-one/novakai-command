@@ -1,13 +1,15 @@
 // Agent messaging tunnel wiring (docs/agent-messaging.md). Owns the surviving
-// REST surface (GET /api/messages history, /api/user/messages, rooms,
-// mailboxes), and pushes every appended envelope over the existing WebSocket
-// broadcast for the future Messages view (R6). Kept out of server/index.ts
-// the same way AgentsHub is.
+// REST surface (GET /api/messages history, /api/user/messages, mailboxes,
+// the free-room archive shim), and pushes every appended envelope over the
+// existing WebSocket broadcast for the future Messages view (R6). Kept out
+// of server/index.ts the same way AgentsHub is.
 //
-// N2 deletions: POST /api/messages + handleSend (agent-originated sends now
-// go through the authenticated v2 routes), and the spawn briefing (the
-// messagingV2 presence glue owns it). The router/delivery/confirmer stack
-// stays for the human lane until N3/N4.
+// N2 deletions: POST /api/messages + handleSend, and the spawn briefing.
+// N3 deletions: routeChannel/routeRoom/deliverRoomMembers, the RoomStore
+// class, POST /api/rooms + /api/rooms/:id/members. #team now lives in the
+// messaging capability (fleet room): handleUserSend and the #team history
+// read translate through the injected TeamLane (D-N3-3/4). Free rooms are
+// archive-only via ./rooms (read fold + create writer, dies in N4).
 import type { Express, Request, Response } from 'express';
 import type { AgentInfo } from '../terminal/manager.js';
 import { rosterFromAgents } from './address/index.js';
@@ -22,7 +24,7 @@ import {
   NotARoomMemberError,
   RoomNotFoundError,
 } from './router/index.js';
-import { RoomStore } from './rooms/index.js';
+import { DEFAULT_ROOMS_PATH, createRoom, getRoom, listRooms } from './rooms/index.js';
 import { MailboxConflictError, MailboxRegistry } from './mailbox/index.js';
 import { SendApi, InvalidSendError } from './send/index.js';
 import { EnvelopeIdentity } from './identity/index.js';
@@ -31,11 +33,10 @@ import { TranscriptEffectConfirmer } from './confirm/index.js';
 import type { EffectConfirmer } from './confirm/index.js';
 import { createThreadRoute } from './threads/index.js';
 import { MessageStore } from './store/index.js';
-import { CHRIS_IDENTITY, CHRIS_MEMBER } from './types.js';
-import type { MessageQuery, Room, SendMessage } from './types.js';
+import { CHRIS_IDENTITY, TEAM_CHANNEL } from './types.js';
+import type { MessageQuery, SendMessage } from './types.js';
 
 export { MessageStore } from './store/index.js';
-export { RoomStore } from './rooms/index.js';
 export {
   PtyDelivery,
   PtyDeliveryAdapter,
@@ -54,6 +55,27 @@ export * from './types.js';
 /** The TerminalManager surface messaging consumes. */
 export interface AgentTerminals extends PtyWriter {
   list(): AgentInfo[];
+}
+
+/**
+ * D-N3-3/4: the capability-backed #team lane (implemented by the messagingV2
+ * rooms glue; dies in N4). `from` is always the server-stamped human.
+ */
+export interface TeamLaneEnvelope {
+  id: string;
+  from: string;
+  to: string;
+  body: string;
+  createdAt: string;
+  status: string;
+  delivery: string;
+}
+
+export interface TeamLane {
+  /** Human #team post; resolves to the translated old-shape envelope. */
+  post(body: string): Promise<TeamLaneEnvelope>;
+  /** Translated #team history (old shape; archive never merged, D1). */
+  history(): Promise<TeamLaneEnvelope[]>;
 }
 
 export interface MessagingOptions {
@@ -75,16 +97,19 @@ export interface MessagingOptions {
   confirmTimeoutMs?: number;
   /** Restart reconciliation (D2) runs shortly after boot unless disabled. */
   reconcileOnStart?: boolean;
+  /** D-N3-3/4: lazy capability-backed #team lane (boots after this hub). */
+  teamLane?: () => TeamLane | null;
 }
 
 export class MessagingHub {
   private readonly store: MessageStore;
   private readonly delivery: PtyDelivery;
-  private readonly rooms: RoomStore;
+  private readonly roomsPath: string;
   private readonly mailboxes: MailboxRegistry;
   private readonly sendApi: SendApi;
   private readonly router: MessageRouter;
   private readonly missionGraph?: MissionGraph;
+  private readonly teamLane?: () => TeamLane | null;
 
   constructor(
     private readonly terminals: AgentTerminals,
@@ -92,10 +117,11 @@ export class MessagingHub {
     options: MessagingOptions = {},
   ) {
     this.missionGraph = options.missionGraph;
-    this.store = new MessageStore(options.storePath); this.rooms = new RoomStore(options.roomsStorePath);
+    this.teamLane = options.teamLane;
+    this.store = new MessageStore(options.storePath);
+    this.roomsPath = options.roomsStorePath ?? DEFAULT_ROOMS_PATH;
     this.mailboxes = options.mailboxRegistry ?? new MailboxRegistry(options.mailboxStorePath);
     this.store.onAppend((envelope) => this.broadcast('message-envelope', envelope));
-    this.rooms.onAppend(() => this.broadcast('rooms-changed', { rooms: this.rooms.list() }));
     this.delivery = new PtyDelivery(this.terminals, options.timings);
     this.router = this.buildRouter(options);
     this.sendApi = new SendApi(this.router);
@@ -114,7 +140,6 @@ export class MessagingHub {
     return new MessageRouter(
       this.store,
       this.delivery,
-      this.rooms,
       () => rosterFromAgents(this.terminals.list()),
       new InterruptRateLimiter(options.maxInterruptsPerMinute),
       (name) => this.mailboxes.identityFor(name),
@@ -145,26 +170,22 @@ export class MessagingHub {
 
   registerRoutes(application: Express): void {
     application.post('/api/user/messages', (request, response) => void this.handleUserSend(request, response));
-    application.get('/api/messages', (request, response) => this.handleHistory(request, response));
+    application.get('/api/messages', (request, response) => void this.handleHistory(request, response));
     application.get('/api/identity', (_request, response) => response.json({ identity: CHRIS_IDENTITY }));
     application.get('/api/messaging/address-book', (_request, response) => response.json({
       mailboxes: this.mailboxes.list(),
       presences: rosterFromAgents(this.terminals.list()),
     }));
     application.post('/api/mailboxes', (request, response) => this.handleRegisterMailbox(request, response));
-    application.post('/api/rooms', (request, response) => this.handleCreateRoom(request, response));
+    // Free-room archive shim (N3, dies in N4): reads + browser creation only.
+    application.get('/api/rooms', (_request, response) => response.json({ rooms: listRooms(this.roomsPath) }));
     application.post('/api/user/rooms', (request, response) => this.handleCreateUserRoom(request, response));
-    application.get('/api/rooms', (_request, response) => response.json({ rooms: this.rooms.list() }));
-    application.post(
-      '/api/rooms/:roomId/members',
-      (request, response) => this.handleAddMembers(request, response),
-    );
     application.post('/api/threads', (request, response) => this.handleCreateThread(request, response));
   }
 
   /** The mission↔room link: one typed thread block in the system of record. */
   private handleCreateThread(request: Request, response: Response): void {
-    createThreadRoute(request, response, this.missionGraph, (roomId) => this.rooms.get(roomId));
+    createThreadRoute(request, response, this.missionGraph, (roomId) => getRoom(this.roomsPath, roomId));
   }
 
   private handleRegisterMailbox(request: Request, response: Response): void {
@@ -182,54 +203,18 @@ export class MessagingHub {
     }
   }
 
-  private handleCreateRoom(request: Request, response: Response): void {
-    const payload = (request.body ?? {}) as { name?: unknown; members?: unknown; from?: unknown };
-    try {
-      const name = this.requireText(payload.name, 'name');
-      const members = this.requireStringArray(payload.members, 'members');
-      const createdBy = this.requireText(payload.from, 'from');
-      const resolvedMembers = createdBy === CHRIS_MEMBER
-        ? [...new Set([...members, CHRIS_IDENTITY.memberName])]
-        : members;
-      response.status(201).json({ room: this.rooms.create({ name, members: resolvedMembers, createdBy }) });
-    } catch (error) {
-      response.status(400).json({ error: error instanceof Error ? error.message : String(error) });
-    }
-  }
-
   private handleCreateUserRoom(request: Request, response: Response): void {
     const payload = (request.body ?? {}) as { name?: unknown; members?: unknown };
     try {
       const name = this.requireText(payload.name, 'name');
       const members = this.requireStringArray(payload.members, 'members');
-      response.status(201).json({
-        room: this.rooms.create({
-          name,
-          members: [...new Set([...members, CHRIS_IDENTITY.memberName])],
-          createdBy: CHRIS_IDENTITY.memberName,
-        }),
+      const room = createRoom(this.roomsPath, {
+        name,
+        members: [...new Set([...members, CHRIS_IDENTITY.memberName])],
+        createdBy: CHRIS_IDENTITY.memberName,
       });
-    } catch (error) {
-      response.status(400).json({ error: error instanceof Error ? error.message : String(error) });
-    }
-  }
-
-  private handleAddMembers(request: Request, response: Response): void {
-    const roomId = request.params.roomId;
-    const room = this.rooms.get(roomId);
-    if (!room) {
-      response.status(404).json({ error: new RoomNotFoundError(roomId).message });
-      return;
-    }
-    const payload = (request.body ?? {}) as { 'add'?: unknown; from?: unknown };
-    try {
-      const sender = this.requireText(payload.from, 'from');
-      if (!room.members.includes(sender)) {
-        response.status(403).json({ error: new NotARoomMemberError(sender, roomId).message });
-        return;
-      }
-      const membersToAdd = this.requireStringArray(payload.add, 'add');
-      response.json({ room: this.rooms.addMembers(roomId, membersToAdd) as Room });
+      this.broadcast('rooms-changed', { rooms: listRooms(this.roomsPath) });
+      response.status(201).json({ room });
     } catch (error) {
       response.status(400).json({ error: error instanceof Error ? error.message : String(error) });
     }
@@ -251,7 +236,35 @@ export class MessagingHub {
 
   private async handleUserSend(request: Request, response: Response): Promise<void> {
     const payload = (request.body ?? {}) as Partial<SendMessage> & { threadId?: string };
+    // D-N3-3: Chris's #team posts go through the capability (fleet room) —
+    // capability delivery does the PTY fan-out; routeChannel is deleted.
+    if (payload.to === TEAM_CHANNEL) {
+      await this.sendTeamChannel(payload, response);
+      return;
+    }
     await this.sendPayload(CHRIS_IDENTITY.memberName, payload, response);
+  }
+
+  /** The #team user-send through the injected capability lane (D-N3-3). */
+  private async sendTeamChannel(
+    payload: Partial<SendMessage>,
+    response: Response,
+  ): Promise<void> {
+    if (payload.delivery === 'interrupt') {
+      response.status(400).json({ error: new ChannelInterruptError(TEAM_CHANNEL).message });
+      return;
+    }
+    const lane = this.teamLane?.() ?? null;
+    if (lane === null) {
+      response.status(503).json({ error: 'messaging capability unavailable this run — #team post not sent' });
+      return;
+    }
+    try {
+      const body = this.requireText(payload.body, 'body');
+      response.status(201).json({ envelope: await lane.post(body) });
+    } catch (error) {
+      response.status(502).json({ error: error instanceof Error ? error.message : String(error) });
+    }
   }
 
   private async sendPayload(
@@ -291,7 +304,7 @@ export class MessagingHub {
     }
   }
 
-  private handleHistory(request: Request, response: Response): void {
+  private async handleHistory(request: Request, response: Response): Promise<void> {
     const query: MessageQuery = {};
     if (typeof request.query.withAgent === 'string') query.withAgent = request.query.withAgent;
     if (typeof request.query.withRoom === 'string') query.withRoom = request.query.withRoom;
@@ -302,6 +315,27 @@ export class MessagingHub {
       const limit = Number.parseInt(request.query.limit, 10);
       if (Number.isFinite(limit) && limit > 0) query.limit = limit;
     }
+    // D-N3-4 READ shim: #team history translates from the capability (fleet
+    // room, old envelope shape). The old journal's #team lines are archive —
+    // NEVER merged (D1). Everything else keeps reading the old store.
+    if (query.withAgent === TEAM_CHANNEL) {
+      await this.teamHistory(response);
+      return;
+    }
     response.json({ messages: this.store.history(query) });
+  }
+
+  /** The translated #team read through the injected capability lane (D-N3-4). */
+  private async teamHistory(response: Response): Promise<void> {
+    const lane = this.teamLane?.() ?? null;
+    if (lane === null) {
+      response.status(503).json({ error: 'messaging capability unavailable this run — #team history unavailable' });
+      return;
+    }
+    try {
+      response.json({ messages: await lane.history() });
+    } catch (error) {
+      response.status(502).json({ error: error instanceof Error ? error.message : String(error) });
+    }
   }
 }

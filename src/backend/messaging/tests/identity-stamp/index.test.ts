@@ -122,8 +122,10 @@ async function post(route: string, body: unknown): Promise<{ status: number; jso
   return { status: response.status, json: await response.json() as Record<string, unknown> };
 }
 
-// Create a room, link it to the mission, post into it.
-const roomResponse = await post('/api/rooms', { name: 'alpha-room', members: ['worker-1', 'manager-1'], from: 'worker-1' });
+// Create a room (via the N3 shim's browser route), link it to the mission.
+// N3 deleted the router's room arms, so the room-send stamp assertion went
+// with them — the thread-link and direct-stamp behavior survive.
+const roomResponse = await post('/api/user/rooms', { name: 'alpha-room', members: ['worker-1', 'manager-1'] });
 assert.equal(roomResponse.status, 201);
 const roomId = (roomResponse.json.room as { roomId: string }).roomId;
 
@@ -131,15 +133,12 @@ assert.equal((await post('/api/threads', { roomId, missionId: 'mission_alpha' })
 assert.equal((await post('/api/threads', { roomId, missionId: 'mission_beta' })).status, 409, 'a room links to one mission');
 assert.equal((await post('/api/threads', { roomId: 'room_ghost', missionId: 'mission_alpha' })).status, 404);
 
-const roomEnvelope = await messagingHub.send.send('worker-1', { 'to': roomId, delivery: 'normal', body: 'room ping' });
-assert.equal(roomEnvelope.missionId, 'mission_alpha', 'room send carries the linked mission');
-
 const dmEnvelope = await messagingHub.send.send('worker-1', { 'to': 'manager-1', delivery: 'normal', body: 'dm ping' });
 assert.equal(dmEnvelope.missionId, 'mission_alpha', 'server derivation is the only missionId source');
 
 const history = await fetch(`${base}/api/messages?missionId=mission_alpha`);
 const messages = (await history.json() as { messages: MessageEnvelope[] }).messages;
-assert.equal(messages.length >= 2, true);
+assert.equal(messages.length >= 1, true);
 assert.ok(messages.every((message) => message.missionId === 'mission_alpha'), 'history filters by mission');
 console.log('hub thread-link + history tests passed');
 

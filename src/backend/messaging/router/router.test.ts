@@ -10,11 +10,8 @@ import {
   InterruptRateLimiter,
   RecipientNotFoundError,
   InterruptRateLimitError,
-  ChannelInterruptError,
 } from './index.js';
 import { MessageStore } from '../store/index.js';
-import { RoomStore } from '../rooms/index.js';
-import { TEAM_CHANNEL } from '../types.js';
 import type { AgentAddress, MessageEnvelope } from '../types.js';
 
 const FAST = { interruptSettleMs: 0, submitDelayMs: 0 };
@@ -43,14 +40,13 @@ interface Fixture {
 function fixture(limiter?: InterruptRateLimiter): Fixture {
   const root = mkdtempSync(join(tmpdir(), 'nvk-router-'));
   const store = new MessageStore(join(root, 'messages.jsonl'));
-  const rooms = new RoomStore(join(root, 'rooms.jsonl'));
   const writes: Array<{ agentId: string; data: string }> = [];
   const writeOk = { value: true };
   const write = (agentId: string, data: string): boolean => {
     writes.push({ agentId, data });
     return writeOk.value;
   };
-  const router = new MessageRouter(store, new PtyDelivery({ write }, FAST), rooms, () => ROSTER, limiter);
+  const router = new MessageRouter(store, new PtyDelivery({ write }, FAST), () => ROSTER, limiter);
   return { router, store, writes, writeOk };
 }
 
@@ -80,22 +76,6 @@ async function testRecipientNotFoundFailsWithRoster(): Promise<void> {
   assert.equal(writes.length, 0, 'nothing typed anywhere');
 }
 
-async function testChannelPostIsRecordOnly(): Promise<void> {
-  const { router, store, writes } = fixture();
-  const post = envelope({ 'to': TEAM_CHANNEL });
-  const receipt = await router.route(post);
-  assert.equal(receipt.mode, 'channel');
-  assert.equal(writes.length, 0, 'channel fan-out never PTY-injects (§4)');
-  assert.equal(store.readChannel()[0]?.status, 'delivered');
-}
-
-async function testChannelInterruptRejected(): Promise<void> {
-  const { router, store } = fixture();
-  const post = envelope({ 'to': TEAM_CHANNEL, delivery: 'interrupt' });
-  await assert.rejects(() => router.route(post), ChannelInterruptError);
-  assert.equal(store.history().at(-1)?.status, 'failed');
-}
-
 async function testInterruptRateCap(): Promise<void> {
   let clock = 0;
   const { router, store } = fixture(new InterruptRateLimiter(2, () => clock));
@@ -120,8 +100,6 @@ async function testDeliveryFailureAudited(): Promise<void> {
 
 await testDirectMessageAcceptsOnWrite();
 await testRecipientNotFoundFailsWithRoster();
-await testChannelPostIsRecordOnly();
-await testChannelInterruptRejected();
 await testInterruptRateCap();
 await testDeliveryFailureAudited();
 console.log('PASS');

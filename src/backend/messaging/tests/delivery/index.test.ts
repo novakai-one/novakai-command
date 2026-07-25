@@ -1,5 +1,5 @@
-// Delivery adapter seam + honest room-status tests (messaging rework
-// task 3). Run with
+// Delivery adapter seam tests (messaging rework task 3). N3 deleted the
+// router's room arms; their tests went with them. Run with
 // `npx tsx src/backend/messaging/tests/delivery/index.test.ts`.
 import assert from 'node:assert/strict';
 import { mkdtempSync } from 'node:fs';
@@ -7,7 +7,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PtyDelivery } from '../../delivery/index.js';
 import { MessageRouter } from '../../router/index.js';
-import { RoomStore } from '../../rooms/index.js';
 import { MessageStore } from '../../store/index.js';
 import type { AgentAddress, MessageEnvelope } from '../../types.js';
 
@@ -38,31 +37,12 @@ function envelope(recipient: string, from = 'claude-1'): MessageEnvelope {
   };
 }
 
-function makeRouter(): { router: MessageRouter; store: MessageStore; rooms: RoomStore } {
+function makeRouter(): { router: MessageRouter; store: MessageStore } {
   const root = mkdtempSync(join(tmpdir(), 'nvk-delivery-'));
   const store = new MessageStore(join(root, 'messages.jsonl'));
-  const rooms = new RoomStore(join(root, 'rooms.jsonl'));
   const timings = { interruptSettleMs: 0, submitDelayMs: 0 };
-  const router = new MessageRouter(store, new PtyDelivery({ write: fakeWrite }, timings), rooms, () => roster);
-  return { router, store, rooms };
-}
-
-async function testRoomFailureIsPartialAndHonest(): Promise<void> {
-  const { router, store, rooms } = makeRouter();
-  const room = rooms.create({ name: 'ops', members: ['claude-1', 'codex-1', 'codex-2', 'chris'], createdBy: 'claude-1' });
-  const receipt = await router.route(envelope(room.roomId));
-  assert.equal(receipt.mode, 'room');
-  assert.deepEqual(receipt.failed, ['codex-2'], 'the dead PTY member is named on the receipt');
-  assert.equal(store.history()[0]?.status, 'partial', 'member failure settles the envelope partial');
-  assert.ok(writes.some((entry) => entry.agentId === 'agent_2'), 'live members still receive the write');
-  assert.ok(!writes.some((entry) => entry.agentId === 'agent_1'), 'sender is skipped');
-}
-
-async function testRoomAllLiveDelivers(): Promise<void> {
-  const { router, rooms } = makeRouter();
-  const room = rooms.create({ name: 'duo', members: ['claude-1', 'codex-1'], createdBy: 'claude-1' });
-  const receipt = await router.route(envelope(room.roomId));
-  assert.equal(receipt.mode, 'room');
+  const router = new MessageRouter(store, new PtyDelivery({ write: fakeWrite }, timings), () => roster);
+  return { router, store };
 }
 
 async function testMailboxDirectMessages(): Promise<void> {
@@ -88,8 +68,6 @@ async function testAgentDirectAndUnknown(): Promise<void> {
   assert.equal(store.history({ limit: 1 })[0]?.status, 'failed', 'unknown recipient fails honestly');
 }
 
-await testRoomFailureIsPartialAndHonest();
-await testRoomAllLiveDelivers();
 await testMailboxDirectMessages();
 await testAgentDirectAndUnknown();
 console.log('PASS');

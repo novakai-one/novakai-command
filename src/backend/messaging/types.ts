@@ -141,8 +141,3 @@ export function formatInboundMarker(envelope: MessageEnvelope): string {
 export function formatInbound(envelope: MessageEnvelope): string {
   return `${formatInboundMarker(envelope)} ${envelope.body}`;
 }
-
-/** Inbound PTY line for a room post. */
-export function formatRoomInbound(room: Room, envelope: MessageEnvelope): string {
-  return `[nvk-room ${room.name} from ${envelope.from} id ${envelope.id}] ${envelope.body}`;
-}

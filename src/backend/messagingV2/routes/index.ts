@@ -134,6 +134,53 @@ function sendInputFor(parsed: SendBody, peer: AgentInfo): Record<string, unknown
   };
 }
 
+/** D-N3-5: a room target → its provisioned threadId, or an HTTP-ready error. */
+function roomTarget(
+  deps: MessagingV2RouteDeps,
+  senderAgentId: string,
+  target: string,
+): { threadId: ThreadId } | { status: number; error: string } {
+  const rooms = deps.getHandle()?.rooms ?? null;
+  if (rooms === null) return { status: 503, error: 'messaging capability unavailable this run' };
+  if (target === '#team') {
+    const threadId = rooms.fleetThreadId();
+    return threadId === undefined ? { status: 503, error: 'fleet room not provisioned' } : { threadId };
+  }
+  if (target === '#mission') {
+    const missionId = deps.objectModel.missionForAgent(senderAgentId);
+    if (missionId === null) return { status: 400, error: 'no mission room — the sender has no mission ref' };
+    const threadId = rooms.threadIdFor('mission', missionId);
+    return threadId === undefined ? { status: 400, error: `no room provisioned for mission ${missionId}` } : { threadId };
+  }
+  return { status: 400, error: `unsupported room target "${target}" — use '#team' or '#mission' (free rooms are archive-only)` };
+}
+
+/** D-N3-5: room send — always normal priority (parity note below). */
+async function handleRoomSend(
+  deps: MessagingV2RouteDeps,
+  cache: SessionCache,
+  auth: { session: MessagingSession; token: string },
+  parsed: SendBody,
+  response: Response,
+): Promise<void> {
+  if (parsed.interrupt) {
+    // Parity with the old ChannelInterruptError: interrupting the whole fleet
+    // is never what anyone means. The CORE allows urgent room priority
+    // (MSG-010 generalized) — the route rejects it deliberately.
+    response.status(400).json({ error: 'interrupt delivery is rejected for room recipients' });
+    return;
+  }
+  const resolved = roomTarget(deps, auth.token, parsed.target);
+  if ('status' in resolved) { response.status(resolved.status).json({ error: resolved.error }); return; }
+  const outcome = await auth.session.sendMessage({
+    address: `thread:${resolved.threadId}`,
+    body: { text: parsed.text },
+    priority: 'normal',
+    clientMessageId: parsed.clientMessageId,
+  });
+  reply(cache, auth.token, response, outcome);
+}
+
 async function handleSend(deps: MessagingV2RouteDeps, cache: SessionCache, request: Request, response: Response): Promise<void> {
   const auth = await sessionOrReply(deps, cache, request, response);
   if (auth === null) return;
@@ -143,7 +190,7 @@ async function handleSend(deps: MessagingV2RouteDeps, cache: SessionCache, reque
     return;
   }
   if (isChannel(parsed.target) || isRoom(parsed.target)) {
-    response.status(400).json({ error: 'rooms and channels land in N3 — #team is read-only for agents' });
+    await handleRoomSend(deps, cache, auth, parsed, response);
     return;
   }
   const peer = peerOrReply(deps.terminals, parsed.target, response);
@@ -201,6 +248,19 @@ async function handleMessages(deps: MessagingV2RouteDeps, cache: SessionCache, r
   if (auth === null) return;
   const withName = withParam(request, response);
   if (withName === null) return;
+  // D-N3-5: room reads resolve like room sends ('#team', '#mission').
+  if (isChannel(withName) || isRoom(withName)) {
+    const resolved = roomTarget(deps, auth.token, withName);
+    if ('status' in resolved) { response.status(resolved.status).json({ error: resolved.error }); return; }
+    const page = await auth.session.getMessages({ threadId: resolved.threadId });
+    if (page.kind !== 'ok') {
+      const failure = failurePayload(cache, auth.token, page.error);
+      response.status(failure.status).json(failure.payload);
+      return;
+    }
+    response.status(200).json({ threadId: resolved.threadId, messages: page.value.messages });
+    return;
+  }
   const peer = peerOrReply(deps.terminals, withName, response);
   if (peer === null) return;
   const result = await messagesResult(cache, auth.token, auth.session, peer);

@@ -84,10 +84,10 @@ if (cmd === 'send') {
   const who = args[0];
   if (!who) { console.error('usage: nvk-msg read <name|#team> [--since ISO]'); process.exit(1); }
 
-  if (who.startsWith('#') || who.startsWith('room_')) {
-    // INTERIM (until N3): channel/room reads still come from the OLD pull-only
-    // history route — #team is read-only for agents and has no v2 thread yet.
-    const query = new URLSearchParams({ withAgent: who, ...(since ? { since } : {}) });
+  if (who.startsWith('room_')) {
+    // INTERIM (dies in N4): free-room reads still come from the OLD pull-only
+    // history route — free rooms are archive-only since N3.
+    const query = new URLSearchParams({ withRoom: who, ...(since ? { since } : {}) });
     const { messages = [] } = await api(`/api/messages?${query}`);
     if (!messages.length) { console.log('(no messages)'); process.exit(0); }
     for (const m of messages) {
