@@ -1,16 +1,35 @@
 # Messaging Integration (N-Program) — Handover to the Next Agent
 
 **Written:** 2026-07-25 by kimi-cli, at N-program kickoff (plan ratified, nothing built yet).
-**You are:** the agent executing slice N1 or later. Read this first, every session.
+**Updated:** 2026-07-25 by kimi-cli — **slice N1 (Foundation) SEALED** after law-#6
+audit (moderate; 2 must-fix + lesser findings disposed at source with regression
+tests — `Messaging-N1-Review.md`). On branch `kimi/n1-foundation`, **PR #63 open**
+(Chris merges code slices). Next: **slice N2 (Agent direct lane)** once N1 merges.
+**You are:** the agent executing slice N2 or later. Read this first, every session.
 
 ---
 
 ## Where things stand
 
 The Messaging pass-2 program is COMPLETE and sealed (S1–S4, P1–P6, 253/253 tests,
-scorecard 97.0/100, merged to `main` via PR #59). The N-program — wiring that
-capability into Novakai-Command and outward to Slack/Luke — is **ratified but not
-started**. Your job starts at **slice N1 (Foundation)**.
+scorecard 97.0/100, merged to `main` via PR #59). The N-program is UNDERWAY:
+**N1 sealed** — the capability now lives at `packages/messaging/` (D2), embedded
+in the app backend (`src/backend/messagingV2/` + `ServerController` start/stop),
+additive with zero consumers, contract suite in app CI. Remaining: N2–N8 in phase
+order. Your job starts at **slice N2 (Agent direct lane)**.
+
+## N1 left you these (read before designing N2)
+
+- `Messaging-N1-Review.md` §follow-up debt — the scheduled items N2 inherits:
+  the token=agentId threat note (authenticate must not be exposed to callers
+  that can read agents.jsonl), adapter disk-scan cost (presence heartbeats make
+  revalidate hot), shared-helper drift risk if a second host adapter appears.
+- `src/backend/messagingV2/` — the composition glue + Novakai adapters N2
+  extends (the handle `ServerController.messagingV2.embedded` is the consumer
+  entry point; PTY presence transport is N2's to add — do NOT reuse the old
+  `PtyDelivery` mechanism, law #1).
+- Env discipline: `NVK_MESSAGING_V2_STORE` (journal), `NVK_MESSAGING_V2_HUMAN_TOKEN`
+  (optional human principal). Store default `.novakai-command/messaging-v2/journal.jsonl`.
 
 ## Read next (in this order)
 

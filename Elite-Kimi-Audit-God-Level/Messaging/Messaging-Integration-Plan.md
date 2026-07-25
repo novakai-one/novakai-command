@@ -24,7 +24,8 @@ code.** If a slice needs a core change, that is a new R-item and a contract amen
 
 ## 2. Current state (evidence)
 
-- The capability: `Elite-Kimi-Audit-God-Level/Messaging/messaging/` — embedded +
+- The capability: `packages/messaging/` (moved from the audit workspace in N1
+  per D2; contract source at `packages/messaging/contract/`) — embedded +
   standalone composition roots; seams for store/authority/membership/presence-
   transport/clock; `ws` the only runtime dep; proof layer P1–P6.
 - The surface being replaced: `src/backend/messaging/**` (28
@@ -95,7 +96,7 @@ No slice seals with a finding undisposed.
 
 | Slice | Capability after slice | Deletes | Exit condition |
 |---|---|---|---|
-| **N1 — Foundation** | Package at `packages/messaging/`; embedded in the backend composition root; authority/membership/store adapters wired to ObjectModel + PeopleHub; app gates + package suite in CI | nothing (additive) | Capability boots in-app; contract suite runs in app CI; `tsc`/lint/stores gates green |
+| **N1 — Foundation** | Package at `packages/messaging/`; embedded in the backend composition root; authority/membership/store adapters wired to ObjectModel (amendment, N1 audit finding 13: the authority adapter reads ObjectModel directly — PeopleHub is itself a read hub over the same model, so an in-process HTTP hop would be ceremony; PeopleHub's join/liveness rules remain the N4 read-side reference); app gates + package suite in CI | nothing (additive) | Capability boots in-app; contract suite runs in app CI; `tsc`/lint/stores gates green |
 | **N2 — Agent direct lane** | Agents send/receive 1-1 through the capability; PTY delivery via terminal-host transport adapter (submit lane); `nvk-msg` CLI re-pointed as thin adapter (D3) | Router direct path, `PtyDelivery`, `POST /api/messages` trust-the-`from` debt | Two live agents converse via capability in the running app; old path gone |
 | **N3 — Rooms** | #team + rooms are room Threads; membership from ObjectModel refs | `RoomStore`, channel fan-out | Room send reaches exactly the snapshot members; blocked recipient terminally failed (R4/§11.7) |
 | **N4 — Frontend** | Messages tab + Mission Control on pushed capability events + queries | `tunnelModel` messaging half, `message-envelope` dialect, tunnel UI | Inbox updates with zero REST polls; reconnect replays from cursor |
@@ -130,7 +131,7 @@ previous one's slices unsealed.
 - App gates: `npx tsc --noEmit`, every `src/**/*.test.ts` via tsx, `npm run
   stores:test`, `npm run lint`, `npm run stores:gate`, `npm run build`.
 - Package suite: `npm run build && npm test` in `packages/messaging/` (253+ tests),
-  `node contract/check-map-drift.mjs` while the map covers the contract.
+  `node packages/messaging/contract/check-map-drift.mjs` while the map covers the contract.
 - New behaviour: tests cross the public contract only; shared adapter suites run
   against every adapter; process-level proofs for anything external.
 - Law #6: fresh 0-context adversarial auditor per slice, diff since last auditor,

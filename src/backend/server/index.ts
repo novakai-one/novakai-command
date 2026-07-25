@@ -22,6 +22,8 @@ import { DesignHub } from './design/index.js';
 import { MailboxRegistry, MessagingHub, rosterFromAgents } from '../messaging/index.js';
 import { MissionViewHub } from '../missionView/index.js';
 import { ObjectModel } from '../objectModel/index.js';
+import { startMessagingV2 } from '../messagingV2/index.js';
+import type { MessagingV2Handle } from '../messagingV2/index.js';
 import { ExternalSessionsHub } from '../externalSessions/index.js';
 import { PeopleHub } from '../people/index.js';
 import type { TerminalRuntime } from '../terminal/runtime/index.js';
@@ -84,6 +86,7 @@ export class ServerController {
   private readonly externalSessionsHub: ExternalSessionsHub;
   private readonly mailboxRegistry: MailboxRegistry;
   private readonly objectModel: ObjectModel;
+  private messagingV2: MessagingV2Handle | null = null;
 
   constructor(
     private readonly port: number,
@@ -540,6 +543,17 @@ export class ServerController {
     if (this.appServer && this.options.appPort) {
       await this.listen(this.appServer, this.options.appPort);
     }
+    try {
+      this.messagingV2 = await startMessagingV2({
+        objectModel: this.objectModel,
+        storePath: process.env.NVK_MESSAGING_V2_STORE || undefined,
+        humanToken: process.env.NVK_MESSAGING_V2_HUMAN_TOKEN || undefined,
+      });
+    } catch (error) {
+      // N1 is additive with zero consumers — a v2 boot failure must never take
+      // down the app (the old surface still serves). Fail LOUD, continue.
+      console.error('[messaging-v2] boot failed — capability disabled this run:', error);
+    }
   }
 
   private listen(server: HttpServer, port: number): Promise<void> {
@@ -560,6 +574,15 @@ export class ServerController {
   }
 
   public async stop(): Promise<void> {
+    // messagingV2 closes FIRST — it is additive (N1) and holds the journal
+    // handle; nothing else depends on it yet. A close failure must not abort
+    // shutdown (N1 audit finding 6): log it, keep closing the real servers.
+    try {
+      await this.messagingV2?.close();
+    } catch (error) {
+      console.error('[messaging-v2] close failed during shutdown — continuing:', error);
+    }
+    this.messagingV2 = null;
     const wsServers = this.appWss ? [this.wsServer, this.appWss] : [this.wsServer];
     const httpServers = this.appServer ? [this.server, this.appServer] : [this.server];
     await Promise.all(wsServers.map((socketServer) => new Promise<void>((resolve) => socketServer.close(() => resolve()))));

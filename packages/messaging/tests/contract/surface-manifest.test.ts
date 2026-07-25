@@ -29,9 +29,9 @@ import {
 } from "../../public/index.js";
 
 // dist/tests/contract/ -> package root is three levels up; the contract
-// source lives beside the package (law #3 single source of truth).
+// source lives inside the package (law #3 single source of truth, D2 move).
 const packageRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
-const CONTRACT_PATH = join(packageRoot, "..", "contract", "messaging-contract.json");
+const CONTRACT_PATH = join(packageRoot, "contract", "messaging-contract.json");
 
 interface ContractSource {
   constants: Record<string, number>;

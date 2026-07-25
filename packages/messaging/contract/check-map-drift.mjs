@@ -4,7 +4,7 @@
 // source of truth (contract/messaging-contract.json) actually matches it.
 // The map's prose is curated; its enumerations are NOT trusted to hand-copying.
 //
-// Usage:  node contract/check-map-drift.mjs        (from the Messaging/ directory)
+// Usage:  node packages/messaging/contract/check-map-drift.mjs   (from the repo root)
 // Exit 0 = no drift. Exit 1 = drift found (prints every mismatch).
 
 import { readFileSync } from "node:fs";
@@ -12,9 +12,13 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const root = join(here, "..");
 const contract = JSON.parse(readFileSync(join(here, "messaging-contract.json"), "utf8"));
-const mapSrc = readFileSync(join(root, "Messaging-Map.html"), "utf8");
+// The map is a program-docs artifact; it stays with the Messaging program docs
+// while the contract (single source of truth) lives with the capability (D2).
+const mapSrc = readFileSync(
+  join(here, "..", "..", "..", "Elite-Kimi-Audit-God-Level", "Messaging", "Messaging-Map.html"),
+  "utf8",
+);
 
 const script = mapSrc.match(/<script>([\s\S]*)<\/script>/)[1];
 const modules = eval(script.match(/const MODULES = (\[[\s\S]*?\n\]);/)[1]);

@@ -194,6 +194,11 @@ export class ObjectModel {
     return this.record('missions.jsonl', missionId)?.block ?? null;
   }
 
+  /** The durable team block, or null when the id resolves to no team. */
+  teamRecord(teamId: string): Record<string, unknown> | null {
+    return this.record('teams.jsonl', teamId)?.block ?? null;
+  }
+
   /** The mission a durable agent belongs to, from its typed refs. */
   missionForAgent(agentId: string): string | null {
     const block = this.agentRecord(agentId);

@@ -16,7 +16,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 
-const contractUrl = new URL("../../contract/messaging-contract.json", import.meta.url);
+const contractUrl = new URL("../contract/messaging-contract.json", import.meta.url);
 const outUrl = new URL("../public/contract/generated.ts", import.meta.url);
 
 const sourceText = readFileSync(contractUrl, "utf8");
