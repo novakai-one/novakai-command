@@ -10,7 +10,10 @@ Step 5 (S1 build kickoff).
 **Updated:** 2026-07-24 by kimi-cli — Step 5 (S1 build) COMPLETE and SEALED after
 law-#6 audit + full remediation (`Messaging-S1-Review.md`). Next: slice S2 (Rooms)
 per `Messaging-Plan.md` §18, or Chris's redirection.
-**You are:** the agent executing Step 6 / slice S2 or later. Read this first.
+**Updated:** 2026-07-24 by kimi-cli — slice S2 (Rooms) COMPLETE and SEALED after two
+law-#6 audits + full remediation (`Messaging-S2-Review.md`). Exit condition P4 met.
+Next: slice S3 (Attention — mostly built in S1; exit condition P1) per Plan §18.
+**You are:** the agent executing slice S3 or later. Read this first.
 
 ---
 
@@ -46,6 +49,7 @@ Step 1 of the pass-2 sequence is COMPLETE:
 | `Messaging-Seams.md` | Step 3b seam contracts: authority (incl. DEC-07 role→grant config), membership (R8 linearization), presence-transport (R1 transport half), clock/ID; review record (8 findings disposed) | **Step 3b output — binding** |
 | `messaging/` | The S1 implementation: TS strict ESM package (`@novakai/messaging`). Public surface `public/index.ts` ONLY; codegen from `contract/messaging-contract.json` (law #3); store-memory + store-jsonl (mutation-queue atomic); embedded + standalone (WS, `ws` dep) composition roots; 158 tests | **Step 5 output — S1 sealed** |
 | `Messaging-S1-Review.md` | Law-#6 audit of the S1 diff (verdict HIGH pre-fix: 3 severe, 9 moderate, 10 low) + full disposal record | Step 5 evidence |
+| `Messaging-S2-Review.md` | Law-#6 audits of the S2-a/S2-b diffs (S2-a: HIGH pre-fix, R4 made literal via errata §11.7; S2-b: LOW-MODERATE) + disposal records | S2 evidence |
 | `Messaging-Map.html` | Visual module map (open in a browser; 40 modules, animated traces) | Update in Step 4 |
 | `Messaging-Report copy.html` | Second visual variant of the map | Working copy |
 | `Messaging-Report.html` | Older mermaid-based report | Superseded, kept for history |
@@ -130,13 +134,26 @@ Step 1 of the pass-2 sequence is COMPLETE:
   (3 severely critical incl. store-jsonl concurrency atomicity, 9 moderate, 10 low)
   — **all disposed at the source**, record in `Messaging-S1-Review.md`; 158/158
   tests green post-remediation.
-- **Next: slice S2 (Rooms)** per `Messaging-Plan.md` §18 — team/mission sends via
-  the membership seam + frozen recipient snapshots; exit condition P4. Known S2
-  hooks already flagged in code: room-Thread creation op (Store-Seam §2.1 gap),
-  `ListThreadsForPerson` store read, room subscription authorization
-  (`subscriptions.ts` L10 note), `failed{RecordNotFound}` → `UnknownThread` path
-  (F9). S3 (attention) is largely built already; S4 (templates + failure truth,
-  scorecard re-run) after that.
+- ~~**Slice S2 — Rooms.**~~ **DONE (2026-07-24)** — membership seam +
+  membership-config adapter (rosters in config never core, 3 s deadline wrapper),
+  room sends (one resolveMembers per accept, R8 sender check from the same
+  resolution, frozen recipient snapshots I5), room authorization R3 wired through
+  queries + subscriptions (revocation stops facts, replay re-checks),
+  ListThreadsForPerson end-to-end. Store-Seam errata §11.4–§11.7 (recorded
+  amendments; contract JSON untouched): **§11.7 made R4 literal** — blocked room
+  recipients commit TERMINAL `failed{blocked-by-contact-policy}` INSIDE
+  commitAcceptance after the S2-a auditor reproduced two ordinary interleavings
+  that delivered a blocked recipient. Exit condition met: **P4 passes**
+  (Mission Rooms reference capability, both integration modes, integrity render
+  from Messaging queries, ID-references-only persistence). Two law-#6 audits
+  (S2-a: HIGH pre-fix, 10 findings; S2-b: LOW-MODERATE, 6 findings) — all disposed
+  at source, record in `Messaging-S2-Review.md`; 194/194 tests green.
+- **Next: slice S3 (Attention)** per Plan §18 — push subscriptions, DND, urgent +
+  override, contact policy (DEC-07/12/14/16, I9). Most of S3's behaviour was built
+  in S1 (W1 both paths proven) — S3's job is the remaining proofs (MSG-009/010/015)
+  and its exit condition **P1** (standalone messenger app as second host). Then S4
+  (templates + failure truth, DEC-15; exit: full adapter suite + P5/P6 + scorecard
+  re-run).
 
 ## Context you will not find in the files
 

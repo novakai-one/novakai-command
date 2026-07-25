@@ -3,8 +3,8 @@
  * walks the COMPILED import graph (dist/) plus the test TS sources with
  * nothing but node builtins and asserts:
  *
- *   (a) the consumer door is the only door: no test in tests/contract,
- *       tests/harness, or tests/standalone imports the capability's private
+ *   (a) the consumer door is the only door: no test in tests/capability,
+ *       tests/contract, tests/harness, or tests/standalone imports the capability's private
  *       modules (core/ seams/ adapters/ protocol/) — the TS sources are
  *       scanned so type-only imports count too; and the external Chief
  *       client (tests/standalone/external-chief.ts) compiles to a module
@@ -44,6 +44,12 @@ function listJsFiles(root: string): string[] {
   return out;
 }
 
+// SCANNER LIMITATIONS (tripwire, not proof): this regex matches LITERAL
+// specifiers only — import(variable), createRequire, or eval-constructed
+// imports evade it, and the TS-source scans judge RELATIVE specifiers only
+// (bare package specifiers are ignored). The backstop is the compiled-
+// artifact assertions (the zero-runtime-imports proofs below and in the P4
+// suite), which no source-level trick can fake.
 const IMPORT_PATTERN =
   /(?:import|export)\s[^'"]*?from\s+["']([^"']+)["']|import\s+["']([^"']+)["']|import\s*\(\s*["']([^"']+)["']\s*\)|require\s*\(\s*["']([^"']+)["']\s*\)/g;
 
@@ -92,8 +98,10 @@ for (const file of capabilityFiles) {
 }
 
 describe("architecture — the door is the only door (MSG-013, G4)", () => {
-  it("no S1-d consumer test imports capability-private modules (core/seams/adapters/protocol)", () => {
-    const consumerTestDirs = ["contract", "harness", "standalone"];
+  it("no consumer test (capability/contract/harness/standalone) imports capability-private modules (core/seams/adapters/protocol)", () => {
+    // tests/capability joined at S2-b (P4): the stand-in second capability
+    // and its proof tests obey the same door-only rule as every consumer.
+    const consumerTestDirs = ["capability", "contract", "harness", "standalone"];
     const offenders: string[] = [];
     for (const dir of consumerTestDirs) {
       const dirPath = join(testsSourceRoot, dir);

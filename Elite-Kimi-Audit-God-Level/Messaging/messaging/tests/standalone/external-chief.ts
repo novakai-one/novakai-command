@@ -84,6 +84,7 @@ export class ExternalChief {
   }
 
   /** Await the next frame matching `match` (backlog first; consumed on match). */
+  // The 5 s default is a CI-load margin, not an observed latency bound.
   waitFor(match: (frame: Frame) => boolean, timeoutMs = 5_000): Promise<Frame> {
     const index = this.backlog.findIndex(match);
     if (index >= 0) {
