@@ -168,4 +168,23 @@ assert.throws(
   'malformed personId fails construction');
 console.log('config validation tests passed');
 
+// --- session pruning (N1 audit finding 5) --------------------------------------------
+
+const pruneModel = new ObjectModel({ storesDir: scratchStores() });
+const pruneTeam = pruneModel.createTeam({ name: 'Prune Crew', missionId: 'mission_alpha' });
+const pruneAgent = pruneModel.createAgent({ name: 'worker-prune', provider: 'kimi', teamId: pruneTeam, missionId: 'mission_alpha' });
+const prunable = createNovakaiAuthority(pruneModel, clock, { sessionTtlMs: 20 });
+const first = await prunable.authenticate({ token: pruneAgent });
+assert.equal(first.kind, 'authenticated');
+assert.equal(prunable.sessionCount(), 1);
+await new Promise((resolve) => setTimeout(resolve, 30)); // let the first session expire
+const second = await prunable.authenticate({ token: pruneAgent });
+assert.equal(second.kind, 'authenticated');
+assert.equal(prunable.sessionCount(), 1, 'the expired session is pruned at the next authenticate (finding 5)');
+if (first.kind === 'authenticated') {
+  assert.equal((await prunable.revalidate(first.principal.sessionId)).kind, 'invalid');
+  assert.equal(prunable.sessionCount(), 1, 'revalidate deletes the expired entry at the point of truth');
+}
+console.log('session pruning tests passed');
+
 console.log('messagingV2 authority adapter tests passed');

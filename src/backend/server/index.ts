@@ -575,8 +575,13 @@ export class ServerController {
 
   public async stop(): Promise<void> {
     // messagingV2 closes FIRST — it is additive (N1) and holds the journal
-    // handle; nothing else depends on it yet.
-    await this.messagingV2?.close();
+    // handle; nothing else depends on it yet. A close failure must not abort
+    // shutdown (N1 audit finding 6): log it, keep closing the real servers.
+    try {
+      await this.messagingV2?.close();
+    } catch (error) {
+      console.error('[messaging-v2] close failed during shutdown — continuing:', error);
+    }
     this.messagingV2 = null;
     const wsServers = this.appWss ? [this.wsServer, this.appWss] : [this.wsServer];
     const httpServers = this.appServer ? [this.server, this.appServer] : [this.server];

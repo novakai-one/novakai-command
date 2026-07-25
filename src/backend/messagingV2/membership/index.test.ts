@@ -7,7 +7,7 @@
  * Run with `npx tsx src/backend/messagingV2/membership/index.test.ts`.
  */
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, appendFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { PersonId, Timestamp } from '../../../../packages/messaging/public/contract/index.js';
@@ -127,6 +127,22 @@ assert.deepEqual(goneIsMember, { kind: 'known', member: false }, 'retired agent 
 const unknownIsMember = await membership.isMember({ authority: 'mission', externalId: 'mission_ghost' }, personIdForAgentId(aliceId));
 assert.equal(unknownIsMember.kind, 'unknown');
 console.log('isMember tests passed');
+
+// --- roster dedupe (N1 audit finding 9): ObjectModel.missionAgents does not fold
+// by id — a duplicated agent line must never double-receive a room send. --------
+const aliceRecord = readStoreDir(scratch).files['agents.jsonl'].records
+  .find((entry: { block: { id?: string } }) => entry.block.id === aliceId);
+assert.ok(aliceRecord, 'alice exists');
+appendFileSync(path.join(scratch, 'agents.jsonl'), aliceRecord.raw + '\n'); // the double-mint class
+const deduped = await membership.resolveMembers(missionRoom);
+assert.equal(deduped.kind, 'resolved');
+if (deduped.kind !== 'resolved') throw new Error('unreachable');
+assert.equal(
+  deduped.members.filter((member) => member === personIdForAgentId(aliceId)).length,
+  1,
+  'a duplicated agent line yields the Person exactly once (finding 9)',
+);
+console.log('roster dedupe test passed');
 
 // --- dependency failure → typed unavailable (§3.3), never a throw -----------------
 

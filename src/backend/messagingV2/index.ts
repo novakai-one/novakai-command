@@ -26,7 +26,7 @@ import { createSystemClock } from '../../../packages/messaging/adapters/clock-sy
 import { openJsonlStore } from '../../../packages/messaging/adapters/store-jsonl.js';
 import type { PersonId } from '../../../packages/messaging/public/contract/index.js';
 import type { ObjectModel } from '../objectModel/index.js';
-import { createNovakaiAuthority } from './authority/index.js';
+import { createNovakaiAuthority, isActiveAgent } from './authority/index.js';
 import type { NovakaiAuthorityConfig } from './authority/index.js';
 import { createNovakaiMembership } from './membership/index.js';
 
@@ -44,9 +44,7 @@ function humanConfig(humanToken: string | undefined): NovakaiAuthorityConfig {
 
 /** Boot-log principal count: live/spawning durable agents + configured humans. */
 function countPrincipals(objectModel: ObjectModel, config: NovakaiAuthorityConfig): number {
-  const agents = objectModel
-    .listAgents()
-    .filter((block) => block.status === 'live' || block.status === 'spawning').length;
+  const agents = objectModel.listAgents().filter(isActiveAgent).length;
   return agents + (config.humans?.length ?? 0);
 }
 
@@ -59,22 +57,45 @@ export interface StartMessagingV2Deps {
   log?: (message: string) => void;
 }
 
+/** Boot + announce, guarded: any failure closes the half-built capability
+ * (sweep/bus timers, the journal handle) so "capability disabled this run"
+ * is mechanically true (N1 audit finding 1), never a log line over a leak. */
+async function bootGuarded(
+  embedded: EmbeddedMessaging,
+  deps: StartMessagingV2Deps,
+  config: NovakaiAuthorityConfig,
+  storePath: string,
+): Promise<MessagingV2Handle> {
+  try {
+    const principals = countPrincipals(deps.objectModel, config);
+    // DEC-21/F10: the recovery sweep runs BEFORE serving (inside start()).
+    await embedded.start();
+    const announce = deps.log ?? console.log;
+    announce(`[messaging-v2] capability booted (store=${storePath}, principals=${principals})`);
+    return { embedded, close: () => embedded.close() };
+  } catch (error) {
+    try {
+      await embedded.close();
+    } catch {
+      // The boot failure stands; a close failure must not mask it.
+    }
+    throw error;
+  }
+}
+
 export async function startMessagingV2(deps: StartMessagingV2Deps): Promise<MessagingV2Handle> {
   const clock = createSystemClock();
   const storePath = deps.storePath ?? path.resolve('.novakai-command/messaging-v2/journal.jsonl');
-  const store = await openJsonlStore(clock, { path: storePath });
   const config = humanConfig(deps.humanToken);
+  // Pure adapters first — no resources to leak if construction throws.
+  const authority = createNovakaiAuthority(deps.objectModel, clock, config);
+  const membership = createNovakaiMembership(deps.objectModel, clock);
+  const store = await openJsonlStore(clock, { path: storePath });
   // No `transports`: the default in-memory 'ws' transport is correct for N1
   // (the PTY/app-ws presence transports are slices N2/N4).
   const embedded = createEmbeddedMessaging({
-    clock, store,
-    authority: createNovakaiAuthority(deps.objectModel, clock, config),
-    membership: createNovakaiMembership(deps.objectModel, clock),
+    clock, store, authority, membership,
     busPollIntervalMs: 500, sweepIntervalMs: 60_000,
   });
-  // DEC-21/F10: the recovery sweep runs BEFORE serving (inside start()).
-  await embedded.start();
-  const announce = deps.log ?? console.log;
-  announce(`[messaging-v2] capability booted (store=${storePath}, principals=${countPrincipals(deps.objectModel, config)})`);
-  return { embedded, close: () => embedded.close() };
+  return bootGuarded(embedded, deps, config, storePath);
 }

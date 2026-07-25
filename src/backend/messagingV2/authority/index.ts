@@ -5,9 +5,13 @@
  *
  * Identity law: the durable agentId (agents.jsonl, written only through
  * ObjectModel) is the ONLY join key — identity NEVER comes from
- * caller-supplied names. An agent's credential token IS its durable agentId
- * (an unguessable uuid; embedded mode only — real token issuance is N6).
- * personId derivation is one-directional (never reverse-mapped):
+ * caller-supplied names. An agent's credential token IS its durable agentId.
+ * HONEST SECURITY POSTURE (N1 audit finding 3): an agentId is an identifier,
+ * not a secret — it is observable in rosters, logs, and the object model.
+ * That is acceptable ONLY because N1 has no untrusted callers (embedded mode,
+ * no exposed endpoint); real token issuance arrives with N6, and N2 must not
+ * expose authenticate to any caller that can read agents.jsonl without a
+ * threat note. personId derivation is one-directional (never reverse-mapped):
  *   agent_550e8400-…  →  person_agent-550e8400-…
  *
  * Roles (D4): roles are display-name CONVENTIONS, never a schema field and
@@ -84,6 +88,8 @@ export interface NovakaiAuthority extends Authority, ProvisioningDirectory {
   setUnavailable(unavailable: boolean): void;
   /** Test/host control: simulate session invalidation (§2.1 invalid). */
   invalidateSession(sessionId: string): void;
+  /** Test control: live session count — proves pruning (N1 audit finding 5). */
+  sessionCount(): number;
 }
 
 /**
@@ -95,14 +101,18 @@ export function personIdForAgentId(agentId: string): PersonId {
   return `person_${agentId.replaceAll('_', '-')}` as PersonId;
 }
 
-/** Authenticatable + provisionable lifecycle states (Seams §2 truth source). */
-function isActiveAgent(block: AgentBlock): boolean {
+/** Authenticatable + provisionable lifecycle states (Seams §2 truth source).
+ * THE ONE lifecycle predicate — shared by the membership adapter and the
+ * composition glue's principal count (N1 audit finding 7: triplicated
+ * predicates drift). */
+export function isActiveAgent(block: AgentBlock): boolean {
   return block.status === 'live' || block.status === 'spawning';
 }
 
-/** D4: the 'Chief' role is a display-name convention, asserted here only. */
+/** D4: the 'Chief' role is a display-name convention, asserted here only.
+ * Word-bounded (N1 audit finding 4): "chieftain" must not assert Chief. */
 function rolesForAgent(block: AgentBlock): string[] {
-  return block.name.toLowerCase().startsWith('chief') ? ['Chief'] : [];
+  return /^chief\b/i.test(block.name) ? ['Chief'] : [];
 }
 
 type LiveSession =
@@ -201,6 +211,15 @@ function parseToken(credential: unknown): string | undefined {
   return typeof record?.['token'] === 'string' ? record['token'] : undefined;
 }
 
+/** N1 audit finding 5: the session Map must not grow for the process
+ * lifetime — drop expired/invalidated entries (called on authenticate, the
+ * only growth point; revalidate deletes on invalid). */
+function pruneSessions(state: AuthorityState, nowMs: number): void {
+  for (const [sessionId, session] of state.sessions) {
+    if (session.invalidated || nowMs >= session.expiresAtMs) state.sessions.delete(sessionId);
+  }
+}
+
 // --- authenticate -----------------------------------------------------------------
 
 interface AuthenticateDeps {
@@ -231,6 +250,15 @@ function authenticateHuman(deps: AuthenticateDeps, human: NovakaiHumanConfig): A
   return { kind: 'authenticated', principal: toPrincipal(sessionId, human.personId, grants, expiresAtMs) };
 }
 
+/** Token → principal resolution once the agent list is in hand. */
+function resolveByToken(deps: AuthenticateDeps, token: string, agents: AgentBlock[]): AuthOutcome {
+  const agent = agents.find((block) => block.id === token);
+  if (agent !== undefined) return authenticateAgent(deps, agent);
+  const human = deps.humansByToken.get(token);
+  if (human === undefined) return { kind: 'rejected', error: authRejected('unknown credential') };
+  return authenticateHuman(deps, human);
+}
+
 function makeAuthenticate(deps: AuthenticateDeps): Authority['authenticate'] {
   return async (credential) => {
     if (deps.state.unavailable) {
@@ -240,15 +268,12 @@ function makeAuthenticate(deps: AuthenticateDeps): Authority['authenticate'] {
     if (token === undefined) {
       return { kind: 'rejected', error: authRejected('credential must be { token: string }') };
     }
+    pruneSessions(deps.state, millis(deps.clock.now()));
     const agents = readAgents(deps.objectModel);
     if (agents instanceof Error) {
       return { kind: 'unavailable', error: authUnavailable(`principal read failed: ${agents.message}`) };
     }
-    const agent = agents.find((block) => block.id === token);
-    if (agent !== undefined) return authenticateAgent(deps, agent);
-    const human = deps.humansByToken.get(token);
-    if (human === undefined) return { kind: 'rejected', error: authRejected('unknown credential') };
-    return authenticateHuman(deps, human);
+    return resolveByToken(deps, token, agents);
   };
 }
 
@@ -272,6 +297,25 @@ function revalidateAgent(
   return { kind: 'valid', principal: toPrincipal(sessionId, personIdForAgentId(agent.id), grants, session.expiresAtMs) };
 }
 
+/** Agent-session revalidation + the finding-5 prune at the point of truth. */
+function revalidateAgentSession(
+  objectModel: ObjectModel,
+  roleGrants: Record<string, Grant[]>,
+  state: AuthorityState,
+  sessionId: string,
+  session: Extract<LiveSession, { kind: 'agent' }>,
+): RevalidateOutcome {
+  const outcome = revalidateAgent(objectModel, roleGrants, sessionId, session);
+  if (outcome.kind === 'invalid') state.sessions.delete(sessionId); // gone/retired mid-session
+  return outcome;
+}
+
+/** Expired at the point of truth: prune (finding 5), then invalid. */
+function expireSession(state: AuthorityState, sessionId: string): RevalidateOutcome {
+  state.sessions.delete(sessionId);
+  return { kind: 'invalid' };
+}
+
 function makeRevalidate(
   objectModel: ObjectModel,
   clock: ClockIds,
@@ -282,8 +326,10 @@ function makeRevalidate(
     if (state.unavailable) return { kind: 'unavailable' };
     const session = state.sessions.get(sessionId);
     if (!session || session.invalidated) return { kind: 'invalid' };
-    if (millis(clock.now()) >= session.expiresAtMs) return { kind: 'invalid' };
-    if (session.kind === 'agent') return revalidateAgent(objectModel, roleGrants, sessionId, session);
+    if (millis(clock.now()) >= session.expiresAtMs) return expireSession(state, sessionId);
+    if (session.kind === 'agent') {
+      return revalidateAgentSession(objectModel, roleGrants, state, sessionId, session);
+    }
     // Fresh grants: a mid-session grant change takes effect HERE (§2.1).
     const grants = grantsFor(roleGrants, session.human.roles, session.human.grants);
     return { kind: 'valid', principal: toPrincipal(sessionId, session.human.personId, grants, session.expiresAtMs) };
@@ -335,6 +381,7 @@ export function createNovakaiAuthority(
       const session = state.sessions.get(sessionId);
       if (session) session.invalidated = true;
     },
+    sessionCount: (): number => state.sessions.size,
     isProvisioned: makeIsProvisioned(objectModel, humansByToken),
     authenticate: makeAuthenticate({ objectModel, clock, ttlMs, roleGrants, humansByToken, state }),
     revalidate: makeRevalidate(objectModel, clock, roleGrants, state),

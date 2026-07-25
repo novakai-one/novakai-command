@@ -154,5 +154,41 @@ if (aliceReboot.kind === 'authenticated') {
 await rebooted.close();
 console.log('torn-tail restart test passed');
 
+// --- regression (N1 audit finding 1): a FAILED boot leaves nothing alive ------------
+// Boot with an ObjectModel whose stores dir vanishes before the boot reads it:
+// the principal read must fail the boot AND the half-built capability (sweep
+// timer, bus timer, open store) must be torn down — "disabled this run" must
+// be mechanically true, not a log line over a leaking stack. Intervals are
+// tracked through a temporary global spy (the leak is otherwise invisible —
+// the package's timers are unref'd, so the process can exit over them).
+const doomedStores = scratchStores();
+const doomedModel = new ObjectModel({ storesDir: doomedStores });
+rmSync(doomedStores, { recursive: true, force: true });
+const doomedJournal = path.join(mkdtempSync(path.join(tmpdir(), 'nvk-mv2-doomed-')), 'journal.jsonl');
+const realSetInterval = globalThis.setInterval;
+const realClearInterval = globalThis.clearInterval;
+const leaked = new Set<ReturnType<typeof setInterval>>();
+globalThis.setInterval = ((...args: Parameters<typeof setInterval>) => {
+  const timer = realSetInterval(...args);
+  leaked.add(timer);
+  return timer;
+}) as typeof setInterval;
+globalThis.clearInterval = ((timer?: Parameters<typeof clearInterval>[0]) => {
+  if (timer !== undefined) leaked.delete(timer as ReturnType<typeof setInterval>);
+  return realClearInterval(timer);
+}) as typeof clearInterval;
+try {
+  await assert.rejects(
+    startMessagingV2({ objectModel: doomedModel, storePath: doomedJournal, 'log': () => {} }),
+    'a boot whose principal read fails must reject',
+  );
+  assert.equal(leaked.size, 0, `a failed boot must not leak sweep/bus timers — ${leaked.size} still live`);
+} finally {
+  globalThis.setInterval = realSetInterval;
+  globalThis.clearInterval = realClearInterval;
+  for (const timer of leaked) realClearInterval(timer); // never strand a leak in the test process
+}
+console.log('failed-boot teardown test passed');
+
 rmSync(scratch, { recursive: true, force: true });
 console.log('messagingV2 boot proof passed');

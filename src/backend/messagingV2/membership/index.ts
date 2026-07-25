@@ -46,14 +46,16 @@ import type {
   RoomRef,
 } from '../../../../packages/messaging/seams/membership.js';
 import type { AgentBlock, ObjectModel } from '../../objectModel/index.js';
-import { personIdForAgentId } from '../authority/index.js';
+import { isActiveAgent, personIdForAgentId } from '../authority/index.js';
 
 /** The two RoomRef authorities this adapter serves (§3.1). */
 const KNOWN_AUTHORITIES: ReadonlySet<string> = new Set(['mission', 'team']);
 
-/** Receivable lifecycle states — retired/failed agents are never recipients. */
-function isReceivable(block: AgentBlock): boolean {
-  return block.status === 'live' || block.status === 'spawning';
+/** Roster derivation: the shared lifecycle predicate (finding 7), deduped by
+ * personId (N1 audit finding 9 — ObjectModel.missionAgents does not fold by
+ * id; a duplicated agent line must never double-receive a room send). */
+function rosterOf(blocks: AgentBlock[]): PersonId[] {
+  return [...new Set(blocks.filter(isActiveAgent).map((block) => personIdForAgentId(block.id)))];
 }
 
 /** §3.2.3: the authority has no native revision token — hash the sorted roster. */
@@ -66,21 +68,17 @@ function revisionFor(members: PersonId[]): string {
 function resolveFresh(objectModel: ObjectModel, room: RoomRef): PersonId[] | null {
   if (room.authority === 'mission') {
     if (objectModel.missionRecord(room.externalId) === null) return null;
-    return objectModel
-      .missionAgents(room.externalId)
-      .filter(isReceivable)
-      .map((block) => personIdForAgentId(block.id));
+    return rosterOf(objectModel.missionAgents(room.externalId));
   }
   // room.authority === 'team' (checked by the callers)
   if (objectModel.teamRecord(room.externalId) === null) return null;
-  return objectModel
-    .listAgents()
-    .filter(
-      (block) =>
-        isReceivable(block) &&
+  return rosterOf(
+    objectModel
+      .listAgents()
+      .filter((block) =>
         block.refs?.some((reference) => reference.kind === 'team' && reference.value === room.externalId),
-    )
-    .map((block) => personIdForAgentId(block.id));
+      ),
+  );
 }
 
 /** §3.3: a read throw is a typed dependency failure, never a leaked exception. */
