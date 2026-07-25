@@ -8,7 +8,6 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { MessageStore } from '../../../store/index.js';
-import { RoomStore } from '../../../rooms/index.js';
 import { PtyDelivery } from '../../../delivery/index.js';
 import { MessageRouter, InterruptRateLimiter } from '../../../router/index.js';
 import type { EffectConfirmer } from '../../../confirm/index.js';
@@ -52,7 +51,7 @@ function makeWriter(writes: Harness['writes'], submits: Harness['submits'], subm
 
 function makeRouter(store: MessageStore, delivery: PtyDelivery, confirmer: EffectConfirmer | undefined, confirmTimeoutMs: number): MessageRouter {
   return new MessageRouter(
-    store, delivery, new RoomStore(join(mkdtempSync(join(tmpdir(), 'nvk-dsm-rooms-')), 'rooms.jsonl')),
+    store, delivery,
     () => roster, new InterruptRateLimiter(100), undefined, undefined,
     confirmer,
     (agentId) => ({ sessionId: `sess-${agentId}`, projectDir: 'proj', provider: agentId === 'agent_r2' ? 'kimi' : 'claude' }),

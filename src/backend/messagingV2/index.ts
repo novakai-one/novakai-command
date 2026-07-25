@@ -14,10 +14,11 @@
  * history reads). A boot failure must never take the app down (the server
  * catches and logs it LOUD, then continues without the capability).
  *
- * Room Thread provisioning note (composition/coreStack.ts): passing a READY
- * MembershipSource means the coreStack provisions NOTHING — the HOST owns
- * room Thread creation. That is slice N3's job; N1 boots with zero room
- * Threads (the direct person: lane works today).
+ * Room Thread provisioning (N3): the app passes a READY MembershipSource so
+ * coreStack provisions NOTHING — the rooms glue (./rooms) owns creation via
+ * embedded.store.createRoomThread at boot and on launch (fleet #team room +
+ * one per team + one per mission). The membership adapter serves the 'fleet'
+ * authority and includes the human principal in EVERY roster (D-N3-1).
  *
  * ONE clock (createSystemClock) is shared by the store, both adapters, and
  * the embedded stack so session expiry, evidence timestamps, and journal
@@ -30,6 +31,7 @@ import type { EmbeddedMessaging } from '../../../packages/messaging/composition/
 import { createSystemClock } from '../../../packages/messaging/adapters/clock-system.js';
 import { openJsonlStore } from '../../../packages/messaging/adapters/store-jsonl.js';
 import type { PersonId } from '../../../packages/messaging/public/contract/index.js';
+import { CHRIS_MEMBER } from '../messaging/types.js';
 import type { ObjectModel } from '../objectModel/index.js';
 import type { AgentInfo } from '../terminal/manager.js';
 import type { TerminalRuntime } from '../terminal/runtime/index.js';
@@ -39,19 +41,26 @@ import { createNovakaiMembership } from './membership/index.js';
 import { createTerminalHostTransport } from './transport/index.js';
 import { createAgentLaneGlue } from './presence/index.js';
 import type { AgentLaneGlue } from './presence/index.js';
+import { createRoomDirectory, createRoomsGlue } from './rooms/index.js';
+import type { RoomsGlue } from './rooms/index.js';
+
+/** The one human personId (D-N3-1: shared by authority config + membership). */
+export const HUMAN_PERSON_ID = 'person_user-chris' as PersonId;
 
 export interface MessagingV2Handle {
   /** The full embedded capability handle, held for N2+ consumers. */
   readonly embedded: EmbeddedMessaging;
   /** N2: pty presence lanes for durable agents; null without a terminal runtime. */
   readonly lanes: AgentLaneGlue | null;
+  /** N3: room provisioning + the browser #team shim; null without terminals. */
+  readonly rooms: RoomsGlue | null;
   close(): Promise<void>;
 }
 
 /** The optional human principal (person_user-chris, role Human) from config. */
 function humanConfig(humanToken: string | undefined): NovakaiAuthorityConfig {
   if (humanToken === undefined) return {};
-  return { humans: [{ token: humanToken, personId: 'person_user-chris' as PersonId, roles: ['Human'] }] };
+  return { humans: [{ token: humanToken, personId: HUMAN_PERSON_ID, roles: ['Human'] }] };
 }
 
 /** Boot-log principal count: live/spawning durable agents + configured humans. */
@@ -73,6 +82,8 @@ export interface StartMessagingV2Deps {
   terminals?: TerminalRuntime;
   /** N2: launch subscription hook (AgentsHub.onLaunch in the app composition). */
   onLaunch?: (listener: (info: AgentInfo) => void) => void;
+  /** N3: ws broadcast for the rooms live shim (browser #team lane). */
+  broadcast?: (event: string, payload: unknown) => void;
   log?: (message: string) => void;
 }
 
@@ -94,47 +105,130 @@ async function bootGuarded(
   config: NovakaiAuthorityConfig,
   storePath: string,
   transport: ReturnType<typeof createTerminalHostTransport> | null,
+  directory: ReturnType<typeof createRoomDirectory>,
 ): Promise<MessagingV2Handle> {
   try {
-    const principals = countPrincipals(deps.objectModel, config);
-    // DEC-21/F10: the recovery sweep runs BEFORE serving (inside start()).
-    await embedded.start();
-    const lanes = await bootLanes(embedded, deps, transport);
-    const announce = deps.log ?? console.log;
-    announce(`[messaging-v2] capability booted (store=${storePath}, principals=${principals})`);
-    return { embedded, lanes, close: () => closeAll(embedded, lanes) };
+    return await bootServing(embedded, deps, config, storePath, transport, directory);
   } catch (error) {
     await closeQuietly(embedded);
     throw error;
   }
 }
 
-/** N2: open pty lanes for already-running agents and wire the launch hook. */
-async function bootLanes(
+/** The serving half of the boot: sweep, glue, announce, handle. */
+async function bootServing(
   embedded: EmbeddedMessaging,
   deps: StartMessagingV2Deps,
+  config: NovakaiAuthorityConfig,
+  storePath: string,
   transport: ReturnType<typeof createTerminalHostTransport> | null,
-): Promise<AgentLaneGlue | null> {
-  if (transport === null || deps.terminals === undefined) return null;
-  const lanes = createAgentLaneGlue({
+  directory: ReturnType<typeof createRoomDirectory>,
+): Promise<MessagingV2Handle> {
+  const principals = countPrincipals(deps.objectModel, config);
+  // DEC-21/F10: the recovery sweep runs BEFORE serving (inside start()).
+  await embedded.start();
+  const booted = await bootLanes(embedded, deps, transport, directory);
+  const announce = deps.log ?? console.log;
+  announce(`[messaging-v2] capability booted (store=${storePath}, principals=${principals})`);
+  return {
+    embedded,
+    lanes: booted?.lanes ?? null,
+    rooms: booted?.rooms ?? null,
+    close: () => closeAll(embedded, booted?.lanes ?? null, booted?.rooms ?? null),
+  };
+}
+
+interface BootedGlue {
+  lanes: AgentLaneGlue;
+  rooms: RoomsGlue;
+}
+
+function makeLaneGlue(
+  embedded: EmbeddedMessaging,
+  deps: StartMessagingV2Deps,
+  transport: NonNullable<ReturnType<typeof createTerminalHostTransport>>,
+): AgentLaneGlue {
+  return createAgentLaneGlue({
     embedded,
     transport,
-    terminals: deps.terminals,
+    terminals: deps.terminals as TerminalRuntime,
     objectModel: deps.objectModel,
     ...(deps.humanToken !== undefined ? { humanToken: deps.humanToken } : {}),
     ...(deps.log !== undefined ? { 'log': deps.log } : {}),
   });
+}
+
+function makeRoomsGlue(
+  embedded: EmbeddedMessaging,
+  deps: StartMessagingV2Deps,
+  directory: ReturnType<typeof createRoomDirectory>,
+  lanes: AgentLaneGlue,
+): RoomsGlue {
+  return createRoomsGlue({
+    embedded,
+    objectModel: deps.objectModel,
+    directory,
+    terminals: deps.terminals as TerminalRuntime,
+    humanSession: () => lanes.humanSession(),
+    humanPersonId: HUMAN_PERSON_ID,
+    ...(deps.broadcast !== undefined ? { broadcast: deps.broadcast } : {}),
+    ...(deps.log !== undefined ? { 'log': deps.log } : {}),
+  });
+}
+
+/** N2/N3: open pty lanes for already-running agents, provision the rooms,
+ * and wire the launch hook for both. */
+async function bootLanes(
+  embedded: EmbeddedMessaging,
+  deps: StartMessagingV2Deps,
+  transport: ReturnType<typeof createTerminalHostTransport> | null,
+  directory: ReturnType<typeof createRoomDirectory>,
+): Promise<BootedGlue | null> {
+  if (transport === null || deps.terminals === undefined) return null;
+  const lanes = makeLaneGlue(embedded, deps, transport);
+  const rooms = makeRoomsGlue(embedded, deps, directory, lanes);
   // audit #9: subscribe launches BEFORE the boot sweep so a spawn landing
   // mid-sweep is never missed — openLane's registry-keyed idempotence
   // dedupes any overlap between the two paths.
-  deps.onLaunch?.((info) => lanes.handleAgentLaunched(info));
+  deps.onLaunch?.((info) => {
+    lanes.handleAgentLaunched(info);
+    rooms.handleAgentLaunched(info);
+  });
+  // FIX 6 (audit F6): rooms provision BEFORE lanes open (and before the
+  // start-sweep can re-drive pending room deliveries) so the transport's
+  // roomLabel lookup never misses for replayed deliveries.
+  await rooms.ensureAllRooms();
   await lanes.openBootLanes();
-  return lanes;
+  rooms.startLiveBroadcast();
+  return { lanes, rooms };
 }
 
-async function closeAll(embedded: EmbeddedMessaging, lanes: AgentLaneGlue | null): Promise<void> {
+async function closeAll(
+  embedded: EmbeddedMessaging,
+  lanes: AgentLaneGlue | null,
+  rooms: RoomsGlue | null,
+): Promise<void> {
+  await rooms?.close();
   await lanes?.close();
   await embedded.close();
+}
+
+/** The terminal-host transport with the N3 lookups, or null without terminals. */
+function makeTransport(
+  deps: StartMessagingV2Deps,
+  directory: ReturnType<typeof createRoomDirectory>,
+): ReturnType<typeof createTerminalHostTransport> | null {
+  // N2: with a terminal runtime, the ONLY registered transport is the
+  // terminal-host 'pty' lane; without one, the default in-memory 'ws'
+  // transport keeps the N1 posture (OpenPresence names a registered kind or
+  // fails ValidationFailed — Seams §4 composition rule). N3: the transport
+  // gets the rooms directory's label lookup for [nvk-room …] formatting and
+  // the human's display name.
+  if (deps.terminals === undefined) return null;
+  return createTerminalHostTransport(deps.terminals, {
+    roomLabel: (threadId) => directory.labelFor(threadId),
+    senderName: (personId) => (personId === HUMAN_PERSON_ID ? CHRIS_MEMBER : undefined),
+  });
 }
 
 export async function startMessagingV2(deps: StartMessagingV2Deps): Promise<MessagingV2Handle> {
@@ -143,17 +237,19 @@ export async function startMessagingV2(deps: StartMessagingV2Deps): Promise<Mess
   const config = humanConfig(deps.humanToken);
   // Pure adapters first — no resources to leak if construction throws.
   const authority = createNovakaiAuthority(deps.objectModel, clock, config);
-  const membership = createNovakaiMembership(deps.objectModel, clock);
+  // D-N3-1: the human principal rides EVERY roster the membership adapter serves.
+  const membership = createNovakaiMembership(
+    deps.objectModel,
+    clock,
+    deps.humanToken === undefined ? undefined : HUMAN_PERSON_ID,
+  );
   const store = await openJsonlStore(clock, { path: storePath });
-  // N2: with a terminal runtime, the ONLY registered transport is the
-  // terminal-host 'pty' lane; without one, the default in-memory 'ws'
-  // transport keeps the N1 posture (OpenPresence names a registered kind or
-  // fails ValidationFailed — Seams §4 composition rule).
-  const transport = deps.terminals === undefined ? null : createTerminalHostTransport(deps.terminals);
+  const directory = createRoomDirectory();
+  const transport = makeTransport(deps, directory);
   const embedded = createEmbeddedMessaging({
     clock, store, authority, membership,
     busPollIntervalMs: 500, sweepIntervalMs: 60_000,
     ...(transport === null ? {} : { transports: [transport] }),
   });
-  return bootGuarded(embedded, deps, config, storePath, transport);
+  return bootGuarded(embedded, deps, config, storePath, transport, directory);
 }

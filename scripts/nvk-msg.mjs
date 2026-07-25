@@ -51,8 +51,8 @@ const printV2Message = (message, nameFor) => console.log(
   `${message.priority === 'urgent' ? ' (interrupt)' : ''}\n  ${message.body.text.replace(/\n/g, '\n  ')}`);
 
 async function addressBookNames() {
-  const { agents = [] } = await api('/api/messaging/v2/address-book');
-  return new Map(agents.map((agent) => [agent.personId, agent.name]));
+  const { agents = [], humans = [] } = await api('/api/messaging/v2/address-book');
+  return new Map([...agents, ...humans].map((entry) => [entry.personId, entry.name]));
 }
 
 if (cmd === 'send') {
@@ -67,7 +67,7 @@ if (cmd === 'send') {
     process.exit(1);
   }
   if (threadId) {
-    console.error('nvk-msg: --thread is not supported by the v2 direct lane — threads land in N3');
+    console.error("nvk-msg: --thread is not supported by the v2 lane — use --to '#team' / '#mission' for rooms (explicit thread ids are not accepted)");
     process.exit(1);
   }
   const body = args.join(' ').trim();
@@ -84,10 +84,10 @@ if (cmd === 'send') {
   const who = args[0];
   if (!who) { console.error('usage: nvk-msg read <name|#team> [--since ISO]'); process.exit(1); }
 
-  if (who.startsWith('#') || who.startsWith('room_')) {
-    // INTERIM (until N3): channel/room reads still come from the OLD pull-only
-    // history route — #team is read-only for agents and has no v2 thread yet.
-    const query = new URLSearchParams({ withAgent: who, ...(since ? { since } : {}) });
+  if (who.startsWith('room_')) {
+    // INTERIM (dies in N4): free-room reads still come from the OLD pull-only
+    // history route — free rooms are archive-only since N3.
+    const query = new URLSearchParams({ withRoom: who, ...(since ? { since } : {}) });
     const { messages = [] } = await api(`/api/messages?${query}`);
     if (!messages.length) { console.log('(no messages)'); process.exit(0); }
     for (const m of messages) {
@@ -107,8 +107,9 @@ if (cmd === 'send') {
   if (messages.length >= 200) console.log('(page is full at 200 — older messages exist beyond this read)');
 
 } else if (cmd === 'names') {
-  const { agents = [] } = await api('/api/messaging/v2/address-book');
+  const { agents = [], humans = [] } = await api('/api/messaging/v2/address-book');
   const lines = agents.map((agent) => `${agent.name} (${agent.provider})${agent.status ? ` [${agent.status}]` : ''}`);
+  for (const human of humans) lines.push(`${human.name} (human)`);
   console.log(lines.join('\n') || '(no live agents)');
 
 } else {

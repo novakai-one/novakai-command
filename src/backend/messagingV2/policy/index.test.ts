@@ -70,7 +70,7 @@ assert.ok(written[0]?.includes(personIdForAgentId(badId)), 'co-membership conten
 const erroring = new Map<string, MessagingSession>([
   [badId, {
     principal: { personId: personIdForAgentId(badId) },
-    getPolicy: () => Promise.resolve({ kind: 'ok', value: { contact: { allowlist: [] }, dnd: {} } }),
+    getPolicy: () => Promise.resolve({ kind: 'ok', value: { contact: { allowlist: [] }, 'dnd': {} } }),
     setContactPolicy: () => Promise.resolve({ kind: 'error', error: { name: 'NotAuthenticated', message: 'ended' } }),
   } as unknown as MessagingSession],
 ]);

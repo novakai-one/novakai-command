@@ -1,60 +1,54 @@
+// Free-room archive shim tests (N3): read fold + create writer over the
+// archived rooms.jsonl. The RoomStore class is deleted — member mutation
+// (addMembers) and the append listener went with it. Run with
+// `npx tsx src/backend/messaging/rooms/rooms.test.ts`.
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { RoomStore } from './index.js';
+import { createRoom, getRoom, listRooms } from './index.js';
 
-function freshStore(): { store: RoomStore; storePath: string } {
-  const storePath = join(mkdtempSync(join(tmpdir(), 'nvk-rooms-')), 'rooms.jsonl');
-  return { store: new RoomStore(storePath), storePath };
+function freshPath(): string {
+  return join(mkdtempSync(join(tmpdir(), 'nvk-rooms-')), 'rooms.jsonl');
 }
 
-function testCreateRoundtripAndMembership(): void {
-  const { store } = freshStore();
-  const room = store.create({
+function testCreateRoundtrip(): void {
+  const storePath = freshPath();
+  const room = createRoom(storePath, {
     name: 'Tunnel Builders',
     members: ['codex-1', 'codex-1'],
     createdBy: 'chris',
   });
 
   assert.match(room.roomId, /^room_/);
-  assert.deepEqual(room.members, ['codex-1', 'chris']);
+  assert.deepEqual(room.members, ['codex-1', 'chris'], 'the creator joins, deduped');
   assert.equal(room.archived, false);
-  assert.deepEqual(store.get(room.roomId), room);
-  assert.deepEqual(store.list(), [room]);
+  assert.deepEqual(getRoom(storePath, room.roomId), room);
+  assert.deepEqual(listRooms(storePath), [room]);
 }
 
-function testAddMembersFoldsLastLineAndKeepsOrder(): void {
-  const { store, storePath } = freshStore();
-  const first = store.create({ name: 'First Room', members: ['chris'], createdBy: 'chris' });
-  const second = store.create({ name: 'Second Room', members: ['codex-1'], createdBy: 'codex-1' });
-  const amended = store.addMembers(first.roomId, ['claude-1', 'claude-1', 'chris']);
-
-  assert.deepEqual(amended?.members, ['chris', 'claude-1']);
-  assert.deepEqual(store.get(first.roomId), amended);
-  assert.deepEqual(store.list().map((room) => room.roomId), [first.roomId, second.roomId]);
-  assert.equal(readFileSync(storePath, 'utf8').trim().split('\n').length, 3);
-  assert.equal(store.addMembers('room_unknown', ['codex-2']), null);
+function testFoldLastLineWinsAndArchivedFilter(): void {
+  const storePath = freshPath();
+  const first = createRoom(storePath, { name: 'First Room', members: ['chris'], createdBy: 'chris' });
+  createRoom(storePath, { name: 'Second Room', members: ['codex-1'], createdBy: 'codex-1' });
+  writeFileSync(
+    storePath,
+    `${JSON.stringify(first)}\n${JSON.stringify({ ...first, archived: true })}\n`,
+    { flag: 'a' },
+  );
+  assert.equal(getRoom(storePath, first.roomId)?.archived, true, 'last line wins');
+  assert.equal(listRooms(storePath).length, 1, 'archived rooms are filtered from the list');
+  assert.equal(getRoom(storePath, 'room_unknown'), null);
 }
 
 function testCorruptLinesAreSkipped(): void {
-  const { store, storePath } = freshStore();
-  const room = store.create({ name: 'Valid Room', members: ['chris'], createdBy: 'chris' });
+  const storePath = freshPath();
+  const room = createRoom(storePath, { name: 'Valid Room', members: ['chris'], createdBy: 'chris' });
   writeFileSync(storePath, `{ torn line\n${JSON.stringify(room)}\n`);
-  assert.deepEqual(store.list(), [room]);
+  assert.deepEqual(listRooms(storePath), [room]);
 }
 
-function testAppendListenerGetsSnapshots(): void {
-  const { store } = freshStore();
-  const seen: string[][] = [];
-  store.onAppend((room) => seen.push(room.members));
-  const room = store.create({ name: 'Listener Room', members: ['chris'], createdBy: 'chris' });
-  store.addMembers(room.roomId, ['codex-1']);
-  assert.deepEqual(seen, [['chris'], ['chris', 'codex-1']]);
-}
-
-testCreateRoundtripAndMembership();
-testAddMembersFoldsLastLineAndKeepsOrder();
+testCreateRoundtrip();
+testFoldLastLineWinsAndArchivedFilter();
 testCorruptLinesAreSkipped();
-testAppendListenerGetsSnapshots();
 console.log('PASS');

@@ -1,7 +1,10 @@
 // MessagingHub REST + broadcast tests over a real express app — the SURVIVING
-// surface (user sends, history reads, identity, rooms, AgentsHub spawns).
-// N2 deleted the agent-originated POST /api/messages route, handleSend, and
-// the spawn briefing; their tests went with them. Run with
+// surface (user sends, history reads, identity, the free-room shim, AgentsHub
+// spawns). N2 deleted the agent-originated POST /api/messages route and the
+// spawn briefing; N3 deleted the router's channel/room arms and the
+// from-trusting room routes — #team sends/reads now delegate to the injected
+// capability TeamLane (faked here; the real fan-out is covered by the
+// messagingV2 rooms tests). Run with
 // `npx tsx src/backend/messaging/tests/api.test.ts`.
 import assert from 'node:assert/strict';
 import { mkdtempSync } from 'node:fs';
@@ -10,7 +13,7 @@ import { join } from 'node:path';
 import express from 'express';
 import type { Server } from 'node:http';
 import { MessagingHub, TEAM_CHANNEL } from '../index.js';
-import type { MessageEnvelope } from '../index.js';
+import type { MessageEnvelope, TeamLane, TeamLaneEnvelope } from '../index.js';
 import { AgentsHub } from '../../server/agents.js';
 import type { AgentInfo, CreateAgentOptions } from '../../terminal/manager.js';
 import type { TerminalRuntime } from '../../terminal/runtime/index.js';
@@ -34,6 +37,34 @@ const recordWrite = (agentId: string, data: string): boolean => {
   return true;
 };
 
+/** The fake capability lane: records #team posts in the translated shape.
+ * laneMode 'unavailable' simulates a capability DependencyUnavailable. */
+let laneMode: 'ok' | 'unavailable' = 'ok';
+const teamPosts: TeamLaneEnvelope[] = [];
+const fakeLane: TeamLane = {
+  post(body: string): Promise<TeamLaneEnvelope> {
+    if (laneMode === 'unavailable') {
+      const failure = new Error('authority is unavailable');
+      failure.name = 'DependencyUnavailable';
+      return Promise.reject(failure);
+    }
+    const envelope: TeamLaneEnvelope = {
+      id: `message_fake_${teamPosts.length + 1}`,
+      from: 'chris',
+      'to': TEAM_CHANNEL,
+      body,
+      createdAt: new Date().toISOString(),
+      status: 'delivered',
+      delivery: 'normal',
+    };
+    teamPosts.push(envelope);
+    return Promise.resolve(envelope);
+  },
+  history(): Promise<TeamLaneEnvelope[]> {
+    return Promise.resolve([...teamPosts]);
+  },
+};
+
 const messagingHub = new MessagingHub(
   { list: () => agents, write: recordWrite },
   (event, payload) => broadcasts.push({ event, payload: payload as MessageEnvelope }),
@@ -43,6 +74,7 @@ const messagingHub = new MessagingHub(
     // Fake sessionIds — the real transcript confirmer would poll for files
     // that never exist. null disables confirmation; sends note it honestly.
     effectConfirmer: null,
+    teamLane: () => fakeLane,
   },
 );
 
@@ -69,9 +101,9 @@ async function getMessages(query: string): Promise<MessageEnvelope[]> {
 async function testHistoryQueryFilters(): Promise<void> {
   await postAsUser({ 'to': 'codex-1', body: 'done', threadId: 'thread-a' });
   await postAsUser({ 'to': TEAM_CHANNEL, body: 'status: green' });
-  assert.equal((await getMessages('')).length, 2);
+  assert.equal((await getMessages('')).length, 1, 'the #team post lives in the capability, not the old store');
   const channel = await getMessages(`?withAgent=${encodeURIComponent(TEAM_CHANNEL)}`);
-  assert.equal(channel.length, 1, 'channel read via withAgent=#team');
+  assert.equal(channel.length, 1, 'channel read delegates to the capability lane');
   assert.equal(channel[0]?.body, 'status: green');
   assert.equal((await getMessages('?threadId=thread-a'))[0]?.threadId, 'thread-a');
   assert.equal((await getMessages('?limit=1')).length, 1);
@@ -163,30 +195,32 @@ async function testRegisteredUserIdentityOwnsBrowserSends(): Promise<void> {
   assert.equal(direct.json.envelope.from, 'chris', 'server identity overrides client sender claims');
 }
 
-async function testOwnerIdentitySendsToAnyMissionRoom(): Promise<void> {
-  const roomResponse = await fetch(`${baseUrl}/api/rooms`, {
+async function testFreeRoomSendsAreGone(): Promise<void> {
+  // N3 (D-N3-6): the router's room arms are deleted — a free-room send now
+  // 404s as an unknown recipient. Free rooms are archive-only (reads and
+  // browser creation survive via the shim) until N4.
+  const roomResponse = await fetch(`${baseUrl}/api/user/rooms`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ name: 'Agents only', members: ['claude-1', 'codex-1'], from: 'claude-1' }),
+    body: JSON.stringify({ name: 'Agents only', members: ['claude-1', 'codex-1'] }),
   });
+  assert.equal(roomResponse.status, 201, 'browser room creation survives via the shim');
   const roomId = (await roomResponse.json()).room.roomId as string;
-  const roomSend = await postAsUser({ 'to': roomId, body: 'owner can address every mission room' });
-  assert.equal(roomSend.status, 201, 'owner identity has permission to send to any mission room');
-  assert.equal(roomSend.json.envelope.from, 'chris');
+  const roomSend = await postAsUser({ 'to': roomId, body: 'free rooms no longer route' });
+  assert.equal(roomSend.status, 404, 'routeRoom is deleted — free-room sends die in N3');
 }
 
-async function testOwnerTeamPostReachesEveryLiveAgent(): Promise<void> {
+async function testTeamPostDelegatesToTheCapabilityLane(): Promise<void> {
   writes.length = 0;
+  broadcasts.length = 0;
+  const before = teamPosts.length;
   const teamPost = await postAsUser({ 'to': TEAM_CHANNEL, body: 'Hello team, this is live chat.' });
   assert.equal(teamPost.status, 201);
-  assert.deepEqual(
-    writes.filter((entry) => entry.data !== '\r').map((entry) => entry.agentId),
-    ['agent_1', 'agent_2'],
-    'Chris team chat is pushed to every live agent instead of waiting for terminal polling',
-  );
-  for (const write of writes.filter((entry) => entry.data !== '\r')) {
-    assert.match(write.data, /^\[nvk-msg from chris id msg_[^\]]+\] Hello team, this is live chat\.$/);
-  }
+  assert.equal(teamPosts.length, before + 1, 'the post went through the capability lane, not SendApi');
+  assert.equal(teamPost.json.envelope.to, TEAM_CHANNEL);
+  assert.equal(teamPost.json.envelope.from, 'chris', 'server-stamped sender in the translated envelope');
+  assert.equal(writes.length, 0, 'the old hub types nothing — capability delivery owns the fan-out');
+  assert.equal(broadcasts.length, 0, 'the old store saw no #team append (D1: no new writes)');
 }
 
 async function testAgentsCanReplyToUserInboxIsGone(): Promise<void> {
@@ -200,13 +234,12 @@ async function testAgentsCanReplyToUserInboxIsGone(): Promise<void> {
 }
 
 async function testOpenBrowserTabsUpgradeToRegisteredIdentity(): Promise<void> {
-  const roomResponse = await fetch(`${baseUrl}/api/rooms`, {
+  const roomResponse = await fetch(`${baseUrl}/api/user/rooms`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
       name: 'Legacy tab room',
       members: ['codex-1'],
-      from: 'chris',
     }),
   });
   assert.equal(roomResponse.status, 201);
@@ -215,13 +248,27 @@ async function testOpenBrowserTabsUpgradeToRegisteredIdentity(): Promise<void> {
   assert.deepEqual(room.members, ['codex-1', 'chris']);
 }
 
+async function testTeamChannelErrorHonesty(): Promise<void> {
+  // FIX 7a: an empty #team body is a 400 (client error), never a 502.
+  const empty = await postAsUser({ 'to': TEAM_CHANNEL, body: '' });
+  assert.equal(empty.status, 400, 'empty #team body → 400');
+  laneMode = 'unavailable';
+  try {
+    const unavailable = await postAsUser({ 'to': TEAM_CHANNEL, body: 'during an outage' });
+    assert.equal(unavailable.status, 503, 'capability DependencyUnavailable → 503');
+  } finally {
+    laneMode = 'ok';
+  }
+}
+
 try {
   await testHistoryQueryFilters();
   await testReservedNamesRejected();
   await testProviderValidation();
   await testRegisteredUserIdentityOwnsBrowserSends();
-  await testOwnerIdentitySendsToAnyMissionRoom();
-  await testOwnerTeamPostReachesEveryLiveAgent();
+  await testFreeRoomSendsAreGone();
+  await testTeamPostDelegatesToTheCapabilityLane();
+  await testTeamChannelErrorHonesty();
   await testAgentsCanReplyToUserInboxIsGone();
   await testOpenBrowserTabsUpgradeToRegisteredIdentity();
   console.log('PASS');

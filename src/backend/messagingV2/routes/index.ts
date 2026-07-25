@@ -21,12 +21,13 @@ import { randomUUID } from 'node:crypto';
 import type { Express, Request, Response } from 'express';
 import type { MessagingError, PersonId, Thread, ThreadId } from '../../../../packages/messaging/public/contract/index.js';
 import type { MessagingSession, Outcome } from '../../../../packages/messaging/public/capability.js';
-import { isChannel, isRoom } from '../../messaging/types.js';
+import { CHRIS_MEMBER, isChannel, isRoom } from '../../messaging/types.js';
 import type { ObjectModel } from '../../objectModel/index.js';
 import type { AgentInfo } from '../../terminal/manager.js';
 import type { TerminalRuntime } from '../../terminal/runtime/index.js';
 import type { MessagingV2Handle } from '../index.js';
 import { personIdForAgentId } from '../authority/index.js';
+import { readTrailingPage } from '../rooms/index.js';
 
 export interface MessagingV2RouteDeps {
   /** Lazy: the capability boots asynchronously AFTER routes are registered. */
@@ -134,6 +135,93 @@ function sendInputFor(parsed: SendBody, peer: AgentInfo): Record<string, unknown
   };
 }
 
+/** D-N3-5: a room target → its provisioned threadId, or an HTTP-ready error. */
+function roomTarget(
+  deps: MessagingV2RouteDeps,
+  senderAgentId: string,
+  target: string,
+): { threadId: ThreadId } | { status: number; error: string } {
+  const rooms = deps.getHandle()?.rooms ?? null;
+  if (rooms === null) return { status: 503, error: 'messaging capability unavailable this run' };
+  if (target === '#team') {
+    const threadId = rooms.fleetThreadId();
+    return threadId === undefined ? { status: 503, error: 'fleet room not provisioned' } : { threadId };
+  }
+  if (target === '#mission') {
+    const missionId = deps.objectModel.missionForAgent(senderAgentId);
+    if (missionId === null) return { status: 400, error: 'no mission room — the sender has no mission ref' };
+    const threadId = rooms.threadIdFor('mission', missionId);
+    return threadId === undefined ? { status: 400, error: `no room provisioned for mission ${missionId}` } : { threadId };
+  }
+  return { status: 400, error: `unsupported room target "${target}" — use '#team' or '#mission' (free rooms are archive-only)` };
+}
+
+/** D-N3-5: resolve a room target, answering the error itself (null = sent). */
+function roomTargetOrReply(
+  deps: MessagingV2RouteDeps,
+  senderAgentId: string,
+  target: string,
+  response: Response,
+): ThreadId | null {
+  const resolved = roomTarget(deps, senderAgentId, target);
+  if ('threadId' in resolved) return resolved.threadId;
+  response.status(resolved.status).json({ error: resolved.error });
+  return null;
+}
+
+/** D-N3-5: room send — always normal priority (parity note below). */
+async function handleRoomSend(
+  deps: MessagingV2RouteDeps,
+  cache: SessionCache,
+  auth: { session: MessagingSession; token: string },
+  parsed: SendBody,
+  response: Response,
+): Promise<void> {
+  if (parsed.interrupt) {
+    // Parity with the old ChannelInterruptError: interrupting the whole fleet
+    // is never what anyone means. The CORE allows urgent room priority
+    // (MSG-010 generalized) — the route rejects it deliberately.
+    response.status(400).json({ error: 'interrupt delivery is rejected for room recipients' });
+    return;
+  }
+  const threadId = roomTargetOrReply(deps, auth.token, parsed.target, response);
+  if (threadId === null) return;
+  reply(cache, auth.token, response, await auth.session.sendMessage({
+    address: `thread:${threadId}`,
+    body: { text: parsed.text },
+    priority: 'normal',
+    clientMessageId: parsed.clientMessageId,
+  }));
+}
+
+/** Map a room-read failure: NotAuthenticated evicts the cached session
+ * (same as reply()); DependencyUnavailable → 503; anything else → 502. */
+function roomReadFailure(cache: SessionCache, token: string, error: unknown, response: Response): void {
+  const name = error instanceof Error ? error.name : '';
+  if (name === 'NotAuthenticated') cache.delete(token);
+  const status = name === 'NotAuthenticated' ? 401 : name === 'DependencyUnavailable' ? 503 : 502;
+  response.status(status).json({ error: error instanceof Error ? error.message : String(error), name });
+}
+
+/** D-N3-5: room read — the same resolution as room sends. FIX 4: serves the
+ * TRAILING window (newest page), matching the old trailing-limit semantics. */
+async function handleRoomMessages(
+  deps: MessagingV2RouteDeps,
+  cache: SessionCache,
+  auth: { session: MessagingSession; token: string },
+  withName: string,
+  response: Response,
+): Promise<void> {
+  const threadId = roomTargetOrReply(deps, auth.token, withName, response);
+  if (threadId === null) return;
+  try {
+    const trailing = await readTrailingPage(auth.session, threadId);
+    response.status(200).json({ threadId, messages: trailing });
+  } catch (error) {
+    roomReadFailure(cache, auth.token, error, response);
+  }
+}
+
 async function handleSend(deps: MessagingV2RouteDeps, cache: SessionCache, request: Request, response: Response): Promise<void> {
   const auth = await sessionOrReply(deps, cache, request, response);
   if (auth === null) return;
@@ -143,7 +231,7 @@ async function handleSend(deps: MessagingV2RouteDeps, cache: SessionCache, reque
     return;
   }
   if (isChannel(parsed.target) || isRoom(parsed.target)) {
-    response.status(400).json({ error: 'rooms and channels land in N3 — #team is read-only for agents' });
+    await handleRoomSend(deps, cache, auth, parsed, response);
     return;
   }
   const peer = peerOrReply(deps.terminals, parsed.target, response);
@@ -201,6 +289,10 @@ async function handleMessages(deps: MessagingV2RouteDeps, cache: SessionCache, r
   if (auth === null) return;
   const withName = withParam(request, response);
   if (withName === null) return;
+  if (isChannel(withName) || isRoom(withName)) {
+    await handleRoomMessages(deps, cache, auth, withName, response);
+    return;
+  }
   const peer = peerOrReply(deps.terminals, withName, response);
   if (peer === null) return;
   const result = await messagesResult(cache, auth.token, auth.session, peer);
@@ -210,7 +302,15 @@ async function handleMessages(deps: MessagingV2RouteDeps, cache: SessionCache, r
 async function handleAddressBook(deps: MessagingV2RouteDeps, cache: SessionCache, request: Request, response: Response): Promise<void> {
   const auth = await sessionOrReply(deps, cache, request, response);
   if (auth === null) return;
-  response.status(200).json({ agents: addressBook(deps) });
+  response.status(200).json({ agents: addressBook(deps), humans: humanEntries(deps) });
+}
+
+/** FIX 7b: the human principal in the address book — CLIs render human
+ * senders by name instead of the raw personId. */
+function humanEntries(deps: MessagingV2RouteDeps): Array<Record<string, unknown>> {
+  const session = deps.getHandle()?.lanes?.humanSession() ?? null;
+  if (session === null) return [];
+  return [{ name: CHRIS_MEMBER, personId: session.principal.personId }];
 }
 
 function addressBook(deps: MessagingV2RouteDeps): Array<Record<string, unknown>> {

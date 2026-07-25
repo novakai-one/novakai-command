@@ -1,4 +1,8 @@
-/* eslint-disable max-lines-per-function */
+// Free-room archive shim tests over the hub's REST surface (N3): browser
+// room creation + list read the ARCHIVED rooms.jsonl through the shim; the
+// agent-trusting room routes (POST /api/rooms, /api/rooms/:id/members) are
+// deleted with the router's room arms. Run with
+// `npx tsx src/backend/messaging/tests/rooms-hub/index.test.ts`.
 import assert from 'node:assert/strict';
 import { mkdtempSync } from 'node:fs';
 import type { Server } from 'node:http';
@@ -7,7 +11,7 @@ import { join } from 'node:path';
 import express from 'express';
 import { MessagingHub } from '../../index.js';
 import type { AgentInfo } from '../../../terminal/manager.js';
-import type { MessageEnvelope, Room } from '../../types.js';
+import type { Room } from '../../types.js';
 
 function agent(agentId: string, title: string, provider: 'claude' | 'codex'): AgentInfo {
   return {
@@ -27,15 +31,11 @@ const agents = [
   agent('agent_claude', 'claude-1', 'claude'),
   agent('agent_codex', 'codex-1', 'codex'),
 ];
-const writes: Array<{ agentId: string; data: string }> = [];
 const broadcasts: Array<{ event: string; payload: unknown }> = [];
 const messagingHub = new MessagingHub(
   {
     list: () => agents,
-    write: (agentId, data) => {
-      writes.push({ agentId, data });
-      return true;
-    },
+    write: () => true,
   },
   (event, payload) => broadcasts.push({ event, payload }),
   {
@@ -60,94 +60,47 @@ async function request(path: string, method = 'GET', body?: unknown) {
       ? {}
       : { headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }),
   });
-  return { status: response.status, json: await response.json() };
+  // Deleted routes answer express's plain-text 404 — never JSON-parse that.
+  const json = await response.json().catch(() => null);
+  return { status: response.status, json };
 }
 
-async function testRoomLifecycle(): Promise<Room> {
-  const created = await request('/api/rooms', 'POST', {
+async function testShimLifecycle(): Promise<void> {
+  const created = await request('/api/user/rooms', 'POST', {
     name: 'Tunnel Builders',
-    members: ['codex-1', 'chris'],
-    from: 'claude-1',
+    members: ['codex-1'],
   });
   assert.equal(created.status, 201);
   const room = created.json.room as Room;
-  assert.deepEqual(room.members, ['codex-1', 'chris', 'claude-1']);
+  assert.deepEqual(room.members, ['codex-1', 'chris'], 'the browser identity always joins');
+  assert.equal(room.createdBy, 'chris', 'server-stamped creator — no from field accepted');
 
   const roomEvents = broadcasts.filter((entry) => entry.event === 'rooms-changed');
-  assert.equal(roomEvents.length, 1);
+  assert.equal(roomEvents.length, 1, 'creation broadcasts rooms-changed for the shim');
   assert.deepEqual(roomEvents[0]?.payload, { rooms: [room] });
-  assert.deepEqual((await request('/api/rooms')).json.rooms, [room]);
-
-  const forbidden = await request(`/api/rooms/${room.roomId}/members`, 'POST', {
-    'add': ['outsider'],
-    from: 'not-a-member',
-  });
-  assert.equal(forbidden.status, 403);
-  const amended = await request(`/api/rooms/${room.roomId}/members`, 'POST', {
-    'add': ['claude-2'],
-    from: 'claude-1',
-  });
-  assert.equal(amended.status, 200);
-  assert.ok(amended.json.room.members.includes('claude-2'));
-  assert.equal(
-    (await request('/api/rooms/room_unknown/members', 'POST', {
-      'add': ['codex-2'],
-      from: 'claude-1',
-    })).status,
-    404,
-  );
-  return amended.json.room as Room;
+  assert.deepEqual((await request('/api/rooms')).json.rooms, [room], 'list reads the archive fold');
 }
 
-async function testRoomMessaging(room: Room): Promise<void> {
-  writes.length = 0;
-  // N2: POST /api/messages is gone — room routing (which survives until N3)
-  // is exercised through the same SendApi seam the old route wrapped.
-  const envelope = await messagingHub.send.send('claude-1', {
-    'to': room.roomId,
-    delivery: 'normal',
-    body: 'three-way hello',
+async function testDeletedRoomRoutesAreGone(): Promise<void> {
+  const agentCreate = await request('/api/rooms', 'POST', {
+    name: 'x', members: ['codex-1'], from: 'claude-1',
   });
-  assert.equal(envelope.status, 'delivered');
-  assert.equal(writes[0]?.agentId, 'agent_codex');
-  assert.equal(
-    writes[0]?.data,
-    `[nvk-room Tunnel Builders from claude-1 id ${envelope.id}] three-way hello`,
-  );
-  assert.ok(broadcasts.some((entry) => entry.event === 'message-envelope'));
-
-  const history = await request(`/api/messages?withRoom=${encodeURIComponent(room.roomId)}`);
-  assert.deepEqual(history.json.messages.map((message: MessageEnvelope) => message.id), [envelope.id]);
-
-  await assert.rejects(
-    messagingHub.send.send('claude-1', { 'to': room.roomId, delivery: 'interrupt', body: 'never record this' }),
-    /interrupt/,
-  );
-  const afterInterrupt = await request(`/api/messages?withRoom=${encodeURIComponent(room.roomId)}`);
-  assert.equal(afterInterrupt.json.messages.length, 1, 'room interrupt rejected before recording');
-
-  await assert.rejects(
-    messagingHub.send.send('outsider', { 'to': room.roomId, delivery: 'normal', body: 'no access' }),
-    /is not a member of room/,
-  );
-  await assert.rejects(
-    messagingHub.send.send('claude-1', { 'to': 'room_unknown', delivery: 'normal', body: 'missing' }),
-    /was not found/,
-  );
+  assert.equal(agentCreate.status, 404, 'POST /api/rooms (from-trusting) is deleted');
+  const members = await request('/api/rooms/room_x/members', 'POST', { 'add': ['y'], from: 'claude-1' });
+  assert.equal(members.status, 404, 'POST /api/rooms/:id/members is deleted');
 }
 
 async function testInvalidInputs(): Promise<void> {
-  assert.equal((await request('/api/rooms', 'POST', { members: [], from: 'chris' })).status, 400);
-  assert.equal((await request('/api/rooms', 'POST', {
+  assert.equal((await request('/api/user/rooms', 'POST', { members: [] })).status, 400);
+  assert.equal((await request('/api/user/rooms', 'POST', {
     name: 'Bad Members',
     members: 'codex-1',
-    from: 'chris',
   })).status, 400);
 }
 
 try {
-  const room = await testRoomLifecycle();
-  await testRoomMessaging(room);
+  await testShimLifecycle();
+  await testDeletedRoomRoutesAreGone();
   await testInvalidInputs();
   console.log('PASS');
 } finally {

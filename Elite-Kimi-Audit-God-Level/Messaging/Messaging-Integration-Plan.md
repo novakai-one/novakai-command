@@ -67,6 +67,17 @@ code.** If a slice needs a core change, that is a new R-item and a contract amen
 - **D-N2-5 (N2):** team contact bootstrap is composition policy — the glue unions
   contact allowlists for team/mission co-members + the human principal with
   `defaultRule:'deny'` always re-asserted. DEC-14 stays the gate.
+- **D-N3-1/2 (N3):** `#team` = room Thread `{team, authority:'fleet', externalId:'team'}`
+  (fleet = active durable agents + human); the human principal is in EVERY roster
+  the membership adapter serves (owner host policy).
+- **D-N3-3/4 (N3):** room Thread provisioning is host-owned (boot before lanes +
+  on launch); the browser #team shim needed ONE frontend line (`historyPath` →
+  `?withAgent=%23team`) — the "zero frontend changes" claim is amended.
+- **D-N3-5/6 (N3):** urgent-to-room stays route-rejected (old parity, core would
+  allow); sender-receives-own-room-post is accepted core truth.
+- **A-N3 (N3):** old free-floating rooms are browser-only archive (fold shim over
+  `rooms.jsonl`); agent room routes deleted; the whole shim + surviving human-route
+  stack dies in N4. Fleet push reaches co-members + chris by design (DEC-14).
 
 ## 4. Architecture
 
