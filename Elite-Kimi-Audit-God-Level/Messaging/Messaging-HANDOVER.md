@@ -22,6 +22,10 @@ in Plan §18.
 all six proof scenarios (P1–P6) passing, 253/253 tests green, scorecard 97.0/100
 ELITE (`Messaging-Scorecard.md`).** The capability awaits Chris's next direction
 (integration into a host, or new requirements as numbered items per law #2).
+**Amendment (2026-07-25, N1/D2):** the capability + contract moved to
+`packages/messaging/` (contract source: `packages/messaging/contract/`). Where
+this file map below says `messaging/` or `contract/`, read the new home. Run the
+drift guard as `node packages/messaging/contract/check-map-drift.mjs`.
 **You are:** the agent picking up post-program work. Read this first.
 
 ---
