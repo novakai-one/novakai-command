@@ -83,13 +83,14 @@ const terminals = new FakeTerminalRuntime([aliceInfo, bobInfo, carolInfo]);
 const broadcasts: Array<{ event: string; payload: unknown }> = [];
 
 const journalPath = path.join(mkdtempSync(path.join(tmpdir(), 'nvk-mv2-rooms-journal-')), 'journal.jsonl');
+const glueLogs: string[] = [];
 const handle = await startMessagingV2({
   objectModel: model,
   storePath: journalPath,
   terminals,
   humanToken: 'human-secret',
   broadcast: (event, payload) => broadcasts.push({ event, payload }),
-  'log': () => {},
+  'log': (line) => glueLogs.push(line),
 });
 const rooms = handle.rooms;
 assert.ok(rooms, 'the rooms glue booted');
@@ -198,6 +199,133 @@ assert.ok(rooms.threadIdFor('team', gammaTeam), 'launch provisions the new team 
 assert.equal(rooms.labelFor(rooms.threadIdFor('team', gammaTeam) ?? ''), '#Gamma Crew');
 console.log('launch-time provisioning test passed');
 
+// --- FIX 4: room history serves the TRAILING window (newest page), not the oldest ---
+
+{
+  const aliceWriter = await authenticate(aliceId);
+  for (let count = 1; count <= 205; count += 1) {
+    const seeded = await aliceWriter.sendMessage({
+      address: `thread:${fleetThreadId}`, body: { text: `seed ${count}` },
+      priority: 'normal', clientMessageId: `n3-seed-${count}`,
+    });
+    assert.equal(seeded.kind, 'ok');
+  }
+  const windowed = await rooms.history();
+  assert.equal(windowed.length, 200, 'history is capped at the contract pageLimitMax');
+  assert.equal(windowed.at(-1)?.body, 'seed 205', 'the NEWEST messages are served, not the oldest page');
+  assert.ok(!windowed.some((entry) => entry.body === 'seed 1'), 'the oldest page is NOT what the browser gets');
+  console.log('trailing-window history test passed');
+}
+
+// --- FIX 2: only FLEET commits rebroadcast — team/mission commits never leak --------
+
+{
+  await handle.embedded.pumpEvents(); // drain the seed commits first
+  broadcasts.length = 0;
+  const aliceRoom = await authenticate(aliceId);
+  const teamPost = await aliceRoom.sendMessage({
+    address: `thread:${teamThreadId}`, body: { text: 'team room only' },
+    priority: 'normal', clientMessageId: 'n3-fix2-1',
+  });
+  assert.equal(teamPost.kind, 'ok');
+  await handle.embedded.pumpEvents();
+  assert.equal(broadcasts.length, 0, 'a team-room commit produces NO message-envelope broadcast');
+  const fleetPost2 = await aliceRoom.sendMessage({
+    address: `thread:${fleetThreadId}`, body: { text: 'fleet again' },
+    priority: 'normal', clientMessageId: 'n3-fix2-2',
+  });
+  assert.equal(fleetPost2.kind, 'ok');
+  await handle.embedded.pumpEvents();
+  const fleetFrames = broadcasts.filter((entry) => entry.event === 'message-envelope');
+  assert.equal(fleetFrames.length, 1, 'a fleet commit produces exactly one broadcast');
+  assert.equal((fleetFrames[0]?.payload as { to?: string }).to, '#team');
+  console.log('fleet-only rebroadcast test passed');
+}
+
+// --- FIX 1: the real client shape — GET /api/messages?withAgent=%23team --------------
+// (route level, with a pre-seeded OLD-journal archive line that must NOT merge, D1)
+
+{
+  const { MessagingHub } = await import('../../messaging/index.js');
+  const { TEAM_CHANNEL } = await import('../../messaging/types.js');
+  const express = (await import('express')).default;
+  const archivePath = path.join(mkdtempSync(path.join(tmpdir(), 'nvk-mv2-archive-')), 'messages.jsonl');
+  const archiveEnvelope = {
+    id: 'msg_archive_1', from: 'claude-1', 'to': TEAM_CHANNEL, delivery: 'normal',
+    body: 'pre-N3 archive line', createdAt: STAMP, status: 'delivered',
+  };
+  writeFileSync(archivePath, JSON.stringify(archiveEnvelope) + '\n');
+  const shimHub = new MessagingHub(
+    { list: () => terminals.list(), write: () => true },
+    () => {},
+    { storePath: archivePath, teamLane: () => rooms, effectConfirmer: null },
+  );
+  const shimApp = express();
+  shimApp.use(express.json());
+  shimHub.registerRoutes(shimApp);
+  const shimServer = await new Promise<import('node:http').Server>((resolve) => {
+    const listening = shimApp.listen(0, '127.0.0.1', () => resolve(listening));
+  });
+  const port = (shimServer.address() as { port: number }).port;
+  const shimPost = await rooms.post('shim real-client read');
+  const realClient = await fetch(`http://127.0.0.1:${port}/api/messages?withAgent=%23team`);
+  assert.equal(realClient.status, 200);
+  const served = (await realClient.json()) as { messages: Array<Record<string, unknown>> };
+  assert.ok(
+    served.messages.some((entry) => entry['id'] === shimPost.id && entry['to'] === '#team' && entry['status'] === 'delivered'),
+    'a capability-era fleet message is served in the translated old-envelope form',
+  );
+  assert.ok(
+    !served.messages.some((entry) => entry['body'] === 'pre-N3 archive line'),
+    'the old-journal archive is NOT merged (D1)',
+  );
+  shimServer.close();
+  console.log('real-client-shape shim test passed');
+}
+
+// --- FIX 3: boot with pre-existing fleet history → ZERO replay rebroadcasts ----------
+
 await handle.close();
+
+{
+  const rebootBroadcasts: Array<{ event: string; payload: unknown }> = [];
+  const rebootLogs: string[] = [];
+  const reboot = await startMessagingV2({
+    objectModel: model,
+    storePath: journalPath, // the SAME journal — fleet history pre-exists
+    terminals,
+    humanToken: 'human-secret',
+    broadcast: (event, payload) => rebootBroadcasts.push({ event, payload }),
+    'log': (line) => rebootLogs.push(line),
+  });
+  await reboot.embedded.pumpEvents();
+  assert.equal(
+    rebootBroadcasts.filter((entry) => entry.event === 'message-envelope').length,
+    0,
+    'boot must NOT replay fleet history into the browser (the subscription is cursor-seeded)',
+  );
+  const rebootRooms = reboot.rooms;
+  assert.ok(rebootRooms);
+  const fresh = await rebootRooms.post('post-reboot commit');
+  await reboot.embedded.pumpEvents();
+  const freshFrames = rebootBroadcasts.filter((entry) => entry.event === 'message-envelope');
+  assert.equal(freshFrames.length, 1, 'only NEW commits broadcast after boot');
+  assert.equal((freshFrames[0]?.payload as { id?: string }).id, fresh.id);
+
+  // An ended frame is logged LOUDLY (never a silent subscription death).
+  const rebootAuthority = reboot.embedded.authority as unknown as { invalidateSession(sessionId: string): void };
+  const humanSession = reboot.lanes?.humanSession();
+  assert.ok(humanSession);
+  rebootAuthority.invalidateSession(humanSession.principal.sessionId);
+  assert.equal(await humanSession.revalidate(), 'ended');
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.ok(
+    rebootLogs.some((line) => /ended/i.test(line)),
+    'an ended frame (auth-lost) is logged loudly',
+  );
+  await reboot.close();
+  console.log('replay-seed + ended-logging tests passed');
+}
+
 rmSync(scratch, { recursive: true, force: true });
 console.log('messagingV2 rooms glue tests passed');

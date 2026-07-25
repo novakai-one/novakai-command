@@ -24,7 +24,8 @@
 import { randomUUID } from 'node:crypto';
 import type { EmbeddedMessaging } from '../../../../packages/messaging/composition/embedded.js';
 import type { MessagingSession } from '../../../../packages/messaging/public/capability.js';
-import type { Message, ThreadId } from '../../../../packages/messaging/public/contract/index.js';
+import { constants } from '../../../../packages/messaging/public/contract/index.js';
+import type { Cursor, Message, SubscriptionMessage, ThreadId } from '../../../../packages/messaging/public/contract/index.js';
 import type { SubscriptionHandle } from '../../../../packages/messaging/core/subscriptions.js';
 import { CHRIS_MEMBER } from '../../messaging/types.js';
 import type { ObjectModel } from '../../objectModel/index.js';
@@ -169,11 +170,18 @@ async function ensureForAgent(deps: RoomsGlueDeps, agentId: string): Promise<voi
   }
 }
 
+/** A lane failure that keeps the capability's error NAME for HTTP mapping. */
+function namedFailure(name: string, message: string): Error {
+  const failure = new Error(message);
+  failure.name = name;
+  return failure;
+}
+
 async function postTeam(deps: RoomsGlueDeps, body: string): Promise<TranslatedEnvelope> {
   const session = deps.humanSession();
   const threadId = deps.directory.fleetThreadId();
   if (session === null || threadId === undefined) {
-    throw new Error('messaging capability unavailable this run — #team post not sent');
+    throw namedFailure('DependencyUnavailable', 'messaging capability unavailable this run — #team post not sent');
   }
   const accepted = await session.sendMessage({
     address: `thread:${threadId}`,
@@ -181,7 +189,7 @@ async function postTeam(deps: RoomsGlueDeps, body: string): Promise<TranslatedEn
     priority: 'normal',
     clientMessageId: `msg_${randomUUID()}`,
   });
-  if (accepted.kind !== 'ok') throw new Error(accepted.error.message);
+  if (accepted.kind !== 'ok') throw namedFailure(accepted.error.name, accepted.error.message);
   const page = await session.getMessages({ threadId });
   const message = page.kind === 'ok' ? page.value.messages.find((entry) => entry.id === accepted.value.messageId) : undefined;
   return translate(deps, message ?? syntheticMessage(accepted.value.messageId, threadId, session, body));
@@ -199,29 +207,84 @@ function syntheticMessage(messageId: string, threadId: ThreadId, session: Messag
   } as unknown as Message;
 }
 
+/**
+ * Read the TRAILING window of a thread (FIX 4): pages are sequence-ordered
+ * oldest-first, so page through nextCursor to the end and keep the newest
+ * pageLimitMax messages — matching the old history's trailing-limit
+ * semantics. Cost: one read per page (O(total/pageLimitMax)) per call;
+ * acceptable for the shim until N4.
+ */
+export async function readTrailingPage(session: MessagingSession, threadId: ThreadId): Promise<Message[]> {
+  let cursor: Cursor | undefined;
+  const accumulated: Message[] = [];
+  do {
+    const outcome = await session.getMessages(cursor === undefined ? { threadId } : { threadId, cursor });
+    if (outcome.kind !== 'ok') throw namedFailure(outcome.error.name, outcome.error.message);
+    accumulated.push(...outcome.value.messages);
+    cursor = outcome.value.nextCursor;
+  } while (cursor !== undefined);
+  return accumulated.slice(-constants.pageLimitMax);
+}
+
 async function teamHistory(deps: RoomsGlueDeps): Promise<TranslatedEnvelope[]> {
   const session = deps.humanSession();
   const threadId = deps.directory.fleetThreadId();
   if (session === null || threadId === undefined) {
     throw new Error('messaging capability unavailable this run — #team history unavailable');
   }
-  const page = await session.getMessages({ threadId });
-  if (page.kind !== 'ok') throw new Error(page.error.message);
-  return page.value.messages.map((message) => translate(deps, message));
+  const trailing = await readTrailingPage(session, threadId);
+  return trailing.map((message) => translate(deps, message));
 }
 
-/** D-N3-4 LIVE: re-broadcast provisioned-room commits as old-shape envelopes. */
-async function subscribeRooms(deps: RoomsGlueDeps, subscription: { current?: SubscriptionHandle }): Promise<void> {
-  const session = deps.humanSession();
-  if (session === null || deps.broadcast === undefined) return;
-  const broadcast = deps.broadcast;
-  const outcome = await session.subscribe({ events: ['MessageCommitted'] }, (frame) => {
+/** The replay cursor: sequence of the newest fleet message, as a Cursor. */
+async function currentTipCursor(session: MessagingSession, fleetThreadId: ThreadId): Promise<Cursor | undefined> {
+  const newest = (await readTrailingPage(session, fleetThreadId)).at(-1);
+  if (newest === undefined) return undefined;
+  return `s_${Number(newest.sequence)}` as Cursor;
+}
+
+/** The live-shim sink: ended frames log loudly; fleet commits after the
+ * subscribe instant rebroadcast — nothing else (FIX 2 + FIX 3). */
+function roomSink(
+  deps: RoomsGlueDeps,
+  fleetThreadId: ThreadId,
+  subscribedAt: string,
+  broadcast: (event: string, payload: unknown) => void,
+): (frame: SubscriptionMessage) => Promise<{ kind: 'effect' }> {
+  return (frame) => {
+    if (frame.kind === 'ended') {
+      // Never a silent subscription death — the browser falls back to refetch.
+      announce(deps, `[messaging-v2] rooms live subscription ENDED (${frame.reason}) — browser falls back to refetch`);
+      return Promise.resolve({ kind: 'effect' as const });
+    }
     const message = frame.kind === 'event' ? (frame.event as { message?: Message }).message : undefined;
-    if (message !== undefined && deps.directory.labelFor(message.threadId) !== undefined) {
+    // FIX 2: fleet commits ONLY — team/mission room commits never leak
+    // into the browser (the frontend would mis-file them as phantom lanes).
+    if (message !== undefined && message.threadId === fleetThreadId && message.createdAt >= subscribedAt) {
       broadcast('message-envelope', translate(deps, message));
     }
     return Promise.resolve({ kind: 'effect' as const });
-  });
+  };
+}
+
+/** D-N3-4 LIVE: re-broadcast FLEET commits as old-shape envelopes. */
+async function subscribeRooms(deps: RoomsGlueDeps, subscription: { current?: SubscriptionHandle }): Promise<void> {
+  const session = deps.humanSession();
+  const fleetThreadId = deps.directory.fleetThreadId();
+  if (session === null || deps.broadcast === undefined || fleetThreadId === undefined) return;
+  // FIX 3: scoped to the fleet thread AND cursor-seeded at the current tip.
+  // NOTE: the `since` cursor suppresses REPLAY enqueues, but the core's
+  // watermark only advances via replayed facts (subscriptions.ts:519) — an
+  // empty replay leaves it at 0 and the bus's sequence-0 live tail would
+  // flood every historical fact through. So frames whose message predates
+  // this subscribe are dropped too (the read shim serves history; replay is
+  // deliberately traded away — audit F3's sanctioned fallback).
+  const since = await currentTipCursor(session, fleetThreadId);
+  const subscribedAt = new Date().toISOString();
+  const outcome = await session.subscribe(
+    { events: ['MessageCommitted'], threads: [fleetThreadId], ...(since !== undefined ? { since } : {}) },
+    roomSink(deps, fleetThreadId, subscribedAt, deps.broadcast),
+  );
   if (outcome.kind === 'ok') subscription.current = outcome.value;
   else announce(deps, `[messaging-v2] rooms live subscription failed (${outcome.error.name}) — browser falls back to refetch`);
 }

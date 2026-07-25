@@ -37,10 +37,17 @@ const recordWrite = (agentId: string, data: string): boolean => {
   return true;
 };
 
-/** The fake capability lane: records #team posts in the translated shape. */
+/** The fake capability lane: records #team posts in the translated shape.
+ * laneMode 'unavailable' simulates a capability DependencyUnavailable. */
+let laneMode: 'ok' | 'unavailable' = 'ok';
 const teamPosts: TeamLaneEnvelope[] = [];
 const fakeLane: TeamLane = {
   post(body: string): Promise<TeamLaneEnvelope> {
+    if (laneMode === 'unavailable') {
+      const failure = new Error('authority is unavailable');
+      failure.name = 'DependencyUnavailable';
+      return Promise.reject(failure);
+    }
     const envelope: TeamLaneEnvelope = {
       id: `message_fake_${teamPosts.length + 1}`,
       from: 'chris',
@@ -241,6 +248,19 @@ async function testOpenBrowserTabsUpgradeToRegisteredIdentity(): Promise<void> {
   assert.deepEqual(room.members, ['codex-1', 'chris']);
 }
 
+async function testTeamChannelErrorHonesty(): Promise<void> {
+  // FIX 7a: an empty #team body is a 400 (client error), never a 502.
+  const empty = await postAsUser({ 'to': TEAM_CHANNEL, body: '' });
+  assert.equal(empty.status, 400, 'empty #team body → 400');
+  laneMode = 'unavailable';
+  try {
+    const unavailable = await postAsUser({ 'to': TEAM_CHANNEL, body: 'during an outage' });
+    assert.equal(unavailable.status, 503, 'capability DependencyUnavailable → 503');
+  } finally {
+    laneMode = 'ok';
+  }
+}
+
 try {
   await testHistoryQueryFilters();
   await testReservedNamesRejected();
@@ -248,6 +268,7 @@ try {
   await testRegisteredUserIdentityOwnsBrowserSends();
   await testFreeRoomSendsAreGone();
   await testTeamPostDelegatesToTheCapabilityLane();
+  await testTeamChannelErrorHonesty();
   await testAgentsCanReplyToUserInboxIsGone();
   await testOpenBrowserTabsUpgradeToRegisteredIdentity();
   console.log('PASS');

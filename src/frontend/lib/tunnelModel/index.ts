@@ -232,10 +232,12 @@ function isEnvelope(payload: unknown): payload is TunnelEnvelope {
     && typeof candidate.to === 'string' && typeof candidate.createdAt === 'string';
 }
 
-/** Server-side history filter for one lane; #team stays a full pull. */
+/** Server-side history filter for one lane. N3 (audit F1): #team reads the
+ * capability shim — the parameterless pull only ever saw the pre-N3 archive. */
 function historyPath(id: ConversationId): string {
   if (isRoomId(id)) return `/api/messages?withRoom=${encodeURIComponent(id)}`;
   if (id.startsWith('dm:')) return `/api/messages?withAgent=${encodeURIComponent(id.slice(3))}`;
+  if (id === TEAM_CHANNEL) return `/api/messages?withAgent=${encodeURIComponent(TEAM_CHANNEL)}`;
   return '/api/messages';
 }
 

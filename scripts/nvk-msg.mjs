@@ -51,8 +51,8 @@ const printV2Message = (message, nameFor) => console.log(
   `${message.priority === 'urgent' ? ' (interrupt)' : ''}\n  ${message.body.text.replace(/\n/g, '\n  ')}`);
 
 async function addressBookNames() {
-  const { agents = [] } = await api('/api/messaging/v2/address-book');
-  return new Map(agents.map((agent) => [agent.personId, agent.name]));
+  const { agents = [], humans = [] } = await api('/api/messaging/v2/address-book');
+  return new Map([...agents, ...humans].map((entry) => [entry.personId, entry.name]));
 }
 
 if (cmd === 'send') {
@@ -107,8 +107,9 @@ if (cmd === 'send') {
   if (messages.length >= 200) console.log('(page is full at 200 — older messages exist beyond this read)');
 
 } else if (cmd === 'names') {
-  const { agents = [] } = await api('/api/messaging/v2/address-book');
+  const { agents = [], humans = [] } = await api('/api/messaging/v2/address-book');
   const lines = agents.map((agent) => `${agent.name} (${agent.provider})${agent.status ? ` [${agent.status}]` : ''}`);
+  for (const human of humans) lines.push(`${human.name} (human)`);
   console.log(lines.join('\n') || '(no live agents)');
 
 } else {

@@ -194,8 +194,11 @@ async function bootLanes(
     lanes.handleAgentLaunched(info);
     rooms.handleAgentLaunched(info);
   });
-  await lanes.openBootLanes();
+  // FIX 6 (audit F6): rooms provision BEFORE lanes open (and before the
+  // start-sweep can re-drive pending room deliveries) so the transport's
+  // roomLabel lookup never misses for replayed deliveries.
   await rooms.ensureAllRooms();
+  await lanes.openBootLanes();
   rooms.startLiveBroadcast();
   return { lanes, rooms };
 }

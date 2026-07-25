@@ -26,7 +26,7 @@ const MESSAGING_LINES = [
   'DM a peer: node scripts/nvk-msg.mjs send --to <peer> "body" — your identity comes from the NVK_AGENT_ID env var (already set for you).',
   'Add --interrupt ONLY for real urgency (never to a room).',
   'Read a DM thread: node scripts/nvk-msg.mjs read <name>.',
-  "Post to the whole fleet: node scripts/nvk-msg.mjs send --to '#team' \"body\"; post to your mission room: send --to '#mission' \"body\".",
+  "#team is shared fleet-wide history every member can read — post with send --to '#team' \"body\" (mission room: send --to '#mission' \"body\"); push delivery reaches your team/mission co-members + chris, and cross-team members terminally fail delivery by design (DEC-14 deny-by-default stays the gate).",
   "Read the fleet and mission rooms: node scripts/nvk-msg.mjs read '#team' and read '#mission'.",
   'Incoming mail arrives in your prompt prefixed [nvk-msg from <name> id <msgId>] (a DM) or [nvk-room <label> from <name> id <msgId>] (a room post) — reply by sending a message back, not by answering inline.',
 ];

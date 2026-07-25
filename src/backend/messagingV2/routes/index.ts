@@ -21,12 +21,13 @@ import { randomUUID } from 'node:crypto';
 import type { Express, Request, Response } from 'express';
 import type { MessagingError, PersonId, Thread, ThreadId } from '../../../../packages/messaging/public/contract/index.js';
 import type { MessagingSession, Outcome } from '../../../../packages/messaging/public/capability.js';
-import { isChannel, isRoom } from '../../messaging/types.js';
+import { CHRIS_MEMBER, isChannel, isRoom } from '../../messaging/types.js';
 import type { ObjectModel } from '../../objectModel/index.js';
 import type { AgentInfo } from '../../terminal/manager.js';
 import type { TerminalRuntime } from '../../terminal/runtime/index.js';
 import type { MessagingV2Handle } from '../index.js';
 import { personIdForAgentId } from '../authority/index.js';
+import { readTrailingPage } from '../rooms/index.js';
 
 export interface MessagingV2RouteDeps {
   /** Lazy: the capability boots asynchronously AFTER routes are registered. */
@@ -193,7 +194,17 @@ async function handleRoomSend(
   }));
 }
 
-/** D-N3-5: room read — the same resolution as room sends. */
+/** Map a room-read failure: NotAuthenticated evicts the cached session
+ * (same as reply()); DependencyUnavailable → 503; anything else → 502. */
+function roomReadFailure(cache: SessionCache, token: string, error: unknown, response: Response): void {
+  const name = error instanceof Error ? error.name : '';
+  if (name === 'NotAuthenticated') cache.delete(token);
+  const status = name === 'NotAuthenticated' ? 401 : name === 'DependencyUnavailable' ? 503 : 502;
+  response.status(status).json({ error: error instanceof Error ? error.message : String(error), name });
+}
+
+/** D-N3-5: room read — the same resolution as room sends. FIX 4: serves the
+ * TRAILING window (newest page), matching the old trailing-limit semantics. */
 async function handleRoomMessages(
   deps: MessagingV2RouteDeps,
   cache: SessionCache,
@@ -203,13 +214,12 @@ async function handleRoomMessages(
 ): Promise<void> {
   const threadId = roomTargetOrReply(deps, auth.token, withName, response);
   if (threadId === null) return;
-  const page = await auth.session.getMessages({ threadId });
-  if (page.kind !== 'ok') {
-    const failure = failurePayload(cache, auth.token, page.error);
-    response.status(failure.status).json(failure.payload);
-    return;
+  try {
+    const trailing = await readTrailingPage(auth.session, threadId);
+    response.status(200).json({ threadId, messages: trailing });
+  } catch (error) {
+    roomReadFailure(cache, auth.token, error, response);
   }
-  response.status(200).json({ threadId, messages: page.value.messages });
 }
 
 async function handleSend(deps: MessagingV2RouteDeps, cache: SessionCache, request: Request, response: Response): Promise<void> {
@@ -292,7 +302,15 @@ async function handleMessages(deps: MessagingV2RouteDeps, cache: SessionCache, r
 async function handleAddressBook(deps: MessagingV2RouteDeps, cache: SessionCache, request: Request, response: Response): Promise<void> {
   const auth = await sessionOrReply(deps, cache, request, response);
   if (auth === null) return;
-  response.status(200).json({ agents: addressBook(deps) });
+  response.status(200).json({ agents: addressBook(deps), humans: humanEntries(deps) });
+}
+
+/** FIX 7b: the human principal in the address book — CLIs render human
+ * senders by name instead of the raw personId. */
+function humanEntries(deps: MessagingV2RouteDeps): Array<Record<string, unknown>> {
+  const session = deps.getHandle()?.lanes?.humanSession() ?? null;
+  if (session === null) return [];
+  return [{ name: CHRIS_MEMBER, personId: session.principal.personId }];
 }
 
 function addressBook(deps: MessagingV2RouteDeps): Array<Record<string, unknown>> {

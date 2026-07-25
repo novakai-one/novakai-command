@@ -254,16 +254,26 @@ export class MessagingHub {
       response.status(400).json({ error: new ChannelInterruptError(TEAM_CHANNEL).message });
       return;
     }
+    // FIX 7a: a missing/empty body is the CLIENT's error (400), never a 502.
+    if (typeof payload.body !== 'string' || payload.body.trim() === '') {
+      response.status(400).json({ error: 'body must be a non-empty string' });
+      return;
+    }
     const lane = this.teamLane?.() ?? null;
     if (lane === null) {
       response.status(503).json({ error: 'messaging capability unavailable this run — #team post not sent' });
       return;
     }
+    await this.postTeamChannel(lane, payload.body, response);
+  }
+
+  /** Lane post + error mapping (FIX 7a: DependencyUnavailable → 503). */
+  private async postTeamChannel(lane: TeamLane, body: string, response: Response): Promise<void> {
     try {
-      const body = this.requireText(payload.body, 'body');
       response.status(201).json({ envelope: await lane.post(body) });
     } catch (error) {
-      response.status(502).json({ error: error instanceof Error ? error.message : String(error) });
+      const unavailable = error instanceof Error && error.name === 'DependencyUnavailable';
+      response.status(unavailable ? 503 : 502).json({ error: error instanceof Error ? error.message : String(error) });
     }
   }
 

@@ -197,6 +197,12 @@ const entries = book.json['agents'] as Array<Record<string, unknown>>;
 assert.deepEqual(entries.map((entry) => entry['name']), ['chief-kimi', 'worker-b', 'worker-c']);
 assert.equal(entries[0]?.['personId'], alicePerson, 'name → personId for CLI resolution');
 assert.equal(typeof entries[0]?.['status'], 'string', 'durable status rides along');
+// FIX 7b: the human principal is in the address book so CLIs render human senders.
+const humans = book.json['humans'] as Array<Record<string, unknown>>;
+assert.ok(
+  humans.some((entry) => entry['name'] === 'chris' && entry['personId'] === 'person_user-chris'),
+  'the human principal maps name → personId in the address book',
+);
 console.log('read tests passed');
 
 // --- interrupt: urgent leads with Esc; MSG-010 downgrade is DND-conditional --------------
