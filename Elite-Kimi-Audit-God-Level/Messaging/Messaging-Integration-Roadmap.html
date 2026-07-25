@@ -44,6 +44,9 @@
   .slice b { display: block; margin-bottom: 1px; }
   .slice .exit { font-size: 13px; color: var(--dim); }
   .slice .exit b { display: inline; color: var(--green); font-weight: 600; }
+  .slice.sealed { opacity: .92; }
+  .slice.sealed .id { text-decoration: line-through; }
+  .slice .seal { font-size: 13px; color: var(--green); font-weight: 600; }
   .luke { background: linear-gradient(135deg, #2d2144, #3a1f33);
           border: 1px solid #57408a; }
   .luke .star { font-size: 22px; }
@@ -86,7 +89,7 @@
       <header><span class="tag">PHASE 1</span><h3>Rock solid inside the app</h3></header>
       <div class="goal">Replace the old messaging surface slice by slice. Each slice: build → audit → dispose → commit. Old path deleted, never dual-run.</div>
       <div class="slices">
-        <div class="slice"><span class="id">N1</span><div><b>Foundation</b> — package embedded in the backend; adapters wired to the app's agent/team/mission truth.<span class="exit"> <b>Exit:</b> boots in-app, all gates green.</span></div></div>
+        <div class="slice sealed"><span class="id">N1</span><div><b>Foundation</b> — package embedded in the backend; adapters wired to the app's agent/team/mission truth.<span class="exit"> <b>Exit:</b> boots in-app, all gates green.</span> <span class="seal">SEALED 2026-07-25 — audit moderate, findings disposed (<code>Messaging-N1-Review.md</code>); PR #63 open.</span></div></div>
         <div class="slice"><span class="id">N2</span><div><b>Agent direct lane</b> — 1-1 messages through the capability; PTY delivery via the terminal submit lane.<span class="exit"> <b>Exit:</b> two live agents converse; old router path gone.</span></div></div>
         <div class="slice"><span class="id">N3</span><div><b>Rooms</b> — #team and rooms become room Threads with frozen member snapshots.<span class="exit"> <b>Exit:</b> room send reaches exactly the members; blocked never receives.</span></div></div>
         <div class="slice"><span class="id">N4</span><div><b>Frontend</b> — Messages tab + Mission Control run on pushed events. The big one.<span class="exit"> <b>Exit:</b> inbox updates with zero polling.</span></div></div>
