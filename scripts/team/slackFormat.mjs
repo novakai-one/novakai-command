@@ -2,6 +2,11 @@
 // N7 bridge, which reuses it for app→Slack). Pure presentation: envelope-ish
 // rows in, webhook payloads out. Extracted from nvk-slack-mirror.mjs in N5 —
 // byte for byte the old grammar.
+//
+// F10 debt: the ⚠ 'partial' branch below has NO caller in the capability
+// world — delivery states are pending|held|delivered|failed, there is no
+// partial amendment event. The branch stays (the N7 bridge may need it);
+// mirror-side ⚠ restoration waits on a core-level partial concept.
 
 const BODY_MAX = 500;
 

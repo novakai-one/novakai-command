@@ -31,7 +31,10 @@ async function getJson(base, path) {
 }
 
 /** personId → agentId: the exact inverse of the authority's derivation
- * (person_${agentId.replaceAll('_','-')}), for agent_<uuid> ids. */
+ * (person_${agentId.replaceAll('_','-')}), for agent_<uuid> ids.
+ * FRAGILE (F7, accepted): stringly-typed by construction — any change to the
+ * authority's derivation silently breaks name resolution (unknown personIds
+ * pass through raw). Left as-is until the roster route exposes personIds. */
 function agentIdForPersonId(personId) {
   if (!personId.startsWith('person_agent-')) return null;
   return personId.slice('person_'.length).replace('-', '_');

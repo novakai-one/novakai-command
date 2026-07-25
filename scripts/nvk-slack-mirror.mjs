@@ -23,7 +23,6 @@ import {
   resolveRoster,
   resolveThreadLanes,
   fetchThreadMessages,
-  HUMAN_PERSON_ID,
 } from './team/capabilityClient.mjs';
 import { formatNew, formatStatus } from './team/slackFormat.mjs';
 
@@ -82,6 +81,10 @@ See docs/operations/SLACK-MIRROR.md.`);
 }
 
 // --- seen-id tracking (bounded) ----------------------------------------------
+//
+// SEEN_MAX bound (F5, accepted): at most 5000 ids are remembered; once an id
+// is evicted, a very late status amendment for it could re-post ONCE. With
+// ~1 msg/sec Slack pacing that's hours of traffic — the bound is deliberate.
 
 const seen = new Map(); // id → last status posted
 function remember(id, status) {
@@ -142,8 +145,22 @@ const enqueue = (payload) => { if (payload) { queue.push(payload); void drain();
 
 // --- capability → mirror translation -------------------------------------------
 
-const nameFor = await resolveRoster(SERVER);
-const lanes = await resolveThreadLanes(SERVER);
+let nameFor = await resolveRoster(SERVER);
+let lanes = await resolveThreadLanes(SERVER);
+
+// F7: names were resolved ONCE at startup (renames and new lanes kept stale
+// labels forever). Re-resolve over the user routes every 5 min — a route
+// poll from a manual ops script, never a journal tail.
+const RERESOLVE_MS = 5 * 60_000;
+async function reresolveNames() {
+  try {
+    nameFor = await resolveRoster(SERVER);
+    lanes = await resolveThreadLanes(SERVER);
+  } catch (error) {
+    warn(`roster re-resolve failed (keeping last): ${error.message}`);
+  }
+}
+setInterval(() => { void reresolveNames(); }, RERESOLVE_MS).unref();
 /** messageId → { senderId, threadId } so a failure line can name its sender. */
 const messageCache = new Map();
 let lastSequence = 0;
@@ -178,15 +195,17 @@ function onCommitted(event) {
   remember(message.id, 'delivered');
 }
 
-/** A terminal delivery failure → one Slack status line. */
+/** A terminal delivery failure → one Slack status line. F7: a failure whose
+ * message left the cache attributes to a neutral 'unknown' — never to the
+ * human (blaming chris for someone else's failure was pure disinformation). */
 function onDeliveryUpdated(event) {
   const delivery = event.delivery;
   if (delivery.state !== 'failed' || seen.get(delivery.id) === 'failed') return;
-  const origin = messageCache.get(delivery.messageId) ?? { senderId: HUMAN_PERSON_ID, threadId: delivery.threadId };
+  const origin = messageCache.get(delivery.messageId);
   enqueue(formatStatus({
     id: delivery.messageId,
-    from: nameFor(origin.senderId),
-    to: laneFor(origin.threadId),
+    from: origin ? nameFor(origin.senderId) : 'unknown',
+    to: laneFor(origin?.threadId ?? delivery.threadId),
     createdAt: delivery.updatedAt,
     status: 'failed',
   }));
@@ -207,8 +226,26 @@ function onFrame(frame) {
 
 // --- backlog (server-owned reads, folded like the live path) -------------------
 
+/** F5: --backlog 0 must be LIVE-ONLY. Seed the resume cursor at the current
+ * tip (max message sequence across lanes) without posting anything — the old
+ * behavior subscribed from sequence 0 and flooded Slack with all history.
+ * The tip is message-sequence based: a delivery-update committed after the
+ * latest message can still replay once (deduped by `seen`), never the whole
+ * history. */
+async function seedTip() {
+  for (const threadId of lanes.keys()) {
+    for (const message of await fetchThreadMessages(SERVER, threadId)) {
+      cacheMessage(message);
+      advanceSequence(message.sequence);
+    }
+  }
+}
+
 async function loadBacklog(n) {
-  if (n === 0) return;
+  if (n === 0) {
+    await seedTip();
+    return;
+  }
   const all = [];
   for (const threadId of lanes.keys()) {
     for (const message of await fetchThreadMessages(SERVER, threadId)) {
