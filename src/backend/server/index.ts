@@ -35,13 +35,12 @@ import { ExternalSessionsHub } from '../externalSessions/index.js';
 import { PeopleHub } from '../people/index.js';
 import type { TerminalRuntime } from '../terminal/runtime/index.js';
 import { createSeatWatch, tickSafely } from '../terminal/seatWatch/index.js';
+import { ensureWatchdogIdentity, WATCHDOG_AGENT_NAME } from './watchdogIdentity/index.js';
+import type { MessagingSession } from '../../../packages/messaging/public/capability.js';
 
 const PROJECT_RE = /^[A-Za-z0-9._-]+$/;
 const SESSION_RE = /^[A-Za-z0-9-]+$/;
 const AGENT_RE = /^agent-[A-Za-z0-9]+$/;
-/** D-N5-6: the seat-watch's durable identity + its ops team (find-or-create). */
-const WATCHDOG_AGENT_NAME = 'nvk-watchdog';
-const WATCHDOG_TEAM_NAME = 'ops';
 
 function isValidProjectDir(value: unknown): value is string {
   return typeof value === 'string' && PROJECT_RE.test(value) && value !== '.' && value !== '..';
@@ -100,6 +99,8 @@ export class ServerController {
   private readonly messagingLive: MessagingLive;
   private messagingV2: MessagingV2Handle | null = null;
   private seatWatchTimer: ReturnType<typeof setInterval> | null = null;
+  private watchdogId: string | null = null;
+  private watchdogSession: MessagingSession | null = null;
 
   constructor(
     private readonly port: number,
@@ -221,29 +222,44 @@ export class ServerController {
     return { id: accepted.value.messageId };
   }
 
-  /** D-N5-6: find-or-create the durable watchdog identity. Null = no mission
-   * record to attach an ops team to — the alert sink degrades to log-only. */
-  private ensureWatchdogIdentity(): string | null {
-    const existing = this.objectModel.listAgents().find((agent) => agent.name === WATCHDOG_AGENT_NAME);
-    if (existing) return existing.id;
-    const missionId = this.objectModel.listMissions()[0]?.id;
-    if (typeof missionId !== 'string') return null;
-    const team = this.objectModel.listTeams().find((entry) => entry.name === WATCHDOG_TEAM_NAME);
-    const teamId = typeof team?.id === 'string' ? team.id : this.objectModel.createTeam({ name: WATCHDOG_TEAM_NAME, missionId });
-    return this.objectModel.createAgent({ name: WATCHDOG_AGENT_NAME, provider: 'ops', teamId, missionId });
+  /** F3: the identity (refs unioned across every team + mission) must exist
+   * BEFORE messagingV2's boot policy syncs, or recipients' allowlists lack
+   * the watchdog and its alerts terminally fail delivery. Failure → null →
+   * log-only sink, never a boot blocker. */
+  private ensureWatchdogIdentitySafely(): string | null {
+    try {
+      return ensureWatchdogIdentity(this.objectModel);
+    } catch (error) {
+      console.error('[seatWatch] watchdog identity failed — alerts are log-only this run:', error);
+      return null;
+    }
+  }
+
+  /** F8: ONE authenticated session for every seat alert (authenticate-per-
+   * alert leaked a session each time). A rejected send drops the cache so an
+   * expired session re-authenticates on the next alert. */
+  private async seatAlertSession(watchdogId: string): Promise<MessagingSession | null> {
+    if (this.watchdogSession !== null) return this.watchdogSession;
+    const auth = await this.messagingV2?.embedded.authenticate({ token: watchdogId });
+    if (auth?.kind !== 'authenticated') return null;
+    this.watchdogSession = auth.session;
+    return this.watchdogSession;
   }
 
   /** One #team alert through the capability, sent AS the watchdog agent. */
   private async sendSeatAlert(watchdogId: string, body: string): Promise<void> {
     const threadId = this.messagingV2?.rooms?.fleetThreadId();
     if (threadId === undefined) return console.log(`[seatWatch] unsent (no fleet room): ${body}`);
-    const auth = await this.messagingV2?.embedded.authenticate({ token: watchdogId });
-    if (auth?.kind !== 'authenticated') return console.log(`[seatWatch] unsent (identity rejected): ${body}`);
-    const accepted = await auth.session.sendMessage({
+    const session = await this.seatAlertSession(watchdogId);
+    if (session === null) return console.log(`[seatWatch] unsent (identity rejected): ${body}`);
+    const accepted = await session.sendMessage({
       address: `thread:${threadId}`, body: { text: body },
       priority: 'normal', clientMessageId: `wd_${randomUUID()}`,
     });
-    if (accepted.kind !== 'ok') console.error(`[seatWatch] alert rejected: ${accepted.error.message}`);
+    if (accepted.kind !== 'ok') {
+      this.watchdogSession = null;
+      console.error(`[seatWatch] alert rejected: ${accepted.error.message}`);
+    }
   }
 
   private postSeatAlert(watchdogId: string, body: string): void {
@@ -256,8 +272,8 @@ export class ServerController {
    * loss). Ticks over transcript mtimes — never a journal — on the config
    * interval; the boot tick baselines silently before the first post. */
   private startSeatWatch(): void {
-    const watchdogId = this.ensureWatchdogIdentity();
-    if (watchdogId === null) console.warn('[seatWatch] no mission record — alerts are log-only this run');
+    const watchdogId = this.watchdogId;
+    if (watchdogId === null) console.warn('[seatWatch] no watchdog identity — alerts are log-only this run');
     const onAlert = watchdogId === null
       ? (body: string) => console.log(`[seatWatch] ${body}`)
       : (body: string) => this.postSeatAlert(watchdogId, body);
@@ -652,6 +668,14 @@ export class ServerController {
     if (this.appServer && this.options.appPort) {
       await this.listen(this.appServer, this.options.appPort);
     }
+    this.watchdogId = this.ensureWatchdogIdentitySafely();
+    await this.bootMessagingV2Safely();
+    this.startSeatWatchSafely();
+  }
+
+  /** A v2 boot failure must never take down the app (the old surface still
+   * serves). Fail LOUD, continue — the v2 routes answer 503 this run. */
+  private async bootMessagingV2Safely(): Promise<void> {
     try {
       this.messagingV2 = await startMessagingV2({
         objectModel: this.objectModel,
@@ -663,11 +687,8 @@ export class ServerController {
         onLaunch: (listener) => this.agentsHub.onLaunch(listener),
       });
     } catch (error) {
-      // A v2 boot failure must never take down the app (the old surface still
-      // serves). Fail LOUD, continue — the v2 routes answer 503 this run.
       console.error('[messaging-v2] boot failed — capability disabled this run:', error);
     }
-    this.startSeatWatchSafely();
   }
 
   private listen(server: HttpServer, port: number): Promise<void> {
