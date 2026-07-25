@@ -54,6 +54,20 @@ code.** If a slice needs a core change, that is a new R-item and a contract amen
 | D7 | Slack bridge shape | **A bridge daemon that is a CLIENT of Messaging over DEC-17** — same pattern as messenger-cli, but a service. Not an adapter inside the capability. Core untouched by construction. |
 | D8 | Luke cross-company | **Start the Slack Connect conversation during Phase 1.** It is the only long-lead dependency code cannot control. |
 
+### Recorded amendments (law #2)
+
+- **A-N2-1 (N2):** the N2 row's "deletes PtyDelivery + router direct path" is
+  scoped to AGENT-originated traffic. The server-owned human route
+  (`/api/user/messages` → SendApi → routeDirect → PtyDelivery → confirmer)
+  survives until N3/N4 so Chris's UI never regresses; it dies there. Agent lanes
+  never dual-run.
+- **D-N2-1/2 (N2):** agent credential = durable agentId, env-injected at spawn
+  (`NVK_AGENT_ID`); token=agentId is an accepted localhost-threat decision until
+  N6's real issuance (N1 finding 3, ruled in `Messaging-N2-Review.md`).
+- **D-N2-5 (N2):** team contact bootstrap is composition policy — the glue unions
+  contact allowlists for team/mission co-members + the human principal with
+  `defaultRule:'deny'` always re-asserted. DEC-14 stays the gate.
+
 ## 4. Architecture
 
 ```
