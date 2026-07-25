@@ -78,6 +78,17 @@ code.** If a slice needs a core change, that is a new R-item and a contract amen
 - **A-N3 (N3):** old free-floating rooms are browser-only archive (fold shim over
   `rooms.jsonl`); agent room routes deleted; the whole shim + surviving human-route
   stack dies in N4. Fleet push reaches co-members + chris by design (DEC-14).
+- **D-N4-1..5 (N4):** browser = forwarded-frame subscriber over the existing app ws
+  (per-connection sink/cursor/teardown; browser presence transport + DEC-17 are
+  N5/N6 options); data plane moves, view layer survives under a strict honesty
+  table; sends/reads are server-owned human sessions; UI rooms are capability
+  rooms; presence UI = PeopleHub tiers (capability presence surface built, found
+  unused, deleted).
+- **R-N4-1 (OPEN — for Chris):** agent↔agent direct threads are party-only by the
+  ratified contract; the human no longer sees agent↔agent DM lanes (rooms/#team
+  fully visible — he is in every roster). An owner read-override would be a
+  CONTRACT amendment (assertThreadMember + subscription filtering) — surfaced,
+  not built.
 
 ## 4. Architecture
 
