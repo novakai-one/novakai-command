@@ -26,3 +26,4 @@ desktop/package-lock.json
 node_modules
 .novakai-command/mailboxes.jsonl
 .novakai-command/slack-mirror.json
+.novakai-command/messaging-v2/
