@@ -1,0 +1,16 @@
+{
+  "name": "messenger-cli",
+  "version": "0.1.0",
+  "description": "Standalone terminal messenger — the Messaging capability's second host (Plan §15 P1). Protocol-only: speaks the published DEC-17 JSON-over-WebSocket protocol and imports nothing from the Messaging package.",
+  "type": "module",
+  "private": true,
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node app.mjs"
+  },
+  "dependencies": {
+    "ws": "^8.21.1"
+  }
+}

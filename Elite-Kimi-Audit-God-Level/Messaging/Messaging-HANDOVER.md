@@ -13,7 +13,11 @@ per `Messaging-Plan.md` §18, or Chris's redirection.
 **Updated:** 2026-07-24 by kimi-cli — slice S2 (Rooms) COMPLETE and SEALED after two
 law-#6 audits + full remediation (`Messaging-S2-Review.md`). Exit condition P4 met.
 Next: slice S3 (Attention — mostly built in S1; exit condition P1) per Plan §18.
-**You are:** the agent executing slice S3 or later. Read this first.
+**Updated:** 2026-07-24 by kimi-cli — slice S3 (Attention) COMPLETE and SEALED
+(`Messaging-S3-Review.md`). Exit condition P1 met. Next: slice S4 (Templates +
+failure truth; exit: full adapter suite + P5/P6 + scorecard re-run) — the LAST slice
+in Plan §18.
+**You are:** the agent executing slice S4 or later. Read this first.
 
 ---
 
@@ -50,6 +54,7 @@ Step 1 of the pass-2 sequence is COMPLETE:
 | `messaging/` | The S1 implementation: TS strict ESM package (`@novakai/messaging`). Public surface `public/index.ts` ONLY; codegen from `contract/messaging-contract.json` (law #3); store-memory + store-jsonl (mutation-queue atomic); embedded + standalone (WS, `ws` dep) composition roots; 158 tests | **Step 5 output — S1 sealed** |
 | `Messaging-S1-Review.md` | Law-#6 audit of the S1 diff (verdict HIGH pre-fix: 3 severe, 9 moderate, 10 low) + full disposal record | Step 5 evidence |
 | `Messaging-S2-Review.md` | Law-#6 audits of the S2-a/S2-b diffs (S2-a: HIGH pre-fix, R4 made literal via errata §11.7; S2-b: LOW-MODERATE) + disposal records | S2 evidence |
+| `Messaging-S3-Review.md` | Law-#6 audit of the S3 diff (2 moderate, 3 low — all disposed) + MSG-009/010/015 coverage map + P1 proof record | S3 evidence |
 | `Messaging-Map.html` | Visual module map (open in a browser; 40 modules, animated traces) | Update in Step 4 |
 | `Messaging-Report copy.html` | Second visual variant of the map | Working copy |
 | `Messaging-Report.html` | Older mermaid-based report | Superseded, kept for history |
@@ -148,12 +153,20 @@ Step 1 of the pass-2 sequence is COMPLETE:
   from Messaging queries, ID-references-only persistence). Two law-#6 audits
   (S2-a: HIGH pre-fix, 10 findings; S2-b: LOW-MODERATE, 6 findings) — all disposed
   at source, record in `Messaging-S2-Review.md`; 194/194 tests green.
-- **Next: slice S3 (Attention)** per Plan §18 — push subscriptions, DND, urgent +
-  override, contact policy (DEC-07/12/14/16, I9). Most of S3's behaviour was built
-  in S1 (W1 both paths proven) — S3's job is the remaining proofs (MSG-009/010/015)
-  and its exit condition **P1** (standalone messenger app as second host). Then S4
-  (templates + failure truth, DEC-15; exit: full adapter suite + P5/P6 + scorecard
-  re-run).
+- ~~**Slice S3 — Attention.**~~ **DONE (2026-07-24)** — MSG-009/010/015 proofs
+  closed (one genuine gap: MSG-009's held-but-pullable pull assertion; the rest was
+  already covered and is cited in `Messaging-S3-Review.md`). Exit condition met:
+  **P1 passes** — `messaging/examples/messenger-cli/`, a separate-package terminal
+  messenger (ws only, zero messaging imports, child-process driven): token+URL
+  provisioning, DEC-17 frames, own text UI rendered from published projections,
+  inbox updating from push with ZERO queries issued (MSG-023), catch-up pull path.
+  Law-#6 audit of the diff: 2 moderate + 3 low, all disposed at source. 198/198
+  tests green; contract JSON untouched.
+- **Next: slice S4 (Templates + failure truth)** — the LAST slice in Plan §18.
+  DEC-15, MSG-016/017 proofs; the S4-template commands (SendFromTemplate,
+  UpsertTemplate, RetireTemplate, ListTemplates) move from absent-not-stubbed to
+  live; exit: full adapter suite + P5 (adapter swap) + P6 + **scorecard re-run**
+  (elite-scorecard reference from the elite-codebase-engineering skill).
 
 ## Context you will not find in the files
 

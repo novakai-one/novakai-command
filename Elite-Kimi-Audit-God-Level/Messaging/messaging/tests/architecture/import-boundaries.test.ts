@@ -9,7 +9,9 @@
  *       scanned so type-only imports count too; and the external Chief
  *       client (tests/standalone/external-chief.ts) compiles to a module
  *       whose ONLY runtime dependency is `ws` — the MSG-004 proof that an
- *       external principal needs no Novakai-specific object.
+ *       external principal needs no Novakai-specific object; and the P1
+ *       second host (examples/messenger-cli) imports nothing but `ws` and
+ *       node builtins — no import path into messaging internals (G13).
  *   (b) the capability graph has no import cycles.
  *   (c) adapters never import each other (Plan §17 rule). store-shared.js is
  *       the documented exception: it is not an adapter but the shared store
@@ -138,6 +140,45 @@ describe("architecture — the door is the only door (MSG-013, G4)", () => {
       runtimeImports,
       ["ws"],
       "an external principal needs the published wire protocol and nothing Novakai-specific",
+    );
+  });
+
+  it("the P1 messenger app (examples/messenger-cli) has NO import path into messaging internals (G13, MSG-022)", () => {
+    // The second host is a separate package OUTSIDE the messaging compile
+    // graph (not in the messaging tsconfig include set). Scan its sources
+    // RECURSIVELY (audit F4: a nested lib/ or a .cjs file must not evade the
+    // tripwire): every import specifier must be `ws` or a node: builtin — a
+    // RELATIVE specifier is the only way to reach messaging internals from
+    // there, so any relative import offends, and any other bare specifier is
+    // an undeclared dependency. (Same scanner limitations as above: literal
+    // specifiers only; the app is plain JS with no build step, so the scanned
+    // source IS the runtime artifact.)
+    const appRoot = join(packageRoot, "examples", "messenger-cli");
+    const appSources: string[] = [];
+    const walkApp = (dir: string): void => {
+      for (const entry of readdirSync(dir)) {
+        const path = join(dir, entry);
+        if (statSync(path).isDirectory()) {
+          if (entry !== "node_modules") walkApp(path);
+        } else if (entry.endsWith(".mjs") || entry.endsWith(".js") || entry.endsWith(".cjs")) {
+          appSources.push(path);
+        }
+      }
+    };
+    walkApp(appRoot);
+    assert.ok(appSources.length >= 1, "the app exists");
+    const offenders: string[] = [];
+    for (const file of appSources) {
+      for (const specifier of importSpecifiers(file)) {
+        if (specifier.startsWith("node:")) continue;
+        if (specifier === "ws") continue;
+        offenders.push(`${file.slice(appRoot.length + 1)} → ${specifier}`);
+      }
+    }
+    assert.deepEqual(
+      offenders,
+      [],
+      "the second host speaks the wire protocol only — no messaging import, declared or relative",
     );
   });
 

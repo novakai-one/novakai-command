@@ -84,6 +84,35 @@ describe("W1 — urgent vs DND (R5)", () => {
     assert.equal(transport.effects[0]?.payload.priority, "urgent");
   });
 
+  it("MSG-009 literal: DND already on → a NON-urgent push is held from acceptance, yet stays pullable", async () => {
+    const { cap, transport } = makeHarness();
+    const alice = await sessionFor(cap, "tok-alice");
+    const bob = await sessionFor(cap, "tok-bob");
+
+    await allowlist(bob, ALICE);
+    unwrap(await bob.setDndPolicy({ enabled: true }));
+    // Online with DND on: attention is held, access is not.
+    unwrap(await bob.openPresence({ transport: "ws" }));
+
+    const accepted = unwrap(
+      await alice.sendMessage(sendInput(`person:${BOB}`, "normal: weekly digest", "w1-4")),
+    );
+    assert.equal(accepted.urgentDowngraded, undefined, "nothing to downgrade — it was never urgent");
+
+    // Held state visible in Delivery (MSG-009 proof criterion 1).
+    const { deliveries } = unwrap(await bob.getDelivery({ messageId: accepted.messageId }));
+    assert.equal(deliveries[0]?.state, "held");
+    assert.equal(deliveries[0]?.stateReason, "dnd-hold");
+    assert.equal(transport.effects.length, 0, "no push effect while DND holds (DEC-08)");
+
+    // …but the Message remains pullable: GetInbox serves held items
+    // (MSG-009 proof criterion 2; guarantee 6; Store-Seam §11.2).
+    const inbox = unwrap(await bob.getInbox({}));
+    assert.equal(inbox.messages.length, 1);
+    assert.equal(inbox.messages[0]?.id, accepted.messageId);
+    assert.equal(inbox.messages[0]?.body.text, "normal: weekly digest");
+  });
+
   it("DND enabled AFTER acceptance still holds the push (R5 policyEvaluation)", async () => {
     const { cap, transport } = makeHarness();
     const alice = await sessionFor(cap, "tok-alice");
