@@ -19,6 +19,7 @@ import type { AgentInfo } from '../../terminal/manager.js';
 import type { TerminalRuntime } from '../../terminal/runtime/index.js';
 import { ObjectModel } from '../../objectModel/index.js';
 import { createNovakaiAuthority } from '../authority/index.js';
+import { createFailureTruth } from './index.js';
 import { createNovakaiMembership } from '../membership/index.js';
 import { createAgentLaneGlue } from '../presence/index.js';
 import { createTerminalHostTransport } from '../transport/index.js';
@@ -129,6 +130,34 @@ assert.ok(!laneText(bobId).some((text) => text.includes('nvk-msg failed')), 'the
 await embedded.pumpEvents();
 await new Promise((resolve) => setTimeout(resolve, 50));
 assert.equal(laneText(carolId).filter((text) => text === expectedLine).length, 1, 'replay never retypes');
+
+// --- F2: a watch started after history types NOTHING for old failures --------
+
+async function currentJournalTip(): Promise<number> {
+  const page = await embedded.store.scanJournal();
+  if (page.kind !== 'ok') throw new Error('unreachable');
+  return page.value.reduce((maxSeq, entry) => Math.max(maxSeq, entry.sequence), 0);
+}
+
+const tipSnapshot = await currentJournalTip();
+const liveOnly = createFailureTruth({ terminals, tipSequence: () => tipSnapshot });
+liveOnly.watchSession(carol, carolId);
+await embedded.pumpEvents();
+await new Promise((resolve) => setTimeout(resolve, 50));
+assert.equal(liveOnly.typedCount, 0, 'a live-only watch types NOTHING for pre-existing historical failures');
+
+const second = await carol.sendMessage({
+  address: `thread:${fleet.value.id}`,
+  body: { text: 'bob still will not see this' },
+  priority: 'normal', clientMessageId: 'n5-failure-2',
+});
+assert.equal(second.kind, 'ok', 'the second blocked send still accepts (R4)');
+if (second.kind !== 'ok') throw new Error('unreachable');
+await embedded.pumpEvents();
+await new Promise((resolve) => setTimeout(resolve, 50));
+assert.equal(liveOnly.typedCount, 1, 'a failure committed after watch start types exactly one line');
+const secondLine = `[nvk-msg failed: blocked-by-contact-policy — ${second.value.messageId}]`;
+assert.ok(laneText(carolId).includes(secondLine), 'the typed line carries the new messageId');
 
 // --- a sender with NO live lane drops quietly -------------------------------------
 

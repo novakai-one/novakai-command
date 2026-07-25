@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
   defaultCapabilityJournalPath,
+  journalTipSequence,
   lastActivityBySenderId,
   readJournalEnvelopes,
 } from './index.js';
@@ -73,3 +74,18 @@ console.log('missing-file tests passed');
 }
 
 console.log('capability journal reader tests passed');
+
+// --- F2: journalTipSequence — the max sequence across journaled fact entries ---
+
+const tipPath = path.join(scratch, 'tip.jsonl');
+writeFileSync(tipPath, [
+  '{"op":"room-thread","thread":{"id":"thread_x"}}',                       // not journaled — no tip
+  JSON.stringify({ 'op': 'acceptance', thread: {}, message: {}, journal: [{ sequence: 41 }, { sequence: 42 }] }),
+  '{ torn line',
+  JSON.stringify({ 'op': 'delivery-transition', delivery: {}, journal: { sequence: 57 } }),
+  JSON.stringify({ 'op': 'policy', contact: {}, journal: { sequence: 55 } }),
+  JSON.stringify({ 'op': 'settled', messageId: 'message_1' }),             // not journaled — skipped
+].join('\n') + '\n');
+assert.equal(journalTipSequence(tipPath), 57, 'tip is the max journaled sequence (arrays + singles)');
+assert.equal(journalTipSequence(path.join(scratch, 'missing.jsonl')), 0, 'missing file → tip 0 (replay from 0)');
+console.log('journal tip tests passed');

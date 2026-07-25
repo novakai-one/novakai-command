@@ -101,3 +101,27 @@ export function lastActivityBySenderId(journalPath: string): Map<string, number>
   }
   return lastByPersonId;
 }
+
+interface JournaledOp {
+  journal?: { sequence?: number } | Array<{ sequence?: number }>;
+}
+
+function tipOfLine(line: string): number {
+  try {
+    const journal = (JSON.parse(line) as JournaledOp | null)?.journal;
+    if (Array.isArray(journal)) return Math.max(0, ...journal.map((entry) => entry.sequence ?? 0));
+    return journal?.sequence ?? 0;
+  } catch {
+    return 0; // torn lines contribute nothing
+  }
+}
+
+/** The journal tip (F2): the max sequence across journaled fact entries —
+ * acceptance ops carry an array (MessageCommitted + §11.7 DeliveryUpdateds),
+ * delivery-transition/policy/template ops one entry. On demand, never an
+ * interval; a missing/empty journal is tip 0 (subscribe replays from 0). */
+export function journalTipSequence(journalPath: string): number {
+  let maxSeq = 0;
+  for (const line of linesOf(journalPath)) maxSeq = Math.max(maxSeq, tipOfLine(line));
+  return maxSeq;
+}

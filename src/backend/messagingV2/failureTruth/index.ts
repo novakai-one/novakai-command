@@ -9,6 +9,14 @@
  * uses. One failed delivery = one typed line (dedupe by delivery id across
  * both parties' subscriptions and across replay). A sender with no live
  * lane is dropped quietly — the browser surface still has the truth.
+ *
+ * F2: the subscription is LIVE-ONLY — it opens with a `since` cursor at the
+ * journal tip captured when the watch starts (the app-owned journal read
+ * fold, on demand), so a backend restart never re-types historical failures
+ * (and never pays an O(all-pages) trailing read per replayed failure). The
+ * cursor is computed, never persisted — live-only is the semantic.
+ * F4: with live-only subscriptions the "message left the trailing window"
+ * drop is rare (recovery sweeps/races) — it leaves a log line now.
  */
 
 import type { MessagingSession } from '../../../../packages/messaging/public/capability.js';
@@ -16,10 +24,13 @@ import type { SubscriptionHandle } from '../../../../packages/messaging/core/sub
 import type { TerminalRuntime } from '../../terminal/runtime/index.js';
 import { personIdForAgentId } from '../authority/index.js';
 import { readTrailingPage } from '../rooms/index.js';
+import { defaultCapabilityJournalPath, journalTipSequence } from '../journal/index.js';
 
 export interface FailureTruthDeps {
   terminals: TerminalRuntime;
   log?: (message: string) => void;
+  /** F2: journal tip at watch start; defaults to the app-owned journal fold. */
+  tipSequence?: () => number;
 }
 
 export interface FailureTruth {
@@ -54,6 +65,33 @@ interface FailureState {
   seen: Set<string>;
   watched: Set<string>;
   typed: number;
+  /** F2: journal tip captured once, at the first watched session (null = not yet). */
+  tipSeq: number | null;
+}
+
+/** F2: the tip is read once per watch — every lane subscription opens at the
+ * same live-only cursor; facts committed after it are legitimately new. */
+function currentTip(state: FailureState): number {
+  if (state.tipSeq === null) {
+    state.tipSeq = (state.deps.tipSequence ?? (() => journalTipSequence(defaultCapabilityJournalPath())))();
+  }
+  return state.tipSeq;
+}
+
+/** The trailing-window lookup. F4: a message that aged out leaves a trace
+ * (rare under F2's live-only subscription); a message owned by ANOTHER
+ * sender returns null quietly (the recipient-side view, the normal case). */
+async function ownMessageOrLogged(
+  state: FailureState,
+  session: MessagingSession,
+  agentId: string,
+  delivery: { messageId: string; threadId: string },
+) {
+  const messages = await readTrailingPage(session, delivery.threadId as never);
+  const message = messages.find((entry) => entry.id === delivery.messageId);
+  if (message !== undefined) return message.senderId === personIdForAgentId(agentId) ? message : null;
+  announce(state.deps, `[messaging-v2] failure-truth: message ${delivery.messageId} left the trailing window — line dropped`);
+  return null;
 }
 
 /** The failure line: typed once into the SENDER's own live lane. ORDER
@@ -66,9 +104,7 @@ async function typeFailureLine(
   agentId: string,
   delivery: { id: string; messageId: string; threadId: string; stateReason?: string },
 ): Promise<void> {
-  const messages = await readTrailingPage(session, delivery.threadId as never);
-  const message = messages.find((entry) => entry.id === delivery.messageId);
-  if (message === undefined || message.senderId !== personIdForAgentId(agentId)) return;
+  if ((await ownMessageOrLogged(state, session, agentId, delivery)) === null) return;
   if (state.seen.has(delivery.id)) return;
   state.seen.add(delivery.id);
   const reason = delivery.stateReason ?? 'failed';
@@ -98,8 +134,9 @@ function watchSession(state: FailureState, session: MessagingSession, agentId: s
   const sessionKey = session.principal.sessionId;
   if (state.watched.has(sessionKey)) return;
   state.watched.add(sessionKey);
+  const tipAtStart = currentTip(state);
   void session.subscribe(
-    { events: ['DeliveryUpdated'] },
+    { events: ['DeliveryUpdated'], ...(tipAtStart > 0 ? { since: `s_${tipAtStart}` } : {}) },
     sinkFor(state, session, agentId) as never,
   ).then((outcome) => {
     if (outcome.kind === 'error') {
@@ -112,7 +149,7 @@ function watchSession(state: FailureState, session: MessagingSession, agentId: s
 }
 
 export function createFailureTruth(deps: FailureTruthDeps): FailureTruth {
-  const state: FailureState = { deps, seen: new Set(), watched: new Set(), typed: 0 };
+  const state: FailureState = { deps, seen: new Set(), watched: new Set(), typed: 0, tipSeq: null };
   return {
     watchSession: (session, agentId) => watchSession(state, session, agentId),
     get typedCount(): number {
