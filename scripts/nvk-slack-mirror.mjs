@@ -1,9 +1,15 @@
 #!/usr/bin/env node
-// nvk slack-mirror — read-only mirror of the team messaging journal
-// (.novakai-command/messages.jsonl) into a Slack channel via an Incoming
-// Webhook. One-way: this script never writes to the journal or the backend.
+// nvk slack-mirror — read-only mirror of team messaging into a Slack channel
+// via an Incoming Webhook. One-way: this script never writes to the backend.
 //
-//   node scripts/nvk-slack-mirror.mjs [--backlog N] [--dry-run] [--verbose] [--file <path>]
+// N5 (D-N5-2): NO journal file, NO byte-offset tail. The mirror is a CLIENT
+// of the messaging capability: backlog reads ride the server-owned /user
+// routes, and live events ride the browser dialect (messaging-v2-sub over
+// /ws — MessageCommitted + DeliveryUpdated), exactly like the Messages tab.
+// The N7 two-way bridge grows out of scripts/team/capabilityClient.mjs +
+// slackFormat.mjs — this main stays thin.
+//
+//   node scripts/nvk-slack-mirror.mjs [--backlog N] [--dry-run] [--verbose] [--server <url>]
 //
 // Webhook URL: env NVK_SLACK_WEBHOOK_URL wins; fallback is
 // .novakai-command/slack-mirror.json ({"webhookUrl": "..."}). Never hardcoded.
@@ -12,6 +18,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  openCapabilitySocket,
+  resolveRoster,
+  resolveThreadLanes,
+  fetchThreadMessages,
+  HUMAN_PERSON_ID,
+} from './team/capabilityClient.mjs';
+import { formatNew, formatStatus } from './team/slackFormat.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -22,14 +36,13 @@ const opt = (name) => { const i = args.indexOf(name); return i >= 0 ? args.splic
 const DRY_RUN = flag('--dry-run');
 const VERBOSE = flag('--verbose');
 const BACKLOG = Math.max(0, Number.parseInt(opt('--backlog') ?? '20', 10) || 0);
-const JOURNAL = path.resolve(opt('--file') || path.join(ROOT, '.novakai-command', 'messages.jsonl'));
+const SERVER = opt('--server') || undefined;
 const CONFIG_FILE = path.join(ROOT, '.novakai-command', 'slack-mirror.json');
 
-const POLL_MS = 2000;
 const POST_GAP_MS = 1100;      // Slack webhooks allow ~1 msg/sec
-const BODY_MAX = 500;
 const SEEN_MAX = 5000;
 const RETRY_DELAY_MS = 5000;
+const MESSAGE_CACHE_MAX = 2000;
 
 const log = (...a) => console.log('[slack-mirror]', ...a);
 const warn = (...a) => console.warn('[slack-mirror] WARN:', ...a);
@@ -77,124 +90,7 @@ function remember(id, status) {
   if (seen.size > SEEN_MAX) seen.delete(seen.keys().next().value);
 }
 
-// --- formatting --------------------------------------------------------------
-
-const timeOf = (iso) => {
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? '??:??'
-    : d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-};
-
-const truncate = (body) => {
-  const flat = String(body ?? '').replace(/\s+/g, ' ').trim();
-  return flat.length <= BODY_MAX ? flat : `${flat.slice(0, BODY_MAX)}… (truncated)`;
-};
-
-const STATUS_ICON = { delivered: '↳', partial: '⚠', failed: '✗', queued: '…' };
-
-// Status semantics always win over sender identity: failed/partial = muted
-// red, other amendments = grey. Sender colors apply to new messages only.
-const COLOR_FAILED = '#B05A5A';
-const COLOR_AMENDMENT = '#9E9E9E';
-
-// Muted/professional palette; a deterministic name hash picks one per sender
-// so an agent always shows the same color across restarts.
-const SENDER_COLORS = [
-  '#5B7A99', // slate blue
-  '#7A9B76', // sage
-  '#9B7B8C', // dusty mauve
-  '#B0816A', // terracotta
-  '#8A8B5C', // olive
-  '#5F8B8B', // steel teal
-  '#8C8377', // warm grey
-  '#7E6B8F', // muted plum
-  '#6E86A0', // faded denim
-  '#A08A6B', // khaki
-  '#6B9B8A', // sea glass
-  '#96778A', // heather
-];
-
-// Known actors get a fixed emoji (loose, case-insensitive substring match);
-// unknown senders get a stable pick from the fallback list via the same hash.
-const KNOWN_EMOJI = [
-  ['fable', '🦊'],
-  ['scribe', '📜'],
-  ['watchdog', '🐶'],
-  ['chief', '🎖️'],
-  ['chris', '👤'],
-  ['manager', '🧭'],
-  ['kimi', '🌙'],
-  ['claude', '🎻'],
-];
-const FALLBACK_EMOJI = ['🤖', '🛰️', '📡', '🧪', '🦉', '🐙', '🌿', '🔧', '📐', '🧵'];
-
-// Simple stable string hash (FNV-1a 32-bit).
-function hashName(name) {
-  let h = 0x811c9dc5;
-  for (const ch of String(name)) {
-    h ^= ch.codePointAt(0);
-    h = Math.imul(h, 0x01000193) >>> 0;
-  }
-  return h;
-}
-
-const senderColor = (name) => SENDER_COLORS[hashName(name) % SENDER_COLORS.length];
-
-function senderEmoji(name) {
-  const lower = String(name).toLowerCase();
-  for (const [needle, emoji] of KNOWN_EMOJI) {
-    if (lower.includes(needle)) return emoji;
-  }
-  return FALLBACK_EMOJI[hashName(lower) % FALLBACK_EMOJI.length];
-}
-
-// Recipient emoji: channels/rooms get their own symbols, people get the
-// same known/fallback mapping as senders.
-function recipientEmoji(to) {
-  const t = String(to).toLowerCase();
-  if (t === '#team' || t.startsWith('#')) return '📣';
-  if (t.startsWith('room')) return '🏠';
-  return senderEmoji(to);
-}
-
-// New message → one Slack message. to '#team' shows as the channel name;
-// room_* shows as room id; anything else is a direct message. Sender identity
-// is carried primarily by an inline emoji in the text header (always renders,
-// even when the Slack app overrides webhook username/avatar), plus username +
-// icon_emoji + a muted per-sender attachment color for clients that honor them.
-function formatNew(env) {
-  const flags = env.delivery === 'interrupt' ? ' · ⚡interrupt' : '';
-  const text = `${senderEmoji(env.from)} *${env.from}* → ${recipientEmoji(env.to)} *${env.to}* · ${timeOf(env.createdAt)}${flags}\n${truncate(env.body)}`;
-  return {
-    username: env.from,
-    icon_emoji: senderEmoji(env.from),
-    text,
-    attachments: [{ color: senderColor(env.from), fallback: text }],
-  };
-}
-
-function formatStatus(env) {
-  const icon = STATUS_ICON[env.status] ?? '↳';
-  const bad = env.status === 'failed' || env.status === 'partial';
-  const attachments = bad
-    ? [{ color: COLOR_FAILED, fallback: `${env.id} → ${env.status}` }]
-    : [{ color: COLOR_AMENDMENT, fallback: `${env.id} → ${env.status}` }];
-  return {
-    text: `${icon} \`${env.id}\` → *${env.status}* (${env.from} → ${env.to}, ${timeOf(env.createdAt)})`,
-    attachments,
-  };
-}
-
-function formatLine(env) {
-  const prior = seen.get(env.id);
-  const payload = (prior === undefined)
-    ? formatNew(env)
-    : (prior === env.status ? null : formatStatus(env));
-  if (payload) remember(env.id, env.status);
-  return payload;
-}
-
-// --- send queue (spaced posts, one retry) ------------------------------------
+// --- send queue (spaced posts, one retry) -------------------------------------
 
 const queue = [];
 let sending = false;
@@ -244,94 +140,104 @@ async function drain() {
 
 const enqueue = (payload) => { if (payload) { queue.push(payload); void drain(); } };
 
-// --- journal reading ----------------------------------------------------------
+// --- capability → mirror translation -------------------------------------------
 
-let offset = 0;
-let remainder = '';
+const nameFor = await resolveRoster(SERVER);
+const lanes = await resolveThreadLanes(SERVER);
+/** messageId → { senderId, threadId } so a failure line can name its sender. */
+const messageCache = new Map();
+let lastSequence = 0;
 
-function readNewLines() {
-  let stats;
-  try {
-    stats = fs.statSync(JOURNAL);
-  } catch {
-    return; // journal may not exist yet; keep polling
-  }
-  if (stats.size < offset) { // truncated / rotated
-    warn('journal shrank (truncated or rotated); restarting from beginning');
-    offset = 0;
-    remainder = '';
-  }
-  if (stats.size === offset) return;
-  const fd = fs.openSync(JOURNAL, 'r');
-  try {
-    const length = stats.size - offset;
-    const buffer = Buffer.alloc(length);
-    fs.readSync(fd, buffer, 0, length, offset);
-    offset = stats.size;
-    const chunk = remainder + buffer.toString('utf8');
-    const lines = chunk.split('\n');
-    remainder = lines.pop(); // last piece may be a partial line
-    for (const line of lines) handleLine(line);
-  } finally {
-    fs.closeSync(fd);
-  }
+function cacheMessage(message) {
+  if (messageCache.has(message.id)) messageCache.delete(message.id);
+  messageCache.set(message.id, { senderId: message.senderId, threadId: message.threadId });
+  if (messageCache.size > MESSAGE_CACHE_MAX) messageCache.delete(messageCache.keys().next().value);
 }
 
-function handleLine(line) {
-  if (!line.trim()) return;
-  let env;
-  try {
-    env = JSON.parse(line);
-  } catch {
-    warn(`skipping malformed JSONL line (${line.slice(0, 80)}…)`);
-    return;
-  }
-  if (typeof env?.id !== 'string') {
-    warn('skipping line without a string id');
-    return;
-  }
-  enqueue(formatLine(env));
+const laneFor = (threadId) => lanes.get(threadId) ?? threadId;
+
+function advanceSequence(sequence) {
+  if (typeof sequence === 'number' && sequence > lastSequence) lastSequence = sequence;
 }
 
-function loadBacklog(n) {
-  if (!fs.existsSync(JOURNAL) || n === 0) return;
-  const all = fs.readFileSync(JOURNAL, 'utf8').split('\n').filter((l) => l.trim());
-  const slice = all.slice(-n);
-  // Fold by id within the backlog slice: post each message once, in its latest
-  // state, rather than a send plus its amendments.
-  const folded = new Map();
-  for (const line of slice) {
-    try {
-      const env = JSON.parse(line);
-      if (typeof env?.id === 'string') folded.set(env.id, env);
-    } catch {
-      warn(`skipping malformed backlog line (${line.slice(0, 80)}…)`);
+/** One capability Message → a Slack payload (status semantics: committed IS
+ * durable truth → 'delivered', matching the in-app honesty table). */
+function onCommitted(event) {
+  const message = event.message;
+  cacheMessage(message);
+  const prior = seen.get(message.id);
+  if (prior === 'delivered') return;
+  enqueue(formatNew({
+    id: message.id,
+    from: nameFor(message.senderId),
+    to: laneFor(message.threadId),
+    delivery: message.priority === 'urgent' ? 'interrupt' : 'normal',
+    body: message.body.text,
+    createdAt: message.createdAt,
+  }));
+  remember(message.id, 'delivered');
+}
+
+/** A terminal delivery failure → one Slack status line. */
+function onDeliveryUpdated(event) {
+  const delivery = event.delivery;
+  if (delivery.state !== 'failed' || seen.get(delivery.id) === 'failed') return;
+  const origin = messageCache.get(delivery.messageId) ?? { senderId: HUMAN_PERSON_ID, threadId: delivery.threadId };
+  enqueue(formatStatus({
+    id: delivery.messageId,
+    from: nameFor(origin.senderId),
+    to: laneFor(origin.threadId),
+    createdAt: delivery.updatedAt,
+    status: 'failed',
+  }));
+  remember(delivery.id, 'failed');
+}
+
+function onFrame(frame) {
+  if (frame.kind === 'ended') {
+    warn(`subscription ended (${frame.reason ?? 'unknown'}) — reconnecting from cursor s_${lastSequence}`);
+    socket.close();
+    return;
+  }
+  if (frame.kind !== 'event' || !frame.event) return;
+  advanceSequence(frame.sequence ?? frame.event.sequence);
+  if (frame.event.message) onCommitted(frame.event);
+  else if (frame.event.delivery) onDeliveryUpdated(frame.event);
+}
+
+// --- backlog (server-owned reads, folded like the live path) -------------------
+
+async function loadBacklog(n) {
+  if (n === 0) return;
+  const all = [];
+  for (const threadId of lanes.keys()) {
+    for (const message of await fetchThreadMessages(SERVER, threadId)) {
+      cacheMessage(message);
+      all.push(message);
     }
   }
-  for (const env of folded.values()) enqueue(formatLine(env));
+  all.sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+  for (const message of all.slice(-n)) {
+    onCommitted({ message, sequence: message.sequence });
+    advanceSequence(message.sequence);
+  }
 }
 
-// --- main ----------------------------------------------------------------------
+// --- main ------------------------------------------------------------------------
 
-if (!fs.existsSync(JOURNAL)) {
-  warn(`journal not found at ${JOURNAL} — will start when it appears`);
-}
+log(`mode: ${DRY_RUN ? 'dry-run (no Slack posts)' : `live → Slack via ${webhook.source}`} · backlog ${BACKLOG} · capability dialect (no journal)`);
+await loadBacklog(BACKLOG);
 
-loadBacklog(BACKLOG);
-// Seek to end for live tailing (backlog lines were already posted folded).
-try {
-  offset = fs.statSync(JOURNAL).size;
-} catch {
-  offset = 0;
-}
-
-log(`tailing ${JOURNAL}`);
-log(`mode: ${DRY_RUN ? 'dry-run (no Slack posts)' : `live → Slack via ${webhook.source}`} · backlog ${BACKLOG} · poll ${POLL_MS}ms`);
-
-const timer = setInterval(readNewLines, POLL_MS);
+const socket = openCapabilitySocket({
+  server: SERVER,
+  since: () => (lastSequence > 0 ? `s_${lastSequence}` : undefined),
+  onFrame,
+  onRetryWait: (waitMs) => vlog(`socket closed; retrying in ${waitMs}ms`),
+  log: vlog,
+});
 
 process.on('SIGINT', () => {
-  clearInterval(timer);
+  socket.close();
   log(`stopping (SIGINT). ${queue.length} message(s) still queued — drained or dropped on exit.`);
   process.exit(0);
 });
