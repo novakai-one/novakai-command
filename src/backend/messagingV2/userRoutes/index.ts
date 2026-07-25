@@ -211,19 +211,8 @@ async function handleMessages(deps: MessagingV2UserRouteDeps, request: Request, 
   }
 }
 
-function handlePresence(deps: MessagingV2UserRouteDeps, response: Response): void {
-  const handle = deps.getHandle();
-  if (handle === null) {
-    response.status(503).json({ error: 'messaging capability unavailable this run' });
-    return;
-  }
-  // The registry is the live-presence truth (DEC-02: ephemeral, open = live).
-  response.status(200).json({ presences: handle.embedded.registry.all() });
-}
-
 export function registerMessagingV2UserRoutes(application: Express, deps: MessagingV2UserRouteDeps): void {
   application.post('/api/messaging/v2/user/send', (request, response) => void handleUserSend(deps, request, response));
   application.get('/api/messaging/v2/user/threads', (_request, response) => void handleThreads(deps, response));
   application.get('/api/messaging/v2/user/messages', (request, response) => void handleMessages(deps, request, response));
-  application.get('/api/messaging/v2/user/presence', (_request, response) => handlePresence(deps, response));
 }

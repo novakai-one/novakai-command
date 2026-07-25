@@ -3,7 +3,7 @@
  * browser's send/read surface through the capability AS the human principal
  * (no Bearer — the server is the trust boundary). Send to a live agent, to
  * '#team', and to room labels/ids; error grammar (400/404+roster/503);
- * threads list; trailing-window messages; presence snapshot. Real embedded
+ * threads list; trailing-window messages. Real embedded
  * stack (JSONL journal in tmp), real ObjectModel fixture, fake
  * TerminalRuntime for PTY effects. Run with
  * `npx tsx src/backend/messagingV2/userRoutes/index.test.ts`.
@@ -161,7 +161,7 @@ assert.equal(unknown.status, 404, 'a truly unknown name still 404s with the rost
 assert.ok(Array.isArray(unknown.json['roster']));
 console.log('offline recipient resolution tests passed');
 
-// --- reads: threads, trailing-window messages, presence snapshot ---------------------------
+// --- reads: threads, trailing-window messages --------------------------------------
 
 const threads = await userGet('/api/messaging/v2/user/threads');
 assert.equal(threads.status, 200);
@@ -178,12 +178,6 @@ const missingThread = await userGet('/api/messaging/v2/user/messages');
 assert.equal(missingThread.status, 400);
 const unknownThread = await userGet('/api/messaging/v2/user/messages?threadId=thread_ghost');
 assert.equal(unknownThread.status, 404, 'an unknown thread is a 404, never a 500');
-
-const presence = await userGet('/api/messaging/v2/user/presence');
-assert.equal(presence.status, 200);
-const presences = presence.json['presences'] as Array<Record<string, unknown>>;
-assert.ok(presences.length >= 2, 'live agent presences are in the snapshot');
-assert.ok(presences.every((entry) => entry['transport'] === 'pty'));
 console.log('user read tests passed');
 
 await handle.close();

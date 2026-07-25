@@ -39,11 +39,6 @@ export interface CapabilityThread {
   label?: string;
 }
 
-export interface CapabilityPresence {
-  id: string;
-  personId: string;
-}
-
 /** The row shape consumers already render (mechanically TunnelEnvelope). */
 export interface MessageRow {
   id: string;
@@ -209,11 +204,6 @@ export async function fetchThreadMessages(threadId: string): Promise<CapabilityM
     `/api/messaging/v2/user/messages?threadId=${encodeURIComponent(threadId)}`,
   );
   return data?.messages ?? [];
-}
-
-export async function fetchPresence(): Promise<CapabilityPresence[]> {
-  const data = await fetchJson<{ presences?: CapabilityPresence[] }>('/api/messaging/v2/user/presence');
-  return data?.presences ?? [];
 }
 
 // --- conversations (rail lanes) -------------------------------------------------

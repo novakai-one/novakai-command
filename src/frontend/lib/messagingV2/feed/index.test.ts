@@ -75,7 +75,6 @@ function okFetch(): void {
   installFetch({
     '/api/messaging/v2/user/threads': { body: { threads: [THREAD] } },
     '/api/messaging/v2/user/messages': { body: { messages: [] } },
-    '/api/messaging/v2/user/presence': { body: { presences: [] } },
     '/api/messaging/v2/user/send': { body: { messageId: 'message_posted', threadId: 'thread_dm' } },
   });
 }
@@ -193,7 +192,6 @@ console.log('F8a delivery cursor test passed');
 installFetch({
   '/api/messaging/v2/user/threads': { body: { threads: [THREAD, NEW_THREAD] } },
   '/api/messaging/v2/user/messages': { body: { messages: [] } },
-  '/api/messaging/v2/user/presence': { body: { presences: [] } },
 });
 {
   fetchLog.length = 0;
