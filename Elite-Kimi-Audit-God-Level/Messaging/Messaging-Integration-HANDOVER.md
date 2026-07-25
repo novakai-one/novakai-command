@@ -21,20 +21,24 @@ All under `Elite-Kimi-Audit-God-Level/Messaging/` in the novakai-command repo:
    from THIS file.
 2. `Messaging-Integration-Roadmap.html` — the visual. Keep it current (law #4):
    strike slices as they seal.
-3. `Messaging-HANDOVER.md` — the sealed program's handover: the six laws in full,
+3. `Messaging-Integration-CurrentState.md` — the old app messaging surface mapped
+   with file:line anchors: what to delete per slice, where the new capability
+   attaches. Re-verify against code before deleting anything.
+4. `Messaging-HANDOVER.md` — the sealed program's handover: the six laws in full,
    the file map, the context-you-won't-find-in-files.
-4. `contract/messaging-contract.json` — the frozen contract. The core does not
+5. `contract/messaging-contract.json` — the frozen contract. The core does not
    change in this program; if a slice thinks it needs a core change, that is a new
    R-item + recorded amendment (law #2), surfaced to Chris, never a quiet edit.
 
 ## Current-state evidence for the integration
 
-A full exploration of the app's existing messaging surface was run 2026-07-25 (what
-to delete, where the integration points are, with file:line anchors). Its findings
-are summarized in §2 of the plan. Key facts: ObjectModel (`agents/teams/missions/
-threads.jsonl`) is the membership/identity authority; TerminalHost `submit` lane is
-the PTY delivery seam; `broadcastEvent` is the browser push boundary; the old
-surface is `src/backend/messaging/**` + Messages tab/tunnel UI + pollers.
+**`Messaging-Integration-CurrentState.md` is the evidence base** — a full map of
+the app's existing messaging surface captured 2026-07-25 with file:line anchors:
+what to delete per slice, and where the new capability attaches. Key facts:
+ObjectModel (`agents/teams/missions/threads.jsonl`) is the membership/identity
+authority; the TerminalHost `submit` lane is the PTY delivery seam;
+`broadcastEvent` is the browser push boundary; the old surface is
+`src/backend/messaging/**` + Messages tab/tunnel UI + pollers.
 
 ## Standing rules for every N slice
 
