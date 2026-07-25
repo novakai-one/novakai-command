@@ -27,11 +27,12 @@ code.** If a slice needs a core change, that is a new R-item and a contract amen
 - The capability: `Elite-Kimi-Audit-God-Level/Messaging/messaging/` — embedded +
   standalone composition roots; seams for store/authority/membership/presence-
   transport/clock; `ws` the only runtime dep; proof layer P1–P6.
-- The surface being replaced (full map with file:line anchors in the 2026-07-25
-  exploration report, held in session history): `src/backend/messaging/**` (28
+- The surface being replaced: `src/backend/messaging/**` (28
   files), Messages tab + tunnel UI (~6,300 LOC), messaging REST routes +
   `message-envelope` broadcasts, PTY-typing delivery, transcript confirmer,
-  `nvk-watchdog` / `nvk-slack-mirror` / `nvk-msg` conventions.
+  `nvk-watchdog` / `nvk-slack-mirror` / `nvk-msg` conventions. **Full map with
+  file:line anchors: `Messaging-Integration-CurrentState.md`** (the deletion +
+  integration-point evidence base for N1–N5).
 - App integration points: ObjectModel (`agents/teams/missions/threads.jsonl` — the
   single membership authority), PeopleHub directory, TerminalHost `submit` lane,
   `broadcastEvent` ws boundary, Express `registerRoutes` pattern.
