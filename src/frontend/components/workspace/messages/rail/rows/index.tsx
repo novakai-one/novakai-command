@@ -3,15 +3,16 @@
 // derivation stays in the shared panel model.
 import React from 'react';
 import type { ArchivedLane } from '../../../../../../shared/people/schema.js';
-import type { Conversation } from '../../../../../lib/tunnelModel/index.js';
+import type { Conversation } from '../../../../../lib/messagingV2/index.js';
 import type { PanelPersonRow } from '../../../../../lib/tunnelModel/panel/index.js';
-import { PRESENCE_LABEL, initialFor, presenceToneFor } from '../../model.js';
+import { PRESENCE_LABEL, initialFor } from '../../model.js';
+import type { PresenceTone } from '../../model.js';
 import './index.css';
 
 /** Presence for a person row: unread wins (amber notification), then the ONE
  * server-derived liveness tier (Ruling 3): green only for live and
  * external-verified — unverified is never green. */
-function personTone(personRow: PanelPersonRow, count: number): ReturnType<typeof presenceToneFor> {
+function personTone(personRow: PanelPersonRow, count: number): PresenceTone {
   if (count > 0) return 'amber';
   if (personRow.person?.liveness === 'live' || personRow.person?.liveness === 'external-verified') return 'green';
   return 'gray';

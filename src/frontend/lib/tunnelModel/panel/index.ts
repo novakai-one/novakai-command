@@ -13,7 +13,7 @@
 // Rooms pass through in buildConversations' recency order — per-view chrome
 // (caps, ROOM_LIMIT) may WINDOW these arrays but never reorder them (M1).
 import type { ArchivedLane, PersonView } from '../../../../shared/people/schema.js';
-import { dmId, type Conversation, type ConversationId } from '../index.js';
+import { dmId, type Conversation, type ConversationId } from '../../messagingV2/index.js';
 
 export interface PanelPersonRow {
   /** Durable agentId; falls back to the lane id ONLY when no identity exists. */

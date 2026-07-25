@@ -61,6 +61,8 @@ export interface Conversation {
   kind: 'room' | 'channel' | 'dm';
   title: string;
   threadId?: string;
+  /** Room member display names when a lane carries them (free-room archive). */
+  members?: string[];
   lastMessageAt?: string;
 }
 
@@ -206,7 +208,9 @@ function laneKind(laneId: string): Conversation['kind'] {
 }
 
 /** Lanes from threads (+ roster names with no thread yet, so a silent agent
- * is still openable — sending creates the thread). */
+ * is still openable — sending creates the thread). Room lanes carry
+ * `members: [chris]`: D-N3-1 host policy puts the human in EVERY roster —
+ * the prune's members rule is the truth, not a courtesy. */
 export function buildConversations(
   threads: CapabilityThread[],
   feed: MessageRow[],
@@ -219,6 +223,7 @@ export function buildConversations(
     lanes.set(laneId, {
       id: laneId, kind: laneKind(laneId), title: laneId.startsWith('dm:') ? laneId.slice(3) : laneId,
       threadId: thread.id, lastMessageAt: latest.get(laneId)?.createdAt,
+      ...(laneKind(laneId) !== 'dm' ? { members: [CHRIS] } : {}),
     });
   }
   for (const agent of agents) {
@@ -231,7 +236,7 @@ export function buildConversations(
 const CHRIS_MENTION = /\bchris\b/i;
 
 export interface ChrisQuestion {
-  rowId: string;
+  envelopeId: string;
   conversationId: string;
   since: string;
 }
@@ -242,7 +247,7 @@ export function latestChrisQuestion(feed: MessageRow[]): ChrisQuestion | null {
   for (const [id, entry] of latestByLane(feed)) {
     if (entry.from === CHRIS || !CHRIS_MENTION.test(entry.body)) continue;
     if (!winner || entry.createdAt > winner.since) {
-      winner = { rowId: entry.id, conversationId: id, since: entry.createdAt };
+      winner = { envelopeId: entry.id, conversationId: id, since: entry.createdAt };
     }
   }
   return winner;
@@ -259,3 +264,6 @@ export function messagesFor(feed: MessageRow[], laneId: string): MessageRow[] {
 export function formatRoute(messageRow: MessageRow): string {
   return `${messageRow.from} → ${messageRow.to.startsWith('dm:') ? messageRow.to.slice(3) : messageRow.to}`;
 }
+
+// Single import surface: the compatibility helpers (was tunnelModel).
+export * from './compat/index.js';

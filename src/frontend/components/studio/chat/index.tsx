@@ -25,13 +25,13 @@ import {
   useAttention,
   type AttentionItem,
 } from '../../../lib/attention/index.js';
-import { latestChrisQuestion, useTunnelFeed } from '../../../lib/tunnelModel/index.js';
+import { latestChrisQuestion } from '../../../lib/messagingV2/index.js';
+import { useMessagingFeed } from '../../../lib/messagingV2/feed/index.js';
 import { MarkdownText } from '../../../lib/markdown/index.js';
 import type { SessionUsage } from '../../../lib/cost/index.js';
 import { ChatComposer } from './composer.js';
 import { MentionText } from './mention/index.js';
 import { ParityStrip } from './parity/index.js';
-import { TunnelMessenger } from './tunnel/index.js';
 import './index.css';
 
 /** A composer send waiting for its echo on the live stream. */
@@ -56,12 +56,11 @@ export interface StudioChatPanelProps {
   onOpenAgent(agentId: string): void;
 }
 
-type ChatTabId = 'context' | 'conversation' | 'tunnel' | 'evidence';
+type ChatTabId = 'context' | 'conversation' | 'evidence';
 
 const CHAT_TABS: { id: ChatTabId; label: string }[] = [
   { id: 'context', label: 'Context' },
   { id: 'conversation', label: 'Conversation' },
-  { id: 'tunnel', label: 'Tunnel' },
   { id: 'evidence', label: 'Evidence' },
 ];
 
@@ -287,7 +286,7 @@ export function StudioChatPanel(props: StudioChatPanelProps) {
   // through a failed send dismisses it — that is its resolution. A lane whose
   // newest word asks for Chris joins the queue the same way; opening that
   // lane in the messenger dismisses it.
-  const { feed: tunnelFeed, loadConversation } = useTunnelFeed();
+  const { feed: tunnelFeed } = useMessagingFeed(props.agents);
   const [dismissedNeeds, setDismissedNeeds] = useState<ReadonlySet<string>>(() => new Set<string>());
   useEffect(() => {
     const queue = buildAttentionQueue(props.projection, tunnelFeed, dismissedNeeds);
@@ -333,15 +332,6 @@ export function StudioChatPanel(props: StudioChatPanelProps) {
         <ConversationBody projection={props.projection} thread={props.thread} pendingSends={pendingSends} targets={mentionTargets} />
       )}
       {activeTab === 'context' && <ContextBody {...props} />}
-      {activeTab === 'tunnel' && (
-        <TunnelMessenger
-          feed={tunnelFeed}
-          agents={props.agents}
-          targets={mentionTargets}
-          onResolve={resolveNeed}
-          onLoadConversation={loadConversation}
-        />
-      )}
       {activeTab === 'evidence' && <div className="st-ai-quiet">Nothing captured yet</div>}
 
       {activeTab === 'conversation' && (

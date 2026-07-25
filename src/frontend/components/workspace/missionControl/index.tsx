@@ -24,16 +24,14 @@ import {
   latestChrisQuestion,
   messagesFor,
   resolveSelectedLane,
-  useTunnelFeed,
-  useTunnelRooms,
   type Conversation,
   type ConversationId,
   type TunnelEnvelope,
-  type TunnelRoom,
-} from '../../../lib/tunnelModel/index.js';
+} from '../../../lib/messagingV2/index.js';
+import { useMessagingFeed } from '../../../lib/messagingV2/feed/index.js';
 import { usePeople, visibleLanesFor } from '../../../lib/tunnelModel/people/index.js';
 import { buildPanelLanes } from '../../../lib/tunnelModel/panel/index.js';
-import { MessengerComposer, Transcript } from '../../studio/chat/tunnel/transcript/index.js';
+import { MessengerComposer, Transcript } from '../../messaging/transcript/index.js';
 import { MISSION_ROOM_CONVERSATION_ID, MISSION_ROOM_V1_TARGET, useMissionSnapshot } from '../../../lib/missionRoom/index.js';
 import { MissionRoom, MissionRoomHero } from './room/index.js';
 import {
@@ -112,8 +110,7 @@ export function MissionControl(props: MissionControlProps) {
   // lane isn't derivable yet still OPENS — the overlay stands in until history
   // derives the real lane. Shared derivation, same as the Messages tab.
   const [overlayLane, setOverlayLane] = useState<Conversation | null>(null);
-  const { feed, loadConversation } = useTunnelFeed();
-  const { rooms, ingestRoom } = useTunnelRooms();
+  const { feed, threads, send: sendMessage } = useMessagingFeed(props.agents);
   // Durable-first people directory (rulings S3 + D1/D2): the same source and
   // the same C3 pruning the Messages tab uses — one lane set, two chromes.
   const { people, archivedLaneIds, stale: peopleStale } = usePeople();
@@ -122,9 +119,20 @@ export function MissionControl(props: MissionControlProps) {
     [people],
   );
   const peopleTitles = useMemo(() => people.map((person) => ({ title: person.name })), [people]);
+  const rosterAgents = useMemo(() => {
+    const known = new Set(props.agents.map((agent) => agent.title));
+    const extras = people
+      .filter((person) => !known.has(person.name))
+      .map((person) => ({
+        agentId: `person_${person.name}`, title: person.name,
+        provider: person.provider as AgentInfo['provider'], status: 'exited' as const,
+        sessionId: '', projectDir: '', cwd: '', createdAt: '',
+      }));
+    return [...props.agents, ...extras];
+  }, [props.agents, people]);
   const conversations = useMemo(
-    () => visibleLanesFor(buildConversations(feed, rooms, peopleRoster), feed, peopleTitles),
-    [feed, rooms, peopleRoster, peopleTitles],
+    () => visibleLanesFor(buildConversations(threads, feed, rosterAgents), feed, peopleTitles),
+    [threads, feed, rosterAgents, peopleTitles],
   );
   const panel = useMemo(() => buildPanelLanes(conversations, people, feed, archivedLaneIds), [conversations, people, feed, archivedLaneIds]);
   // Room-composer roster: live people (the external chief is invitable too).
@@ -158,9 +166,6 @@ export function MissionControl(props: MissionControlProps) {
     setSelectedId(restoredLane(conversations) ?? conversations[0].id);
   }, [selectedId, conversations]);
 
-  useEffect(() => {
-    if (selectedId && selectedId !== MISSION_ROOM_CONVERSATION_ID) loadConversation(selectedId);
-  }, [selectedId, loadConversation]);
 
   useEffect(() => {
     updateAttentionQueue(buildAttentionQueue(null, feed, dismissed));
@@ -191,27 +196,12 @@ export function MissionControl(props: MissionControlProps) {
     selectConversation(conversation);
   }
 
-  function handleRoomCreated(room: TunnelRoom): void {
-    ingestRoom(room);
-    selectConversation({
-      id: room.roomId,
-      kind: 'room',
-      title: room.name,
-      members: room.members,
-    });
-  }
-
   async function send(body: string): Promise<void> {
     if (!selected) return;
+    // The hook owns optimism: 'queued' until the committed echo settles.
     const recipient = selected.kind === 'dm' ? selected.title : selected.id;
-    const response = await fetch('/api/user/messages', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ 'to': recipient, delivery: 'normal', body }),
-    });
-    if (response.ok) return;
-    const failure = await response.json().catch(() => null) as { error?: string } | null;
-    throw new Error(failure?.error ?? `HTTP ${response.status}`);
+    const sent = await sendMessage({ 'to': recipient, body });
+    if (!sent) throw new Error('send failed — the messaging capability is unavailable');
   }
 
   function toggleRail(side: 'left' | 'right'): void {
@@ -288,7 +278,6 @@ export function MissionControl(props: MissionControlProps) {
         onToggle={() => toggleRail('left')}
         onSelectConversation={selectConversation}
         onSelectPerson={selectPerson}
-        onRoomCreated={handleRoomCreated}
       />
 
       {leftOpen && (

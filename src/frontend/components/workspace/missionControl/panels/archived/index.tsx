@@ -3,7 +3,7 @@
 // people. Split from panels/index.tsx; presentation only.
 import React, { useState } from 'react';
 import type { ArchivedLane } from '../../../../../../shared/people/schema.js';
-import type { Conversation, ConversationId } from '../../../../../lib/tunnelModel/index.js';
+import type { Conversation, ConversationId } from '../../../../../lib/messagingV2/index.js';
 import { mergeArchive, type PanelPersonRow } from '../../../../../lib/tunnelModel/panel/index.js';
 import { useArchive } from '../../../../../lib/tunnelModel/people/index.js';
 import './index.css';

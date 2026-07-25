@@ -13,7 +13,7 @@ import {
   CHRIS,
   type Conversation,
   type TunnelEnvelope,
-} from '../../../../lib/tunnelModel/index.js';
+} from '../../../../lib/messagingV2/index.js';
 import { laneStatsFor, recapNotesFor, roomIdentityFor } from '../model.js';
 import './index.css';
 
@@ -178,7 +178,7 @@ function PersonView(props: ContextPanelProps) {
             <div className="msg-stat"><span>Sent by you</span><strong>{stats.sent}</strong></div>
             <div className="msg-stat"><span>Received</span><strong>{stats.received}</strong></div>
             <div className="msg-stat"><span>Delivered</span><strong>{stats.delivered}</strong></div>
-            {stats.accepted > 0 && <div className="msg-stat"><span>Accepted</span><strong>{stats.accepted}</strong></div>}
+            {stats.queued > 0 && <div className="msg-stat"><span>Sending</span><strong>{stats.queued}</strong></div>}
             <div className="msg-stat"><span>Failed</span><strong>{stats.failed}</strong></div>
           </section>
         )}

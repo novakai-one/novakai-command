@@ -16,7 +16,7 @@ import {
   type Conversation,
   type ConversationId,
   type TunnelEnvelope,
-} from '../index.js';
+} from '../../messagingV2/index.js';
 
 /* ---------- Lane pruning (C3, audit S2 — moved here for ruling D2) ----------
    Chris sees only lanes he is party to. Precedence RULED by the audit —

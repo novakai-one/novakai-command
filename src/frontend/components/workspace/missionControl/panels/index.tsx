@@ -11,8 +11,7 @@ import type {
   Conversation,
   ConversationId,
   RosterEntry,
-  TunnelRoom,
-} from '../../../../lib/tunnelModel/index.js';
+} from '../../../../lib/messagingV2/index.js';
 import type { PanelPersonRow } from '../../../../lib/tunnelModel/panel/index.js';
 import { PanelGlyph } from '../../../ui/index.js';
 import type { MissionConfidence } from '../index.js';
@@ -39,53 +38,11 @@ interface MissionRailProps {
   onToggle(): void;
   onSelectConversation(conversation: Conversation): void;
   onSelectPerson(agent: AgentInfo): void;
-  onRoomCreated(room: TunnelRoom): void;
 }
 
 export function MissionRail(props: MissionRailProps) {
   const [roomsExpanded, setRoomsExpanded] = useState(false);
-  const [composerOpen, setComposerOpen] = useState(false);
-  const [roomName, setRoomName] = useState('');
-  const [members, setMembers] = useState<ReadonlySet<string>>(() => new Set());
-  const [creating, setCreating] = useState(false);
-  const [roomError, setRoomError] = useState<string | null>(null);
   const visibleRooms = roomsExpanded ? props.missionRooms : props.missionRooms.slice(0, ROOM_LIMIT);
-
-  function toggleMember(agentName: string): void {
-    setMembers((current) => {
-      const next = new Set(current);
-      if (next.has(agentName)) next.delete(agentName);
-      else next.add(agentName);
-      return next;
-    });
-  }
-
-  async function createRoom(): Promise<void> {
-    const name = roomName.trim();
-    if (!name || members.size === 0 || creating) return;
-    setCreating(true);
-    setRoomError(null);
-    try {
-      const response = await fetch('/api/user/rooms', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, members: [...members] }),
-      });
-      const payload = await response.json().catch(() => null) as { room?: TunnelRoom; error?: string } | null;
-      if (!response.ok || !payload?.room) {
-        throw new Error(payload?.error ?? `HTTP ${response.status}`);
-      }
-      props.onRoomCreated(payload.room);
-      setRoomName('');
-      setMembers(new Set());
-      setComposerOpen(false);
-      setRoomsExpanded(true);
-    } catch (failure) {
-      setRoomError(failure instanceof Error ? failure.message : String(failure));
-    } finally {
-      setCreating(false);
-    }
-  }
 
   if (!props.open) {
     return (
@@ -119,57 +76,7 @@ export function MissionRail(props: MissionRailProps) {
           <span>Mission rooms</span>
           <span>{roomsExpanded ? '−' : `+${Math.max(0, props.missionRooms.length - ROOM_LIMIT)}`}</span>
         </button>
-        <button
-          type="button"
-          className="mc-room-create-toggle"
-          onClick={() => {
-            setComposerOpen((open) => !open);
-            setRoomError(null);
-          }}
-          aria-expanded={composerOpen}
-          aria-label="New mission room"
-          title="New mission room"
-        >
-          +
-        </button>
       </div>
-      {composerOpen && (
-        <div className="mc-room-composer">
-          <input
-            aria-label="Mission room name"
-            placeholder="Room name"
-            value={roomName}
-            autoFocus
-            onChange={(change) => setRoomName(change.target.value)}
-            onKeyDown={(press) => {
-              if (press.key === 'Enter') void createRoom();
-              if (press.key === 'Escape') setComposerOpen(false);
-            }}
-          />
-          <div className="mc-room-member-list" aria-label="Room participants">
-            {props.roster.map((agent) => (
-              <button
-                type="button"
-                key={agent.name}
-                className={members.has(agent.name) ? 'mc-room-member is-selected' : 'mc-room-member'}
-                onClick={() => toggleMember(agent.name)}
-              >
-                <span />
-                {agent.name}
-              </button>
-            ))}
-          </div>
-          <button
-            type="button"
-            className="mc-room-create"
-            disabled={!roomName.trim() || members.size === 0 || creating}
-            onClick={() => void createRoom()}
-          >
-            {creating ? 'Creating…' : 'Create room'}
-          </button>
-          {roomError && <div className="mc-room-error">{roomError}</div>}
-        </div>
-      )}
       <div className="mc-room-list">
         {visibleRooms.map((conversation) => (
           <button

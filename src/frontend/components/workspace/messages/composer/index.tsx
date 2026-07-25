@@ -7,7 +7,7 @@
 // picker (round 2): arrows move, Enter/Tab picks, Escape closes; picking
 // writes "@label " so MentionText resolves it downstream.
 import React, { useEffect, useRef, useState } from 'react';
-import type { Conversation } from '../../../../lib/tunnelModel/index.js';
+import type { Conversation } from '../../../../lib/messagingV2/index.js';
 import type { MentionTarget } from '../../../../lib/mentions/index.js';
 import { clearDraft, loadDraft, saveDraft } from '../../../../lib/composerDraft/index.js';
 import {

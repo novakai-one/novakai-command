@@ -8,7 +8,8 @@
 // owns gold everywhere in the app.
 import React, { useMemo, useState } from 'react';
 import type { AgentInfo } from '../../../lib/agentSocket/index.js';
-import { CHRIS, useTunnelFeed, useTunnelRooms } from '../../../lib/tunnelModel/index.js';
+import { CHRIS } from '../../../lib/messagingV2/index.js';
+import { useMessagingFeed } from '../../../lib/messagingV2/feed/index.js';
 import {
   formatCost,
   formatTokens,
@@ -197,8 +198,9 @@ function IntelColumn({ agents, liveCount, stats, orgScore, roomCount, fleetToken
 }
 
 export function OrganizationLens({ agents }: { agents: AgentInfo[] }) {
-  const { feed } = useTunnelFeed();
-  const { rooms } = useTunnelRooms();
+  const { feed, threads } = useMessagingFeed(agents);
+  // Rooms in the capability model: every non-direct thread (fleet + teams + missions).
+  const roomCount = threads.filter((thread) => thread.threadKind !== 'direct').length;
   const usageByAgent = useFleetUsage(agents);
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
@@ -249,7 +251,7 @@ export function OrganizationLens({ agents }: { agents: AgentInfo[] }) {
         liveCount={liveCount}
         stats={stats}
         orgScore={orgScore}
-        roomCount={rooms.length}
+        roomCount={roomCount}
         fleetTokens={fleetTokens}
         fleetCost={fleetCost}
         settings={costSettings}

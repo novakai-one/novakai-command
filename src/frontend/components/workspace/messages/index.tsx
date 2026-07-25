@@ -14,12 +14,11 @@ import { buildTargets } from '../../../lib/mentions/index.js';
 import {
   buildConversations,
   messagesFor,
-  useTunnelFeed,
-  useTunnelRooms,
   type Conversation,
   type ConversationId,
   type TunnelEnvelope,
-} from '../../../lib/tunnelModel/index.js';
+} from '../../../lib/messagingV2/index.js';
+import { useMessagingFeed } from '../../../lib/messagingV2/feed/index.js';
 import { usePeople } from '../../../lib/tunnelModel/people/index.js';
 import { buildPanelLanes } from '../../../lib/tunnelModel/panel/index.js';
 import {
@@ -70,8 +69,7 @@ export interface MessagesOpenRequest {
 
 export function MessagesView({ agents, agentsLoaded, projects, openRequest }: MessagesViewProps) {
   const rootRef = useRef<HTMLElement | null>(null);
-  const { feed, feedLoaded, connection, loadConversation, ingestEnvelope } = useTunnelFeed();
-  const { rooms, roomsLoaded, ingestRoom } = useTunnelRooms();
+  const { feed, threads, feedLoaded, connection, send: sendMessage } = useMessagingFeed(agents);
   const cursors = useReadCursors();
   const [dismissed, setDismissed] = useState<ReadonlySet<string>>(() => new Set());
   const [selectedId, setSelectedId] = useState<ConversationId | null>(null);
@@ -96,14 +94,23 @@ export function MessagesView({ agents, agentsLoaded, projects, openRequest }: Me
   // prunes to lanes Chris is party to — "registered" now means "known to the
   // people directory", so the external chief's empty lane survives the prune.
   const { people, archivedLaneIds, loaded: peopleLoaded, stale: peopleStale } = usePeople();
-  const roster = useMemo(
-    () => people.map((person) => ({ name: person.name, provider: person.provider as AgentInfo['provider'] })),
-    [people],
-  );
   const peopleTitles = useMemo(() => people.map((person) => ({ title: person.name })), [people]);
+  // The lane roster: the runtime fleet PLUS people-directory names the fleet
+  // list doesn't know (registered-but-silent agents keep openable lanes).
+  const rosterAgents = useMemo(() => {
+    const known = new Set(agents.map((agent) => agent.title));
+    const extras = people
+      .filter((person) => !known.has(person.name))
+      .map((person) => ({
+        agentId: `person_${person.name}`, title: person.name,
+        provider: person.provider as AgentInfo['provider'], status: 'exited' as const,
+        sessionId: '', projectDir: '', cwd: '', createdAt: '',
+      }));
+    return [...agents, ...extras];
+  }, [agents, people]);
   const conversations = useMemo(
-    () => visibleLanesFor(buildConversations(feed, rooms, roster), feed, peopleTitles),
-    [feed, rooms, roster, peopleTitles],
+    () => visibleLanesFor(buildConversations(threads, feed, rosterAgents), feed, peopleTitles),
+    [threads, feed, rosterAgents, peopleTitles],
   );
   // The ONE row set both rails render (Task 2.3) — agentId-keyed buckets.
   const panel = useMemo(() => buildPanelLanes(conversations, people, feed, archivedLaneIds), [conversations, people, feed, archivedLaneIds]);
@@ -113,7 +120,6 @@ export function MessagesView({ agents, agentsLoaded, projects, openRequest }: Me
   // Known agents (live + exited + feed-history names) feed the M5 pickers.
   const knownAgents = useMemo(() => knownAgentsFor(agents, feed), [agents, feed]);
   const flows = useLaneFlows({
-    ingestRoom,
     openLane: (laneId) => { setSelectedId(laneId); saveLane(laneId); },
   });
   const targets = useMemo(
@@ -195,22 +201,16 @@ export function MessagesView({ agents, agentsLoaded, projects, openRequest }: Me
       conversationIds: conversations.map((lane) => lane.id),
       // People joined the lane derivation (S3) — the restore machine waits on
       // the directory settling too, same S7 rule as the other three sources.
-      feedLoaded, roomsLoaded, agentsLoaded: agentsLoaded && peopleLoaded,
+      feedLoaded, roomsLoaded: true, agentsLoaded: agentsLoaded && peopleLoaded,
     });
     if (decision.kind === 'restore' || decision.kind === 'fallback') setSelectedId(decision.id);
-  }, [selectedId, conversations, feedLoaded, roomsLoaded, agentsLoaded, peopleLoaded]);
+  }, [selectedId, conversations, feedLoaded, agentsLoaded, peopleLoaded]);
 
   useEffect(() => {
     if (!openRequest || !conversations.some((lane) => lane.id === openRequest.id)) return;
     setSelectedId(openRequest.id);
     saveLane(openRequest.id);
   }, [openRequest?.nonce, conversations]);
-
-  // Lane history loads on selection AND on every reconnect (C5) — frames
-  // dropped during an outage come back through the same lane pull.
-  useEffect(() => {
-    if (selectedId && connection === 'connected') loadConversation(selectedId);
-  }, [selectedId, connection, loadConversation]);
 
   const selected = flows.resolveSelected(conversations, selectedId);
 
@@ -230,11 +230,10 @@ export function MessagesView({ agents, agentsLoaded, projects, openRequest }: Me
 
   async function send(body: string): Promise<void> {
     if (!selected) return;
+    // The hook owns optimism: 'queued' until the committed echo settles.
     const recipient = selected.kind === 'dm' ? selected.title : selected.id;
-    const data = (await postJson('/api/user/messages', { 'to': recipient, delivery: 'normal', body })) as { envelope: TunnelEnvelope };
-    // The 201 carries the settled envelope — the row leaves "Sending…" on the
-    // response, never on the mercy of a dropped ws amendment frame.
-    ingestEnvelope(data.envelope);
+    const sent = await sendMessage({ 'to': recipient, body });
+    if (!sent) throw new Error('send failed — the messaging capability is unavailable');
   }
 
   // Review = scroll the thread to the failed row AND resolve its amber item.
@@ -314,7 +313,6 @@ export function MessagesView({ agents, agentsLoaded, projects, openRequest }: Me
         collapsed={railCollapsed}
         onToggleCollapse={() => setRailCollapsed((current) => !current)}
         onSelect={select}
-        onStartChat={flows.startRoom}
         onOpenDm={openDm}
         onSpawnAgent={flows.spawnAgent}
       />

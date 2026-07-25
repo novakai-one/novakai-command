@@ -1,10 +1,8 @@
 // Composer foot of the AI panel. Sends are recorded first: the composer
-// POSTs an envelope to /api/user/messages (server-stamped as Chris, to the
-// agent's name) and the server's PtyDeliveryAdapter types it into the
-// agent's PTY — the same net effect as raw socket typing, now in the audit
-// log. Without a live agent it offers the provider launch actions. The
-// solid-gold send button is the brand's primary-action signature (dark
-// glyph on gold).
+// POSTs to /api/messaging/v2/user/send (server-stamped as Chris, to the
+// agent's name) and the capability delivers into the agent's lane. Without
+// a live agent it offers the provider launch actions. The solid-gold send
+// button is the brand's primary-action signature (dark glyph on gold).
 import React, { useState } from 'react';
 import type { ProviderId, ThreadRecord } from '../../../../shared/project/schema.js';
 import type { AgentInfo } from '../../../lib/agentSocket/index.js';
@@ -56,12 +54,13 @@ export function ChatComposer({ thread, runtimeAgent, onLaunch, onSent }: ChatCom
   const [error, setError] = useState<string | null>(null);
   const live = runtimeAgent?.status === 'running';
 
-  /** Record the send as an envelope; the server stamps Chris and types it into the PTY. */
+  /** Record the send through the capability; the server stamps Chris and
+   * delivers into the agent's lane. */
   async function postMessage(recipient: string, text: string): Promise<void> {
-    const response = await fetch('/api/user/messages', {
+    const response = await fetch('/api/messaging/v2/user/send', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ 'to': recipient, delivery: 'normal', body: text }),
+      body: JSON.stringify({ 'to': recipient, body: text }),
     });
     if (!response.ok) {
       const failure = (await response.json().catch(() => null)) as { error?: string } | null;
