@@ -84,11 +84,20 @@ code.** If a slice needs a core change, that is a new R-item and a contract amen
   table; sends/reads are server-owned human sessions; UI rooms are capability
   rooms; presence UI = PeopleHub tiers (capability presence surface built, found
   unused, deleted).
-- **R-N4-1 (OPEN — for Chris):** agent↔agent direct threads are party-only by the
-  ratified contract; the human no longer sees agent↔agent DM lanes (rooms/#team
-  fully visible — he is in every roster). An owner read-override would be a
-  CONTRACT amendment (assertThreadMember + subscription filtering) — surfaced,
-  not built.
+- **R-N4-1 (RULED by Chris 2026-07-26: YES):** agent↔agent direct threads are
+  party-only by the ratified contract; the human no longer sees agent↔agent DM
+  lanes (rooms/#team fully visible — he is in every roster). Chris ruled the
+  owner MUST see agent↔agent DM lanes. This is a CONTRACT amendment
+  (assertThreadMember + subscription filtering) — scheduled as its own slice
+  after N5 seals; not to be snuck into an unrelated branch.
+- **D-BRIDGE-1 (2026-07-26):** D7 descoped. A v0 Slack bridge
+  (`scripts/nvk-slack-bridge.mjs`, branch `kimi/slack-bridge-v0`) precedes N7:
+  own workspace, human principal ONLY (agent→chris DMs appear in Slack;
+  chris's Slack replies land in the capability). Owner: Chris's kimi
+  orchestrator lane. **No N-slice builds Slack bridging** — N7 generalizes the
+  v0 bridge (rooms, fleet identity, rate limits); it does not start from
+  scratch, and no other Slack work begins before then. The one-way
+  `nvk-slack-mirror.mjs` stays N5's concern (D5) and is unaffected.
 
 ## 4. Architecture
 
