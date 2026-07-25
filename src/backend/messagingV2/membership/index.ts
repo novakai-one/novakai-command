@@ -3,13 +3,21 @@
  * MembershipSource for the sealed @novakai/messaging capability (slice N1).
  *
  * DEC-04: membership truth stays with ObjectModel — this adapter only
- * TRANSLATES. RoomRef authorities are "mission" and "team"; any other
- * authority string is `unknown` (UnknownRoomError, this seam's own
- * vocabulary). Roster derivation mirrors the app's single authority:
- * membership derives from durable Agent `refs` (teams.jsonl holds NO member
- * lists), filtered to status 'live' | 'spawning' — retired/failed agents
- * cannot receive, and including them would manufacture terminal delivery
- * failures on every room send.
+ * TRANSLATES. RoomRef authorities are "mission", "team", and (D-N3-1)
+ * "fleet"; any other authority string is `unknown` (UnknownRoomError, this
+ * seam's own vocabulary). Roster derivation mirrors the app's single
+ * authority: membership derives from durable Agent `refs` (teams.jsonl holds
+ * NO member lists), filtered to status 'live' | 'spawning' — retired/failed
+ * agents cannot receive, and including them would manufacture terminal
+ * delivery failures on every room send.
+ *
+ * D-N3-1 (fleet room for #team): authority "fleet" with the constant
+ * externalId FLEET_EXTERNAL_ID ("team") resolves to EVERY active durable
+ * agent. Owner host policy: the human principal (when configured) is in
+ * EVERY roster this adapter serves — team, mission, and fleet — so Chris's
+ * sends authorize (R4's same-resolution member check) and his session
+ * passes isMember reads. The revision hash covers the human inclusion by
+ * construction (it hashes the served roster).
  *
  * Linearization (§3.2, R8): NO cached rosters — every resolveMembers reads
  * ObjectModel fresh, inside the caller's accept call. Revision evidence
@@ -48,14 +56,23 @@ import type {
 import type { AgentBlock, ObjectModel } from '../../objectModel/index.js';
 import { isActiveAgent, personIdForAgentId } from '../authority/index.js';
 
-/** The two RoomRef authorities this adapter serves (§3.1). */
-const KNOWN_AUTHORITIES: ReadonlySet<string> = new Set(['mission', 'team']);
+/** The RoomRef authorities this adapter serves (§3.1 + D-N3-1's fleet). */
+const KNOWN_AUTHORITIES: ReadonlySet<string> = new Set(['mission', 'team', 'fleet']);
+
+/** D-N3-1: the fleet room's one externalId — the #team lane. */
+export const FLEET_EXTERNAL_ID = 'team';
 
 /** Roster derivation: the shared lifecycle predicate (finding 7), deduped by
  * personId (N1 audit finding 9 — ObjectModel.missionAgents does not fold by
  * id; a duplicated agent line must never double-receive a room send). */
 function rosterOf(blocks: AgentBlock[]): PersonId[] {
   return [...new Set(blocks.filter(isActiveAgent).map((block) => personIdForAgentId(block.id)))];
+}
+
+/** D-N3-1 owner host policy: the human principal is in EVERY served roster. */
+function withHuman(members: PersonId[], humanPersonId: PersonId | undefined): PersonId[] {
+  if (humanPersonId === undefined || members.includes(humanPersonId)) return members;
+  return [...members, humanPersonId];
 }
 
 /** §3.2.3: the authority has no native revision token — hash the sorted roster. */
@@ -66,6 +83,11 @@ function revisionFor(members: PersonId[]): string {
 
 /** Fresh roster resolution (R8 — no cache); null when the room is unknown. */
 function resolveFresh(objectModel: ObjectModel, room: RoomRef): PersonId[] | null {
+  if (room.authority === 'fleet') {
+    // D-N3-1: one fleet room only — any other externalId is an unknown room.
+    if (room.externalId !== FLEET_EXTERNAL_ID) return null;
+    return rosterOf(objectModel.listAgents());
+  }
   if (room.authority === 'mission') {
     if (objectModel.missionRecord(room.externalId) === null) return null;
     return rosterOf(objectModel.missionAgents(room.externalId));
@@ -92,12 +114,17 @@ function resolveSafely(objectModel: ObjectModel, room: RoomRef): PersonId[] | nu
   }
 }
 
-function makeResolveMembers(objectModel: ObjectModel, clock: ClockIds): MembershipSource['resolveMembers'] {
+function makeResolveMembers(
+  objectModel: ObjectModel,
+  clock: ClockIds,
+  humanPersonId: PersonId | undefined,
+): MembershipSource['resolveMembers'] {
   return async (room): Promise<ResolveMembersOutcome> => {
     if (!KNOWN_AUTHORITIES.has(room.authority)) return { kind: 'unknown', error: unknownRoom(room) };
-    const members = resolveSafely(objectModel, room);
-    if (members instanceof MessagingError) return { kind: 'unavailable', error: members };
-    if (members === null) return { kind: 'unknown', error: unknownRoom(room) };
+    const resolved = resolveSafely(objectModel, room);
+    if (resolved instanceof MessagingError) return { kind: 'unavailable', error: resolved };
+    if (resolved === null) return { kind: 'unknown', error: unknownRoom(room) };
+    const members = withHuman(resolved, humanPersonId);
     return {
       kind: 'resolved',
       members,
@@ -106,22 +133,27 @@ function makeResolveMembers(objectModel: ObjectModel, clock: ClockIds): Membersh
   };
 }
 
-function makeIsMember(objectModel: ObjectModel): MembershipSource['isMember'] {
+function makeIsMember(
+  objectModel: ObjectModel,
+  humanPersonId: PersonId | undefined,
+): MembershipSource['isMember'] {
   return async (room, personId): Promise<IsMemberOutcome> => {
     if (!KNOWN_AUTHORITIES.has(room.authority)) return { kind: 'unknown', error: unknownRoom(room) };
-    const members = resolveSafely(objectModel, room);
-    if (members instanceof MessagingError) return { kind: 'unavailable', error: members };
-    if (members === null) return { kind: 'unknown', error: unknownRoom(room) };
-    return { kind: 'known', member: members.includes(personId) };
+    const resolved = resolveSafely(objectModel, room);
+    if (resolved instanceof MessagingError) return { kind: 'unavailable', error: resolved };
+    if (resolved === null) return { kind: 'unknown', error: unknownRoom(room) };
+    return { kind: 'known', member: withHuman(resolved, humanPersonId).includes(personId) };
   };
 }
 
 export function createNovakaiMembership(
   objectModel: ObjectModel,
   clock: ClockIds,
+  /** D-N3-1: the human principal, included in every served roster when set. */
+  humanPersonId?: PersonId,
 ): MembershipSource {
   return {
-    resolveMembers: makeResolveMembers(objectModel, clock),
-    isMember: makeIsMember(objectModel),
+    resolveMembers: makeResolveMembers(objectModel, clock, humanPersonId),
+    isMember: makeIsMember(objectModel, humanPersonId),
   };
 }

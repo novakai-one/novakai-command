@@ -260,7 +260,7 @@ console.log('channel rejection test passed');
     authCalls += 1;
     return realAuthenticate(credential);
   };
-  const ttlHandle: MessagingV2Handle = { embedded: ttlEmbedded, lanes: null, close: () => ttlEmbedded.close() };
+  const ttlHandle: MessagingV2Handle = { embedded: ttlEmbedded, lanes: null, rooms: null, close: () => ttlEmbedded.close() };
   const ttlApp = express();
   ttlApp.use(express.json());
   registerMessagingV2Routes(ttlApp, { getHandle: () => ttlHandle, terminals, objectModel: model });

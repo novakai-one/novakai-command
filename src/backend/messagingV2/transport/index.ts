@@ -69,6 +69,8 @@ interface TransportState {
   runtime: TerminalRuntime;
   bindings: Map<PresenceId, string>;
   liveness?: TransportLivenessCallbacks;
+  /** N3: threadId → room label lookup (the rooms directory fills it). */
+  roomLabel?: (threadId: string) => string | undefined;
 }
 
 function transient(detail: string): EffectReport {
@@ -97,10 +99,14 @@ function agentIdCandidates(personId: string): string[] {
   return [suffix.replaceAll('-', '_'), suffix.replace('-', '_')];
 }
 
-/** `[nvk-msg from <displayName> id <messageId>] <body>` on ONE line: raw
+/** One delivery line: direct stays `[nvk-msg …]`; a provisioned room thread
+ * (N3, D3 receive convention) becomes `[nvk-room <label> from …]`. Raw
  * newlines would submit the TUI early, so they become literal "\n". */
-function deliveryText(displayName: string, message: Message): string {
+function deliveryText(displayName: string, message: Message, roomLabel: string | undefined): string {
   const oneLine = message.body.text.replace(/\r?\n/g, '\\n');
+  if (roomLabel !== undefined) {
+    return `[nvk-room ${roomLabel} from ${displayName} id ${message.id}] ${oneLine}`;
+  }
   return `[nvk-msg from ${displayName} id ${message.id}] ${oneLine}`;
 }
 
@@ -147,7 +153,11 @@ function laneState(state: TransportState, presenceId: PresenceId): { info: Agent
 function deliverMessage(state: TransportState, presenceId: PresenceId, payload: DeliverPayload): Promise<EffectReport> {
   const lane = laneState(state, presenceId);
   if (!('info' in lane)) return Promise.resolve(lane);
-  const text = deliveryText(displayNameFor(state, payload.message.senderId), payload.message);
+  const text = deliveryText(
+    displayNameFor(state, payload.message.senderId),
+    payload.message,
+    state.roomLabel?.(payload.message.threadId),
+  );
   if (state.runtime.submit(submitJobFor(lane.info, payload, text))) {
     return Promise.resolve({ kind: 'effect' }); // bytes queued into a live lane (G10)
   }
@@ -185,8 +195,15 @@ function bindLane(state: TransportState, presenceId: PresenceId, agentId: string
   return true;
 }
 
-export function createTerminalHostTransport(runtime: TerminalRuntime): TerminalHostPresenceTransport {
-  const state: TransportState = { runtime, bindings: new Map() };
+export function createTerminalHostTransport(
+  runtime: TerminalRuntime,
+  options?: { roomLabel?: (threadId: string) => string | undefined },
+): TerminalHostPresenceTransport {
+  const state: TransportState = {
+    runtime,
+    bindings: new Map(),
+    ...(options?.roomLabel !== undefined ? { roomLabel: options.roomLabel } : {}),
+  };
   runtime.onExit((agentId) => onAgentExit(state, agentId));
   return {
     kind: 'pty',

@@ -225,6 +225,16 @@ export class ObjectModel {
     return [...folded.values()];
   }
 
+  /** Every durable Team block (N3 room provisioning enumerates them). */
+  listTeams(): Array<Record<string, unknown>> {
+    return this.storeRecords('teams.jsonl').map((entry) => entry.block as Record<string, unknown>);
+  }
+
+  /** Every durable Mission block (N3 room provisioning enumerates them). */
+  listMissions(): Array<Record<string, unknown>> {
+    return this.storeRecords('missions.jsonl').map((entry) => entry.block as Record<string, unknown>);
+  }
+
   /** Every durable agent on a mission (membership derives from Agent refs — single authority). */
   missionAgents(missionId: string): AgentBlock[] {
     return this.storeRecords('agents.jsonl')

@@ -57,6 +57,8 @@ export interface AgentLaneGlue {
   handleAgentLaunched(info: AgentInfo): void;
   /** Open lanes (operability/tests). */
   laneCount(): number;
+  /** The held human session (N3: the rooms glue posts/reads #team as Chris). */
+  humanSession(): MessagingSession | null;
   close(): Promise<void>;
 }
 
@@ -195,6 +197,7 @@ export function createAgentLaneGlue(deps: AgentLaneGlueDeps): AgentLaneGlue {
     openBootLanes: () => openBootLanes(state),
     handleAgentLaunched: (info) => handleAgentLaunched(state, info),
     laneCount: () => state.sessions.size,
+    humanSession: () => state.human,
     close: () => closeGlue(state),
   };
 }
