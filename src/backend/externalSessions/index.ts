@@ -9,8 +9,8 @@
 // composition (dependency inversion, same pattern as MissionGraph).
 import type { Express, Request, Response } from 'express';
 import { PROVIDER_IDS } from '../../shared/project/schema.js';
-import { CHRIS_MEMBER, isChannel, isRoom } from '../messaging/types.js';
-import type { MailboxIdentity, MessageEnvelope, SendMessage } from '../messaging/types.js';
+import { isChannel, isRoom } from '../messaging/types.js';
+import type { MailboxIdentity } from '../messaging/types.js';
 
 /** The slice of the durable mission graph registration needs. */
 export interface ExternalSessionGraph {
@@ -31,8 +31,10 @@ export interface ExternalSessionMailboxes {
   register(input: { displayName: string; memberName: string }): MailboxIdentity;
 }
 
-/** The send seam (MessagingHub.send satisfies this structurally). */
-export type SendExternal = (from: string, message: SendMessage) => Promise<MessageEnvelope>;
+/** The send seam: authenticate as the durable agentId, send to the human
+ * principal through the capability (N4 — the old SendApi path is deleted).
+ * Resolves to the accepted messageId. */
+export type SendExternal = (agentId: string, body: string) => Promise<{ id: string }>;
 
 /** The name collides with a live backend-owned PTY — reuse is never safe there. */
 export class ExternalSessionNameConflictError extends Error {}
@@ -75,18 +77,14 @@ interface ValidatedRegistration {
   mailboxExists: boolean;
 }
 
-/** The lane-materializing envelope: one announcement name→chris. */
+/** The lane-materializing message: one announcement agent→chris DM. */
 function announcementBody(
   input: RegisterExternalInput,
   persisted: { agentId: string; mailbox: 'created' | 'existing' },
-): SendMessage {
-  return {
-    'to': CHRIS_MEMBER,
-    delivery: 'normal',
-    body: `📡 ${input.name} registered as durable agent ${persisted.agentId} `
-      + `(external ${input.provider} session ${input.sessionId}, mission ${input.missionId}, mailbox ${persisted.mailbox}). `
-      + 'This DM lane is live — messages here reach my mailbox.',
-  };
+): string {
+  return `📡 ${input.name} registered as durable agent ${persisted.agentId} `
+    + `(external ${input.provider} session ${input.sessionId}, mission ${input.missionId}, mailbox ${persisted.mailbox}). `
+    + 'This DM lane is live — messages here reach my mailbox.';
 }
 
 export class ExternalSessionsHub {
@@ -181,7 +179,7 @@ export class ExternalSessionsHub {
     const result: RegisterExternalResult = { ...persisted, announcement: 'skipped' };
     if (input.announce === false) return result;
     try {
-      const envelope = await this.sendExternal(input.name, announcementBody(input, persisted));
+      const envelope = await this.sendExternal(persisted.agentId, announcementBody(input, persisted));
       result.announcement = 'sent';
       result.envelopeId = envelope.id;
     } catch (error) {

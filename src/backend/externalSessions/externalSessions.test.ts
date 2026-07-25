@@ -16,7 +16,6 @@ import type { ExternalSessionGraph, RegisterExternalResult } from './index.js';
 import { ObjectModel } from '../objectModel/index.js';
 import { MailboxRegistry } from '../messaging/mailbox/index.js';
 import { readStoreDir } from '../stores/store.mjs';
-import type { MessageEnvelope, SendMessage } from '../messaging/types.js';
 
 const MISSION = 'mission_alpha';
 const STAMP = '2026-07-23T09:00:00+10:00';
@@ -31,14 +30,18 @@ function storeBlocks(scratch: string, storeFile: string): Array<Record<string, u
   return readStoreDir(scratch).files[storeFile].records.map((entry) => entry.block as Record<string, unknown>);
 }
 
-function fakeSend(envelopes: MessageEnvelope[]): (from: string, message: SendMessage) => Promise<MessageEnvelope> {
-  return (from, message) => {
-    const envelope: MessageEnvelope = {
-      id: `msg_test-${envelopes.length + 1}`, from, 'to': message.to, delivery: message.delivery,
-      body: message.body, createdAt: new Date().toISOString(), status: 'delivered',
-    };
-    envelopes.push(envelope);
-    return Promise.resolve(envelope);
+interface SentAnnouncement {
+  agentId: string;
+  body: string;
+  id: string;
+}
+
+/** The N4 capability seam: (durable agentId, body) → accepted messageId. */
+function fakeSend(sent: SentAnnouncement[]): (agentId: string, body: string) => Promise<{ id: string }> {
+  return (agentId, body) => {
+    const announcement: SentAnnouncement = { agentId, body, id: `msg_test-${sent.length + 1}` };
+    sent.push(announcement);
+    return Promise.resolve({ id: announcement.id });
   };
 }
 
@@ -46,7 +49,7 @@ interface Rig {
   subject: ExternalSessionsHub;
   model: ObjectModel;
   mailboxes: MailboxRegistry;
-  envelopes: MessageEnvelope[];
+  sent: SentAnnouncement[];
   scratch: string;
 }
 
@@ -55,9 +58,9 @@ function makeRig(options: { liveNames?: string[]; seedMailbox?: string } = {}): 
   const model = new ObjectModel({ storesDir: scratch });
   const mailboxes = MailboxRegistry.inMemory();
   if (options.seedMailbox) mailboxes.register({ displayName: options.seedMailbox, memberName: options.seedMailbox });
-  const envelopes: MessageEnvelope[] = [];
-  const subject = new ExternalSessionsHub(model, mailboxes, fakeSend(envelopes), () => options.liveNames ?? []);
-  return { subject, model, mailboxes, envelopes, scratch };
+  const sent: SentAnnouncement[] = [];
+  const subject = new ExternalSessionsHub(model, mailboxes, fakeSend(sent), () => options.liveNames ?? []);
+  return { subject, model, mailboxes, sent, scratch };
 }
 
 const INPUT = { name: 'chief-kimi-2', provider: 'kimi', sessionId: 'session_c8d39318-test', missionId: MISSION };
@@ -65,7 +68,7 @@ const INPUT = { name: 'chief-kimi-2', provider: 'kimi', sessionId: 'session_c8d3
 // --- happy path: team + agent + Presence + mailbox + announcement -----------
 
 {
-  const { subject, model, mailboxes, envelopes, scratch } = makeRig();
+  const { subject, model, mailboxes, sent, scratch } = makeRig();
   const result = await subject.register(INPUT);
   assert.match(result.agentId, /^agent_/);
   assert.equal(result.mailbox, 'created');
@@ -83,9 +86,9 @@ const INPUT = { name: 'chief-kimi-2', provider: 'kimi', sessionId: 'session_c8d3
   );
   assert.equal(storeBlocks(scratch, 'teams.jsonl')[0].id, result.teamId, 'team block persisted');
   assert.ok(mailboxes.identityFor(INPUT.name), 'mailbox registered');
-  assert.equal(envelopes.length, 1);
-  assert.equal(envelopes[0].from, INPUT.name);
-  assert.equal(envelopes[0].to, 'chris', 'announcement lands in Chris’s mailbox');
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].agentId, result.agentId, 'the announcement authenticates AS the durable agent (N4)');
+  assert.match(sent[0].body, /registered as durable agent/, 'announcement body lands for Chris');
   rmSync(scratch, { recursive: true, force: true });
   console.log('happy path test passed');
 }
@@ -163,7 +166,7 @@ const INPUT = { name: 'chief-kimi-2', provider: 'kimi', sessionId: 'session_c8d3
 {
   const scratch = scratchStores();
   const model = new ObjectModel({ storesDir: scratch });
-  const failingSend = (): Promise<MessageEnvelope> => Promise.reject(new Error('router down'));
+  const failingSend = (): Promise<{ id: string }> => Promise.reject(new Error('router down'));
   const subject = new ExternalSessionsHub(model, MailboxRegistry.inMemory(), failingSend, () => []);
   const result: RegisterExternalResult = await subject.register(INPUT);
   assert.equal(result.announcement, 'failed');

@@ -41,19 +41,24 @@ export interface RoomDirectory {
   register(threadId: ThreadId, authority: string, externalId: string, label: string): void;
   labelFor(threadId: string): string | undefined;
   threadIdFor(authority: string, externalId: string): ThreadId | undefined;
+  /** N4: label (`#team`, `#<name>`) → threadId, for the user send route. */
+  threadIdForLabel(label: string): ThreadId | undefined;
   fleetThreadId(): ThreadId | undefined;
 }
 
 export function createRoomDirectory(): RoomDirectory {
   const byThreadId = new Map<string, string>();
   const byKey = new Map<string, ThreadId>();
+  const byLabel = new Map<string, ThreadId>();
   return {
     register(threadId, authority, externalId, label) {
       byThreadId.set(threadId, label);
       byKey.set(`${authority}/${externalId}`, threadId);
+      byLabel.set(label, threadId);
     },
     labelFor: (threadId) => byThreadId.get(threadId),
     threadIdFor: (authority, externalId) => byKey.get(`${authority}/${externalId}`),
+    threadIdForLabel: (label) => byLabel.get(label),
     fleetThreadId: () => byKey.get(`fleet/${FLEET_EXTERNAL_ID}`),
   };
 }
@@ -91,6 +96,7 @@ export interface RoomsGlue {
   /** D-N3-4: translated #team history (old shape; archive never merged). */
   history(): Promise<TranslatedEnvelope[]>;
   threadIdFor(authority: string, externalId: string): ThreadId | undefined;
+  threadIdForLabel(label: string): ThreadId | undefined;
   fleetThreadId(): ThreadId | undefined;
   labelFor(threadId: string): string | undefined;
   startLiveBroadcast(): void;
@@ -311,6 +317,7 @@ export function createRoomsGlue(deps: RoomsGlueDeps): RoomsGlue {
     post: (body) => postTeam(deps, body),
     history: () => teamHistory(deps),
     threadIdFor: (authority, externalId) => deps.directory.threadIdFor(authority, externalId),
+    threadIdForLabel: (label) => deps.directory.threadIdForLabel(label),
     fleetThreadId: () => deps.directory.fleetThreadId(),
     labelFor: (threadId) => deps.directory.labelFor(threadId),
     startLiveBroadcast: () => startBroadcast(deps, subscription),
