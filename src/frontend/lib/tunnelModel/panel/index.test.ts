@@ -6,7 +6,7 @@
 import assert from 'node:assert/strict';
 import type { PersonView } from '../../../../shared/people/schema.js';
 import { buildPanelLanes, mergeArchive, type PanelPersonRow } from './index.js';
-import { dmId, type Conversation } from '../index.js';
+import { dmId, type Conversation } from '../../messagingV2/index.js';
 
 /** The tier the backend would derive for these inputs (Ruling 3) — fixtures
  * default to it so tests read like the real projection. Explicit overrides win. */

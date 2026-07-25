@@ -166,28 +166,16 @@ export class ServerController {
   }
 
   /**
-   * Agent messaging tunnel (docs/agent-messaging.md): envelopes broadcast on
-   * the shared ws so the Messages view can build a live feed. N2: the spawn
-   * briefing moved to the messagingV2 presence glue (wired in start()).
+   * The messaging sliver (N4): mailbox registry routes + POST /api/threads.
+   * Everything message-shaped lives in the capability now — the old tunnel
+   * routes, router, delivery, and broadcasts are deleted.
    */
   private buildMessagingHub(): MessagingHub {
-    return new MessagingHub(
-      this.agentsHub.terminals,
-      (event, payload) => this.broadcastEvent(event, payload),
-      {
-        mailboxRegistry: this.mailboxRegistry, missionGraph: this.objectModel,
-        // NVK_MESSAGE_STORE pins the journal for non-Live stacks (same
-        // discipline as NVK_MISSION_STORES_DIR — scratch evidence stays real).
-        storePath: process.env.NVK_MESSAGE_STORE || undefined,
-        // A scratch backend sharing the REAL journal must not reconcile it:
-        // its roster is empty, so retry/confirmation amendments would falsify
-        // envelopes the Live lane can still deliver. Default unchanged.
-        reconcileOnStart: process.env.NVK_RECONCILE_ON_START !== 'off',
-        // N3: #team sends/reads delegate to the capability (boots after this
-        // hub — resolved lazily at request time).
-        teamLane: () => this.messagingV2?.rooms ?? null,
-      },
-    );
+    return new MessagingHub({
+      mailboxRegistry: this.mailboxRegistry,
+      missionGraph: this.objectModel,
+      roomsStorePath: process.env.NVK_MISSION_ROOMS ?? path.resolve('.novakai-command/rooms.jsonl'),
+    });
   }
 
   /**
@@ -609,9 +597,6 @@ export class ServerController {
         // runtime; the glue opens lanes for live agents and briefs new spawns.
         terminals: this.agentsHub.terminals,
         onLaunch: (listener) => this.agentsHub.onLaunch(listener),
-        // N3: the rooms glue re-broadcasts #team commits as message-envelope
-        // frames for the browser lane (D-N3-4 LIVE shim).
-        broadcast: (event, payload) => this.broadcastEvent(event, payload),
       });
     } catch (error) {
       // A v2 boot failure must never take down the app (the old surface still

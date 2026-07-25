@@ -1,9 +1,18 @@
 // POST /api/threads — the mission↔room link route (plan v2 §1.5). One typed
 // thread block per room; the mission graph owns the write, the hub passes its
-// room lookup in so this module stays free of hub internals.
+// room lookup in so this module stays free of hub internals. N4: MissionGraph
+// and the room-not-found error live here now (the router/identity dirs are
+// deleted); room existence reads the archived rooms.jsonl fold.
 import type { Request, Response } from 'express';
-import { RoomNotFoundError } from '../router/index.js';
-import type { MissionGraph } from '../identity/index.js';
+
+/** The slice of the durable mission graph the thread link needs
+ * (ObjectModel satisfies this structurally). */
+export interface MissionGraph {
+  missionForRoom(roomId: string): string | null;
+  createThread(input: { roomId: string; missionId: string }): string;
+}
+
+/** The archived free-room shape the fold returns (types.ts owns Room). */
 import type { Room } from '../types.js';
 
 function requireText(value: unknown, field: string): string {
@@ -26,7 +35,7 @@ export function createThreadRoute(
     const roomId = requireText(payload.roomId, 'roomId');
     const missionId = requireText(payload.missionId, 'missionId');
     if (!roomFor(roomId)) {
-      response.status(404).json({ error: new RoomNotFoundError(roomId).message });
+      response.status(404).json({ error: `room "${roomId}" was not found` });
       return;
     }
     const existing = graph.missionForRoom(roomId);

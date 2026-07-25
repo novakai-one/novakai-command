@@ -1,10 +1,7 @@
-// MessagingHub REST + broadcast tests over a real express app — the SURVIVING
-// surface (user sends, history reads, identity, the free-room shim, AgentsHub
-// spawns). N2 deleted the agent-originated POST /api/messages route and the
-// spawn briefing; N3 deleted the router's channel/room arms and the
-// from-trusting room routes — #team sends/reads now delegate to the injected
-// capability TeamLane (faked here; the real fan-out is covered by the
-// messagingV2 rooms tests). Run with
+// MessagingHub sliver + AgentsHub REST tests (N4): the hub shrank to
+// mailbox registration + POST /api/threads; AgentsHub spawn rules are
+// unchanged. The old tunnel routes (GET /api/messages, /api/user/messages,
+// rooms) are deleted — their tests went with them. Run with
 // `npx tsx src/backend/messaging/tests/api.test.ts`.
 import assert from 'node:assert/strict';
 import { mkdtempSync } from 'node:fs';
@@ -12,8 +9,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import express from 'express';
 import type { Server } from 'node:http';
-import { MessagingHub, TEAM_CHANNEL } from '../index.js';
-import type { MessageEnvelope, TeamLane, TeamLaneEnvelope } from '../index.js';
+import { MailboxRegistry, MessagingHub } from '../index.js';
 import { AgentsHub } from '../../server/agents.js';
 import type { AgentInfo, CreateAgentOptions } from '../../terminal/manager.js';
 import type { TerminalRuntime } from '../../terminal/runtime/index.js';
@@ -30,54 +26,11 @@ const agents: AgentInfo[] = [
   agent({ agentId: 'agent_1', title: 'claude-1' }),
   agent({ agentId: 'agent_2', title: 'codex-1', provider: 'codex' }),
 ];
-const writes: Array<{ agentId: string; data: string }> = [];
-const broadcasts: Array<{ event: string; payload: MessageEnvelope }> = [];
-const recordWrite = (agentId: string, data: string): boolean => {
-  writes.push({ agentId, data });
-  return true;
-};
 
-/** The fake capability lane: records #team posts in the translated shape.
- * laneMode 'unavailable' simulates a capability DependencyUnavailable. */
-let laneMode: 'ok' | 'unavailable' = 'ok';
-const teamPosts: TeamLaneEnvelope[] = [];
-const fakeLane: TeamLane = {
-  post(body: string): Promise<TeamLaneEnvelope> {
-    if (laneMode === 'unavailable') {
-      const failure = new Error('authority is unavailable');
-      failure.name = 'DependencyUnavailable';
-      return Promise.reject(failure);
-    }
-    const envelope: TeamLaneEnvelope = {
-      id: `message_fake_${teamPosts.length + 1}`,
-      from: 'chris',
-      'to': TEAM_CHANNEL,
-      body,
-      createdAt: new Date().toISOString(),
-      status: 'delivered',
-      delivery: 'normal',
-    };
-    teamPosts.push(envelope);
-    return Promise.resolve(envelope);
-  },
-  history(): Promise<TeamLaneEnvelope[]> {
-    return Promise.resolve([...teamPosts]);
-  },
-};
-
-const messagingHub = new MessagingHub(
-  { list: () => agents, write: recordWrite },
-  (event, payload) => broadcasts.push({ event, payload: payload as MessageEnvelope }),
-  {
-    storePath: join(mkdtempSync(join(tmpdir(), 'nvk-api-')), 'messages.jsonl'),
-    timings: { interruptSettleMs: 0, submitDelayMs: 0 },
-    // Fake sessionIds — the real transcript confirmer would poll for files
-    // that never exist. null disables confirmation; sends note it honestly.
-    effectConfirmer: null,
-    teamLane: () => fakeLane,
-  },
-);
-
+const messagingHub = new MessagingHub({
+  mailboxRegistry: MailboxRegistry.inMemory(),
+  roomsStorePath: join(mkdtempSync(join(tmpdir(), 'nvk-api-')), 'rooms.jsonl'),
+});
 const application = express();
 application.use(express.json());
 messagingHub.registerRoutes(application);
@@ -86,27 +39,43 @@ const server: Server = await new Promise((resolve) => {
 });
 const baseUrl = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
 
-async function postAsUser(body: unknown): Promise<{ status: number; json: any }> {
-  const response = await fetch(`${baseUrl}/api/user/messages`, {
+async function post(route: string, body: unknown): Promise<{ status: number; json: Record<string, unknown> }> {
+  const response = await fetch(`${baseUrl}${route}`, {
     method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
   });
-  return { status: response.status, json: await response.json() };
+  return { status: response.status, json: await response.json().catch(() => ({})) as Record<string, unknown> };
 }
 
-async function getMessages(query: string): Promise<MessageEnvelope[]> {
-  const response = await fetch(`${baseUrl}/api/messages${query}`);
-  return (await response.json()).messages;
+async function testMailboxRegisterRoute(): Promise<void> {
+  const created = await post('/api/mailboxes', { displayName: 'Manager K3', memberName: 'manager-k3' });
+  assert.equal(created.status, 201);
+  const conflict = await post('/api/mailboxes', { displayName: 'Twin', memberName: 'manager-k3' });
+  assert.equal(conflict.status, 409);
+  const invalid = await post('/api/mailboxes', { displayName: '', memberName: 'x' });
+  assert.equal(invalid.status, 400);
+  console.log('mailbox register route tests passed');
 }
 
-async function testHistoryQueryFilters(): Promise<void> {
-  await postAsUser({ 'to': 'codex-1', body: 'done', threadId: 'thread-a' });
-  await postAsUser({ 'to': TEAM_CHANNEL, body: 'status: green' });
-  assert.equal((await getMessages('')).length, 1, 'the #team post lives in the capability, not the old store');
-  const channel = await getMessages(`?withAgent=${encodeURIComponent(TEAM_CHANNEL)}`);
-  assert.equal(channel.length, 1, 'channel read delegates to the capability lane');
-  assert.equal(channel[0]?.body, 'status: green');
-  assert.equal((await getMessages('?threadId=thread-a'))[0]?.threadId, 'thread-a');
-  assert.equal((await getMessages('?limit=1')).length, 1);
+async function testThreadsLinkValidatesAgainstTheArchive(): Promise<void> {
+  // No mission graph on this hub → the route honestly 501s (the stores-gated
+  // link is exercised end-to-end in missionView's own suite).
+  const noGraph = await post('/api/threads', { roomId: 'room_x', missionId: 'mission_alpha' });
+  assert.equal(noGraph.status, 501);
+  console.log('threads link tests passed');
+}
+
+async function testDeletedRoutesAreGone(): Promise<void> {
+  const history = await fetch(`${baseUrl}/api/messages`);
+  assert.equal(history.status, 404, 'GET /api/messages is deleted (N4)');
+  const userSend = await post('/api/user/messages', { 'to': 'claude-1', body: 'x' });
+  assert.equal(userSend.status, 404, 'POST /api/user/messages is deleted (N4)');
+  const rooms = await fetch(`${baseUrl}/api/rooms`);
+  assert.equal(rooms.status, 404, 'GET /api/rooms is deleted (N4)');
+  const identity = await fetch(`${baseUrl}/api/identity`);
+  assert.equal(identity.status, 404, 'GET /api/identity is deleted (N4)');
+  const addressBook = await fetch(`${baseUrl}/api/messaging/address-book`);
+  assert.equal(addressBook.status, 404, 'the old address-book is deleted (agents use v2)');
+  console.log('deleted-route tests passed');
 }
 
 /** AgentsHub over a fake runtime — reserved names 409 before any spawn happens. */
@@ -177,100 +146,12 @@ async function testProviderValidation(): Promise<void> {
   });
 }
 
-async function testRegisteredUserIdentityOwnsBrowserSends(): Promise<void> {
-  const identityResponse = await fetch(`${baseUrl}/api/identity`);
-  assert.equal(identityResponse.status, 200);
-  assert.deepEqual(await identityResponse.json(), {
-    identity: {
-      id: 'user:chris',
-      displayName: 'Chris',
-      memberName: 'chris',
-      role: 'owner',
-      permissions: ['messages:send', 'rooms:send'],
-    },
-  });
-
-  const direct = await postAsUser({ from: 'spoofed-agent', 'to': 'codex-1', body: 'browser-authored' });
-  assert.equal(direct.status, 201);
-  assert.equal(direct.json.envelope.from, 'chris', 'server identity overrides client sender claims');
-}
-
-async function testFreeRoomSendsAreGone(): Promise<void> {
-  // N3 (D-N3-6): the router's room arms are deleted — a free-room send now
-  // 404s as an unknown recipient. Free rooms are archive-only (reads and
-  // browser creation survive via the shim) until N4.
-  const roomResponse = await fetch(`${baseUrl}/api/user/rooms`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ name: 'Agents only', members: ['claude-1', 'codex-1'] }),
-  });
-  assert.equal(roomResponse.status, 201, 'browser room creation survives via the shim');
-  const roomId = (await roomResponse.json()).room.roomId as string;
-  const roomSend = await postAsUser({ 'to': roomId, body: 'free rooms no longer route' });
-  assert.equal(roomSend.status, 404, 'routeRoom is deleted — free-room sends die in N3');
-}
-
-async function testTeamPostDelegatesToTheCapabilityLane(): Promise<void> {
-  writes.length = 0;
-  broadcasts.length = 0;
-  const before = teamPosts.length;
-  const teamPost = await postAsUser({ 'to': TEAM_CHANNEL, body: 'Hello team, this is live chat.' });
-  assert.equal(teamPost.status, 201);
-  assert.equal(teamPosts.length, before + 1, 'the post went through the capability lane, not SendApi');
-  assert.equal(teamPost.json.envelope.to, TEAM_CHANNEL);
-  assert.equal(teamPost.json.envelope.from, 'chris', 'server-stamped sender in the translated envelope');
-  assert.equal(writes.length, 0, 'the old hub types nothing — capability delivery owns the fan-out');
-  assert.equal(broadcasts.length, 0, 'the old store saw no #team append (D1: no new writes)');
-}
-
-async function testAgentsCanReplyToUserInboxIsGone(): Promise<void> {
-  // N2: the agent-originated route is deleted — it now answers 404 (agent
-  // sends authenticate through the v2 routes instead).
-  const reply = await fetch(`${baseUrl}/api/messages`, {
-    method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ from: 'codex-1', 'to': 'chris', body: 'x' }),
-  });
-  assert.equal(reply.status, 404, 'POST /api/messages is gone (N2)');
-}
-
-async function testOpenBrowserTabsUpgradeToRegisteredIdentity(): Promise<void> {
-  const roomResponse = await fetch(`${baseUrl}/api/user/rooms`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      name: 'Legacy tab room',
-      members: ['codex-1'],
-    }),
-  });
-  assert.equal(roomResponse.status, 201);
-  const room = (await roomResponse.json()).room;
-  assert.equal(room.createdBy, 'chris');
-  assert.deepEqual(room.members, ['codex-1', 'chris']);
-}
-
-async function testTeamChannelErrorHonesty(): Promise<void> {
-  // FIX 7a: an empty #team body is a 400 (client error), never a 502.
-  const empty = await postAsUser({ 'to': TEAM_CHANNEL, body: '' });
-  assert.equal(empty.status, 400, 'empty #team body → 400');
-  laneMode = 'unavailable';
-  try {
-    const unavailable = await postAsUser({ 'to': TEAM_CHANNEL, body: 'during an outage' });
-    assert.equal(unavailable.status, 503, 'capability DependencyUnavailable → 503');
-  } finally {
-    laneMode = 'ok';
-  }
-}
-
 try {
-  await testHistoryQueryFilters();
+  await testMailboxRegisterRoute();
+  await testThreadsLinkValidatesAgainstTheArchive();
+  await testDeletedRoutesAreGone();
   await testReservedNamesRejected();
   await testProviderValidation();
-  await testRegisteredUserIdentityOwnsBrowserSends();
-  await testFreeRoomSendsAreGone();
-  await testTeamPostDelegatesToTheCapabilityLane();
-  await testTeamChannelErrorHonesty();
-  await testAgentsCanReplyToUserInboxIsGone();
-  await testOpenBrowserTabsUpgradeToRegisteredIdentity();
   console.log('PASS');
 } finally {
   server.close();

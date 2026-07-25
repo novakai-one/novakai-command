@@ -49,40 +49,12 @@ export interface Room {
   archived: boolean;
 }
 
-export interface SendMessage {
-  to: string;
-  delivery: 'normal' | 'interrupt';
-  body: string;
-}
-
-export interface DeliveryReceipt {
-  messageId: string;
-  deliveredAt: string;
-  mode: string;
-  failed?: string[];   // room fan-out: members whose PTY write failed (status 'partial')
-}
-
 export interface AgentAddress {
   agentId: string;
   name: string;
   provider: ProviderId;
 }
 
-export interface MessageQuery {
-  withAgent?: string;
-  withRoom?: string;
-  threadId?: string;
-  missionId?: string;
-  since?: string;
-  limit?: number;
-}
-
-export interface ChannelQuery {
-  since?: string;
-  limit?: number;
-}
-
-export const TEAM_CHANNEL = '#team';
 export const CHRIS_MEMBER = 'chris';
 export const KIMI_MEMBER = 'kimi';
 
@@ -130,14 +102,4 @@ export function isChannel(recipient: string): boolean {
 
 export function isRoom(recipient: string): boolean {
   return recipient.startsWith('room_');
-}
-
-/** The correlation marker: full sender + message id, never body text alone (M9). */
-export function formatInboundMarker(envelope: MessageEnvelope): string {
-  return `[nvk-msg from ${envelope.from} id ${envelope.id}]`;
-}
-
-/** Inbound line typed into a recipient PTY — distinguishes agent mail from Chris typing. */
-export function formatInbound(envelope: MessageEnvelope): string {
-  return `${formatInboundMarker(envelope)} ${envelope.body}`;
 }
