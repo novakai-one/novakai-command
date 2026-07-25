@@ -13,6 +13,7 @@ import {
 import { buildTargets } from '../../../lib/mentions/index.js';
 import {
   buildConversations,
+  laneRosterFor,
   messagesFor,
   type Conversation,
   type ConversationId,
@@ -46,6 +47,7 @@ import {
   type RailWidths,
 } from './model.js';
 import { SHELL_STYLE, resolveStyle } from './styles/index.js';
+import { beginResize, nudgeWidth } from './resize/index.js';
 import { postJson, useLaneFlows } from './flows/index.js';
 import { RoomsRail } from './rail/index.js';
 import { MessageFeed, messageRowId } from './thread/index.js';
@@ -67,9 +69,16 @@ export interface MessagesOpenRequest {
   nonce: number;
 }
 
+/** The connection strip's text (null = hidden) — extracted for complexity. */
+function connStripText(loadError: boolean, connection: 'connected' | 'disconnected', feedLoaded: boolean): string | null {
+  if (loadError) return 'Messaging unavailable — retrying…';
+  if (connection === 'disconnected' && feedLoaded) return 'Reconnecting…';
+  return null;
+}
+
 export function MessagesView({ agents, agentsLoaded, projects, openRequest }: MessagesViewProps) {
   const rootRef = useRef<HTMLElement | null>(null);
-  const { feed, threads, feedLoaded, connection, send: sendMessage } = useMessagingFeed(agents);
+  const { feed, threads, feedLoaded, loadError, connection, send: sendMessage } = useMessagingFeed(agents);
   const cursors = useReadCursors();
   const [dismissed, setDismissed] = useState<ReadonlySet<string>>(() => new Set());
   const [selectedId, setSelectedId] = useState<ConversationId | null>(null);
@@ -86,7 +95,7 @@ export function MessagesView({ agents, agentsLoaded, projects, openRequest }: Me
   );
   const [widths, setWidths] = useState<RailWidths>(() => loadRailWidths());
   const widthsRef = useRef(widths);
-  widthsRef.current = widths;
+  widthsRef.current = widths; const resizeDeps = { rootRef, widthsRef, setWidths, setResizing };
 
   // Durable-first people directory (ruling S3): the roster that materializes
   // DM lanes is the PeopleHub union — durable agents (incl. registered
@@ -95,19 +104,10 @@ export function MessagesView({ agents, agentsLoaded, projects, openRequest }: Me
   // people directory", so the external chief's empty lane survives the prune.
   const { people, archivedLaneIds, loaded: peopleLoaded, stale: peopleStale } = usePeople();
   const peopleTitles = useMemo(() => people.map((person) => ({ title: person.name })), [people]);
-  // The lane roster: the runtime fleet PLUS people-directory names the fleet
-  // list doesn't know (registered-but-silent agents keep openable lanes).
-  const rosterAgents = useMemo(() => {
-    const known = new Set(agents.map((agent) => agent.title));
-    const extras = people
-      .filter((person) => !known.has(person.name))
-      .map((person) => ({
-        agentId: `person_${person.name}`, title: person.name,
-        provider: person.provider as AgentInfo['provider'], status: 'exited' as const,
-        sessionId: '', projectDir: '', cwd: '', createdAt: '',
-      }));
-    return [...agents, ...extras];
-  }, [agents, people]);
+  const rosterAgents = useMemo(
+    () => laneRosterFor(agents, people.map((person) => ({ name: person.name, provider: person.provider as AgentInfo['provider'] }))),
+    [agents, people],
+  );
   const conversations = useMemo(
     () => visibleLanesFor(buildConversations(threads, feed, rosterAgents), feed, peopleTitles),
     [threads, feed, rosterAgents, peopleTitles],
@@ -149,41 +149,6 @@ export function MessagesView({ agents, agentsLoaded, projects, openRequest }: Me
     root.style.setProperty('--msg-rail-w', `${widths.rail}px`);
     root.style.setProperty('--msg-context-w', `${widths.context}px`);
   }, [widths]);
-
-  // Drag a column edge: pointer capture keeps the drag alive off-handle; the
-  // width lands on pointerup. Arrow keys on the focused handle nudge ±16px.
-  function beginResize(kind: keyof RailWidths) {
-    return (down: React.PointerEvent<HTMLElement>) => {
-      const rect = rootRef.current?.getBoundingClientRect();
-      if (!rect) return;
-      down.preventDefault();
-      const handle = down.currentTarget;
-      handle.setPointerCapture(down.pointerId);
-      setResizing(true);
-      const move = (event: PointerEvent) => {
-        const pixels = kind === 'rail' ? event.clientX - rect.left : rect.right - event.clientX;
-        setWidths((current) => ({ ...current, [kind]: clampRailWidth(kind, pixels) }));
-      };
-      const release = () => {
-        handle.removeEventListener('pointermove', move);
-        setResizing(false);
-        saveRailWidths(widthsRef.current);
-      };
-      handle.addEventListener('pointermove', move);
-      handle.addEventListener('pointerup', release, { once: true });
-    };
-  }
-
-  function nudgeWidth(kind: keyof RailWidths) {
-    return (press: React.KeyboardEvent<HTMLElement>) => {
-      if (press.key !== 'ArrowLeft' && press.key !== 'ArrowRight') return;
-      press.preventDefault();
-      const delta = (press.key === 'ArrowRight' ? 16 : -16) * (kind === 'rail' ? 1 : -1);
-      const next = { ...widthsRef.current, [kind]: clampRailWidth(kind, widthsRef.current[kind] + delta) };
-      setWidths(next);
-      saveRailWidths(next);
-    };
-  }
 
   // Keep the app-wide amber engine fed — unchanged behavior (§6.9).
   useEffect(() => {
@@ -348,8 +313,8 @@ export function MessagesView({ agents, agentsLoaded, projects, openRequest }: Me
               onExtendWindow={() => setThreadWindow((current) => ({ count: current.count + MESSAGING_SETTINGS.thread.windowSize }))}
               onSeen={(seenCreatedAt) => advanceCursor(selected.id, seenCreatedAt)}
             />
-            {connection === 'disconnected' && feedLoaded && (
-              <div className="msg-conn-strip" role="status">Reconnecting…</div>
+            {connStripText(loadError, connection, feedLoaded) !== null && (
+              <div className="msg-conn-strip" role="status">{connStripText(loadError, connection, feedLoaded)}</div>
             )}
             <ComposerBar conversation={selected} targets={composerTargets} onSend={send} />
           </>
@@ -387,8 +352,8 @@ export function MessagesView({ agents, agentsLoaded, projects, openRequest }: Me
         aria-label="Resize conversations panel"
         tabIndex={0}
         className="msg-resize msg-resize-rail"
-        onPointerDown={beginResize('rail')}
-        onKeyDown={nudgeWidth('rail')}
+        onPointerDown={beginResize(resizeDeps, 'rail')}
+        onKeyDown={nudgeWidth(resizeDeps, 'rail')}
       />
       {selected && contextOpen && (
         <div
@@ -397,8 +362,8 @@ export function MessagesView({ agents, agentsLoaded, projects, openRequest }: Me
           aria-label="Resize context panel"
           tabIndex={0}
           className="msg-resize msg-resize-context"
-          onPointerDown={beginResize('context')}
-          onKeyDown={nudgeWidth('context')}
+          onPointerDown={beginResize(resizeDeps, 'context')}
+          onKeyDown={nudgeWidth(resizeDeps, 'context')}
         />
       )}
     </section>

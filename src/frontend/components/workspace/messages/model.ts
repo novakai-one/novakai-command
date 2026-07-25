@@ -194,10 +194,10 @@ export function saveRailWidths(widths: RailWidths): void {
 }
 
 /* ---------- Presence tones (D-N4-5) ------------------------------------------
-   The invented feed-derived heuristic is DELETED — rows use PeopleHub
-   liveness tiers (kept) and the capability presence snapshot is real
-   (PresenceChanged + /user/presence). unread → amber "notification";
-   live-verified → green; anything else → gray. */
+   The invented feed-derived heuristic is DELETED — rail/person rows use
+   PeopleHub liveness tiers (the ONE server-derived liveness truth, Ruling 3).
+   The feed lib carries NO presence plumbing (F11): unread → amber
+   "notification"; live-verified → green; anything else → gray. */
 export type PresenceTone = 'amber' | 'green' | 'gray';
 
 export const PRESENCE_LABEL: Record<PresenceTone, string> = {

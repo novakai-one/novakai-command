@@ -1,7 +1,8 @@
 // ComposerBar — the storyboard's pinned composer: drag handle, raised box,
 // channel line, textarea, footer ("Draft saved" + inverted ↑ send button).
-// Send is record-first: POST /api/user/messages (parent owns the fetch), the
-// ws echo upserts the row — no optimistic row. Drafts persist per lane
+// Send rides the data plane's hook (N4): optimistic 'queued' row, the
+// committed echo settles it, a failed POST marks it 'failed' (F4). Drafts
+// persist per lane
 // (lib/composerDraft); server errors (404 roster hint, 502 honest failure)
 // render inline above the box. Typing @ at a word boundary opens the member
 // picker (round 2): arrows move, Enter/Tab picks, Escape closes; picking

@@ -83,6 +83,14 @@ interface LiveState {
   handles: Map<LiveSocket, SubscriptionHandle>;
 }
 
+/** Supersede the socket's prior handle BEFORE replacing it (F6 — every
+ * event would land twice otherwise). */
+async function supersede(state: LiveState, socket: LiveSocket, handle: SubscriptionHandle): Promise<void> {
+  const existing = state.handles.get(socket);
+  if (existing !== undefined) await existing.close().catch(() => {});
+  state.handles.set(socket, handle);
+}
+
 async function subscribeSocket(state: LiveState, socket: LiveSocket, since: string | undefined): Promise<void> {
   const session = state.deps.humanSession();
   if (session === null) {
@@ -103,7 +111,7 @@ async function subscribeSocket(state: LiveState, socket: LiveSocket, since: stri
     await outcome.value.close().catch(() => {});
     return;
   }
-  state.handles.set(socket, outcome.value);
+  await supersede(state, socket, outcome.value);
 }
 
 function closeSocket(state: LiveState, socket: LiveSocket): void {

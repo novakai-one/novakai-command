@@ -84,6 +84,12 @@ assert.equal(
   'urgent priority renders as interrupt delivery',
 );
 assert.equal(formatRoute(translated), 'chris → chief-kimi', 'the dm lane renders its agent name in routes');
+// F3 (audit): an INCOMING dm row (from === the lane name) renders its bare
+// sender — never '<name> → <name>'; outgoing keeps the route.
+const incoming = translateMessage(message({ senderId: ALICE_PERSON }), threads, agents);
+assert.equal(incoming.from, 'chief-kimi');
+assert.equal(formatRoute(incoming), 'chief-kimi', 'incoming dm rows render the bare sender');
+assert.equal(formatRoute(translated), 'chris → chief-kimi', 'outgoing keeps the full route');
 console.log('message translation tests passed');
 
 // --- the honesty table -------------------------------------------------------------

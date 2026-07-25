@@ -90,6 +90,29 @@ export function nameForPersonId(personId: string, agents: Pick<AgentInfo, 'agent
   return found?.title ?? personId;
 }
 
+/** The lane roster (F13, ONE home): the runtime fleet PLUS people-directory
+ * names the fleet doesn't know — registered-but-silent agents keep openable
+ * lanes. Extras carry an EMPTY agentId: no id is fabricated (a fabricated
+ * `person_<name>` could alias a real personId derivation; '' matches
+ * nothing, honestly). */
+export interface LaneAgent {
+  agentId: string;
+  title: string;
+  provider: AgentInfo['provider'];
+  status: AgentInfo['status'];
+}
+
+export function laneRosterFor(
+  agents: AgentInfo[],
+  people: Array<{ name: string; provider: AgentInfo['provider'] }>,
+): LaneAgent[] {
+  const known = new Set(agents.map((agent) => agent.title));
+  const extras = people
+    .filter((person) => !known.has(person.name))
+    .map((person) => ({ agentId: '', title: person.name, provider: person.provider, status: 'exited' as const }));
+  return [...agents, ...extras];
+}
+
 /** One thread → its lane id. */
 export function laneForThread(thread: CapabilityThread, agents: Pick<AgentInfo, 'agentId' | 'title'>[]): string {
   if (thread.threadKind === 'direct') {
@@ -118,7 +141,8 @@ export function translateMessage(
   };
 }
 
-/** Same id replaces in place (the committed echo settles a 'queued' row). */
+/** Same id replaces in place (the committed echo settles a 'queued' row).
+ * Also exported under the old name (upsertEnvelope, tunnelModel grammar). */
 export function upsertRow(feed: MessageRow[], incoming: MessageRow): MessageRow[] {
   const index = feed.findIndex((entry) => entry.id === incoming.id);
   if (index === -1) return [...feed, incoming];
@@ -174,9 +198,10 @@ async function fetchJson<T>(path: string): Promise<T | null> {
   }
 }
 
-export async function fetchThreads(): Promise<CapabilityThread[]> {
+export async function fetchThreads(): Promise<CapabilityThread[] | null> {
   const data = await fetchJson<{ threads?: CapabilityThread[] }>('/api/messaging/v2/user/threads');
-  return data?.threads ?? [];
+  // F16: null = the read FAILED (a load error, never an empty thread list).
+  return data === null ? null : data.threads ?? [];
 }
 
 export async function fetchThreadMessages(threadId: string): Promise<CapabilityMessage[]> {
@@ -219,6 +244,20 @@ function laneKind(laneId: string): Conversation['kind'] {
  * is still openable — sending creates the thread). Room lanes carry
  * `members: [chris]`: D-N3-1 host policy puts the human in EVERY roster —
  * the prune's members rule is the truth, not a courtesy. */
+/** One thread → its rail conversation (lane id, kind, honest membership). */
+function conversationFor(
+  thread: CapabilityThread,
+  agents: Pick<AgentInfo, 'agentId' | 'title'>[],
+  latest: Map<string, MessageRow>,
+): Conversation {
+  const laneId = laneForThread(thread, agents);
+  return {
+    id: laneId, kind: laneKind(laneId), title: laneId.startsWith('dm:') ? laneId.slice(3) : laneId,
+    threadId: thread.id, lastMessageAt: latest.get(laneId)?.createdAt,
+    ...(laneKind(laneId) !== 'dm' ? { members: [CHRIS] } : {}),
+  };
+}
+
 export function buildConversations(
   threads: CapabilityThread[],
   feed: MessageRow[],
@@ -227,12 +266,8 @@ export function buildConversations(
   const latest = latestByLane(feed);
   const lanes = new Map<string, Conversation>();
   for (const thread of threads) {
-    const laneId = laneForThread(thread, agents);
-    lanes.set(laneId, {
-      id: laneId, kind: laneKind(laneId), title: laneId.startsWith('dm:') ? laneId.slice(3) : laneId,
-      threadId: thread.id, lastMessageAt: latest.get(laneId)?.createdAt,
-      ...(laneKind(laneId) !== 'dm' ? { members: [CHRIS] } : {}),
-    });
+    const conversation = conversationFor(thread, agents, latest);
+    lanes.set(conversation.id, conversation);
   }
   for (const agent of agents) {
     const laneId = `dm:${agent.title}`;
@@ -268,10 +303,15 @@ export function messagesFor(feed: MessageRow[], laneId: string): MessageRow[] {
     .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id));
 }
 
-/** "claude-1 → codex-2" — the tiny mono route label (grammar preserved). */
+/** "claude-1 → codex-2" — the tiny mono route label (grammar preserved).
+ * F3 (audit): in a dm lane, an INCOMING row (from === the lane name)
+ * renders its bare sender — never '<name> → <name>'. */
 export function formatRoute(messageRow: MessageRow): string {
-  return `${messageRow.from} → ${messageRow.to.startsWith('dm:') ? messageRow.to.slice(3) : messageRow.to}`;
+  const laneName = messageRow.to.startsWith('dm:') ? messageRow.to.slice(3) : messageRow.to;
+  if (messageRow.from === laneName) return messageRow.from;
+  return `${messageRow.from} → ${laneName}`;
 }
 
 // Single import surface: the compatibility helpers (was tunnelModel).
 export * from './compat/index.js';
+export { upsertRow as upsertEnvelope };

@@ -3,12 +3,13 @@
  * derivations the old tunnelModel exported that consumers still need,
  * re-derived over the honest capability rows (../index.ts). This module
  * exists so the consumer rewires stay mechanical; ../index.ts re-exports it
- * for a single import surface. Nothing here invents state.
+ * for a single import surface. Nothing here invents state. F14 (audit):
+ * the import direction is ONE way — compat takes only TYPES from index
+ * (erased at runtime); index re-exports compat's values.
  */
 
 import { onConnectionChanged } from '../../agentSocket/index.js';
 import type { AgentInfo } from '../../agentSocket/index.js';
-import { CHRIS, TEAM_CHANNEL } from '../index.js';
 import type { Conversation, MessageRow } from '../index.js';
 
 /** Compatibility alias: the old envelope shape, now honest rows. */
@@ -49,9 +50,6 @@ export function resolveSelectedLane(
 export function conversationIdsFor(envelope: TunnelEnvelope): ConversationId[] {
   return [envelope.to];
 }
-
-/** Same id replaces in place; a new id appends (upsertRow, old name). */
-export { upsertRow as upsertEnvelope } from '../index.js';
 
 /** History snapshot under any live frames that landed while it was in flight. */
 export function mergeFeed(history: TunnelEnvelope[], live: TunnelEnvelope[]): TunnelEnvelope[] {

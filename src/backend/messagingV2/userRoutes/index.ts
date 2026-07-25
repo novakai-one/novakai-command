@@ -60,10 +60,18 @@ function parseSendBody(payload: unknown): SendBody | string {
   return { target: record['to'], text: record['body'], interrupt: record['interrupt'] === true };
 }
 
-/** display name → durable AND running agent (the old route's roster rule). */
-function resolveAgent(deps: MessagingV2UserRouteDeps, name: string): AgentInfo | undefined {
-  return deps.terminals.list().find((agent) =>
+/** display name → personId: the running roster first, then DURABLE agents
+ * by name (F9 — an exited-but-durable agent resolves; the capability
+ * decides deliverability — delivery pends honestly, matching the UI's
+ * openable exited-agent lanes). Mailbox identities that map to durable
+ * agents are covered by the same name lookup (their memberName IS the
+ * agent's name). Unknown → null (the caller 404s with the roster hint). */
+function resolveRecipientPersonId(deps: MessagingV2UserRouteDeps, name: string): string | undefined {
+  const running = deps.terminals.list().find((agent) =>
     agent.status === 'running' && agent.title === name && deps.objectModel.agentRecord(agent.agentId) !== null);
+  if (running !== undefined) return personIdForAgentId(running.agentId);
+  const durable = deps.objectModel.listAgents().find((block) => block.name === name);
+  return durable === undefined ? undefined : personIdForAgentId(durable.id);
 }
 
 function liveRosterHint(deps: MessagingV2UserRouteDeps): string[] {
@@ -126,9 +134,9 @@ async function sendRoom(
   replyOutcome(response, await session.sendMessage(roomInput(parsed, threadId)), 201);
 }
 
-function agentInput(parsed: SendBody, agent: AgentInfo): Record<string, unknown> {
+function personInput(parsed: SendBody, personId: string): Record<string, unknown> {
   return {
-    address: `person:${personIdForAgentId(agent.agentId)}`,
+    address: `person:${personId}`,
     body: { text: parsed.text },
     priority: parsed.interrupt ? 'urgent' : 'normal',
     clientMessageId: `msg_${randomUUID()}`,
@@ -147,12 +155,12 @@ async function handleUserSend(deps: MessagingV2UserRouteDeps, request: Request, 
     await sendRoom(deps, session, parsed, response);
     return;
   }
-  const agent = resolveAgent(deps, parsed.target);
-  if (agent === undefined) {
+  const personId = resolveRecipientPersonId(deps, parsed.target);
+  if (personId === undefined) {
     response.status(404).json({ error: `recipient "${parsed.target}" is not a live agent`, roster: liveRosterHint(deps) });
     return;
   }
-  replyOutcome(response, await session.sendMessage(agentInput(parsed, agent)), 201);
+  replyOutcome(response, await session.sendMessage(personInput(parsed, personId)), 201);
 }
 
 async function handleThreads(deps: MessagingV2UserRouteDeps, response: Response): Promise<void> {

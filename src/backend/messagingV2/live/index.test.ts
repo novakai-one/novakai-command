@@ -105,6 +105,20 @@ await new Promise((resolve) => setTimeout(resolve, 30));
 assert.equal(second.sent.length, secondBefore, 'a torn-down subscription forwards nothing');
 console.log('manual teardown tests passed');
 
+// --- F6: a re-subscribe on the same socket closes the prior handle (no doubling) ---
+
+session = await humanSession();
+const resub = new FakeSocket();
+await live.subscribe(resub, undefined);
+await live.subscribe(resub, undefined); // re-sub BEFORE any commit
+assert.equal(live.count, 1, 'the socket still holds exactly one handle');
+const resentId = await commit('no doubling', 'live-5');
+const echoes = resub.frames().filter((frame) =>
+  frame['kind'] === 'event' && (frame['event'] as { message?: { id?: string } }).message?.id === resentId);
+assert.equal(echoes.length, 1, 'the superseded subscription is closed — one echo, never two');
+live.close(resub);
+console.log('re-subscribe handle-close test passed');
+
 // --- no human session → honest dependency-lost frame ------------------------------
 
 session = null as never;

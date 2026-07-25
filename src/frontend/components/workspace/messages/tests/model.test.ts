@@ -484,8 +484,8 @@ assert.deepEqual(mentionSuggestions(offlineTargets, '', 6).map((target) => targe
     { id: 'thread_dm_e', threadKind: 'direct' as const, direct: { pair: ['person_user-chris', 'person_agent-e'] as [string, string] } },
   ];
   const feed = [
-    envelope({ id: 'p1', from: 'worker-e', to: 'dm:worker-e', body: 'hello chris' }),
-    envelope({ id: 'p2', from: 'chris', to: 'dm:worker-e', body: 'hi' }),
+    envelope({ id: 'p1', from: 'worker-e', 'to': 'dm:worker-e', body: 'hello chris' }),
+    envelope({ id: 'p2', from: 'chris', 'to': 'dm:worker-e', body: 'hi' }),
   ];
   const lanes = buildConversations(threads, feed, agents);
   assert.ok(lanes.some((entry) => entry.id === 'dm:worker-c'), 'exited empty lane must materialize');

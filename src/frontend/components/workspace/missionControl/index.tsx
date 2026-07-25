@@ -21,6 +21,7 @@ import {
   buildConversations,
   dmId,
   dmLaneFor,
+  laneRosterFor,
   latestChrisQuestion,
   messagesFor,
   resolveSelectedLane,
@@ -119,17 +120,10 @@ export function MissionControl(props: MissionControlProps) {
     [people],
   );
   const peopleTitles = useMemo(() => people.map((person) => ({ title: person.name })), [people]);
-  const rosterAgents = useMemo(() => {
-    const known = new Set(props.agents.map((agent) => agent.title));
-    const extras = people
-      .filter((person) => !known.has(person.name))
-      .map((person) => ({
-        agentId: `person_${person.name}`, title: person.name,
-        provider: person.provider as AgentInfo['provider'], status: 'exited' as const,
-        sessionId: '', projectDir: '', cwd: '', createdAt: '',
-      }));
-    return [...props.agents, ...extras];
-  }, [props.agents, people]);
+  const rosterAgents = useMemo(
+    () => laneRosterFor(props.agents, people.map((person) => ({ name: person.name, provider: person.provider as AgentInfo['provider'] }))),
+    [props.agents, people],
+  );
   const conversations = useMemo(
     () => visibleLanesFor(buildConversations(threads, feed, rosterAgents), feed, peopleTitles),
     [threads, feed, rosterAgents, peopleTitles],

@@ -66,6 +66,8 @@ const model = new ObjectModel({ storesDir: scratch });
 const teamId = model.createTeam({ name: 'Messaging Crew', missionId: 'mission_alpha' });
 const aliceId = model.createAgent({ name: 'chief-kimi', provider: 'kimi', teamId, missionId: 'mission_alpha' });
 const bobId = model.createAgent({ name: 'worker-b', provider: 'claude', teamId, missionId: 'mission_alpha' });
+// F9: durable but OFFLINE — no live terminal anywhere.
+const carolId = model.createAgent({ name: 'worker-c', provider: 'claude', teamId, missionId: 'mission_alpha' });
 const terminals = new FakeTerminalRuntime([
   agentInfo(aliceId, 'chief-kimi', 'kimi'),
   agentInfo(bobId, 'worker-b'),
@@ -140,6 +142,24 @@ const agentInterrupt = await userSend({ 'to': 'worker-b', body: 'urgent dm', int
 assert.equal(agentInterrupt.status, 201, 'the human holds priority.override — urgent DMs are legal');
 assert.deepEqual(terminals.submissions.at(-1)?.leadIn, { data: '\x1b', settleMs: 400 });
 console.log('error grammar tests passed');
+
+// --- F9: offline/durable recipients resolve — the capability decides deliverability ---
+
+const offline = await userSend({ 'to': 'worker-c', body: 'you are offline but durable' });
+assert.equal(offline.status, 201, 'an exited-but-durable agent name resolves (NOT 404)');
+assert.ok(
+  !terminals.submissions.some((submission) => submission.text.includes('you are offline but durable')),
+  'nothing types into a lane that does not exist',
+);
+const humanSession = handle.lanes?.humanSession();
+assert.ok(humanSession);
+const offlineDelivery = await humanSession?.getDelivery({ messageId: offline.json['messageId'] });
+if (offlineDelivery?.kind !== 'ok') throw new Error('unreachable');
+assert.equal(offlineDelivery?.value.deliveries[0]?.state, 'pending', 'delivery pends honestly for the offline agent');
+const unknown = await userSend({ 'to': 'worker-ghost', body: 'x' });
+assert.equal(unknown.status, 404, 'a truly unknown name still 404s with the roster hint');
+assert.ok(Array.isArray(unknown.json['roster']));
+console.log('offline recipient resolution tests passed');
 
 // --- reads: threads, trailing-window messages, presence snapshot ---------------------------
 
