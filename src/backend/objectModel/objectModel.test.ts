@@ -129,5 +129,11 @@ assert.equal(model.missionRecord('mission_alpha')?.title, 'Alpha');
 assert.equal(model.missionRecord('mission_ghost'), null, 'unknown mission resolves to null, never a throw');
 console.log('mission read test passed');
 
+// --- team read -----------------------------------------------------------------
+
+assert.equal(model.teamRecord(teamId)?.name, 'Object Model Crew');
+assert.equal(model.teamRecord('team_ghost'), null, 'unknown team resolves to null, never a throw');
+console.log('team read test passed');
+
 rmSync(scratch, { recursive: true, force: true });
 console.log('object-model module tests passed');

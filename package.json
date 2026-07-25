@@ -18,6 +18,7 @@
     "stores:audit": "node scripts/nvk-store.mjs audit --dir .novakai/stores",
     "stores:gate": "node tools/gates/stores.mjs",
     "stores:test": "npx tsx src/backend/stores/validate.test.mjs && npx tsx src/backend/stores/objectmodel.test.mjs && npx tsx src/backend/stores/transition.test.mjs && npx tsx src/backend/stores/store.test.mjs && npx tsx src/backend/stores/cli.test.mjs && npx tsx tools/gates/stores.test.mjs && npx tsx scripts/nvk-mission.test.mjs",
+    "messaging:test": "npm --prefix packages/messaging run build && npm --prefix packages/messaging test && node packages/messaging/contract/check-map-drift.mjs",
     "app": "electron desktop",
     "app:build": "electron-builder --mac --config electron-builder.yml",
     "postinstall": "chmod +x node_modules/node-pty/prebuilds/*/spawn-helper 2>/dev/null || true",
@@ -34,7 +35,7 @@
     "playwright-core": "^1.61.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "ws": "^8.17.0"
+    "ws": "^8.21.1"
   },
   "devDependencies": {
     "@types/cors": "^2.8.17",
