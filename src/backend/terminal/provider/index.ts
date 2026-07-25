@@ -19,11 +19,14 @@ export interface ProviderLaunch {
   cancelSessionWait?(reason?: string): void;
 }
 
-/** Injectable provider launcher used by TerminalManager and its tests. */
+/** Injectable provider launcher used by TerminalManager and its tests. The
+ * optional agentId is the spawn's adopted identity (durable for mission
+ * spawns, runtime-minted otherwise) — injected into the child env (N2). */
 export type ProviderLauncher = (
   provider: ProviderId,
   cwd: string,
   requestedSessionId: string,
+  agentId?: string,
 ) => ProviderLaunch;
 
 interface ProviderSpec {
@@ -34,21 +37,21 @@ interface ProviderSpec {
   /** Configured CLI path (absolute or on-PATH name). */
   cliPath(configuration: AppConfig): string | undefined;
   /** Spawn the PTY and resolve the authoritative session id. */
-  launch(cwd: string, requestedSessionId: string): ProviderLaunch;
+  launch(cwd: string, requestedSessionId: string, agentId?: string): ProviderLaunch;
 }
 
-function launchClaude(cwd: string, requestedSessionId: string): ProviderLaunch {
+function launchClaude(cwd: string, requestedSessionId: string, agentId?: string): ProviderLaunch {
   return {
-    process: spawn('claude', cwd, PROVIDERS.claude.args(requestedSessionId), requestedSessionId),
+    process: spawn('claude', cwd, PROVIDERS.claude.args(requestedSessionId), requestedSessionId, agentId),
     sessionId: Promise.resolve(requestedSessionId),
   };
 }
 
-function launchCodex(cwd: string, requestedSessionId: string): ProviderLaunch {
+function launchCodex(cwd: string, requestedSessionId: string, agentId?: string): ProviderLaunch {
   const locator = new CodexSessionLocator();
   const known = locator.snapshot();
   const startedAt = Date.now();
-  const launched = spawn('codex', cwd, PROVIDERS.codex.args(requestedSessionId), requestedSessionId);
+  const launched = spawn('codex', cwd, PROVIDERS.codex.args(requestedSessionId), requestedSessionId, agentId);
   return {
     process: launched,
     sessionId: locator.waitForNew(cwd, known, startedAt),
@@ -56,10 +59,10 @@ function launchCodex(cwd: string, requestedSessionId: string): ProviderLaunch {
   };
 }
 
-function launchKimi(cwd: string, requestedSessionId: string): ProviderLaunch {
+function launchKimi(cwd: string, requestedSessionId: string, agentId?: string): ProviderLaunch {
   const locator = new KimiSessionLocator();
   const known = locator.snapshot();
-  const launched = spawn('kimi', cwd, PROVIDERS.kimi.args(requestedSessionId), requestedSessionId);
+  const launched = spawn('kimi', cwd, PROVIDERS.kimi.args(requestedSessionId), requestedSessionId, agentId);
   return {
     process: launched,
     sessionId: locator.waitForNew(cwd, known),
@@ -96,6 +99,7 @@ export function providerEnvironment(
   provider: ProviderId,
   browserSession?: string,
   serverPort?: number,
+  agentId?: string,
 ): NodeJS.ProcessEnv {
   const scrubbed = { ...process.env };
   for (const envKey of Object.keys(scrubbed)) {
@@ -106,6 +110,10 @@ export function providerEnvironment(
   // Bind each agent to its own isolated browser session. When the agent runs
   // `browse`, it auto-scopes to this id — parallel agents never share a tab.
   if (browserSession) scrubbed.NVK_SESSION = browserSession;
+  // N2: the agent's messaging credential is its adopted agentId (durable for
+  // mission spawns, runtime-minted otherwise — the latter simply never
+  // authenticates). nvk-msg reads it; the briefing never prints it.
+  if (agentId) scrubbed.NVK_AGENT_ID = agentId;
   // Lane-local tunnel routing: THIS backend's own port is authoritative for
   // its agents' nvk-msg / nvk-live, even when the parent environment carries
   // another backend's NVK_COMMAND_URL — a dev backend started from a
@@ -116,7 +124,13 @@ export function providerEnvironment(
   return scrubbed;
 }
 
-function spawn(provider: ProviderId, cwd: string, args: string[], browserSession: string): ProviderTerminalProcess {
+function spawn(
+  provider: ProviderId,
+  cwd: string,
+  args: string[],
+  browserSession: string,
+  agentId?: string,
+): ProviderTerminalProcess {
   const configuration = ConfigManager.load();
   const serverPort = Number(process.env.NOVAKAI_SERVER_PORT) || configuration.serverPort;
   const configured = PROVIDERS[provider].cliPath(configuration);
@@ -130,11 +144,16 @@ function spawn(provider: ProviderId, cwd: string, args: string[], browserSession
     cols: 120,
     rows: 32,
     cwd,
-    env: providerEnvironment(provider, browserSession, serverPort),
+    env: providerEnvironment(provider, browserSession, serverPort, agentId),
   });
 }
 
 /** Launch a provider CLI while resolving its authoritative session ID. */
-export function launchProvider(provider: ProviderId, cwd: string, requestedSessionId: string): ProviderLaunch {
-  return PROVIDERS[provider].launch(cwd, requestedSessionId);
+export function launchProvider(
+  provider: ProviderId,
+  cwd: string,
+  requestedSessionId: string,
+  agentId?: string,
+): ProviderLaunch {
+  return PROVIDERS[provider].launch(cwd, requestedSessionId, agentId);
 }

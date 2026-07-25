@@ -101,14 +101,13 @@ async function testRoomLifecycle(): Promise<Room> {
 
 async function testRoomMessaging(room: Room): Promise<void> {
   writes.length = 0;
-  const posted = await request('/api/messages', 'POST', {
-    from: 'claude-1',
+  // N2: POST /api/messages is gone — room routing (which survives until N3)
+  // is exercised through the same SendApi seam the old route wrapped.
+  const envelope = await messagingHub.send.send('claude-1', {
     'to': room.roomId,
     delivery: 'normal',
     body: 'three-way hello',
   });
-  assert.equal(posted.status, 201);
-  const envelope = posted.json.envelope as MessageEnvelope;
   assert.equal(envelope.status, 'delivered');
   assert.equal(writes[0]?.agentId, 'agent_codex');
   assert.equal(
@@ -120,33 +119,20 @@ async function testRoomMessaging(room: Room): Promise<void> {
   const history = await request(`/api/messages?withRoom=${encodeURIComponent(room.roomId)}`);
   assert.deepEqual(history.json.messages.map((message: MessageEnvelope) => message.id), [envelope.id]);
 
-  assert.equal(
-    (await request('/api/messages', 'POST', {
-      from: 'claude-1',
-      'to': room.roomId,
-      delivery: 'interrupt',
-      body: 'never record this',
-    })).status,
-    400,
+  await assert.rejects(
+    messagingHub.send.send('claude-1', { 'to': room.roomId, delivery: 'interrupt', body: 'never record this' }),
+    /interrupt/,
   );
   const afterInterrupt = await request(`/api/messages?withRoom=${encodeURIComponent(room.roomId)}`);
   assert.equal(afterInterrupt.json.messages.length, 1, 'room interrupt rejected before recording');
 
-  assert.equal(
-    (await request('/api/messages', 'POST', {
-      from: 'outsider',
-      'to': room.roomId,
-      body: 'no access',
-    })).status,
-    403,
+  await assert.rejects(
+    messagingHub.send.send('outsider', { 'to': room.roomId, delivery: 'normal', body: 'no access' }),
+    /is not a member of room/,
   );
-  assert.equal(
-    (await request('/api/messages', 'POST', {
-      from: 'claude-1',
-      'to': 'room_unknown',
-      body: 'missing',
-    })).status,
-    404,
+  await assert.rejects(
+    messagingHub.send.send('claude-1', { 'to': 'room_unknown', delivery: 'normal', body: 'missing' }),
+    /was not found/,
   );
 }
 

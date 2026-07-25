@@ -1,12 +1,16 @@
-// Agent messaging tunnel wiring (docs/agent-messaging.md). Owns the REST
-// surface (POST/GET /api/messages), pushes every appended envelope over the
-// existing WebSocket broadcast for the future Messages view (R6), and types
-// the spawn briefing into each new agent's PTY (R5). Kept out of
-// server/index.ts the same way AgentsHub is.
+// Agent messaging tunnel wiring (docs/agent-messaging.md). Owns the surviving
+// REST surface (GET /api/messages history, /api/user/messages, rooms,
+// mailboxes), and pushes every appended envelope over the existing WebSocket
+// broadcast for the future Messages view (R6). Kept out of server/index.ts
+// the same way AgentsHub is.
+//
+// N2 deletions: POST /api/messages + handleSend (agent-originated sends now
+// go through the authenticated v2 routes), and the spawn briefing (the
+// messagingV2 presence glue owns it). The router/delivery/confirmer stack
+// stays for the human lane until N3/N4.
 import type { Express, Request, Response } from 'express';
 import type { AgentInfo } from '../terminal/manager.js';
 import { rosterFromAgents } from './address/index.js';
-import { composeSpawnBriefing } from './address/briefing.js';
 import { PtyDelivery, DeliveryFailedError } from './delivery/index.js';
 import type { DeliveryTimings, PtyWriter } from './delivery/index.js';
 import {
@@ -45,7 +49,6 @@ export { MessageRouter, InterruptRateLimiter } from './router/index.js';
 export { MailboxConflictError, MailboxRegistry } from './mailbox/index.js';
 export { SendApi } from './send/index.js';
 export { rosterFromAgents, nextSpawnName, isNameTaken } from './address/index.js';
-export { composeSpawnBriefing } from './address/briefing.js';
 export * from './types.js';
 
 /** The TerminalManager surface messaging consumes. */
@@ -62,10 +65,6 @@ export interface MessagingOptions {
   mailboxRegistry?: MailboxRegistry;
   timings?: DeliveryTimings;
   maxInterruptsPerMinute?: number;
-  /** How long a freshly spawned CLI gets to boot before the briefing is typed. */
-  spawnBriefingDelayMs?: number;
-  /** Port quoted in the briefing's curl instructions. */
-  serverPort?: number;
   /** The durable mission graph — enables server-derived envelope identity
    * and the POST /api/threads mission↔room link. */
   missionGraph?: MissionGraph;
@@ -85,8 +84,6 @@ export class MessagingHub {
   private readonly mailboxes: MailboxRegistry;
   private readonly sendApi: SendApi;
   private readonly router: MessageRouter;
-  private readonly spawnBriefingDelayMs: number;
-  private readonly serverPort: number;
   private readonly missionGraph?: MissionGraph;
 
   constructor(
@@ -102,8 +99,6 @@ export class MessagingHub {
     this.delivery = new PtyDelivery(this.terminals, options.timings);
     this.router = this.buildRouter(options);
     this.sendApi = new SendApi(this.router);
-    this.spawnBriefingDelayMs = options.spawnBriefingDelayMs ?? 3000;
-    this.serverPort = options.serverPort ?? 3031;
     if (options.reconcileOnStart !== false) {
       // Delayed + unref'd: short-lived rigs exit before it fires; a real
       // backend reconciles the journal once the roster has had time to attach.
@@ -149,7 +144,6 @@ export class MessagingHub {
   }
 
   registerRoutes(application: Express): void {
-    application.post('/api/messages', (request, response) => void this.handleSend(request, response));
     application.post('/api/user/messages', (request, response) => void this.handleUserSend(request, response));
     application.get('/api/messages', (request, response) => this.handleHistory(request, response));
     application.get('/api/identity', (_request, response) => response.json({ identity: CHRIS_IDENTITY }));
@@ -253,32 +247,6 @@ export class MessagingHub {
       throw new Error(`${field} must be an array of non-empty strings`);
     }
     return value;
-  }
-
-  /**
-   * Phase 5: standing instructions typed into the agent's PTY once its CLI
-   * has had time to boot. Best-effort — a briefing must never fail a spawn.
-   */
-  handleAgentSpawned(info: AgentInfo): void {
-    const timer = setTimeout(() => {
-      const roster = rosterFromAgents(this.terminals.list());
-      const self = roster.find((agent) => agent.agentId === info.agentId);
-      if (!self) return; // exited before the briefing was due
-      const peers = roster.filter((agent) => agent.agentId !== info.agentId);
-      void this.delivery
-        .type(self, composeSpawnBriefing(self.name, peers, this.serverPort, this.mailboxes.list()))
-        .catch(() => { /* PTY already gone — nothing to brief */ });
-    }, this.spawnBriefingDelayMs);
-    timer.unref?.();
-  }
-
-  private async handleSend(request: Request, response: Response): Promise<void> {
-    const payload = (request.body ?? {}) as Partial<SendMessage> & { from?: string; threadId?: string };
-    // SECURITY DEBT (M2): this agent route still trusts the submitted `from`
-    // string. Authenticate live agents and give orchestrators a server-owned
-    // send route before treating sender identity as an authorization fact.
-    const sender = payload.from === CHRIS_MEMBER ? CHRIS_IDENTITY.memberName : payload.from as string;
-    await this.sendPayload(sender, payload, response);
   }
 
   private async handleUserSend(request: Request, response: Response): Promise<void> {
