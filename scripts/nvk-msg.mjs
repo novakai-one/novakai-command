@@ -84,18 +84,6 @@ if (cmd === 'send') {
   const who = args[0];
   if (!who) { console.error('usage: nvk-msg read <name|#team> [--since ISO]'); process.exit(1); }
 
-  if (who.startsWith('room_')) {
-    // INTERIM (dies in N4): free-room reads still come from the OLD pull-only
-    // history route — free rooms are archive-only since N3.
-    const query = new URLSearchParams({ withRoom: who, ...(since ? { since } : {}) });
-    const { messages = [] } = await api(`/api/messages?${query}`);
-    if (!messages.length) { console.log('(no messages)'); process.exit(0); }
-    for (const m of messages) {
-      console.log(`[nvk-msg from ${m.from} id ${m.id}] ${m.createdAt}${m.delivery === 'interrupt' ? ' (interrupt)' : ''}\n  ${m.body.replace(/\n/g, '\n  ')}`);
-    }
-    process.exit(0);
-  }
-
   const names = await addressBookNames();
   const { messages = [] } = await api(`/api/messaging/v2/messages?with=${encodeURIComponent(who)}`);
   const visible = since ? messages.filter((m) => m.createdAt >= since) : messages;

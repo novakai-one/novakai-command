@@ -4,7 +4,25 @@
 //   npx tsx src/frontend/lib/tunnelModel/people.test.ts
 import assert from 'node:assert/strict';
 import type { PersonView } from '../../../../shared/people/schema.js';
-import { emptyPeopleSnapshot, mountPeople, type PeopleSnapshot } from './index.js';
+import { emptyPeopleSnapshot, mountPeople, visibleLanesFor, type PeopleSnapshot } from './index.js';
+
+// --- F2 (audit): an incoming-only DM lane is NEVER pruned --------------------
+// R3 serves only the human's own direct threads — every dm lane with feed
+// history is human-party by contract. The old chrisParty rule (from ===
+// 'chris') pruned incoming-only lanes. Both rails share visibleLanesFor.
+{
+  const lanes = [
+    { id: 'dm:worker-b', kind: 'dm' as const, title: 'worker-b' },
+    { id: '#team', kind: 'channel' as const, title: '#team' },
+  ];
+  const incomingOnly = [
+    { id: 'm1', from: 'worker-b', to: 'dm:worker-b', delivery: 'normal' as const, body: 'ping chris', createdAt: 'T', status: 'delivered' as const },
+  ];
+  const visible = visibleLanesFor(lanes, incomingOnly, []).map((lane) => lane.id);
+  assert.ok(visible.includes('dm:worker-b'), 'incoming-only DM lane stays visible (R3: served DMs are human-party)');
+  assert.ok(visible.includes('#team'));
+  console.log('F2 incoming-only lane visibility test passed');
+}
 
 function person(overrides: Partial<PersonView> & { agentId: string; name: string }): PersonView {
   return {

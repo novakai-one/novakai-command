@@ -4,20 +4,20 @@
 // that needs Chris); clicking that row's meta line resolves it and the gold
 // releases to sage.
 import React, { useEffect, useRef, useState } from 'react';
-import { messageItemId, useAttention } from '../../../../../lib/attention/index.js';
-import { anchorFor, saveAnchor } from '../../../../../lib/readCursor/index.js';
+import { messageItemId, useAttention } from '../../../lib/attention/index.js';
+import { anchorFor, saveAnchor } from '../../../lib/readCursor/index.js';
 import {
   CHRIS,
   formatRoute,
   statusMeta,
   type Conversation,
   type TunnelEnvelope,
-} from '../../../../../lib/tunnelModel/index.js';
-import { avatarInitials, formatChatTime } from '../../../../../lib/chatModel/index.js';
-import { clearDraft, loadDraft, saveDraft } from '../../../../../lib/composerDraft/index.js';
-import type { MentionTarget } from '../../../../../lib/mentions/index.js';
-import { MarkdownText } from '../../../../../lib/markdown/index.js';
-import { MentionText } from '../../mention/index.js';
+} from '../../../lib/messagingV2/index.js';
+import { avatarInitials, formatChatTime } from '../../../lib/chatModel/index.js';
+import { clearDraft, loadDraft, saveDraft } from '../../../lib/composerDraft/index.js';
+import type { MentionTarget } from '../../../lib/mentions/index.js';
+import { MarkdownText } from '../../../lib/markdown/index.js';
+import { MentionText } from '../../studio/chat/mention/index.js';
 import './index.css';
 
 /** Chris reads as You; an agent↔agent DM surfacing in a lane keeps its full

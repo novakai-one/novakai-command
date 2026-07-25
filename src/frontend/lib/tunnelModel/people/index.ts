@@ -1,11 +1,12 @@
 // Durable people projection (mission_mission-control-ux, rulings S3 + M2).
-// The fourth live projection beside feed/rooms/roster: one fetch of
+// The people directory beside the capability feed (N4): one fetch of
 // GET /api/people on mount, a re-pull on every ws 'connected' transition
 // (C5 pattern — frames dropped in an outage come back through the read
 // interface), and failed reads keep the LAST GOOD list under an honest
 // `stale` flag instead of wiping the panel. Identity is durable agentId
-// everywhere; dm:<name> conversation ids remain transport only (v2.1).
-// The shared panel row model lives beside this in ../panel/.
+// everywhere; dm:<name> conversation ids remain presentation only. The
+// shared panel row model lives beside this in ../panel/. (This lib is the
+// PeopleHub lane — NOT messaging; it survived the tunnelModel deletion.)
 import { useEffect, useState } from 'react';
 import type { ArchiveResponse, ArchivedLane, PeopleResponse, PersonView } from '../../../../shared/people/schema.js';
 import { connect } from '../../agentSocket/index.js';
@@ -16,7 +17,7 @@ import {
   type Conversation,
   type ConversationId,
   type TunnelEnvelope,
-} from '../index.js';
+} from '../../messagingV2/index.js';
 
 /* ---------- Lane pruning (C3, audit S2 — moved here for ruling D2) ----------
    Chris sees only lanes he is party to. Precedence RULED by the audit —
@@ -32,30 +33,33 @@ import {
    fan-out semantics stay intact for attention/readCursor/review consumers.
    BOTH rails consume this now — "registered" means known to the people
    directory (durable ∪ runtime). */
-function dmLaneStanding(feed: TunnelEnvelope[]): { hasHistory: Set<ConversationId>; chrisParty: Set<ConversationId> } {
+function dmLaneStanding(feed: TunnelEnvelope[]): { hasHistory: Set<ConversationId> } {
   const hasHistory = new Set<ConversationId>();
-  const chrisParty = new Set<ConversationId>();
   for (const message of feed) {
     for (const laneId of conversationIdsFor(message)) {
-      if (!laneId.startsWith('dm:')) continue;
-      hasHistory.add(laneId);
-      if (message.from === CHRIS || message.to === CHRIS) chrisParty.add(laneId);
+      if (laneId.startsWith('dm:')) hasHistory.add(laneId);
     }
   }
-  return { hasHistory, chrisParty };
+  return { hasHistory };
 }
 
+/** Lane pruning (C3 + audit F2): (a) a dm lane with feed history is ALWAYS
+ * visible — R3 serves only the human's own direct threads, so any served dm
+ * lane is human-party by contract (the old chrisParty rule pruned
+ * incoming-only lanes); (b) an empty dm lane materializes for a REGISTERED
+ * agent, any status; (c) channels always; (d) rooms are member lanes
+ * (D-N3-1). */
 export function visibleLanesFor(
   lanes: Conversation[],
   feed: TunnelEnvelope[],
   agents: { title: string }[],
 ): Conversation[] {
   const registered = new Set(agents.map((agent) => agent.title));
-  const { hasHistory, chrisParty } = dmLaneStanding(feed);
+  const { hasHistory } = dmLaneStanding(feed);
   return lanes.filter((entry) => {
     if (entry.kind === 'channel') return true;
     if (entry.kind === 'room') return entry.members?.includes(CHRIS) ?? false;
-    if (hasHistory.has(entry.id)) return chrisParty.has(entry.id);
+    if (hasHistory.has(entry.id)) return true;
     return registered.has(entry.title);
   });
 }

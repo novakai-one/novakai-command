@@ -1,18 +1,16 @@
-// New-lane flows (round 3, M5) — the two ways a lane comes into being.
-// A mission room exists only once POST /api/user/rooms answers; its 201
-// carries the room record, folded straight in — never awaited on the ws
-// echo. A DM needs no server resource at all: the lane is derived, so
-// "creating" one is just opening it. The overlay below stands in for the
-// not-yet-derived lane until Chris's first envelope lands and
-// buildConversations picks the lane up for real.
+// New-lane flows (round 3, M5) — the ways a lane comes into being. N4: the
+// free-room creation flow is DELETED (rooms are team/mission/fleet threads
+// now, D-N4-4 — no POST /api/user/rooms left). A DM needs no server
+// resource at all: the lane is derived, so "creating" one is just opening
+// it. The overlay below stands in for the not-yet-derived lane until
+// Chris's first envelope lands and buildConversations picks it up for real.
 import { useState } from 'react';
 import type { AgentInfo } from '../../../../lib/agentSocket/index.js';
 import type { ProviderId } from '../../../../../shared/project/schema.js';
 import {
   type Conversation,
   type ConversationId,
-  type TunnelRoom,
-} from '../../../../lib/tunnelModel/index.js';
+} from '../../../../lib/messagingV2/index.js';
 import { dmLaneFor, resolveSelectedLane } from '../model.js';
 
 /** POST JSON and unwrap the error body into an honest Error message
@@ -32,7 +30,6 @@ export async function postJson(path: string, payload: unknown): Promise<unknown>
 }
 
 interface LaneFlowDeps {
-  ingestRoom(room: TunnelRoom): void;
   openLane(id: ConversationId): void;
 }
 
@@ -53,14 +50,9 @@ export interface LaneFlowIo extends LaneFlowDeps {
 }
 
 export function createLaneFlows(laneIo: LaneFlowIo): {
-  startRoom(members: string[], name: string): Promise<void>;
   openDm(name: string): Conversation;
   spawnAgent(provider: ProviderId, title?: string): Promise<void>;
 } {
-  async function startRoom(members: string[], name: string): Promise<void> {
-    const data = (await postJson('/api/user/rooms', { name, members })) as { room: TunnelRoom };
-    laneIo.ingestRoom(data.room); laneIo.openLane(data.room.roomId);
-  }
   function openDm(name: string): Conversation {
     const lane = dmLaneFor(name);
     laneIo.setOverlay(lane); return lane;
@@ -70,21 +62,19 @@ export function createLaneFlows(laneIo: LaneFlowIo): {
     laneIo.setOverlay(lane); // BEFORE selecting: the lane renders from the 201 alone (S1)
     laneIo.openLane(lane.id);
   }
-  return { startRoom, openDm, spawnAgent };
+  return { openDm, spawnAgent };
 }
 
-/** Lane-creation flows for the rail entry points: startRoom posts the room
- *  and opens the lane the 201 returns; openDm derives the DM lane locally
- *  (a DM is not a server resource) and holds it as an overlay until the
- *  first envelope makes buildConversations derive it for real. */
-export function useLaneFlows({ ingestRoom, openLane }: LaneFlowDeps): {
+/** Lane-creation flows for the rail entry points: openDm derives the DM
+ *  lane locally (a DM is not a server resource) and holds it as an overlay
+ *  until the first envelope makes buildConversations derive it for real. */
+export function useLaneFlows({ openLane }: LaneFlowDeps): {
   resolveSelected(conversations: Conversation[], selectedId: ConversationId | null): Conversation | null;
-  startRoom(members: string[], name: string): Promise<void>;
   openDm(name: string): Conversation;
   spawnAgent(provider: ProviderId, title?: string): Promise<void>;
 } {
   const [overlay, setOverlay] = useState<Conversation | null>(null);
-  const flows = createLaneFlows({ ingestRoom, openLane, setOverlay });
+  const flows = createLaneFlows({ openLane, setOverlay });
   function resolveSelected(conversations: Conversation[], selectedId: ConversationId | null): Conversation | null {
     return resolveSelectedLane(conversations, overlay, selectedId);
   }

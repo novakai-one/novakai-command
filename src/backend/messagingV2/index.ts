@@ -85,8 +85,6 @@ export interface StartMessagingV2Deps {
   terminals?: TerminalRuntime;
   /** N2: launch subscription hook (AgentsHub.onLaunch in the app composition). */
   onLaunch?: (listener: (info: AgentInfo) => void) => void;
-  /** N3: ws broadcast for the rooms live shim (browser #team lane). */
-  broadcast?: (event: string, payload: unknown) => void;
   log?: (message: string) => void;
 }
 
@@ -182,7 +180,6 @@ function makeRoomsGlue(
     terminals: deps.terminals as TerminalRuntime,
     humanSession: () => lanes.humanSession(),
     humanPersonId: HUMAN_PERSON_ID,
-    ...(deps.broadcast !== undefined ? { broadcast: deps.broadcast } : {}),
     ...(deps.log !== undefined ? { 'log': deps.log } : {}),
   });
 }
@@ -211,7 +208,6 @@ async function bootLanes(
   // roomLabel lookup never misses for replayed deliveries.
   await rooms.ensureAllRooms();
   await lanes.openBootLanes();
-  rooms.startLiveBroadcast();
   return { lanes, rooms };
 }
 

@@ -10,7 +10,7 @@ import {
   conversationIdsFor,
   type ConversationId,
   type TunnelEnvelope,
-} from '../tunnelModel/index.js';
+} from '../messagingV2/index.js';
 
 const CURSOR_KEY = 'novakai-read-cursors-v1';
 const ANCHOR_KEY = 'novakai-scroll-anchors-v1';

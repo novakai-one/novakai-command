@@ -1,6 +1,6 @@
 // Organization lens — variant B's org-compiler center + intelligence column
 // rebuilt over the LIVE fleet. Chris sits at the root; every running session
-// is a positioned node; the wires are real DM traffic from the tunnel feed
+// is a positioned node; the wires are real DM traffic from the capability feed
 // (thickness = volume). The right column reads the organization honestly:
 // a derived org score, live measures (presence, traffic, spend from
 // /api/usage), and the newest thing that deserves attention. Calm grammar:
@@ -8,7 +8,8 @@
 // owns gold everywhere in the app.
 import React, { useMemo, useState } from 'react';
 import type { AgentInfo } from '../../../lib/agentSocket/index.js';
-import { CHRIS, useTunnelFeed, useTunnelRooms } from '../../../lib/tunnelModel/index.js';
+import { CHRIS } from '../../../lib/messagingV2/index.js';
+import { useMessagingFeed } from '../../../lib/messagingV2/feed/index.js';
 import {
   formatCost,
   formatTokens,
@@ -168,7 +169,7 @@ function IntelColumn({ agents, liveCount, stats, orgScore, roomCount, fleetToken
           <strong>{formatCost(fleetCost, settings.currency)}</strong>
         </div>
         <div className="org-measure">
-          <div><span>Rooms</span><small>group lanes in the tunnel</small></div>
+          <div><span>Rooms</span><small>group lanes in messaging</small></div>
           <strong>{roomCount}</strong>
         </div>
       </section>
@@ -177,7 +178,7 @@ function IntelColumn({ agents, liveCount, stats, orgScore, roomCount, fleetToken
         {stats.latestFailed ? (
           <>
             <h3>{stats.latestFailed.from} → {stats.latestFailed.to} failed</h3>
-            <p>The newest undelivered message in the tunnel — usually a misspelled agent name.</p>
+            <p>The newest undelivered message in the fleet — usually a misspelled agent name.</p>
           </>
         ) : stats.latestTeamPost ? (
           <>
@@ -197,8 +198,9 @@ function IntelColumn({ agents, liveCount, stats, orgScore, roomCount, fleetToken
 }
 
 export function OrganizationLens({ agents }: { agents: AgentInfo[] }) {
-  const { feed } = useTunnelFeed();
-  const { rooms } = useTunnelRooms();
+  const { feed, threads } = useMessagingFeed(agents);
+  // Rooms in the capability model: every non-direct thread (fleet + teams + missions).
+  const roomCount = threads.filter((thread) => thread.threadKind !== 'direct').length;
   const usageByAgent = useFleetUsage(agents);
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
@@ -249,7 +251,7 @@ export function OrganizationLens({ agents }: { agents: AgentInfo[] }) {
         liveCount={liveCount}
         stats={stats}
         orgScore={orgScore}
-        roomCount={rooms.length}
+        roomCount={roomCount}
         fleetTokens={fleetTokens}
         fleetCost={fleetCost}
         settings={costSettings}

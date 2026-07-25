@@ -1,54 +1,45 @@
-// Free-room archive shim tests (N3): read fold + create writer over the
-// archived rooms.jsonl. The RoomStore class is deleted — member mutation
-// (addMembers) and the append listener went with it. Run with
-// `npx tsx src/backend/messaging/rooms/rooms.test.ts`.
+// Free-room archive fold tests (N4): the read-only fold over the archived
+// rooms.jsonl — the old RoomStore class, the create writer, and the room
+// routes are deleted; the fold survives for /api/threads' existence check.
+// Run with `npx tsx src/backend/messaging/rooms/rooms.test.ts`.
 import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createRoom, getRoom, listRooms } from './index.js';
+import { getRoom } from './index.js';
 
 function freshPath(): string {
   return join(mkdtempSync(join(tmpdir(), 'nvk-rooms-')), 'rooms.jsonl');
 }
 
-function testCreateRoundtrip(): void {
-  const storePath = freshPath();
-  const room = createRoom(storePath, {
-    name: 'Tunnel Builders',
-    members: ['codex-1', 'codex-1'],
-    createdBy: 'chris',
+function roomLine(roomId: string, overrides: Record<string, unknown> = {}): string {
+  return JSON.stringify({
+    roomId, name: 'Room', members: ['chris'], createdBy: 'chris', createdAt: 'T', archived: false,
+    ...overrides,
   });
-
-  assert.match(room.roomId, /^room_/);
-  assert.deepEqual(room.members, ['codex-1', 'chris'], 'the creator joins, deduped');
-  assert.equal(room.archived, false);
-  assert.deepEqual(getRoom(storePath, room.roomId), room);
-  assert.deepEqual(listRooms(storePath), [room]);
 }
 
-function testFoldLastLineWinsAndArchivedFilter(): void {
+{
   const storePath = freshPath();
-  const first = createRoom(storePath, { name: 'First Room', members: ['chris'], createdBy: 'chris' });
-  createRoom(storePath, { name: 'Second Room', members: ['codex-1'], createdBy: 'codex-1' });
-  writeFileSync(
-    storePath,
-    `${JSON.stringify(first)}\n${JSON.stringify({ ...first, archived: true })}\n`,
-    { flag: 'a' },
-  );
-  assert.equal(getRoom(storePath, first.roomId)?.archived, true, 'last line wins');
-  assert.equal(listRooms(storePath).length, 1, 'archived rooms are filtered from the list');
-  assert.equal(getRoom(storePath, 'room_unknown'), null);
+  writeFileSync(storePath, `${roomLine('room_a')}\n${roomLine('room_b', { name: 'Beta' })}\n`);
+  assert.equal(getRoom(storePath, 'room_a')?.roomId, 'room_a');
+  assert.equal(getRoom(storePath, 'room_b')?.name, 'Beta');
+  assert.equal(getRoom(storePath, 'room_ghost'), null);
+  console.log('fold read tests passed');
 }
 
-function testCorruptLinesAreSkipped(): void {
+{
   const storePath = freshPath();
-  const room = createRoom(storePath, { name: 'Valid Room', members: ['chris'], createdBy: 'chris' });
-  writeFileSync(storePath, `{ torn line\n${JSON.stringify(room)}\n`);
-  assert.deepEqual(listRooms(storePath), [room]);
+  // Last line wins; torn lines never block the rest.
+  writeFileSync(storePath, `{ torn\n${roomLine('room_a', { archived: true })}\n${roomLine('room_a', { archived: false })}\n`);
+  assert.equal(getRoom(storePath, 'room_a')?.archived, false, 'last line wins over a torn prefix and an amendment');
+  console.log('last-line-wins + tolerance tests passed');
 }
 
-testCreateRoundtrip();
-testFoldLastLineWinsAndArchivedFilter();
-testCorruptLinesAreSkipped();
+{
+  const storePath = join(mkdtempSync(join(tmpdir(), 'nvk-rooms-missing-')), 'rooms.jsonl');
+  assert.equal(getRoom(storePath, 'room_a'), null, 'a missing file is an empty archive, never a crash');
+  console.log('missing-file test passed');
+}
+
 console.log('PASS');

@@ -1,9 +1,9 @@
 // Organization lens read model — pure derivations from the live seams:
 // node layout over the agent roster, wires folded from real DM traffic,
-// fleet stats from the tunnel feed, and the /api/usage sweep hook.
+// fleet stats from the capability feed, and the /api/usage sweep hook.
 import { useEffect, useState } from 'react';
 import type { AgentInfo } from '../../../lib/agentSocket/index.js';
-import { CHRIS, TEAM_CHANNEL, isRoomId, type TunnelEnvelope } from '../../../lib/tunnelModel/index.js';
+import { CHRIS, TEAM_CHANNEL, isRoomLane, type TunnelEnvelope } from '../../../lib/messagingV2/index.js';
 import { costOf, fetchUsage, tokensOf, type CostSettings, type SessionUsage } from '../../../lib/cost/index.js';
 import type { ProviderId } from '../../../../shared/project/schema.js';
 
@@ -78,14 +78,22 @@ export function layoutNodes(agents: AgentInfo[]): OrgNode[] {
   ];
 }
 
-/** DM traffic between known nodes, folded to undirected pair volumes. */
+/** The lane a DM row lands in carries the counterparty — strip the prefix. */
+function counterpartyOf(envelope: TunnelEnvelope): string {
+  return envelope.to.startsWith('dm:') ? envelope.to.slice(3) : envelope.to;
+}
+
+/** DM traffic between known nodes, folded to undirected pair volumes. N4:
+ * rows are capability rows — the `to` of a direct row is its dm: lane; the
+ * counterparty name is what wires fold on. */
 export function deriveWires(feed: TunnelEnvelope[], nodes: OrgNode[]): OrgWire[] {
   const known = new Set(nodes.map((node) => node.name));
   const volume = new Map<string, OrgWire>();
   for (const envelope of feed) {
-    if (envelope.to === TEAM_CHANNEL || isRoomId(envelope.to)) continue;
-    if (!known.has(envelope.from) || !known.has(envelope.to) || envelope.from === envelope.to) continue;
-    const [nameA, nameB] = [envelope.from, envelope.to].sort() as [string, string];
+    if (isRoomLane(envelope.to)) continue;
+    const counterparty = counterpartyOf(envelope);
+    if (!known.has(envelope.from) || !known.has(counterparty) || envelope.from === counterparty) continue;
+    const [nameA, nameB] = [envelope.from, counterparty].sort() as [string, string];
     const pairKey = `${nameA}␟${nameB}`;
     const wire = volume.get(pairKey);
     if (wire) wire.count += 1;
@@ -95,7 +103,7 @@ export function deriveWires(feed: TunnelEnvelope[], nodes: OrgNode[]): OrgWire[]
 }
 
 export function deriveStats(feed: TunnelEnvelope[]): FleetStats {
-  const directMessages = feed.filter((envelope) => envelope.to !== TEAM_CHANNEL && !isRoomId(envelope.to));
+  const directMessages = feed.filter((envelope) => !isRoomLane(envelope.to));
   const failed = feed.filter((envelope) => envelope.status === 'failed');
   return {
     directMessages,

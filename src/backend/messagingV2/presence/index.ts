@@ -28,7 +28,7 @@ import type { ObjectModel } from '../../objectModel/index.js';
 import type { AgentInfo } from '../../terminal/manager.js';
 import type { TerminalRuntime } from '../../terminal/runtime/index.js';
 import { composeAgentBriefing } from '../briefing/index.js';
-import { personIdForAgentId } from '../authority/index.js';
+import { personIdForAgentId, isActiveAgent } from '../authority/index.js';
 import { createContactBootstrap } from '../policy/index.js';
 import type { ContactBootstrap } from '../policy/index.js';
 import type { TerminalHostPresenceTransport } from '../transport/index.js';
@@ -78,11 +78,25 @@ async function ensureHuman(state: GlueState): Promise<void> {
   state.human = auth.kind === 'authenticated' ? auth.session : null;
 }
 
+/** Every sync covers EVERY active durable agent (audit F9's exposed gap):
+ * an agent with no live lane gets a throwaway policy session, so Chris can
+ * DM offline teammates — the lane sessions alone left never-live agents at
+ * DEC-14's deny-by-default. */
+async function policySessions(state: GlueState): Promise<Map<string, MessagingSession>> {
+  const resolved = new Map(state.sessions);
+  for (const block of state.deps.objectModel.listAgents().filter(isActiveAgent)) {
+    if (resolved.has(block.id)) continue;
+    const auth = await state.deps.embedded.authenticate({ token: block.id });
+    if (auth.kind === 'authenticated') resolved.set(block.id, auth.session);
+  }
+  return resolved;
+}
+
 /** D-N2-5: membership-driven contact bootstrap — best-effort host policy;
  * a policy write must never break a lane. Failures are logged, never thrown. */
 async function syncPolicies(state: GlueState): Promise<void> {
   if (state.sessions.size === 0 && state.human === null) return;
-  const failures = await state.bootstrap.sync(state.sessions, state.human);
+  const failures = await state.bootstrap.sync(await policySessions(state), state.human);
   const announce = state.deps.log ?? ((): void => {});
   for (const failure of failures) {
     announce(`[messaging-v2] contact-policy sync failed for ${failure.personId}: ${failure.detail}`);

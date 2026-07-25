@@ -1,5 +1,5 @@
 // Messages tab — rebuilt to the storyboard vision (docs/plans/messaging-ui-rebuild.md).
-// This view is a lens over the canonical tunnel feed, rooms, roster and read
+// This view is a lens over the capability feed, room threads, roster and read
 // cursors; it owns no message store. All visual decisions live in tokens.css,
 // all derived behavior in model.ts — the components only render and wire.
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -13,13 +13,13 @@ import {
 import { buildTargets } from '../../../lib/mentions/index.js';
 import {
   buildConversations,
+  laneRosterFor,
   messagesFor,
-  useTunnelFeed,
-  useTunnelRooms,
   type Conversation,
   type ConversationId,
   type TunnelEnvelope,
-} from '../../../lib/tunnelModel/index.js';
+} from '../../../lib/messagingV2/index.js';
+import { useMessagingFeed } from '../../../lib/messagingV2/feed/index.js';
 import { usePeople } from '../../../lib/tunnelModel/people/index.js';
 import { buildPanelLanes } from '../../../lib/tunnelModel/panel/index.js';
 import {
@@ -47,6 +47,7 @@ import {
   type RailWidths,
 } from './model.js';
 import { SHELL_STYLE, resolveStyle } from './styles/index.js';
+import { beginResize, nudgeWidth } from './resize/index.js';
 import { postJson, useLaneFlows } from './flows/index.js';
 import { RoomsRail } from './rail/index.js';
 import { MessageFeed, messageRowId } from './thread/index.js';
@@ -68,10 +69,16 @@ export interface MessagesOpenRequest {
   nonce: number;
 }
 
+/** The connection strip's text (null = hidden) — extracted for complexity. */
+function connStripText(loadError: boolean, connection: 'connected' | 'disconnected', feedLoaded: boolean): string | null {
+  if (loadError) return 'Messaging unavailable — retrying…';
+  if (connection === 'disconnected' && feedLoaded) return 'Reconnecting…';
+  return null;
+}
+
 export function MessagesView({ agents, agentsLoaded, projects, openRequest }: MessagesViewProps) {
   const rootRef = useRef<HTMLElement | null>(null);
-  const { feed, feedLoaded, connection, loadConversation, ingestEnvelope } = useTunnelFeed();
-  const { rooms, roomsLoaded, ingestRoom } = useTunnelRooms();
+  const { feed, threads, feedLoaded, loadError, connection, send: sendMessage } = useMessagingFeed(agents);
   const cursors = useReadCursors();
   const [dismissed, setDismissed] = useState<ReadonlySet<string>>(() => new Set());
   const [selectedId, setSelectedId] = useState<ConversationId | null>(null);
@@ -88,7 +95,7 @@ export function MessagesView({ agents, agentsLoaded, projects, openRequest }: Me
   );
   const [widths, setWidths] = useState<RailWidths>(() => loadRailWidths());
   const widthsRef = useRef(widths);
-  widthsRef.current = widths;
+  widthsRef.current = widths; const resizeDeps = { rootRef, widthsRef, setWidths, setResizing };
 
   // Durable-first people directory (ruling S3): the roster that materializes
   // DM lanes is the PeopleHub union — durable agents (incl. registered
@@ -96,14 +103,14 @@ export function MessagesView({ agents, agentsLoaded, projects, openRequest }: Me
   // prunes to lanes Chris is party to — "registered" now means "known to the
   // people directory", so the external chief's empty lane survives the prune.
   const { people, archivedLaneIds, loaded: peopleLoaded, stale: peopleStale } = usePeople();
-  const roster = useMemo(
-    () => people.map((person) => ({ name: person.name, provider: person.provider as AgentInfo['provider'] })),
-    [people],
-  );
   const peopleTitles = useMemo(() => people.map((person) => ({ title: person.name })), [people]);
+  const rosterAgents = useMemo(
+    () => laneRosterFor(agents, people.map((person) => ({ name: person.name, provider: person.provider as AgentInfo['provider'] }))),
+    [agents, people],
+  );
   const conversations = useMemo(
-    () => visibleLanesFor(buildConversations(feed, rooms, roster), feed, peopleTitles),
-    [feed, rooms, roster, peopleTitles],
+    () => visibleLanesFor(buildConversations(threads, feed, rosterAgents), feed, peopleTitles),
+    [threads, feed, rosterAgents, peopleTitles],
   );
   // The ONE row set both rails render (Task 2.3) — agentId-keyed buckets.
   const panel = useMemo(() => buildPanelLanes(conversations, people, feed, archivedLaneIds), [conversations, people, feed, archivedLaneIds]);
@@ -113,7 +120,6 @@ export function MessagesView({ agents, agentsLoaded, projects, openRequest }: Me
   // Known agents (live + exited + feed-history names) feed the M5 pickers.
   const knownAgents = useMemo(() => knownAgentsFor(agents, feed), [agents, feed]);
   const flows = useLaneFlows({
-    ingestRoom,
     openLane: (laneId) => { setSelectedId(laneId); saveLane(laneId); },
   });
   const targets = useMemo(
@@ -144,41 +150,6 @@ export function MessagesView({ agents, agentsLoaded, projects, openRequest }: Me
     root.style.setProperty('--msg-context-w', `${widths.context}px`);
   }, [widths]);
 
-  // Drag a column edge: pointer capture keeps the drag alive off-handle; the
-  // width lands on pointerup. Arrow keys on the focused handle nudge ±16px.
-  function beginResize(kind: keyof RailWidths) {
-    return (down: React.PointerEvent<HTMLElement>) => {
-      const rect = rootRef.current?.getBoundingClientRect();
-      if (!rect) return;
-      down.preventDefault();
-      const handle = down.currentTarget;
-      handle.setPointerCapture(down.pointerId);
-      setResizing(true);
-      const move = (event: PointerEvent) => {
-        const pixels = kind === 'rail' ? event.clientX - rect.left : rect.right - event.clientX;
-        setWidths((current) => ({ ...current, [kind]: clampRailWidth(kind, pixels) }));
-      };
-      const release = () => {
-        handle.removeEventListener('pointermove', move);
-        setResizing(false);
-        saveRailWidths(widthsRef.current);
-      };
-      handle.addEventListener('pointermove', move);
-      handle.addEventListener('pointerup', release, { once: true });
-    };
-  }
-
-  function nudgeWidth(kind: keyof RailWidths) {
-    return (press: React.KeyboardEvent<HTMLElement>) => {
-      if (press.key !== 'ArrowLeft' && press.key !== 'ArrowRight') return;
-      press.preventDefault();
-      const delta = (press.key === 'ArrowRight' ? 16 : -16) * (kind === 'rail' ? 1 : -1);
-      const next = { ...widthsRef.current, [kind]: clampRailWidth(kind, widthsRef.current[kind] + delta) };
-      setWidths(next);
-      saveRailWidths(next);
-    };
-  }
-
   // Keep the app-wide amber engine fed — unchanged behavior (§6.9).
   useEffect(() => {
     updateAttentionQueue(buildAttentionQueue(null, feed, dismissed));
@@ -195,22 +166,16 @@ export function MessagesView({ agents, agentsLoaded, projects, openRequest }: Me
       conversationIds: conversations.map((lane) => lane.id),
       // People joined the lane derivation (S3) — the restore machine waits on
       // the directory settling too, same S7 rule as the other three sources.
-      feedLoaded, roomsLoaded, agentsLoaded: agentsLoaded && peopleLoaded,
+      feedLoaded, roomsLoaded: true, agentsLoaded: agentsLoaded && peopleLoaded,
     });
     if (decision.kind === 'restore' || decision.kind === 'fallback') setSelectedId(decision.id);
-  }, [selectedId, conversations, feedLoaded, roomsLoaded, agentsLoaded, peopleLoaded]);
+  }, [selectedId, conversations, feedLoaded, agentsLoaded, peopleLoaded]);
 
   useEffect(() => {
     if (!openRequest || !conversations.some((lane) => lane.id === openRequest.id)) return;
     setSelectedId(openRequest.id);
     saveLane(openRequest.id);
   }, [openRequest?.nonce, conversations]);
-
-  // Lane history loads on selection AND on every reconnect (C5) — frames
-  // dropped during an outage come back through the same lane pull.
-  useEffect(() => {
-    if (selectedId && connection === 'connected') loadConversation(selectedId);
-  }, [selectedId, connection, loadConversation]);
 
   const selected = flows.resolveSelected(conversations, selectedId);
 
@@ -230,11 +195,10 @@ export function MessagesView({ agents, agentsLoaded, projects, openRequest }: Me
 
   async function send(body: string): Promise<void> {
     if (!selected) return;
+    // The hook owns optimism: 'queued' until the committed echo settles.
     const recipient = selected.kind === 'dm' ? selected.title : selected.id;
-    const data = (await postJson('/api/user/messages', { 'to': recipient, delivery: 'normal', body })) as { envelope: TunnelEnvelope };
-    // The 201 carries the settled envelope — the row leaves "Sending…" on the
-    // response, never on the mercy of a dropped ws amendment frame.
-    ingestEnvelope(data.envelope);
+    const sent = await sendMessage({ 'to': recipient, body });
+    if (!sent) throw new Error('send failed — the messaging capability is unavailable');
   }
 
   // Review = scroll the thread to the failed row AND resolve its amber item.
@@ -314,7 +278,6 @@ export function MessagesView({ agents, agentsLoaded, projects, openRequest }: Me
         collapsed={railCollapsed}
         onToggleCollapse={() => setRailCollapsed((current) => !current)}
         onSelect={select}
-        onStartChat={flows.startRoom}
         onOpenDm={openDm}
         onSpawnAgent={flows.spawnAgent}
       />
@@ -350,8 +313,8 @@ export function MessagesView({ agents, agentsLoaded, projects, openRequest }: Me
               onExtendWindow={() => setThreadWindow((current) => ({ count: current.count + MESSAGING_SETTINGS.thread.windowSize }))}
               onSeen={(seenCreatedAt) => advanceCursor(selected.id, seenCreatedAt)}
             />
-            {connection === 'disconnected' && feedLoaded && (
-              <div className="msg-conn-strip" role="status">Reconnecting…</div>
+            {connStripText(loadError, connection, feedLoaded) !== null && (
+              <div className="msg-conn-strip" role="status">{connStripText(loadError, connection, feedLoaded)}</div>
             )}
             <ComposerBar conversation={selected} targets={composerTargets} onSend={send} />
           </>
@@ -389,8 +352,8 @@ export function MessagesView({ agents, agentsLoaded, projects, openRequest }: Me
         aria-label="Resize conversations panel"
         tabIndex={0}
         className="msg-resize msg-resize-rail"
-        onPointerDown={beginResize('rail')}
-        onKeyDown={nudgeWidth('rail')}
+        onPointerDown={beginResize(resizeDeps, 'rail')}
+        onKeyDown={nudgeWidth(resizeDeps, 'rail')}
       />
       {selected && contextOpen && (
         <div
@@ -399,8 +362,8 @@ export function MessagesView({ agents, agentsLoaded, projects, openRequest }: Me
           aria-label="Resize context panel"
           tabIndex={0}
           className="msg-resize msg-resize-context"
-          onPointerDown={beginResize('context')}
-          onKeyDown={nudgeWidth('context')}
+          onPointerDown={beginResize(resizeDeps, 'context')}
+          onKeyDown={nudgeWidth(resizeDeps, 'context')}
         />
       )}
     </section>

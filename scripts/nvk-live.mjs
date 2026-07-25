@@ -38,73 +38,16 @@ if (command === 'roster') {
   if (!recipient || args.length === 0) {
     throw new Error('usage: nvk-live send --to <agent> [--from name] [--interrupt] "message"');
   }
-  if (recipient.startsWith('room_')) {
-    const backend = await resolveRoomBackend(recipient, backends);
-    const result = await requestJson(backend, '/api/messages', {
-      method: 'POST',
-      body: { from, to: recipient, delivery: interrupt ? 'interrupt' : 'normal', body: args.join(' ') },
-    });
-    console.log(`${result.envelope.id} → ${recipient} (${result.envelope.status})`);
-  } else {
-    const discovery = await discoverAgents(backends);
-    const agent = resolveAgent(discovery.agents, recipient);
-    const receipt = await deliverMessage({ agent, body: args.join(' '), from, interrupt });
-    console.log(`${receipt.messageId} → ${agent.title} (${receipt.status})`);
+  if (recipient.startsWith('room_') || recipient.startsWith('#')) {
+    // N4: free rooms and their routes are deleted — rooms are capability
+    // threads now; post via nvk-msg (v2) instead.
+    throw new Error(`free-room sends are deleted (N4) — use nvk-msg send --to '#team' / '#mission'`);
   }
-} else if (command === 'room') {
-  const roomCommand = args.shift();
-  if (roomCommand === 'create') {
-    const name = takeOption('--name');
-    const members = takeAll('--member');
-    const from = takeOption('--from') ?? process.env.NVK_AGENT ?? 'chris';
-    if (!name) {
-      throw new Error('usage: nvk-live room create --name <name> --member <agent> [--member <agent>] [--from name]');
-    }
-    if (backends.length !== 1) {
-      throw new Error('room create requires exactly one --backend');
-    }
-    const result = await requestJson(backends[0], '/api/rooms', {
-      method: 'POST',
-      body: { name, members, from },
-    });
-    console.log(`${result.room.roomId} ${result.room.name} · ${result.room.members.join(', ')}`);
-  } else if (roomCommand === 'list') {
-    for (const backend of backends) {
-      const result = await requestJson(backend, '/api/rooms');
-      for (const room of result.rooms) {
-        console.log(`${room.roomId} ${room.name} · ${room.members.join(', ')} · ${backend}`);
-      }
-    }
-  } else {
-    throw new Error('usage: nvk-live room <create|list> [--backend URL]');
-  }
+  const discovery = await discoverAgents(backends);
+  const agent = resolveAgent(discovery.agents, recipient);
+  const receipt = await deliverMessage({ agent, body: args.join(' '), from, interrupt });
+  console.log(`${receipt.messageId} → ${agent.title} (${receipt.status})`);
 } else {
-  console.error('usage: nvk-live <roster|send|room> [--backend URL]');
+  console.error('usage: nvk-live <roster|send> [--backend URL]');
   process.exitCode = 1;
-}
-
-async function requestJson(backend, pathname, options = {}) {
-  const response = await fetch(`${backend}${pathname}`, {
-    method: options.method ?? 'GET',
-    ...(options.body === undefined
-      ? {}
-      : { headers: { 'content-type': 'application/json' }, body: JSON.stringify(options.body) }),
-  });
-  const payload = await response.json();
-  if (!response.ok) {
-    throw new Error(payload.error ?? `HTTP ${response.status} from ${backend}${pathname}`);
-  }
-  return payload;
-}
-
-async function resolveRoomBackend(roomId, candidates) {
-  if (candidates.length === 1) return candidates[0];
-  const matches = [];
-  for (const backend of candidates) {
-    const result = await requestJson(backend, '/api/rooms');
-    if (result.rooms.some((room) => room.roomId === roomId)) matches.push(backend);
-  }
-  if (matches.length === 1) return matches[0];
-  if (matches.length === 0) throw new Error(`No room matches "${roomId}"`);
-  throw new Error(`Room "${roomId}" exists on multiple backends; pass one --backend`);
 }

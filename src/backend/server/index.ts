@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import fs from 'node:fs';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { createServer, Server as HttpServer } from 'node:http';
 import { WebSocketServer, WebSocket } from 'ws';
 import { AgentCoordinator } from '../agent/index.js';
@@ -24,7 +25,11 @@ import { MissionViewHub } from '../missionView/index.js';
 import { ObjectModel } from '../objectModel/index.js';
 import { startMessagingV2 } from '../messagingV2/index.js';
 import type { MessagingV2Handle } from '../messagingV2/index.js';
+import { HUMAN_PERSON_ID } from '../messagingV2/index.js';
 import { registerMessagingV2Routes } from '../messagingV2/routes/index.js';
+import { registerMessagingV2UserRoutes } from '../messagingV2/userRoutes/index.js';
+import { createMessagingLive } from '../messagingV2/live/index.js';
+import type { MessagingLive } from '../messagingV2/live/index.js';
 import { ExternalSessionsHub } from '../externalSessions/index.js';
 import { PeopleHub } from '../people/index.js';
 import type { TerminalRuntime } from '../terminal/runtime/index.js';
@@ -87,6 +92,7 @@ export class ServerController {
   private readonly externalSessionsHub: ExternalSessionsHub;
   private readonly mailboxRegistry: MailboxRegistry;
   private readonly objectModel: ObjectModel;
+  private readonly messagingLive: MessagingLive;
   private messagingV2: MessagingV2Handle | null = null;
 
   constructor(
@@ -105,6 +111,7 @@ export class ServerController {
     [this.canvasHub, this.analyticsHub, this.designHub] = this.buildStudioHubs();
     this.messagingHub = this.buildMessagingHub(); this.missionViewHub = this.buildMissionViewHub();
     this.externalSessionsHub = this.buildExternalSessionsHub();
+    this.messagingLive = this.buildMessagingLive();
     this.server = createServer(this.app);
     this.wsServer = new WebSocketServer({ server: this.server });
     this.createAppListener();
@@ -113,6 +120,15 @@ export class ServerController {
     this.configureRoutes();
     this.configureStaticFallback();
     this.coordinator.setBroadcastHandler((event, payload) => this.broadcastEvent(event, payload));
+  }
+
+  /** N4 (D-N4-1): per-connection messaging-v2 subscriptions as the human
+   * session — the human principal arrives with the capability (N3.1). */
+  private buildMessagingLive(): MessagingLive {
+    return createMessagingLive({
+      humanSession: () => this.messagingV2?.lanes?.humanSession() ?? null,
+      'log': (line) => console.log(line),
+    });
   }
 
   /** Optional same-origin app listener — prod serves the built frontend here. */
@@ -150,28 +166,16 @@ export class ServerController {
   }
 
   /**
-   * Agent messaging tunnel (docs/agent-messaging.md): envelopes broadcast on
-   * the shared ws so the Messages view can build a live feed. N2: the spawn
-   * briefing moved to the messagingV2 presence glue (wired in start()).
+   * The messaging sliver (N4): mailbox registry routes + POST /api/threads.
+   * Everything message-shaped lives in the capability now — the old tunnel
+   * routes, router, delivery, and broadcasts are deleted.
    */
   private buildMessagingHub(): MessagingHub {
-    return new MessagingHub(
-      this.agentsHub.terminals,
-      (event, payload) => this.broadcastEvent(event, payload),
-      {
-        mailboxRegistry: this.mailboxRegistry, missionGraph: this.objectModel,
-        // NVK_MESSAGE_STORE pins the journal for non-Live stacks (same
-        // discipline as NVK_MISSION_STORES_DIR — scratch evidence stays real).
-        storePath: process.env.NVK_MESSAGE_STORE || undefined,
-        // A scratch backend sharing the REAL journal must not reconcile it:
-        // its roster is empty, so retry/confirmation amendments would falsify
-        // envelopes the Live lane can still deliver. Default unchanged.
-        reconcileOnStart: process.env.NVK_RECONCILE_ON_START !== 'off',
-        // N3: #team sends/reads delegate to the capability (boots after this
-        // hub — resolved lazily at request time).
-        teamLane: () => this.messagingV2?.rooms ?? null,
-      },
-    );
+    return new MessagingHub({
+      mailboxRegistry: this.mailboxRegistry,
+      missionGraph: this.objectModel,
+      roomsStorePath: process.env.NVK_MISSION_ROOMS ?? path.resolve('.novakai-command/rooms.jsonl'),
+    });
   }
 
   /**
@@ -180,13 +184,35 @@ export class ServerController {
    * object model, the shared mailbox registry, the messaging send seam, and
    * the live roster (for the one rejecting collision) — nothing else.
    */
+  /**
+   * External-session registration (mission_external-session-visibility):
+   * terminal-spawned sessions join the durable mission graph. N4: the
+   * announcement DM goes through the capability — authenticate as the
+   * external agent's durable agentId, send to the human principal.
+   */
   private buildExternalSessionsHub(): ExternalSessionsHub {
     return new ExternalSessionsHub(
       this.objectModel,
       this.mailboxRegistry,
-      (from, message) => this.messagingHub.send.send(from, message),
+      (agentId, body) => this.sendExternalAnnouncement(agentId, body),
       () => rosterFromAgents(this.agentsHub.terminals.list()).map((agent) => agent.name),
     );
+  }
+
+  /** The capability-backed announcement: agentId → human personId (N4). */
+  private async sendExternalAnnouncement(agentId: string, body: string): Promise<{ id: string }> {
+    const handle = this.messagingV2;
+    if (handle === null) throw new Error('messaging capability unavailable this run');
+    const auth = await handle.embedded.authenticate({ token: agentId });
+    if (auth.kind !== 'authenticated') throw new Error(`external agent ${agentId} is not authenticatable`);
+    const accepted = await auth.session.sendMessage({
+      address: `person:${HUMAN_PERSON_ID}`,
+      body: { text: body },
+      priority: 'normal',
+      clientMessageId: `msg_${randomUUID()}`,
+    });
+    if (accepted.kind !== 'ok') throw new Error(accepted.error.message);
+    return { id: accepted.value.messageId };
   }
 
   /**
@@ -217,24 +243,30 @@ export class ServerController {
     if (this.appWss) this.attachConnectionHandler(this.appWss);
   }
 
+  /** One client frame: messaging-v2-sub is per-connection (never AgentsHub). */
+  private handleSocketFrame(socket: WebSocket, data: WebSocket.RawData): void {
+    try {
+      const message = JSON.parse(data.toString()) as { type?: string; since?: unknown };
+      if (message.type === 'messaging-v2-sub') {
+        void this.messagingLive.subscribe(socket, typeof message.since === 'string' ? message.since : undefined);
+        return;
+      }
+      this.agentsHub.handleMessage(socket, message as Record<string, unknown>);
+    } catch {
+      // ignore malformed messages
+    }
+  }
+
   private attachConnectionHandler(socketServer: WebSocketServer): void {
     // ws re-emits http-server errors on the WebSocketServer; without this
     // listener a listen() failure crashes as an unhandled 'error' event.
     socketServer.on('error', () => {});
     socketServer.on('connection', (socket) => {
       this.activeSockets.add(socket);
-
-      socket.on('message', (data) => {
-        try {
-          const message = JSON.parse(data.toString());
-          this.agentsHub.handleMessage(socket, message);
-        } catch {
-          // ignore malformed messages
-        }
-      });
-
+      socket.on('message', (data) => this.handleSocketFrame(socket, data));
       socket.on('close', () => {
         this.activeSockets.delete(socket);
+        this.messagingLive.close(socket);
         this.agentsHub.handleClose(socket);
       });
     });
@@ -296,6 +328,12 @@ export class ServerController {
     this.designHub.registerRoutes(this.app);
     this.messagingHub.registerRoutes(this.app);
     registerMessagingV2Routes(this.app, {
+      getHandle: () => this.messagingV2,
+      terminals: this.agentsHub.terminals,
+      objectModel: this.objectModel,
+    });
+    // N4 (D-N4-3): the browser's server-owned human surface.
+    registerMessagingV2UserRoutes(this.app, {
       getHandle: () => this.messagingV2,
       terminals: this.agentsHub.terminals,
       objectModel: this.objectModel,
@@ -559,9 +597,6 @@ export class ServerController {
         // runtime; the glue opens lanes for live agents and briefs new spawns.
         terminals: this.agentsHub.terminals,
         onLaunch: (listener) => this.agentsHub.onLaunch(listener),
-        // N3: the rooms glue re-broadcasts #team commits as message-envelope
-        // frames for the browser lane (D-N3-4 LIVE shim).
-        broadcast: (event, payload) => this.broadcastEvent(event, payload),
       });
     } catch (error) {
       // A v2 boot failure must never take down the app (the old surface still

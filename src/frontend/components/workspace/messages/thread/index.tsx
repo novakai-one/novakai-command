@@ -13,7 +13,7 @@ import { MentionText } from '../../../studio/chat/mention/index.js';
 import type {
   Conversation,
   TunnelEnvelope,
-} from '../../../../lib/tunnelModel/index.js';
+} from '../../../../lib/messagingV2/index.js';
 import {
   displayNameFor,
   formatClockTime,

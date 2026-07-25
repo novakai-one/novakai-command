@@ -1,14 +1,10 @@
-// Free-room archive shim (N3, dies in N4): the old RoomStore class is
-// deleted — free rooms never joined the capability, and .novakai-command/
-// rooms.jsonl is now an ARCHIVE. What survives until N4 is read access
-// (GET /api/rooms, the /api/threads existence check) and browser room
-// creation (POST /api/user/rooms), served by this minimal tolerant fold
-// (same last-line-wins discipline as people/index.ts foldRoomsWithArchived)
-// plus a tiny append writer with the old create semantics. There is NO
-// member mutation here — POST /api/rooms and /api/rooms/:id/members are
-// gone with the router's room arms.
-import { randomUUID } from 'node:crypto';
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
+// Free-room archive fold (N4): .novakai-command/rooms.jsonl is an ARCHIVE —
+// nothing creates or mutates rooms anymore (the old RoomStore, the create
+// routes, and the router's room arms are all deleted). The ONE surviving
+// reader is POST /api/threads' room-existence check, served by this
+// tolerant last-line-wins fold (same discipline as people/index.ts
+// foldRoomsWithArchived).
+import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import type { Room } from '../types.js';
 
@@ -30,28 +26,7 @@ function foldRooms(storePath: string): Map<string, Room> {
   return folded;
 }
 
-export function listRooms(storePath: string): Room[] {
-  return Array.from(foldRooms(storePath).values()).filter((room) => !room.archived);
-}
-
-export function getRoom(storePath: string, roomId: string): Room | null {
-  return foldRooms(storePath).get(roomId) ?? null;
-}
-
-/** Browser room creation (old RoomStore.create semantics, minus the class). */
-export function createRoom(
-  storePath: string,
-  input: { name: string; members: string[]; createdBy: string },
-): Room {
-  const room: Room = {
-    roomId: `room_${randomUUID()}`,
-    name: input.name,
-    members: Array.from(new Set([...input.members, input.createdBy])),
-    createdBy: input.createdBy,
-    createdAt: new Date().toISOString(),
-    archived: false,
-  };
-  mkdirSync(path.dirname(storePath), { recursive: true });
-  appendFileSync(storePath, JSON.stringify(room) + '\n');
-  return room;
+/** The archived room, or null — the /api/threads existence check. */
+export function getRoom(storePath: string | undefined, roomId: string): Room | null {
+  return foldRooms(storePath ?? DEFAULT_ROOMS_PATH).get(roomId) ?? null;
 }

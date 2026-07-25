@@ -1,5 +1,12 @@
 # Messages Tab UI Rebuild — Implementation Plan
 
+> **SUPERSEDED** — the agent messaging contract is being replaced by the
+> @novakai/messaging capability (N-program). As of N4 the Messages tab,
+> Mission Control inbox, and the data plane run on the capability
+> (messagingV2 feed, zero REST polls); the tunnel/ envelope model this plan
+> built on is deleted. See
+> Elite-Kimi-Audit-God-Level/Messaging/Messaging-Integration-Plan.md.
+
 **Date:** 2026-07-19 · **Branch:** `kimi/messaging-ui` (worktree `Novakai-Command-kimi-messaging-ui`, base 77f8e251)
 **Strategy:** TEAR OUT the current Messages tab UI and build fresh against the storyboard vision.
 Backend plumbing (store index/cache, actor registry, delivery adapters, record-first composer,

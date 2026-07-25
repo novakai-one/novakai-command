@@ -7,7 +7,7 @@
 // moment — it must feel like the app exhaling, not a cursor moving.
 import { useSyncExternalStore } from 'react';
 import type { ThreadProjection } from '../../../shared/provider/schema.js';
-import type { TunnelEnvelope } from '../tunnelModel/index.js';
+import type { TunnelEnvelope } from '../messagingV2/index.js';
 
 export type AttentionKind = 'approval' | 'failed-message';
 

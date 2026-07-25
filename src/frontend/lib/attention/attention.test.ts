@@ -7,7 +7,7 @@ import {
   messageItemId,
   type AttentionItem,
 } from './index.js';
-import type { TunnelEnvelope } from '../tunnelModel/index.js';
+import type { TunnelEnvelope } from '../messagingV2/index.js';
 import type { ThreadProjection } from '../../../shared/provider/schema.js';
 
 function envelope(overrides: Partial<TunnelEnvelope>): TunnelEnvelope {

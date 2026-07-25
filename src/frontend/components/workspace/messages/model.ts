@@ -10,7 +10,7 @@ import {
   type Conversation,
   type ConversationId,
   type TunnelEnvelope,
-} from '../../../lib/tunnelModel/index.js';
+} from '../../../lib/messagingV2/index.js';
 
 /* ---------- Density-as-data (owner decision, locked) -----------------------
    The whole tab rescales from this ONE knob: MessagesView writes
@@ -193,9 +193,11 @@ export function saveRailWidths(widths: RailWidths): void {
   }
 }
 
-/* ---------- Presence (D3 — invented heuristic; no backend presence) --------
-   unread in the lane → amber "notification"; agent running → green;
-   anything else (exited / unknown) → gray. */
+/* ---------- Presence tones (D-N4-5) ------------------------------------------
+   The invented feed-derived heuristic is DELETED — rail/person rows use
+   PeopleHub liveness tiers (the ONE server-derived liveness truth, Ruling 3).
+   The feed lib carries NO presence plumbing (F11): unread → amber
+   "notification"; live-verified → green; anything else → gray. */
 export type PresenceTone = 'amber' | 'green' | 'gray';
 
 export const PRESENCE_LABEL: Record<PresenceTone, string> = {
@@ -203,15 +205,6 @@ export const PRESENCE_LABEL: Record<PresenceTone, string> = {
   green: 'online',
   gray: 'offline',
 };
-
-export function presenceToneFor(
-  unreadCount: number,
-  status: AgentInfo['status'] | null,
-): PresenceTone {
-  if (unreadCount > 0) return 'amber';
-  if (status === 'running') return 'green';
-  return 'gray';
-}
 
 /* ---------- Rail sections ---------------------------------------------------
    MISSION ROOMS = #team channel pinned first, then rooms (recency order as
@@ -386,7 +379,7 @@ export function composerTargetsFor(knownAgents: KnownAgent[]): MentionTarget[] {
    tunnel model (mission_visual-truth defect 1): Mission Control consumes the
    same derivation now — one overlay grammar, two chromes. Re-exported here so
    this module's existing consumers and tests keep their import surface. */
-export { dmLaneFor, resolveSelectedLane } from '../../../lib/tunnelModel/index.js';
+export { dmLaneFor, resolveSelectedLane } from '../../../lib/messagingV2/index.js';
 /* ---------- Right-panel identity header (round 3 M4) -----------------------
    Rooms/channels get the same "where you are" header DMs have: name, kind,
    member count. The count only appears when the room record carries a real
@@ -521,19 +514,19 @@ export interface LaneStats {
   sent: number;
   received: number;
   delivered: number;
-  /** Interrupts whose bytes were written but whose effect is not yet proven (D1). */
-  accepted: number;
+  /** Just-sent rows not yet echoed by the committed fact (optimistic grammar). */
+  queued: number;
   failed: number;
 }
 
 export function laneStatsFor(messages: TunnelEnvelope[]): LaneStats {
-  const stats: LaneStats = { sent: 0, received: 0, delivered: 0, accepted: 0, failed: 0 };
+  const stats: LaneStats = { sent: 0, received: 0, delivered: 0, queued: 0, failed: 0 };
   for (const message of messages) {
     if (message.from === CHRIS) stats.sent += 1;
     else stats.received += 1;
     if (message.status === 'failed') stats.failed += 1;
     else if (message.status === 'delivered') stats.delivered += 1;
-    else if (message.status === 'accepted') stats.accepted += 1;
+    else if (message.status === 'queued') stats.queued += 1;
   }
   return stats;
 }

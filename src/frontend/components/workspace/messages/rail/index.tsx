@@ -11,7 +11,7 @@ import type { AgentInfo } from '../../../../lib/agentSocket/index.js';
 import type {
   Conversation,
   ConversationId,
-} from '../../../../lib/tunnelModel/index.js';
+} from '../../../../lib/messagingV2/index.js';
 import type { ArchivedLane } from '../../../../../shared/people/schema.js';
 import { mergeArchive, type PanelLanes, type PanelPersonRow } from '../../../../lib/tunnelModel/panel/index.js';
 import { useArchive } from '../../../../lib/tunnelModel/people/index.js';
@@ -26,7 +26,7 @@ import {
 } from '../model.js';
 import type { ProviderId } from '../../../../../shared/project/schema.js';
 import { NEW_ACTION_STYLE, resolveStyle } from '../styles/index.js';
-import { NewAgentPicker, NewDmPicker, NewRoomPicker } from './pickers.js';
+import { NewAgentPicker, NewDmPicker } from './pickers.js';
 import './index.css';
 
 interface RoomsRailProps {
@@ -50,7 +50,6 @@ interface RoomsRailProps {
   collapsed: boolean;
   onToggleCollapse(): void;
   onSelect(conversation: Conversation): void;
-  onStartChat(members: string[], name: string): Promise<void>;
   onOpenDm(name: string): void;
   onSpawnAgent(provider: ProviderId, title?: string): Promise<void>;
 }
@@ -77,7 +76,7 @@ function RoomRow(props: {
   );
 }
 
-type NewFlow = 'room' | 'dm' | 'agent';
+type NewFlow = 'dm' | 'agent';
 
 export function RoomsRail(props: RoomsRailProps) {
   const [flow, setFlow] = useState<NewFlow | null>(null);
@@ -162,14 +161,6 @@ export function RoomsRail(props: RoomsRailProps) {
           <div className="msg-new-actions">
             <button
               type="button"
-              className={resolveStyle(NEW_ACTION_STYLE.base, flow === 'room' && NEW_ACTION_STYLE.active)}
-              aria-expanded={flow === 'room'}
-              onClick={() => toggleFlow('room')}
-            >
-              New room
-            </button>
-            <button
-              type="button"
               className={resolveStyle(NEW_ACTION_STYLE.base, flow === 'dm' && NEW_ACTION_STYLE.active)}
               aria-expanded={flow === 'dm'}
               onClick={() => toggleFlow('dm')}
@@ -187,13 +178,6 @@ export function RoomsRail(props: RoomsRailProps) {
           </div>
           {flow === 'agent' && (
             <NewAgentPicker onSpawnAgent={props.onSpawnAgent} onClose={() => setFlow(null)} />
-          )}
-          {flow === 'room' && (
-            <NewRoomPicker
-              knownAgents={props.knownAgents}
-              onStartChat={props.onStartChat}
-              onClose={() => setFlow(null)}
-            />
           )}
           {flow === 'dm' && (
             <NewDmPicker

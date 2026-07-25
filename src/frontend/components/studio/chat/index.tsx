@@ -25,13 +25,13 @@ import {
   useAttention,
   type AttentionItem,
 } from '../../../lib/attention/index.js';
-import { latestChrisQuestion, useTunnelFeed } from '../../../lib/tunnelModel/index.js';
+import { latestChrisQuestion } from '../../../lib/messagingV2/index.js';
+import { useMessagingFeed } from '../../../lib/messagingV2/feed/index.js';
 import { MarkdownText } from '../../../lib/markdown/index.js';
 import type { SessionUsage } from '../../../lib/cost/index.js';
 import { ChatComposer } from './composer.js';
 import { MentionText } from './mention/index.js';
 import { ParityStrip } from './parity/index.js';
-import { TunnelMessenger } from './tunnel/index.js';
 import './index.css';
 
 /** A composer send waiting for its echo on the live stream. */
@@ -49,19 +49,18 @@ export interface StudioChatPanelProps {
   /** Aggregated token usage for the selected session — the parity readout's
    * projection source (already fetched by the shell; never refetched here). */
   sessionUsage: SessionUsage | null;
-  /** Every known agent — the tunnel's roster hint and mention targets. */
+  /** Every known agent — the messaging roster hint and mention targets. */
   agents: AgentInfo[];
   onLaunch(provider: ProviderId): Promise<unknown>;
   onAttach(provider: ProviderId, sessionId: string, cwd?: string): Promise<void>;
   onOpenAgent(agentId: string): void;
 }
 
-type ChatTabId = 'context' | 'conversation' | 'tunnel' | 'evidence';
+type ChatTabId = 'context' | 'conversation' | 'evidence';
 
 const CHAT_TABS: { id: ChatTabId; label: string }[] = [
   { id: 'context', label: 'Context' },
   { id: 'conversation', label: 'Conversation' },
-  { id: 'tunnel', label: 'Tunnel' },
   { id: 'evidence', label: 'Evidence' },
 ];
 
@@ -282,12 +281,12 @@ export function StudioChatPanel(props: StudioChatPanelProps) {
     [props.agents, props.project],
   );
 
-  // Amber engine feed. The tunnel feed lives HERE (not in the Tunnel tab) so
-  // a failed delivery claims attention whichever lens is open. Clicking
+  // Amber engine feed. The capability feed lives HERE (not in a messaging
+  // tab) so a failed delivery claims attention whichever lens is open. Clicking
   // through a failed send dismisses it — that is its resolution. A lane whose
   // newest word asks for Chris joins the queue the same way; opening that
   // lane in the messenger dismisses it.
-  const { feed: tunnelFeed, loadConversation } = useTunnelFeed();
+  const { feed: tunnelFeed } = useMessagingFeed(props.agents);
   const [dismissedNeeds, setDismissedNeeds] = useState<ReadonlySet<string>>(() => new Set<string>());
   useEffect(() => {
     const queue = buildAttentionQueue(props.projection, tunnelFeed, dismissedNeeds);
@@ -333,15 +332,6 @@ export function StudioChatPanel(props: StudioChatPanelProps) {
         <ConversationBody projection={props.projection} thread={props.thread} pendingSends={pendingSends} targets={mentionTargets} />
       )}
       {activeTab === 'context' && <ContextBody {...props} />}
-      {activeTab === 'tunnel' && (
-        <TunnelMessenger
-          feed={tunnelFeed}
-          agents={props.agents}
-          targets={mentionTargets}
-          onResolve={resolveNeed}
-          onLoadConversation={loadConversation}
-        />
-      )}
       {activeTab === 'evidence' && <div className="st-ai-quiet">Nothing captured yet</div>}
 
       {activeTab === 'conversation' && (

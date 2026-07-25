@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import type { AgentInfo } from '../../../../lib/agentSocket/index.js';
-import type { Conversation, TunnelEnvelope } from '../../../../lib/tunnelModel/index.js';
-import { buildConversations, dmId, registeredRoster } from '../../../../lib/tunnelModel/index.js';
+import type { Conversation, TunnelEnvelope } from '../../../../lib/messagingV2/index.js';
+import { buildConversations, dmId, registeredRoster } from '../../../../lib/messagingV2/index.js';
 import { createLaneFlows } from '../flows/index.js';
 import {
   DEFAULT_RAIL_WIDTHS,
@@ -25,7 +25,6 @@ import {
   mentionQueryAt,
   mentionSuggestions,
   parseRailWidths,
-  presenceToneFor,
   recapNotesFor,
   replyLabelFor,
   resolveSelectedLane,
@@ -78,12 +77,6 @@ function lane(id: string, kind: Conversation['kind'], title: string): Conversati
 assert.equal(DENSITY_SCALE.low, 1.0);
 assert.equal(DENSITY_SCALE.normal, 1.3);
 assert.equal(DENSITY_SCALE.high, 1.7);
-
-// Presence heuristic: unread beats running beats gray.
-assert.equal(presenceToneFor(2, 'running'), 'amber');
-assert.equal(presenceToneFor(0, 'running'), 'green');
-assert.equal(presenceToneFor(0, 'exited'), 'gray');
-assert.equal(presenceToneFor(0, null), 'gray');
 
 // Rail sections: #team pinned first, rooms next, dms separate (TEAMS hidden).
 const sections = splitRailSections([
@@ -148,7 +141,7 @@ const laneMessages = [
   envelope({ id: 'msg_2', from: 'claude-1', 'to': 'chris', status: 'delivered' }),
   envelope({ id: 'msg_3', from: 'chris', 'to': 'claude-1', status: 'failed' }),
 ];
-assert.deepEqual(laneStatsFor(laneMessages), { sent: 2, received: 1, delivered: 2, accepted: 0, failed: 1 });
+assert.deepEqual(laneStatsFor(laneMessages), { sent: 2, received: 1, delivered: 2, queued: 0, failed: 1 });
 
 // Recap notes: unread, members, last word — all derived.
 const room = lane('room_a', 'room', 'alpha');
@@ -170,11 +163,12 @@ assert.equal(
 
 // Review resilience (M4): the target's lanes are derived from the envelope;
 // a stale notice (envelope gone from the feed) resolves to null honestly.
+// N4: a row's `to` IS its lane (one thread, one lane).
 const reviewFeed = [
-  envelope({ id: 'msg_room_fail', 'to': 'room_a' }),
-  envelope({ id: 'msg_dm_fail', 'to': 'claude-1' }),
+  envelope({ id: 'msg_room_fail', 'to': '#team' }),
+  envelope({ id: 'msg_dm_fail', 'to': 'dm:claude-1' }),
 ];
-assert.deepEqual(reviewLanesFor(reviewFeed, 'msg_room_fail'), ['room_a']);
+assert.deepEqual(reviewLanesFor(reviewFeed, 'msg_room_fail'), ['#team']);
 assert.deepEqual(reviewLanesFor(reviewFeed, 'msg_dm_fail'), ['dm:claude-1']);
 assert.equal(reviewLanesFor(reviewFeed, 'msg_gone'), null);
 
@@ -473,44 +467,36 @@ assert.deepEqual(mentionSuggestions(offlineTargets, '', 6).map((target) => targe
 }
 
 // ---- C3 (audit S2): lane pruning, composed through buildConversations ------
-// Precedence: (a) history → visible only if Chris is a party (registration
-// NEVER overrides); (b) empty lane → registered agent, ANY status; (c) #team
-// always; (d) rooms → members only. registeredRoster (not liveRoster)
-// materializes exited agents' empty lanes.
+// N4 semantics: (a) direct threads are the human's OWN by contract (R3) —
+// chris-party is the only kind of DM history the capability serves; (b)
+// empty lane → registered agent, ANY status; (c) #team always; (d) room
+// lanes carry members: [chris] (D-N3-1 host policy: the human is in every
+// roster). Agent↔agent DM lanes are UNSERVABLE (R3) and never appear.
 {
   const agents = [
-    agent({ agentId: 'ag-a', title: 'worker-a', status: 'running' }),  // agent↔agent history only
     agent({ agentId: 'ag-c', title: 'worker-c', status: 'exited' }),   // empty, exited
     agent({ agentId: 'ag-d', title: 'worker-d', status: 'running' }),  // empty, running
-    agent({ agentId: 'ag-e', title: 'worker-e', status: 'running' }),  // chris-party history
-    agent({ agentId: 'ag-f', title: 'worker-f', status: 'exited' }),   // exited, agent↔agent history only
+    agent({ agentId: 'agent_e', title: 'worker-e', status: 'running' }),  // chris-party thread
+  ];
+  const threads = [
+    { id: 'thread_fleet', threadKind: 'team' as const, label: '#team' },
+    { id: 'thread_crew', threadKind: 'team' as const, label: '#Crew Room' },
+    { id: 'thread_dm_e', threadKind: 'direct' as const, direct: { pair: ['person_user-chris', 'person_agent-e'] as [string, string] } },
   ];
   const feed = [
-    envelope({ id: 'p1', from: 'worker-a', to: 'worker-b', body: 'private' }),
-    envelope({ id: 'p2', from: 'worker-f', to: 'worker-b', body: 'private' }),
-    envelope({ id: 'p3', from: 'chris', to: 'worker-e', body: 'hello' }),
-    envelope({ id: 'p4', from: 'ghost', to: 'chris', body: 'history knows me' }),
-    envelope({ id: 'p5', from: 'phantom', to: 'ghost2', body: 'strangers' }),
+    envelope({ id: 'p1', from: 'worker-e', 'to': 'dm:worker-e', body: 'hello chris' }),
+    envelope({ id: 'p2', from: 'chris', 'to': 'dm:worker-e', body: 'hi' }),
   ];
-  const rooms = [
-    { roomId: 'room_mine-0001', name: 'mine', members: ['chris', 'worker-a'], createdBy: 'chris', createdAt: 'T', archived: false },
-    { roomId: 'room_them-0002', name: 'them', members: ['worker-a', 'worker-b'], createdBy: 'worker-a', createdAt: 'T', archived: false },
-  ];
-  // Exited agents MUST materialize: liveRoster omits them, registeredRoster does not.
-  const lanes = buildConversations(feed, rooms, registeredRoster(agents));
+  const lanes = buildConversations(threads, feed, agents);
   assert.ok(lanes.some((entry) => entry.id === 'dm:worker-c'), 'exited empty lane must materialize');
+  assert.ok(lanes.some((entry) => entry.id === 'dm:worker-e' && entry.threadId === 'thread_dm_e'), 'the direct thread derives its dm lane');
   const visible = visibleLanesFor(lanes, feed, agents).map((entry) => entry.id);
   assert.ok(visible.includes('#team'), '(c) #team always');
-  assert.ok(visible.includes('room_mine-0001'), '(d) member room kept');
-  assert.ok(!visible.includes('room_them-0002'), '(d) non-member room dropped');
+  assert.ok(visible.includes('#Crew Room'), '(d) the human is a member of every roster (D-N3-1)');
   assert.ok(visible.includes('dm:worker-e'), '(a) chris-party history kept');
-  assert.ok(visible.includes('dm:ghost'), '(a) unregistered but chris-party history kept');
   assert.ok(visible.includes('dm:worker-c'), '(b) empty exited registered kept');
   assert.ok(visible.includes('dm:worker-d'), '(b) empty running registered kept');
-  assert.ok(!visible.includes('dm:worker-a'), '(a) running registered, agent-only history → hidden');
-  assert.ok(!visible.includes('dm:worker-f'), '(a) exited registered, agent-only history → hidden');
-  assert.ok(!visible.includes('dm:worker-b'), 'unregistered, agent-only history → hidden');
-  assert.ok(!visible.includes('dm:phantom') && !visible.includes('dm:ghost2'), 'stranger lanes hidden');
+  assert.ok(!visible.includes('dm:worker-f'), 'unregistered empty names stay hidden');
 }
 
 // ---- C4 (audit S1): spawn lane renders from the 201 ALONE ------------------
@@ -521,7 +507,7 @@ assert.deepEqual(mentionSuggestions(offlineTargets, '', 6).map((target) => targe
   const spawnedTitle = 'claude-7'; // as minted by the POST /api/agents 201
   const overlay = dmLaneFor(spawnedTitle);
   const selectedId = overlay.id;
-  const withheld = visibleLanesFor(buildConversations([], [], registeredRoster([])), [], []);
+  const withheld = visibleLanesFor(buildConversations([], [], []), [], []);
   assert.equal(withheld.some((entry) => entry.id === overlay.id), false, 'no derived lane before the frame');
   const rendered = resolveSelectedLane(withheld, overlay, selectedId);
   assert.ok(rendered, 'the overlay lane renders from the 201 alone');
@@ -532,7 +518,7 @@ assert.deepEqual(mentionSuggestions(offlineTargets, '', 6).map((target) => targe
   // survives pruning (registered + empty), and reconciliation prefers the
   // DERIVED lane over the overlay.
   const roster = [agent({ agentId: 'ag-7', title: spawnedTitle, status: 'running' })];
-  const derived = visibleLanesFor(buildConversations([], [], registeredRoster(roster)), [], roster);
+  const derived = visibleLanesFor(buildConversations([], [], roster), [], roster);
   const reconciled = resolveSelectedLane(derived, overlay, selectedId);
   assert.ok(reconciled, 'lane still selected after the frame');
   assert.equal(reconciled.id, dmId(spawnedTitle));
@@ -557,7 +543,6 @@ assert.deepEqual(mentionSuggestions(offlineTargets, '', 6).map((target) => targe
   }) as typeof fetch;
   try {
     const flows = createLaneFlows({
-      ingestRoom: () => {},
       setOverlay: (lane) => { overlay = lane; },
       openLane: (laneId) => {
         overlayAtSelection = overlay; // capture ordering: overlay must already exist

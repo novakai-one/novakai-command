@@ -302,8 +302,8 @@ export function DashboardShell() {
           if (message.event?.kind === 'usage') refetchUsage(1500);
           if (message.subagentId && message.event) subagentLiveRef.current?.(message.subagentId, message.event);
         }
-      } else if (message.event === 'watch-started' || message.event === 'message-envelope') {
-        // Watch acks and tunnel envelopes (consumed via the agentSocket
+      } else if (message.event === 'watch-started' || message.event === 'messaging-v2') {
+        // Watch acks and capability frames (consumed via the agentSocket
         // singleton) must not fall through to the debug message list.
       } else if (message.event === 'design-event') {
         // External design commit (bounded CLI, html-builder app) — the always-
