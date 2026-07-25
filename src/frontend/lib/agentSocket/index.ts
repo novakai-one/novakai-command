@@ -37,7 +37,7 @@ export interface AgentHandlers {
 
 interface ServerFrame {
   type: string;
-  /** Broadcast dialect used by the messaging tunnel: { event, payload }. */
+  /** Broadcast dialect used by messaging-v2 + transcript frames: { event, payload }. */
   event?: string;
   payload?: unknown;
   [prop: string]: unknown;
@@ -58,8 +58,6 @@ const agentHandlers = new Map<string, AgentHandlers>();
 const watchedSessions = new Map<string, WatchTarget>();
 
 const agentsChangedListeners: Array<(agents: AgentInfo[]) => void> = [];
-const messageEnvelopeListeners: Array<(envelope: unknown) => void> = [];
-const roomsChangedListeners: Array<(rooms: unknown) => void> = [];
 const messagingV2Listeners: Array<(frame: unknown) => void> = [];
 const transcriptEventListeners: Array<(sessionId: string, event: unknown) => void> = [];
 const subagentsChangedListeners: Array<(sessionId: string, subagents: SubagentSummary[]) => void> = [];
@@ -131,13 +129,9 @@ function routeAgentFrame(message: ServerFrame): void {
 
 function routeMessage(message: ServerFrame): void {
   if (AGENT_FRAME_TYPES.has(message.type)) return routeAgentFrame(message);
-  // Tunnel envelopes arrive on the event-keyed broadcast dialect ({event,
-  // payload}) the server uses for transcript frames — same socket, no type.
-  if (message.event === 'message-envelope') return emitAll(messageEnvelopeListeners, message.payload);
+  // N4: capability frames arrive on the event-keyed broadcast dialect
+  // ({event, payload}) the server uses for transcript frames — same socket.
   if (message.event === 'messaging-v2') return emitAll(messagingV2Listeners, message.payload);
-  if (message.event === 'rooms-changed') {
-    return emitAll(roomsChangedListeners, (message.payload as { rooms?: unknown } | undefined)?.rooms);
-  }
   const handler = BROADCAST_HANDLERS[message.type];
   if (handler) handler(message);
 }
@@ -269,16 +263,6 @@ export function unwatchSession(projectDir: string, sessionId: string): void {
 
 export function onAgentsChanged(listener: (agents: AgentInfo[]) => void): () => void {
   return addListener(agentsChangedListeners, listener);
-}
-
-/** Tunnel feed: every appended message envelope (sends AND status amendments). */
-export function onMessageEnvelope(listener: (envelope: unknown) => void): () => void {
-  return addListener(messageEnvelopeListeners, listener);
-}
-
-/** Tunnel rooms: the full room roster snapshot on every rooms.jsonl append. */
-export function onRoomsChanged(listener: (rooms: unknown) => void): () => void {
-  return addListener(roomsChangedListeners, listener);
 }
 
 /** N4 (D-N4-1): capability frames forwarded by the per-connection

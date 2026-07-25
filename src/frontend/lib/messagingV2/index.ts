@@ -75,7 +75,15 @@ const CURSOR_KEY = 'nvk-messaging-v2-cursor';
 
 // --- translator (capability → view) -------------------------------------------
 
-/** personId → display name: the human is chris; agents forward-derive. */
+/**
+ * personId → display name: the human is chris; agents forward-derive with
+ * the authority's personIdForAgentId shape.
+ * DERIVATION IS DEBT (same class as the N2 transport's reverse-map): the
+ * authority documents the personId mapping as one-directional, and the
+ * right fix is an authority-owned personId→name query (later slice) that
+ * both the backend transport and this client consume. Until then, the
+ * forward derivation is exact for every live roster entry — never a guess.
+ */
 export function nameForPersonId(personId: string, agents: Pick<AgentInfo, 'agentId' | 'title'>[]): string {
   if (personId === HUMAN_PERSON_ID) return CHRIS;
   const found = agents.find((agent) => `person_${agent.agentId.replaceAll('_', '-')}` === personId);

@@ -1,6 +1,6 @@
 // Organization lens — variant B's org-compiler center + intelligence column
 // rebuilt over the LIVE fleet. Chris sits at the root; every running session
-// is a positioned node; the wires are real DM traffic from the tunnel feed
+// is a positioned node; the wires are real DM traffic from the capability feed
 // (thickness = volume). The right column reads the organization honestly:
 // a derived org score, live measures (presence, traffic, spend from
 // /api/usage), and the newest thing that deserves attention. Calm grammar:
@@ -169,7 +169,7 @@ function IntelColumn({ agents, liveCount, stats, orgScore, roomCount, fleetToken
           <strong>{formatCost(fleetCost, settings.currency)}</strong>
         </div>
         <div className="org-measure">
-          <div><span>Rooms</span><small>group lanes in the tunnel</small></div>
+          <div><span>Rooms</span><small>group lanes in messaging</small></div>
           <strong>{roomCount}</strong>
         </div>
       </section>
@@ -178,7 +178,7 @@ function IntelColumn({ agents, liveCount, stats, orgScore, roomCount, fleetToken
         {stats.latestFailed ? (
           <>
             <h3>{stats.latestFailed.from} → {stats.latestFailed.to} failed</h3>
-            <p>The newest undelivered message in the tunnel — usually a misspelled agent name.</p>
+            <p>The newest undelivered message in the fleet — usually a misspelled agent name.</p>
           </>
         ) : stats.latestTeamPost ? (
           <>

@@ -123,15 +123,19 @@ assert.equal(rooms.fleetThreadId(), fleetThreadId, 'get-or-create is idempotent'
 console.log('boot provisioning tests passed');
 
 // --- D-N3-3/5: the human posts #team → every live agent's PTY (the exit condition) ---
+// (The user send route's own path: sendMessage as the human session.)
 
-const posted = await rooms.post('hello fleet');
-assert.equal(posted.from, 'chris', 'translated envelope stamps the human');
-assert.equal(posted.to, '#team');
-assert.equal(posted.status, 'delivered');
-assert.equal(posted.body, 'hello fleet');
+const human = await authenticate('human-secret');
+const posted = await human.sendMessage({
+  address: `thread:${fleetThreadId}`, body: { text: 'hello fleet' },
+  priority: 'normal', clientMessageId: 'n3-exit-1',
+});
+assert.equal(posted.kind, 'ok', 'the human posts to the fleet room (D-N3-1 membership)');
+if (posted.kind !== 'ok') throw new Error('unreachable');
+const postedId = posted.value.messageId;
 for (const agentId of [aliceId, bobId, carolId]) {
   assert.ok(
-    laneText(agentId).some((text) => text === `[nvk-room #team from chris id ${posted.id}] hello fleet`),
+    laneText(agentId).some((text) => text === `[nvk-room #team from chris id ${postedId}] hello fleet`),
     `${agentId} received the fleet post typed as [nvk-room #team …]`,
   );
 }
@@ -219,8 +223,13 @@ console.log('launch-time provisioning test passed');
   );
   const noTokenRooms = noToken.rooms;
   assert.ok(noTokenRooms, 'the rooms glue boots without a configured humanToken');
-  const posted = await noTokenRooms.post('no-env-token post');
-  assert.equal(posted.to, '#team', 'the human #team lane works with the self-minted token');
+  const noTokenSession = noToken.lanes?.humanSession();
+  assert.ok(noTokenSession, 'the self-minted human session is held (N3.1)');
+  const minted = await noTokenSession?.sendMessage({
+    address: `thread:${noTokenRooms.fleetThreadId() ?? ''}`, body: { text: 'no-env-token post' },
+    priority: 'normal', clientMessageId: 'n3-selfmint-1',
+  });
+  assert.equal(minted?.kind, 'ok', 'the fleet lane works with the self-minted token');
   await noToken.close();
   console.log('self-minted human token test passed');
 }

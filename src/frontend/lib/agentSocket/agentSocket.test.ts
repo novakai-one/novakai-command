@@ -40,7 +40,7 @@ class FakeSocket {
 (globalThis as unknown as { WebSocket: unknown }).WebSocket = FakeSocket;
 
 const agentSocket = await import('./index.js');
-const { connect, subscribeAgent, sendInput, watchSession, unwatchSession, setBackoffForTest, onRoomsChanged, connectionStatus, onConnectionChanged } = agentSocket;
+const { connect, subscribeAgent, sendInput, watchSession, unwatchSession, setBackoffForTest, connectionStatus, onConnectionChanged } = agentSocket;
 
 function framesOf(instance: FakeSocket, type: string): Record<string, unknown>[] {
   return instance.sent.map(frame => JSON.parse(frame)).filter(frame => frame.type === type);
@@ -81,16 +81,6 @@ assert.deepEqual(subscribeFrames.map(frame => frame.agentId).sort(), ['agent-1',
 socketOne.triggerMessage({ type: 'agent-data', agentId: 'agent-1', data: 'hello-1' });
 assert.deepEqual(dataOne, ['hello-1']);
 assert.deepEqual(dataTwo, []);
-
-// rooms-changed rides the event-keyed broadcast dialect ({event, payload});
-// listeners receive the payload's rooms array, and unsubscribe stops delivery.
-const roomFrames: unknown[] = [];
-const unsubscribeRooms = onRoomsChanged(rooms => roomFrames.push(rooms));
-socketOne.triggerMessage({ event: 'rooms-changed', payload: { rooms: [{ roomId: 'room_a' }] } });
-assert.deepEqual(roomFrames, [[{ roomId: 'room_a' }]]);
-unsubscribeRooms();
-socketOne.triggerMessage({ event: 'rooms-changed', payload: { rooms: [] } });
-assert.equal(roomFrames.length, 1);
 
 // Simulated close → reconnect after backoff → new socket → re-subscribe + re-watch.
 socketOne.triggerClose();

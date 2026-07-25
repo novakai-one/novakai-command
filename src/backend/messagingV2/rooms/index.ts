@@ -12,18 +12,19 @@
  * (`#team`, `#<team name>`, `#<mission title>`; falls back to externalId)
  * for the transport's [nvk-room …] formatting and the routes' resolution.
  *
- * N4 note: the browser #team shim (read translation + live rebroadcast) is
- * DELETED — the browser is a forwarded-frame subscriber now (messagingV2/
- * live, D-N4-1). Provisioning, the directory, `post` (the human's #team
- * send), and fleetThreadId STAY (D-N4-3's user routes use them).
+ * N4 note: the browser #team shim (read translation + live rebroadcast)
+ * is DELETED — the browser is a forwarded-frame subscriber now
+ * (messagingV2/live, D-N4-1), and the fleet send path is the user send
+ * route's own sendMessage (messagingV2/userRoutes). What stays here:
+ * provisioning (boot + launch), the RoomDirectory (labels for the
+ * transport's [nvk-room …] formatting and the routes' resolution), and
+ * readTrailingPage (the routes' trailing-window paging).
  */
 
-import { randomUUID } from 'node:crypto';
 import type { EmbeddedMessaging } from '../../../../packages/messaging/composition/embedded.js';
 import type { MessagingSession } from '../../../../packages/messaging/public/capability.js';
 import { constants } from '../../../../packages/messaging/public/contract/index.js';
 import type { Cursor, Message, ThreadId } from '../../../../packages/messaging/public/contract/index.js';
-import { CHRIS_MEMBER } from '../../messaging/types.js';
 import type { ObjectModel } from '../../objectModel/index.js';
 import type { AgentInfo } from '../../terminal/manager.js';
 import type { TerminalRuntime } from '../../terminal/runtime/index.js';
@@ -70,23 +71,10 @@ export interface RoomsGlueDeps {
   log?: (message: string) => void;
 }
 
-/** The old tunnel envelope shape tunnelModel consumes (dies in N4). */
-export interface TranslatedEnvelope {
-  id: string;
-  from: string;
-  to: string;
-  body: string;
-  createdAt: string;
-  status: 'delivered';
-  delivery: 'normal';
-}
-
 export interface RoomsGlue {
   ensureAllRooms(): Promise<void>;
   /** Launch-time provisioning: the launched agent's team/mission rooms. */
   handleAgentLaunched(info: AgentInfo): void;
-  /** D-N3-3: the human's #team post through the capability. */
-  post(body: string): Promise<TranslatedEnvelope>;
   threadIdFor(authority: string, externalId: string): ThreadId | undefined;
   threadIdForLabel(label: string): ThreadId | undefined;
   fleetThreadId(): ThreadId | undefined;
@@ -96,27 +84,6 @@ export interface RoomsGlue {
 
 function announce(deps: RoomsGlueDeps, message: string): void {
   (deps.log ?? ((): void => {}))(message);
-}
-
-/** senderId → display name: the human is 'chris'; agents resolve by the
- * EXACT forward derivation (personIdForAgentId) against the live roster. */
-function nameFor(deps: RoomsGlueDeps, personId: string): string {
-  if (personId === deps.humanPersonId) return CHRIS_MEMBER;
-  const found = deps.terminals.list().find((agent) => personIdForAgentId(agent.agentId) === personId);
-  return found?.title ?? personId;
-}
-
-function translate(deps: RoomsGlueDeps, message: Message): TranslatedEnvelope {
-  const label = deps.directory.labelFor(message.threadId) ?? FLEET_LABEL;
-  return {
-    id: message.id,
-    from: nameFor(deps, message.senderId),
-    'to': label,
-    body: message.body.text,
-    createdAt: message.createdAt,
-    status: 'delivered',
-    delivery: 'normal',
-  };
 }
 
 /** One get-or-create + directory registration; failures log, never throw. */
@@ -174,36 +141,6 @@ function namedFailure(name: string, message: string): Error {
   return failure;
 }
 
-async function postTeam(deps: RoomsGlueDeps, body: string): Promise<TranslatedEnvelope> {
-  const session = deps.humanSession();
-  const threadId = deps.directory.fleetThreadId();
-  if (session === null || threadId === undefined) {
-    throw namedFailure('DependencyUnavailable', 'messaging capability unavailable this run — #team post not sent');
-  }
-  const accepted = await session.sendMessage({
-    address: `thread:${threadId}`,
-    body: { text: body },
-    priority: 'normal',
-    clientMessageId: `msg_${randomUUID()}`,
-  });
-  if (accepted.kind !== 'ok') throw namedFailure(accepted.error.name, accepted.error.message);
-  const page = await session.getMessages({ threadId });
-  const message = page.kind === 'ok' ? page.value.messages.find((entry) => entry.id === accepted.value.messageId) : undefined;
-  return translate(deps, message ?? syntheticMessage(accepted.value.messageId, threadId, session, body));
-}
-
-/** The acceptance carries no Message record; synthesize one for translation
- * only when the journal read somehow misses it (never in practice). */
-function syntheticMessage(messageId: string, threadId: ThreadId, session: MessagingSession, body: string): Message {
-  return {
-    id: messageId,
-    threadId,
-    senderId: session.principal.personId,
-    createdAt: new Date().toISOString(),
-    body: { text: body },
-  } as unknown as Message;
-}
-
 /**
  * Read the TRAILING window of a thread (FIX 4): pages are sequence-ordered
  * oldest-first, so page through nextCursor to the end and keep the newest
@@ -234,7 +171,6 @@ export function createRoomsGlue(deps: RoomsGlueDeps): RoomsGlue {
   return {
     ensureAllRooms: () => ensureAllRooms(deps),
     handleAgentLaunched: (info) => launchProvision(deps, info),
-    post: (body) => postTeam(deps, body),
     threadIdFor: (authority, externalId) => deps.directory.threadIdFor(authority, externalId),
     threadIdForLabel: (label) => deps.directory.threadIdForLabel(label),
     fleetThreadId: () => deps.directory.fleetThreadId(),

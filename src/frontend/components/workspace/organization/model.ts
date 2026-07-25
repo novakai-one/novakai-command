@@ -1,6 +1,6 @@
 // Organization lens read model — pure derivations from the live seams:
 // node layout over the agent roster, wires folded from real DM traffic,
-// fleet stats from the tunnel feed, and the /api/usage sweep hook.
+// fleet stats from the capability feed, and the /api/usage sweep hook.
 import { useEffect, useState } from 'react';
 import type { AgentInfo } from '../../../lib/agentSocket/index.js';
 import { CHRIS, TEAM_CHANNEL, isRoomLane, type TunnelEnvelope } from '../../../lib/messagingV2/index.js';

@@ -1,5 +1,5 @@
 // Messages tab — rebuilt to the storyboard vision (docs/plans/messaging-ui-rebuild.md).
-// This view is a lens over the canonical tunnel feed, rooms, roster and read
+// This view is a lens over the capability feed, room threads, roster and read
 // cursors; it owns no message store. All visual decisions live in tokens.css,
 // all derived behavior in model.ts — the components only render and wire.
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';

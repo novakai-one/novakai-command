@@ -49,7 +49,7 @@ export interface StudioChatPanelProps {
   /** Aggregated token usage for the selected session — the parity readout's
    * projection source (already fetched by the shell; never refetched here). */
   sessionUsage: SessionUsage | null;
-  /** Every known agent — the tunnel's roster hint and mention targets. */
+  /** Every known agent — the messaging roster hint and mention targets. */
   agents: AgentInfo[];
   onLaunch(provider: ProviderId): Promise<unknown>;
   onAttach(provider: ProviderId, sessionId: string, cwd?: string): Promise<void>;
@@ -281,8 +281,8 @@ export function StudioChatPanel(props: StudioChatPanelProps) {
     [props.agents, props.project],
   );
 
-  // Amber engine feed. The tunnel feed lives HERE (not in the Tunnel tab) so
-  // a failed delivery claims attention whichever lens is open. Clicking
+  // Amber engine feed. The capability feed lives HERE (not in a messaging
+  // tab) so a failed delivery claims attention whichever lens is open. Clicking
   // through a failed send dismisses it — that is its resolution. A lane whose
   // newest word asks for Chris joins the queue the same way; opening that
   // lane in the messenger dismisses it.

@@ -8,7 +8,7 @@ import type { AgentHealth } from '../health/index.js';
  * evaluation — never "you are stuck"). */
 export const NUDGE_PROMPT = '[operator nudge] No terminal output has been observed from this session recently. If you are mid-task, please continue. If you are waiting or blocked, please report your current state.';
 
-/** Typing rhythm matches the tunnel's ruled submit timing (delivery
+/** Typing rhythm matches the transport submit lane's ruled timing (delivery
  * DEFAULT_TIMINGS: settle 900ms; kimi needs the 6s flush \r). Duplicated by
  * design — the messaging fence forbids importing the delivery module. */
 const NUDGE_SETTLE_MS = 900;
