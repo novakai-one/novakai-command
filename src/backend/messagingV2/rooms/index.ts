@@ -226,25 +226,31 @@ async function subscribeRooms(deps: RoomsGlueDeps, subscription: { current?: Sub
   else announce(deps, `[messaging-v2] rooms live subscription failed (${outcome.error.name}) — browser falls back to refetch`);
 }
 
+/** Launch-time provisioning, fire-and-forget with honest failure logging. */
+function launchProvision(deps: RoomsGlueDeps, info: AgentInfo): void {
+  void ensureForAgent(deps, info.agentId).catch((cause: unknown) => {
+    announce(deps, `[messaging-v2] launch-time room provisioning failed: ${cause instanceof Error ? cause.message : String(cause)}`);
+  });
+}
+
+/** Start the live subscription; failures log, never throw (D-N3-4 fallback). */
+function startBroadcast(deps: RoomsGlueDeps, subscription: { current?: SubscriptionHandle }): void {
+  void subscribeRooms(deps, subscription).catch((cause: unknown) => {
+    announce(deps, `[messaging-v2] rooms live subscription error: ${cause instanceof Error ? cause.message : String(cause)}`);
+  });
+}
+
 export function createRoomsGlue(deps: RoomsGlueDeps): RoomsGlue {
   const subscription: { current?: SubscriptionHandle } = {};
   return {
     ensureAllRooms: () => ensureAllRooms(deps),
-    handleAgentLaunched(info) {
-      void ensureForAgent(deps, info.agentId).catch((cause: unknown) => {
-        announce(deps, `[messaging-v2] launch-time room provisioning failed: ${cause instanceof Error ? cause.message : String(cause)}`);
-      });
-    },
+    handleAgentLaunched: (info) => launchProvision(deps, info),
     post: (body) => postTeam(deps, body),
     history: () => teamHistory(deps),
     threadIdFor: (authority, externalId) => deps.directory.threadIdFor(authority, externalId),
     fleetThreadId: () => deps.directory.fleetThreadId(),
     labelFor: (threadId) => deps.directory.labelFor(threadId),
-    startLiveBroadcast() {
-      void subscribeRooms(deps, subscription).catch((cause: unknown) => {
-        announce(deps, `[messaging-v2] rooms live subscription error: ${cause instanceof Error ? cause.message : String(cause)}`);
-      });
-    },
+    startLiveBroadcast: () => startBroadcast(deps, subscription),
     close: () => subscription.current?.close() ?? Promise.resolve(),
   };
 }

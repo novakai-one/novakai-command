@@ -31,6 +31,7 @@ import type { EmbeddedMessaging } from '../../../packages/messaging/composition/
 import { createSystemClock } from '../../../packages/messaging/adapters/clock-system.js';
 import { openJsonlStore } from '../../../packages/messaging/adapters/store-jsonl.js';
 import type { PersonId } from '../../../packages/messaging/public/contract/index.js';
+import { CHRIS_MEMBER } from '../messaging/types.js';
 import type { ObjectModel } from '../objectModel/index.js';
 import type { AgentInfo } from '../terminal/manager.js';
 import type { TerminalRuntime } from '../terminal/runtime/index.js';
@@ -107,27 +108,72 @@ async function bootGuarded(
   directory: ReturnType<typeof createRoomDirectory>,
 ): Promise<MessagingV2Handle> {
   try {
-    const principals = countPrincipals(deps.objectModel, config);
-    // DEC-21/F10: the recovery sweep runs BEFORE serving (inside start()).
-    await embedded.start();
-    const booted = await bootLanes(embedded, deps, transport, directory);
-    const announce = deps.log ?? console.log;
-    announce(`[messaging-v2] capability booted (store=${storePath}, principals=${principals})`);
-    return {
-      embedded,
-      lanes: booted?.lanes ?? null,
-      rooms: booted?.rooms ?? null,
-      close: () => closeAll(embedded, booted?.lanes ?? null, booted?.rooms ?? null),
-    };
+    return await bootServing(embedded, deps, config, storePath, transport, directory);
   } catch (error) {
     await closeQuietly(embedded);
     throw error;
   }
 }
 
+/** The serving half of the boot: sweep, glue, announce, handle. */
+async function bootServing(
+  embedded: EmbeddedMessaging,
+  deps: StartMessagingV2Deps,
+  config: NovakaiAuthorityConfig,
+  storePath: string,
+  transport: ReturnType<typeof createTerminalHostTransport> | null,
+  directory: ReturnType<typeof createRoomDirectory>,
+): Promise<MessagingV2Handle> {
+  const principals = countPrincipals(deps.objectModel, config);
+  // DEC-21/F10: the recovery sweep runs BEFORE serving (inside start()).
+  await embedded.start();
+  const booted = await bootLanes(embedded, deps, transport, directory);
+  const announce = deps.log ?? console.log;
+  announce(`[messaging-v2] capability booted (store=${storePath}, principals=${principals})`);
+  return {
+    embedded,
+    lanes: booted?.lanes ?? null,
+    rooms: booted?.rooms ?? null,
+    close: () => closeAll(embedded, booted?.lanes ?? null, booted?.rooms ?? null),
+  };
+}
+
 interface BootedGlue {
   lanes: AgentLaneGlue;
   rooms: RoomsGlue;
+}
+
+function makeLaneGlue(
+  embedded: EmbeddedMessaging,
+  deps: StartMessagingV2Deps,
+  transport: NonNullable<ReturnType<typeof createTerminalHostTransport>>,
+): AgentLaneGlue {
+  return createAgentLaneGlue({
+    embedded,
+    transport,
+    terminals: deps.terminals as TerminalRuntime,
+    objectModel: deps.objectModel,
+    ...(deps.humanToken !== undefined ? { humanToken: deps.humanToken } : {}),
+    ...(deps.log !== undefined ? { 'log': deps.log } : {}),
+  });
+}
+
+function makeRoomsGlue(
+  embedded: EmbeddedMessaging,
+  deps: StartMessagingV2Deps,
+  directory: ReturnType<typeof createRoomDirectory>,
+  lanes: AgentLaneGlue,
+): RoomsGlue {
+  return createRoomsGlue({
+    embedded,
+    objectModel: deps.objectModel,
+    directory,
+    terminals: deps.terminals as TerminalRuntime,
+    humanSession: () => lanes.humanSession(),
+    humanPersonId: HUMAN_PERSON_ID,
+    ...(deps.broadcast !== undefined ? { broadcast: deps.broadcast } : {}),
+    ...(deps.log !== undefined ? { 'log': deps.log } : {}),
+  });
 }
 
 /** N2/N3: open pty lanes for already-running agents, provision the rooms,
@@ -139,24 +185,8 @@ async function bootLanes(
   directory: ReturnType<typeof createRoomDirectory>,
 ): Promise<BootedGlue | null> {
   if (transport === null || deps.terminals === undefined) return null;
-  const lanes = createAgentLaneGlue({
-    embedded,
-    transport,
-    terminals: deps.terminals,
-    objectModel: deps.objectModel,
-    ...(deps.humanToken !== undefined ? { humanToken: deps.humanToken } : {}),
-    ...(deps.log !== undefined ? { 'log': deps.log } : {}),
-  });
-  const rooms = createRoomsGlue({
-    embedded,
-    objectModel: deps.objectModel,
-    directory,
-    terminals: deps.terminals,
-    humanSession: () => lanes.humanSession(),
-    humanPersonId: HUMAN_PERSON_ID,
-    ...(deps.broadcast !== undefined ? { broadcast: deps.broadcast } : {}),
-    ...(deps.log !== undefined ? { 'log': deps.log } : {}),
-  });
+  const lanes = makeLaneGlue(embedded, deps, transport);
+  const rooms = makeRoomsGlue(embedded, deps, directory, lanes);
   // audit #9: subscribe launches BEFORE the boot sweep so a spawn landing
   // mid-sweep is never missed — openLane's registry-keyed idempotence
   // dedupes any overlap between the two paths.
@@ -180,6 +210,24 @@ async function closeAll(
   await embedded.close();
 }
 
+/** The terminal-host transport with the N3 lookups, or null without terminals. */
+function makeTransport(
+  deps: StartMessagingV2Deps,
+  directory: ReturnType<typeof createRoomDirectory>,
+): ReturnType<typeof createTerminalHostTransport> | null {
+  // N2: with a terminal runtime, the ONLY registered transport is the
+  // terminal-host 'pty' lane; without one, the default in-memory 'ws'
+  // transport keeps the N1 posture (OpenPresence names a registered kind or
+  // fails ValidationFailed — Seams §4 composition rule). N3: the transport
+  // gets the rooms directory's label lookup for [nvk-room …] formatting and
+  // the human's display name.
+  if (deps.terminals === undefined) return null;
+  return createTerminalHostTransport(deps.terminals, {
+    roomLabel: (threadId) => directory.labelFor(threadId),
+    senderName: (personId) => (personId === HUMAN_PERSON_ID ? CHRIS_MEMBER : undefined),
+  });
+}
+
 export async function startMessagingV2(deps: StartMessagingV2Deps): Promise<MessagingV2Handle> {
   const clock = createSystemClock();
   const storePath = deps.storePath ?? path.resolve('.novakai-command/messaging-v2/journal.jsonl');
@@ -193,15 +241,8 @@ export async function startMessagingV2(deps: StartMessagingV2Deps): Promise<Mess
     deps.humanToken === undefined ? undefined : HUMAN_PERSON_ID,
   );
   const store = await openJsonlStore(clock, { path: storePath });
-  // N2: with a terminal runtime, the ONLY registered transport is the
-  // terminal-host 'pty' lane; without one, the default in-memory 'ws'
-  // transport keeps the N1 posture (OpenPresence names a registered kind or
-  // fails ValidationFailed — Seams §4 composition rule). N3: the transport
-  // gets the rooms directory's label lookup for [nvk-room …] formatting.
   const directory = createRoomDirectory();
-  const transport = deps.terminals === undefined
-    ? null
-    : createTerminalHostTransport(deps.terminals, { roomLabel: (threadId) => directory.labelFor(threadId) });
+  const transport = makeTransport(deps, directory);
   const embedded = createEmbeddedMessaging({
     clock, store, authority, membership,
     busPollIntervalMs: 500, sweepIntervalMs: 60_000,

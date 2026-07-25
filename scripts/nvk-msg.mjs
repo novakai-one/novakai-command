@@ -67,7 +67,7 @@ if (cmd === 'send') {
     process.exit(1);
   }
   if (threadId) {
-    console.error('nvk-msg: --thread is not supported by the v2 direct lane — threads land in N3');
+    console.error("nvk-msg: --thread is not supported by the v2 lane — use --to '#team' / '#mission' for rooms (explicit thread ids are not accepted)");
     process.exit(1);
   }
   const body = args.join(' ').trim();

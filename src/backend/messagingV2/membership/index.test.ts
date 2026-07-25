@@ -161,4 +161,59 @@ const unavailableIsMember = await membership.isMember(missionRoom, 'person_x' as
 assert.equal(unavailableIsMember.kind, 'unavailable');
 console.log('dependency failure tests passed');
 
+// --- D-N3-1: the fleet authority + the human principal in EVERY roster ---------
+
+{
+  const humanScratch = scratchStores();
+  const humanModel = new ObjectModel({ storesDir: humanScratch });
+  const crewId = humanModel.createTeam({ name: 'Fleet Crew', missionId: 'mission_alpha' });
+  const betaCrewId = humanModel.createTeam({ name: 'Beta Crew', missionId: 'mission_beta' });
+  const alphaAgent = humanModel.createAgent({ name: 'worker-a', provider: 'claude', teamId: crewId, missionId: 'mission_alpha' });
+  const betaAgent = humanModel.createAgent({ name: 'worker-b', provider: 'kimi', teamId: betaCrewId, missionId: 'mission_beta' });
+  const human = 'person_user-chris' as PersonId;
+  const fleetMembership = createNovakaiMembership(humanModel, clock, human);
+
+  const fleetRoom: RoomRef = { authority: 'fleet', externalId: 'team' };
+  const fleet = await fleetMembership.resolveMembers(fleetRoom);
+  assert.equal(fleet.kind, 'resolved');
+  if (fleet.kind !== 'resolved') throw new Error('unreachable');
+  assert.deepEqual(
+    [...fleet.members].sort(),
+    [personIdForAgentId(alphaAgent), personIdForAgentId(betaAgent), human].sort(),
+    'fleet roster = every active durable agent + the human, across missions',
+  );
+  const wrongId = await fleetMembership.resolveMembers({ authority: 'fleet', externalId: 'everyone' });
+  assert.equal(wrongId.kind, 'unknown', 'only the constant fleet externalId resolves');
+  console.log('fleet roster tests passed');
+
+  const alphaRoom = await fleetMembership.resolveMembers({ authority: 'mission', externalId: 'mission_alpha' });
+  if (alphaRoom.kind !== 'resolved') throw new Error('unreachable');
+  assert.ok(alphaRoom.members.includes(human), 'the human rides the mission roster (owner host policy)');
+  const teamRoom = await fleetMembership.resolveMembers({ authority: 'team', externalId: crewId });
+  if (teamRoom.kind !== 'resolved') throw new Error('unreachable');
+  assert.ok(teamRoom.members.includes(human), 'the human rides the team roster');
+  const humanMember = await fleetMembership.isMember(fleetRoom, human);
+  assert.deepEqual(humanMember, { kind: 'known', member: true }, 'isMember admits the human');
+  console.log('human-in-every-roster tests passed');
+
+  // Revision evidence covers the human inclusion: adding the human to the
+  // served roster changes the hash; a roster change changes it again.
+  const bareMembership = createNovakaiMembership(humanModel, clock);
+  const bare = await bareMembership.resolveMembers(fleetRoom);
+  if (bare.kind !== 'resolved' || fleet.kind !== 'resolved') throw new Error('unreachable');
+  assert.notEqual(bare.evidence.revision, fleet.evidence.revision, 'the human inclusion is revision-visible');
+  assert.ok(!bare.members.includes(human), 'no humanToken, no human in the roster');
+  const doomedAgent = humanModel.createAgent({ name: 'worker-doomed', provider: 'codex', teamId: crewId, missionId: 'mission_alpha' });
+  humanModel.markAgentFailed(doomedAgent, 'test');
+  const before = (await fleetMembership.resolveMembers(fleetRoom)) as typeof fleet;
+  if (before.kind !== 'resolved') throw new Error('unreachable');
+  const thirdAgent = humanModel.createAgent({ name: 'worker-c', provider: 'claude', teamId: crewId, missionId: 'mission_alpha' });
+  const after = await fleetMembership.resolveMembers(fleetRoom);
+  if (after.kind !== 'resolved') throw new Error('unreachable');
+  assert.notEqual(before.evidence.revision, after.evidence.revision, 'a roster change is a revision change');
+  assert.ok(after.members.includes(personIdForAgentId(thirdAgent)));
+  rmSync(humanScratch, { recursive: true, force: true });
+  console.log('fleet revision tests passed');
+}
+
 console.log('messagingV2 membership adapter tests passed');

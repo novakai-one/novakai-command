@@ -71,6 +71,8 @@ interface TransportState {
   liveness?: TransportLivenessCallbacks;
   /** N3: threadId → room label lookup (the rooms directory fills it). */
   roomLabel?: (threadId: string) => string | undefined;
+  /** N3: non-agent principal display names (the human → 'chris'). */
+  senderName?: (personId: string) => string | undefined;
 }
 
 function transient(detail: string): EffectReport {
@@ -130,6 +132,8 @@ function submitJobFor(info: AgentInfo, payload: DeliverPayload, text: string): S
 }
 
 function displayNameFor(state: TransportState, senderId: string): string {
+  const named = state.senderName?.(senderId);
+  if (named !== undefined) return named;
   const roster = state.runtime.list();
   for (const candidate of agentIdCandidates(senderId)) {
     const title = roster.find((agent) => agent.agentId === candidate)?.title;
@@ -195,16 +199,7 @@ function bindLane(state: TransportState, presenceId: PresenceId, agentId: string
   return true;
 }
 
-export function createTerminalHostTransport(
-  runtime: TerminalRuntime,
-  options?: { roomLabel?: (threadId: string) => string | undefined },
-): TerminalHostPresenceTransport {
-  const state: TransportState = {
-    runtime,
-    bindings: new Map(),
-    ...(options?.roomLabel !== undefined ? { roomLabel: options.roomLabel } : {}),
-  };
-  runtime.onExit((agentId) => onAgentExit(state, agentId));
+function transportFront(state: TransportState): TerminalHostPresenceTransport {
   return {
     kind: 'pty',
     get boundCount(): number {
@@ -217,4 +212,21 @@ export function createTerminalHostTransport(
     deliver: (presenceId, payload) => deliverMessage(state, presenceId, payload),
     push: (presenceId) => pushFrame(state, presenceId),
   };
+}
+
+export function createTerminalHostTransport(
+  runtime: TerminalRuntime,
+  options?: {
+    roomLabel?: (threadId: string) => string | undefined;
+    senderName?: (personId: string) => string | undefined;
+  },
+): TerminalHostPresenceTransport {
+  const state: TransportState = {
+    runtime,
+    bindings: new Map(),
+    ...(options?.roomLabel !== undefined ? { roomLabel: options.roomLabel } : {}),
+    ...(options?.senderName !== undefined ? { senderName: options.senderName } : {}),
+  };
+  runtime.onExit((agentId) => onAgentExit(state, agentId));
+  return transportFront(state);
 }

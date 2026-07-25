@@ -155,6 +155,19 @@ function roomTarget(
   return { status: 400, error: `unsupported room target "${target}" — use '#team' or '#mission' (free rooms are archive-only)` };
 }
 
+/** D-N3-5: resolve a room target, answering the error itself (null = sent). */
+function roomTargetOrReply(
+  deps: MessagingV2RouteDeps,
+  senderAgentId: string,
+  target: string,
+  response: Response,
+): ThreadId | null {
+  const resolved = roomTarget(deps, senderAgentId, target);
+  if ('threadId' in resolved) return resolved.threadId;
+  response.status(resolved.status).json({ error: resolved.error });
+  return null;
+}
+
 /** D-N3-5: room send — always normal priority (parity note below). */
 async function handleRoomSend(
   deps: MessagingV2RouteDeps,
@@ -170,15 +183,33 @@ async function handleRoomSend(
     response.status(400).json({ error: 'interrupt delivery is rejected for room recipients' });
     return;
   }
-  const resolved = roomTarget(deps, auth.token, parsed.target);
-  if ('status' in resolved) { response.status(resolved.status).json({ error: resolved.error }); return; }
-  const outcome = await auth.session.sendMessage({
-    address: `thread:${resolved.threadId}`,
+  const threadId = roomTargetOrReply(deps, auth.token, parsed.target, response);
+  if (threadId === null) return;
+  reply(cache, auth.token, response, await auth.session.sendMessage({
+    address: `thread:${threadId}`,
     body: { text: parsed.text },
     priority: 'normal',
     clientMessageId: parsed.clientMessageId,
-  });
-  reply(cache, auth.token, response, outcome);
+  }));
+}
+
+/** D-N3-5: room read — the same resolution as room sends. */
+async function handleRoomMessages(
+  deps: MessagingV2RouteDeps,
+  cache: SessionCache,
+  auth: { session: MessagingSession; token: string },
+  withName: string,
+  response: Response,
+): Promise<void> {
+  const threadId = roomTargetOrReply(deps, auth.token, withName, response);
+  if (threadId === null) return;
+  const page = await auth.session.getMessages({ threadId });
+  if (page.kind !== 'ok') {
+    const failure = failurePayload(cache, auth.token, page.error);
+    response.status(failure.status).json(failure.payload);
+    return;
+  }
+  response.status(200).json({ threadId, messages: page.value.messages });
 }
 
 async function handleSend(deps: MessagingV2RouteDeps, cache: SessionCache, request: Request, response: Response): Promise<void> {
@@ -248,17 +279,8 @@ async function handleMessages(deps: MessagingV2RouteDeps, cache: SessionCache, r
   if (auth === null) return;
   const withName = withParam(request, response);
   if (withName === null) return;
-  // D-N3-5: room reads resolve like room sends ('#team', '#mission').
   if (isChannel(withName) || isRoom(withName)) {
-    const resolved = roomTarget(deps, auth.token, withName);
-    if ('status' in resolved) { response.status(resolved.status).json({ error: resolved.error }); return; }
-    const page = await auth.session.getMessages({ threadId: resolved.threadId });
-    if (page.kind !== 'ok') {
-      const failure = failurePayload(cache, auth.token, page.error);
-      response.status(failure.status).json(failure.payload);
-      return;
-    }
-    response.status(200).json({ threadId: resolved.threadId, messages: page.value.messages });
+    await handleRoomMessages(deps, cache, auth, withName, response);
     return;
   }
   const peer = peerOrReply(deps.terminals, withName, response);

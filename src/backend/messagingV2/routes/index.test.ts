@@ -9,7 +9,7 @@
  * `npx tsx src/backend/messagingV2/routes/index.test.ts`.
  */
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import express from 'express';
@@ -233,12 +233,59 @@ assert.equal(terminals.submissions.length, submissionsBeforeHold + 1, 'the DND r
 assert.match(terminals.submissions.at(-1)?.text ?? '', /held urgent/);
 console.log('interrupt + DND tests passed');
 
-// --- #team → 400 (rooms land in N3) -------------------------------------------------------
+// --- D-N3-5: agent room sends + reads through the v2 routes ------------------------------
 
-const channel = await v2send(aliceId, { 'to': '#team', body: 'status' });
-assert.equal(channel.status, 400);
-assert.match(String(channel.json['error']), /N3/);
-console.log('channel rejection test passed');
+const fleetPost = await v2send(aliceId, { 'to': '#team', body: 'alice to the fleet' });
+assert.equal(fleetPost.status, 200, JSON.stringify(fleetPost.json));
+assert.match(String(fleetPost.json['threadId']), /^thread_/);
+assert.ok(
+  terminals.submissions.some((submission) =>
+    submission.agentId === bobId
+    && submission.text === `[nvk-room #team from chief-kimi id ${String(fleetPost.json['messageId'])}] alice to the fleet`),
+  "bob's lane received the fleet post with the D3 room format",
+);
+assert.ok(
+  terminals.submissions.some((submission) => submission.agentId === aliceId && submission.text.includes('alice to the fleet')),
+  'CORE TRUTH: the sender is a room recipient too (flagged, delivered honestly)',
+);
+console.log('agent #team send test passed');
+
+const missionPost = await v2send(bobId, { 'to': '#mission', body: 'mission room ping' });
+assert.equal(missionPost.status, 200, JSON.stringify(missionPost.json));
+assert.ok(
+  terminals.submissions.some((submission) =>
+    submission.agentId === aliceId
+    && submission.text === `[nvk-room #Alpha from worker-b id ${String(missionPost.json['messageId'])}] mission room ping`),
+  "alice's lane received the mission-room post with the mission label",
+);
+console.log('agent #mission send test passed');
+
+const roomInterrupt = await v2send(aliceId, { 'to': '#team', body: 'shout', interrupt: true });
+assert.equal(roomInterrupt.status, 400, 'interrupt to a room stays rejected (parity with the old channel rule)');
+const bogusRoom = await v2send(aliceId, { 'to': '#bogus', body: 'x' });
+assert.equal(bogusRoom.status, 400);
+assert.match(String(bogusRoom.json['error']), /#team.*#mission/);
+// A durable agent with NO mission ref gets the honest 400 for '#mission'.
+appendFileSync(path.join(scratch, 'agents.jsonl'),
+  JSON.stringify({ id: 'agent_nomission', kind: 'agent', 'ts': STAMP, name: 'worker-nom', provider: 'claude', status: 'live', refs: [{ kind: 'team', value: teamId }] }) + '\n');
+const noMission = await v2send('agent_nomission', { 'to': '#mission', body: 'x' });
+assert.equal(noMission.status, 400);
+assert.match(String(noMission.json['error']), /no mission ref/);
+console.log('room send rejection tests passed');
+
+const fleetRead = await v2get(bobId, '/api/messaging/v2/messages?with=%23team');
+assert.equal(fleetRead.status, 200);
+assert.ok(
+  (fleetRead.json['messages'] as Array<{ body: { text: string } }>).some((message) => message.body.text === 'alice to the fleet'),
+  'v2 room read: the fleet post is in the thread',
+);
+const missionRead = await v2get(aliceId, '/api/messaging/v2/messages?with=%23mission');
+assert.equal(missionRead.status, 200);
+assert.ok(
+  (missionRead.json['messages'] as Array<{ body: { text: string } }>).some((message) => message.body.text === 'mission room ping'),
+  'v2 room read: the mission post is in the thread',
+);
+console.log('room read tests passed');
 
 // --- audit #7: GET messages evicts a dead cached session and re-authenticates ------------
 // A 60 ms session TTL poisons the cached session via lazy expiry (§2.1): the
