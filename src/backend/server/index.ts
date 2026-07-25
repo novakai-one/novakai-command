@@ -111,12 +111,7 @@ export class ServerController {
     [this.canvasHub, this.analyticsHub, this.designHub] = this.buildStudioHubs();
     this.messagingHub = this.buildMessagingHub(); this.missionViewHub = this.buildMissionViewHub();
     this.externalSessionsHub = this.buildExternalSessionsHub();
-    // N4 (D-N4-1): per-connection messaging-v2 subscriptions as the human
-    // session — the human principal arrives with the capability (N3.1).
-    this.messagingLive = createMessagingLive({
-      humanSession: () => this.messagingV2?.lanes?.humanSession() ?? null,
-      log: (line) => console.log(line),
-    });
+    this.messagingLive = this.buildMessagingLive();
     this.server = createServer(this.app);
     this.wsServer = new WebSocketServer({ server: this.server });
     this.createAppListener();
@@ -125,6 +120,15 @@ export class ServerController {
     this.configureRoutes();
     this.configureStaticFallback();
     this.coordinator.setBroadcastHandler((event, payload) => this.broadcastEvent(event, payload));
+  }
+
+  /** N4 (D-N4-1): per-connection messaging-v2 subscriptions as the human
+   * session — the human principal arrives with the capability (N3.1). */
+  private buildMessagingLive(): MessagingLive {
+    return createMessagingLive({
+      humanSession: () => this.messagingV2?.lanes?.humanSession() ?? null,
+      'log': (line) => console.log(line),
+    });
   }
 
   /** Optional same-origin app listener — prod serves the built frontend here. */
@@ -251,28 +255,27 @@ export class ServerController {
     if (this.appWss) this.attachConnectionHandler(this.appWss);
   }
 
+  /** One client frame: messaging-v2-sub is per-connection (never AgentsHub). */
+  private handleSocketFrame(socket: WebSocket, data: WebSocket.RawData): void {
+    try {
+      const message = JSON.parse(data.toString()) as { type?: string; since?: unknown };
+      if (message.type === 'messaging-v2-sub') {
+        void this.messagingLive.subscribe(socket, typeof message.since === 'string' ? message.since : undefined);
+        return;
+      }
+      this.agentsHub.handleMessage(socket, message as Record<string, unknown>);
+    } catch {
+      // ignore malformed messages
+    }
+  }
+
   private attachConnectionHandler(socketServer: WebSocketServer): void {
     // ws re-emits http-server errors on the WebSocketServer; without this
     // listener a listen() failure crashes as an unhandled 'error' event.
     socketServer.on('error', () => {});
     socketServer.on('connection', (socket) => {
       this.activeSockets.add(socket);
-
-      socket.on('message', (data) => {
-        try {
-          const message = JSON.parse(data.toString()) as { type?: string; since?: unknown };
-          // N4 (D-N4-1): the messaging-v2 subscribe frame is per-connection —
-          // it never reaches the AgentsHub frame handlers.
-          if (message.type === 'messaging-v2-sub') {
-            void this.messagingLive.subscribe(socket, typeof message.since === 'string' ? message.since : undefined);
-            return;
-          }
-          this.agentsHub.handleMessage(socket, message as Record<string, unknown>);
-        } catch {
-          // ignore malformed messages
-        }
-      });
-
+      socket.on('message', (data) => this.handleSocketFrame(socket, data));
       socket.on('close', () => {
         this.activeSockets.delete(socket);
         this.messagingLive.close(socket);

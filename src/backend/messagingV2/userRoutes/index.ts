@@ -72,6 +72,21 @@ function liveRosterHint(deps: MessagingV2UserRouteDeps): string[] {
     .map((agent) => agent.title);
 }
 
+/** One outcome → HTTP (ok at `okStatus`, errors through the grammar). */
+function replyOutcome<T>(response: Response, outcome: { kind: 'ok'; value: T } | { kind: 'error'; error: MessagingError }, okStatus: number): void {
+  if (outcome.kind === 'ok') {
+    response.status(okStatus).json(outcome.value);
+    return;
+  }
+  response.status(statusForError(outcome.error)).json({ error: outcome.error.message, name: outcome.error.name });
+}
+
+/** A 400 already sent (null return for the guard shape). */
+function badRequest(response: Response, message: string): null {
+  response.status(400).json({ error: message });
+  return null;
+}
+
 /** A `#…` target → threadId: label match, then team/mission id match. */
 function resolveRoomThread(deps: MessagingV2UserRouteDeps, target: string): ThreadId | undefined {
   const rooms = deps.getHandle()?.rooms ?? null;
@@ -83,6 +98,15 @@ function resolveRoomThread(deps: MessagingV2UserRouteDeps, target: string): Thre
     ?? rooms.threadIdFor('mission', bare);
 }
 
+function roomInput(parsed: SendBody, threadId: ThreadId): Record<string, unknown> {
+  return {
+    address: `thread:${threadId}`,
+    body: { text: parsed.text },
+    priority: 'normal',
+    clientMessageId: `msg_${randomUUID()}`,
+  };
+}
+
 async function sendRoom(
   deps: MessagingV2UserRouteDeps,
   session: MessagingSession,
@@ -91,7 +115,7 @@ async function sendRoom(
 ): Promise<void> {
   if (parsed.interrupt) {
     // Parity with the old channel rule: interrupting a whole room is rejected.
-    response.status(400).json({ error: 'interrupt delivery is rejected for room recipients' });
+    badRequest(response, 'interrupt delivery is rejected for room recipients');
     return;
   }
   const threadId = resolveRoomThread(deps, parsed.target);
@@ -99,21 +123,26 @@ async function sendRoom(
     response.status(404).json({ error: `no room named "${parsed.target}" (try '#team' or a provisioned #<team/mission name>)` });
     return;
   }
-  const outcome = await session.sendMessage({
-    address: `thread:${threadId}`,
+  replyOutcome(response, await session.sendMessage(roomInput(parsed, threadId)), 201);
+}
+
+function agentInput(parsed: SendBody, agent: AgentInfo): Record<string, unknown> {
+  return {
+    address: `person:${personIdForAgentId(agent.agentId)}`,
     body: { text: parsed.text },
-    priority: 'normal',
+    priority: parsed.interrupt ? 'urgent' : 'normal',
     clientMessageId: `msg_${randomUUID()}`,
-  });
-  if (outcome.kind === 'ok') { response.status(201).json(outcome.value); return; }
-  response.status(statusForError(outcome.error)).json({ error: outcome.error.message, name: outcome.error.name });
+  };
 }
 
 async function handleUserSend(deps: MessagingV2UserRouteDeps, request: Request, response: Response): Promise<void> {
   const session = humanOrReply(deps, response);
   if (session === null) return;
   const parsed = parseSendBody(request.body);
-  if (typeof parsed === 'string') { response.status(400).json({ error: parsed }); return; }
+  if (typeof parsed === 'string') {
+    badRequest(response, parsed);
+    return;
+  }
   if (isChannel(parsed.target) || isRoom(parsed.target)) {
     await sendRoom(deps, session, parsed, response);
     return;
@@ -123,41 +152,54 @@ async function handleUserSend(deps: MessagingV2UserRouteDeps, request: Request, 
     response.status(404).json({ error: `recipient "${parsed.target}" is not a live agent`, roster: liveRosterHint(deps) });
     return;
   }
-  const outcome = await session.sendMessage({
-    address: `person:${personIdForAgentId(agent.agentId)}`,
-    body: { text: parsed.text },
-    priority: parsed.interrupt ? 'urgent' : 'normal',
-    clientMessageId: `msg_${randomUUID()}`,
-  });
-  if (outcome.kind === 'ok') { response.status(201).json(outcome.value); return; }
-  response.status(statusForError(outcome.error)).json({ error: outcome.error.message, name: outcome.error.name });
+  replyOutcome(response, await session.sendMessage(agentInput(parsed, agent)), 201);
 }
 
 async function handleThreads(deps: MessagingV2UserRouteDeps, response: Response): Promise<void> {
   const session = humanOrReply(deps, response);
   if (session === null) return;
   const outcome = await session.listThreadsForPerson({});
-  if (outcome.kind === 'ok') { response.status(200).json(outcome.value); return; }
-  response.status(statusForError(outcome.error)).json({ error: outcome.error.message, name: outcome.error.name });
+  if (outcome.kind !== 'ok') {
+    replyOutcome(response, outcome, 200);
+    return;
+  }
+  // Enrich room threads with their directory label — the D-N4-2 translator
+  // derives lane ids from it ('#team', '#<team/mission name>').
+  const rooms = deps.getHandle()?.rooms ?? null;
+  const threads = outcome.value.threads.map((thread) => {
+    const label = rooms?.labelFor(thread.id);
+    return label === undefined ? thread : { ...thread, label };
+  });
+  response.status(200).json({ threads });
+}
+
+/** threadId query param, or a 400 already sent (null). */
+function threadIdParam(request: Request, response: Response): string | null {
+  const threadId = request.query['threadId'];
+  if (typeof threadId === 'string' && threadId.trim() !== '') return threadId;
+  response.status(400).json({ error: 'threadId=<id> is required' });
+  return null;
+}
+
+/** The read failure grammar: unknown thread 404, dependency 503, else 500. */
+function readFailure(error: unknown, response: Response): void {
+  const name = error instanceof Error ? error.name : '';
+  const status = name === 'UnknownThread' ? 404 : name === 'DependencyUnavailable' ? 503 : 500;
+  response.status(status).json({ error: error instanceof Error ? error.message : String(error), name });
 }
 
 async function handleMessages(deps: MessagingV2UserRouteDeps, request: Request, response: Response): Promise<void> {
   const session = humanOrReply(deps, response);
   if (session === null) return;
-  const threadId = request.query['threadId'];
-  if (typeof threadId !== 'string' || threadId.trim() === '') {
-    response.status(400).json({ error: 'threadId=<id> is required' });
-    return;
-  }
+  const threadId = threadIdParam(request, response);
+  if (threadId === null) return;
   try {
     // Trailing window (the D-N4-2 client serves the newest page; the O(pages)
     // cost is recorded in the data-plane header).
     const trailing = await readTrailingPage(session, threadId as ThreadId);
     response.status(200).json({ threadId, messages: trailing });
   } catch (error) {
-    const name = error instanceof Error ? error.name : '';
-    const status = name === 'UnknownThread' ? 404 : name === 'DependencyUnavailable' ? 503 : 500;
-    response.status(status).json({ error: error instanceof Error ? error.message : String(error), name });
+    readFailure(error, response);
   }
 }
 

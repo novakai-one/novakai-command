@@ -66,52 +66,62 @@ function socketSink(socket: LiveSocket): (frame: unknown) => Promise<EffectRepor
   };
 }
 
-export function createMessagingLive(deps: MessagingLiveDeps): MessagingLive {
-  const handles = new Map<LiveSocket, SubscriptionHandle>();
-
-  async function subscribe(socket: LiveSocket, since: string | undefined): Promise<void> {
-    const session = deps.humanSession();
-    if (session === null) {
-      // Honest dependency loss — the client refetches and resubscribes.
-      try {
-        socket.send(JSON.stringify({
-          event: 'messaging-v2',
-          payload: { kind: 'ended', subscriptionId: 'unavailable', reason: 'dependency-lost' },
-        }));
-      } catch {
-        // the socket is already gone — nothing to report into
-      }
-      return;
-    }
-    const outcome = await session.subscribe(
-      { events: ['MessageCommitted', 'DeliveryUpdated', 'PresenceChanged'], ...(since !== undefined ? { since: since as Cursor } : {}) },
-      socketSink(socket),
-    );
-    if (outcome.kind === 'ok') {
-      if (socket.readyState !== SOCKET_OPEN) {
-        // Dead-on-arrival: the subscription already ended on the failed
-        // started-flush — close the handle instead of leaking a zombie.
-        await outcome.value.close().catch(() => {});
-        return;
-      }
-      handles.set(socket, outcome.value);
-      return;
-    }
-    announce(deps, `[messaging-v2] live subscribe failed (${outcome.error.name}): ${outcome.error.message}`);
+/** Honest dependency loss — the client refetches and resubscribes. */
+function dependencyLost(socket: LiveSocket): void {
+  try {
+    socket.send(JSON.stringify({
+      event: 'messaging-v2',
+      payload: { kind: 'ended', subscriptionId: 'unavailable', reason: 'dependency-lost' },
+    }));
+  } catch {
+    // the socket is already gone — nothing to report into
   }
+}
 
+interface LiveState {
+  deps: MessagingLiveDeps;
+  handles: Map<LiveSocket, SubscriptionHandle>;
+}
+
+async function subscribeSocket(state: LiveState, socket: LiveSocket, since: string | undefined): Promise<void> {
+  const session = state.deps.humanSession();
+  if (session === null) {
+    dependencyLost(socket);
+    return;
+  }
+  const outcome = await session.subscribe(
+    { events: ['MessageCommitted', 'DeliveryUpdated', 'PresenceChanged'], ...(since !== undefined ? { since: since as Cursor } : {}) },
+    socketSink(socket),
+  );
+  if (outcome.kind !== 'ok') {
+    announce(state.deps, `[messaging-v2] live subscribe failed (${outcome.error.name}): ${outcome.error.message}`);
+    return;
+  }
+  if (socket.readyState !== SOCKET_OPEN) {
+    // Dead-on-arrival: the subscription already ended on the failed
+    // started-flush — close the handle instead of leaking a zombie.
+    await outcome.value.close().catch(() => {});
+    return;
+  }
+  state.handles.set(socket, outcome.value);
+}
+
+function closeSocket(state: LiveState, socket: LiveSocket): void {
+  const handle = state.handles.get(socket);
+  if (handle === undefined) return;
+  state.handles.delete(socket);
+  void handle.close().catch(() => {
+    // Teardown is best-effort; the socket is already gone.
+  });
+}
+
+export function createMessagingLive(deps: MessagingLiveDeps): MessagingLive {
+  const state: LiveState = { deps, handles: new Map() };
   return {
-    subscribe,
-    close(socket: LiveSocket): void {
-      const handle = handles.get(socket);
-      if (handle === undefined) return;
-      handles.delete(socket);
-      void handle.close().catch(() => {
-        // Teardown is best-effort; the socket is already gone.
-      });
-    },
+    subscribe: (socket, since) => subscribeSocket(state, socket, since),
+    close: (socket) => closeSocket(state, socket),
     get count(): number {
-      return handles.size;
+      return state.handles.size;
     },
   };
 }
