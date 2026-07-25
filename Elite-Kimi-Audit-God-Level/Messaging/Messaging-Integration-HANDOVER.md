@@ -1,11 +1,11 @@
 # Messaging Integration (N-Program) — Handover to the Next Agent
 
 **Written:** 2026-07-25 by kimi-cli, at N-program kickoff.
-**Updated:** 2026-07-26 by kimi-cli — **slices N1, N2, N3 (+N3.1), N4 SEALED, merged,
-and deployed** (each after its own law-#6 0-context adversarial audit with findings
-disposed at source — see `Messaging-N1/N2/N3/N4-Review.md`). Next: **slice N5 (Kill
-the pollers)**. **You are:** the agent executing slice N5 or later. Read this first,
-every session.
+**Updated:** 2026-07-26 by kimi-cli — **slices N1, N2, N3 (+N3.1), N4, N5 SEALED,
+merged, and deployed** (each after its own law-#6 0-context adversarial audit with
+findings disposed at source — see `Messaging-N1/N2/N3/N4/N5-Review.md`). Next:
+**slice N6 (Open the door — external terminals)**. **You are:** the agent
+executing slice N6 or later. Read this first, every session.
 
 ---
 
@@ -32,31 +32,51 @@ The Messaging pass-2 program is COMPLETE (S1–S4, P1–P6, 253/253 tests, score
   surface deleted at the root (−3,671 LOC: SendApi, MessageRouter, PtyDelivery,
   TranscriptEffectConfirmer, MessageStore, tunnel UI, tunnelModel messaging half,
   message-envelope dialect, the N3 shims). Lint baseline ratcheted 201→192.
-- **Your job starts at slice N5 (Kill the pollers).**
+- **N5 (Kill the pollers)** — sealed. The watchdog process is DELETED (launchd
+  job too; its seat-watch revived IN-APP as `terminal/seatWatch/` on Chris's
+  ruling — quiet/pendingPrompt/dead-seat detection, alerts to #team through the
+  capability as the `nvk-watchdog` ops identity, co-member of every
+  team/mission); slack-mirror is a capability client (the N7 bridge seed);
+  frozen-archive readers (people liveness, missionView, nvk-status) fold the
+  capability journal; failed deliveries type ONE `[nvk-msg failed …]` line into
+  the sender's PTY (live-only subscriptions — no restart replays).
+  **NO interval touches any journal anywhere.** `.novakai-command/messages.jsonl`
+  is now a pure archive with zero readers in production code.
+- **Your job starts at slice N6 (Open the door — external terminals).**
 
-## N5's inheritance (read the review records' follow-up debt sections)
+## N6's inheritance (read the review records' follow-up debt sections)
 
-- `Messaging-N4-Review.md` §follow-up debt: watchdog/nvk-live/slack-mirror are
-  dark/quiet and are N5's to repoint (D5) or delete; `.novakai-command/
-  messages.jsonl` is a FROZEN archive (no writers — direct file readers survive:
-  people liveness, missionView); ExternalSessions allowlist timing; F8b.
-- **R-N4-1 is OPEN with Chris:** agent↔agent direct threads are party-only by the
-  ratified contract — the human no longer sees agent↔agent DM lanes. An owner
-  read-override would be a CONTRACT amendment (assertThreadMember + subscription
-  filtering) — surfaced, not built. If Chris rules on it, record the amendment.
+- `Messaging-N5-Review.md` §follow-up debt: journal fold growth (core-side
+  rotation/query question); watchdog union refreshes on restart only; mirror
+  raw-threadId/FRAGILE-inverse/no-⚠ debt; the N4 carryovers (ExternalSessions
+  allowlist timing, F8b, browser presence transport = the N6 option).
+- **R-N4-1 is RULED (PR #72, Chris 2026-07-26: YES)** — the owner MUST see
+  agent↔agent DM lanes. Contract amendment (assertThreadMember + subscription
+  filtering) scheduled as its OWN slice after N5 seals; never snuck into an
+  unrelated branch.
+- **D-BRIDGE-1 (PR #72):** the v0 Slack bridge (`scripts/nvk-slack-bridge.mjs`,
+  merged PR #74) owns ALL Slack bridging — own workspace, human principal only.
+  No N-slice builds Slack bridging; N7 generalizes v0. The one-way mirror
+  stays N5's (D5), unaffected. PR #73 added agent→human DM by name
+  (`resolveRecipientPersonId` in messagingV2 routes).
 - N1 debt still watched: authority revalidate is a full disk scan (presence
-  heartbeats make it hot); token=agentId until N6's real issuance (D-N2-2).
+  heartbeats make it hot); **token=agentId retires in N6** (D-N2-2 — real
+  issuance/revocation is N6's headline).
+- **N7 long-lead (surfaced to Chris at the N5 seal):** the machine has only a
+  post-only Slack webhook. N7 needs a Slack app with a bot token (chat:write,
+  channels:manage, channels:read, users:read) + Socket Mode. Click-steps were
+  handed to Chris at the N5 seal.
 
 ## Read next (in this order)
 
 All under `Elite-Kimi-Audit-God-Level/Messaging/`:
 
 1. `Messaging-Integration-Plan.md` — THE plan: promise, decisions D1–D8 +
-   Recorded amendments (A-N2-1, D-N2, D-N3/A-N3, D-N4, R-N4-1). Work derives
-   from THIS file. N5 row (§5) is the done-definition: no interval touches any
-   journal; failure truth is pushed DeliveryUpdated.
-2. `Messaging-Integration-Roadmap.html` — the visual (law #4): N1–N4 struck;
-   strike N5 when it seals.
+   Recorded amendments (A-N2-1, D-N2, D-N3/A-N3, D-N4, R-N4-1, D-N5/A-N5-1).
+   Work derives from THIS file. N6 row (§5) is the done-definition: an agent on
+   a foreign machine connects, authenticates, messages — no manual step.
+2. `Messaging-Integration-Roadmap.html` — the visual (law #4): N1–N5 struck;
+   strike N6 when it seals.
 3. `Messaging-Integration-CurrentState.md` — the old-surface map. NOTE: most of
    its N2–N4 deletion targets are now deleted; re-verify against code before
    trusting any anchor (it says so itself: "the code wins").
@@ -66,17 +86,26 @@ All under `Elite-Kimi-Audit-God-Level/Messaging/`:
    change in this program; a core change is a new R-item + recorded amendment
    (law #2), surfaced to Chris, never a quiet edit.
 
-## Live surface today (post-N4)
+## Live surface today (post-N5)
 
 - Agents: `scripts/nvk-msg.mjs` — token from `NVK_AGENT_ID` env (injected at
   spawn); `send --to <name>|'#team'|'#mission'`, `read <name>`, `names`.
   v2 Bearer routes: `/api/messaging/v2/{send,inbox,messages,address-book}`.
+  A terminally-failed send types ONE `[nvk-msg failed: <reason> — <id>]` line
+  into the sender's PTY (live-only — restarts do not replay history).
 - Browser: `/api/messaging/v2/user/send|threads|messages` (server-owned human
   principal, no Bearer) + ws dialect `{type:'messaging-v2-sub', since?}` →
   `{event:'messaging-v2', payload}` (MessageCommitted/DeliveryUpdated/
   PresenceChanged, cursor replay).
 - Rooms: fleet (`#team`) + one per team + one per mission, provisioned at boot
   and on launch; membership from ObjectModel refs (+ human in every roster).
+- Ops: the in-app seat-watch (`terminal/seatWatch/`, watchdog.json boundaries)
+  posts quiet/waiting-on-human/dead-seat alerts to #team as `nvk-watchdog`
+  (co-member of every team/mission); health annotated at
+  `GET /api/agents/:id/health`. NO watchdog launchd job exists anymore.
+  `nvk-slack-mirror.mjs` (manual run) is a capability client → webhook.
+- Journals: `.novakai-command/messages.jsonl` = pure archive, ZERO production
+  readers; the capability journal is the only live one.
 - Deploy: `npm run redeploy` (snapshot → SIGHUP swap). Verify :3030/:3031 +
   route guards after every deploy. The serve runs under launchd
   (`com.novakai.prod`) with NO NVK_* env vars — the human token self-mints.

@@ -28,11 +28,15 @@ import type { MessagingV2Handle } from '../messagingV2/index.js';
 import { HUMAN_PERSON_ID } from '../messagingV2/index.js';
 import { registerMessagingV2Routes } from '../messagingV2/routes/index.js';
 import { registerMessagingV2UserRoutes } from '../messagingV2/userRoutes/index.js';
+import { defaultCapabilityJournalPath } from '../messagingV2/journal/index.js';
 import { createMessagingLive } from '../messagingV2/live/index.js';
 import type { MessagingLive } from '../messagingV2/live/index.js';
 import { ExternalSessionsHub } from '../externalSessions/index.js';
 import { PeopleHub } from '../people/index.js';
 import type { TerminalRuntime } from '../terminal/runtime/index.js';
+import { createSeatWatch, tickSafely } from '../terminal/seatWatch/index.js';
+import { ensureWatchdogIdentity, WATCHDOG_AGENT_NAME } from './watchdogIdentity/index.js';
+import type { MessagingSession } from '../../../packages/messaging/public/capability.js';
 
 const PROJECT_RE = /^[A-Za-z0-9._-]+$/;
 const SESSION_RE = /^[A-Za-z0-9-]+$/;
@@ -94,6 +98,9 @@ export class ServerController {
   private readonly objectModel: ObjectModel;
   private readonly messagingLive: MessagingLive;
   private messagingV2: MessagingV2Handle | null = null;
+  private seatWatchTimer: ReturnType<typeof setInterval> | null = null;
+  private watchdogId: string | null = null;
+  private watchdogSession: MessagingSession | null = null;
 
   constructor(
     private readonly port: number,
@@ -215,6 +222,79 @@ export class ServerController {
     return { id: accepted.value.messageId };
   }
 
+  /** F3: the identity (refs unioned across every team + mission) must exist
+   * BEFORE messagingV2's boot policy syncs, or recipients' allowlists lack
+   * the watchdog and its alerts terminally fail delivery. Failure → null →
+   * log-only sink, never a boot blocker. */
+  private ensureWatchdogIdentitySafely(): string | null {
+    try {
+      return ensureWatchdogIdentity(this.objectModel);
+    } catch (error) {
+      console.error('[seatWatch] watchdog identity failed — alerts are log-only this run:', error);
+      return null;
+    }
+  }
+
+  /** F8: ONE authenticated session for every seat alert (authenticate-per-
+   * alert leaked a session each time). A rejected send drops the cache so an
+   * expired session re-authenticates on the next alert. */
+  private async seatAlertSession(watchdogId: string): Promise<MessagingSession | null> {
+    if (this.watchdogSession !== null) return this.watchdogSession;
+    const auth = await this.messagingV2?.embedded.authenticate({ token: watchdogId });
+    if (auth?.kind !== 'authenticated') return null;
+    this.watchdogSession = auth.session;
+    return this.watchdogSession;
+  }
+
+  /** One #team alert through the capability, sent AS the watchdog agent. */
+  private async sendSeatAlert(watchdogId: string, body: string): Promise<void> {
+    const threadId = this.messagingV2?.rooms?.fleetThreadId();
+    if (threadId === undefined) return console.log(`[seatWatch] unsent (no fleet room): ${body}`);
+    const session = await this.seatAlertSession(watchdogId);
+    if (session === null) return console.log(`[seatWatch] unsent (identity rejected): ${body}`);
+    const accepted = await session.sendMessage({
+      address: `thread:${threadId}`, body: { text: body },
+      priority: 'normal', clientMessageId: `wd_${randomUUID()}`,
+    });
+    if (accepted.kind !== 'ok') {
+      this.watchdogSession = null;
+      console.error(`[seatWatch] alert rejected: ${accepted.error.message}`);
+    }
+  }
+
+  private postSeatAlert(watchdogId: string, body: string): void {
+    this.sendSeatAlert(watchdogId, body).catch((error: unknown) => {
+      console.error(`[seatWatch] alert failed: ${error instanceof Error ? error.message : String(error)}`);
+    });
+  }
+
+  /** D-N5-6: the revived seat-watch (Chris's overrule of N5's accepted
+   * loss). Ticks over transcript mtimes — never a journal — on the config
+   * interval; the boot tick baselines silently before the first post. */
+  private startSeatWatch(): void {
+    const watchdogId = this.watchdogId;
+    if (watchdogId === null) console.warn('[seatWatch] no watchdog identity — alerts are log-only this run');
+    const onAlert = watchdogId === null
+      ? (body: string) => console.log(`[seatWatch] ${body}`)
+      : (body: string) => this.postSeatAlert(watchdogId, body);
+    const watch = createSeatWatch({
+      terminals: this.agentsHub.terminals, onAlert, extraIgnoreTitles: [WATCHDOG_AGENT_NAME],
+    });
+    this.agentsHub.attachSeatWatch(watch);
+    tickSafely(watch);
+    this.seatWatchTimer = setInterval(() => tickSafely(watch), watch.intervalSec() * 1000);
+    this.seatWatchTimer.unref();
+  }
+
+  /** A seat-watch boot failure must never take down the app (N1's rule). */
+  private startSeatWatchSafely(): void {
+    try {
+      this.startSeatWatch();
+    } catch (error) {
+      console.error('[seatWatch] boot failed — disabled this run:', error);
+    }
+  }
+
   /**
    * Mission Room V1 (mission_mission-room-v1): read-only snapshot hub. Roots
    * are resolved explicitly here — env overrides for the dev-lane worktree,
@@ -224,7 +304,7 @@ export class ServerController {
     return new MissionViewHub({
       storesDir: process.env.NVK_MISSION_STORES_DIR ?? path.resolve('.novakai/stores'),
       workDir: process.env.NVK_MISSION_WORK_DIR ?? path.resolve('.novakai/work'),
-      journalPath: process.env.NVK_MISSION_JOURNAL ?? path.resolve('.novakai-command/messages.jsonl'),
+      journalPath: defaultCapabilityJournalPath(),
       registryPath: process.env.NVK_MISSION_REGISTRY ?? path.resolve('.novakai-command/agents.json'),
       roomsPath: process.env.NVK_MISSION_ROOMS ?? path.resolve('.novakai-command/rooms.jsonl'),
     });
@@ -340,7 +420,7 @@ export class ServerController {
     });
     this.missionViewHub.registerRoutes(this.app);
     this.externalSessionsHub.registerRoutes(this.app);
-    new PeopleHub(this.objectModel, () => this.agentsHub.terminals.list(), process.env.NVK_MISSION_ROOMS ?? path.resolve('.novakai-command/rooms.jsonl'), { journalPath: process.env.NVK_MISSION_JOURNAL ?? path.resolve('.novakai-command/messages.jsonl') }).registerRoutes(this.app);
+    new PeopleHub(this.objectModel, () => this.agentsHub.terminals.list(), process.env.NVK_MISSION_ROOMS ?? path.resolve('.novakai-command/rooms.jsonl'), { journalPath: defaultCapabilityJournalPath() }).registerRoutes(this.app);
 
     this.app.get('/api/config', (_, res) => {
       res.json(ConfigManager.load());
@@ -588,6 +668,14 @@ export class ServerController {
     if (this.appServer && this.options.appPort) {
       await this.listen(this.appServer, this.options.appPort);
     }
+    this.watchdogId = this.ensureWatchdogIdentitySafely();
+    await this.bootMessagingV2Safely();
+    this.startSeatWatchSafely();
+  }
+
+  /** A v2 boot failure must never take down the app (the old surface still
+   * serves). Fail LOUD, continue — the v2 routes answer 503 this run. */
+  private async bootMessagingV2Safely(): Promise<void> {
     try {
       this.messagingV2 = await startMessagingV2({
         objectModel: this.objectModel,
@@ -599,8 +687,6 @@ export class ServerController {
         onLaunch: (listener) => this.agentsHub.onLaunch(listener),
       });
     } catch (error) {
-      // A v2 boot failure must never take down the app (the old surface still
-      // serves). Fail LOUD, continue — the v2 routes answer 503 this run.
       console.error('[messaging-v2] boot failed — capability disabled this run:', error);
     }
   }
@@ -623,6 +709,12 @@ export class ServerController {
   }
 
   public async stop(): Promise<void> {
+    // The seat-watch timer touches transcripts only; clear it before anything
+    // else so a late tick can never fire into a half-closed capability.
+    if (this.seatWatchTimer !== null) {
+      clearInterval(this.seatWatchTimer);
+      this.seatWatchTimer = null;
+    }
     // messagingV2 closes FIRST — it is additive (N1) and holds the journal
     // handle; nothing else depends on it yet. A close failure must not abort
     // shutdown (N1 audit finding 6): log it, keep closing the real servers.

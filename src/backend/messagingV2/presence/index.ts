@@ -31,6 +31,8 @@ import { composeAgentBriefing } from '../briefing/index.js';
 import { personIdForAgentId, isActiveAgent } from '../authority/index.js';
 import { createContactBootstrap } from '../policy/index.js';
 import type { ContactBootstrap } from '../policy/index.js';
+import { createFailureTruth } from '../failureTruth/index.js';
+import type { FailureTruth } from '../failureTruth/index.js';
 import type { TerminalHostPresenceTransport } from '../transport/index.js';
 
 const BRIEFING_DELAY_MS = 3_000;
@@ -69,6 +71,8 @@ interface GlueState {
   /** The held human session (D-N2-5); null until ensured or unconfigured. */
   human: MessagingSession | null;
   bootstrap: ContactBootstrap;
+  /** D-N5-3: terminal delivery failures type one line into the sender's lane. */
+  failureTruth: FailureTruth;
 }
 
 /** Authenticate the human principal once and hold the session (D-N2-5). */
@@ -138,6 +142,7 @@ async function openLane(state: GlueState, agentId: string): Promise<boolean> {
     return false;
   }
   state.sessions.set(agentId, auth.session);
+  state.failureTruth.watchSession(auth.session, agentId);
   return true;
 }
 
@@ -206,6 +211,7 @@ export function createAgentLaneGlue(deps: AgentLaneGlueDeps): AgentLaneGlue {
     timers: new Set(),
     human: null,
     bootstrap: createContactBootstrap(deps.objectModel),
+    failureTruth: createFailureTruth({ terminals: deps.terminals, ...(deps.log !== undefined ? { 'log': deps.log } : {}) }),
   };
   return {
     openBootLanes: () => openBootLanes(state),

@@ -53,7 +53,13 @@ function makeFacts(linkage: MissionLinkage, overrides: Partial<MissionFacts> = {
 }
 
 function envelope(envelopeId: string, body: string): MessageEnvelope {
-  return JSON.parse(envelopeLine(envelopeId, body)) as MessageEnvelope;
+  // The shape readJournalEnvelopes produces from an acceptance line (N5) —
+  // built directly: envelopeLine is the on-disk form, this is the folded form.
+  return {
+    id: envelopeId, from: 'person_agent-agent-a', 'to': 'thread_fixture',
+    delivery: 'normal', body, threadId: 'thread_fixture',
+    createdAt: '2026-07-21T11:30:00+10:00', status: 'delivered',
+  };
 }
 
 function packetFile(name: string): PacketFile {

@@ -122,6 +122,22 @@ export class ObjectModel {
     }));
   }
 
+  /** F3: idempotent ref union — appends NOTHING when every ref is present.
+   * The ops-watchdog identity uses it to stay co-member with every team and
+   * mission (contact co-membership is union semantics over these refs). */
+  unionAgentRefs(agentId: string, refs: Array<{ kind: string; value: string }>): void {
+    const current = this.agentRecord(agentId);
+    if (current === null) throw new ObjectModelError(`agent "${agentId}" resolves to no record`);
+    const held = new Set(current.refs.map((entry) => `${entry.kind}:${entry.value}`));
+    const added = refs.filter((entry) => !held.has(`${entry.kind}:${entry.value}`));
+    if (added.length === 0) return;
+    this.transition('agents.jsonl', agentId, (block) => ({
+      ...block,
+      refs: [...((block.refs as AgentBlock['refs'] | undefined) ?? []), ...added],
+      updated: nextUpdated(block.updated),
+    }));
+  }
+
   createTask(input: { title: string; missionId: string; agentId?: string; taskId?: string }): string {
     const id = input.taskId ?? `task_${randomUUID().slice(0, 8)}`;
     const timestamp = timestampNow();

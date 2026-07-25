@@ -90,6 +90,28 @@ code.** If a slice needs a core change, that is a new R-item and a contract amen
   owner MUST see agent↔agent DM lanes. This is a CONTRACT amendment
   (assertThreadMember + subscription filtering) — scheduled as its own slice
   after N5 seals; not to be snuck into an unrelated branch.
+- **D-N5-1..5 (N5):** watchdog process deleted whole (delivery checks zombie on
+  the frozen journal; launchd job removed, plist archived); slack-mirror
+  repointed to a capability client per D5 (user routes + browser ws dialect,
+  cursor resume — the N7 bridge seed); sender failure-truth types ONE
+  `[nvk-msg failed …]` line into the sender's PTY per terminal DeliveryUpdated,
+  live-only subscriptions (cursor seeded at journal tip — no restart replays);
+  frozen-archive readers (people liveness, missionView, nvk-status) fold the
+  capability journal via `messagingV2/journal/`; nvk-oversee left (no journal
+  contact).
+- **D-N5-6 (N5 — Chris's ruling, overrides D-N5-1's accepted loss):** the
+  watchdog's seat-watch is revived IN-APP (`terminal/seatWatch/`): quiet
+  detection (watchdog.json boundaries honored), pendingPrompt sniff, dead-seat
+  + Codex pid fallback, alert-once + silent first-tick baseline; alerts post to
+  the fleet room through the capability as the durable `nvk-watchdog` ops
+  identity — co-member of EVERY team/mission (audit finding 3: deny-by-default
+  policy would otherwise terminally-fail most alert fan-out); state annotated
+  on `/api/agents/:id/health`. Every tick guarded (a throwing tick logs and
+  loses one pass, never kills the backend).
+- **A-N5-1 (N5):** app-side stores schema allows an agent multiple team/mission
+  refs (min 1, no max) — co-membership was always union semantics in
+  `messagingV2/policy/`; the validator's REF-CARDINALITY contradicted it.
+  App-side change; the frozen core is untouched.
 - **D-BRIDGE-1 (2026-07-26):** D7 descoped. A v0 Slack bridge
   (`scripts/nvk-slack-bridge.mjs`, branch `kimi/slack-bridge-v0`) precedes N7:
   own workspace, human principal ONLY (agent→chris DMs appear in Slack;

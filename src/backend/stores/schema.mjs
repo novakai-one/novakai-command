@@ -91,13 +91,18 @@ export const KIND_RULES = Object.freeze({
   // The durable Novakai identity (≈ CONTEXT.md Person). sessionId is its
   // CURRENT Presence pointer; prior values rotate into the `sessions` history
   // array so an overwrite never erases Presence history (ruling M13).
+  // F3 amendment: team/mission refs are multi-membership (min 1, no max) —
+  // co-membership has always been union semantics over these refs
+  // (messagingV2/policy), and ops-service identities (nvk-watchdog) must be
+  // co-member with EVERY team and mission or their alerts terminally fail
+  // delivery to everyone else.
   agent: Object.freeze({
     required: Object.freeze(['name', 'provider']),
     arrays: Object.freeze(['sessions']),
     statusSet: Object.freeze(['spawning', 'live', 'failed', 'retired']),
     refRules: Object.freeze({
-      team: Object.freeze({ min: 1, max: 1 }),
-      mission: Object.freeze({ min: 1, max: 1 }),
+      team: Object.freeze({ min: 1, max: Number.POSITIVE_INFINITY }),
+      mission: Object.freeze({ min: 1, max: Number.POSITIVE_INFINITY }),
     }),
   }),
   // Exactly one of path|url, and at least one mission/task anchor — both

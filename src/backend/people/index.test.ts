@@ -164,11 +164,20 @@ function hubOver(durable: AgentBlock[], runtime: AgentInfo[]): PeopleHub {
   const scratch = mkdtempSync(path.join(tmpdir(), 'nvk-liveness-'));
   const journalPath = path.join(scratch, 'messages.jsonl');
   try {
+    const acceptance = (id: string, senderId: string, createdAt: string, extra = {}) => JSON.stringify({
+      'op': 'acceptance',
+      thread: { id: 'thread_dm', kind: 'thread', schemaVersion: 1, createdAt, threadKind: 'direct' },
+      message: {
+        id, kind: 'message', schemaVersion: 1, createdAt, threadId: 'thread_dm',
+        senderId, clientMessageId: `cm-${id}`, sequence: 1, priority: 'normal',
+        body: { text: 'activity' }, ...extra,
+      },
+    });
     writeFileSync(journalPath, [
-      '{"id":"m1","from":"chief-kimi-7","to":"chris","body":"fresh","createdAt":"2026-07-23T11:55:00.000Z","status":"delivered"}',
-      '{"id":"m2","from":"Stale Bot","to":"chris","body":"old","createdAt":"2026-07-23T10:00:00.000Z","status":"delivered"}',
-      '{"id":"m3","from":"Retired Bot","to":"chris","body":"fresh but retired","createdAt":"2026-07-23T11:59:00.000Z","status":"delivered"}',
-      '{"id":"m4","from":"Ts Trap","to":"chris","body":"ts is not the field","ts":"2026-07-23T11:59:00.000Z","status":"delivered"}',
+      acceptance('m1', 'person_agent-ext', '2026-07-23T11:55:00.000Z'),
+      acceptance('m2', 'person_agent-stale', '2026-07-23T10:00:00.000Z'),
+      acceptance('m3', 'person_agent-ret', '2026-07-23T11:59:00.000Z'),
+      acceptance('m4', 'person_agent-ts', 'not-a-date', { 'ts': '2026-07-23T11:59:00.000Z' }),
       'torn line not json',
     ].map((line) => `${line}\n`).join(''));
     const opts = { journalPath, now: () => NOW_MS };
