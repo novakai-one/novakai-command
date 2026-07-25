@@ -32,8 +32,10 @@ const STORE_FILES = [
 function scratchStores(): string {
   const scratch = mkdtempSync(path.join(tmpdir(), 'nvk-mv2-routes-'));
   for (const name of STORE_FILES) writeFileSync(path.join(scratch, name), '');
-  writeFileSync(path.join(scratch, 'missions.jsonl'),
-    JSON.stringify({ id: 'mission_alpha', kind: 'mission', 'ts': STAMP, title: 'Alpha', owner: 'chief' }) + '\n');
+  writeFileSync(path.join(scratch, 'missions.jsonl'), [
+    JSON.stringify({ id: 'mission_alpha', kind: 'mission', 'ts': STAMP, title: 'Alpha', owner: 'chief' }),
+    JSON.stringify({ id: 'mission_beta', kind: 'mission', 'ts': STAMP, title: 'Beta', owner: 'chief' }),
+  ].join('\n') + '\n');
   return scratch;
 }
 
@@ -67,16 +69,21 @@ const model = new ObjectModel({ storesDir: scratch });
 const teamId = model.createTeam({ name: 'Messaging Crew', missionId: 'mission_alpha' });
 const aliceId = model.createAgent({ name: 'chief-kimi', provider: 'kimi', teamId, missionId: 'mission_alpha' });
 const bobId = model.createAgent({ name: 'worker-b', provider: 'claude', teamId, missionId: 'mission_alpha' });
+// carol shares NO team/mission ref with the crew — deny-by-default must hold.
+const otherTeam = model.createTeam({ name: 'Other Crew', missionId: 'mission_beta' });
+const carolId = model.createAgent({ name: 'worker-c', provider: 'claude', teamId: otherTeam, missionId: 'mission_beta' });
 const alicePerson = personIdForAgentId(aliceId);
 const bobPerson = personIdForAgentId(bobId);
+const carolPerson = personIdForAgentId(carolId);
 const terminals = new FakeTerminalRuntime([
   agentInfo(aliceId, 'chief-kimi', 'kimi'),
   agentInfo(bobId, 'worker-b'),
+  agentInfo(carolId, 'worker-c'),
 ]);
 
 const journalPath = path.join(mkdtempSync(path.join(tmpdir(), 'nvk-mv2-route-journal-')), 'journal.jsonl');
 const handle = await startMessagingV2({
-  objectModel: model, storePath: journalPath, terminals, 'log': () => {},
+  objectModel: model, storePath: journalPath, terminals, humanToken: 'human-secret', 'log': () => {},
 });
 
 const application = express();
@@ -114,19 +121,8 @@ assert.equal(
 );
 console.log('auth rejection tests passed');
 
-// --- first contact is deliberate (DEC-14): allowlist both directions -------------------
-
-for (const [token, peer] of [[aliceId, bobPerson], [bobId, alicePerson]] as const) {
-  const auth = await handle.embedded.authenticate({ token });
-  assert.equal(auth.kind, 'authenticated');
-  if (auth.kind === 'authenticated') {
-    const policy = await auth.session.setContactPolicy({ allowlist: [peer], defaultRule: 'deny' });
-    assert.equal(policy.kind, 'ok');
-  }
-}
-console.log('contact policy setup passed');
-
-// --- the two-agents-converse proof ------------------------------------------------------
+// --- D-N2-5: co-members converse with NO manual setContactPolicy ------------------------
+// (the glue's team contact bootstrap seeded the allowlists at boot)
 
 const first = await v2send(aliceId, { 'to': 'worker-b', body: 'hello bob' });
 assert.equal(first.status, 200, JSON.stringify(first.json));
@@ -146,7 +142,34 @@ const toAlice = terminals.submissions.at(-1);
 assert.equal(toAlice?.agentId, aliceId, "B's reply landed on A's lane");
 assert.equal(toAlice?.text, `[nvk-msg from worker-b id ${String(reply.json['messageId'])}] hi alice`);
 assert.equal(toAlice?.flushMs, 6000, 'alice is kimi — the flush rides');
-console.log('two-agents-converse proof passed');
+console.log('two-agents-converse proof passed (no manual setContactPolicy — D-N2-5)');
+
+// --- deny-by-default intact + manual setContactPolicy still works (contract command) ----
+
+const stranger = await v2send(aliceId, { 'to': 'worker-c', body: 'stranger ping' });
+assert.equal(stranger.status, 403, 'carol shares no team/mission ref → BlockedByContactPolicy');
+assert.match(String(stranger.json['name']), /BlockedByContactPolicy/);
+
+const carolAuth = await handle.embedded.authenticate({ token: carolId });
+if (carolAuth.kind !== 'authenticated') throw new Error('unreachable');
+const manual = await carolAuth.session.setContactPolicy({ allowlist: [alicePerson], defaultRule: 'deny' });
+assert.equal(manual.kind, 'ok', 'manual policy remains a first-class contract command');
+const welcomed = await v2send(aliceId, { 'to': 'worker-c', body: 'now reachable' });
+assert.equal(welcomed.status, 200, 'a manual allowlist admits the non-co-member');
+assert.equal(terminals.submissions.at(-1)?.agentId, carolId);
+console.log('deny-by-default + manual policy tests passed');
+
+// --- the human principal's allowlist is seeded at boot --------------------------------------
+
+const humanAuth = await handle.embedded.authenticate({ token: 'human-secret' });
+if (humanAuth.kind !== 'authenticated') throw new Error('unreachable');
+assert.equal(humanAuth.principal.personId, 'person_user-chris');
+const humanPolicy = await humanAuth.session.getPolicy({});
+if (humanPolicy.kind !== 'ok') throw new Error('unreachable');
+for (const personId of [alicePerson, bobPerson, carolPerson]) {
+  assert.ok(humanPolicy.value.contact.allowlist.includes(personId), `human allowlist seeds ${personId}`);
+}
+console.log('human allowlist seeding test passed');
 
 // --- reads: thread messages, inbox, address book -------------------------------------------
 
@@ -166,7 +189,7 @@ assert.deepEqual(
 const book = await v2get(aliceId, '/api/messaging/v2/address-book');
 assert.equal(book.status, 200);
 const entries = book.json['agents'] as Array<Record<string, unknown>>;
-assert.deepEqual(entries.map((entry) => entry['name']), ['chief-kimi', 'worker-b']);
+assert.deepEqual(entries.map((entry) => entry['name']), ['chief-kimi', 'worker-b', 'worker-c']);
 assert.equal(entries[0]?.['personId'], alicePerson, 'name → personId for CLI resolution');
 assert.equal(typeof entries[0]?.['status'], 'string', 'durable status rides along');
 console.log('read tests passed');

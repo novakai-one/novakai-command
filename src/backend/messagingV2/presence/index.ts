@@ -16,14 +16,21 @@
  * Briefing: same 3000 ms delay and roster re-check as the old hub, but
  * delivered through the TerminalRuntime submit lane directly (the old
  * PtyDelivery path is untouched but no longer used for briefings).
+ *
+ * D-N2-5 (team contact bootstrap): after every boot/launch lane-open, the
+ * glue runs the membership-driven contact-policy sync (../policy/index.ts)
+ * for every held session — host policy, composition-owned, core untouched.
  */
 
 import type { EmbeddedMessaging } from '../../../../packages/messaging/composition/embedded.js';
 import type { MessagingSession } from '../../../../packages/messaging/public/capability.js';
+import type { ObjectModel } from '../../objectModel/index.js';
 import type { AgentInfo } from '../../terminal/manager.js';
 import type { TerminalRuntime } from '../../terminal/runtime/index.js';
 import { composeAgentBriefing } from '../briefing/index.js';
 import { personIdForAgentId } from '../authority/index.js';
+import { createContactBootstrap } from '../policy/index.js';
+import type { ContactBootstrap } from '../policy/index.js';
 import type { TerminalHostPresenceTransport } from '../transport/index.js';
 
 const BRIEFING_DELAY_MS = 3_000;
@@ -34,6 +41,10 @@ export interface AgentLaneGlueDeps {
   embedded: EmbeddedMessaging;
   transport: TerminalHostPresenceTransport;
   terminals: TerminalRuntime;
+  /** D-N2-5: durable membership truth for the team contact bootstrap. */
+  objectModel: ObjectModel;
+  /** When set, the human principal's session is held and its allowlist seeded. */
+  humanToken?: string;
   /** Test hook; defaults to 3000 ms (the old hub's delay). */
   briefingDelayMs?: number;
   log?: (message: string) => void;
@@ -53,6 +64,23 @@ interface GlueState {
   deps: AgentLaneGlueDeps;
   sessions: Map<string, MessagingSession>;
   timers: Set<NodeJS.Timeout>;
+  /** The held human session (D-N2-5); null until ensured or unconfigured. */
+  human: MessagingSession | null;
+  bootstrap: ContactBootstrap;
+}
+
+/** Authenticate the human principal once and hold the session (D-N2-5). */
+async function ensureHuman(state: GlueState): Promise<void> {
+  if (state.human !== null || state.deps.humanToken === undefined) return;
+  const auth = await state.deps.embedded.authenticate({ token: state.deps.humanToken });
+  state.human = auth.kind === 'authenticated' ? auth.session : null;
+}
+
+/** D-N2-5: membership-driven contact bootstrap — best-effort host policy;
+ * a policy write must never break a lane. */
+async function syncPolicies(state: GlueState): Promise<void> {
+  if (state.sessions.size === 0 && state.human === null) return;
+  await state.bootstrap.sync(state.sessions, state.human);
 }
 
 /** Re-bind surviving registry presences (clientLabel = agentId) to live terminals. */
@@ -82,12 +110,14 @@ async function openLane(state: GlueState, agentId: string): Promise<boolean> {
 }
 
 async function openBootLanes(state: GlueState): Promise<void> {
+  await ensureHuman(state);
   rebindSurvivors(state);
   const running = state.deps.terminals.list().filter((info) => info.status === 'running');
   let opened = 0;
   for (const info of running) {
     if (await openLane(state, info.agentId)) opened += 1;
   }
+  await syncPolicies(state);
   const announce = state.deps.log ?? ((): void => {});
   announce(`[messaging-v2] pty lanes open for ${opened}/${running.length} live agents`);
 }
@@ -109,8 +139,16 @@ function briefAgent(state: GlueState, info: AgentInfo, messagingAvailable: boole
   });
 }
 
+/** Lane first, then the D-N2-5 policy pass (a new teammate becomes reachable
+ * BY existing members and vice versa before the briefing lands). */
+async function laneThenSync(state: GlueState, agentId: string): Promise<boolean> {
+  const opened = await openLane(state, agentId);
+  if (opened) await syncPolicies(state);
+  return opened;
+}
+
 function handleAgentLaunched(state: GlueState, info: AgentInfo): void {
-  const available = openLane(state, info.agentId).catch(() => false);
+  const available = laneThenSync(state, info.agentId).catch(() => false);
   const delayMs = state.deps.briefingDelayMs ?? BRIEFING_DELAY_MS;
   const timer = setTimeout(() => {
     state.timers.delete(timer);
@@ -128,7 +166,13 @@ function closeGlue(state: GlueState): Promise<void> {
 }
 
 export function createAgentLaneGlue(deps: AgentLaneGlueDeps): AgentLaneGlue {
-  const state: GlueState = { deps, sessions: new Map(), timers: new Set() };
+  const state: GlueState = {
+    deps,
+    sessions: new Map(),
+    timers: new Set(),
+    human: null,
+    bootstrap: createContactBootstrap(deps.objectModel),
+  };
   return {
     openBootLanes: () => openBootLanes(state),
     handleAgentLaunched: (info) => handleAgentLaunched(state, info),

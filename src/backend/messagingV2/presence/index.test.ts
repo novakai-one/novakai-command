@@ -32,8 +32,10 @@ const STORE_FILES = [
 function scratchStores(): string {
   const scratch = mkdtempSync(path.join(tmpdir(), 'nvk-mv2-presence-'));
   for (const name of STORE_FILES) writeFileSync(path.join(scratch, name), '');
-  writeFileSync(path.join(scratch, 'missions.jsonl'),
-    JSON.stringify({ id: 'mission_alpha', kind: 'mission', 'ts': STAMP, title: 'Alpha', owner: 'chief' }) + '\n');
+  writeFileSync(path.join(scratch, 'missions.jsonl'), [
+    JSON.stringify({ id: 'mission_alpha', kind: 'mission', 'ts': STAMP, title: 'Alpha', owner: 'chief' }),
+    JSON.stringify({ id: 'mission_beta', kind: 'mission', 'ts': STAMP, title: 'Beta', owner: 'chief' }),
+  ].join('\n') + '\n');
   return scratch;
 }
 
@@ -83,6 +85,12 @@ const model = new ObjectModel({ storesDir: scratch });
 const teamId = model.createTeam({ name: 'Messaging Crew', missionId: 'mission_alpha' });
 const aliceId = model.createAgent({ name: 'chief-kimi', provider: 'kimi', teamId, missionId: 'mission_alpha' });
 const bobId = model.createAgent({ name: 'worker-b', provider: 'claude', teamId, missionId: 'mission_alpha' });
+// carol shares NO team/mission ref with the crew — deny-by-default must hold for her.
+const otherTeam = model.createTeam({ name: 'Other Crew', missionId: 'mission_beta' });
+const carolId = model.createAgent({ name: 'worker-c', provider: 'claude', teamId: otherTeam, missionId: 'mission_beta' });
+const alicePerson = personIdForAgentId(aliceId);
+const bobPerson = personIdForAgentId(bobId);
+const carolPerson = personIdForAgentId(carolId);
 const aliceInfo = agentInfo(aliceId, 'chief-kimi', 'kimi');
 const bobInfo = agentInfo(bobId, 'worker-b');
 const plainInfo = agentInfo('agent_plain', 'plain-1');
@@ -93,14 +101,17 @@ const transport = createTerminalHostTransport(terminals);
 const embedded = createEmbeddedMessaging({
   clock,
   store: createMemoryStore(clock),
-  authority: createNovakaiAuthority(model, clock),
+  authority: createNovakaiAuthority(model, clock, {
+    humans: [{ token: 'human-secret', personId: 'person_user-chris' as never, roles: ['Human'] }],
+  }),
   membership: createNovakaiMembership(model, clock),
   transports: [transport],
 });
 await embedded.start();
 const glueLogs: string[] = [];
 const glue = createAgentLaneGlue({
-  embedded, transport, terminals, briefingDelayMs: 5, 'log': (line) => glueLogs.push(line),
+  embedded, transport, terminals, objectModel: model, humanToken: 'human-secret',
+  briefingDelayMs: 5, 'log': (line) => glueLogs.push(line),
 });
 
 // --- boot lanes: already-running durable agents get presence; plain spawns don't ----
@@ -116,6 +127,43 @@ assert.equal(embedded.registry.presencesFor(personIdForAgentId(plainInfo.agentId
   'plain spawns have no durable record → no presence (accepted limitation)');
 assert.ok(glueLogs.some((line) => line.includes('2/3')), 'boot log counts the roster');
 console.log('boot lane tests passed');
+
+// --- D-N2-5 team contact bootstrap (host policy; DEC-14 deny-by-default intact) ------
+
+async function allowlistFor(token: string): Promise<unknown> {
+  const auth = await embedded.authenticate({ token });
+  if (auth.kind !== 'authenticated') throw new Error('unreachable');
+  const policy = await auth.session.getPolicy({});
+  if (policy.kind !== 'ok') throw new Error('unreachable');
+  return policy.value.contact;
+}
+
+const aliceContact = await allowlistFor(aliceId) as { allowlist: string[]; defaultRule: string };
+assert.ok(aliceContact.allowlist.includes(bobPerson), 'co-member bob is reachable by alice');
+assert.ok(aliceContact.allowlist.includes('person_user-chris'), 'the human principal is reachable by alice');
+assert.ok(!aliceContact.allowlist.includes(carolPerson), 'carol shares no ref — NOT allowlisted');
+assert.equal(aliceContact.defaultRule, 'deny', 'deny-by-default preserved');
+const humanContact = await allowlistFor('human-secret') as { allowlist: string[] };
+for (const personId of [alicePerson, bobPerson, carolPerson]) {
+  assert.ok(humanContact.allowlist.includes(personId), `human allowlist seeds durable team agent ${personId}`);
+}
+console.log('contact bootstrap policy tests passed');
+
+// agent→chris DMs send cleanly (delivery pends until N4 — expected); carol stays 403.
+const aliceAuth = await embedded.authenticate({ token: aliceId });
+if (aliceAuth.kind !== 'authenticated') throw new Error('unreachable');
+const toChris = await aliceAuth.session.sendMessage({
+  address: 'person:person_user-chris', body: { text: 'boss ping' },
+  priority: 'normal', clientMessageId: 'n2-policy-1',
+});
+assert.equal(toChris.kind, 'ok', 'agent→human DM accepted (delivery pends — N4)');
+const toCarol = await aliceAuth.session.sendMessage({
+  address: `person:${carolPerson}`, body: { text: 'stranger ping' },
+  priority: 'normal', clientMessageId: 'n2-policy-2',
+});
+assert.equal(toCarol.kind, 'error', 'non-co-member stays blocked');
+if (toCarol.kind === 'error') assert.equal(toCarol.error.name, 'BlockedByContactPolicy', 'DEC-14 intact');
+console.log('bootstrap send-outcome tests passed');
 
 // --- exit → liveness disconnect through the core's single close path (R9) -----------
 

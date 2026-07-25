@@ -116,7 +116,14 @@ async function bootLanes(
   transport: ReturnType<typeof createTerminalHostTransport> | null,
 ): Promise<AgentLaneGlue | null> {
   if (transport === null || deps.terminals === undefined) return null;
-  const lanes = createAgentLaneGlue({ embedded, transport, terminals: deps.terminals, 'log': deps.log });
+  const lanes = createAgentLaneGlue({
+    embedded,
+    transport,
+    terminals: deps.terminals,
+    objectModel: deps.objectModel,
+    ...(deps.humanToken !== undefined ? { humanToken: deps.humanToken } : {}),
+    ...(deps.log !== undefined ? { 'log': deps.log } : {}),
+  });
   await lanes.openBootLanes();
   deps.onLaunch?.((info) => lanes.handleAgentLaunched(info));
   return lanes;
