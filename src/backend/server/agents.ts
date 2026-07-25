@@ -18,6 +18,7 @@ import { SubagentWatcher } from '../transcript/subagents/index.js';
 import type { SessionControlIntent } from '../../shared/sessionControl.js';
 import { SessionControl } from '../terminal/control/index.js';
 import { deriveHealth, thresholdsFromEnv, type AgentHealth, type HealthThresholds } from '../terminal/health/index.js';
+import type { SeatWatch } from '../terminal/seatWatch/index.js';
 import { NudgeAction } from '../terminal/nudge/index.js';
 import { ObjectModel } from '../objectModel/index.js';
 import { resolveMissionSpawn } from './missionSpawn/index.js';
@@ -55,6 +56,8 @@ export class AgentsHub {
   private readonly nudge: NudgeAction;
   /** Ruled stall thresholds, read once at composition (env overrides are rig-only). */
   private readonly thresholds: HealthThresholds = thresholdsFromEnv();
+  /** D-N5-6: attached by the composition root after the seat-watch boots. */
+  private seatWatch: SeatWatch | null = null;
 
   constructor(
     private readonly sockets: Set<WebSocket>,
@@ -103,6 +106,11 @@ export class AgentsHub {
   /** The terminal surface the messaging tunnel routes through (roster + PTY writes). */
   get terminals(): TerminalRuntime {
     return this.manager;
+  }
+
+  /** D-N5-6: the health route annotates from the live seat-watch afterwards. */
+  attachSeatWatch(watch: SeatWatch): void {
+    this.seatWatch = watch;
   }
 
   handleMessage(socket: WebSocket, message: Record<string, unknown>): boolean {
@@ -157,7 +165,10 @@ export class AgentsHub {
       response.status(404).json({ error: 'Agent not found' });
       return;
     }
-    response.json({ agentId: info.agentId, status: info.status, health: this.healthFor(info) });
+    response.json({
+      agentId: info.agentId, status: info.status,
+      health: this.healthFor(info), seatWatch: this.seatWatch?.stateFor(info.agentId) ?? null,
+    });
   }
 
   private nudgeAgent(request: Request, response: Response): void {

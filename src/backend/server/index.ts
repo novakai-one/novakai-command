@@ -34,10 +34,14 @@ import type { MessagingLive } from '../messagingV2/live/index.js';
 import { ExternalSessionsHub } from '../externalSessions/index.js';
 import { PeopleHub } from '../people/index.js';
 import type { TerminalRuntime } from '../terminal/runtime/index.js';
+import { createSeatWatch } from '../terminal/seatWatch/index.js';
 
 const PROJECT_RE = /^[A-Za-z0-9._-]+$/;
 const SESSION_RE = /^[A-Za-z0-9-]+$/;
 const AGENT_RE = /^agent-[A-Za-z0-9]+$/;
+/** D-N5-6: the seat-watch's durable identity + its ops team (find-or-create). */
+const WATCHDOG_AGENT_NAME = 'nvk-watchdog';
+const WATCHDOG_TEAM_NAME = 'ops';
 
 function isValidProjectDir(value: unknown): value is string {
   return typeof value === 'string' && PROJECT_RE.test(value) && value !== '.' && value !== '..';
@@ -95,6 +99,7 @@ export class ServerController {
   private readonly objectModel: ObjectModel;
   private readonly messagingLive: MessagingLive;
   private messagingV2: MessagingV2Handle | null = null;
+  private seatWatchTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(
     private readonly port: number,
@@ -214,6 +219,64 @@ export class ServerController {
     });
     if (accepted.kind !== 'ok') throw new Error(accepted.error.message);
     return { id: accepted.value.messageId };
+  }
+
+  /** D-N5-6: find-or-create the durable watchdog identity. Null = no mission
+   * record to attach an ops team to — the alert sink degrades to log-only. */
+  private ensureWatchdogIdentity(): string | null {
+    const existing = this.objectModel.listAgents().find((agent) => agent.name === WATCHDOG_AGENT_NAME);
+    if (existing) return existing.id;
+    const missionId = this.objectModel.listMissions()[0]?.id;
+    if (typeof missionId !== 'string') return null;
+    const team = this.objectModel.listTeams().find((entry) => entry.name === WATCHDOG_TEAM_NAME);
+    const teamId = typeof team?.id === 'string' ? team.id : this.objectModel.createTeam({ name: WATCHDOG_TEAM_NAME, missionId });
+    return this.objectModel.createAgent({ name: WATCHDOG_AGENT_NAME, provider: 'ops', teamId, missionId });
+  }
+
+  /** One #team alert through the capability, sent AS the watchdog agent. */
+  private async sendSeatAlert(watchdogId: string, body: string): Promise<void> {
+    const threadId = this.messagingV2?.rooms?.fleetThreadId();
+    if (threadId === undefined) return console.log(`[seatWatch] unsent (no fleet room): ${body}`);
+    const auth = await this.messagingV2?.embedded.authenticate({ token: watchdogId });
+    if (auth?.kind !== 'authenticated') return console.log(`[seatWatch] unsent (identity rejected): ${body}`);
+    const accepted = await auth.session.sendMessage({
+      address: `thread:${threadId}`, body: { text: body },
+      priority: 'normal', clientMessageId: `wd_${randomUUID()}`,
+    });
+    if (accepted.kind !== 'ok') console.error(`[seatWatch] alert rejected: ${accepted.error.message}`);
+  }
+
+  private postSeatAlert(watchdogId: string, body: string): void {
+    this.sendSeatAlert(watchdogId, body).catch((error: unknown) => {
+      console.error(`[seatWatch] alert failed: ${error instanceof Error ? error.message : String(error)}`);
+    });
+  }
+
+  /** D-N5-6: the revived seat-watch (Chris's overrule of N5's accepted
+   * loss). Ticks over transcript mtimes — never a journal — on the config
+   * interval; the boot tick baselines silently before the first post. */
+  private startSeatWatch(): void {
+    const watchdogId = this.ensureWatchdogIdentity();
+    if (watchdogId === null) console.warn('[seatWatch] no mission record — alerts are log-only this run');
+    const onAlert = watchdogId === null
+      ? (body: string) => console.log(`[seatWatch] ${body}`)
+      : (body: string) => this.postSeatAlert(watchdogId, body);
+    const watch = createSeatWatch({
+      terminals: this.agentsHub.terminals, onAlert, extraIgnoreTitles: [WATCHDOG_AGENT_NAME],
+    });
+    this.agentsHub.attachSeatWatch(watch);
+    watch.tick();
+    this.seatWatchTimer = setInterval(() => watch.tick(), watch.intervalSec() * 1000);
+    this.seatWatchTimer.unref();
+  }
+
+  /** A seat-watch boot failure must never take down the app (N1's rule). */
+  private startSeatWatchSafely(): void {
+    try {
+      this.startSeatWatch();
+    } catch (error) {
+      console.error('[seatWatch] boot failed — disabled this run:', error);
+    }
   }
 
   /**
@@ -604,6 +667,7 @@ export class ServerController {
       // serves). Fail LOUD, continue — the v2 routes answer 503 this run.
       console.error('[messaging-v2] boot failed — capability disabled this run:', error);
     }
+    this.startSeatWatchSafely();
   }
 
   private listen(server: HttpServer, port: number): Promise<void> {
@@ -624,6 +688,12 @@ export class ServerController {
   }
 
   public async stop(): Promise<void> {
+    // The seat-watch timer touches transcripts only; clear it before anything
+    // else so a late tick can never fire into a half-closed capability.
+    if (this.seatWatchTimer !== null) {
+      clearInterval(this.seatWatchTimer);
+      this.seatWatchTimer = null;
+    }
     // messagingV2 closes FIRST — it is additive (N1) and holds the journal
     // handle; nothing else depends on it yet. A close failure must not abort
     // shutdown (N1 audit finding 6): log it, keep closing the real servers.
