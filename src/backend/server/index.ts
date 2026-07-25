@@ -34,7 +34,7 @@ import type { MessagingLive } from '../messagingV2/live/index.js';
 import { ExternalSessionsHub } from '../externalSessions/index.js';
 import { PeopleHub } from '../people/index.js';
 import type { TerminalRuntime } from '../terminal/runtime/index.js';
-import { createSeatWatch } from '../terminal/seatWatch/index.js';
+import { createSeatWatch, tickSafely } from '../terminal/seatWatch/index.js';
 
 const PROJECT_RE = /^[A-Za-z0-9._-]+$/;
 const SESSION_RE = /^[A-Za-z0-9-]+$/;
@@ -265,8 +265,8 @@ export class ServerController {
       terminals: this.agentsHub.terminals, onAlert, extraIgnoreTitles: [WATCHDOG_AGENT_NAME],
     });
     this.agentsHub.attachSeatWatch(watch);
-    watch.tick();
-    this.seatWatchTimer = setInterval(() => watch.tick(), watch.intervalSec() * 1000);
+    tickSafely(watch);
+    this.seatWatchTimer = setInterval(() => tickSafely(watch), watch.intervalSec() * 1000);
     this.seatWatchTimer.unref();
   }
 

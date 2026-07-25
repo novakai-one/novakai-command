@@ -289,6 +289,17 @@ function tickWatch(watch: WatchContext): void {
   watch.baselined = true;
 }
 
+/** F1: the script wrapped every tick in try/catch — restored. A throwing
+ * tick (TOCTOU transcript unlink, config ENOSPC) logs and loses ONE pass;
+ * the interval driver must never let it kill the backend. */
+export function tickSafely(watch: SeatWatch, log: (line: string) => void = console.error): void {
+  try {
+    watch.tick();
+  } catch (error) {
+    log(`[seatWatch] tick failed — continuing: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
 function buildContext(deps: SeatWatchDeps): WatchContext {
   return {
     roster: deps.terminals,

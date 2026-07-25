@@ -12,6 +12,7 @@ import {
   createSeatWatch,
   loadWatchdogConfig,
   pendingPrompt,
+  tickSafely,
   transcriptPathFor,
   type SeatRoster,
 } from './index.js';
@@ -200,5 +201,25 @@ skipWatch.tick();
 assert.equal(skipAlerts.length, 0, 'exited / ignored / watchdog seats never alert');
 assert.equal(skipWatch.events().length, 0, 'skipped seats record no events at all (not even baselined)');
 assert.equal(skipWatch.stateFor('agent_ch'), null, 'ignored seats carry no annotation');
+
+// --- F1: a throwing tick never propagates; the next tick still runs ----------
+
+let rosterThrows = true;
+const guardedAlerts: string[] = [];
+const guardLogs: string[] = [];
+const throwingSeat = makeSeat({ agentId: 'agent_throw', sessionId: 'sess_throw' });
+writeTranscript(throwingSeat, [textEntry], NOW_MS - 1_300_000);
+const guardedWatch = createSeatWatch({
+  terminals: { list: () => { if (rosterThrows) throw new Error('registry gone'); return [throwingSeat]; } },
+  claudeDir, configPath: configFile,
+  onAlert: (body) => guardedAlerts.push(body), nowMs: () => NOW_MS, pidAlive: () => false,
+});
+tickSafely(guardedWatch, (line) => guardLogs.push(line));
+assert.equal(guardLogs.length, 1, 'a throwing tick is logged, not propagated');
+assert.match(guardLogs[0] ?? '', /registry gone/);
+rosterThrows = false;
+tickSafely(guardedWatch, (line) => guardLogs.push(line));
+assert.equal(guardLogs.length, 1, 'the next tick runs clean — no further log');
+assert.equal(guardedWatch.events().length, 1, 'the recovered tick did its work');
 
 console.log('PASS');
