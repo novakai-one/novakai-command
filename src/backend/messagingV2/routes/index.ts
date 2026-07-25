@@ -118,17 +118,29 @@ async function sessionOrReply(
   return null;
 }
 
-/** The live peer, or a 404 already sent (null). */
-function peerOrReply(terminals: TerminalRuntime, name: string, response: Response): AgentInfo | null {
-  const peer = resolvePeer(terminals, name);
-  if (peer !== undefined) return peer;
+/** name → personId: a running agent by title, else the human principal —
+ * the address book promises chris, so send/read must reach him (R-BRIDGE-1). */
+function resolveRecipientPersonId(deps: MessagingV2RouteDeps, name: string): PersonId | undefined {
+  const peer = resolvePeer(deps.terminals, name);
+  if (peer !== undefined) return personIdForAgentId(peer.agentId);
+  if (name === CHRIS_MEMBER) {
+    const session = deps.getHandle()?.lanes?.humanSession() ?? null;
+    if (session !== null) return session.principal.personId;
+  }
+  return undefined;
+}
+
+/** The recipient's personId, or a 404 already sent (null). */
+function recipientOrReply(deps: MessagingV2RouteDeps, name: string, response: Response): PersonId | null {
+  const personId = resolveRecipientPersonId(deps, name);
+  if (personId !== undefined) return personId;
   response.status(404).json({ error: `no live agent named "${name}"` });
   return null;
 }
 
-function sendInputFor(parsed: SendBody, peer: AgentInfo): Record<string, unknown> {
+function sendInputFor(parsed: SendBody, personId: PersonId): Record<string, unknown> {
   return {
-    address: `person:${personIdForAgentId(peer.agentId)}`,
+    address: `person:${personId}`,
     body: { text: parsed.text },
     priority: parsed.interrupt ? 'urgent' : 'normal',
     clientMessageId: parsed.clientMessageId,
@@ -234,9 +246,9 @@ async function handleSend(deps: MessagingV2RouteDeps, cache: SessionCache, reque
     await handleRoomSend(deps, cache, auth, parsed, response);
     return;
   }
-  const peer = peerOrReply(deps.terminals, parsed.target, response);
-  if (peer === null) return;
-  reply(cache, auth.token, response, await auth.session.sendMessage(sendInputFor(parsed, peer)));
+  const personId = recipientOrReply(deps, parsed.target, response);
+  if (personId === null) return;
+  reply(cache, auth.token, response, await auth.session.sendMessage(sendInputFor(parsed, personId)));
 }
 
 async function handleInbox(deps: MessagingV2RouteDeps, cache: SessionCache, request: Request, response: Response): Promise<void> {
@@ -273,11 +285,11 @@ async function messagesResult(
   cache: SessionCache,
   token: string,
   session: MessagingSession,
-  peer: AgentInfo,
+  personId: PersonId,
 ): Promise<{ status: number; payload: Record<string, unknown> }> {
   const threads = await session.listThreadsForPerson({});
   if (threads.kind !== 'ok') return failurePayload(cache, token, threads.error);
-  const threadId = directThreadId(threads.value.threads, session.principal.personId, personIdForAgentId(peer.agentId));
+  const threadId = directThreadId(threads.value.threads, session.principal.personId, personId);
   if (threadId === undefined) return { status: 200, payload: { threadId: null, messages: [] } };
   const page = await session.getMessages({ threadId });
   if (page.kind !== 'ok') return failurePayload(cache, token, page.error);
@@ -293,9 +305,9 @@ async function handleMessages(deps: MessagingV2RouteDeps, cache: SessionCache, r
     await handleRoomMessages(deps, cache, auth, withName, response);
     return;
   }
-  const peer = peerOrReply(deps.terminals, withName, response);
-  if (peer === null) return;
-  const result = await messagesResult(cache, auth.token, auth.session, peer);
+  const personId = recipientOrReply(deps, withName, response);
+  if (personId === null) return;
+  const result = await messagesResult(cache, auth.token, auth.session, personId);
   response.status(result.status).json(result.payload);
 }
 

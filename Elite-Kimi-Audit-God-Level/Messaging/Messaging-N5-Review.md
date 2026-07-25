@@ -118,7 +118,9 @@ package **253/253 + NO DRIFT** (60 suites).
 - Carried from N4: ExternalSessions allowlist timing; F8b quiet sub-tip
   failures; browser presence transport (N6 option); N1 authority revalidate is
   a full disk scan; token=agentId until N6 (D-N2-2).
-- **R-N4-1 remains OPEN with Chris** (owner read-override for agent↔agent DMs).
+- **R-N4-1 is RULED (PR #72, Chris 2026-07-26: YES)** — the owner MUST see
+  agent↔agent DM lanes. Contract amendment (assertThreadMember + subscription
+  filtering) scheduled as its own slice after N5 seals — never a quiet edit.
 - **For Chris at this seal:** (1) Slack app provisioning click-steps for N7
   (bot token + Socket Mode — the webhook is post-only, cannot read or create
   channels); (2) final D8 reminder — Luke's Slack Connect acceptance.

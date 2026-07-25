@@ -205,6 +205,21 @@ assert.ok(
 );
 console.log('read tests passed');
 
+// --- agent → human DM: the address book promises chris; the send must reach him ---
+
+const toChris = await v2send(aliceId, { 'to': 'chris', body: 'alice pings the human' });
+assert.equal(toChris.status, 200, 'an agent DMs the human by name (the address book promised him)');
+const chrisThread = await v2get(aliceId, `/api/messaging/v2/messages?with=${encodeURIComponent('chris')}`);
+assert.equal(chrisThread.status, 200, 'the agent reads the shared human thread');
+const chrisBodies = (chrisThread.json['messages'] as Array<{ body: { text: string } }>).map((message) => message.body.text);
+assert.ok(chrisBodies.includes('alice pings the human'), 'the human thread carries the send');
+const humanThreads = await humanAuth.session.listThreadsForPerson({});
+if (humanThreads.kind !== 'ok') throw new Error('unreachable');
+const humanSeesAlice = humanThreads.value.threads.find((entry) =>
+  entry.threadKind === 'direct' && entry.direct?.pair.includes(alicePerson));
+assert.ok(humanSeesAlice, 'the human principal holds the direct thread with alice');
+console.log('agent → human DM tests passed');
+
 // --- interrupt: urgent leads with Esc; MSG-010 downgrade is DND-conditional --------------
 
 await v2send(aliceId, { 'to': 'worker-b', body: 'urgent question', interrupt: true });

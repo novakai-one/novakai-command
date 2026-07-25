@@ -50,10 +50,15 @@ The Messaging pass-2 program is COMPLETE (S1–S4, P1–P6, 253/253 tests, score
   rotation/query question); watchdog union refreshes on restart only; mirror
   raw-threadId/FRAGILE-inverse/no-⚠ debt; the N4 carryovers (ExternalSessions
   allowlist timing, F8b, browser presence transport = the N6 option).
-- **R-N4-1 is OPEN with Chris:** agent↔agent direct threads are party-only by the
-  ratified contract — the human no longer sees agent↔agent DM lanes. An owner
-  read-override would be a CONTRACT amendment (assertThreadMember + subscription
-  filtering) — surfaced, not built. If Chris rules on it, record the amendment.
+- **R-N4-1 is RULED (PR #72, Chris 2026-07-26: YES)** — the owner MUST see
+  agent↔agent DM lanes. Contract amendment (assertThreadMember + subscription
+  filtering) scheduled as its OWN slice after N5 seals; never snuck into an
+  unrelated branch.
+- **D-BRIDGE-1 (PR #72):** the v0 Slack bridge (`scripts/nvk-slack-bridge.mjs`,
+  merged PR #74) owns ALL Slack bridging — own workspace, human principal only.
+  No N-slice builds Slack bridging; N7 generalizes v0. The one-way mirror
+  stays N5's (D5), unaffected. PR #73 added agent→human DM by name
+  (`resolveRecipientPersonId` in messagingV2 routes).
 - N1 debt still watched: authority revalidate is a full disk scan (presence
   heartbeats make it hot); **token=agentId retires in N6** (D-N2-2 — real
   issuance/revocation is N6's headline).
