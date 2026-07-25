@@ -61,8 +61,8 @@ const handle = await startMessagingV2({
   'log': (message) => bootLogs.push(message),
 });
 assert.ok(
-  bootLogs.some((line) => line.startsWith('[messaging-v2] capability booted') && line.includes('principals=2')),
-  `boot log line names the store and principal count, got: ${JSON.stringify(bootLogs)}`,
+  bootLogs.some((line) => line.startsWith('[messaging-v2] capability booted') && line.includes('principals=3')),
+  `boot log line names the store and principal count (2 agents + self-minted human), got: ${JSON.stringify(bootLogs)}`,
 );
 console.log('boot test passed');
 
@@ -225,12 +225,14 @@ class FakeTerminalRuntime implements TerminalRuntime {
     agentId: laneAgentId, title: 'worker-lane', provider: 'claude', sessionId: 'session',
     projectDir: 'project', cwd: '/tmp/project', status: 'running', createdAt: new Date().toISOString(),
   };
-  // Reads 1-2 (principal count, authenticate) pass; read 3 (the policy sync) burns.
+  // Reads 1-3 (principal count, agent authenticate, human authenticate — the
+  // human session is self-minted since the N3 live-verification fix) pass;
+  // read 4 (the policy sync) burns.
   let reads = 0;
   const realListAgents = bootModel.listAgents.bind(bootModel);
   bootModel.listAgents = (() => {
     reads += 1;
-    if (reads > 2) throw new Error('stores on fire');
+    if (reads > 3) throw new Error('stores on fire');
     return realListAgents();
   }) as typeof bootModel.listAgents;
   const bootJournal = path.join(mkdtempSync(path.join(tmpdir(), 'nvk-mv2-policyfail-')), 'journal.jsonl');
