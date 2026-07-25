@@ -1,0 +1,23 @@
+{
+  "name": "@novakai/messaging",
+  "version": "0.1.0",
+  "description": "Novakai Messaging capability — S1-c: contract/codegen/store/clock (S1-a), core send path (S1-b), durable events + subscriptions + WS standalone mode (S1-c).",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "generate": "node tools/generate-ts.mjs",
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test \"dist/tests/**/*.test.js\""
+  },
+  "license": "UNLICENSED",
+  "private": true,
+  "devDependencies": {
+    "@types/ws": "^8.18.1",
+    "typescript": "^5.5.0"
+  },
+  "dependencies": {
+    "ws": "^8.21.1"
+  }
+}

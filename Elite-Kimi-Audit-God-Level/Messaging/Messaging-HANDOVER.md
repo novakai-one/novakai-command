@@ -7,7 +7,10 @@
 **all R-items (R1–R13) CLOSED**.
 **Updated:** 2026-07-24 by kimi-cli — Step 4 (trace refresh + map) COMPLETE; next is
 Step 5 (S1 build kickoff).
-**You are:** the agent executing Step 5 or later. Read this first.
+**Updated:** 2026-07-24 by kimi-cli — Step 5 (S1 build) COMPLETE and SEALED after
+law-#6 audit + full remediation (`Messaging-S1-Review.md`). Next: slice S2 (Rooms)
+per `Messaging-Plan.md` §18, or Chris's redirection.
+**You are:** the agent executing Step 6 / slice S2 or later. Read this first.
 
 ---
 
@@ -41,6 +44,8 @@ Step 1 of the pass-2 sequence is COMPLETE:
 | `contract/check-map-drift.mjs` | Law-#3 guard: machine-verifies every enumeration the map copies from the contract source. Run after any contract or map edit | **Step 4 output — drift guard** |
 | `Messaging-Schemas.md` | Step 2 rulings doc: R1–R5, R9–R13, R6 closed; review record (15 findings disposed) | **Step 2 output — binding** |
 | `Messaging-Seams.md` | Step 3b seam contracts: authority (incl. DEC-07 role→grant config), membership (R8 linearization), presence-transport (R1 transport half), clock/ID; review record (8 findings disposed) | **Step 3b output — binding** |
+| `messaging/` | The S1 implementation: TS strict ESM package (`@novakai/messaging`). Public surface `public/index.ts` ONLY; codegen from `contract/messaging-contract.json` (law #3); store-memory + store-jsonl (mutation-queue atomic); embedded + standalone (WS, `ws` dep) composition roots; 158 tests | **Step 5 output — S1 sealed** |
+| `Messaging-S1-Review.md` | Law-#6 audit of the S1 diff (verdict HIGH pre-fix: 3 severe, 9 moderate, 10 low) + full disposal record | Step 5 evidence |
 | `Messaging-Map.html` | Visual module map (open in a browser; 40 modules, animated traces) | Update in Step 4 |
 | `Messaging-Report copy.html` | Second visual variant of the map | Working copy |
 | `Messaging-Report.html` | Older mermaid-based report | Superseded, kept for history |
@@ -113,10 +118,25 @@ Step 1 of the pass-2 sequence is COMPLETE:
   machine-verifies every enumeration the map copies (run: `node
   contract/check-map-drift.mjs`). 0-context auditor (law #6): overall MODERATE, 10
   findings (0 severely critical) — all disposed at the source.
-- **Step 5 — S1 build kickoff. ← NEXT.** All R-items closed; all traces green.
-  Build slice S1 (direct lane: auth + 1-1 send/pull + durable acceptance +
-  idempotent retry, embedded + standalone) against the frozen contracts; exit
-  condition P2 + P3.
+- ~~**Step 5 — S1 build.**~~ **DONE (2026-07-24)** — `messaging/` package: slice S1
+  (direct lane: auth + 1-1 send/pull + durable acceptance + idempotent retry,
+  embedded + standalone) built against the frozen contracts. Codegen from the
+  contract JSON (law #3 holds mechanically, sha256-checked); store seam with
+  memory + jsonl adapters (mutation-queue atomic, F1); single-decision-point send
+  pipeline; R5 orchestrator; journal-sourced eventBus + subscriptions (R1/R2/R3);
+  DEC-17 WS protocol; DEC-21 sweep (startup + periodic). Exit condition met:
+  **P2 + P3 pass** (process-level, protocol-only external clients); W2 crash-retry
+  proven with fault injection; P6 harness green. Law-#6 audit: verdict HIGH pre-fix
+  (3 severely critical incl. store-jsonl concurrency atomicity, 9 moderate, 10 low)
+  — **all disposed at the source**, record in `Messaging-S1-Review.md`; 158/158
+  tests green post-remediation.
+- **Next: slice S2 (Rooms)** per `Messaging-Plan.md` §18 — team/mission sends via
+  the membership seam + frozen recipient snapshots; exit condition P4. Known S2
+  hooks already flagged in code: room-Thread creation op (Store-Seam §2.1 gap),
+  `ListThreadsForPerson` store read, room subscription authorization
+  (`subscriptions.ts` L10 note), `failed{RecordNotFound}` → `UnknownThread` path
+  (F9). S3 (attention) is largely built already; S4 (templates + failure truth,
+  scorecard re-run) after that.
 
 ## Context you will not find in the files
 
