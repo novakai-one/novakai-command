@@ -5,7 +5,7 @@
  * Run with `npx tsx src/backend/messagingV2/tokens/index.test.ts`.
  */
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -83,3 +83,48 @@ assert.equal(restarted.listFor('agent_alpha').length, 1, 'history folds across r
 
 rmSync(scratch, { recursive: true, force: true });
 console.log('token store tests passed');
+
+// --- F1: a SECOND process's revocation retires this process's held raw ---------
+// The running server holds raws in memory; the CLI revokes from another
+// process. A held raw whose records are ALL revoked is NOT a credential:
+// ensure() must re-mint and tokenForAgent() must never serve the dead raw.
+
+{
+  const f1Dir = mkdtempSync(path.join(tmpdir(), 'nvk-tokens-f1-'));
+  const f1Path = path.join(f1Dir, 'tokens.jsonl');
+  const server = createTokenStore(f1Path);
+  const cliStore = createTokenStore(f1Path);
+
+  server.ensure('agent_remote');
+  const deadRaw = server.tokenForAgent('agent_remote');
+  assert.match(deadRaw ?? '', /^nvkt_/, 'the server holds a raw after ensure');
+  cliStore.revokeAll('agent_remote'); // the owner's CLI, a second process
+  assert.equal(cliStore.resolve(deadRaw ?? ''), null, 'sanity: the CLI process sees its own revocation');
+
+  server.ensure('agent_remote');
+  const freshRaw = server.tokenForAgent('agent_remote');
+  assert.notEqual(freshRaw, deadRaw, 'after a cross-process revocation, ensure() MUST re-mint — the held raw is dead');
+  assert.match(freshRaw ?? '', /^nvkt_/, 'the re-minted raw is served to consumers');
+  assert.equal(server.resolve(deadRaw ?? ''), null, 'the dead raw never resolves again');
+  assert.deepEqual(
+    server.resolve(freshRaw ?? '')?.agentId,
+    'agent_remote',
+    'the re-minted token authenticates (the running server heals in place)',
+  );
+  rmSync(f1Dir, { recursive: true, force: true });
+  console.log('F1 cross-process revocation tests passed');
+}
+
+// --- F3: a pre-existing loose file is tightened to 600 on the next append ------
+
+{
+  const f3Dir = mkdtempSync(path.join(tmpdir(), 'nvk-tokens-f3-'));
+  const f3Path = path.join(f3Dir, 'tokens.jsonl');
+  writeFileSync(f3Path, '', { mode: 0o644 }); // hand-created / umask-loose
+  assert.equal(statSync(f3Path).mode & 0o777, 0o644, 'fixture: the file starts readable');
+  const f3Store = createTokenStore(f3Path);
+  f3Store.issue('agent_loose');
+  assert.equal(statSync(f3Path).mode & 0o777, 0o600, 'an append tightens a loose pre-existing file to 600');
+  rmSync(f3Dir, { recursive: true, force: true });
+  console.log('F3 loose-file permission tests passed');
+}

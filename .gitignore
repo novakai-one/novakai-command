@@ -28,7 +28,5 @@ node_modules
 .novakai-command/slack-mirror.json
 .novakai-command/slack-bridge.json
 .novakai-command/slack-bridge-state.json
+# D-N6-2: agent messaging credentials live here (hash-only, never committed)
 .novakai-command/messaging-v2/
-
-# D-N6-2: agent messaging credentials (hash-only, never committed)
-.novakai-command/messaging-v2/tokens.jsonl

@@ -185,7 +185,8 @@ async function cmdMailbox(query) {
   console.log(JSON.stringify(body.identity, null, 2));
 }
 
-// Register an externally-spawned session (a terminal-spawned chief or agent)// into the durable mission graph: Agent record + Presence attach + mailbox,
+// Register an externally-spawned session (a terminal-spawned chief or agent)
+// into the durable mission graph: Agent record + Presence attach + mailbox,
 // so Mission Control's DM lane is backed by durable identity. The pre-flight
 // proves the transcript exists BEFORE any store write — registering a
 // Presence that cannot be located would be a lie the stores have to keep.

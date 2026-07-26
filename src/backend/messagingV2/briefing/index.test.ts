@@ -14,7 +14,8 @@ const briefing = composeAgentBriefing({
 assert.match(briefing, /You are agent "worker-b"/, 'briefing states the agent name');
 assert.match(briefing, /chief-kimi \(kimi\)/, 'briefing lists the live roster');
 assert.match(briefing, /nvk-msg\.mjs send --to <peer>/, 'briefing teaches the authenticated send verb');
-assert.match(briefing, /NVK_AGENT_ID env var/, 'briefing names the injected identity source');
+assert.match(briefing, /NVK_AGENT_TOKEN env var/, 'briefing names the injected CREDENTIAL source (D-N6-2)');
+assert.match(briefing, /NVK_AGENT_ID is your identity, never a credential/, 'identity and credential are not conflated');
 assert.match(briefing, /--interrupt ONLY for real urgency/, 'briefing teaches interrupt etiquette');
 assert.match(briefing, /nvk-msg\.mjs read <name>/, 'briefing teaches the read verb');
 assert.match(briefing, /send --to '#team'/, 'briefing teaches the fleet room post (N3)');

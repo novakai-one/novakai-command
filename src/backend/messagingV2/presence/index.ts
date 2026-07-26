@@ -3,15 +3,17 @@
  * the 'pty' presence lane for every durable agent and takes over the spawn
  * briefing from the old MessagingHub.handleAgentSpawned (deleted).
  *
- * Lane lifecycle: authenticate({ token: agentId }) → openPresence({ transport:
- * 'pty', clientLabel: agentId }) → transport.bind(presenceId, agentId). The
- * authority rejects agents without a durable record (plain spawns) — they get
- * no lane, and their briefing says messaging is unavailable. Lanes open on
- * launch AND at boot for already-running live agents (PTYs survive backend
- * restarts; presence is ephemeral, DEC-02); any surviving registry presences
- * with a clientLabel are re-bound to their live terminals first. Sessions are
- * held for the app lifetime and dropped on close (the embedded stack's own
- * close ends them — the in-memory registry dies with it).
+ * Lane lifecycle: authenticate({ token: <issued nvkt_ token> }) — minted and
+ * held by the token store (D-N6-2; the raw agentId is NOT a credential) →
+ * openPresence({ transport: 'pty', clientLabel: agentId }) →
+ * transport.bind(presenceId, agentId). The authority rejects agents without
+ * a durable record (plain spawns) — they get no lane, and their briefing
+ * says messaging is unavailable. Lanes open on launch AND at boot for
+ * already-running live agents (PTYs survive backend restarts; presence is
+ * ephemeral, DEC-02); any surviving registry presences with a clientLabel
+ * are re-bound to their live terminals first. Sessions are held for the app
+ * lifetime and dropped on close (the embedded stack's own close ends them —
+ * the in-memory registry dies with it).
  *
  * Briefing: same 3000 ms delay and roster re-check as the old hub, but
  * delivered through the TerminalRuntime submit lane directly (the old

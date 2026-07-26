@@ -13,12 +13,14 @@
  *
  * Cross-process truth: the nvk-agent CLI appends from a second process, so
  * resolve/isRevoked re-fold the file whenever it changed on disk (mtime/size
- * check — the fold itself only runs on change). Raw-token lookup
- * (tokenForAgent) is process-local by design: after a restart the raw is
- * gone, but the hash still authenticates.
+ * check — the fold itself only runs on change). The same rule governs the
+ * in-process raw cache (F1): a held raw whose records are ALL revoked (the
+ * CLI revoked from another process) is NOT a credential — ensure() re-mints
+ * and refreshes the cache, tokenForAgent() never serves the dead raw. A
+ * restart drops the raw cache entirely, but the hash still authenticates.
  */
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 export interface AgentTokenRecord {
@@ -99,6 +101,9 @@ function freshRecords(state: StoreState): Map<string, AgentTokenRecord> {
 function appendRecord(state: StoreState, record: AgentTokenRecord): void {
   mkdirSync(path.dirname(state.storePath), { recursive: true });
   if (!existsSync(state.storePath)) writeFileSync(state.storePath, '', { mode: 0o600 });
+  // F3: a hand-created or umask-loose file is tightened, never left readable
+  // (appends are rare — the chmod is noise against the write itself).
+  chmodSync(state.storePath, 0o600);
   appendFileSync(state.storePath, `${JSON.stringify(record)}\n`);
   state.byId?.set(record.id, record);
 }
@@ -137,6 +142,21 @@ function revokeAllFor(state: StoreState, agentId: string): AgentTokenRecord[] {
   return live.map((record) => ({ ...record, revoked: true as const }));
 }
 
+/** F1: does the fresh fold hold ANY live (non-revoked) record for the agent? */
+function hasLiveRecord(state: StoreState, agentId: string): boolean {
+  return [...freshRecords(state).values()].some(
+    (record) => record.agentId === agentId && record.revoked !== true,
+  );
+}
+
+/** This process's raw for the agent — F1: never a dead raw (a second
+ * process's revocation retires it; the cache is not the truth, the fold is). */
+function rawForAgent(state: StoreState, agentId: string): string | null {
+  const heldRaw = state.rawByAgent.get(agentId) ?? null;
+  if (heldRaw !== null && !hasLiveRecord(state, agentId)) return null;
+  return heldRaw;
+}
+
 export function createTokenStore(storePath: string = defaultTokenStorePath()): TokenStore {
   const state: StoreState = {
     storePath, byId: null, foldedMtimeMs: -1, foldedSize: -1, rawByAgent: new Map(),
@@ -144,9 +164,11 @@ export function createTokenStore(storePath: string = defaultTokenStorePath()): T
   return {
     issue: (agentId) => mint(state, agentId),
     ensure: (agentId) => {
-      if (!state.rawByAgent.has(agentId)) mint(state, agentId);
+      // F1: a held raw whose records are ALL revoked (a second process
+      // revoked them) is NOT a credential — re-mint and refresh the cache.
+      if (!state.rawByAgent.has(agentId) || !hasLiveRecord(state, agentId)) mint(state, agentId);
     },
-    tokenForAgent: (agentId) => state.rawByAgent.get(agentId) ?? null,
+    tokenForAgent: (agentId) => rawForAgent(state, agentId),
     resolve: (token) => resolveToken(state, token),
     isRevoked: (recordId) => freshRecords(state).get(recordId)?.revoked === true,
     revokeAll: (agentId) => revokeAllFor(state, agentId),
