@@ -140,13 +140,17 @@ All under `Elite-Kimi-Audit-God-Level/Messaging/`:
 
 ## Context you will not find in the files
 
-- Chris's end-state emotional target: "an agent from my team messages Luke."
+- Chris's end-state emotional target: "an agent from my team messages
+  PartnerChris" (A-N8-1: the target replaced Luke 2026-07-26 — PartnerChris is
+  already in our Slack workspace).
   N8 is the moment the program exists for. Do not let Phase 1 perfectionism
   delay the phase gates.
-- D8 is the only long-lead external dependency: Luke must accept a Slack
+- D8 was the only long-lead external dependency — AMENDED (A-N8-1):
+  PartnerChris is already in the workspace, no invite acceptance blocking. The
+  old note: Luke must accept a Slack
   Connect invite. Chris owns that conversation; he was reminded at the N2 seal.
   Remind ONCE more at the N5 seal if it hasn't happened. Then stop.
-- Slack-for-Chris is N7 (own workspace first; Luke = N8). Terminal→Slack always
+- Slack-for-Chris is N7 (own workspace first; PartnerChris = N8). Terminal→Slack always
   flows terminal → capability → bridge → Slack, never a direct wire.
 - Chris spews words; compile them. Batch decisions with recommendations, never
   grill, silence = accepted. He is visual — the roadmap HTML is how he
