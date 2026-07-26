@@ -23,8 +23,7 @@ import type { TerminalRuntime } from '../../terminal/runtime/index.js';
 import { ObjectModel } from '../../objectModel/index.js';
 import { startMessagingV2 } from '../index.js';
 import type { MessagingV2Handle } from '../index.js';
-import { createNovakaiAuthority } from '../authority/index.js';
-import { personIdForAgentId } from '../authority/index.js';
+import { createNovakaiAuthority, personIdForAgentId } from '../authority/index.js';
 import { createNovakaiMembership } from '../membership/index.js';
 import { registerMessagingV2UserRoutes } from './index.js';
 

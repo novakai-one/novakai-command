@@ -20,10 +20,13 @@ import {
   createEmbeddedMessaging,
   createMemoryPresenceTransport,
   createSeededClock,
+  cursorFor,
   DEFAULT_ROLE_GRANTS,
 } from "../../public/index.js";
 import type {
+  MembershipRoomConfig,
   PersonId,
+  Sequence,
   SubscriptionMessage,
   SubscriptionSink,
   ThreadId,
@@ -46,8 +49,16 @@ import {
 /** The lane overseer — holds oversight.read directly (DEC-07: adapter config). */
 const OVERSEER = "person_overseer" as PersonId;
 
+/** A room the overseer is NOT a member of (F3's boundary fixture). */
+const TEAM_ROOM: MembershipRoomConfig = {
+  threadKind: "team",
+  authority: "team-capability",
+  externalId: "team-oversight",
+  members: [ALICE, BOB, CHIEF],
+};
+
 /** makeHarness + the overseer principal (the shared helper fixes its own list). */
-function makeOversightHarness() {
+function makeOversightHarness(rooms?: MembershipRoomConfig[]) {
   const clock = createSeededClock({ seed: "core" });
   const transport = createMemoryPresenceTransport({ kind: "ws" });
   const scheduler = new ManualScheduler();
@@ -56,6 +67,7 @@ function makeOversightHarness() {
     transports: [transport],
     scheduler,
     retryPolicy: TEST_RETRY_POLICY,
+    ...(rooms !== undefined ? { membership: { rooms } } : {}),
     authority: {
       principals: [
         { token: "tok-alice", personId: ALICE, roles: ["Worker"] },
@@ -201,6 +213,73 @@ describe("A-R-N4-1 oversight.read — subscriptions on a foreign direct lane", (
       await chief.subscribe({ events: ["MessageCommitted"], threads: [threadId as ThreadId] }, collectSink().sink),
     );
     assert.equal(denied.name, "NotAuthorized", "a non-holder's foreign scope fails the whole Subscribe");
+    await cap.close();
+  });
+
+  it("F4: replay — a since-cursor subscription delivers foreign-lane history to the holder", async () => {
+    const { cap } = makeOversightHarness();
+    // The lane commits traffic BEFORE the subscription exists — this is the
+    // replay path (journal scan from the cursor), not the live push.
+    const { threadId } = await foreignLane(cap);
+    const overseer = await sessionFor(cap, "tok-overseer");
+    const { sink, frames } = collectSink();
+    unwrap(await overseer.subscribe({ events: ["MessageCommitted"], since: cursorFor(0 as Sequence) }, sink));
+    await cap.pumpEvents();
+    await flushMicrotasks();
+
+    const replayed = frames.filter((frame) => frame.kind === "event").some((frame) => {
+      const payload = frame.event as { message?: { threadId: string; body: { text: string } } };
+      return payload.message?.threadId === threadId && payload.message.body.text === "lane traffic";
+    });
+    assert.ok(replayed, "the foreign lane's committed history REPLAYS to the holder (A-R-N4-1)");
+    await cap.close();
+  });
+});
+
+describe("A-R-N4-1 — the boundaries the grant does NOT cross", () => {
+  it("F1: a non-holder's list order is the store's interleaved creation order (§11.5)", async () => {
+    const { cap } = makeOversightHarness([TEAM_ROOM]);
+    const alice = await sessionFor(cap, "tok-alice");
+    const bob = await sessionFor(cap, "tok-bob");
+    const chief = await sessionFor(cap, "tok-chief");
+    await allowlist(bob, ALICE);
+    await allowlist(chief, ALICE);
+
+    // direct lane, then a room alice belongs to, then another direct lane —
+    // the list must stay interleaved, never directs-then-rooms.
+    const lane1 = unwrap(await alice.sendMessage(sendInput(`person:${BOB}`, "lane one", "f1-1")));
+    const roomOutcome = await cap.store.createRoomThread({
+      threadKind: "team", authority: "team-capability", externalId: "team-oversight",
+    });
+    if (roomOutcome.kind !== "ok") throw new Error("unreachable");
+    const room = roomOutcome.value;
+    const lane2 = unwrap(await alice.sendMessage(sendInput(`person:${CHIEF}`, "lane two", "f1-2")));
+
+    const listed = unwrap(await alice.listThreadsForPerson({}));
+    assert.deepEqual(
+      listed.threads.map((thread) => thread.id),
+      [lane1.threadId, room.id, lane2.threadId],
+      "non-holder output is byte-identical to the pre-amendment interleaved order",
+    );
+    await cap.close();
+  });
+
+  it("F3: the grant never bleeds into rooms — foreign room reads stay NotAuthorized", async () => {
+    const { cap } = makeOversightHarness([TEAM_ROOM]);
+    await cap.start(); // Store-Seam §11.4 provisioning creates the room Thread
+    const alice = await sessionFor(cap, "tok-alice");
+    const listed = unwrap(await alice.listThreadsForPerson({}));
+    const room = listed.threads.find((thread) => thread.threadKind === "team");
+    assert.ok(room, "the member sees the provisioned room Thread");
+    const overseer = await sessionFor(cap, "tok-overseer");
+
+    const read = expectError(await overseer.getThread({ threadId: room.id }));
+    assert.equal(read.name, "NotAuthorized", "oversight.read is direct-lane-only — rooms keep R3 membership");
+
+    const scoped = expectError(
+      await overseer.subscribe({ events: ["MessageCommitted"], threads: [room.id] }, collectSink().sink),
+    );
+    assert.equal(scoped.name, "NotAuthorized", "explicit scope on a foreign room fails the whole Subscribe");
     await cap.close();
   });
 });

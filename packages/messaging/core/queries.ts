@@ -24,11 +24,12 @@
  *
  * A-R-N4-1 (contract 1.1.0, oversight.read): the holder READS any direct
  * Thread regardless of pair membership — assertThreadMember's direct branch
- * admits the grant (rooms unchanged). A holder listing SELF swaps the
- * pair-scoped direct half for store.listDirectThreads() (every lane);
- * policy.admin acting for ANOTHER keeps the pair-scoped read — oversight is
- * a self-list privilege, never a leak of unrelated lanes. READ-ONLY: the
- * R4 party-only send rules are untouched.
+ * admits the grant (rooms unchanged). A holder listing SELF gets the
+ * interleaved §11.5 list PLUS the foreign lanes appended (non-holder output
+ * is byte-identical to the pre-amendment order; ordering remains
+ * non-contractual per §11.5); policy.admin acting for ANOTHER keeps the
+ * pair-scoped read — oversight is a self-list privilege, never a leak of
+ * unrelated lanes. READ-ONLY: the R4 party-only send rules are untouched.
  *
  * GetPolicy has no NotFound in its error list, so an absent policy pair
  * returns the DEC-14 synthesized defaults (view-only, revision 0 — never
@@ -174,18 +175,12 @@ export function createQueries(deps: QueriesDeps) {
     const target = selfOrAdmin(principal, input.personId);
     const listed = await store.listThreadsForPerson(target);
     if (listed.kind === "error") throw mapReadError(listed.error, () => unknownThread(target));
-    // A-R-N4-1: a holder listing SELF swaps the pair-scoped direct half for
-    // the unscoped lane enumeration — rooms stay the §11.5 read, filtered by
-    // the TARGET's membership below (G6 rules unchanged).
-    let directThreads = listed.value.filter((thread) => thread.threadKind === "direct");
-    if (target === principal.personId && principal.grants.includes("oversight.read")) {
-      const lanes = await store.listDirectThreads();
-      if (lanes.kind === "error") throw mapReadError(lanes.error, () => unknownThread(target));
-      directThreads = lanes.value;
-    }
-    const visible: Thread[] = [...directThreads];
+    const visible: Thread[] = [];
     for (const thread of listed.value) {
-      if (thread.threadKind === "direct") continue; // the direct half is settled above
+      if (thread.threadKind === "direct") {
+        visible.push(thread); // the store already matched the pair (§11.5)
+        continue;
+      }
       if (!thread.room) {
         throw storeDependencyError({
           name: "StoreCorrupt",
@@ -202,6 +197,23 @@ export function createQueries(deps: QueriesDeps) {
       // target as a member — omit. Unavailable fails the whole query (G6).
       if (outcome.kind === "unknown") continue;
       throw outcome.error;
+    }
+    // A-R-N4-1 (F1): a holder listing SELF gets every direct lane — the
+    // FOREIGN half appended after the interleaved §11.5 list, so non-holder
+    // output stays byte-identical to the pre-amendment order (ordering
+    // remains non-contractual per §11.5 either way).
+    if (target === principal.personId && principal.grants.includes("oversight.read")) {
+      const lanes = await store.listDirectThreads();
+      if (lanes.kind === "error") {
+        // L9 (F2): this read folds/filters — it never resolves a record, so
+        // there is no honest Unknown* mapping. CursorInvalid → ValidationFailed.
+        if (lanes.error.name === "CursorInvalid") throw cursorInvalidError(lanes.error.cursor as Cursor);
+        throw storeDependencyError(lanes.error);
+      }
+      const held = new Set(visible.map((thread) => thread.id));
+      for (const lane of lanes.value) {
+        if (!held.has(lane.id)) visible.push(lane);
+      }
     }
     return { threads: visible };
   }

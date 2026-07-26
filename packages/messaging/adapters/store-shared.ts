@@ -602,7 +602,7 @@ export class StoreCore implements MessagingStore {
    */
   async listDirectThreads(): Promise<StoreResult<Thread[]>> {
     const threads = [...this.state.threads.values()].filter(
-      (thread) => thread.threadKind === "direct",
+      (thread) => thread.threadKind === "direct" && thread.direct !== undefined,
     );
     return ok(threads);
   }
