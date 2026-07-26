@@ -14,7 +14,7 @@ session can compact and the next agent can run the remaining program
 The app's messaging is rebuilt as a sealed capability
 (`packages/messaging/`, FROZEN). The N-program wires it everywhere. **N8 is the
 moment the program exists for: a Novakai agent posts in a shared cross-company
-Slack channel → Luke's team sees it in their Slack → their reply lands in the
+Slack channel → PartnerChris's team sees it in Slack → their reply lands in the
 app with real delivery truth.** Do not let phase perfectionism delay the
 phase gates. Sequence: **R-N4-1 → N6 → N7 → N8.** Phase gates are hard: a
 slice seals before the next starts.
@@ -108,7 +108,7 @@ slice seals before the next starts.
 - **Your ruling authority:** everything in-scope (messaging + what N6–N8
   need). MUST surface to Chris (R-items): any `packages/messaging/` contract
   change beyond the ratified R-N4-1 amendment; adding new external
-  principals/workspaces; anything Luke-facing before N8; spend.
+  principals/workspaces; anything PartnerChris-facing before N8; spend.
 - **Audit disposal:** regression tests shown RED pre-fix; findings disposed
   at source; debt recorded in the review's follow-up section.
 
@@ -157,15 +157,18 @@ slice seals before the next starts.
   one-liner); Slack `<@U...>` mention syntax undecoded in bodies (cosmetic);
   in-app surface for bridge health.
 
-### N8 — The Luke moment
-- Done-definition: Slack Connect channel; cross-company room; Luke's team as
+### N8 — The PartnerChris moment
+- **A-N8-1 (Chris, 2026-07-26): the external target is PartnerChris, replacing
+  Luke — and PartnerChris is ALREADY a colleague in Chris's Slack workspace.**
+  The cross-company Slack Connect invite dependency (old D8) is OFF the
+  critical path: no invite acceptance to wait for.
+- Done-definition: a shared channel in OUR workspace; PartnerChris's team as
   external principals behind deny-by-default contact policy; a Novakai agent
-  posts → visible in Luke's Slack → reply lands in the app with delivery
-  truth.
-- **D8 dependency: Luke must accept a Slack Connect invite — CHRIS owns that
-  conversation. He has been reminded TWICE (N2 and N5 seals). DO NOT remind
-  again.** If N7 seals and D8 hasn't happened, surface it ONCE as a
-  phase-gate blocker, then wait.
+  posts → visible to PartnerChris's team in Slack → their reply lands in the
+  app with delivery truth.
+- No external blocker remains — N8 unblocks when N7 (rooms ↔ channels, fleet
+  identity, echo-safe) seals. The channel creation itself is a Chris-visible
+  step (which channel, who joins) — surface it at the N7 seal, not before.
 
 ## 6. Live infrastructure + verification playbook
 

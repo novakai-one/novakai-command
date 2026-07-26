@@ -13,8 +13,8 @@
 Novakai-Command's messaging becomes the sealed `@novakai/messaging` capability —
 pushed, durable, policy-true — inside the app, with the old surface deleted. Then the
 door opens: external terminals integrate as first-class principals, a Slack bridge
-connects the app's rooms to Slack channels, and finally a Novakai agent and Luke's
-team share one cross-company channel with real delivery truth.
+connects the app's rooms to Slack channels, and finally a Novakai agent and
+PartnerChris's team share one channel with real delivery truth.
 
 The capability core does not change. Everything in this program attaches through the
 seams that already exist, or is a client of the published DEC-17 protocol. That is
@@ -52,7 +52,7 @@ code.** If a slice needs a core change, that is a new R-item and a contract amen
 | D5 | Slack mirror + watchdog | **Repoint the mirror to a capability subscription; delete the watchdog's delivery checks** — the capability's own failure truth replaces them. |
 | D6 | External chiefs | **Expose the DEC-17 endpoint from the app itself** — one less process, and external principals are the primary consumer. |
 | D7 | Slack bridge shape | **A bridge daemon that is a CLIENT of Messaging over DEC-17** — same pattern as messenger-cli, but a service. Not an adapter inside the capability. Core untouched by construction. |
-| D8 | Luke cross-company | **Start the Slack Connect conversation during Phase 1.** It is the only long-lead dependency code cannot control. |
+| D8 | External partner channel | **Start the partner conversation during Phase 1.** It is the only long-lead dependency code cannot control. **AMENDED (A-N8-1, 2026-07-26): the target is PartnerChris — already in our Slack workspace, so no cross-company Slack Connect invite is on the critical path.** |
 
 ### Recorded amendments (law #2)
 
@@ -121,6 +121,13 @@ code.** If a slice needs a core change, that is a new R-item and a contract amen
   policy in the host: the app's human principal carries the grant explicitly;
   package DEFAULT_ROLE_GRANTS unchanged (DEC-07 second-host test). Record:
   `Messaging-R-N4-1-Review.md` (audit LOW, 5 findings disposed at source).
+- **A-N8-1 (Chris, 2026-07-26):** N8's external target is **PartnerChris**,
+  replacing Luke — and PartnerChris is already a colleague in Chris's Slack
+  workspace, so the cross-company Slack Connect invite dependency (old D8) is
+  OFF the critical path. N8 = a shared channel in OUR workspace with
+  PartnerChris's team as external principals behind deny-by-default contact
+  policy. The channel creation (which channel, who joins) is a Chris-visible
+  step, surfaced at the N7 seal.
 - **D-BRIDGE-1 (2026-07-26):** D7 descoped. A v0 Slack bridge
   (`scripts/nvk-slack-bridge.mjs`, branch `kimi/slack-bridge-v0`) precedes N7:
   own workspace, human principal ONLY (agent→chris DMs appear in Slack;
@@ -156,7 +163,7 @@ code.** If a slice needs a core change, that is a new R-item and a contract amen
                                                          └─ lane 2: subscribe → Slack
                                                                     │
                                                           Slack Connect channel
-                                                          (Luke's workspace — N8)
+                                                          (PartnerChris — N8)
 ```
 
 Adapter contracts already proven: store (memory↔jsonl, P5), transport
@@ -179,10 +186,10 @@ No slice seals with a finding undisposed.
 | **N5 — Kill the pollers** | Failure truth + push replace every scanner | watchdog delivery checks, transcript confirmer, mailbox-scan briefing | No interval touches the journal; failed deliveries surface as pushed `DeliveryUpdated` |
 | **N6 — Open the door** | Token issuance/revocation; TLS/reachability; connect-your-agent flow | — | An agent spawned on a foreign machine connects, authenticates, messages — no manual step |
 | **N7 — Slack bridge (own workspace)** | Bridge daemon (D7): one Slack channel ↔ one room Thread, echo-safe, identity stamped from Slack user IDs | slack-mirror script | Message Slack→app and app→Slack, both durable, no loops |
-| **N8 — The Luke moment** | Slack Connect channel; cross-company room; Luke's team as external principals behind deny-by-default contact policy | — | A Novakai agent posts in the shared room → visible in Luke's Slack → reply lands in the app with delivery truth |
+| **N8 — The PartnerChris moment** | Shared channel in our workspace; PartnerChris's team as external principals behind deny-by-default contact policy | — | A Novakai agent posts in the shared room → visible to PartnerChris's team in Slack → reply lands in the app with delivery truth |
 
 Phase gates: **Phase 1 = N1–N5** (rock solid in-app) → **Phase 2 = N6** (open door)
-→ **Phase 3 = N7** (Slack) → **Phase 4 = N8** (Luke). Do not start a phase with the
+→ **Phase 3 = N7** (Slack) → **Phase 4 = N8** (PartnerChris). Do not start a phase with the
 previous one's slices unsealed.
 
 ## 6. Risks (named now, watched per slice)
