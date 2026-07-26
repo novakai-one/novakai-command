@@ -85,11 +85,13 @@ export const KIND_RULES = Object.freeze({
   // be." A KR that names an objective still has it checked as a resolvable
   // scalar relation (validate.mjs); a KR without one is legal as written.
   // Same sitting: a KR may carry measurement — target/current as numbers,
-  // unit as a free string, all optional. The store law holds the numbers;
-  // progress math is the UI's problem, never the schema's.
+  // unit as a free string, all optional. The store law holds the numbers
+  // (and holds unit to be a string when present); progress math is the UI's
+  // problem, never the schema's.
   kr: Object.freeze({
     required: Object.freeze(['body']),
     numbers: Object.freeze(['target', 'current']),
+    strings: Object.freeze(['unit']),
     statusSet: null,
   }),
   project: Object.freeze({ required: Object.freeze(['title', 'status', 'path']), statusSet: null }),

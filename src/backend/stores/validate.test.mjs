@@ -263,6 +263,9 @@ console.log('validate cycle A tests passed');
   // present fields must be numbers when the law says numbers
   assert.deepEqual(codes(validateIn({ ...VALID.kr, id: 'kr_meas_b', target: '100' })), ['FIELD-INVALID']);
   assert.deepEqual(codes(validateIn({ ...VALID.kr, id: 'kr_meas_c', current: '40' })), ['FIELD-INVALID']);
+  // and unit must be a string when present — wrong-typed data would sit in
+  // the append-only store forever
+  assert.deepEqual(codes(validateIn({ ...VALID.kr, id: 'kr_meas_d', unit: 42 })), ['FIELD-INVALID']);
 }
 
 // --- nested KRs --------------------------------------------------------------
