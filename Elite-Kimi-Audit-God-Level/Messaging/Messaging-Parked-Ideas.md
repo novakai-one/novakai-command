@@ -17,3 +17,4 @@ gates; nothing is lost, nothing interrupts a slice.
 | DM-lane thread-reply visibility: agents' answers hide in Slack DM threads (top-level/broadcast decision) | N8 polish |
 | UI surface for the bridge-health route (`/api/agents/slack-bridge/health` is live) | N8 polish |
 | Bridge boot-time saveState (health 503s until first persist after daemon restart) | N8 polish |
+| Bridge `<#C…>` channel-mention wire format undecoded in inbound bodies (users done; channels cosmetic) | N8 polish |

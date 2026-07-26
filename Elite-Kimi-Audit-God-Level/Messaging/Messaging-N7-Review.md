@@ -78,18 +78,17 @@ source:
 - Full src tsx sweep **93/93**; scripts sweep **7/7**; `npx tsc --noEmit`
   clean; `npm run lint` **192 at baseline**; stores:test + stores:gate
   PASS; build green; package **263/263 + NO DRIFT** (untouched).
-- Live-fire (post-click-work, with Chris): a real channel ↔ the fleet room.
-  Until then production runs dormant — DM lanes unaffected.
-
-## Chris's click-work (surfaced at the seal — Slack app "Novakai Mirror")
-
-1. Bot scopes: add `channels:read`, `channels:join`, `channels:manage`,
-   `channels:history` (`users:read` already works).
-2. Bot events: subscribe to `message.channels`.
-3. Create/pick the channel; invite the bot (and, when it's time,
-   PartnerChris).
-4. Tell the orchestrator the channel id → one line into
-   `.novakai-command/slack-bridge.json` `channels` + bridge restart.
+- **LIVE-FIRED 2026-07-26 (the click-work was done by the orchestrator via
+  the browse bridge, on Chris's instruction):** manifest scopes
+  (`channels:read/join/manage/history`) + `message.channels` event added via
+  the App Manifest editor; app reinstalled (token unchanged — verified).
+  Channel `#novakai-fleet` (`C0BKV3G4CH0`) created via the bot; config
+  `channels:[{slackChannelId:'C0BKV3G4CH0', room:'fleet:team'}]`; bridge
+  restarted. **Outbound:** agent → #team → top-level Slack channel post
+  (seen in Chris's Slack client). **Inbound:** Chris's Slack channel post →
+  committed to the fleet room as person_user-chris
+  (`message_763baef2…`). Echo-safe: no re-bridge of the inbound human
+  message. DM lanes untouched throughout.
 
 ## Follow-up debt for N8+
 

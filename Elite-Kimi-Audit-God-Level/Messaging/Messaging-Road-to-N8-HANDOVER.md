@@ -67,8 +67,14 @@ slice seals before the next starts.
   source; bridge suite 26 → 46. **Production runs DORMANT** (channels config
   absent — DM lanes exactly as before, live-verified post-deploy).
   Record: `Messaging-N7-Review.md`.
+- **N7 channel lane LIVE 2026-07-26:** the click-work was done by the
+  orchestrator via the browse bridge (manifest scopes + `message.channels`
+  + reinstall, token unchanged; channel `#novakai-fleet` = `C0BKV3G4CH0`
+  created by the bot; config wired `fleet:team`; bridge restarted).
+  FULL DUPLEX verified: agent → #team → top-level Slack post; Chris's
+  Slack post → fleet room as person_user-chris.
 - Main is clean. Deployed snapshot `7c78dd78`. **Next: N8 — the
-  PartnerChris moment — after Chris's Slack click-work (§5 N7).**
+  PartnerChris moment. UNBLOCKED.**
 
 ## 3. The per-slice ritual (follow it exactly — it's what made N1–N5 elite)
 
@@ -157,15 +163,11 @@ slice seals before the next starts.
 ### N7 — Slack grows up (SEALED 2026-07-26, PR #85, deployed `7c78dd78`)
 - See `Messaging-N7-Review.md`. One Slack channel ↔ one room Thread,
   generalized in place; DORMANT in production until the click-work lands.
-- **Chris's click-work (Slack app "Novakai Mirror") — N8's only gate:**
-  1. Bot scopes: `channels:read`, `channels:join`, `channels:manage`,
-     `channels:history` (users:read already works).
-  2. Bot events: subscribe `message.channels`.
-  3. Create/pick the channel; invite the bot (and PartnerChris when ready).
-  4. Tell the orchestrator the channel id → one line into
-     `.novakai-command/slack-bridge.json` `channels` + bridge restart —
-     then live-fire the channel lane (agent posts → Slack; owner's Slack
-     post → room).
+- **The click-work is DONE (orchestrator via the browse bridge, Chris's
+  instruction 2026-07-26):** scopes + `message.channels` + reinstall (token
+  unchanged); `#novakai-fleet` = `C0BKV3G4CH0` wired to `fleet:team`; full
+  duplex live-fired. Remaining Chris-social step: invite PartnerChris to
+  the channel — at N8 live-fire time, his call.
 
 ### N8 — The PartnerChris moment
 - **A-N8-1 (Chris, 2026-07-26): the external target is PartnerChris, replacing
