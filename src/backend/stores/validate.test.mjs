@@ -239,8 +239,9 @@ console.log('validate cycle A tests passed');
 {
   assert.deepEqual(codes(validateIn({ ...VALID.kr, id: 'kr_rel_a', objective: 'okr_ghost' })), ['REF-DANGLING']);
   assert.deepEqual(codes(validateIn({ ...VALID.kr, id: 'kr_rel_b', objective: 'mission_probe' })), ['REF-WRONG-KIND']);
+  // Ruling B (Chris, 2026-07-26): objective is optional — a KR with none is legal.
   const { objective, ...krRest } = { ...VALID.kr, id: 'kr_rel_c' };
-  assert.deepEqual(codes(validateIn(krRest)), ['FIELD-MISSING']);
+  assert.deepEqual(validateIn(krRest), []);
   // answered without decision → RELATION-MISSING; with dangling decision → REF-DANGLING
   assert.deepEqual(
     codes(validateIn({ ...VALID.request, id: 'request_rel-a', status: 'answered' })),
@@ -250,6 +251,18 @@ console.log('validate cycle A tests passed');
     codes(validateIn({ ...VALID.request, id: 'request_rel-b', status: 'answered', decision: 'DEC-2026-07-21-999' })),
     ['REF-DANGLING'],
   );
+}
+
+// --- kr measurement fields (target/current/unit, all optional) ---------------
+
+{
+  assert.deepEqual(
+    validateIn({ ...VALID.kr, id: 'kr_meas_a', target: 100, current: 40, unit: 'users' }),
+    [],
+  );
+  // present fields must be numbers when the law says numbers
+  assert.deepEqual(codes(validateIn({ ...VALID.kr, id: 'kr_meas_b', target: '100' })), ['FIELD-INVALID']);
+  assert.deepEqual(codes(validateIn({ ...VALID.kr, id: 'kr_meas_c', current: '40' })), ['FIELD-INVALID']);
 }
 
 // --- nested KRs --------------------------------------------------------------

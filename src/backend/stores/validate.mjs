@@ -300,6 +300,11 @@ export function validateBlock(block, { storeFile, index = new Map(), mode = 'aud
       addViolation('FIELD-INVALID', `"${field}" must be an array`);
     }
   }
+  for (const field of rules.numbers ?? []) {
+    if (block[field] !== undefined && typeof block[field] !== 'number') {
+      addViolation('FIELD-INVALID', `"${field}" must be a number`);
+    }
+  }
   for (const [field, allowed] of Object.entries(rules.enums ?? {})) {
     if (block[field] !== undefined && !allowed.includes(block[field])) {
       addViolation('FIELD-INVALID', `"${field}" must be one of ${allowed.join('|')}`);

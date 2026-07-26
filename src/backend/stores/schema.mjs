@@ -80,7 +80,18 @@ export const KIND_RULES = Object.freeze({
     enums: Object.freeze({ horizon: Object.freeze(['now', 'next', 'later']) }),
     statusSet: null,
   }),
-  kr: Object.freeze({ required: Object.freeze(['objective', 'body']), statusSet: null }),
+  // Chris, 2026-07-26 (Ruling B): the KR → objective link is OPTIONAL — "give
+  // flexibility. No need to force a join where we haven't proven it needed to
+  // be." A KR that names an objective still has it checked as a resolvable
+  // scalar relation (validate.mjs); a KR without one is legal as written.
+  // Same sitting: a KR may carry measurement — target/current as numbers,
+  // unit as a free string, all optional. The store law holds the numbers;
+  // progress math is the UI's problem, never the schema's.
+  kr: Object.freeze({
+    required: Object.freeze(['body']),
+    numbers: Object.freeze(['target', 'current']),
+    statusSet: null,
+  }),
   project: Object.freeze({ required: Object.freeze(['title', 'status', 'path']), statusSet: null }),
   issue: Object.freeze({ required: Object.freeze([]), statusSet: null }),
   // Team is the shell for future expansion — membership is NOT stored here:
