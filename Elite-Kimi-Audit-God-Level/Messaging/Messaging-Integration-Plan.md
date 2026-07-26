@@ -112,6 +112,15 @@ code.** If a slice needs a core change, that is a new R-item and a contract amen
   refs (min 1, no max) — co-membership was always union semantics in
   `messagingV2/policy/`; the validator's REF-CARDINALITY contradicted it.
   App-side change; the frozen core is untouched.
+- **A-R-N4-1 (R-N4-1 — Chris's PR #72 ruling, YES):** contract **1.0.0 → 1.1.0**
+  (additive): new Grant `oversight.read` — the holder READS any direct Thread
+  regardless of pair membership (queries + subscription filtering + explicit
+  scope + self-list). READ-ONLY: R4 party-only sends unchanged; rooms,
+  PolicyChanged, presence unchanged. Store seam gains `listDirectThreads()`
+  (§11.5 is pair-scoped; the owner's lane LIST needs the unscoped read). Host
+  policy in the host: the app's human principal carries the grant explicitly;
+  package DEFAULT_ROLE_GRANTS unchanged (DEC-07 second-host test). Record:
+  `Messaging-R-N4-1-Review.md` (audit LOW, 5 findings disposed at source).
 - **D-BRIDGE-1 (2026-07-26):** D7 descoped. A v0 Slack bridge
   (`scripts/nvk-slack-bridge.mjs`, branch `kimi/slack-bridge-v0`) precedes N7:
   own workspace, human principal ONLY (agent→chris DMs appear in Slack;
