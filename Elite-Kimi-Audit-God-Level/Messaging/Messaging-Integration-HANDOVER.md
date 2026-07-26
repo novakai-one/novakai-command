@@ -5,7 +5,10 @@
 merged, and deployed** (each after its own law-#6 0-context adversarial audit with
 findings disposed at source — see `Messaging-N1/N2/N3/N4/N5/R-N4-1/N6/N7-Review.md`). Next:
 **slice N8 (the PartnerChris moment)** — gated on Chris's Slack click-work
-(Road-to-N8 §5 N7). **You are:** the agent executing slice N8. Read this first, every session. The MASTER
+(Road-to-N8 §5 N7). **You are:** the agent executing post-program follow-ups. **THE PROGRAM IS COMPLETE (N1–N8 all
+sealed, merged, deployed `c26f06d5`).** Top follow-up: the N8 law-#6 audit
+was skipped at Chris's explicit instruction — run a fresh 0-context auditor
+on the N8 diff first (`Messaging-N8-Review.md` §follow-up debt). Read this first, every session. The MASTER
 handover for the run to N8 is `Messaging-Road-to-N8-HANDOVER.md` — read it next.
 
 ---
