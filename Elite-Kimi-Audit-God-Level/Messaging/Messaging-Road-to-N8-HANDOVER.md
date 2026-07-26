@@ -59,7 +59,16 @@ slice seals before the next starts.
   is open — see §5. Also merged today: PR #82 (A-N8-1 — N8's target is
   **PartnerChris**, already in our Slack; the Slack Connect dependency is OFF
   the critical path).
-- Main is clean. Deployed snapshot `0e38e7b3`. **Next slice: N7.**
+- **N7 SEALED, merged (PR #85), deployed `7c78dd78`** (2026-07-26): the v0
+  bridge generalized in place — one Slack channel ↔ one room Thread,
+  echo-safe, owner-only inbound, edit/delete notes, 32 KiB chunking with
+  mid-chunk resume, 429 Retry-After, health route
+  (`/api/agents/slack-bridge/health`). Audit MODERATE, all 9 disposed at
+  source; bridge suite 26 → 46. **Production runs DORMANT** (channels config
+  absent — DM lanes exactly as before, live-verified post-deploy).
+  Record: `Messaging-N7-Review.md`.
+- Main is clean. Deployed snapshot `7c78dd78`. **Next: N8 — the
+  PartnerChris moment — after Chris's Slack click-work (§5 N7).**
 
 ## 3. The per-slice ritual (follow it exactly — it's what made N1–N5 elite)
 
@@ -145,24 +154,18 @@ slice seals before the next starts.
 - N6 debt (review §follow-up): F4 doorStack Pick-shape; F7 door close race
   (inherited); boot-mint growth; nvk-connect name resolution limited.
 
-### N7 — Slack grows up (own workspace)
-- **D-BRIDGE-1 governs:** N7 GENERALIZES the v0 bridge
-  (`scripts/nvk-slack-bridge.mjs`) — rooms, fleet identity, rate limits. NO
-  new Slack bridging from scratch; no other Slack work before then. The
-  one-way `nvk-slack-mirror.mjs` stays N5's (D5), unaffected.
-- Done-definition: one Slack channel ↔ one room Thread, echo-safe, identity
-  stamped from Slack user IDs (never message text — same law as the core),
-  both directions durable, no loops (loop hunt before sealing).
-- Ratified risk notes (plan §6): echo loops (drop own posts — v0 already does
-  metadata tags + bot_id + auth.test); Slack edit/delete → follow-up note,
-  NEVER a mutation (immutable history); rate limits + 32 KiB cap (chunk or
-  reply-too-big — decide at N7 contract time); cross-boundary cosmetic
-  interleaving accepted.
-- Parked bridge polish for N7 (from 2026-07-26 ops): thread-reply
-  visibility (agents' answers hide in Slack threads — consider top-level or
-  reply_broadcast); follow-up bridges log at verbose level only (vlog→log
-  one-liner); Slack `<@U...>` mention syntax undecoded in bodies (cosmetic);
-  in-app surface for bridge health.
+### N7 — Slack grows up (SEALED 2026-07-26, PR #85, deployed `7c78dd78`)
+- See `Messaging-N7-Review.md`. One Slack channel ↔ one room Thread,
+  generalized in place; DORMANT in production until the click-work lands.
+- **Chris's click-work (Slack app "Novakai Mirror") — N8's only gate:**
+  1. Bot scopes: `channels:read`, `channels:join`, `channels:manage`,
+     `channels:history` (users:read already works).
+  2. Bot events: subscribe `message.channels`.
+  3. Create/pick the channel; invite the bot (and PartnerChris when ready).
+  4. Tell the orchestrator the channel id → one line into
+     `.novakai-command/slack-bridge.json` `channels` + bridge restart —
+     then live-fire the channel lane (agent posts → Slack; owner's Slack
+     post → room).
 
 ### N8 — The PartnerChris moment
 - **A-N8-1 (Chris, 2026-07-26): the external target is PartnerChris, replacing
@@ -253,6 +256,10 @@ slice seals before the next starts.
   option); N1 authority revalidate disk scan.
 - N6: F4 doorStack Pick-shape; F7 door close race (inherited); boot-mint
   growth; nvk-connect resolves only person:/thread:/agent_<id>.
+- N7: DM-lane thread-reply visibility (agents' answers hide in Slack
+  threads); UI surface for the bridge-health route; boot-time saveState
+  (health 503s until the first persist after a daemon restart — honest but
+  noisy on idle boots).
 - Bridge polish (see N7 parked list above).
 - R-N4-1 audit F4 remainder: jsonl close/reopen fold test for
   `listDirectThreads` (sound by construction — the same op-application path

@@ -14,3 +14,6 @@ gates; nothing is lost, nothing interrupts a slice.
 | jsonl close/reopen fold test for `listDirectThreads` (R-N4-1 audit F4 remainder) | N6 (test-debt batch) |
 | nvk-connect: stdin lines sent before `ready` are dropped with an error — queue until ready | N6 polish |
 | Door bind writes no serve.out log line (only a port check reveals it) — add a boot log line | N6 polish |
+| DM-lane thread-reply visibility: agents' answers hide in Slack DM threads (top-level/broadcast decision) | N8 polish |
+| UI surface for the bridge-health route (`/api/agents/slack-bridge/health` is live) | N8 polish |
+| Bridge boot-time saveState (health 503s until first persist after daemon restart) | N8 polish |
