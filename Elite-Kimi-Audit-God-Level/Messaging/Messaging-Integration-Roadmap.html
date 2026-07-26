@@ -72,13 +72,13 @@
 <body>
 <div class="wrap">
 
-  <h1>Messaging Integration — the road to Luke</h1>
+  <h1>Messaging Integration — the road to PartnerChris</h1>
   <div class="sub">N-Program · ratified 2026-07-25 · plan: <code>Messaging-Integration-Plan.md</code> · sealed capability: <code>@novakai/messaging</code> (253/253, scorecard 97.0)</div>
 
   <div class="promise">
     <b>The promise:</b> the app's messaging becomes the sealed capability — pushed, durable,
     policy-true — then the door opens to external terminals, then Slack, then one shared
-    cross-company channel with Luke's team. The core never changes; everything attaches
+    shared channel with PartnerChris's team (A-N8-1: was Luke). The core never changes; everything attaches
     through seams or speaks the published protocol.
   </div>
 
@@ -115,13 +115,13 @@
     </div>
 
     <div class="phase p4 luke">
-      <header><span class="tag">PHASE 4</span><span class="star">★</span><h3>The Luke moment</h3></header>
+      <header><span class="tag">PHASE 4</span><span class="star">★</span><h3>The PartnerChris moment</h3></header>
       <div class="goal">Same bridge pointed at a Slack Connect channel between the two companies. Cross-company room, explicit allowlist, deny-by-default guarding everything.</div>
       <div class="slices">
-        <div class="slice"><span class="id">N8</span><div><b>Cross-company channel</b><span class="exit"> <b>Exit:</b> a Novakai agent posts → Luke's team sees it in their Slack → their reply lands in the app with real delivery truth.</span></div></div>
+        <div class="slice"><span class="id">N8</span><div><b>Shared partner channel</b><span class="exit"> <b>Exit:</b> a Novakai agent posts → PartnerChris's team sees it in Slack → their reply lands in the app with real delivery truth.</span></div></div>
       </div>
       <ul class="tight">
-        <li>The one thing code can't control: Luke must accept the Slack Connect invite. <b>Start that conversation during Phase 1.</b></li>
+        <li>A-N8-1: the partner is PartnerChris — already in our workspace, no Slack Connect invite on the critical path.</li>
       </ul>
     </div>
 
@@ -138,7 +138,7 @@
 │           adapter    adapter   (PTY+ws)   (jsonl)    │
 └──────────────────────▲───────────────▲───────────────┘
                        │ DEC-17        │ DEC-17
-              External terminals   Slack bridge → Slack Connect → Luke</div>
+              External terminals   Slack bridge → shared channel → PartnerChris</div>
 
   <h2>Binding decisions</h2>
   <div class="cards">
@@ -149,7 +149,7 @@
     <div class="card"><span class="n">D5</span>Mirror repointed; <b>watchdog checks deleted</b></div>
     <div class="card"><span class="n">D6</span>External endpoint → <b>served by the app itself</b></div>
     <div class="card"><span class="n">D7</span>Slack bridge → <b>a client of Messaging, never core code</b></div>
-    <div class="card"><span class="n">D8</span>Luke → <b>start the Slack Connect talk in Phase 1</b></div>
+    <div class="card"><span class="n">D8</span>PartnerChris — <b>already in our Slack (A-N8-1)</b></div>
   </div>
 
   <h2>Risks being watched</h2>
