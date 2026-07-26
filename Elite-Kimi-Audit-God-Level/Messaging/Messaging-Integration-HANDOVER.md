@@ -1,11 +1,11 @@
 # Messaging Integration (N-Program) — Handover to the Next Agent
 
 **Written:** 2026-07-25 by kimi-cli, at N-program kickoff.
-**Updated:** 2026-07-26 by kimi-cli — **slices N1–N5 + R-N4-1 SEALED,
+**Updated:** 2026-07-26 by kimi-cli — **slices N1–N5 + R-N4-1 + N6 SEALED,
 merged, and deployed** (each after its own law-#6 0-context adversarial audit with
-findings disposed at source — see `Messaging-N1/N2/N3/N4/N5/R-N4-1-Review.md`). Next:
-**slice N6 (Open the door — external terminals)**. **You are:** the agent
-executing slice N6 or later. Read this first, every session. The MASTER
+findings disposed at source — see `Messaging-N1/N2/N3/N4/N5/R-N4-1/N6-Review.md`). Next:
+**slice N7 (Slack grows up — own workspace)**. **You are:** the agent
+executing slice N7 or later. Read this first, every session. The MASTER
 handover for the run to N8 is `Messaging-Road-to-N8-HANDOVER.md` — read it next.
 
 ---
@@ -43,7 +43,12 @@ The Messaging pass-2 program is COMPLETE (S1–S4, P1–P6, 253/253 tests, score
   the sender's PTY (live-only subscriptions — no restart replays).
   **NO interval touches any journal anywhere.** `.novakai-command/messages.jsonl`
   is now a pure archive with zero readers in production code.
-- **Your job starts at slice N6 (Open the door — external terminals).**
+- **N6 (Open the door)** — sealed (PR #83). The DEC-17 frames endpoint serves
+  from the app itself (3032, localhost default); real `nvkt_` token
+  issuance/revocation retired token=agentId; `nvk-connect.mjs` is the
+  foreign-machine client; live-verified end-to-end (external send → human
+  lane → Slack bridge).
+- **Your job starts at slice N7 (Slack grows up — own workspace).**
 
 ## N6's inheritance (read the review records' follow-up debt sections)
 

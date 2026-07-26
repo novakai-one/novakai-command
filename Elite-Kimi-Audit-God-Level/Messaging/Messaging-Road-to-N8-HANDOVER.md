@@ -55,7 +55,11 @@ slice seals before the next starts.
   lanes so far (agent traffic is agent→chris) — the negative case is
   live-verified; the positive moment arrives with the first real agent↔agent
   conversation. `Messaging-Parked-Ideas.md` seeded (idea-parking is live).
-- Main is clean. Deployed snapshot `b8ef813b`. **Next slice: N6.**
+- **N6 SEALED, merged (PR #83), deployed `0e38e7b3`** (2026-07-26): the door
+  is open — see §5. Also merged today: PR #82 (A-N8-1 — N8's target is
+  **PartnerChris**, already in our Slack; the Slack Connect dependency is OFF
+  the critical path).
+- Main is clean. Deployed snapshot `0e38e7b3`. **Next slice: N7.**
 
 ## 3. The per-slice ritual (follow it exactly — it's what made N1–N5 elite)
 
@@ -122,21 +126,24 @@ slice seals before the next starts.
   grant rides the app's human principal as host policy. Record:
   `Messaging-R-N4-1-Review.md` (audit LOW, 5 disposed at source).
 
-### N6 — Open the door (external terminals)
-- Done-definition (plan §5): an agent spawned on a FOREIGN machine connects,
-  authenticates, messages — no manual step.
-- Ratified: **D6** — expose the DEC-17 endpoint from the app itself (one less
-  process; external principals are the primary consumer). Real token
-  issuance/revocation **retires D-N2-2** (token=agentId was a localhost
-  threat decision — its comment in `src/backend/messagingV2/routes/index.ts`
-  says so). Connect-your-agent flow.
-- Inheritance: ExternalSessions allowlist timing (a fresh external's announce
-  can 403 until next bootstrap sync — N6's call); browser presence transport
-  (N6 option); journal fold growth (core-side question — R-item if it
-  bites); N1 authority revalidate is a full disk scan (presence heartbeats
-  make it hot).
-- Watch: TLS/reachability decisions are Chris-visible (bind posture changes);
-  keep the localhost default.
+### N6 — Open the door (SEALED 2026-07-26, PR #83, deployed `0e38e7b3`)
+- The DEC-17 door lives in the app (third listener, **3032, 127.0.0.1**) via
+  `createProtocolConnection` against the embedded stack; the ws presence
+  transport registers alongside pty. Real tokens retire D-N2-2: `nvkt_` mints,
+  SHA-256 at rest (`tokens.jsonl`, chmod 600, gitignored), printed once,
+  revocable; **raw agentId is rejected**; spawn injects `NVK_AGENT_TOKEN`;
+  owner CLI `nvk-agent token issue/revoke/list`. `scripts/nvk-connect.mjs` =
+  the foreign-machine client (protocol-only, resume + transparent re-auth);
+  `docs/operations/CONNECT-EXTERNAL.md`. Issuance triggers the policy sync
+  (N4 allowlist-timing debt disposed). Record: `Messaging-N6-Review.md`
+  (audit MODERATE; F1 cross-process-revocation heal + F2 briefing + F3 perms
+  disposed at source; F4/F7 debt).
+- LIVE-VERIFIED: door bound 3032; CLI-issued token → nvk-connect →
+  authenticate → presence → subscribe (replay) → send committed (seq 78) →
+  pushed back live → visible in the human lane → bridged to Slack (bridge
+  cursor 78). Deploy health all green.
+- N6 debt (review §follow-up): F4 doorStack Pick-shape; F7 door close race
+  (inherited); boot-mint growth; nvk-connect name resolution limited.
 
 ### N7 — Slack grows up (own workspace)
 - **D-BRIDGE-1 governs:** N7 GENERALIZES the v0 bridge
@@ -173,16 +180,19 @@ slice seals before the next starts.
 ## 6. Live infrastructure + verification playbook
 
 - **Services (launchd, gui domain):** `com.novakai.prod` (the app: api :3031,
-  app :3030 — binds 127.0.0.1), `com.novakai.slackbridge`, `com.novakai.shot`
-  (screenshotter). `com.novakai.watchdog` is DEAD (N5; plist archived at
+  app :3030, **door :3032 (N6, DEC-17 frames/ws)** — all bind 127.0.0.1),
+  `com.novakai.slackbridge`, `com.novakai.shot` (screenshotter).
+  `com.novakai.watchdog` is DEAD (N5; plist archived at
   `N5-watchdog-plist-archive.txt`).
 - **Deploy:** `npm run redeploy` (snapshot → SIGHUP swap). Serve log:
   `.novakai-command/deploy/serve.out`. Verify after EVERY deploy:
   `curl :3030/` 200, `:3031/api/agents` 200,
   `/api/messaging/v2/user/threads` 200, v2 agent route 401 without Bearer,
   old routes 404, and `principals=` count + no error loops in serve.out.
-- **Live Slack test:** send as a durable agent
-  (`NVK_AGENT_ID=agent_<id> node scripts/nvk-msg.mjs send --to chris "…"`)
+- **Live Slack test:** send as a durable agent — post-N6 the credential is
+  `NVK_AGENT_TOKEN` (issue once via `node scripts/nvk-agent.mjs token issue
+  --agent agent_<id>`; raw agentId is REJECTED):
+  `NVK_AGENT_TOKEN=nvkt_… node scripts/nvk-msg.mjs send --to chris "…"`
   → watch `/tmp/nvk-slack-bridge.log` for the bridge line. NOTE: follow-up
   bridges log at VERBOSE only — only "bridged new DM thread" appears in the
   normal log. Debug rig: bootout the launchd job, run the bridge foreground
@@ -208,6 +218,13 @@ slice seals before the next starts.
   dispatching or after completion.
 - **Human/session TTLs:** anything minted at boot dies at its TTL unless
   re-minted (PR #76). When you add a long-lived consumer, ask "what expires?"
+- **Token retirement is real (N6):** raw agentId → NotAuthenticated
+  everywhere. Anything still holding only NVK_AGENT_ID (old runbooks, muscle
+  memory) fails flat. In-process raw tokens die at restart (hash still
+  authenticates; consumers re-mint via ensure()).
+- **The door binds 127.0.0.1:3032 by design (D-N6-1).** A foreign machine
+  cannot reach it until Chris opts in (bind env or SSH/Tailscale tunnel);
+  NO TLS in N6. Surfaced to Chris; do not "fix" it quietly.
 - **Cursor semantics:** the bridge/capability cursor is the GLOBAL journal
   sequence; "left behind for replay" only works if later events can't advance
   the cursor past a failed item (delivery events advance unconditionally —
@@ -231,8 +248,11 @@ slice seals before the next starts.
 - Watchdog union refreshes on restart only (mid-run-created teams/missions).
 - Slack-mirror: DM-lane raw-threadId fallback; FRAGILE `agentIdForPersonId`
   inverse; no `⚠ partial` line (no such delivery state exists).
-- ExternalSessions allowlist timing (N6's call); F8b quiet sub-tip failures;
-  browser presence transport (N6 option); N1 authority revalidate disk scan.
+- ~~ExternalSessions allowlist timing~~ — DISPOSED at N6 (issuance-time
+  policy sync). F8b quiet sub-tip failures; browser presence transport (N7
+  option); N1 authority revalidate disk scan.
+- N6: F4 doorStack Pick-shape; F7 door close race (inherited); boot-mint
+  growth; nvk-connect resolves only person:/thread:/agent_<id>.
 - Bridge polish (see N7 parked list above).
 - R-N4-1 audit F4 remainder: jsonl close/reopen fold test for
   `listDirectThreads` (sound by construction — the same op-application path

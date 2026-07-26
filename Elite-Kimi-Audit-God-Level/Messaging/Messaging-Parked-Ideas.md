@@ -12,3 +12,5 @@ gates; nothing is lost, nothing interrupts a slice.
 | Slack `<@U...>` mention syntax undecoded in message bodies (cosmetic) | N7 |
 | Bridge follow-up posts log at verbose only — promote a one-liner to normal log | N7 |
 | jsonl close/reopen fold test for `listDirectThreads` (R-N4-1 audit F4 remainder) | N6 (test-debt batch) |
+| nvk-connect: stdin lines sent before `ready` are dropped with an error — queue until ready | N6 polish |
+| Door bind writes no serve.out log line (only a port check reveals it) — add a boot log line | N6 polish |
