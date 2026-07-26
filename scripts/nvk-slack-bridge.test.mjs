@@ -237,6 +237,7 @@ function startFakeApp() {
       },
       pushEnded: (reason) => broadcast({ event: 'messaging-v2', payload: { kind: 'ended', reason } }),
       pushAgentsChanged: () => broadcast({ type: 'agents-changed', agents: roster }),
+      addAgent: (agent) => { roster = [...roster, agent]; },
       renameAgent: (agentId, title) => {
         roster = roster.map((agent) => (agent.agentId === agentId ? { ...agent, title } : agent));
       },
@@ -432,6 +433,55 @@ slack.sendSlackEvent({ type: 'message', channel_type: 'im', user: CHRIS, text: '
 await waitFor(() => app.sends.some((s) => s.body === 'post-rename reply'), 'post-rename reply reaches the capability');
 assert.deepEqual(app.sends.at(-1), { to: 'fable-v2', body: 'post-rename reply' });
 ok('F9: renamed agent keeps inbound routing (personId-keyed map, forward-time name)');
+
+// — top-level mentions with REAL roster titles: the old single-word regex
+// parsed '@Manager Kimi Messages hello' as to:'Manager' → 404. The daemon
+// must longest-prefix-match the live roster (spaces and '·' included).
+app.addAgent({ agentId: 'agent_kimi', title: 'Manager Kimi Messages' });
+app.addAgent({ agentId: 'agent_worker', title: 'Worker' });
+app.addAgent({ agentId: 'agent_worker_fable', title: 'Worker Fable' });
+app.addAgent({ agentId: 'agent_fable_claude', title: 'Fable · claude' });
+app.pushAgentsChanged();
+await sleep(300); // the daemon's roster refreshes off the broadcast
+
+slack.sendSlackEvent({ type: 'message', channel_type: 'im', user: CHRIS, text: '@Manager Kimi Messages hello', ts: '1800.000020' });
+await waitFor(() => app.sends.some((s) => s.body === 'hello'), 'multi-word mention reaches the capability');
+assert.deepEqual(app.sends.at(-1), { to: 'Manager Kimi Messages', body: 'hello' });
+ok('mention: multi-word title parses to the full name + body');
+
+slack.sendSlackEvent({ type: 'message', channel_type: 'im', user: CHRIS, text: '@Worker Fable ping', ts: '1800.000021' });
+await waitFor(() => app.sends.some((s) => s.body === 'ping'), 'prefixed-title mention reaches the capability');
+assert.deepEqual(app.sends.at(-1), { to: 'Worker Fable', body: 'ping' });
+ok('mention: longest roster title wins when one title prefixes another');
+
+slack.sendSlackEvent({ type: 'message', channel_type: 'im', user: CHRIS, text: '@Worker pong', ts: '1800.000022' });
+await waitFor(() => app.sends.some((s) => s.body === 'pong'), 'short-title mention reaches the capability');
+assert.deepEqual(app.sends.at(-1), { to: 'Worker', body: 'pong' });
+ok('mention: the shorter title still resolves at a word boundary');
+
+slack.sendSlackEvent({ type: 'message', channel_type: 'im', user: CHRIS, text: '@Fable · claude yo', ts: '1800.000023' });
+await waitFor(() => app.sends.some((s) => s.body === 'yo'), '·-title mention reaches the capability');
+assert.deepEqual(app.sends.at(-1), { to: 'Fable · claude', body: 'yo' });
+ok('mention: a ·-containing title parses');
+
+slack.sendSlackEvent({ type: 'message', channel_type: 'im', user: CHRIS, text: '@manager kimi messages case test', ts: '1800.000024' });
+await waitFor(() => app.sends.some((s) => s.body === 'case test'), 'case-insensitive mention reaches the capability');
+assert.deepEqual(app.sends.at(-1), { to: 'Manager Kimi Messages', body: 'case test' });
+ok('mention: matching is case-insensitive, the canonical title is sent');
+
+slack.sendSlackEvent({ type: 'message', channel_type: 'im', user: CHRIS, text: '@nobody here', ts: '1800.000025' });
+await waitFor(() => postsWith('could not reach *nobody*').length === 1, 'no-match mention hits the honest 404 path');
+ok('mention: no roster match falls back to single-word (404 + roster hint)');
+
+const sendsBeforeEmpty = app.sends.length;
+slack.sendSlackEvent({ type: 'message', channel_type: 'im', user: CHRIS, text: '@Manager Kimi Messages', ts: '1800.000026' });
+await waitFor(
+  () => postsWith('start with @agentName').some((p) => p.thread_ts === undefined),
+  'empty-body mention gets the guidance post',
+);
+await sleep(300);
+assert.equal(app.sends.length, sendsBeforeEmpty, 'an empty body is never sent');
+ok('mention: title with no body → guidance, not an empty send');
 
 // (d) restart: state persisted, resume from the cursor, no double-posting.
 await daemon.stop();

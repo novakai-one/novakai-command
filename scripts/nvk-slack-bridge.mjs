@@ -489,7 +489,32 @@ function alreadyHandled(key) {
   return false;
 }
 
-const MENTION = /^@([A-Za-z0-9._-]+)\s+([\s\S]+)$/;
+const MENTION_FALLBACK = /^@([A-Za-z0-9._-]+)\s+([\s\S]+)$/;
+
+/** Top-level "@agentName body" opener. Roster titles are multi-word
+ * ('Manager Kimi Messages', 'Fable · claude'), so the parse is a
+ * LONGEST-prefix match against the live roster (case-insensitive; the title
+ * must be followed by whitespace or end-of-text) — the single-word regex
+ * sent only the first word and 404'd. Falls back to the single-word shape
+ * when no roster title matches (the honest 404 + roster hint path).
+ * {name:null} = no parse — the caller posts the guidance, never an empty send. */
+function parseMention(text) {
+  const after = text.slice(1); // drop the leading '@'
+  let best = null;
+  for (const agent of roster) {
+    const title = typeof agent.title === 'string' ? agent.title : '';
+    if (title === '' || !after.toLowerCase().startsWith(title.toLowerCase())) continue;
+    const rest = after.slice(title.length);
+    if (rest !== '' && !/^\s/.test(rest)) continue; // a name boundary must follow
+    if (best === null || title.length > best.length) best = title;
+  }
+  if (best !== null) {
+    const body = after.slice(best.length).trim();
+    return body === '' ? { name: null, body: null } : { name: best, body };
+  }
+  const fallback = MENTION_FALLBACK.exec(text);
+  return fallback === null ? { name: null, body: null } : { name: fallback[1], body: fallback[2] };
+}
 
 async function handleChrisMessage(event) {
   const text = decodeSlackText(event.text ?? '').trim();
@@ -502,12 +527,12 @@ async function handleChrisMessage(event) {
     await forwardToAgent(await nameForSend(stored), text, event.thread_ts);
     return;
   }
-  const mention = MENTION.exec(text);
-  if (mention === null) {
+  const mention = parseMention(text);
+  if (mention.name === null) {
     await postToSlack({ text: 'unknown thread — start with @agentName' });
     return;
   }
-  await forwardToAgent(mention[1], mention[2], undefined);
+  await forwardToAgent(mention.name, mention.body, undefined);
 }
 
 async function forwardToAgent(agentName, body, threadTs) {
