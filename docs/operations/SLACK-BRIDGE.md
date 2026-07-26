@@ -76,8 +76,25 @@ node scripts/nvk-slack-bridge.mjs --verbose
 node scripts/nvk-slack-bridge.mjs --dry-run   # Slack posts print to stdout; inbound off
 ```
 
-Open a DM with the bot in Slack. `@fable hello` starts a lane; after that,
-answer in the agent's thread.
+Open a DM with the bot in Slack. `@fable hello` starts a lane — multi-word
+titles work too (`@Manager Kimi Messages hello`): the mention longest-matches
+the live roster titles, case-insensitive. After that, answer in the agent's
+thread.
+
+## Service (launchd)
+
+Production runs as `com.novakai.slackbridge` (plist:
+`scripts/com.novakai.slackbridge.plist`, installed to
+`~/Library/LaunchAgents/`): KeepAlive, `NVK_SLACK_BRIDGE_APP_BASE` pinned to
+the Live serve (`http://localhost:3030`), logs to `/tmp/nvk-slack-bridge.log`.
+Config (`.novakai-command/slack-bridge.json`, chmod 600) and cursor state live
+in the MAIN repo — the daemon survives terminal sessions and reboots.
+
+```sh
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.novakai.slackbridge.plist
+launchctl kickstart -k gui/$(id -u)/com.novakai.slackbridge   # restart
+launchctl bootout gui/$(id -u)/com.novakai.slackbridge        # stop
+```
 
 Config precedence: env tokens → `.novakai-command/slack-bridge.json`. State
 (independently of config) always lives in
