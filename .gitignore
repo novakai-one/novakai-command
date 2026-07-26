@@ -30,3 +30,4 @@ node_modules
 .novakai-command/slack-bridge-state.json
 # D-N6-2: agent messaging credentials live here (hash-only, never committed)
 .novakai-command/messaging-v2/
+tsconfig.tsbuildinfo

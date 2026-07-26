@@ -23,6 +23,12 @@ function scratchStores(): string {
     JSON.stringify({ id: 'mission_alpha', kind: 'mission', 'ts': STAMP, title: 'Alpha', owner: 'chief' }),
     JSON.stringify({ id: 'mission_beta', kind: 'mission', 'ts': STAMP, title: 'Beta', owner: 'chief' }),
   ].join('\n') + '\n');
+  writeFileSync(path.join(scratch, 'projects.jsonl'),
+    JSON.stringify({ id: 'proj_alpha', kind: 'project', 'ts': STAMP, title: 'Alpha', status: 'active', path: '~/Programming/alpha' }) + '\n');
+  writeFileSync(path.join(scratch, 'okrs.jsonl'), [
+    JSON.stringify({ id: 'okr_alpha', kind: 'objective', 'ts': STAMP, title: 'Own the quarter', horizon: 'now' }),
+    JSON.stringify({ id: 'kr_alpha', kind: 'kr', 'ts': STAMP, objective: 'okr_alpha', body: 'Ship 3 things' }),
+  ].join('\n') + '\n');
   return scratch;
 }
 
@@ -101,6 +107,23 @@ assert.equal(taskBlock.status, 'done');
 assert.equal(taskBlock.blockedReason, undefined, 'reason leaves with the blocked status');
 
 assert.throws(() => model.transitionTask(taskId, 'blocked'), ObjectModelError, 'blocked without a reason is rejected');
+
+// A task captured from the vault has no mission behind it — Chris types one
+// line and it exists. The schema always allowed this (mission min 0); only the
+// write interface insisted on it.
+const looseTaskId = model.createTask({ title: 'Buy the domain' });
+assert.deepEqual(blockById(scratch, 'tasks.jsonl', looseTaskId).refs, [], 'a task creates with no mission');
+assert.equal(blockById(scratch, 'tasks.jsonl', looseTaskId).status, 'todo');
+
+const projectTaskId = model.createTask({
+  title: 'Draft the pricing page',
+  attachTo: [{ kind: 'project', value: 'proj_alpha' }, { kind: 'kr', value: 'kr_alpha' }],
+});
+assert.deepEqual(
+  blockById(scratch, 'tasks.jsonl', projectTaskId).refs,
+  [{ kind: 'project', value: 'proj_alpha' }, { kind: 'kr', value: 'kr_alpha' }],
+  'a task hangs off a project and a key result without a mission in between',
+);
 console.log('task transition tests passed');
 
 // --- thread link + artifact + mission reads ----------------------------------
@@ -112,10 +135,21 @@ assert.equal(model.missionForRoom('room_unlinked'), null);
 
 const artifactId = model.recordArtifact({ title: 'Tree screenshot', path: 'evidence/tree.png', missionId: 'mission_alpha', taskId });
 assert.equal(blockById(scratch, 'artifacts.jsonl', artifactId).path, 'evidence/tree.png');
-assert.throws(
-  () => model.recordArtifact({ title: 'Nowhere', path: 'x.md' }),
-  ObjectModelError,
-  'artifact without a mission/task anchor is rejected',
+
+// Chris, 2026-07-26: you drop the file in first and decide where it belongs
+// after. A parentless artifact is the normal case, not an error.
+const looseId = model.recordArtifact({ title: 'Loose screenshot', path: 'shots/loose.png' });
+assert.deepEqual(blockById(scratch, 'artifacts.jsonl', looseId).refs, [], 'an artifact records with no attachment at all');
+
+const attachedId = model.recordArtifact({
+  title: 'Storyboard',
+  path: 'design/storyboard.md',
+  attachTo: [{ kind: 'project', value: 'proj_alpha' }, { kind: 'kr', value: 'kr_alpha' }, { kind: 'objective', value: 'okr_alpha' }],
+});
+assert.deepEqual(
+  blockById(scratch, 'artifacts.jsonl', attachedId).refs,
+  [{ kind: 'project', value: 'proj_alpha' }, { kind: 'kr', value: 'kr_alpha' }, { kind: 'objective', value: 'okr_alpha' }],
+  'an artifact attaches to a project, a key result and an objective at once',
 );
 
 assert.equal(model.missionForAgent(agentId), 'mission_alpha');

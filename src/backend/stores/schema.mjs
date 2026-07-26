@@ -27,10 +27,12 @@ export const STORE_KINDS = Object.freeze({
 // Ruling 7 (Chief, 2026-07-21, supersedes ruling 6), extended by
 // mission_mission-object-model (Chief addition: `thread` is repository law):
 // team|agent|artifact|thread join the allowed ref kinds.
-export const REF_KINDS = Object.freeze(['task', 'mission', 'project', 'doc', 'decision', 'log', 'exp', 'objective', 'request', 'issue', 'session', 'learning', 'team', 'agent', 'artifact', 'thread']);
+// Chris, 2026-07-26: `kr` joins them too — a Key Result is a link target, so
+// work and evidence can point at the result they move, not just its Objective.
+export const REF_KINDS = Object.freeze(['task', 'mission', 'project', 'doc', 'decision', 'log', 'exp', 'objective', 'kr', 'request', 'issue', 'session', 'learning', 'team', 'agent', 'artifact', 'thread']);
 
 /** Ref kinds whose targets live in these stores; doc/exp/session are declared-unchecked. */
-export const RESOLVABLE_REF_KINDS = Object.freeze(['task', 'mission', 'project', 'decision', 'log', 'objective', 'request', 'issue', 'learning', 'team', 'agent', 'artifact', 'thread']);
+export const RESOLVABLE_REF_KINDS = Object.freeze(['task', 'mission', 'project', 'decision', 'log', 'objective', 'kr', 'request', 'issue', 'learning', 'team', 'agent', 'artifact', 'thread']);
 
 const SLUG = '[A-Za-z0-9][A-Za-z0-9_.-]*';
 
@@ -78,7 +80,20 @@ export const KIND_RULES = Object.freeze({
     enums: Object.freeze({ horizon: Object.freeze(['now', 'next', 'later']) }),
     statusSet: null,
   }),
-  kr: Object.freeze({ required: Object.freeze(['objective', 'body']), statusSet: null }),
+  // Chris, 2026-07-26 (Ruling B): the KR → objective link is OPTIONAL — "give
+  // flexibility. No need to force a join where we haven't proven it needed to
+  // be." A KR that names an objective still has it checked as a resolvable
+  // scalar relation (validate.mjs); a KR without one is legal as written.
+  // Same sitting: a KR may carry measurement — target/current as numbers,
+  // unit as a free string, all optional. The store law holds the numbers
+  // (and holds unit to be a string when present); progress math is the UI's
+  // problem, never the schema's.
+  kr: Object.freeze({
+    required: Object.freeze(['body']),
+    numbers: Object.freeze(['target', 'current']),
+    strings: Object.freeze(['unit']),
+    statusSet: null,
+  }),
   project: Object.freeze({ required: Object.freeze(['title', 'status', 'path']), statusSet: null }),
   issue: Object.freeze({ required: Object.freeze([]), statusSet: null }),
   // Team is the shell for future expansion — membership is NOT stored here:
@@ -105,8 +120,12 @@ export const KIND_RULES = Object.freeze({
       mission: Object.freeze({ min: 1, max: Number.POSITIVE_INFINITY }),
     }),
   }),
-  // Exactly one of path|url, and at least one mission/task anchor — both
-  // enforced in validate.mjs (the either-or shapes don't fit required[]).
+  // Exactly one of path|url — enforced in validate.mjs (the either-or shape
+  // doesn't fit required[]). An artifact carries NO anchor requirement:
+  // Chris, 2026-07-26 — "if I have a project and I load in a screenshot then
+  // that exists on its own". It is created parentless and attached afterwards,
+  // to any number of objectives, key results, projects or tasks, via ordinary
+  // refs. Nothing owns it.
   artifact: Object.freeze({ required: Object.freeze(['title']), statusSet: null }),
   // The mission↔messaging link: resolvable mission ref + scalar roomId, a
   // runtime identifier deliberately unchecked against runtime state (same
@@ -118,8 +137,11 @@ export const KIND_RULES = Object.freeze({
   }),
 });
 
-/** Artifact anchor rule: at least one ref of one of these kinds (plan v2 §1.0). */
-export const ARTIFACT_ANCHOR_KINDS = Object.freeze(['mission', 'task']);
+// The artifact anchor rule (plan v2 §1.0, "at least one mission|task ref") was
+// REMOVED on Chris's ruling of 2026-07-26. Artifacts are first-class and
+// free-floating; requiring a parent at write time is what stops you dropping a
+// screenshot in before you know where it belongs. Attachment is now ordinary
+// refs, governed by REF_KINDS alone — no special case, no constant.
 
 // Ruling 4: tombstone = status "refiled" + scalar refiledTo (title optional).
 export const TOMBSTONE_STATUS = 'refiled';

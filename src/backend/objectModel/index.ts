@@ -46,6 +46,22 @@ export class ObjectModelError extends Error {
 
 const makeRef = (kind: string, value: string) => ({ kind, value });
 
+/**
+ * What a task or artifact can be hung off. Deliberately a closed set of the
+ * planning kinds — attaching to a `log` or a `session` is not a thing a person
+ * does, so the compiler says so. Under the hood these are ordinary refs; the
+ * store's own REF_KINDS law remains the single authority on validity.
+ */
+export type AttachTarget = {
+  kind: 'mission' | 'task' | 'project' | 'objective' | 'kr';
+  value: string;
+};
+
+/** Attachments in, refs out — order preserved so the caller's intent survives. */
+function attachmentRefs(attachTo: readonly AttachTarget[] | undefined) {
+  return (attachTo ?? []).map((target) => makeRef(target.kind, target.value));
+}
+
 function timestampNow(): string {
   return new Date().toISOString();
 }
@@ -138,12 +154,22 @@ export class ObjectModel {
     }));
   }
 
-  createTask(input: { title: string; missionId: string; agentId?: string; taskId?: string }): string {
+  /**
+   * A task starts as a title and nothing else. `missionId` is optional because
+   * capture must cost one line — the schema always allowed a task with no
+   * mission (task.refRules mission min 0); only this interface insisted.
+   * Anything else it hangs off goes through `attachTo` (Chris, 2026-07-26).
+   */
+  createTask(input: { title: string; missionId?: string; agentId?: string; taskId?: string; attachTo?: readonly AttachTarget[] }): string {
     const id = input.taskId ?? `task_${randomUUID().slice(0, 8)}`;
     const timestamp = timestampNow();
     this.append('tasks.jsonl', {
       id, kind: 'task', 'ts': timestamp, title: input.title, status: 'todo', updated: timestamp,
-      refs: [makeRef('mission', input.missionId), ...(input.agentId ? [makeRef('agent', input.agentId)] : [])],
+      refs: [
+        ...(input.missionId ? [makeRef('mission', input.missionId)] : []),
+        ...(input.agentId ? [makeRef('agent', input.agentId)] : []),
+        ...attachmentRefs(input.attachTo),
+      ],
     });
     return id;
   }
@@ -167,7 +193,17 @@ export class ObjectModel {
     return id;
   }
 
-  recordArtifact(input: { title: string; path?: string; url?: string; missionId?: string; taskId?: string; artifactId?: string }): string {
+  /**
+   * An artifact is first-class: a screenshot, prototype, storyboard, token set
+   * or document exists the moment it is recorded, with no parent. Attachment is
+   * a separate, later, optional act — to any number of objectives, key results,
+   * projects, tasks or missions (Chris, 2026-07-26).
+   */
+  recordArtifact(input: {
+    title: string; path?: string; url?: string;
+    missionId?: string; taskId?: string; artifactId?: string;
+    attachTo?: readonly AttachTarget[];
+  }): string {
     const id = input.artifactId ?? `artifact_${randomUUID().slice(0, 8)}`;
     this.append('artifacts.jsonl', {
       id, kind: 'artifact', 'ts': timestampNow(), title: input.title,
@@ -176,6 +212,7 @@ export class ObjectModel {
       refs: [
         ...(input.missionId ? [makeRef('mission', input.missionId)] : []),
         ...(input.taskId ? [makeRef('task', input.taskId)] : []),
+        ...attachmentRefs(input.attachTo),
       ],
     });
     return id;
