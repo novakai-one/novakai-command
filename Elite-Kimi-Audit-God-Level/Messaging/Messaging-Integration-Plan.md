@@ -138,6 +138,18 @@ code.** If a slice needs a core change, that is a new R-item and a contract amen
   re-auth); issuance triggers the policy sync (N4 allowlist-timing debt
   disposed). Record: `Messaging-N6-Review.md` (audit MODERATE, F1–F3/F5/F6
   disposed at source, F4/F7 debt).
+- **D-N7-1..7 (N7):** the v0 bridge GENERALIZES in place (D-BRIDGE-1) — one
+  Slack channel ↔ one room Thread joins the DM lanes. Transports stay
+  (embedded client surface; the DEC-17 door migration is unnecessary for a
+  co-located daemon); config-driven channel↔room map (dormant when absent —
+  production's posture until the Slack click-work lands); rooms post
+  top-level with roster-stamped headers; inbound is OWNER-ONLY (a userMap
+  would have stamped the owner's name on another's words — external
+  principals are N8's mechanism); three echo guards on every lane;
+  edit/delete → follow-up notes (immutable history); 32 KiB chunking with
+  mid-chunk resume + 429 Retry-After (capped); bridge-health state +
+  `/api/agents/slack-bridge/health`. Record: `Messaging-N7-Review.md`
+  (audit MODERATE, all 9 findings disposed at source).
 - **D-BRIDGE-1 (2026-07-26):** D7 descoped. A v0 Slack bridge
   (`scripts/nvk-slack-bridge.mjs`, branch `kimi/slack-bridge-v0`) precedes N7:
   own workspace, human principal ONLY (agent→chris DMs appear in Slack;
