@@ -92,6 +92,12 @@ function slugFor(displayName: string, fallbackId: string): string {
 }
 
 function provision(state: StoreState, input: { slackUserId: string; displayName: string }): ExternalRecord {
+  // Idempotent (the store's own discipline): an ACTIVE record for this
+  // slackUserId already exists → return IT, never a duplicate principal.
+  const existing = [...freshRecords(state).values()].find(
+    (record) => record.slackUserId === input.slackUserId && record.revoked !== true,
+  );
+  if (existing !== undefined) return existing;
   const id = `external_${randomUUID()}`;
   const record: ExternalRecord = {
     id,

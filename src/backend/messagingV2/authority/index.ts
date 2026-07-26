@@ -140,10 +140,8 @@ const KNOWN_GRANTS: ReadonlySet<string> = new Set(grantValues);
 
 function millis(isoText: string): number {
   const parsed = Date.parse(isoText);
-  if (Number.isNaN(parsed)) {
-    // A clock the adapter cannot read is a composition error; fail fast.
-    throw authUnavailable(`unparseable timestamp ${JSON.stringify(isoText)}`);
-  }
+  // A clock the adapter cannot read is a composition error; fail fast.
+  if (Number.isNaN(parsed)) throw authUnavailable(`unparseable timestamp ${JSON.stringify(isoText)}`);
   return parsed;
 }
 
@@ -153,9 +151,7 @@ function millis(isoText: string): number {
 function validateRoleGrants(roleGrants: Record<string, Grant[]>): void {
   for (const [role, grants] of Object.entries(roleGrants)) {
     for (const grant of grants) {
-      if (!KNOWN_GRANTS.has(grant)) {
-        throw authUnavailable(`role ${JSON.stringify(role)} maps unknown grant ${JSON.stringify(grant)}`);
-      }
+      if (!KNOWN_GRANTS.has(grant)) throw authUnavailable(`role ${JSON.stringify(role)} maps unknown grant ${JSON.stringify(grant)}`);
     }
   }
 }
@@ -163,14 +159,10 @@ function validateRoleGrants(roleGrants: Record<string, Grant[]>): void {
 function indexHumans(humans: NovakaiHumanConfig[]): Map<string, NovakaiHumanConfig> {
   const byToken = new Map<string, NovakaiHumanConfig>();
   for (const human of humans) {
-    if (!PERSON_PATTERN.test(human.personId)) {
-      throw authUnavailable(`personId ${JSON.stringify(human.personId)} fails the PersonId pattern`);
-    }
+    if (!PERSON_PATTERN.test(human.personId)) throw authUnavailable(`personId ${JSON.stringify(human.personId)} fails the PersonId pattern`);
     if (human.token.length === 0) throw authUnavailable(`empty token for ${human.personId}`);
     for (const grant of human.grants ?? []) {
-      if (!KNOWN_GRANTS.has(grant)) {
-        throw authUnavailable(`principal ${human.personId} assigned unknown grant ${JSON.stringify(grant)}`);
-      }
+      if (!KNOWN_GRANTS.has(grant)) throw authUnavailable(`principal ${human.personId} assigned unknown grant ${JSON.stringify(grant)}`);
     }
     byToken.set(human.token, human);
   }
@@ -181,43 +173,28 @@ function indexHumans(humans: NovakaiHumanConfig[]): Map<string, NovakaiHumanConf
 
 function grantsFor(roleGrants: Record<string, Grant[]>, roles: string[] | undefined, explicit: Grant[] | undefined): Grant[] {
   const effective = new Set<Grant>(explicit ?? []);
-  for (const role of roles ?? []) {
-    for (const grant of roleGrants[role] ?? []) {
-      effective.add(grant);
-    }
-  }
+  for (const role of roles ?? []) { for (const grant of roleGrants[role] ?? []) effective.add(grant); }
   return [...effective];
 }
 
 function toPrincipal(sessionId: string, personId: PersonId, grants: Grant[], expiresAtMs: number): Principal {
-  return {
-    personId,
-    grants,
-    sessionId,
-    expiresAt: new Date(expiresAtMs).toISOString() as Timestamp,
-  };
+  return { personId, grants, sessionId, expiresAt: new Date(expiresAtMs).toISOString() as Timestamp };
 }
 
 function mintSession(state: AuthorityState, session: LiveSession): string {
   state.sessionCounter += 1;
-  const sessionId = `session_${state.sessionCounter}`;
-  state.sessions.set(sessionId, session);
-  return sessionId;
+  state.sessions.set(`session_${state.sessionCounter}`, session);
+  return `session_${state.sessionCounter}`;
 }
 
 function readAgents(objectModel: ObjectModel): AgentBlock[] | Error {
   try {
     return objectModel.listAgents();
-  } catch (error) {
-    return error instanceof Error ? error : new Error(String(error));
-  }
+  } catch (error) { return error instanceof Error ? error : new Error(String(error)); }
 }
 
 function parseToken(credential: unknown): string | undefined {
-  const record =
-    typeof credential === 'object' && credential !== null
-      ? (credential as Record<string, unknown>)
-      : undefined;
+  const record = typeof credential === 'object' && credential !== null ? (credential as Record<string, unknown>) : undefined;
   return typeof record?.['token'] === 'string' ? record['token'] : undefined;
 }
 
@@ -244,11 +221,9 @@ interface AuthenticateDeps {
 }
 
 function authenticateAgent(deps: AuthenticateDeps, agent: AgentBlock, recordId: string): AuthOutcome {
-  if (!isActiveAgent(agent)) {
-    // Retired/failed agents are NOT authenticatable — an unknown credential,
-    // never a distinguished failure mode (§2.2).
-    return { kind: 'rejected', error: authRejected('unknown credential') };
-  }
+  // Retired/failed agents are NOT authenticatable — an unknown credential,
+  // never a distinguished failure mode (§2.2).
+  if (!isActiveAgent(agent)) return { kind: 'rejected', error: authRejected('unknown credential') };
   const expiresAtMs = millis(deps.clock.now()) + deps.ttlMs;
   const sessionId = mintSession(deps.state, { kind: 'agent', agentId: agent.id, recordId, expiresAtMs, invalidated: false });
   const grants = grantsFor(deps.roleGrants, rolesForAgent(agent), undefined);
@@ -265,9 +240,7 @@ function authenticateHuman(deps: AuthenticateDeps, human: NovakaiHumanConfig): A
 /** D-N8-1: an external token authenticates as ITS personId, NO grants —
  * the active check is the externals store's (revoked → unknown credential). */
 function authenticateExternal(deps: AuthenticateDeps, personId: string, recordId: string): AuthOutcome {
-  if (deps.externalsStore?.isActive(personId) !== true) {
-    return { kind: 'rejected', error: authRejected('unknown credential') };
-  }
+  if (deps.externalsStore?.isActive(personId) !== true) return { kind: 'rejected', error: authRejected('unknown credential') };
   const expiresAtMs = millis(deps.clock.now()) + deps.ttlMs;
   const sessionId = mintSession(deps.state, { kind: 'external', personId, recordId, expiresAtMs, invalidated: false });
   return { kind: 'authenticated', principal: toPrincipal(sessionId, personId as PersonId, [], expiresAtMs) };
@@ -288,8 +261,7 @@ function resolveByToken(deps: AuthenticateDeps, token: string, agents: AgentBloc
     return { kind: 'rejected', error: authRejected('unknown credential') };
   }
   const human = deps.humansByToken.get(token);
-  if (human === undefined) return { kind: 'rejected', error: authRejected('unknown credential') };
-  return authenticateHuman(deps, human);
+  return human === undefined ? { kind: 'rejected', error: authRejected('unknown credential') } : authenticateHuman(deps, human);
 }
 
 function makeAuthenticate(deps: AuthenticateDeps): Authority['authenticate'] {
@@ -325,9 +297,7 @@ function revalidateAgent(
   let agent: AgentBlock | null;
   try {
     agent = objectModel.agentRecord(session.agentId);
-  } catch {
-    return { kind: 'unavailable' };
-  }
+  } catch { return { kind: 'unavailable' }; }
   // The durable identity GONE or retired/failed mid-session → invalid (§2.1).
   if (agent === null || !isActiveAgent(agent)) return { kind: 'invalid' };
   const grants = grantsFor(roleGrants, rolesForAgent(agent), undefined);
@@ -364,10 +334,39 @@ function revalidateExternalSession(
   session: Extract<LiveSession, { kind: 'external' }>,
 ): RevalidateOutcome {
   if (tokenStore.isRevoked(session.recordId) || externalsStore?.isActive(session.personId) !== true) {
-    state.sessions.delete(sessionId);
-    return { kind: 'invalid' };
+    state.sessions.delete(sessionId); return { kind: 'invalid' };
   }
   return { kind: 'valid', principal: toPrincipal(sessionId, session.personId as PersonId, [], session.expiresAtMs) };
+}
+
+/** Human-session revalidation: fresh grants at the point of truth (§2.1 — a
+ * mid-session grant change takes effect HERE). */
+function revalidateHuman(
+  roleGrants: Record<string, Grant[]>,
+  sessionId: string,
+  session: Extract<LiveSession, { kind: 'human' }>,
+): RevalidateOutcome {
+  const grants = grantsFor(roleGrants, session.human.roles, session.human.grants);
+  return { kind: 'valid', principal: toPrincipal(sessionId, session.human.personId, grants, session.expiresAtMs) };
+}
+
+/** One session revalidation at the point of truth (§2.1), by session kind. */
+function revalidateSession(
+  objectModel: ObjectModel,
+  clock: ClockIds,
+  roleGrants: Record<string, Grant[]>,
+  tokenStore: TokenStore,
+  externalsStore: { isActive(personId: string): boolean } | undefined,
+  state: AuthorityState,
+  sessionId: string,
+): RevalidateOutcome {
+  if (state.unavailable) return { kind: 'unavailable' };
+  const session = state.sessions.get(sessionId);
+  if (!session || session.invalidated) return { kind: 'invalid' };
+  if (millis(clock.now()) >= session.expiresAtMs) return expireSession(state, sessionId);
+  if (session.kind === 'agent') return revalidateAgentSession(objectModel, roleGrants, tokenStore, state, sessionId, session);
+  if (session.kind === 'external') return revalidateExternalSession(tokenStore, externalsStore, state, sessionId, session);
+  return revalidateHuman(roleGrants, sessionId, session);
 }
 
 function makeRevalidate(
@@ -378,21 +377,8 @@ function makeRevalidate(
   externalsStore: { isActive(personId: string): boolean } | undefined,
   state: AuthorityState,
 ): Authority['revalidate'] {
-  return async (sessionId) => {
-    if (state.unavailable) return { kind: 'unavailable' };
-    const session = state.sessions.get(sessionId);
-    if (!session || session.invalidated) return { kind: 'invalid' };
-    if (millis(clock.now()) >= session.expiresAtMs) return expireSession(state, sessionId);
-    if (session.kind === 'agent') {
-      return revalidateAgentSession(objectModel, roleGrants, tokenStore, state, sessionId, session);
-    }
-    if (session.kind === 'external') {
-      return revalidateExternalSession(tokenStore, externalsStore, state, sessionId, session);
-    }
-    // Fresh grants: a mid-session grant change takes effect HERE (§2.1).
-    const grants = grantsFor(roleGrants, session.human.roles, session.human.grants);
-    return { kind: 'valid', principal: toPrincipal(sessionId, session.human.personId, grants, session.expiresAtMs) };
-  };
+  return (sessionId) =>
+    Promise.resolve(revalidateSession(objectModel, clock, roleGrants, tokenStore, externalsStore, state, sessionId));
 }
 
 // --- provisioning directory (MSG-014 UnknownRecipient) --------------------------------
@@ -405,9 +391,7 @@ function agentProvisioned(objectModel: ObjectModel, personId: PersonId): boolean
     // G6: a silent `false` is a deny we cannot prove — forbidden. The honest
     // failure is DependencyUnavailable; see the header note for how the core
     // maps this MessagingError throw to a typed outcome.
-    throw authUnavailable(
-      `provisioning read failed: ${error instanceof Error ? error.message : String(error)}`,
-    );
+    throw authUnavailable(`provisioning read failed: ${error instanceof Error ? error.message : String(error)}`);
   }
   return agents.some((block) => isActiveAgent(block) && personIdForAgentId(block.id) === personId);
 }
@@ -418,9 +402,7 @@ function makeIsProvisioned(
   externalsStore: { isActive(personId: string): boolean } | undefined,
 ): ProvisioningDirectory['isProvisioned'] {
   return async (personId) => {
-    for (const human of humansByToken.values()) {
-      if (human.personId === personId) return true;
-    }
+    for (const human of humansByToken.values()) if (human.personId === personId) return true;
     // D-N8-1: active externals are provisioned recipients too (MSG-014).
     if (externalsStore?.isActive(personId) === true) return true;
     return agentProvisioned(objectModel, personId);
@@ -441,16 +423,21 @@ function makeTestControls(state: AuthorityState) {
   };
 }
 
-export function createNovakaiAuthority(
-  objectModel: ObjectModel, clock: ClockIds, config: NovakaiAuthorityConfig,
-): NovakaiAuthority {
+/** §1 fail-fast: the config must be able to resolve agent credentials (D-N6-2). */
+function validateConfig(config: NovakaiAuthorityConfig): void {
   if (config.tokenStore === undefined || config.tokenStore === null) {
     // D-N6-2: without the token store no agent credential can resolve —
     // fail construction, never silently reject every agent (Seams §1).
     throw authUnavailable('tokenStore is required (D-N6-2: agent credentials are issued tokens)');
   }
+  validateRoleGrants(config.roleGrants ?? DEFAULT_ROLE_GRANTS);
+}
+
+export function createNovakaiAuthority(
+  objectModel: ObjectModel, clock: ClockIds, config: NovakaiAuthorityConfig,
+): NovakaiAuthority {
+  validateConfig(config);
   const roleGrants = config.roleGrants ?? DEFAULT_ROLE_GRANTS;
-  validateRoleGrants(roleGrants);
   const humansByToken = indexHumans(config.humans ?? []);
   const ttlMs = config.sessionTtlMs ?? DEFAULT_SESSION_TTL_MS;
   const state: AuthorityState = { sessions: new Map(), sessionCounter: 0, unavailable: false };

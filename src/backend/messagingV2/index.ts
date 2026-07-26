@@ -315,6 +315,21 @@ function makeTransports(
   return { transports, doorTransport };
 }
 
+/** The authority + membership adapters (pure — no resources to leak if
+ * construction throws). D-N3-1: the human rides EVERY roster; D-N8-1/2: the
+ * externals store feeds auth, provisioning, and the fleet roster. */
+function makeAdapters(deps: StartMessagingV2Deps, clock: ReturnType<typeof createSystemClock>, config: Omit<NovakaiAuthorityConfig, 'tokenStore'>) {
+  const authority = createNovakaiAuthority(deps.objectModel, clock, {
+    ...config, tokenStore: deps.tokenStore,
+    ...(deps.externalsStore !== undefined ? { externalsStore: deps.externalsStore } : {}),
+  });
+  const membership = createNovakaiMembership(
+    deps.objectModel, clock, HUMAN_PERSON_ID,
+    () => deps.externalsStore?.activePersonIds() ?? [],
+  );
+  return { authority, membership };
+}
+
 export async function startMessagingV2(deps: StartMessagingV2Deps): Promise<MessagingV2Handle> {
   const clock = createSystemClock();
   const storePath = deps.storePath ?? path.resolve('.novakai-command/messaging-v2/journal.jsonl');
@@ -325,16 +340,7 @@ export async function startMessagingV2(deps: StartMessagingV2Deps): Promise<Mess
   // the process. NVK_MESSAGING_V2_HUMAN_TOKEN remains an override.
   const humanToken = deps.humanToken ?? `human_${randomUUID()}`;
   const config = humanConfig(humanToken);
-  // Pure adapters first — no resources to leak if construction throws.
-  const authority = createNovakaiAuthority(deps.objectModel, clock, {
-    ...config, tokenStore: deps.tokenStore,
-    ...(deps.externalsStore !== undefined ? { externalsStore: deps.externalsStore } : {}),
-  });
-  // D-N3-1: the human principal rides EVERY roster the membership adapter serves.
-  const membership = createNovakaiMembership(
-    deps.objectModel, clock, HUMAN_PERSON_ID,
-    () => deps.externalsStore?.activePersonIds() ?? [],
-  );
+  const { authority, membership } = makeAdapters(deps, clock, config);
   const store = await openJsonlStore(clock, { path: storePath });
   const directory = createRoomDirectory();
   const transport = makeTransport(deps, directory);

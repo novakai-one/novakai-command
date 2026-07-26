@@ -717,7 +717,7 @@ ok('D-N7-6: edits in the DM lane note the agent (never a mutation)');
 // D-N7-6: app→Slack chunking over the 32 KiB contract cap, (i/n) markers.
 const bigBody = `chunk-${'x'.repeat(70_000)}`;
 const postsBeforeChunk = postsWith('chunk-').length;
-app.pushMessage(31, { threadId: 'thread_room_team', body: { text: bigBody } });
+app.pushMessage(35, { threadId: 'thread_room_team', body: { text: bigBody } });
 await waitFor(() => postsWith('(3/3)').length === 1, 'oversized room message chunked');
 assert.ok(postsWith('(1/3)').length === 1 && postsWith('(2/3)').length === 1, 'chunks carry (1/3)…(3/3) markers');
 assert.ok(postsWith('chunk-').every((p) => p.channel === 'C_TEAM'), 'chunks land on the mapped channel');
@@ -725,7 +725,7 @@ ok('D-N7-6: >32 KiB app→Slack messages chunk with (i/n) markers');
 
 // D-N7-3: the follow-up bridge line is a real log line (was vlog) — asserted
 // on a message bridged by the CURRENT daemon (the restart wiped the buffer).
-assert.ok(daemon.output().includes('bridged msg_31 → #team C_TEAM'), 'D-N7-3: one log line per bridged message (any lane)');
+assert.ok(daemon.output().includes('bridged msg_35 → #team C_TEAM'), 'D-N7-3: one log line per bridged message (any lane)');
 ok('D-N7-3: the per-message bridge line is promoted to log');
 
 // D-N7-6: an oversized Slack→app body gets a posted note, never a failed send.
@@ -738,7 +738,7 @@ ok('D-N7-6: oversized inbound → "too big to bridge" note, never a failed send'
 // D-N7-6: Slack 429s honor Retry-After (bounded retries, final drop loud).
 slack.rateLimitNextPosts(1, 1);
 const rateLimitedAt = Date.now();
-app.pushMessage(32, { threadId: 'thread_room_team', body: { text: 'worth the wait' } });
+app.pushMessage(36, { threadId: 'thread_room_team', body: { text: 'worth the wait' } });
 await waitFor(() => postsWith('worth the wait').length === 1, 'the post lands after the 429');
 assert.ok(Date.now() - rateLimitedAt >= 900, 'Retry-After was honored (the retry waited, not hammered)');
 assert.equal(slack.attempts429.length, 1, 'exactly one attempt was rate-limited before the landing');

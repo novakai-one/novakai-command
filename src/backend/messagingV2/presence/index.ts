@@ -158,6 +158,20 @@ async function ensureHuman(state: GlueState): Promise<void> {
   armHumanRenewal(state, Math.max(100, Math.floor((state.humanExpiresAtMs - Date.now()) * RENEW_FRACTION)), 0);
 }
 
+/** Ensure + authenticate ONE policy session (agent or external credential). */
+async function authPolicySession(
+  state: GlueState,
+  kind: 'agent' | 'external',
+  principal: string,
+): Promise<MessagingSession | null> {
+  if (kind === 'agent') state.deps.tokenStore.ensure(principal);
+  else state.deps.tokenStore.ensureExternal(principal);
+  const token = kind === 'agent' ? state.deps.tokenStore.tokenForAgent(principal) : state.deps.tokenStore.tokenForExternal(principal);
+  if (token === null) return null; // unreachable after ensure — skip honestly
+  const auth = await state.deps.embedded.authenticate({ token });
+  return auth.kind === 'authenticated' ? auth.session : null;
+}
+
 /** Every sync covers EVERY active durable agent (audit F9's exposed gap):
  * an agent with no live lane gets a throwaway policy session, so Chris can
  * DM offline teammates — the lane sessions alone left never-live agents at
@@ -171,19 +185,13 @@ async function policySessions(state: GlueState): Promise<Map<string, MessagingSe
   for (const block of state.deps.objectModel.listAgents().filter(isActiveAgent)) {
     const personId = personIdForAgentId(block.id);
     if (resolved.has(personId)) continue;
-    state.deps.tokenStore.ensure(block.id);
-    const token = state.deps.tokenStore.tokenForAgent(block.id);
-    if (token === null) continue; // unreachable after ensure — skip honestly
-    const auth = await state.deps.embedded.authenticate({ token });
-    if (auth.kind === 'authenticated') resolved.set(personId, auth.session);
+    const session = await authPolicySession(state, 'agent', block.id);
+    if (session !== null) resolved.set(personId, session);
   }
   for (const personId of state.deps.externalsStore?.activePersonIds() ?? []) {
     if (resolved.has(personId as PersonId)) continue;
-    state.deps.tokenStore.ensureExternal(personId);
-    const token = state.deps.tokenStore.tokenForExternal(personId);
-    if (token === null) continue;
-    const auth = await state.deps.embedded.authenticate({ token });
-    if (auth.kind === 'authenticated') resolved.set(personId as PersonId, auth.session);
+    const session = await authPolicySession(state, 'external', personId);
+    if (session !== null) resolved.set(personId as PersonId, session);
   }
   return resolved;
 }

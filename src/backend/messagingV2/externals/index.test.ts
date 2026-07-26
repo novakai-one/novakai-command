@@ -58,5 +58,16 @@ assert.notEqual(reAdded.id, partner.id, 're-add mints a new record, never resurr
 assert.equal(store.isActive(reAdded.personId), true, 'the re-added external is active again');
 console.log('re-add tests passed');
 
+// --- idempotent provision: an ACTIVE record for the slackUserId returns itself --
+
+const again = store.provision({ slackUserId: 'U_PARTNER', displayName: 'Partner Chris' });
+assert.equal(again.id, reAdded.id, 're-provisioning an ACTIVE slackUserId returns the existing record — no duplicate principal');
+assert.equal(
+  store.list().filter((record) => record.slackUserId === 'U_PARTNER' && record.revoked !== true).length,
+  1,
+  'exactly one ACTIVE record per slackUserId, always',
+);
+console.log('idempotent provision tests passed');
+
 rmSync(scratch, { recursive: true, force: true });
 console.log('externals store tests passed');

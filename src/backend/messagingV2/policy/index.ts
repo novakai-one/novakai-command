@@ -73,6 +73,27 @@ async function growAllowlist(session: MessagingSession, added: PersonId[]): Prom
   }
 }
 
+/** The allowlist delta for one session (D-N8-2: an external's list is the
+ * WHOLE fleet — fleet co-membership by construction, not refs). */
+function addedForSession(
+  personId: string,
+  blocks: AgentBlock[],
+  externalPersonIds: PersonId[],
+  humanPersonId: PersonId | undefined,
+): PersonId[] | null {
+  const isExternal = externalPersonIds.includes(personId as PersonId);
+  const self = isExternal ? undefined : blocks.find((block) => personIdForAgentId(block.id) === personId);
+  if (!isExternal && self === undefined) return null; // plain spawn or retired mid-run — not ours to touch
+  const added = isExternal
+    ? [...blocks.map((block) => personIdForAgentId(block.id)), ...externalPersonIds.filter((other) => other !== personId)]
+    : [
+        ...blocks.filter((block) => isCoMember(self as AgentBlock, block)).map((block) => personIdForAgentId(block.id)),
+        ...externalPersonIds, // fleet co-members (D-N8-2 — deny-by-default stays the gate)
+      ];
+  if (humanPersonId !== undefined) added.push(humanPersonId);
+  return added;
+}
+
 async function syncAgents(
   blocks: AgentBlock[],
   sessions: ReadonlyMap<string, MessagingSession>,
@@ -80,23 +101,27 @@ async function syncAgents(
   externalPersonIds: PersonId[],
   failures: PolicySyncFailure[],
 ): Promise<void> {
-  const allAgentPersonIds = blocks.map((block) => personIdForAgentId(block.id));
   for (const [personId, session] of sessions) {
-    // D-N8-2: an external's allowlist is the WHOLE fleet (they are fleet
-    // co-members with everyone by construction, not by refs).
-    const isExternal = externalPersonIds.includes(personId as PersonId);
-    const self = isExternal ? undefined : blocks.find((block) => personIdForAgentId(block.id) === personId);
-    if (!isExternal && self === undefined) continue; // plain spawn or retired mid-run — not ours to touch
-    const added = isExternal
-      ? [...allAgentPersonIds, ...externalPersonIds.filter((other) => other !== personId)]
-      : [
-          ...blocks.filter((block) => isCoMember(self as AgentBlock, block)).map((block) => personIdForAgentId(block.id)),
-          ...externalPersonIds, // fleet co-members (D-N8-2 — deny-by-default stays the gate)
-        ];
-    if (humanPersonId !== undefined) added.push(humanPersonId);
+    const added = addedForSession(personId, blocks, externalPersonIds, humanPersonId);
+    if (added === null) continue;
     const detail = await growAllowlist(session, added);
     if (detail !== null) failures.push({ personId: personId as PersonId, detail });
   }
+}
+
+/** The human's own sync: every agent + every external (the owner sees all). */
+async function syncHuman(
+  human: MessagingSession,
+  blocks: AgentBlock[],
+  externalPersonIds: PersonId[],
+  failures: PolicySyncFailure[],
+): Promise<void> {
+  const added = [
+    ...blocks.map((block) => personIdForAgentId(block.id)),
+    ...externalPersonIds, // the owner sees every external as a co-member
+  ];
+  const detail = await growAllowlist(human, added);
+  if (detail !== null) failures.push({ personId: human.principal.personId, detail });
 }
 
 export function createContactBootstrap(
@@ -110,14 +135,7 @@ export function createContactBootstrap(
       const blocks = objectModel.listAgents().filter(isActiveAgent);
       const externalPersonIds = (externals?.() ?? []).map((personId) => personId as PersonId);
       await syncAgents(blocks, sessions, human?.principal.personId, externalPersonIds, failures);
-      if (human !== null) {
-        const added = [
-          ...blocks.map((block) => personIdForAgentId(block.id)),
-          ...externalPersonIds, // the owner sees every external as a co-member
-        ];
-        const detail = await growAllowlist(human, added);
-        if (detail !== null) failures.push({ personId: human.principal.personId, detail });
-      }
+      if (human !== null) await syncHuman(human, blocks, externalPersonIds, failures);
       return failures;
     },
   };
