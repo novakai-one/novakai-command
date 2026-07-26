@@ -229,6 +229,56 @@ assert.ok(
 );
 console.log('policy-failure lane resilience test passed');
 
+// --- hotfix: the held human session self-heals at ~50% of the TTL ---------------
+// Root cause (production, serve.out): the N3.1 self-minted human session was
+// minted ONCE at boot with the authority's 1h TTL; at expiry every consumer
+// (live subscribe, user routes, rooms glue) fetched the same dead session
+// forever. The glue must re-mint on a timer and clean that timer up on close.
+
+const renewClock = createSystemClock();
+const renewEmbedded = createEmbeddedMessaging({
+  clock: renewClock,
+  store: createMemoryStore(renewClock),
+  authority: createNovakaiAuthority(model, renewClock, {
+    sessionTtlMs: 400,
+    humans: [{ token: 'human-secret', personId: 'person_user-chris' as never, roles: ['Human'] }],
+  }),
+  membership: createNovakaiMembership(model, renewClock),
+  transports: [createTerminalHostTransport(terminals)],
+});
+await renewEmbedded.start();
+let humanAuthCalls = 0;
+const realAuthenticate = renewEmbedded.authenticate.bind(renewEmbedded);
+renewEmbedded.authenticate = (credential: unknown) => {
+  if ((credential as { token?: string }).token === 'human-secret') humanAuthCalls += 1;
+  return realAuthenticate(credential);
+};
+const renewGlue = createAgentLaneGlue({
+  embedded: renewEmbedded, transport: createTerminalHostTransport(terminals), terminals,
+  objectModel: model, humanToken: 'human-secret', briefingDelayMs: 5, 'log': () => {},
+});
+await renewGlue.openBootLanes();
+const staleSession = renewGlue.humanSession();
+assert.ok(staleSession !== null, 'the human session is held at boot');
+const mintedAtBoot = humanAuthCalls;
+assert.ok(mintedAtBoot >= 1, 'the human session was minted once at boot');
+
+await new Promise((resolve) => setTimeout(resolve, 700)); // TTL 400 ms → re-mint due at ~200 ms
+const warmSession = renewGlue.humanSession();
+assert.ok(warmSession !== null);
+assert.notEqual(
+  warmSession.principal.sessionId, staleSession.principal.sessionId,
+  'after expiry the held session is a FRESH re-mint, never the dead one',
+);
+assert.ok(humanAuthCalls > mintedAtBoot, 'authenticate ran again for the human principal');
+
+await renewGlue.close();
+const callsAtClose = humanAuthCalls;
+await new Promise((resolve) => setTimeout(resolve, 700));
+assert.equal(humanAuthCalls, callsAtClose, 'close() clears the renewal timer — no re-mint afterwards');
+await renewEmbedded.close();
+console.log('human session renewal tests passed');
+
 await glue.close();
 await embedded.close();
 rmSync(scratch, { recursive: true, force: true });

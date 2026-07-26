@@ -20,6 +20,17 @@
  * D-N2-5 (team contact bootstrap): after every boot/launch lane-open, the
  * glue runs the membership-driven contact-policy sync (../policy/index.ts)
  * for every held session — host policy, composition-owned, core untouched.
+ *
+ * HOTFIX (human session renewal): the held human session is minted with the
+ * authority's session TTL (1h default) and used to DIE at expiry — every
+ * consumer fetches humanSession() per use and got the same dead session
+ * forever (live-subscribe NotAuthenticated loops, /user routes 500s). The
+ * glue now holds the session WITH its expiry and re-mints at ~50% of the
+ * TTL on an unref'd timer; a re-mint failure keeps the old session, logs
+ * once, and retries with capped backoff. Reactive belt: a humanSession()
+ * call past expiry with no re-mint in flight kicks one immediately (the
+ * stale session is returned this call — the next one is warm). Consumers
+ * heal with ZERO call-site changes.
  */
 
 import type { EmbeddedMessaging } from '../../../../packages/messaging/composition/embedded.js';
@@ -38,6 +49,11 @@ import type { TerminalHostPresenceTransport } from '../transport/index.js';
 const BRIEFING_DELAY_MS = 3_000;
 const BRIEFING_SETTLE_MS = 900;
 const KIMI_FLUSH_MS = 6_000;
+/** Re-mint the held human session at this fraction of its remaining TTL. */
+const RENEW_FRACTION = 0.5;
+/** Re-mint failure backoff: 5 s doubling, capped (log once per failure). */
+const RENEW_RETRY_BASE_MS = 5_000;
+const RENEW_RETRY_CAP_MS = 5 * 60_000;
 
 export interface AgentLaneGlueDeps {
   embedded: EmbeddedMessaging;
@@ -70,16 +86,64 @@ interface GlueState {
   timers: Set<NodeJS.Timeout>;
   /** The held human session (D-N2-5); null until ensured or unconfigured. */
   human: MessagingSession | null;
+  /** Expiry (ms epoch) of the held human session; null until minted. */
+  humanExpiresAtMs: number | null;
+  /** The self-healing renewal timer (separate from the briefing timers). */
+  humanRenewTimer: NodeJS.Timeout | null;
+  /** In-flight re-mint guard — timer and reactive belt never double-mint. */
+  humanRenewing: boolean;
+  /** Set by close(): a completing re-mint must never re-arm the timer. */
+  closed: boolean;
   bootstrap: ContactBootstrap;
   /** D-N5-3: terminal delivery failures type one line into the sender's lane. */
   failureTruth: FailureTruth;
+}
+
+function announceGlue(state: GlueState, message: string): void {
+  (state.deps.log ?? ((): void => {}))(message);
+}
+
+/** Single armer for the renewal timer (unref'd; never after close). */
+function armHumanRenewal(state: GlueState, delayMs: number, attempt: number): void {
+  if (state.closed || state.deps.humanToken === undefined) return;
+  if (state.humanRenewTimer !== null) clearTimeout(state.humanRenewTimer);
+  state.humanRenewTimer = setTimeout(() => { void renewHuman(state, attempt); }, delayMs);
+  state.humanRenewTimer.unref?.();
+}
+
+/** On failure the OLD session stays held (never cleared), one log line, and
+ * the retry rides a doubling backoff — the capability may be mid-restart. */
+function retryHumanRenewal(state: GlueState, attempt: number, detail: string): void {
+  announceGlue(state, `[messaging-v2] human session re-mint failed (held session kept): ${detail}`);
+  armHumanRenewal(state, Math.min(RENEW_RETRY_BASE_MS * 2 ** attempt, RENEW_RETRY_CAP_MS), attempt + 1);
+}
+
+async function renewHuman(state: GlueState, attempt: number): Promise<void> {
+  const token = state.deps.humanToken;
+  if (token === undefined || state.humanRenewing || state.closed) return;
+  state.humanRenewing = true;
+  try {
+    const auth = await state.deps.embedded.authenticate({ token });
+    if (auth.kind !== 'authenticated') return retryHumanRenewal(state, attempt, auth.error.message);
+    state.human = auth.session;
+    state.humanExpiresAtMs = Date.parse(auth.session.principal.expiresAt);
+    const remainingMs = state.humanExpiresAtMs - Date.now();
+    armHumanRenewal(state, Math.max(100, Math.floor(remainingMs * RENEW_FRACTION)), 0);
+  } catch (cause) {
+    retryHumanRenewal(state, attempt, cause instanceof Error ? cause.message : String(cause));
+  } finally {
+    state.humanRenewing = false;
+  }
 }
 
 /** Authenticate the human principal once and hold the session (D-N2-5). */
 async function ensureHuman(state: GlueState): Promise<void> {
   if (state.human !== null || state.deps.humanToken === undefined) return;
   const auth = await state.deps.embedded.authenticate({ token: state.deps.humanToken });
-  state.human = auth.kind === 'authenticated' ? auth.session : null;
+  if (auth.kind !== 'authenticated') return;
+  state.human = auth.session;
+  state.humanExpiresAtMs = Date.parse(auth.session.principal.expiresAt);
+  armHumanRenewal(state, Math.max(100, Math.floor((state.humanExpiresAtMs - Date.now()) * RENEW_FRACTION)), 0);
 }
 
 /** Every sync covers EVERY active durable agent (audit F9's exposed gap):
@@ -198,26 +262,48 @@ function handleAgentLaunched(state: GlueState, info: AgentInfo): void {
 }
 
 function closeGlue(state: GlueState): Promise<void> {
+  state.closed = true;
+  if (state.humanRenewTimer !== null) {
+    clearTimeout(state.humanRenewTimer);
+    state.humanRenewTimer = null;
+  }
   for (const timer of state.timers) clearTimeout(timer);
   state.timers.clear();
   state.sessions.clear();
   return Promise.resolve();
 }
 
-export function createAgentLaneGlue(deps: AgentLaneGlueDeps): AgentLaneGlue {
-  const state: GlueState = {
+/** The held human session + the reactive belt: past expiry with no re-mint
+ * in flight, kick one NOW — the stale session serves this call, the next
+ * call is warm. */
+function heldHumanSession(state: GlueState): MessagingSession | null {
+  const stale = state.humanExpiresAtMs !== null && Date.now() >= state.humanExpiresAtMs;
+  if (state.human !== null && stale && !state.humanRenewing) void renewHuman(state, 0);
+  return state.human;
+}
+
+function freshGlueState(deps: AgentLaneGlueDeps): GlueState {
+  return {
     deps,
     sessions: new Map(),
     timers: new Set(),
     human: null,
+    humanExpiresAtMs: null,
+    humanRenewTimer: null,
+    humanRenewing: false,
+    closed: false,
     bootstrap: createContactBootstrap(deps.objectModel),
     failureTruth: createFailureTruth({ terminals: deps.terminals, ...(deps.log !== undefined ? { 'log': deps.log } : {}) }),
   };
+}
+
+export function createAgentLaneGlue(deps: AgentLaneGlueDeps): AgentLaneGlue {
+  const state = freshGlueState(deps);
   return {
     openBootLanes: () => openBootLanes(state),
     handleAgentLaunched: (info) => handleAgentLaunched(state, info),
     laneCount: () => state.sessions.size,
-    humanSession: () => state.human,
+    humanSession: () => heldHumanSession(state),
     close: () => closeGlue(state),
   };
 }
