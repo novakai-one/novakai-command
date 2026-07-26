@@ -17,6 +17,7 @@ import type { ClockIds } from '../../../../packages/messaging/seams/clock.js';
 import { ObjectModel } from '../../objectModel/index.js';
 import { readStoreDir, replaceLine } from '../../stores/store.mjs';
 import { createTokenStore } from '../tokens/index.js';
+import { createExternalsStore } from '../externals/index.js';
 import { createNovakaiAuthority, personIdForAgentId } from './index.js';
 
 const STAMP = '2026-07-22T10:00:00+10:00';
@@ -226,5 +227,38 @@ if (first.kind === 'authenticated') {
   assert.equal(prunable.sessionCount(), 1, 'revalidate deletes the expired entry at the point of truth');
 }
 console.log('session pruning tests passed');
+
+// --- D-N8-1: external principals authenticate as THEMSELVES (person_ext-*) -----
+
+const n8Model = new ObjectModel({ storesDir: scratchStores() }); // fresh — the G6 section deleted the main scratch
+const externalsStore = createExternalsStore(path.join(mkdtempSync(path.join(tmpdir(), 'nvk-mv2-ext-')), 'externals.jsonl'));
+const partner = externalsStore.provision({ slackUserId: 'U_PARTNER', displayName: 'Partner Chris' });
+const n8Authority = createNovakaiAuthority(n8Model, clock, {
+  humans: [{ token: 'human-secret', personId: 'person_user-chris' as PersonId, roles: ['Human'] }],
+  tokenStore: tokens,
+  externalsStore,
+});
+const partnerToken = tokens.issueExternal(partner.personId).token;
+
+const partnerAuth = await n8Authority.authenticate({ token: partnerToken });
+assert.equal(partnerAuth.kind, 'authenticated', 'an external token authenticates');
+if (partnerAuth.kind !== 'authenticated') throw new Error('unreachable');
+assert.equal(partnerAuth.principal.personId, partner.personId, 'the external is THEMSELVES — never an agent, never the human');
+assert.deepEqual(partnerAuth.principal.grants, [], 'externals hold NO grants');
+
+externalsStore.revokeBySlackUser('U_PARTNER');
+assert.equal((await n8Authority.authenticate({ token: partnerToken })).kind, 'rejected', 'a revoked external → NotAuthenticated');
+if (partnerAuth.kind === 'authenticated') {
+  assert.equal((await n8Authority.revalidate(partnerAuth.principal.sessionId)).kind, 'invalid', 'revalidate re-checks revocation (§2.1)');
+}
+assert.equal(await n8Authority.isProvisioned(partner.personId as PersonId), false, 'revoked external is not provisioned');
+
+const restored = externalsStore.provision({ slackUserId: 'U_PARTNER', displayName: 'Partner Chris' });
+assert.equal(await n8Authority.isProvisioned(restored.personId as PersonId), true, 'active externals are provisioned (MSG-014)');
+
+// An authority with NO externals store rejects external tokens (no truth to check).
+const bare = createNovakaiAuthority(n8Model, clock, { tokenStore: tokens });
+assert.equal((await bare.authenticate({ token: partnerToken })).kind, 'rejected', 'no externals store → external tokens rejected');
+console.log('D-N8-1 external authority tests passed');
 
 console.log('messagingV2 authority adapter tests passed');

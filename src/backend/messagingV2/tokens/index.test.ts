@@ -128,3 +128,34 @@ console.log('token store tests passed');
   rmSync(f3Dir, { recursive: true, force: true });
   console.log('F3 loose-file permission tests passed');
 }
+
+// --- D-N8-1: external tokens resolve to a personId directly ------------------
+
+{
+  const n8Dir = mkdtempSync(path.join(tmpdir(), 'nvk-tokens-n8-'));
+  const n8Path = path.join(n8Dir, 'tokens.jsonl');
+  const n8Store = createTokenStore(n8Path);
+
+  const issued = n8Store.issueExternal('person_ext-partner-chris');
+  assert.match(issued.token, /^nvkt_[0-9a-f]{64}$/, 'external tokens share the nvkt_ format');
+  assert.equal(issued.record.externalPersonId, 'person_ext-partner-chris');
+  assert.equal(issued.record.agentId, undefined, 'an external record carries NO agentId');
+  assert.ok(!readFileSync(n8Path, 'utf8').includes(issued.token), 'the raw external token is never at rest');
+
+  const resolved = n8Store.resolve(issued.token);
+  assert.deepEqual(resolved, { recordId: issued.record.id, externalPersonId: 'person_ext-partner-chris' },
+    'an external token resolves to its personId (no agentId)');
+  assert.equal(n8Store.tokenForExternal('person_ext-partner-chris'), issued.token, 'in-process raw held');
+
+  n8Store.ensureExternal('person_ext-partner-chris');
+  assert.equal(n8Store.tokenForExternal('person_ext-partner-chris'), issued.token, 'ensure is idempotent');
+
+  n8Store.revokeAllForExternal('person_ext-partner-chris');
+  assert.equal(n8Store.resolve(issued.token), null, 'a revoked external token never resolves');
+  assert.equal(n8Store.tokenForExternal('person_ext-partner-chris'), null, 'a held external raw dies on revocation');
+  n8Store.ensureExternal('person_ext-partner-chris');
+  assert.notEqual(n8Store.tokenForExternal('person_ext-partner-chris'), issued.token, 'ensure re-mints after revocation');
+
+  rmSync(n8Dir, { recursive: true, force: true });
+  console.log('D-N8-1 external token tests passed');
+}

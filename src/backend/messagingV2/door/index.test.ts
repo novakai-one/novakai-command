@@ -19,6 +19,7 @@ import { ObjectModel } from '../../objectModel/index.js';
 import { personIdForAgentId } from '../authority/index.js';
 import { startMessagingV2 } from '../index.js';
 import { createTokenStore } from '../tokens/index.js';
+import { createExternalsStore } from '../externals/index.js';
 
 const STAMP = '2026-07-22T10:00:00+10:00';
 const STORE_FILES = [
@@ -127,9 +128,13 @@ const externId = model.createAgent({ name: 'worker-remote', provider: 'claude', 
 const tokens = createTokenStore(path.join(mkdtempSync(path.join(tmpdir(), 'nvk-mv2-door-tokens-')), 'tokens.jsonl'));
 const journalPath = path.join(mkdtempSync(path.join(tmpdir(), 'nvk-mv2-door-journal-')), 'journal.jsonl');
 const terminals = new FakeTerminalRuntime([agentInfo(aliceId, 'worker-alice'), agentInfo(externId, 'worker-remote')]);
+// D-N8: the external principal is provisioned BEFORE boot — the fleet roster
+// and the boot policy sync must already see them.
+const externalsStore = createExternalsStore(path.join(mkdtempSync(path.join(tmpdir(), 'nvk-mv2-door-ext-')), 'externals.jsonl'));
+const partner = externalsStore.provision({ slackUserId: 'U_PARTNER', displayName: 'Partner Chris' });
 
 const handle = await startMessagingV2({
-  objectModel: model, storePath: journalPath, tokenStore: tokens, terminals, door: { port: 0 }, 'log': () => {},
+  objectModel: model, storePath: journalPath, tokenStore: tokens, externalsStore, terminals, door: { port: 0 }, 'log': () => {},
 });
 assert.ok(handle.door !== null, 'the door booted with the capability');
 const port = handle.door.port;
@@ -233,6 +238,59 @@ assert.ok(
   'after issuance + sync, the human allowlist includes the fresh agent (D-N6-5)',
 );
 console.log('issuance policy-sync test passed');
+
+// --- D-N8-1..4: an external principal messages through the door AS THEMSELF -----
+
+const partnerToken = tokens.issueExternal(partner.personId).token;
+await handle.lanes?.syncPoliciesNow(); // D-N6-5 parity — issuance-time sync covers externals
+
+const partnerDoor = await DoorClient.connect(port);
+const partnerAuth = await partnerDoor.call({ kind: 'authenticate', credential: { token: partnerToken }, protocolVersion: '1.0.0' });
+assert.equal(partnerAuth['kind'], 'authenticated', 'the external authenticates through the door');
+assert.equal((partnerAuth['principal'] as Record<string, unknown>)['personId'], partner.personId, 'AS THEMSELF, never an agent or the human');
+assert.deepEqual((partnerAuth['principal'] as Record<string, unknown>)['grants'], [], 'externals hold no grants');
+
+const partnerPresence = await partnerDoor.call({ kind: 'command', name: 'OpenPresence', input: { transport: 'ws', clientLabel: 'partner-slack' } });
+assert.equal(partnerPresence['kind'], 'command-result', 'the external opens ws presence (D-N8-4: delivery truth lane)');
+partnerDoor.send({ kind: 'subscribe', requestId: 'partner-sub', input: { events: ['MessageCommitted', 'DeliveryUpdated'] } });
+await partnerDoor.waitFor((frame) => frame['kind'] === 'started');
+
+const fleetThreadId = handle.rooms?.fleetThreadId();
+assert.ok(fleetThreadId !== undefined, 'the fleet room is provisioned');
+const partnerSend = await partnerDoor.call({
+  kind: 'command',
+  name: 'SendMessage',
+  input: {
+    address: `thread:${fleetThreadId}`,
+    body: { text: 'hello from outside the workspace' },
+    priority: 'normal', clientMessageId: 'n8-door-1',
+  },
+});
+assert.equal(partnerSend['kind'], 'command-result', 'the external room send commits (fleet membership via D-N8-2)');
+const partnerMessageId = (partnerSend['result'] as Record<string, unknown>)['messageId'] as string;
+
+const committed = await partnerDoor.waitFor(
+  (frame) => frame['kind'] === 'event' && (frame['event'] as Record<string, unknown>)['message'] !== undefined,
+);
+const committedMessage = (committed['event'] as Record<string, unknown>)['message'] as Record<string, unknown>;
+assert.equal(committedMessage['senderId'], partner.personId, 'the committed message is stamped AS THE EXTERNAL');
+await partnerDoor.waitFor(
+  (frame) => frame['kind'] === 'event' && (frame['event'] as Record<string, unknown>)['delivery'] !== undefined,
+);
+assert.ok(true, 'DeliveryUpdated flows to the external’s presence lane');
+
+const partnerDelivery = await partnerDoor.call({ kind: 'query', name: 'GetDelivery', input: { messageId: partnerMessageId } });
+const partnerDeliveries = ((partnerDelivery['result'] as Record<string, unknown>)['deliveries'] ?? []) as Array<Record<string, unknown>>;
+assert.ok(
+  partnerDeliveries.some((entry) => entry['recipientId'] === partner.personId && entry['state'] !== 'failed'),
+  'the external is a DELIVERABLE recipient (frozen snapshot includes them)',
+);
+assert.ok(
+  partnerDeliveries.every((entry) => entry['state'] !== 'failed'),
+  'ZERO failed deliveries — the policy sync made every recipient reachable (D-N8-2/D-N6-5)',
+);
+partnerDoor.close();
+console.log('D-N8 external door tests passed');
 
 external.close();
 await handle.close();

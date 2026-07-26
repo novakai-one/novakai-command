@@ -263,6 +263,48 @@ async function cmdTokenList(agentId) {
   }
 }
 
+// --- D-N8-1: external principals (PartnerChris) --------------------------------
+// Provision a Slack user OUTSIDE the workspace as their own principal, mint
+// their door token (printed ONCE — put it in slack-bridge.json `externals`).
+
+async function cmdExternalAdd() {
+  const slackUserId = opt('--slack-user') ?? fail('external add requires --slack-user <U…>');
+  const displayName = opt('--name') ?? fail('external add requires --name "<display>"');
+  const response = await fetch(`${SERVER}/api/messaging/v2/externals`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ slackUserId, displayName }),
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) fail(`external add rejected: ${body.error ?? response.status}`);
+  console.log(`PROVISIONED ${displayName} → ${body.personId}`);
+  console.log(body.token);
+  console.error(`(token shown once — place it in .novakai-command/slack-bridge.json as { slackUserId: "${slackUserId}", personId: "${body.personId}", token: "<token>" } in "externals")`);
+}
+
+async function cmdExternalList() {
+  const response = await fetch(`${SERVER}/api/messaging/v2/externals`);
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) fail(`external list rejected: ${body.error ?? response.status}`);
+  const externals = body.externals ?? [];
+  if (externals.length === 0) console.log('(no external principals)');
+  for (const record of externals) {
+    console.log(`${record.id} · ${record.displayName} (${record.slackUserId}) → ${record.personId} · ${record.revoked ? 'REVOKED' : 'live'}`);
+  }
+}
+
+async function cmdExternalRevoke() {
+  const slackUserId = opt('--slack-user') ?? fail('external revoke requires --slack-user <U…>');
+  const response = await fetch(`${SERVER}/api/messaging/v2/externals/revoke`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ slackUserId }),
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) fail(`external revoke rejected: ${body.error ?? response.status}`);
+  console.log(`REVOKED ${body.revoked} external(s) for ${slackUserId} (${body.tokensRevoked} token(s) killed) — sessions die at their next revalidate`);
+}
+
 if (cmd === 'spawn') await cmdSpawn();
 else if (cmd === 'register') await cmdRegister();
 else if (cmd === 'send') {
@@ -281,7 +323,13 @@ else if (cmd === 'token') {
   else if (verb === 'revoke') await cmdTokenRevoke(agentId);
   else if (verb === 'list') await cmdTokenList(agentId);
   else fail('usage: nvk-agent.mjs token <issue|revoke|list> --agent <agentId>');
+} else if (cmd === 'external') {
+  const verb = args.shift();
+  if (verb === 'add') await cmdExternalAdd();
+  else if (verb === 'list') await cmdExternalList();
+  else if (verb === 'revoke') await cmdExternalRevoke();
+  else fail('usage: nvk-agent.mjs external <add|list|revoke> [--slack-user <U…>] [--name "<display>"]');
 } else {
-  console.error('usage: nvk-agent.mjs <spawn|register|send|status|tail|kill|mailbox|token> ...');
+  console.error('usage: nvk-agent.mjs <spawn|register|send|status|tail|kill|mailbox|token|external> ...');
   process.exit(1);
 }

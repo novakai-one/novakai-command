@@ -28,10 +28,20 @@ export interface AgentTokenRecord {
   kind: 'agent-token';
   schemaVersion: 1;
   createdAt: string;
-  agentId: string;
+  /** The agent principal — always set on agent records, never on external ones. */
+  agentId?: string;
   /** SHA-256 of the raw token — the ONLY persisted form. */
   tokenHash: string;
   revoked?: boolean;
+  /** D-N8-1: external-principal tokens resolve to a personId directly
+   * (agentId stays undefined on those records; agent records never carry this). */
+  externalPersonId?: string;
+}
+
+export interface TokenResolution {
+  recordId: string;
+  agentId?: string;
+  externalPersonId?: string;
 }
 
 export interface TokenStore {
@@ -41,8 +51,13 @@ export interface TokenStore {
   ensure(agentId: string): void;
   /** This process's raw token for the agent (null after a restart). */
   tokenForAgent(agentId: string): string | null;
+  /** D-N8-1: the external-principal halves of issue/ensure/tokenFor/revokeAll. */
+  issueExternal(personId: string): { record: AgentTokenRecord; token: string };
+  ensureExternal(personId: string): void;
+  tokenForExternal(personId: string): string | null;
+  revokeAllForExternal(personId: string): AgentTokenRecord[];
   /** Hash lookup over the fresh fold; null = unknown or revoked. */
-  resolve(token: string): { agentId: string; recordId: string } | null;
+  resolve(token: string): TokenResolution | null;
   /** Record-level revocation truth (revalidate's §2.1 re-check). */
   isRevoked(recordId: string): boolean;
   /** Append the revoked marker to every live token of the agent. */
@@ -83,6 +98,13 @@ interface StoreState {
   foldedSize: number;
   /** Process-local raw tokens (this run's mints) — never persisted. */
   rawByAgent: Map<string, string>;
+  /** D-N8-1: process-local raw EXTERNAL tokens, keyed by personId. */
+  rawByExternal: Map<string, string>;
+}
+
+/** The credential's principal key: agentId for agents, personId for externals. */
+function principalOf(record: AgentTokenRecord): string {
+  return record.agentId ?? (record.externalPersonId as string);
 }
 
 /** The fold with a freshness check — CLI-side appends become visible here. */
@@ -108,44 +130,51 @@ function appendRecord(state: StoreState, record: AgentTokenRecord): void {
   state.byId?.set(record.id, record);
 }
 
-function mint(state: StoreState, agentId: string): { record: AgentTokenRecord; token: string } {
+function mint(
+  state: StoreState,
+  identity: { agentId: string } | { externalPersonId: string },
+): { record: AgentTokenRecord; token: string } {
   const token = `nvkt_${randomBytes(32).toString('hex')}`;
   const record: AgentTokenRecord = {
     id: `agenttoken_${randomUUID()}`,
     kind: 'agent-token',
     schemaVersion: 1,
     createdAt: new Date().toISOString(),
-    agentId,
     tokenHash: hashToken(token),
+    ...identity,
   };
   appendRecord(state, record);
-  state.rawByAgent.set(agentId, token);
+  if ('externalPersonId' in identity) state.rawByExternal.set(identity.externalPersonId, token);
+  else state.rawByAgent.set(identity.agentId, token);
   return { record, token };
 }
 
-function resolveToken(state: StoreState, token: string): { agentId: string; recordId: string } | null {
+function resolveToken(state: StoreState, token: string): TokenResolution | null {
   const hashed = hashToken(token);
   for (const record of freshRecords(state).values()) {
     if (record.tokenHash === hashed && record.revoked !== true) {
-      return { agentId: record.agentId, recordId: record.id };
+      return record.externalPersonId !== undefined
+        ? { recordId: record.id, externalPersonId: record.externalPersonId }
+        : { recordId: record.id, agentId: record.agentId };
     }
   }
   return null;
 }
 
-function revokeAllFor(state: StoreState, agentId: string): AgentTokenRecord[] {
+function revokeAllPrincipal(state: StoreState, principal: string): AgentTokenRecord[] {
   const live = [...freshRecords(state).values()].filter(
-    (record) => record.agentId === agentId && record.revoked !== true,
+    (record) => principalOf(record) === principal && record.revoked !== true,
   );
   for (const record of live) appendRecord(state, { ...record, revoked: true });
-  state.rawByAgent.delete(agentId); // a revoked identity re-mints on next ensure
+  state.rawByAgent.delete(principal);
+  state.rawByExternal.delete(principal);
   return live.map((record) => ({ ...record, revoked: true as const }));
 }
 
-/** F1: does the fresh fold hold ANY live (non-revoked) record for the agent? */
-function hasLiveRecord(state: StoreState, agentId: string): boolean {
+/** F1: does the fresh fold hold ANY live (non-revoked) record for the principal? */
+function hasLiveRecord(state: StoreState, principal: string): boolean {
   return [...freshRecords(state).values()].some(
-    (record) => record.agentId === agentId && record.revoked !== true,
+    (record) => principalOf(record) === principal && record.revoked !== true,
   );
 }
 
@@ -157,21 +186,46 @@ function rawForAgent(state: StoreState, agentId: string): string | null {
   return heldRaw;
 }
 
-export function createTokenStore(storePath: string = defaultTokenStorePath()): TokenStore {
-  const state: StoreState = {
-    storePath, byId: null, foldedMtimeMs: -1, foldedSize: -1, rawByAgent: new Map(),
-  };
+/** This process's raw for an external — same dead-raw rule as agents (F1). */
+function rawForExternal(state: StoreState, personId: string): string | null {
+  const heldRaw = state.rawByExternal.get(personId) ?? null;
+  if (heldRaw !== null && !hasLiveRecord(state, personId)) return null;
+  return heldRaw;
+}
+
+function agentVerbs(state: StoreState) {
   return {
-    issue: (agentId) => mint(state, agentId),
-    ensure: (agentId) => {
+    issue: (agentId: string) => mint(state, { agentId }),
+    ensure: (agentId: string) => {
       // F1: a held raw whose records are ALL revoked (a second process
       // revoked them) is NOT a credential — re-mint and refresh the cache.
-      if (!state.rawByAgent.has(agentId) || !hasLiveRecord(state, agentId)) mint(state, agentId);
+      if (!state.rawByAgent.has(agentId) || !hasLiveRecord(state, agentId)) mint(state, { agentId });
     },
-    tokenForAgent: (agentId) => rawForAgent(state, agentId),
+    tokenForAgent: (agentId: string) => rawForAgent(state, agentId),
+  };
+}
+
+function externalVerbs(state: StoreState) {
+  return {
+    issueExternal: (personId: string) => mint(state, { externalPersonId: personId }),
+    ensureExternal: (personId: string) => {
+      if (!state.rawByExternal.has(personId) || !hasLiveRecord(state, personId)) mint(state, { externalPersonId: personId });
+    },
+    tokenForExternal: (personId: string) => rawForExternal(state, personId),
+  };
+}
+
+export function createTokenStore(storePath: string = defaultTokenStorePath()): TokenStore {
+  const state: StoreState = {
+    storePath, byId: null, foldedMtimeMs: -1, foldedSize: -1, rawByAgent: new Map(), rawByExternal: new Map(),
+  };
+  return {
+    ...agentVerbs(state),
+    ...externalVerbs(state),
+    revokeAllForExternal: (personId) => revokeAllPrincipal(state, personId),
     resolve: (token) => resolveToken(state, token),
     isRevoked: (recordId) => freshRecords(state).get(recordId)?.revoked === true,
-    revokeAll: (agentId) => revokeAllFor(state, agentId),
+    revokeAll: (agentId) => revokeAllPrincipal(state, agentId),
     listFor: (agentId) =>
       [...freshRecords(state).values()].filter((record) => record.agentId === agentId),
   };

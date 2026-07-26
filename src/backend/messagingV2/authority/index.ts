@@ -87,6 +87,9 @@ export interface NovakaiAuthorityConfig {
   /** D-N6-2: agent credential resolution (hash lookup + revocation truth).
    * REQUIRED — without it no agent credential can exist (fail fast, §1). */
   tokenStore: TokenStore;
+  /** D-N8-1: external-principal truth (active check for auth/revalidate/
+   * provisioning). Absent = external tokens are rejected (nothing to check). */
+  externalsStore?: { isActive(personId: string): boolean };
 }
 
 export interface NovakaiAuthority extends Authority, ProvisioningDirectory {
@@ -123,6 +126,7 @@ function rolesForAgent(block: AgentBlock): string[] {
 
 type LiveSession =
   | { kind: 'agent'; agentId: string; recordId: string; expiresAtMs: number; invalidated: boolean }
+  | { kind: 'external'; personId: string; recordId: string; expiresAtMs: number; invalidated: boolean }
   | { kind: 'human'; human: NovakaiHumanConfig; expiresAtMs: number; invalidated: boolean };
 
 interface AuthorityState {
@@ -235,6 +239,7 @@ interface AuthenticateDeps {
   roleGrants: Record<string, Grant[]>;
   humansByToken: Map<string, NovakaiHumanConfig>;
   tokenStore: TokenStore;
+  externalsStore?: { isActive(personId: string): boolean };
   state: AuthorityState;
 }
 
@@ -257,14 +262,29 @@ function authenticateHuman(deps: AuthenticateDeps, human: NovakaiHumanConfig): A
   return { kind: 'authenticated', principal: toPrincipal(sessionId, human.personId, grants, expiresAtMs) };
 }
 
+/** D-N8-1: an external token authenticates as ITS personId, NO grants —
+ * the active check is the externals store's (revoked → unknown credential). */
+function authenticateExternal(deps: AuthenticateDeps, personId: string, recordId: string): AuthOutcome {
+  if (deps.externalsStore?.isActive(personId) !== true) {
+    return { kind: 'rejected', error: authRejected('unknown credential') };
+  }
+  const expiresAtMs = millis(deps.clock.now()) + deps.ttlMs;
+  const sessionId = mintSession(deps.state, { kind: 'external', personId, recordId, expiresAtMs, invalidated: false });
+  return { kind: 'authenticated', principal: toPrincipal(sessionId, personId as PersonId, [], expiresAtMs) };
+}
+
 /** Token → principal resolution once the agent list is in hand. D-N6-2: an
  * agent credential is an issued nvkt_ token (hash lookup in the token
- * store); the raw durable agentId is REJECTED (D-N2-2 retired). */
+ * store); the raw durable agentId is REJECTED (D-N2-2 retired). D-N8-1:
+ * external tokens resolve to their personId directly. */
 function resolveByToken(deps: AuthenticateDeps, token: string, agents: AgentBlock[]): AuthOutcome {
   const resolved = deps.tokenStore.resolve(token);
   if (resolved !== null) {
+    if (resolved.externalPersonId !== undefined) {
+      return authenticateExternal(deps, resolved.externalPersonId, resolved.recordId);
+    }
     const agent = agents.find((block) => block.id === resolved.agentId);
-    if (agent !== undefined) return authenticateAgent(deps, agent, resolved.recordId);
+    if (agent !== undefined) return authenticateAgent(deps, agent, resolved.recordId as string);
     return { kind: 'rejected', error: authRejected('unknown credential') };
   }
   const human = deps.humansByToken.get(token);
@@ -334,11 +354,28 @@ function expireSession(state: AuthorityState, sessionId: string): RevalidateOutc
   return { kind: 'invalid' };
 }
 
+/** External-session revalidation (D-N8-1): revocation AND the externals
+ * store's active check are re-read at the point of truth (§2.1). */
+function revalidateExternalSession(
+  tokenStore: TokenStore,
+  externalsStore: { isActive(personId: string): boolean } | undefined,
+  state: AuthorityState,
+  sessionId: string,
+  session: Extract<LiveSession, { kind: 'external' }>,
+): RevalidateOutcome {
+  if (tokenStore.isRevoked(session.recordId) || externalsStore?.isActive(session.personId) !== true) {
+    state.sessions.delete(sessionId);
+    return { kind: 'invalid' };
+  }
+  return { kind: 'valid', principal: toPrincipal(sessionId, session.personId as PersonId, [], session.expiresAtMs) };
+}
+
 function makeRevalidate(
   objectModel: ObjectModel,
   clock: ClockIds,
   roleGrants: Record<string, Grant[]>,
   tokenStore: TokenStore,
+  externalsStore: { isActive(personId: string): boolean } | undefined,
   state: AuthorityState,
 ): Authority['revalidate'] {
   return async (sessionId) => {
@@ -348,6 +385,9 @@ function makeRevalidate(
     if (millis(clock.now()) >= session.expiresAtMs) return expireSession(state, sessionId);
     if (session.kind === 'agent') {
       return revalidateAgentSession(objectModel, roleGrants, tokenStore, state, sessionId, session);
+    }
+    if (session.kind === 'external') {
+      return revalidateExternalSession(tokenStore, externalsStore, state, sessionId, session);
     }
     // Fresh grants: a mid-session grant change takes effect HERE (§2.1).
     const grants = grantsFor(roleGrants, session.human.roles, session.human.grants);
@@ -375,11 +415,14 @@ function agentProvisioned(objectModel: ObjectModel, personId: PersonId): boolean
 function makeIsProvisioned(
   objectModel: ObjectModel,
   humansByToken: Map<string, NovakaiHumanConfig>,
+  externalsStore: { isActive(personId: string): boolean } | undefined,
 ): ProvisioningDirectory['isProvisioned'] {
   return async (personId) => {
     for (const human of humansByToken.values()) {
       if (human.personId === personId) return true;
     }
+    // D-N8-1: active externals are provisioned recipients too (MSG-014).
+    if (externalsStore?.isActive(personId) === true) return true;
     return agentProvisioned(objectModel, personId);
   };
 }
@@ -413,8 +456,12 @@ export function createNovakaiAuthority(
   const state: AuthorityState = { sessions: new Map(), sessionCounter: 0, unavailable: false };
   return {
     ...makeTestControls(state),
-    isProvisioned: makeIsProvisioned(objectModel, humansByToken),
-    authenticate: makeAuthenticate({ objectModel, clock, ttlMs, roleGrants, humansByToken, tokenStore: config.tokenStore, state }),
-    revalidate: makeRevalidate(objectModel, clock, roleGrants, config.tokenStore, state),
+    isProvisioned: makeIsProvisioned(objectModel, humansByToken, config.externalsStore),
+    authenticate: makeAuthenticate({
+      objectModel, clock, ttlMs, roleGrants, humansByToken, tokenStore: config.tokenStore,
+      ...(config.externalsStore !== undefined ? { externalsStore: config.externalsStore } : {}),
+      state,
+    }),
+    revalidate: makeRevalidate(objectModel, clock, roleGrants, config.tokenStore, config.externalsStore, state),
   };
 }

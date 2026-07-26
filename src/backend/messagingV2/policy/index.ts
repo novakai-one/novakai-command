@@ -77,28 +77,44 @@ async function syncAgents(
   blocks: AgentBlock[],
   sessions: ReadonlyMap<string, MessagingSession>,
   humanPersonId: PersonId | undefined,
+  externalPersonIds: PersonId[],
   failures: PolicySyncFailure[],
 ): Promise<void> {
-  for (const [agentId, session] of sessions) {
-    const self = blocks.find((block) => block.id === agentId);
-    if (self === undefined) continue; // plain spawn or retired mid-run — not ours to touch
-    const added = blocks
-      .filter((block) => isCoMember(self, block))
-      .map((block) => personIdForAgentId(block.id));
+  const allAgentPersonIds = blocks.map((block) => personIdForAgentId(block.id));
+  for (const [personId, session] of sessions) {
+    // D-N8-2: an external's allowlist is the WHOLE fleet (they are fleet
+    // co-members with everyone by construction, not by refs).
+    const isExternal = externalPersonIds.includes(personId as PersonId);
+    const self = isExternal ? undefined : blocks.find((block) => personIdForAgentId(block.id) === personId);
+    if (!isExternal && self === undefined) continue; // plain spawn or retired mid-run — not ours to touch
+    const added = isExternal
+      ? [...allAgentPersonIds, ...externalPersonIds.filter((other) => other !== personId)]
+      : [
+          ...blocks.filter((block) => isCoMember(self as AgentBlock, block)).map((block) => personIdForAgentId(block.id)),
+          ...externalPersonIds, // fleet co-members (D-N8-2 — deny-by-default stays the gate)
+        ];
     if (humanPersonId !== undefined) added.push(humanPersonId);
     const detail = await growAllowlist(session, added);
-    if (detail !== null) failures.push({ personId: personIdForAgentId(agentId), detail });
+    if (detail !== null) failures.push({ personId: personId as PersonId, detail });
   }
 }
 
-export function createContactBootstrap(objectModel: ObjectModel): ContactBootstrap {
+export function createContactBootstrap(
+  objectModel: ObjectModel,
+  /** D-N8-2: active external personIds — fleet co-members of EVERYONE. */
+  externals?: () => string[],
+): ContactBootstrap {
   return {
     async sync(sessions, human) {
       const failures: PolicySyncFailure[] = [];
       const blocks = objectModel.listAgents().filter(isActiveAgent);
-      await syncAgents(blocks, sessions, human?.principal.personId, failures);
+      const externalPersonIds = (externals?.() ?? []).map((personId) => personId as PersonId);
+      await syncAgents(blocks, sessions, human?.principal.personId, externalPersonIds, failures);
       if (human !== null) {
-        const added = blocks.map((block) => personIdForAgentId(block.id));
+        const added = [
+          ...blocks.map((block) => personIdForAgentId(block.id)),
+          ...externalPersonIds, // the owner sees every external as a co-member
+        ];
         const detail = await growAllowlist(human, added);
         if (detail !== null) failures.push({ personId: human.principal.personId, detail });
       }

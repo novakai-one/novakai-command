@@ -16,6 +16,7 @@ import type { RoomRef } from '../../../../packages/messaging/seams/membership.js
 import { ObjectModel } from '../../objectModel/index.js';
 import { readStoreDir, replaceLine } from '../../stores/store.mjs';
 import { personIdForAgentId } from '../authority/index.js';
+import { createExternalsStore } from '../externals/index.js';
 import { createNovakaiMembership } from './index.js';
 
 const STAMP = '2026-07-22T10:00:00+10:00';
@@ -214,6 +215,41 @@ console.log('dependency failure tests passed');
   assert.ok(after.members.includes(personIdForAgentId(thirdAgent)));
   rmSync(humanScratch, { recursive: true, force: true });
   console.log('fleet revision tests passed');
+}
+
+// --- D-N8-2: active externals ride the FLEET roster only ------------------------
+
+{
+  const n8Scratch = scratchStores();
+  const n8Model = new ObjectModel({ storesDir: n8Scratch });
+  const crewId = n8Model.createTeam({ name: 'Fleet Crew', missionId: 'mission_alpha' });
+  const agentId = n8Model.createAgent({ name: 'worker-a', provider: 'claude', teamId: crewId, missionId: 'mission_alpha' });
+  const human = 'person_user-chris' as PersonId;
+  const externals = createExternalsStore(path.join(mkdtempSync(path.join(tmpdir(), 'nvk-mv2-member-ext-')), 'externals.jsonl'));
+  const partner = externals.provision({ slackUserId: 'U_PARTNER', displayName: 'Partner Chris' });
+  const membership = createNovakaiMembership(n8Model, clock, human, () => externals.activePersonIds());
+
+  const fleetRoom: RoomRef = { authority: 'fleet', externalId: 'team' };
+  const fleet = await membership.resolveMembers(fleetRoom);
+  if (fleet.kind !== 'resolved') throw new Error('unreachable');
+  assert.ok(fleet.members.includes(partner.personId as PersonId), 'the fleet roster includes the active external');
+  const fleetMember = await membership.isMember(fleetRoom, partner.personId as PersonId);
+  assert.deepEqual(fleetMember, { kind: 'known', member: true }, 'the external IS a fleet member (R4 sends authorize)');
+
+  const teamRoom = await membership.resolveMembers({ authority: 'team', externalId: crewId });
+  if (teamRoom.kind !== 'resolved') throw new Error('unreachable');
+  assert.ok(!teamRoom.members.includes(partner.personId as PersonId), 'team rosters do NOT include externals (fleet only)');
+  const missionRoom = await membership.resolveMembers({ authority: 'mission', externalId: 'mission_alpha' });
+  if (missionRoom.kind !== 'resolved') throw new Error('unreachable');
+  assert.ok(!missionRoom.members.includes(partner.personId as PersonId), 'mission rosters do NOT include externals (fleet only)');
+
+  externals.revokeBySlackUser('U_PARTNER');
+  const afterRevoke = await membership.resolveMembers(fleetRoom);
+  if (afterRevoke.kind !== 'resolved') throw new Error('unreachable');
+  assert.ok(!afterRevoke.members.includes(partner.personId as PersonId), 'a revoked external leaves the fleet roster');
+  assert.ok(afterRevoke.members.includes(personIdForAgentId(agentId)), 'agents are unaffected');
+  rmSync(n8Scratch, { recursive: true, force: true });
+  console.log('D-N8-2 fleet-externals tests passed');
 }
 
 console.log('messagingV2 membership adapter tests passed');
