@@ -2,7 +2,7 @@
 // Fake TerminalRuntime, real express — the missionSpawn.test.ts harness
 // pattern. Run with `npx tsx src/backend/server/tests/agentsHealth.test.ts`.
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, readFileSync, existsSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import express from 'express';
@@ -158,6 +158,43 @@ const harness = await makeHarness();
   assert.equal(first.agentId, 'agent_quiet');
   assert.equal(first.healthBefore?.state, 'quiet');
   assert.ok(!Number.isNaN(Date.parse(first.ts)), 'ts is ISO');
+}
+
+// --- D-N7-7: the slack-bridge health route -------------------------------------
+
+{
+  const bridgeStatePath = path.join(mkdtempSync(path.join(tmpdir(), 'nvk-bridge-health-')), 'state.json');
+  process.env.NVK_SLACK_BRIDGE_STATE = bridgeStatePath;
+  try {
+    // 404 while the file is absent (the bridge never ran here).
+    const missing = await fetch(`${harness.base}/api/agents/slack-bridge/health`);
+    assert.equal(missing.status, 404, 'absent state file → 404');
+
+    // 200 with the health block + cursor when the file is fresh.
+    writeFileSync(bridgeStatePath, JSON.stringify({
+      cursor: 42,
+      roots: {}, agents: {},
+      health: {
+        updatedAt: new Date().toISOString(), appRetryCount: 0, slackRetryCount: 1,
+        lastError: null, lastBridgedAt: new Date().toISOString(),
+      },
+    }));
+    const fresh = await fetch(`${harness.base}/api/agents/slack-bridge/health`);
+    assert.equal(fresh.status, 200, 'a fresh state file serves');
+    const body = await fresh.json() as { cursor: number; health: { appRetryCount: number; slackRetryCount: number } };
+    assert.equal(body.cursor, 42, 'the cursor rides along');
+    assert.equal(body.health.slackRetryCount, 1, 'the health block is served verbatim');
+
+    // 503 when updatedAt is stale (>5 min — bridge down or wedged).
+    writeFileSync(bridgeStatePath, JSON.stringify({
+      cursor: 42,
+      health: { updatedAt: new Date(Date.now() - 10 * 60_000).toISOString() },
+    }));
+    const stale = await fetch(`${harness.base}/api/agents/slack-bridge/health`);
+    assert.equal(stale.status, 503, 'a stale health block → 503');
+  } finally {
+    delete process.env.NVK_SLACK_BRIDGE_STATE;
+  }
 }
 
 harness.close();

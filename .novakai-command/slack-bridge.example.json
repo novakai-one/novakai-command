@@ -2,5 +2,11 @@
   "botToken": "xoxb-PUT-YOUR-BOT-TOKEN-HERE",
   "appToken": "xapp-PUT-YOUR-APP-LEVEL-TOKEN-HERE",
   "chrisUserId": "U0123ABCDEF",
-  "chrisEmail": "chris@example.com"
+  "chrisEmail": "chris@example.com",
+  "channels": [
+    { "slackChannelId": "C0123ABCDEF", "room": "team" }
+  ],
+  "_comments": {
+    "channels": "D-N7-2: one Slack channel ↔ one room Thread, label form (resolved at boot via /user/threads; an unresolvable label is a loud boot warning, DM lanes unaffected). ABSENT/empty = channel code dormant. Channel inbound is OWNER-ONLY (chrisUserId) — external principals are N8's mechanism; until then every other Slack user drops with one loud line."
+  }
 }
