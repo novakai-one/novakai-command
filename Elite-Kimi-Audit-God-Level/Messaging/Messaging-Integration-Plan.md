@@ -150,6 +150,16 @@ code.** If a slice needs a core change, that is a new R-item and a contract amen
   mid-chunk resume + 429 Retry-After (capped); bridge-health state +
   `/api/agents/slack-bridge/health`. Record: `Messaging-N7-Review.md`
   (audit MODERATE, all 9 findings disposed at source).
+- **D-N8-1..5 (N8):** externals are a real principal kind (externals store;
+  token-resolved personIds; no grants; provisioning + CLI); they ride the
+  FLEET roster only (deny-by-default stays the gate via the D-N2-5 sync);
+  the bridge is a DEC-17 client per external (identity from the
+  authenticated Slack user id via their own credential — never text, never
+  as chris); one held ws presence per external closes the delivery loop
+  (confirmation-only frames; content stays on the N7 room path);
+  live-fire = the PartnerChris moment. Record: `Messaging-N8-Review.md`.
+  **The law-#6 auditor was SKIPPED at Chris's explicit instruction
+  (usage ceiling) — recorded as follow-up debt.**
 - **D-BRIDGE-1 (2026-07-26):** D7 descoped. A v0 Slack bridge
   (`scripts/nvk-slack-bridge.mjs`, branch `kimi/slack-bridge-v0`) precedes N7:
   own workspace, human principal ONLY (agent→chris DMs appear in Slack;
