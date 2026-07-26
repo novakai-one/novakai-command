@@ -767,6 +767,20 @@ export class ServerController {
     this.startSeatWatchSafely();
   }
 
+  /** D-N6-1: the DEC-17 door options — production defaults to 3032 on
+   * localhost; scratch backends (NOVAKAI_SERVER_PORT set) stay doorless so
+   * parallel rigs never fight over the port. Remote reachability is the
+   * owner's opt-in via NVK_MESSAGING_V2_DOOR_HOST (docs/operations/CONNECT-EXTERNAL.md). */
+  private doorOptions(): { door: { port: number; host: string } } | Record<string, never> {
+    if (process.env.NOVAKAI_SERVER_PORT) return {};
+    return {
+      door: {
+        port: Number(process.env.NVK_MESSAGING_V2_DOOR_PORT) || 3032,
+        host: process.env.NVK_MESSAGING_V2_DOOR_HOST || '127.0.0.1',
+      },
+    };
+  }
+
   /** A v2 boot failure must never take down the app (the old surface still
    * serves). Fail LOUD, continue — the v2 routes answer 503 this run. */
   private async bootMessagingV2Safely(): Promise<void> {
@@ -777,16 +791,7 @@ export class ServerController {
         tokenStore: this.tokenStore,
         externalsStore: this.externalsStore,
         humanToken: process.env.NVK_MESSAGING_V2_HUMAN_TOKEN || undefined,
-        // D-N6-1: the DEC-17 door — production defaults to 3032 on localhost;
-        // scratch backends (NOVAKAI_SERVER_PORT set) stay doorless so parallel
-        // rigs never fight over the port. Remote reachability is the owner's
-        // opt-in via NVK_MESSAGING_V2_DOOR_HOST (docs/operations/CONNECT-EXTERNAL.md).
-        ...(process.env.NOVAKAI_SERVER_PORT ? {} : {
-          door: {
-            port: Number(process.env.NVK_MESSAGING_V2_DOOR_PORT) || 3032,
-            host: process.env.NVK_MESSAGING_V2_DOOR_HOST || '127.0.0.1',
-          },
-        }),
+        ...this.doorOptions(),
         // N2: the agent direct lane — pty presence transport over the terminal
         // runtime; the glue opens lanes for live agents and briefs new spawns.
         terminals: this.agentsHub.terminals,
