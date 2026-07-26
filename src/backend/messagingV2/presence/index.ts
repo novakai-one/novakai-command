@@ -3,15 +3,17 @@
  * the 'pty' presence lane for every durable agent and takes over the spawn
  * briefing from the old MessagingHub.handleAgentSpawned (deleted).
  *
- * Lane lifecycle: authenticate({ token: agentId }) → openPresence({ transport:
- * 'pty', clientLabel: agentId }) → transport.bind(presenceId, agentId). The
- * authority rejects agents without a durable record (plain spawns) — they get
- * no lane, and their briefing says messaging is unavailable. Lanes open on
- * launch AND at boot for already-running live agents (PTYs survive backend
- * restarts; presence is ephemeral, DEC-02); any surviving registry presences
- * with a clientLabel are re-bound to their live terminals first. Sessions are
- * held for the app lifetime and dropped on close (the embedded stack's own
- * close ends them — the in-memory registry dies with it).
+ * Lane lifecycle: authenticate({ token: <issued nvkt_ token> }) — minted and
+ * held by the token store (D-N6-2; the raw agentId is NOT a credential) →
+ * openPresence({ transport: 'pty', clientLabel: agentId }) →
+ * transport.bind(presenceId, agentId). The authority rejects agents without
+ * a durable record (plain spawns) — they get no lane, and their briefing
+ * says messaging is unavailable. Lanes open on launch AND at boot for
+ * already-running live agents (PTYs survive backend restarts; presence is
+ * ephemeral, DEC-02); any surviving registry presences with a clientLabel
+ * are re-bound to their live terminals first. Sessions are held for the app
+ * lifetime and dropped on close (the embedded stack's own close ends them —
+ * the in-memory registry dies with it).
  *
  * Briefing: same 3000 ms delay and roster re-check as the old hub, but
  * delivered through the TerminalRuntime submit lane directly (the old
@@ -45,6 +47,7 @@ import type { ContactBootstrap } from '../policy/index.js';
 import { createFailureTruth } from '../failureTruth/index.js';
 import type { FailureTruth } from '../failureTruth/index.js';
 import type { TerminalHostPresenceTransport } from '../transport/index.js';
+import type { TokenStore } from '../tokens/index.js';
 
 const BRIEFING_DELAY_MS = 3_000;
 const BRIEFING_SETTLE_MS = 900;
@@ -61,6 +64,9 @@ export interface AgentLaneGlueDeps {
   terminals: TerminalRuntime;
   /** D-N2-5: durable membership truth for the team contact bootstrap. */
   objectModel: ObjectModel;
+  /** D-N6-2: agent credentials come from the token store (agentId is NOT
+   * one); ensure() mints on demand so boot/launch stay zero-touch. */
+  tokenStore: TokenStore;
   /** When set, the human principal's session is held and its allowlist seeded. */
   humanToken?: string;
   /** Test hook; defaults to 3000 ms (the old hub's delay). */
@@ -77,6 +83,8 @@ export interface AgentLaneGlue {
   laneCount(): number;
   /** The held human session (N3: the rooms glue posts/reads #team as Chris). */
   humanSession(): MessagingSession | null;
+  /** D-N6-5: run the D-N2-5 policy sync on demand (token issuance). */
+  syncPoliciesNow(): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -154,7 +162,10 @@ async function policySessions(state: GlueState): Promise<Map<string, MessagingSe
   const resolved = new Map(state.sessions);
   for (const block of state.deps.objectModel.listAgents().filter(isActiveAgent)) {
     if (resolved.has(block.id)) continue;
-    const auth = await state.deps.embedded.authenticate({ token: block.id });
+    state.deps.tokenStore.ensure(block.id);
+    const token = state.deps.tokenStore.tokenForAgent(block.id);
+    if (token === null) continue; // unreachable after ensure — skip honestly
+    const auth = await state.deps.embedded.authenticate({ token });
     if (auth.kind === 'authenticated') resolved.set(block.id, auth.session);
   }
   return resolved;
@@ -194,10 +205,15 @@ function rebindSurvivors(state: GlueState): void {
 /** authenticate → openPresence → bind. False = no lane (plain spawn etc.).
  * Idempotence keys off the REGISTRY, not the held sessions: an agent whose
  * presence closed (liveness, R9) and who relaunches with the same durable
- * agentId must get a fresh presence — a stale session must not suppress it. */
+ * agentId must get a fresh presence — a stale session must not suppress it.
+ * D-N6-2: the credential is the token store's issued token (ensured here so
+ * a fresh spawn's first lane never waits on the boot mint). */
 async function openLane(state: GlueState, agentId: string): Promise<boolean> {
   if (state.deps.embedded.registry.presencesFor(personIdForAgentId(agentId)).length > 0) return true;
-  const auth = await state.deps.embedded.authenticate({ token: agentId });
+  state.deps.tokenStore.ensure(agentId);
+  const token = state.deps.tokenStore.tokenForAgent(agentId);
+  if (token === null) return false;
+  const auth = await state.deps.embedded.authenticate({ token });
   if (auth.kind !== 'authenticated') return false;
   const opened = await auth.session.openPresence({ transport: 'pty', clientLabel: agentId });
   if (opened.kind !== 'ok') return false;
@@ -304,6 +320,7 @@ export function createAgentLaneGlue(deps: AgentLaneGlueDeps): AgentLaneGlue {
     handleAgentLaunched: (info) => handleAgentLaunched(state, info),
     laneCount: () => state.sessions.size,
     humanSession: () => heldHumanSession(state),
+    syncPoliciesNow: () => syncPoliciesSafely(state),
     close: () => closeGlue(state),
   };
 }

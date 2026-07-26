@@ -22,6 +22,7 @@ import type { TerminalRuntime } from '../../terminal/runtime/index.js';
 import { ObjectModel } from '../../objectModel/index.js';
 import { personIdForAgentId } from '../authority/index.js';
 import { startMessagingV2 } from '../index.js';
+import { createTokenStore } from '../tokens/index.js';
 import { readTrailingPage } from './index.js';
 
 const STAMP = '2026-07-22T10:00:00+10:00';
@@ -86,7 +87,9 @@ const terminals = new FakeTerminalRuntime([aliceInfo, bobInfo, carolInfo]);
 
 const journalPath = path.join(mkdtempSync(path.join(tmpdir(), 'nvk-mv2-rooms-journal-')), 'journal.jsonl');
 const glueLogs: string[] = [];
+const tokens = createTokenStore(path.join(mkdtempSync(path.join(tmpdir(), 'nvk-mv2-rooms-tokens-')), 'tokens.jsonl'));
 const handle = await startMessagingV2({
+  tokenStore: tokens,
   objectModel: model,
   storePath: journalPath,
   terminals,
@@ -95,6 +98,11 @@ const handle = await startMessagingV2({
 });
 const rooms = handle.rooms;
 assert.ok(rooms, 'the rooms glue booted');
+
+const tokenFor = (agentId: string): string => {
+  tokens.ensure(agentId);
+  return tokens.tokenForAgent(agentId) as string;
+};
 
 async function authenticate(token: string): Promise<MessagingSession> {
   const auth = await handle.embedded.authenticate({ token });
@@ -143,7 +151,7 @@ console.log('human #team fan-out test passed');
 
 // --- sender-in-recipients: the CORE's truth (decideSend.ts — NO sender exclusion) ---
 
-const alice = await authenticate(aliceId);
+const alice = await authenticate(tokenFor(aliceId));
 const alicePost = await alice.sendMessage({
   address: `thread:${fleetThreadId}`, body: { text: 'alice to fleet' },
   priority: 'normal', clientMessageId: 'n3-rooms-1',
@@ -157,7 +165,7 @@ console.log('sender-in-recipients documentation test passed');
 
 // --- R4: a member whose policy blocks the sender — terminal failed, no PTY text ----
 
-const carol = await authenticate(carolId);
+const carol = await authenticate(tokenFor(carolId));
 const carolPost = await carol.sendMessage({
   address: `thread:${fleetThreadId}`, body: { text: 'carol to fleet' },
   priority: 'normal', clientMessageId: 'n3-rooms-2',
@@ -189,7 +197,7 @@ console.log('launch-time provisioning test passed');
 // --- FIX 4: room history serves the TRAILING window (newest page), not the oldest ---
 
 {
-  const aliceWriter = await authenticate(aliceId);
+  const aliceWriter = await authenticate(tokenFor(aliceId));
   for (let count = 1; count <= 205; count += 1) {
     const seeded = await aliceWriter.sendMessage({
       address: `thread:${fleetThreadId}`, body: { text: `seed ${count}` },
@@ -212,6 +220,7 @@ console.log('launch-time provisioning test passed');
 {
   const noTokenLogs: string[] = [];
   const noToken = await startMessagingV2({
+    tokenStore: tokens,
     objectModel: model,
     storePath: path.join(mkdtempSync(path.join(tmpdir(), 'nvk-mv2-notoken-journal-')), 'journal.jsonl'),
     terminals: new FakeTerminalRuntime([]),

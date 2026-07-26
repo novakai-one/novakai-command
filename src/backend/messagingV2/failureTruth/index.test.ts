@@ -19,6 +19,7 @@ import type { AgentInfo } from '../../terminal/manager.js';
 import type { TerminalRuntime } from '../../terminal/runtime/index.js';
 import { ObjectModel } from '../../objectModel/index.js';
 import { createNovakaiAuthority } from '../authority/index.js';
+import { createTokenStore } from '../tokens/index.js';
 import { createFailureTruth } from './index.js';
 import { createNovakaiMembership } from '../membership/index.js';
 import { createAgentLaneGlue } from '../presence/index.js';
@@ -77,18 +78,24 @@ const terminals = new FakeTerminalRuntime([agentInfo(bobId, 'worker-b'), agentIn
 
 const clock = createSystemClock();
 const transport = createTerminalHostTransport(terminals);
+const tokens = createTokenStore(path.join(mkdtempSync(path.join(tmpdir(), 'nvk-mv2-ft-tokens-')), 'tokens.jsonl'));
+const tokenFor = (agentId: string): string => {
+  tokens.ensure(agentId);
+  return tokens.tokenForAgent(agentId) as string;
+};
 const embedded = createEmbeddedMessaging({
   clock,
   store: createMemoryStore(clock),
   authority: createNovakaiAuthority(model, clock, {
     humans: [{ token: 'human-secret', personId: 'person_user-chris' as never, roles: ['Human'] }],
+    tokenStore: tokens,
   }),
   membership: createNovakaiMembership(model, clock, 'person_user-chris' as never),
   transports: [transport],
 });
 await embedded.start();
 const glue = createAgentLaneGlue({
-  embedded, transport, terminals, objectModel: model, humanToken: 'human-secret',
+  embedded, transport, terminals, objectModel: model, tokenStore: tokens, humanToken: 'human-secret',
   briefingDelayMs: 5, 'log': () => {},
 });
 await glue.openBootLanes();
@@ -110,7 +117,7 @@ function laneText(agentId: string): string[] {
 
 const fleet = await embedded.store.createRoomThread({ threadKind: 'team', authority: 'fleet', externalId: 'team' });
 if (fleet.kind !== 'ok') throw new Error('unreachable');
-const carol = await authenticate(carolId);
+const carol = await authenticate(tokenFor(carolId));
 const blocked = await carol.sendMessage({
   address: `thread:${fleet.value.id}`,
   body: { text: 'bob will never see this' },

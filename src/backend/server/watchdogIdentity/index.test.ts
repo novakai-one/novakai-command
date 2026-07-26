@@ -18,6 +18,7 @@ import type { AgentInfo } from '../../terminal/manager.js';
 import type { TerminalRuntime } from '../../terminal/runtime/index.js';
 import { ObjectModel } from '../../objectModel/index.js';
 import { createNovakaiAuthority, personIdForAgentId } from '../../messagingV2/authority/index.js';
+import { createTokenStore } from '../../messagingV2/tokens/index.js';
 import { createNovakaiMembership } from '../../messagingV2/membership/index.js';
 import { createAgentLaneGlue } from '../../messagingV2/presence/index.js';
 import { createTerminalHostTransport } from '../../messagingV2/transport/index.js';
@@ -107,18 +108,24 @@ console.log('no-mission tests passed');
 const terminals = new FakeTerminalRuntime([agentInfo(bobId, 'worker-b'), agentInfo(carolId, 'worker-c')]);
 const clock = createSystemClock();
 const transport = createTerminalHostTransport(terminals);
+const tokens = createTokenStore(path.join(mkdtempSync(path.join(tmpdir(), 'nvk-mv2-wd-tokens-')), 'tokens.jsonl'));
+const tokenFor = (agentId: string): string => {
+  tokens.ensure(agentId);
+  return tokens.tokenForAgent(agentId) as string;
+};
 const embedded = createEmbeddedMessaging({
   clock,
   store: createMemoryStore(clock),
   authority: createNovakaiAuthority(model, clock, {
     humans: [{ token: 'human-secret', personId: 'person_user-chris' as never, roles: ['Human'] }],
+    tokenStore: tokens,
   }),
   membership: createNovakaiMembership(model, clock, 'person_user-chris' as never),
   transports: [transport],
 });
 await embedded.start();
 const glue = createAgentLaneGlue({
-  embedded, transport, terminals, objectModel: model, humanToken: 'human-secret',
+  embedded, transport, terminals, objectModel: model, tokenStore: tokens, humanToken: 'human-secret',
   briefingDelayMs: 5, 'log': () => {},
 });
 await glue.openBootLanes();
@@ -132,7 +139,7 @@ async function authenticate(token: string) {
 
 const watchdogPerson = personIdForAgentId(watchdogId);
 for (const agentId of [bobId, carolId]) {
-  const policy = await (await authenticate(agentId)).getPolicy({});
+  const policy = await (await authenticate(tokenFor(agentId))).getPolicy({});
   if (policy.kind !== 'ok') throw new Error('unreachable');
   assert.ok(
     policy.value.contact.allowlist.includes(watchdogPerson),
@@ -142,7 +149,7 @@ for (const agentId of [bobId, carolId]) {
 
 const fleet = await embedded.store.createRoomThread({ threadKind: 'team', authority: 'fleet', externalId: 'team' });
 if (fleet.kind !== 'ok') throw new Error('unreachable');
-const alert = await (await authenticate(watchdogId)).sendMessage({
+const alert = await (await authenticate(tokenFor(watchdogId))).sendMessage({
   address: `thread:${fleet.value.id}`,
   body: { text: 'worker-b has gone quiet for ~25 min with nothing pending — worth a look.' },
   priority: 'normal', clientMessageId: 'f3-alert-1',
@@ -151,7 +158,7 @@ assert.equal(alert.kind, 'ok', 'the fleet alert accepts');
 if (alert.kind !== 'ok') throw new Error('unreachable');
 await embedded.pumpEvents();
 
-const deliveries = await (await authenticate(watchdogId)).getDelivery({ messageId: alert.value.messageId });
+const deliveries = await (await authenticate(tokenFor(watchdogId))).getDelivery({ messageId: alert.value.messageId });
 if (deliveries.kind !== 'ok') throw new Error('unreachable');
 const failed = deliveries.value.deliveries.filter((delivery) => delivery.state === 'failed');
 assert.equal(failed.length, 0, 'ZERO failed deliveries with agents over 2 missions + 2 teams');

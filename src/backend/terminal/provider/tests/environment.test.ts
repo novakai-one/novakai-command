@@ -53,9 +53,20 @@ function testLaneLocalPrecedence(): void {
   }
 }
 
+function testInjectsAgentTokenAlongsideAgentId(): void {
+  // D-N6-2: the spawn carries its ISSUED credential (nvkt_…) in
+  // NVK_AGENT_TOKEN, next to its identity in NVK_AGENT_ID.
+  const environment = providerEnvironment('claude', 'sess', 3131, 'agent_abc', 'nvkt_deadbeef');
+  assert.equal(environment.NVK_AGENT_ID, 'agent_abc', 'identity env unchanged');
+  assert.equal(environment.NVK_AGENT_TOKEN, 'nvkt_deadbeef', 'the issued credential rides NVK_AGENT_TOKEN');
+  const bare = providerEnvironment('claude', 'sess', 3131, 'agent_abc');
+  assert.equal(bare.NVK_AGENT_TOKEN, undefined, 'no token, no env (plain/runtime spawns)');
+}
+
 testBindsBrowserSession();
 testOmitsBrowserSessionWhenUnset();
 testStillScrubsProviderSecrets();
 testPointsAgentAtOwnBackend();
 testLaneLocalPrecedence();
+testInjectsAgentTokenAlongsideAgentId();
 console.log('PASS');

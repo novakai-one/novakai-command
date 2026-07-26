@@ -1,16 +1,17 @@
 #!/usr/bin/env node
 // nvk msg — agent-to-agent messaging through the sealed messaging capability
 // (slice N2, the agent direct lane). A thin adapter over the authenticated v2
-// REST routes: sender identity comes from the server-injected token
-// (NVK_AGENT_ID env, or --token) — there is NO --from, no self-claim, no file
-// fallback, and no pre-tunnel fallback. A dead server is an honest error with
-// a non-zero exit.
+// REST routes: sender identity comes from the server-injected credential
+// (NVK_AGENT_TOKEN env — the D-N6-2 issued token, or --token) — there is NO
+// --from, no self-claim, no file fallback, and NO agentId-as-token fallback
+// (D-N2-2 is retired: the raw agentId is NOT a credential). A dead server is
+// an honest error with a non-zero exit.
 //
 //   node scripts/nvk-msg.mjs send --to <name> [--interrupt] [--thread <id>] "body"
 //   node scripts/nvk-msg.mjs read <name|#team> [--since ISO]
 //   node scripts/nvk-msg.mjs names
 //
-// Token: --token or NVK_AGENT_ID (injected into every spawned PTY's env).
+// Token: --token or NVK_AGENT_TOKEN (injected into every spawned PTY's env).
 // Server: NVK_COMMAND_URL (default http://127.0.0.1:3031).
 
 import crypto from 'node:crypto';
@@ -22,9 +23,9 @@ const cmd = args.shift();
 const flag = (name) => { const i = args.indexOf(name); return i >= 0 ? args.splice(i, 1) && true : false; };
 const opt = (name) => { const i = args.indexOf(name); return i >= 0 ? args.splice(i, 2)[1] : undefined; };
 
-const token = opt('--token') || process.env.NVK_AGENT_ID;
+const token = opt('--token') || process.env.NVK_AGENT_TOKEN;
 if (!token) {
-  console.error('nvk-msg: no identity token — pass --token <agentId> or run inside a spawned agent (NVK_AGENT_ID is set for you)');
+  console.error('nvk-msg: no identity token — pass --token <nvkt_…> or run inside a spawned agent (NVK_AGENT_TOKEN is set for you)');
   process.exit(1);
 }
 
@@ -60,10 +61,10 @@ if (cmd === 'send') {
   const to = opt('--to');
   const threadId = opt('--thread');
   // audit #4: stale flags must fail loudly — never misdeliver "--from X hi"
-  // as the body. Sender identity comes from NVK_AGENT_ID; there is no --from.
+  // as the body. Sender identity comes from NVK_AGENT_TOKEN; there is no --from.
   const unknown = args.find((token) => token.startsWith('--'));
   if (unknown) {
-    console.error(`nvk-msg: unknown flag "${unknown}" — sender identity comes from NVK_AGENT_ID (there is no --from); run: nvk-msg send --to <name> "body"`);
+    console.error(`nvk-msg: unknown flag "${unknown}" — sender identity comes from NVK_AGENT_TOKEN (there is no --from); run: nvk-msg send --to <name> "body"`);
     process.exit(1);
   }
   if (threadId) {

@@ -18,6 +18,7 @@ import type { SubmitJob } from '../terminal/host/protocol/index.js';
 import type { AgentInfo } from '../terminal/manager.js';
 import type { TerminalRuntime } from '../terminal/runtime/index.js';
 import { personIdForAgentId } from './authority/index.js';
+import { createTokenStore } from './tokens/index.js';
 import { startMessagingV2 } from './index.js';
 
 const STAMP = '2026-07-22T10:00:00+10:00';
@@ -51,6 +52,12 @@ const alicePerson = personIdForAgentId(aliceId);
 const bobPerson = personIdForAgentId(bobId);
 
 const journalPath = path.join(mkdtempSync(path.join(tmpdir(), 'nvk-mv2-journal-')), 'journal.jsonl');
+// D-N6-2: agent credentials are issued tokens (agentId is NOT one).
+const tokens = createTokenStore(path.join(mkdtempSync(path.join(tmpdir(), 'nvk-mv2-tokens-')), 'tokens.jsonl'));
+const tokenFor = (agentId: string): string => {
+  tokens.ensure(agentId);
+  return tokens.tokenForAgent(agentId) as string;
+};
 const bootLogs: string[] = [];
 
 // --- boot ---------------------------------------------------------------------
@@ -58,6 +65,7 @@ const bootLogs: string[] = [];
 const handle = await startMessagingV2({
   objectModel: model,
   storePath: journalPath,
+  tokenStore: tokens,
   'log': (message) => bootLogs.push(message),
 });
 assert.ok(
@@ -79,8 +87,8 @@ console.log('getCapabilities test passed');
 const rejected = await handle.embedded.authenticate({ token: 'agent_00000000-0000-0000-0000-000000000000' });
 assert.equal(rejected.kind, 'rejected', 'unknown durable id is NotAuthenticated');
 
-const aliceAuth = await handle.embedded.authenticate({ token: aliceId });
-const bobAuth = await handle.embedded.authenticate({ token: bobId });
+const aliceAuth = await handle.embedded.authenticate({ token: tokenFor(aliceId) });
+const bobAuth = await handle.embedded.authenticate({ token: tokenFor(bobId) });
 assert.equal(aliceAuth.kind, 'authenticated');
 assert.equal(bobAuth.kind, 'authenticated');
 if (aliceAuth.kind !== 'authenticated' || bobAuth.kind !== 'authenticated') throw new Error('unreachable');
@@ -139,13 +147,14 @@ appendFileSync(journalPath, '{"op":"createThrea');
 const rebooted = await startMessagingV2({
   objectModel: model,
   storePath: journalPath,
+  tokenStore: tokens,
   'log': (message) => bootLogs.push(message),
 });
 assert.ok(
   bootLogs.filter((line) => line.startsWith('[messaging-v2] capability booted')).length === 2,
   'torn-tail journal truncates and the capability boots again',
 );
-const aliceReboot = await rebooted.embedded.authenticate({ token: aliceId });
+const aliceReboot = await rebooted.embedded.authenticate({ token: tokenFor(aliceId) });
 assert.equal(aliceReboot.kind, 'authenticated', 'sessions authenticate against the recovered store');
 if (aliceReboot.kind === 'authenticated') {
   const recovered = unwrap(await aliceReboot.session.getMessages({ threadId: accepted.threadId }));
@@ -182,7 +191,7 @@ globalThis.clearInterval = ((timer?: Parameters<typeof clearInterval>[0]) => {
 }) as typeof clearInterval;
 try {
   await assert.rejects(
-    startMessagingV2({ objectModel: doomedModel, storePath: doomedJournal, 'log': () => {} }),
+    startMessagingV2({ objectModel: doomedModel, storePath: doomedJournal, tokenStore: tokens, 'log': () => {} }),
     'a boot whose principal read fails must reject',
   );
   assert.equal(leaked.size, 0, `a failed boot must not leak sweep/bus timers — ${leaked.size} still live`);
@@ -225,19 +234,20 @@ class FakeTerminalRuntime implements TerminalRuntime {
     agentId: laneAgentId, title: 'worker-lane', provider: 'claude', sessionId: 'session',
     projectDir: 'project', cwd: '/tmp/project', status: 'running', createdAt: new Date().toISOString(),
   };
-  // Reads 1-3 (principal count, agent authenticate, human authenticate — the
-  // human session is self-minted since the N3 live-verification fix) pass;
-  // read 4 (the policy sync) burns.
+  // Reads 1-4 (principal count, the D-N6-2 boot-mint read, human authenticate
+  // — the authority reads the agent list for EVERY credential — and the lane
+  // agent's authenticate) pass; read 5 (the policy sync) burns.
   let reads = 0;
   const realListAgents = bootModel.listAgents.bind(bootModel);
   bootModel.listAgents = (() => {
     reads += 1;
-    if (reads > 3) throw new Error('stores on fire');
+    if (reads > 4) throw new Error('stores on fire');
     return realListAgents();
   }) as typeof bootModel.listAgents;
   const bootJournal = path.join(mkdtempSync(path.join(tmpdir(), 'nvk-mv2-policyfail-')), 'journal.jsonl');
   const bootHandle = await startMessagingV2({
-    objectModel: bootModel, storePath: bootJournal, terminals: new FakeTerminalRuntime([laneInfo]), 'log': () => {},
+    objectModel: bootModel, storePath: bootJournal, tokenStore: tokens,
+    terminals: new FakeTerminalRuntime([laneInfo]), 'log': () => {},
   });
   assert.ok(bootHandle.lanes, 'the capability booted despite the policy-sync failure');
   assert.equal(bootHandle.lanes?.laneCount(), 1, 'the lane opened — only the policy pass failed');

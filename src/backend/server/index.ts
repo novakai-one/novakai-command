@@ -36,6 +36,7 @@ import { PeopleHub } from '../people/index.js';
 import type { TerminalRuntime } from '../terminal/runtime/index.js';
 import { createSeatWatch, tickSafely } from '../terminal/seatWatch/index.js';
 import { ensureWatchdogIdentity, WATCHDOG_AGENT_NAME } from './watchdogIdentity/index.js';
+import { createTokenStore } from '../messagingV2/tokens/index.js';
 import type { MessagingSession } from '../../../packages/messaging/public/capability.js';
 
 const PROJECT_RE = /^[A-Za-z0-9._-]+$/;
@@ -101,6 +102,9 @@ export class ServerController {
   private seatWatchTimer: ReturnType<typeof setInterval> | null = null;
   private watchdogId: string | null = null;
   private watchdogSession: MessagingSession | null = null;
+  /** D-N6-2: the one token store shared by the authority, the lane glue,
+   * spawn env injection, and the in-process consumers (never printed). */
+  private readonly tokenStore = createTokenStore();
 
   constructor(
     private readonly port: number,
@@ -125,6 +129,7 @@ export class ServerController {
     this.configureExpress();
     this.configureWebSockets();
     this.configureRoutes();
+    this.registerTokenRoutes();
     this.configureStaticFallback();
     this.coordinator.setBroadcastHandler((event, payload) => this.broadcastEvent(event, payload));
   }
@@ -169,6 +174,8 @@ export class ServerController {
       terminals,
       (name) => this.mailboxRegistry.identityFor(name),
       this.objectModel,
+      undefined, // nudgeRecordPath — production default
+      this.tokenStore,
     );
   }
 
@@ -206,11 +213,15 @@ export class ServerController {
     );
   }
 
-  /** The capability-backed announcement: agentId → human personId (N4). */
+  /** The capability-backed announcement: agentId → human personId (N4).
+   * D-N6-2: the credential is the store's issued token (agentId is not one). */
   private async sendExternalAnnouncement(agentId: string, body: string): Promise<{ id: string }> {
     const handle = this.messagingV2;
     if (handle === null) throw new Error('messaging capability unavailable this run');
-    const auth = await handle.embedded.authenticate({ token: agentId });
+    this.tokenStore.ensure(agentId);
+    const token = this.tokenStore.tokenForAgent(agentId);
+    if (token === null) throw new Error(`no credential held for ${agentId}`);
+    const auth = await handle.embedded.authenticate({ token });
     if (auth.kind !== 'authenticated') throw new Error(`external agent ${agentId} is not authenticatable`);
     const accepted = await auth.session.sendMessage({
       address: `person:${HUMAN_PERSON_ID}`,
@@ -240,7 +251,10 @@ export class ServerController {
    * expired session re-authenticates on the next alert. */
   private async seatAlertSession(watchdogId: string): Promise<MessagingSession | null> {
     if (this.watchdogSession !== null) return this.watchdogSession;
-    const auth = await this.messagingV2?.embedded.authenticate({ token: watchdogId });
+    this.tokenStore.ensure(watchdogId);
+    const token = this.tokenStore.tokenForAgent(watchdogId);
+    if (token === null) return null;
+    const auth = await this.messagingV2?.embedded.authenticate({ token });
     if (auth?.kind !== 'authenticated') return null;
     this.watchdogSession = auth.session;
     return this.watchdogSession;
@@ -266,6 +280,46 @@ export class ServerController {
     this.sendSeatAlert(watchdogId, body).catch((error: unknown) => {
       console.error(`[seatWatch] alert failed: ${error instanceof Error ? error.message : String(error)}`);
     });
+  }
+
+  /** D-N6-2/D-N6-5: the owner CLI's token surface (localhost trust boundary,
+   * same posture as /api/agents). Issue returns the raw token ONCE — the
+   * caller (nvk-agent) prints it; nothing here logs it. Issuance also runs
+   * the D-N2-5 policy sync so a fresh external's first message never 403s
+   * on the human's deny-by-default contact policy. */
+  private registerTokenRoutes(): void {
+    this.app.post('/api/messaging/v2/tokens', (request, response) => void this.issueToken(request, response));
+    this.app.post('/api/messaging/v2/tokens/revoke', (request, response) => this.revokeTokens(request, response));
+    this.app.get('/api/messaging/v2/tokens', (request, response) => this.listTokens(request, response));
+  }
+
+  private agentIdOrReply(request: express.Request, response: express.Response): string | null {
+    const candidate = request.body?.agentId ?? request.query['agentId'];
+    if (typeof candidate !== 'string' || this.objectModel.agentRecord(candidate) === null) {
+      response.status(404).json({ error: 'unknown durable agent' });
+      return null;
+    }
+    return candidate;
+  }
+
+  private async issueToken(request: express.Request, response: express.Response): Promise<void> {
+    const agentId = this.agentIdOrReply(request, response);
+    if (agentId === null) return;
+    const { token, record } = this.tokenStore.issue(agentId);
+    await this.messagingV2?.lanes?.syncPoliciesNow(); // D-N6-5: allowlists union now
+    response.status(201).json({ agentId, recordId: record.id, token });
+  }
+
+  private revokeTokens(request: express.Request, response: express.Response): void {
+    const agentId = this.agentIdOrReply(request, response);
+    if (agentId === null) return;
+    response.json({ agentId, revoked: this.tokenStore.revokeAll(agentId).length });
+  }
+
+  private listTokens(request: express.Request, response: express.Response): void {
+    const agentId = this.agentIdOrReply(request, response);
+    if (agentId === null) return;
+    response.json({ agentId, tokens: this.tokenStore.listFor(agentId) });
   }
 
   /** D-N5-6: the revived seat-watch (Chris's overrule of N5's accepted
@@ -680,7 +734,18 @@ export class ServerController {
       this.messagingV2 = await startMessagingV2({
         objectModel: this.objectModel,
         storePath: process.env.NVK_MESSAGING_V2_STORE || undefined,
+        tokenStore: this.tokenStore,
         humanToken: process.env.NVK_MESSAGING_V2_HUMAN_TOKEN || undefined,
+        // D-N6-1: the DEC-17 door — production defaults to 3032 on localhost;
+        // scratch backends (NOVAKAI_SERVER_PORT set) stay doorless so parallel
+        // rigs never fight over the port. Remote reachability is the owner's
+        // opt-in via NVK_MESSAGING_V2_DOOR_HOST (docs/operations/CONNECT-EXTERNAL.md).
+        ...(process.env.NOVAKAI_SERVER_PORT ? {} : {
+          door: {
+            port: Number(process.env.NVK_MESSAGING_V2_DOOR_PORT) || 3032,
+            host: process.env.NVK_MESSAGING_V2_DOOR_HOST || '127.0.0.1',
+          },
+        }),
         // N2: the agent direct lane — pty presence transport over the terminal
         // runtime; the glue opens lanes for live agents and briefs new spawns.
         terminals: this.agentsHub.terminals,

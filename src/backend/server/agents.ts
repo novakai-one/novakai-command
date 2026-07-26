@@ -19,6 +19,7 @@ import type { SessionControlIntent } from '../../shared/sessionControl.js';
 import { SessionControl } from '../terminal/control/index.js';
 import { deriveHealth, thresholdsFromEnv, type AgentHealth, type HealthThresholds } from '../terminal/health/index.js';
 import type { SeatWatch } from '../terminal/seatWatch/index.js';
+import type { TokenStore } from '../messagingV2/tokens/index.js';
 import { NudgeAction } from '../terminal/nudge/index.js';
 import { ObjectModel } from '../objectModel/index.js';
 import { resolveMissionSpawn } from './missionSpawn/index.js';
@@ -68,6 +69,8 @@ export class AgentsHub {
     private readonly objectModel?: ObjectModel,
     /** Injectable nudge record path (tests); defaults inside NudgeAction. */
     nudgeRecordPath?: string,
+    /** D-N6-2: spawn credentials (env NVK_AGENT_TOKEN); absent in tests. */
+    private readonly tokenStore?: TokenStore,
   ) {
     this.sessionControl = new SessionControl(this.manager);
     this.nudge = new NudgeAction(this.manager, nudgeRecordPath);
@@ -335,6 +338,32 @@ export class AgentsHub {
     return requested ?? nextSpawnName(provider, this.manager.list().map((agent) => agent.title));
   }
 
+  /** D-N6-2: the spawn's credential — ensured in the store, env-injected,
+   * never printed (the agent's own PTY is the only reader). */
+  private spawnTokenFor(agentId: string | null | undefined): string | undefined {
+    if (agentId == null || this.tokenStore === undefined) return undefined;
+    this.tokenStore.ensure(agentId);
+    return this.tokenStore.tokenForAgent(agentId) ?? undefined;
+  }
+
+  /** The launch half of a spawn: env credential resolved, failure marked. */
+  private async launchCreated(
+    response: Response, title: string, cwd: string, provider: ProviderId, agentId: string | undefined | null,
+  ): Promise<void> {
+    const agentToken = this.spawnTokenFor(agentId ?? null);
+    try {
+      response.status(201).json(await this.launch({
+        title, cwd, provider,
+        ...(agentId ? { agentId } : {}),
+        ...(agentToken !== undefined ? { agentToken } : {}),
+      }));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (agentId) this.markFailedSafely(agentId, message);
+      response.status(500).json({ error: message });
+    }
+  }
+
   private async createAgent(request: Request, response: Response): Promise<void> {
     const configuration = ConfigManager.load();
     const cwd = request.body?.cwd ?? configuration.activeRepo ?? process.cwd();
@@ -349,13 +378,7 @@ export class AgentsHub {
     // persisted BEFORE the Presence exists, launch failure marked explicitly.
     const agentId = resolveMissionSpawn(request, response, this.objectModel, title, provider);
     if (agentId === null) return;
-    try {
-      response.status(201).json(await this.launch({ title, cwd, provider, ...(agentId ? { agentId } : {}) }));
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (agentId) this.markFailedSafely(agentId, message);
-      response.status(500).json({ error: message });
-    }
+    await this.launchCreated(response, title, cwd, provider, agentId);
   }
 
   private markFailedSafely(agentId: string, reason: string): void {
