@@ -22,6 +22,14 @@
  * room unknown to the authority is omitted (the authority owns membership
  * truth — unknown room ⇒ cannot be a member).
  *
+ * A-R-N4-1 (contract 1.1.0, oversight.read): the holder READS any direct
+ * Thread regardless of pair membership — assertThreadMember's direct branch
+ * admits the grant (rooms unchanged). A holder listing SELF swaps the
+ * pair-scoped direct half for store.listDirectThreads() (every lane);
+ * policy.admin acting for ANOTHER keeps the pair-scoped read — oversight is
+ * a self-list privilege, never a leak of unrelated lanes. READ-ONLY: the
+ * R4 party-only send rules are untouched.
+ *
  * GetPolicy has no NotFound in its error list, so an absent policy pair
  * returns the DEC-14 synthesized defaults (view-only, revision 0 — never
  * persisted; the first real write starts at revision 1).
@@ -124,6 +132,8 @@ export function createQueries(deps: QueriesDeps) {
     if (thread.threadKind === "direct" && thread.direct) {
       const [a, b] = thread.direct.pair;
       if (principal.personId === a || principal.personId === b) return;
+      // A-R-N4-1: the oversight.read holder READS any direct lane (read-only).
+      if (principal.grants.includes("oversight.read")) return;
       throw notAuthorized(`not a member of direct Thread ${thread.id} (R3)`);
     }
     if (!thread.room) {
@@ -164,12 +174,18 @@ export function createQueries(deps: QueriesDeps) {
     const target = selfOrAdmin(principal, input.personId);
     const listed = await store.listThreadsForPerson(target);
     if (listed.kind === "error") throw mapReadError(listed.error, () => unknownThread(target));
-    const visible: Thread[] = [];
+    // A-R-N4-1: a holder listing SELF swaps the pair-scoped direct half for
+    // the unscoped lane enumeration — rooms stay the §11.5 read, filtered by
+    // the TARGET's membership below (G6 rules unchanged).
+    let directThreads = listed.value.filter((thread) => thread.threadKind === "direct");
+    if (target === principal.personId && principal.grants.includes("oversight.read")) {
+      const lanes = await store.listDirectThreads();
+      if (lanes.kind === "error") throw mapReadError(lanes.error, () => unknownThread(target));
+      directThreads = lanes.value;
+    }
+    const visible: Thread[] = [...directThreads];
     for (const thread of listed.value) {
-      if (thread.threadKind === "direct") {
-        visible.push(thread); // the store already matched the pair (§11.5)
-        continue;
-      }
+      if (thread.threadKind === "direct") continue; // the direct half is settled above
       if (!thread.room) {
         throw storeDependencyError({
           name: "StoreCorrupt",

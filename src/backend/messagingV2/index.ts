@@ -61,7 +61,10 @@ export interface MessagingV2Handle {
 /** The optional human principal (person_user-chris, role Human) from config. */
 function humanConfig(humanToken: string | undefined): NovakaiAuthorityConfig {
   if (humanToken === undefined) return {};
-  return { humans: [{ token: humanToken, personId: HUMAN_PERSON_ID, roles: ['Human'] }] };
+  // A-R-N4-1: the owner's lane oversight is HOST policy — granted here, in
+  // the app composition. The package's DEFAULT_ROLE_GRANTS is deliberately
+  // unchanged so no second host silently gains oversight (DEC-07).
+  return { humans: [{ token: humanToken, personId: HUMAN_PERSON_ID, roles: ['Human'], grants: ['oversight.read'] }] };
 }
 
 /** Boot-log principal count: live/spawning durable agents + configured humans. */

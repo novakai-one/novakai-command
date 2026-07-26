@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // GENERATED FILE — DO NOT EDIT.
 // Source: contract/messaging-contract.json (law #3 single source of truth).
-// contractVersion 1.0.0 · schemaVersion 1 · sha256:2ab6ae3c8ba0b5e3
+// contractVersion 1.1.0 · schemaVersion 1 · sha256:56bc675fca0f6169
 // Regenerate: npm run generate
 // ---------------------------------------------------------------------------
 
@@ -9,7 +9,7 @@ declare const brand: unique symbol;
 type Brand<Name extends string> = { readonly [brand]: Name };
 
 // --- versions & constants ------------------------------------------------
-export const contractVersion = "1.0.0" as const;
+export const contractVersion = "1.1.0" as const;
 export const schemaVersion = 1 as const;
 export const constants = {
   "messageMaxBytes": 32768,
@@ -125,7 +125,7 @@ export type DeliveryStateReason = (typeof deliveryStateReasonValues)[number];
 export const dndPolicyKindValue = ["dnd-policy"] as const;
 export type DndPolicyKind = (typeof dndPolicyKindValue)[number];
 // source path: Grant
-export const grantValues = ["priority.override","policy.admin","template.write"] as const;
+export const grantValues = ["priority.override","policy.admin","template.write","oversight.read"] as const;
 export type Grant = (typeof grantValues)[number];
 // source path: MessageBody.format
 export const messageBodyFormatValues = ["text","markdown"] as const;

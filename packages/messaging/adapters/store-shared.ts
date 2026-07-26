@@ -593,6 +593,20 @@ export class StoreCore implements MessagingStore {
     return ok(threads);
   }
 
+  /**
+   * A-R-N4-1: the unscoped lane enumeration for oversight.read holders —
+   * every direct Thread (creation order, same Map-insertion note as §11.5).
+   * Both adapters share this implementation: direct Threads are created
+   * inside commitAcceptance, so they live in the same in-memory index the
+   * §11.5 read uses (the jsonl adapter folds them from the op log at boot).
+   */
+  async listDirectThreads(): Promise<StoreResult<Thread[]>> {
+    const threads = [...this.state.threads.values()].filter(
+      (thread) => thread.threadKind === "direct",
+    );
+    return ok(threads);
+  }
+
   /** §11.6: the frozen RecipientSnapshot by messageId (I5 evidence; the sweep no longer reads it — §11.7). */
   async getSnapshot(messageId: MessageId): Promise<StoreResult<RecipientSnapshot>> {
     const snapshot = [...this.state.snapshots.values()].find(

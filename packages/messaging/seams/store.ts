@@ -243,6 +243,14 @@ export interface MessagingStore {
    * by the core above the store (R3). Creation order (not contractual).
    */
   listThreadsForPerson(personId: PersonId): Promise<StoreResult<Thread[]>>;
+  /**
+   * A-R-N4-1 — EVERY direct Thread, unscoped by pair (creation order, same
+   * ordering note as §11.5: Map insertion order, not contractual). The §11.5
+   * read is pair-scoped by design; lane oversight (the oversight.read grant)
+   * needs the unscoped enumeration. Rooms are never included — room
+   * visibility stays membership-driven via §11.5 + the membership seam.
+   */
+  listDirectThreads(): Promise<StoreResult<Thread[]>>;
   getMessage(messageId: MessageId): Promise<StoreResult<Message>>;
   /**
    * §11.6 — the RecipientSnapshot frozen at acceptance (I5 evidence: the
