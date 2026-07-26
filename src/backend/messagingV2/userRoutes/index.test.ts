@@ -22,6 +22,7 @@ import type { AgentInfo } from '../../terminal/manager.js';
 import type { TerminalRuntime } from '../../terminal/runtime/index.js';
 import { ObjectModel } from '../../objectModel/index.js';
 import { startMessagingV2 } from '../index.js';
+import { createTokenStore } from '../tokens/index.js';
 import type { MessagingV2Handle } from '../index.js';
 import { createNovakaiAuthority, personIdForAgentId } from '../authority/index.js';
 import { createNovakaiMembership } from '../membership/index.js';
@@ -80,8 +81,14 @@ const terminals = new FakeTerminalRuntime([
 ]);
 
 const journalPath = path.join(mkdtempSync(path.join(tmpdir(), 'nvk-mv2-user-journal-')), 'journal.jsonl');
+// D-N6-2: agent credentials are issued tokens (agentId is NOT one).
+const tokens = createTokenStore(path.join(mkdtempSync(path.join(tmpdir(), 'nvk-mv2-user-tokens-')), 'tokens.jsonl'));
+const tokenFor = (agentId: string): string => {
+  tokens.ensure(agentId);
+  return tokens.tokenForAgent(agentId) as string;
+};
 const handle = await startMessagingV2({
-  objectModel: model, storePath: journalPath, terminals, humanToken: 'human-secret', 'log': () => {},
+  objectModel: model, storePath: journalPath, tokenStore: tokens, terminals, humanToken: 'human-secret', 'log': () => {},
 });
 
 const application = express();
@@ -198,6 +205,7 @@ const deadEmbedded = createEmbeddedMessaging({
   authority: createNovakaiAuthority(model, deadClock, {
     sessionTtlMs: 60,
     humans: [{ token: 'human-secret', personId: 'person_user-chris' as never, roles: ['Human'] }],
+    tokenStore: tokens,
   }),
   membership: createNovakaiMembership(model, deadClock),
 });
@@ -210,6 +218,7 @@ const deadHandle: MessagingV2Handle = {
   embedded: deadEmbedded,
   lanes: { humanSession: () => deadSession } as never,
   rooms: null,
+  door: null,
   close: () => deadEmbedded.close(),
 };
 const deadApp = express();
@@ -239,7 +248,7 @@ console.log('dead-session 503 tests passed');
 // principal carries the grant (host policy in the composition), so the
 // user-threads route serves lanes the human is NOT a party to.
 
-const aliceAuth = await handle.embedded.authenticate({ token: aliceId });
+const aliceAuth = await handle.embedded.authenticate({ token: tokenFor(aliceId) });
 if (aliceAuth.kind !== 'authenticated') throw new Error('unreachable');
 const agentLane = await aliceAuth.session.sendMessage({
   address: `person:${personIdForAgentId(bobId)}`,

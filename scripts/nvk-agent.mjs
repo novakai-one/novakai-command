@@ -185,8 +185,7 @@ async function cmdMailbox(query) {
   console.log(JSON.stringify(body.identity, null, 2));
 }
 
-// Register an externally-spawned session (a terminal-spawned chief or agent)
-// into the durable mission graph: Agent record + Presence attach + mailbox,
+// Register an externally-spawned session (a terminal-spawned chief or agent)// into the durable mission graph: Agent record + Presence attach + mailbox,
 // so Mission Control's DM lane is backed by durable identity. The pre-flight
 // proves the transcript exists BEFORE any store write — registering a
 // Presence that cannot be located would be a lie the stores have to keep.
@@ -224,6 +223,45 @@ async function cmdRegister() {
   }
 }
 
+// --- D-N6-2: agent messaging tokens (issue/revoke/list) ------------------------
+// The backend owns the store; this CLI is a thin REST client. `issue` prints
+// the raw token EXACTLY ONCE — it is hash-only at rest afterwards, so a lost
+// token means revoke + re-issue, never a lookup.
+
+async function cmdTokenIssue(agentId) {
+  const response = await fetch(`${SERVER}/api/messaging/v2/tokens`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ agentId }),
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) fail(`token issue rejected: ${body.error ?? response.status}`);
+  console.log(body.token);
+  console.error(`(shown once — hash-only at rest. Hand it to the foreign agent as: nvk-connect --token <token>)`);
+}
+
+async function cmdTokenRevoke(agentId) {
+  const response = await fetch(`${SERVER}/api/messaging/v2/tokens/revoke`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ agentId }),
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) fail(`token revoke rejected: ${body.error ?? response.status}`);
+  console.log(`REVOKED ${body.revoked} live token(s) for ${agentId} — sessions die at their next revalidate`);
+}
+
+async function cmdTokenList(agentId) {
+  const response = await fetch(`${SERVER}/api/messaging/v2/tokens?agentId=${encodeURIComponent(agentId)}`);
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) fail(`token list rejected: ${body.error ?? response.status}`);
+  const tokens = body.tokens ?? [];
+  if (tokens.length === 0) console.log(`(no tokens for ${agentId})`);
+  for (const record of tokens) {
+    console.log(`${record.id} · created ${record.createdAt} · ${record.revoked ? 'REVOKED' : 'live'}`);
+  }
+}
+
 if (cmd === 'spawn') await cmdSpawn();
 else if (cmd === 'register') await cmdRegister();
 else if (cmd === 'send') {
@@ -235,7 +273,14 @@ else if (cmd === 'send') {
 else if (cmd === 'tail') await cmdTail(args[0] ?? fail('tail requires an agent'));
 else if (cmd === 'kill') await cmdKill(args[0] ?? fail('kill requires an agent'));
 else if (cmd === 'mailbox') await cmdMailbox(args[0] ?? fail('mailbox requires an agent'));
-else {
-  console.error('usage: nvk-agent.mjs <spawn|register|send|status|tail|kill|mailbox> ...');
+else if (cmd === 'token') {
+  const verb = args.shift();
+  const agentId = opt('--agent') ?? fail('token requires --agent <agentId>');
+  if (verb === 'issue') await cmdTokenIssue(agentId);
+  else if (verb === 'revoke') await cmdTokenRevoke(agentId);
+  else if (verb === 'list') await cmdTokenList(agentId);
+  else fail('usage: nvk-agent.mjs token <issue|revoke|list> --agent <agentId>');
+} else {
+  console.error('usage: nvk-agent.mjs <spawn|register|send|status|tail|kill|mailbox|token> ...');
   process.exit(1);
 }

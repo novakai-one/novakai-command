@@ -3,13 +3,13 @@
  * v2 surface the rewritten nvk-msg CLI talks to. Registered alongside the
  * surviving old routes (the human lane, rooms, history reads — N3/N4).
  *
- * THREAT DECISION (N1 audit finding 3, decided here): the credential token IS
- * the durable agentId — an identifier, not a secret, observable in rosters,
- * logs, and the object model. That is acceptable ONLY inside the local
- * same-user trust boundary: this server binds 127.0.0.1, every caller is a
- * PTY the same user spawned, and the token is server-injected into the child
- * env (NVK_AGENT_ID), never printed. Real token issuance arrives with N6;
- * nothing outside localhost may ever be pointed at these routes before then.
+ * THREAT DECISION (N1 audit finding 3 — RETIRED by D-N6-2): the credential
+ * WAS the durable agentId (an identifier, not a secret). Real issuance
+ * landed: Bearer is now an issued nvkt_ token (hash-only at rest, revocable
+ * — ../tokens), server-injected into the child env as NVK_AGENT_TOKEN, and
+ * the raw agentId is REJECTED at the authority. These routes still bind
+ * 127.0.0.1; external machines speak DEC-17 frames to the door (D-N6-1),
+ * never these REST routes.
  *
  * Auth: `Authorization: Bearer <token>` → embedded.authenticate({ token }).
  * Sessions are cached per token (§2.1 revalidation lives inside the session
@@ -28,6 +28,7 @@ import type { TerminalRuntime } from '../../terminal/runtime/index.js';
 import type { MessagingV2Handle } from '../index.js';
 import { personIdForAgentId } from '../authority/index.js';
 import { readTrailingPage } from '../rooms/index.js';
+import type { RoomsGlue } from '../rooms/index.js';
 
 export interface MessagingV2RouteDeps {
   /** Lazy: the capability boots asynchronously AFTER routes are registered. */
@@ -147,10 +148,32 @@ function sendInputFor(parsed: SendBody, personId: PersonId): Record<string, unkn
   };
 }
 
+/** D-N6-2: the sender's durable agentId comes from the authenticated
+ * PRINCIPAL, never the bearer token — token = credential, agentId =
+ * identity, and D-N2-2's conflation of the two is retired. Null for
+ * non-agent principals (the human), matching the old unknown-agent posture. */
+function senderAgentIdFor(deps: MessagingV2RouteDeps, personId: PersonId): string | null {
+  const block = deps.objectModel.listAgents().find((entry) => personIdForAgentId(entry.id) === personId);
+  return block?.id ?? null;
+}
+
+/** D-N3-5: '#mission' → the sender's mission room, or the honest 400s. */
+function missionTarget(
+  deps: MessagingV2RouteDeps,
+  rooms: RoomsGlue,
+  senderPersonId: PersonId,
+): { threadId: ThreadId } | { status: number; error: string } {
+  const senderAgentId = senderAgentIdFor(deps, senderPersonId);
+  const missionId = senderAgentId === null ? null : deps.objectModel.missionForAgent(senderAgentId);
+  if (missionId === null) return { status: 400, error: 'no mission room — the sender has no mission ref' };
+  const threadId = rooms.threadIdFor('mission', missionId);
+  return threadId === undefined ? { status: 400, error: `no room provisioned for mission ${missionId}` } : { threadId };
+}
+
 /** D-N3-5: a room target → its provisioned threadId, or an HTTP-ready error. */
 function roomTarget(
   deps: MessagingV2RouteDeps,
-  senderAgentId: string,
+  senderPersonId: PersonId,
   target: string,
 ): { threadId: ThreadId } | { status: number; error: string } {
   const rooms = deps.getHandle()?.rooms ?? null;
@@ -159,23 +182,18 @@ function roomTarget(
     const threadId = rooms.fleetThreadId();
     return threadId === undefined ? { status: 503, error: 'fleet room not provisioned' } : { threadId };
   }
-  if (target === '#mission') {
-    const missionId = deps.objectModel.missionForAgent(senderAgentId);
-    if (missionId === null) return { status: 400, error: 'no mission room — the sender has no mission ref' };
-    const threadId = rooms.threadIdFor('mission', missionId);
-    return threadId === undefined ? { status: 400, error: `no room provisioned for mission ${missionId}` } : { threadId };
-  }
+  if (target === '#mission') return missionTarget(deps, rooms, senderPersonId);
   return { status: 400, error: `unsupported room target "${target}" — use '#team' or '#mission' (free rooms are archive-only)` };
 }
 
 /** D-N3-5: resolve a room target, answering the error itself (null = sent). */
 function roomTargetOrReply(
   deps: MessagingV2RouteDeps,
-  senderAgentId: string,
+  senderPersonId: PersonId,
   target: string,
   response: Response,
 ): ThreadId | null {
-  const resolved = roomTarget(deps, senderAgentId, target);
+  const resolved = roomTarget(deps, senderPersonId, target);
   if ('threadId' in resolved) return resolved.threadId;
   response.status(resolved.status).json({ error: resolved.error });
   return null;
@@ -196,7 +214,7 @@ async function handleRoomSend(
     response.status(400).json({ error: 'interrupt delivery is rejected for room recipients' });
     return;
   }
-  const threadId = roomTargetOrReply(deps, auth.token, parsed.target, response);
+  const threadId = roomTargetOrReply(deps, auth.session.principal.personId, parsed.target, response);
   if (threadId === null) return;
   reply(cache, auth.token, response, await auth.session.sendMessage({
     address: `thread:${threadId}`,
@@ -224,7 +242,7 @@ async function handleRoomMessages(
   withName: string,
   response: Response,
 ): Promise<void> {
-  const threadId = roomTargetOrReply(deps, auth.token, withName, response);
+  const threadId = roomTargetOrReply(deps, auth.session.principal.personId, withName, response);
   if (threadId === null) return;
   try {
     const trailing = await readTrailingPage(auth.session, threadId);

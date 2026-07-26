@@ -1,10 +1,11 @@
 /**
- * messagingV2 authority adapter tests (slice N1): ObjectModel-backed
- * Authority + ProvisioningDirectory. Real ObjectModel instances against
- * fixture stores in os.tmpdir() — no mocks of ObjectModel. The adapter is
- * constructed directly (its own seam); the messaging capability is crossed
- * only via seam headers (types/helpers) and the public contract (id
- * patterns, grants). Run with `npx tsx src/backend/messagingV2/authority/index.test.ts`.
+ * messagingV2 authority adapter tests (slice N1; D-N6-2 token migration):
+ * ObjectModel-backed Authority + ProvisioningDirectory. Real ObjectModel
+ * instances against fixture stores in os.tmpdir() — no mocks of ObjectModel.
+ * D-N6-2: agent credentials are ISSUED tokens (nvkt_<64 hex>, hash-only at
+ * rest in the token store) — the raw durable agentId is REJECTED (D-N2-2
+ * retired). Revocation kills authentication AND §2.1 revalidation.
+ * Run with `npx tsx src/backend/messagingV2/authority/index.test.ts`.
  */
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -15,6 +16,7 @@ import type { PersonId, Timestamp } from '../../../../packages/messaging/public/
 import type { ClockIds } from '../../../../packages/messaging/seams/clock.js';
 import { ObjectModel } from '../../objectModel/index.js';
 import { readStoreDir, replaceLine } from '../../stores/store.mjs';
+import { createTokenStore } from '../tokens/index.js';
 import { createNovakaiAuthority, personIdForAgentId } from './index.js';
 
 const STAMP = '2026-07-22T10:00:00+10:00';
@@ -64,30 +66,42 @@ const failedId = model.createAgent({ name: 'worker-doomed', provider: 'codex', t
 setAgentStatus(scratch, retiredId, 'retired');
 model.markAgentFailed(failedId, 'PTY launch refused');
 
+const tokenPath = path.join(mkdtempSync(path.join(tmpdir(), 'nvk-mv2-authtokens-')), 'tokens.jsonl');
+const tokens = createTokenStore(tokenPath);
 const authority = createNovakaiAuthority(model, clock, {
   humans: [{ token: 'human-secret', personId: 'person_user-chris' as PersonId, roles: ['Human'] }],
+  tokenStore: tokens,
 });
 
-// --- authenticate: agents by durable agentId token ----------------------------
+// --- D-N6-2: issued tokens authenticate; the raw agentId is REJECTED --------------
 
-const chiefAuth = await authority.authenticate({ token: chiefId });
-assert.equal(chiefAuth.kind, 'authenticated');
+const chiefToken = tokens.issue(chiefId).token;
+const chiefAuth = await authority.authenticate({ token: chiefToken });
+assert.equal(chiefAuth.kind, 'authenticated', 'an issued nvkt_ token authenticates');
 if (chiefAuth.kind !== 'authenticated') throw new Error('unreachable');
 const chiefPerson = personIdForAgentId(chiefId);
 assert.equal(chiefAuth.principal.personId, chiefPerson);
 assert.ok(PERSON_PATTERN.test(chiefPerson), 'derived personId matches the contract PersonId pattern');
 assert.deepEqual(chiefAuth.principal.grants, ['priority.override'], 'chief-* name asserts the Chief role (D4)');
 assert.match(chiefAuth.principal.sessionId, /^session_\d+$/, 'adapter-minted runtime session id');
-console.log('agent authenticate tests passed');
 
-const workerAuth = await authority.authenticate({ token: workerId });
+for (const legacyId of [chiefId, workerId]) {
+  const legacy = await authority.authenticate({ token: legacyId });
+  assert.equal(legacy.kind, 'rejected', `raw agentId ${legacyId} is REJECTED — D-N2-2 is retired`);
+  if (legacy.kind === 'rejected') assert.equal(legacy.error.name, 'NotAuthenticated');
+}
+console.log('D-N6-2 token authenticate + agentId retirement tests passed');
+
+const workerToken = tokens.issue(workerId).token;
+const workerAuth = await authority.authenticate({ token: workerToken });
 assert.equal(workerAuth.kind, 'authenticated');
 if (workerAuth.kind !== 'authenticated') throw new Error('unreachable');
 assert.deepEqual(workerAuth.principal.grants, [], 'no name convention, no grants');
 
-const workerReAuth = await authority.authenticate({ token: workerId });
+const workerReAuth = await authority.authenticate({ token: workerToken });
 if (workerReAuth.kind !== 'authenticated') throw new Error('unreachable');
 assert.notEqual(workerReAuth.principal.sessionId, workerAuth.principal.sessionId, 'each authenticate mints a fresh session');
+console.log('agent authenticate tests passed');
 
 // --- authenticate: rejections -------------------------------------------------
 
@@ -95,12 +109,29 @@ for (const credential of [undefined, null, 'token', 42, {}, { token: 7 }]) {
   const outcome = await authority.authenticate(credential);
   assert.equal(outcome.kind, 'rejected', `malformed credential ${JSON.stringify(credential)} is rejected, never a throw`);
 }
-for (const token of ['agent_00000000-0000-0000-0000-000000000000', retiredId, failedId]) {
+const unknownNvkt = `nvkt_${'0'.repeat(64)}`;
+for (const token of [unknownNvkt, tokens.issue(retiredId).token, tokens.issue(failedId).token]) {
   const outcome = await authority.authenticate({ token });
-  assert.equal(outcome.kind, 'rejected', `unknown/retired/failed token ${token} is rejected`);
+  assert.equal(outcome.kind, 'rejected', `unknown/retired/failed token is rejected`);
   if (outcome.kind === 'rejected') assert.equal(outcome.error.name, 'NotAuthenticated');
 }
 console.log('rejection tests passed');
+
+// --- D-N6-2: revocation kills authentication AND revalidation ----------------------
+
+const revocable = await authority.authenticate({ token: workerToken });
+assert.equal(revocable.kind, 'authenticated');
+if (revocable.kind !== 'authenticated') throw new Error('unreachable');
+assert.equal((await authority.revalidate(revocable.principal.sessionId)).kind, 'valid', 'live token revalidates');
+tokens.revokeAll(workerId);
+const revokedAuth = await authority.authenticate({ token: workerToken });
+assert.equal(revokedAuth.kind, 'rejected', 'a revoked token never authenticates');
+assert.equal(
+  (await authority.revalidate(revocable.principal.sessionId)).kind,
+  'invalid',
+  'revalidate after revocation ends the session (§2.1)',
+);
+console.log('revocation tests passed');
 
 // --- authenticate: configured humans -------------------------------------------
 
@@ -122,16 +153,15 @@ const afterRetire = await authority.revalidate(chiefAuth.principal.sessionId);
 assert.equal(afterRetire.kind, 'invalid', 'agent retired mid-session ends the session');
 setAgentStatus(scratch, chiefId, 'live');
 
-authority.invalidateSession(workerAuth.principal.sessionId);
-assert.equal((await authority.revalidate(workerAuth.principal.sessionId)).kind, 'invalid', 'invalidated session');
+authority.invalidateSession(chiefAuth.principal.sessionId);
+assert.equal((await authority.revalidate(chiefAuth.principal.sessionId)).kind, 'invalid', 'invalidated session');
 assert.equal((await authority.revalidate('session_999')).kind, 'invalid', 'unknown session');
 console.log('revalidate tests passed');
 
 // --- failure vocabulary ---------------------------------------------------------
 
 authority.setUnavailable(true);
-assert.equal((await authority.authenticate({ token: workerId })).kind, 'unavailable');
-assert.equal((await authority.revalidate(chiefAuth.principal.sessionId)).kind, 'unavailable');
+assert.equal((await authority.authenticate({ token: chiefToken })).kind, 'unavailable');
 authority.setUnavailable(false);
 console.log('unavailable tests passed');
 
@@ -159,17 +189,21 @@ console.log('isProvisioned dependency-failure test passed');
 
 const validModel = new ObjectModel({ storesDir: scratchStores() });
 assert.throws(
-  () => createNovakaiAuthority(validModel, clock, { roleGrants: { Chief: ['not-a-grant' as never] } }),
+  () => createNovakaiAuthority(validModel, clock, { tokenStore: createTokenStore(path.join(mkdtempSync(path.join(tmpdir(), 'nvk-tk-a-')), 't.jsonl')), roleGrants: { Chief: ['not-a-grant' as never] } }),
   (error: unknown) => error instanceof MessagingError && error.name === 'DependencyUnavailable',
   'unknown grant in roleGrants fails construction');
 assert.throws(
-  () => createNovakaiAuthority(validModel, clock, { humans: [{ token: '', personId: 'person_x' as PersonId }] }),
+  () => createNovakaiAuthority(validModel, clock, { tokenStore: createTokenStore(path.join(mkdtempSync(path.join(tmpdir(), 'nvk-tk-b-')), 't.jsonl')), humans: [{ token: '', personId: 'person_x' as PersonId }] }),
   MessagingError,
   'empty human token fails construction');
 assert.throws(
-  () => createNovakaiAuthority(validModel, clock, { humans: [{ token: 't', personId: 'user_chris' as PersonId }] }),
+  () => createNovakaiAuthority(validModel, clock, { tokenStore: createTokenStore(path.join(mkdtempSync(path.join(tmpdir(), 'nvk-tk-c-')), 't.jsonl')), humans: [{ token: 't', personId: 'user_chris' as PersonId }] }),
   MessagingError,
   'malformed personId fails construction');
+assert.throws(
+  () => createNovakaiAuthority(validModel, clock, {} as never),
+  MessagingError,
+  'a missing token store fails construction (D-N6-2: no store, no agent credentials)');
 console.log('config validation tests passed');
 
 // --- session pruning (N1 audit finding 5) --------------------------------------------
@@ -177,12 +211,14 @@ console.log('config validation tests passed');
 const pruneModel = new ObjectModel({ storesDir: scratchStores() });
 const pruneTeam = pruneModel.createTeam({ name: 'Prune Crew', missionId: 'mission_alpha' });
 const pruneAgent = pruneModel.createAgent({ name: 'worker-prune', provider: 'kimi', teamId: pruneTeam, missionId: 'mission_alpha' });
-const prunable = createNovakaiAuthority(pruneModel, clock, { sessionTtlMs: 20 });
-const first = await prunable.authenticate({ token: pruneAgent });
+const pruneTokens = createTokenStore(path.join(mkdtempSync(path.join(tmpdir(), 'nvk-tk-prune-')), 'tokens.jsonl'));
+const prunable = createNovakaiAuthority(pruneModel, clock, { sessionTtlMs: 20, tokenStore: pruneTokens });
+const pruneToken = pruneTokens.issue(pruneAgent).token;
+const first = await prunable.authenticate({ token: pruneToken });
 assert.equal(first.kind, 'authenticated');
 assert.equal(prunable.sessionCount(), 1);
 await new Promise((resolve) => setTimeout(resolve, 30)); // let the first session expire
-const second = await prunable.authenticate({ token: pruneAgent });
+const second = await prunable.authenticate({ token: pruneToken });
 assert.equal(second.kind, 'authenticated');
 assert.equal(prunable.sessionCount(), 1, 'the expired session is pruned at the next authenticate (finding 5)');
 if (first.kind === 'authenticated') {

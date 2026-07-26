@@ -24,6 +24,7 @@ import { ObjectModel } from '../../objectModel/index.js';
 import { createNovakaiAuthority, personIdForAgentId } from '../authority/index.js';
 import { createNovakaiMembership } from '../membership/index.js';
 import { startMessagingV2 } from '../index.js';
+import { createTokenStore } from '../tokens/index.js';
 import type { MessagingV2Handle } from '../index.js';
 import { registerMessagingV2Routes } from './index.js';
 
@@ -87,8 +88,14 @@ const terminals = new FakeTerminalRuntime([
 ]);
 
 const journalPath = path.join(mkdtempSync(path.join(tmpdir(), 'nvk-mv2-route-journal-')), 'journal.jsonl');
+// D-N6-2: agent credentials are issued tokens (agentId is NOT one).
+const tokens = createTokenStore(path.join(mkdtempSync(path.join(tmpdir(), 'nvk-mv2-route-tokens-')), 'tokens.jsonl'));
+const tokenFor = (agentId: string): string => {
+  tokens.ensure(agentId);
+  return tokens.tokenForAgent(agentId) as string;
+};
 const handle = await startMessagingV2({
-  objectModel: model, storePath: journalPath, terminals, humanToken: 'human-secret', 'log': () => {},
+  objectModel: model, storePath: journalPath, tokenStore: tokens, terminals, humanToken: 'human-secret', 'log': () => {},
 });
 
 const application = express();
@@ -129,7 +136,7 @@ console.log('auth rejection tests passed');
 // --- D-N2-5: co-members converse with NO manual setContactPolicy ------------------------
 // (the glue's team contact bootstrap seeded the allowlists at boot)
 
-const first = await v2send(aliceId, { 'to': 'worker-b', body: 'hello bob' });
+const first = await v2send(tokenFor(aliceId), { 'to': 'worker-b', body: 'hello bob' });
 assert.equal(first.status, 200, JSON.stringify(first.json));
 assert.match(String(first.json['messageId']), /^message_/);
 const toBob = terminals.submissions.at(-1);
@@ -141,7 +148,7 @@ assert.equal(
 );
 assert.equal(toBob?.flushMs, undefined, 'bob is claude — no kimi flush');
 
-const reply = await v2send(bobId, { 'to': 'chief-kimi', body: 'hi alice' });
+const reply = await v2send(tokenFor(bobId), { 'to': 'chief-kimi', body: 'hi alice' });
 assert.equal(reply.status, 200, JSON.stringify(reply.json));
 const toAlice = terminals.submissions.at(-1);
 assert.equal(toAlice?.agentId, aliceId, "B's reply landed on A's lane");
@@ -151,15 +158,15 @@ console.log('two-agents-converse proof passed (no manual setContactPolicy — D-
 
 // --- deny-by-default intact + manual setContactPolicy still works (contract command) ----
 
-const stranger = await v2send(aliceId, { 'to': 'worker-c', body: 'stranger ping' });
+const stranger = await v2send(tokenFor(aliceId), { 'to': 'worker-c', body: 'stranger ping' });
 assert.equal(stranger.status, 403, 'carol shares no team/mission ref → BlockedByContactPolicy');
 assert.match(String(stranger.json['name']), /BlockedByContactPolicy/);
 
-const carolAuth = await handle.embedded.authenticate({ token: carolId });
+const carolAuth = await handle.embedded.authenticate({ token: tokenFor(carolId) });
 if (carolAuth.kind !== 'authenticated') throw new Error('unreachable');
 const manual = await carolAuth.session.setContactPolicy({ allowlist: [alicePerson], defaultRule: 'deny' });
 assert.equal(manual.kind, 'ok', 'manual policy remains a first-class contract command');
-const welcomed = await v2send(aliceId, { 'to': 'worker-c', body: 'now reachable' });
+const welcomed = await v2send(tokenFor(aliceId), { 'to': 'worker-c', body: 'now reachable' });
 assert.equal(welcomed.status, 200, 'a manual allowlist admits the non-co-member');
 assert.equal(terminals.submissions.at(-1)?.agentId, carolId);
 console.log('deny-by-default + manual policy tests passed');
@@ -178,12 +185,12 @@ console.log('human allowlist seeding test passed');
 
 // --- reads: thread messages, inbox, address book -------------------------------------------
 
-const thread = await v2get(aliceId, `/api/messaging/v2/messages?with=${encodeURIComponent('worker-b')}`);
+const thread = await v2get(tokenFor(aliceId), `/api/messaging/v2/messages?with=${encodeURIComponent('worker-b')}`);
 assert.equal(thread.status, 200);
 const bodies = (thread.json['messages'] as Array<{ body: { text: string } }>).map((message) => message.body.text);
 assert.deepEqual(bodies, ['hello bob', 'hi alice'], 'the shared DM thread');
 
-const inbox = await v2get(bobId, '/api/messaging/v2/inbox');
+const inbox = await v2get(tokenFor(bobId), '/api/messaging/v2/inbox');
 assert.equal(inbox.status, 200);
 assert.deepEqual(
   inbox.json['messages'],
@@ -191,7 +198,7 @@ assert.deepEqual(
   '§11.2: the inbox holds non-terminal deliveries only — delivered mail reads via the thread',
 );
 
-const book = await v2get(aliceId, '/api/messaging/v2/address-book');
+const book = await v2get(tokenFor(aliceId), '/api/messaging/v2/address-book');
 assert.equal(book.status, 200);
 const entries = book.json['agents'] as Array<Record<string, unknown>>;
 assert.deepEqual(entries.map((entry) => entry['name']), ['chief-kimi', 'worker-b', 'worker-c']);
@@ -207,9 +214,9 @@ console.log('read tests passed');
 
 // --- agent → human DM: the address book promises chris; the send must reach him ---
 
-const toChris = await v2send(aliceId, { 'to': 'chris', body: 'alice pings the human' });
+const toChris = await v2send(tokenFor(aliceId), { 'to': 'chris', body: 'alice pings the human' });
 assert.equal(toChris.status, 200, 'an agent DMs the human by name (the address book promised him)');
-const chrisThread = await v2get(aliceId, `/api/messaging/v2/messages?with=${encodeURIComponent('chris')}`);
+const chrisThread = await v2get(tokenFor(aliceId), `/api/messaging/v2/messages?with=${encodeURIComponent('chris')}`);
 assert.equal(chrisThread.status, 200, 'the agent reads the shared human thread');
 const chrisBodies = (chrisThread.json['messages'] as Array<{ body: { text: string } }>).map((message) => message.body.text);
 assert.ok(chrisBodies.includes('alice pings the human'), 'the human thread carries the send');
@@ -222,28 +229,28 @@ console.log('agent → human DM tests passed');
 
 // --- interrupt: urgent leads with Esc; MSG-010 downgrade is DND-conditional --------------
 
-await v2send(aliceId, { 'to': 'worker-b', body: 'urgent question', interrupt: true });
+await v2send(tokenFor(aliceId), { 'to': 'worker-b', body: 'urgent question', interrupt: true });
 assert.deepEqual(terminals.submissions.at(-1)?.leadIn, { data: '\x1b', settleMs: 400 },
   'urgent carries the Esc lead-in inside the lane (C2)');
 
 // bob has no priority.override, but alice is NOT under DND → no downgrade
 // (MSG-010 qualifies urgent-vs-DND bypass, never grant-less urgency alone).
-const plainUrgent = await v2send(bobId, { 'to': 'chief-kimi', body: 'also urgent', interrupt: true });
+const plainUrgent = await v2send(tokenFor(bobId), { 'to': 'chief-kimi', body: 'also urgent', interrupt: true });
 assert.equal(plainUrgent.status, 200);
 assert.equal(plainUrgent.json['urgentDowngraded'], undefined);
 assert.deepEqual(terminals.submissions.at(-1)?.leadIn, { data: '\x1b', settleMs: 400 });
 
 // alice under DND: bob's urgent downgrades and HOLDS (dnd-hold) — nothing is
 // typed until the release re-drives the attempt (W1, R5).
-const aliceAuth = await handle.embedded.authenticate({ token: aliceId });
+const aliceAuth = await handle.embedded.authenticate({ token: tokenFor(aliceId) });
 if (aliceAuth.kind !== 'authenticated') throw new Error('unreachable');
 await aliceAuth.session.setDndPolicy({ enabled: true });
 const submissionsBeforeHold = terminals.submissions.length;
-const held = await v2send(bobId, { 'to': 'chief-kimi', body: 'held urgent', interrupt: true });
+const held = await v2send(tokenFor(bobId), { 'to': 'chief-kimi', body: 'held urgent', interrupt: true });
 assert.equal(held.status, 200);
 assert.equal(held.json['urgentDowngraded'], true, 'urgent vs DND without the grant downgrades honestly');
 assert.equal(terminals.submissions.length, submissionsBeforeHold, 'a held delivery types nothing');
-const heldInbox = await v2get(aliceId, '/api/messaging/v2/inbox');
+const heldInbox = await v2get(tokenFor(aliceId), '/api/messaging/v2/inbox');
 assert.ok(
   (heldInbox.json['messages'] as Array<{ body: { text: string } }>).some((message) => message.body.text === 'held urgent'),
   'a held delivery shows in the recipient inbox (§11.2 non-terminal)',
@@ -256,7 +263,7 @@ console.log('interrupt + DND tests passed');
 
 // --- D-N3-5: agent room sends + reads through the v2 routes ------------------------------
 
-const fleetPost = await v2send(aliceId, { 'to': '#team', body: 'alice to the fleet' });
+const fleetPost = await v2send(tokenFor(aliceId), { 'to': '#team', body: 'alice to the fleet' });
 assert.equal(fleetPost.status, 200, JSON.stringify(fleetPost.json));
 assert.match(String(fleetPost.json['threadId']), /^thread_/);
 assert.ok(
@@ -271,7 +278,7 @@ assert.ok(
 );
 console.log('agent #team send test passed');
 
-const missionPost = await v2send(bobId, { 'to': '#mission', body: 'mission room ping' });
+const missionPost = await v2send(tokenFor(bobId), { 'to': '#mission', body: 'mission room ping' });
 assert.equal(missionPost.status, 200, JSON.stringify(missionPost.json));
 assert.ok(
   terminals.submissions.some((submission) =>
@@ -281,26 +288,26 @@ assert.ok(
 );
 console.log('agent #mission send test passed');
 
-const roomInterrupt = await v2send(aliceId, { 'to': '#team', body: 'shout', interrupt: true });
+const roomInterrupt = await v2send(tokenFor(aliceId), { 'to': '#team', body: 'shout', interrupt: true });
 assert.equal(roomInterrupt.status, 400, 'interrupt to a room stays rejected (parity with the old channel rule)');
-const bogusRoom = await v2send(aliceId, { 'to': '#bogus', body: 'x' });
+const bogusRoom = await v2send(tokenFor(aliceId), { 'to': '#bogus', body: 'x' });
 assert.equal(bogusRoom.status, 400);
 assert.match(String(bogusRoom.json['error']), /#team.*#mission/);
 // A durable agent with NO mission ref gets the honest 400 for '#mission'.
 appendFileSync(path.join(scratch, 'agents.jsonl'),
   JSON.stringify({ id: 'agent_nomission', kind: 'agent', 'ts': STAMP, name: 'worker-nom', provider: 'claude', status: 'live', refs: [{ kind: 'team', value: teamId }] }) + '\n');
-const noMission = await v2send('agent_nomission', { 'to': '#mission', body: 'x' });
+const noMission = await v2send(tokenFor('agent_nomission'), { 'to': '#mission', body: 'x' });
 assert.equal(noMission.status, 400);
 assert.match(String(noMission.json['error']), /no mission ref/);
 console.log('room send rejection tests passed');
 
-const fleetRead = await v2get(bobId, '/api/messaging/v2/messages?with=%23team');
+const fleetRead = await v2get(tokenFor(bobId), '/api/messaging/v2/messages?with=%23team');
 assert.equal(fleetRead.status, 200);
 assert.ok(
   (fleetRead.json['messages'] as Array<{ body: { text: string } }>).some((message) => message.body.text === 'alice to the fleet'),
   'v2 room read: the fleet post is in the thread',
 );
-const missionRead = await v2get(aliceId, '/api/messaging/v2/messages?with=%23mission');
+const missionRead = await v2get(tokenFor(aliceId), '/api/messaging/v2/messages?with=%23mission');
 assert.equal(missionRead.status, 200);
 assert.ok(
   (missionRead.json['messages'] as Array<{ body: { text: string } }>).some((message) => message.body.text === 'mission room ping'),
@@ -318,7 +325,7 @@ console.log('room read tests passed');
   const ttlEmbedded = createEmbeddedMessaging({
     clock,
     store: createMemoryStore(clock),
-    authority: createNovakaiAuthority(model, clock, { sessionTtlMs: 60 }),
+    authority: createNovakaiAuthority(model, clock, { sessionTtlMs: 60, tokenStore: tokens }),
     membership: createNovakaiMembership(model, clock),
   });
   await ttlEmbedded.start();
@@ -328,7 +335,7 @@ console.log('room read tests passed');
     authCalls += 1;
     return realAuthenticate(credential);
   };
-  const ttlHandle: MessagingV2Handle = { embedded: ttlEmbedded, lanes: null, rooms: null, close: () => ttlEmbedded.close() };
+  const ttlHandle: MessagingV2Handle = { embedded: ttlEmbedded, lanes: null, rooms: null, door: null, close: () => ttlEmbedded.close() };
   const ttlApp = express();
   ttlApp.use(express.json());
   registerMessagingV2Routes(ttlApp, { getHandle: () => ttlHandle, terminals, objectModel: model });
@@ -337,7 +344,7 @@ console.log('room read tests passed');
   });
   const ttlBase = `http://127.0.0.1:${(ttlServer.address() as { port: number }).port}`;
   const callMessages = () => fetch(`${ttlBase}/api/messaging/v2/messages?with=worker-b`, {
-    headers: { authorization: `Bearer ${aliceId}` },
+    headers: { authorization: `Bearer ${tokenFor(aliceId)}` },
   });
 
   assert.equal((await callMessages()).status, 200, 'first call authenticates and serves');

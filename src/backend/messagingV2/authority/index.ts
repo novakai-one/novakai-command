@@ -5,13 +5,15 @@
  *
  * Identity law: the durable agentId (agents.jsonl, written only through
  * ObjectModel) is the ONLY join key — identity NEVER comes from
- * caller-supplied names. An agent's credential token IS its durable agentId.
- * HONEST SECURITY POSTURE (N1 audit finding 3): an agentId is an identifier,
- * not a secret — it is observable in rosters, logs, and the object model.
- * That is acceptable ONLY because N1 has no untrusted callers (embedded mode,
- * no exposed endpoint); real token issuance arrives with N6, and N2 must not
- * expose authenticate to any caller that can read agents.jsonl without a
- * threat note. personId derivation is one-directional (never reverse-mapped):
+ * caller-supplied names. D-N6-2: an agent's credential is an ISSUED token
+ * (nvkt_<64 hex>) resolved through the token store (../tokens) by hash —
+ * the raw durable agentId is REJECTED as a credential (D-N2-2 retired: an
+ * agentId is an identifier, not a secret — observable in rosters, logs,
+ * and the object model; the N1 posture was acceptable only with no exposed
+ * endpoint, and N6 opens the door). Revocation is re-checked at revalidate:
+ * a revoked token's session goes invalid (§2.1). The human principal keeps
+ * its config credential (server-owned, never external).
+ * personId derivation is one-directional (never reverse-mapped):
  *   agent_550e8400-…  →  person_agent-550e8400-…
  *
  * Roles (D4): roles are display-name CONVENTIONS, never a schema field and
@@ -62,6 +64,7 @@ import {
   DEFAULT_SESSION_TTL_MS,
 } from '../../../../packages/messaging/adapters/authority-config.js';
 import type { AgentBlock, ObjectModel } from '../../objectModel/index.js';
+import type { TokenStore } from '../tokens/index.js';
 
 // --- configuration (DEC-07 — roles exist HERE, as adapter config) -------------
 
@@ -81,6 +84,9 @@ export interface NovakaiAuthorityConfig {
   roleGrants?: Record<string, Grant[]>;
   /** Default session TTL in ms (v1 default 1 h). */
   sessionTtlMs?: number;
+  /** D-N6-2: agent credential resolution (hash lookup + revocation truth).
+   * REQUIRED — without it no agent credential can exist (fail fast, §1). */
+  tokenStore: TokenStore;
 }
 
 export interface NovakaiAuthority extends Authority, ProvisioningDirectory {
@@ -116,7 +122,7 @@ function rolesForAgent(block: AgentBlock): string[] {
 }
 
 type LiveSession =
-  | { kind: 'agent'; agentId: string; expiresAtMs: number; invalidated: boolean }
+  | { kind: 'agent'; agentId: string; recordId: string; expiresAtMs: number; invalidated: boolean }
   | { kind: 'human'; human: NovakaiHumanConfig; expiresAtMs: number; invalidated: boolean };
 
 interface AuthorityState {
@@ -228,17 +234,18 @@ interface AuthenticateDeps {
   ttlMs: number;
   roleGrants: Record<string, Grant[]>;
   humansByToken: Map<string, NovakaiHumanConfig>;
+  tokenStore: TokenStore;
   state: AuthorityState;
 }
 
-function authenticateAgent(deps: AuthenticateDeps, agent: AgentBlock): AuthOutcome {
+function authenticateAgent(deps: AuthenticateDeps, agent: AgentBlock, recordId: string): AuthOutcome {
   if (!isActiveAgent(agent)) {
     // Retired/failed agents are NOT authenticatable — an unknown credential,
     // never a distinguished failure mode (§2.2).
     return { kind: 'rejected', error: authRejected('unknown credential') };
   }
   const expiresAtMs = millis(deps.clock.now()) + deps.ttlMs;
-  const sessionId = mintSession(deps.state, { kind: 'agent', agentId: agent.id, expiresAtMs, invalidated: false });
+  const sessionId = mintSession(deps.state, { kind: 'agent', agentId: agent.id, recordId, expiresAtMs, invalidated: false });
   const grants = grantsFor(deps.roleGrants, rolesForAgent(agent), undefined);
   return { kind: 'authenticated', principal: toPrincipal(sessionId, personIdForAgentId(agent.id), grants, expiresAtMs) };
 }
@@ -250,10 +257,16 @@ function authenticateHuman(deps: AuthenticateDeps, human: NovakaiHumanConfig): A
   return { kind: 'authenticated', principal: toPrincipal(sessionId, human.personId, grants, expiresAtMs) };
 }
 
-/** Token → principal resolution once the agent list is in hand. */
+/** Token → principal resolution once the agent list is in hand. D-N6-2: an
+ * agent credential is an issued nvkt_ token (hash lookup in the token
+ * store); the raw durable agentId is REJECTED (D-N2-2 retired). */
 function resolveByToken(deps: AuthenticateDeps, token: string, agents: AgentBlock[]): AuthOutcome {
-  const agent = agents.find((block) => block.id === token);
-  if (agent !== undefined) return authenticateAgent(deps, agent);
+  const resolved = deps.tokenStore.resolve(token);
+  if (resolved !== null) {
+    const agent = agents.find((block) => block.id === resolved.agentId);
+    if (agent !== undefined) return authenticateAgent(deps, agent, resolved.recordId);
+    return { kind: 'rejected', error: authRejected('unknown credential') };
+  }
   const human = deps.humansByToken.get(token);
   if (human === undefined) return { kind: 'rejected', error: authRejected('unknown credential') };
   return authenticateHuman(deps, human);
@@ -282,9 +295,13 @@ function makeAuthenticate(deps: AuthenticateDeps): Authority['authenticate'] {
 function revalidateAgent(
   objectModel: ObjectModel,
   roleGrants: Record<string, Grant[]>,
+  tokenStore: TokenStore,
   sessionId: string,
   session: Extract<LiveSession, { kind: 'agent' }>,
 ): RevalidateOutcome {
+  // D-N6-2: revocation is re-checked at the point of truth — a revoked
+  // token's session goes invalid (§2.1).
+  if (tokenStore.isRevoked(session.recordId)) return { kind: 'invalid' };
   let agent: AgentBlock | null;
   try {
     agent = objectModel.agentRecord(session.agentId);
@@ -301,12 +318,13 @@ function revalidateAgent(
 function revalidateAgentSession(
   objectModel: ObjectModel,
   roleGrants: Record<string, Grant[]>,
+  tokenStore: TokenStore,
   state: AuthorityState,
   sessionId: string,
   session: Extract<LiveSession, { kind: 'agent' }>,
 ): RevalidateOutcome {
-  const outcome = revalidateAgent(objectModel, roleGrants, sessionId, session);
-  if (outcome.kind === 'invalid') state.sessions.delete(sessionId); // gone/retired mid-session
+  const outcome = revalidateAgent(objectModel, roleGrants, tokenStore, sessionId, session);
+  if (outcome.kind === 'invalid') state.sessions.delete(sessionId); // gone/retired/revoked mid-session
   return outcome;
 }
 
@@ -320,6 +338,7 @@ function makeRevalidate(
   objectModel: ObjectModel,
   clock: ClockIds,
   roleGrants: Record<string, Grant[]>,
+  tokenStore: TokenStore,
   state: AuthorityState,
 ): Authority['revalidate'] {
   return async (sessionId) => {
@@ -328,7 +347,7 @@ function makeRevalidate(
     if (!session || session.invalidated) return { kind: 'invalid' };
     if (millis(clock.now()) >= session.expiresAtMs) return expireSession(state, sessionId);
     if (session.kind === 'agent') {
-      return revalidateAgentSession(objectModel, roleGrants, state, sessionId, session);
+      return revalidateAgentSession(objectModel, roleGrants, tokenStore, state, sessionId, session);
     }
     // Fresh grants: a mid-session grant change takes effect HERE (§2.1).
     const grants = grantsFor(roleGrants, session.human.roles, session.human.grants);
@@ -367,14 +386,8 @@ function makeIsProvisioned(
 
 // --- factory ----------------------------------------------------------------------------
 
-export function createNovakaiAuthority(
-  objectModel: ObjectModel, clock: ClockIds, config: NovakaiAuthorityConfig = {},
-): NovakaiAuthority {
-  const roleGrants = config.roleGrants ?? DEFAULT_ROLE_GRANTS;
-  validateRoleGrants(roleGrants);
-  const humansByToken = indexHumans(config.humans ?? []);
-  const ttlMs = config.sessionTtlMs ?? DEFAULT_SESSION_TTL_MS;
-  const state: AuthorityState = { sessions: new Map(), sessionCounter: 0, unavailable: false };
+/** The factory's test/host controls (adapter-private, not seam surface). */
+function makeTestControls(state: AuthorityState) {
   return {
     setUnavailable: (flag: boolean): void => { state.unavailable = flag; },
     invalidateSession: (sessionId: string): void => {
@@ -382,8 +395,26 @@ export function createNovakaiAuthority(
       if (session) session.invalidated = true;
     },
     sessionCount: (): number => state.sessions.size,
+  };
+}
+
+export function createNovakaiAuthority(
+  objectModel: ObjectModel, clock: ClockIds, config: NovakaiAuthorityConfig,
+): NovakaiAuthority {
+  if (config.tokenStore === undefined || config.tokenStore === null) {
+    // D-N6-2: without the token store no agent credential can resolve —
+    // fail construction, never silently reject every agent (Seams §1).
+    throw authUnavailable('tokenStore is required (D-N6-2: agent credentials are issued tokens)');
+  }
+  const roleGrants = config.roleGrants ?? DEFAULT_ROLE_GRANTS;
+  validateRoleGrants(roleGrants);
+  const humansByToken = indexHumans(config.humans ?? []);
+  const ttlMs = config.sessionTtlMs ?? DEFAULT_SESSION_TTL_MS;
+  const state: AuthorityState = { sessions: new Map(), sessionCounter: 0, unavailable: false };
+  return {
+    ...makeTestControls(state),
     isProvisioned: makeIsProvisioned(objectModel, humansByToken),
-    authenticate: makeAuthenticate({ objectModel, clock, ttlMs, roleGrants, humansByToken, state }),
-    revalidate: makeRevalidate(objectModel, clock, roleGrants, state),
+    authenticate: makeAuthenticate({ objectModel, clock, ttlMs, roleGrants, humansByToken, tokenStore: config.tokenStore, state }),
+    revalidate: makeRevalidate(objectModel, clock, roleGrants, config.tokenStore, state),
   };
 }

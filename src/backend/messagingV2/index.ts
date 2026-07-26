@@ -32,6 +32,7 @@ import type { EmbeddedMessaging } from '../../../packages/messaging/composition/
 import { createSystemClock } from '../../../packages/messaging/adapters/clock-system.js';
 import { openJsonlStore } from '../../../packages/messaging/adapters/store-jsonl.js';
 import type { PersonId } from '../../../packages/messaging/public/contract/index.js';
+import type { PresenceTransport } from '../../../packages/messaging/seams/presenceTransport.js';
 import { CHRIS_MEMBER } from '../messaging/types.js';
 import type { ObjectModel } from '../objectModel/index.js';
 import type { AgentInfo } from '../terminal/manager.js';
@@ -44,6 +45,9 @@ import { createAgentLaneGlue } from './presence/index.js';
 import type { AgentLaneGlue } from './presence/index.js';
 import { createRoomDirectory, createRoomsGlue } from './rooms/index.js';
 import type { RoomsGlue } from './rooms/index.js';
+import type { TokenStore } from './tokens/index.js';
+import { createDoorTransport, startDoor } from './door/index.js';
+import type { DoorOptions, MessagingDoor } from './door/index.js';
 
 /** The one human personId (D-N3-1: shared by authority config + membership). */
 export const HUMAN_PERSON_ID = 'person_user-chris' as PersonId;
@@ -55,11 +59,13 @@ export interface MessagingV2Handle {
   readonly lanes: AgentLaneGlue | null;
   /** N3: room provisioning + the browser #team shim; null without terminals. */
   readonly rooms: RoomsGlue | null;
+  /** D-N6-1: the DEC-17 door; null when disabled or when its bind failed. */
+  readonly door: MessagingDoor | null;
   close(): Promise<void>;
 }
 
 /** The optional human principal (person_user-chris, role Human) from config. */
-function humanConfig(humanToken: string | undefined): NovakaiAuthorityConfig {
+function humanConfig(humanToken: string | undefined): Omit<NovakaiAuthorityConfig, 'tokenStore'> {
   if (humanToken === undefined) return {};
   // A-R-N4-1: the owner's lane oversight is HOST policy — granted here, in
   // the app composition. The package's DEFAULT_ROLE_GRANTS is deliberately
@@ -68,7 +74,7 @@ function humanConfig(humanToken: string | undefined): NovakaiAuthorityConfig {
 }
 
 /** Boot-log principal count: live/spawning durable agents + configured humans. */
-function countPrincipals(objectModel: ObjectModel, config: NovakaiAuthorityConfig): number {
+function countPrincipals(objectModel: ObjectModel, config: Omit<NovakaiAuthorityConfig, 'tokenStore'>): number {
   const agents = objectModel.listAgents().filter(isActiveAgent).length;
   return agents + (config.humans?.length ?? 0);
 }
@@ -77,6 +83,12 @@ export interface StartMessagingV2Deps {
   objectModel: ObjectModel;
   /** Journal path; defaults to .novakai-command/messaging-v2/journal.jsonl. */
   storePath?: string;
+  /** D-N6-2: agent credential issuance/resolution (REQUIRED — the authority
+   * rejects every agent credential without it). */
+  tokenStore: TokenStore;
+  /** D-N6-1: the DEC-17 door. Absent = disabled (scratch rigs); port 0 =
+   * ephemeral (tests). Boot failure never kills the capability (loud log). */
+  door?: DoorOptions;
   /** Human principal credential (person_user-chris, role Human). Optional —
    * unset self-mints a boot-random token that never leaves the process (the
    * app is the human session's only consumer); set only to pin it for ops. */
@@ -107,16 +119,26 @@ async function bootGuarded(
   embedded: EmbeddedMessaging,
   deps: StartMessagingV2Deps,
   humanToken: string,
-  config: NovakaiAuthorityConfig,
+  config: Omit<NovakaiAuthorityConfig, 'tokenStore'>,
   storePath: string,
   transport: ReturnType<typeof createTerminalHostTransport> | null,
   directory: ReturnType<typeof createRoomDirectory>,
+  doorTransport: ReturnType<typeof createDoorTransport> | null,
 ): Promise<MessagingV2Handle> {
   try {
-    return await bootServing(embedded, deps, humanToken, config, storePath, transport, directory);
+    return await bootServing(embedded, deps, humanToken, config, storePath, transport, directory, doorTransport);
   } catch (error) {
     await closeQuietly(embedded);
     throw error;
+  }
+}
+
+/** D-N6-2 zero-touch issuance: every active durable agent holds a token
+ * before ANY consumer (lanes, the door, spawn env) can need one. The launch
+ * path re-ensures per spawn (presence glue's openLane). */
+function bootMintTokens(deps: StartMessagingV2Deps): void {
+  for (const block of deps.objectModel.listAgents().filter(isActiveAgent)) {
+    deps.tokenStore.ensure(block.id);
   }
 }
 
@@ -125,27 +147,55 @@ async function bootServing(
   embedded: EmbeddedMessaging,
   deps: StartMessagingV2Deps,
   humanToken: string,
-  config: NovakaiAuthorityConfig,
+  config: Omit<NovakaiAuthorityConfig, 'tokenStore'>,
   storePath: string,
   transport: ReturnType<typeof createTerminalHostTransport> | null,
   directory: ReturnType<typeof createRoomDirectory>,
+  doorTransport: ReturnType<typeof createDoorTransport> | null,
 ): Promise<MessagingV2Handle> {
   const principals = countPrincipals(deps.objectModel, config);
   // DEC-21/F10: the recovery sweep runs BEFORE serving (inside start()).
   await embedded.start();
+  bootMintTokens(deps);
   const booted = await bootLanes(embedded, deps, humanToken, transport, directory);
+  const door = await startDoorSafely(embedded, doorTransport, deps);
   const announce = deps.log ?? console.log;
   announce(`[messaging-v2] capability booted (store=${storePath}, principals=${principals})`);
-  return serveHandle(embedded, booted);
+  return serveHandle(embedded, booted, door);
+}
+
+/** D-N6-1: a door bind failure must never kill the capability — the app
+ * serves without it, LOUD (the N1 boot-failure posture, one level down). */
+async function startDoorSafely(
+  embedded: EmbeddedMessaging,
+  doorTransport: ReturnType<typeof createDoorTransport> | null,
+  deps: StartMessagingV2Deps,
+): Promise<MessagingDoor | null> {
+  if (doorTransport === null || deps.door === undefined) return null;
+  try {
+    return await startDoor(embedded, doorTransport, deps.door);
+  } catch (error) {
+    const announce = deps.log ?? console.error;
+    announce(`[messaging-v2] DOOR failed to bind (${deps.door.host ?? '127.0.0.1'}:${deps.door.port}) — externals unserved this run: ${error instanceof Error ? error.message : String(error)}`);
+    return null;
+  }
 }
 
 /** The public handle over the booted stack + glue. */
-function serveHandle(embedded: EmbeddedMessaging, booted: BootedGlue | null): MessagingV2Handle {
+function serveHandle(
+  embedded: EmbeddedMessaging,
+  booted: BootedGlue | null,
+  door: MessagingDoor | null,
+): MessagingV2Handle {
   return {
     embedded,
     lanes: booted?.lanes ?? null,
     rooms: booted?.rooms ?? null,
-    close: () => closeAll(embedded, booted?.lanes ?? null, booted?.rooms ?? null),
+    door,
+    close: async () => {
+      await door?.close(); // door sockets carry subscriptions — they close first
+      await closeAll(embedded, booted?.lanes ?? null, booted?.rooms ?? null);
+    },
   };
 }
 
@@ -165,6 +215,7 @@ function makeLaneGlue(
     transport,
     terminals: deps.terminals as TerminalRuntime,
     objectModel: deps.objectModel,
+    tokenStore: deps.tokenStore,
     humanToken,
     ...(deps.log !== undefined ? { 'log': deps.log } : {}),
   });
@@ -242,6 +293,19 @@ function makeTransport(
   });
 }
 
+/** The presence transports for this boot: the pty lane (with terminals) plus
+ * the door's 'ws' transport (D-N6-1 — externals OpenPresence with 'ws'). */
+function makeTransports(
+  ptyTransport: ReturnType<typeof createTerminalHostTransport> | null,
+  deps: StartMessagingV2Deps,
+): { transports: PresenceTransport[]; doorTransport: ReturnType<typeof createDoorTransport> | null } {
+  const doorTransport = deps.door !== undefined ? createDoorTransport() : null;
+  const transports: PresenceTransport[] = [];
+  if (ptyTransport !== null) transports.push(ptyTransport);
+  if (doorTransport !== null) transports.push(doorTransport);
+  return { transports, doorTransport };
+}
+
 export async function startMessagingV2(deps: StartMessagingV2Deps): Promise<MessagingV2Handle> {
   const clock = createSystemClock();
   const storePath = deps.storePath ?? path.resolve('.novakai-command/messaging-v2/journal.jsonl');
@@ -253,16 +317,17 @@ export async function startMessagingV2(deps: StartMessagingV2Deps): Promise<Mess
   const humanToken = deps.humanToken ?? `human_${randomUUID()}`;
   const config = humanConfig(humanToken);
   // Pure adapters first — no resources to leak if construction throws.
-  const authority = createNovakaiAuthority(deps.objectModel, clock, config);
+  const authority = createNovakaiAuthority(deps.objectModel, clock, { ...config, tokenStore: deps.tokenStore });
   // D-N3-1: the human principal rides EVERY roster the membership adapter serves.
   const membership = createNovakaiMembership(deps.objectModel, clock, HUMAN_PERSON_ID);
   const store = await openJsonlStore(clock, { path: storePath });
   const directory = createRoomDirectory();
   const transport = makeTransport(deps, directory);
+  const { transports, doorTransport } = makeTransports(transport, deps);
   const embedded = createEmbeddedMessaging({
     clock, store, authority, membership,
     busPollIntervalMs: 500, sweepIntervalMs: 60_000,
-    ...(transport === null ? {} : { transports: [transport] }),
+    ...(transports.length === 0 ? {} : { transports }),
   });
-  return bootGuarded(embedded, deps, humanToken, config, storePath, transport, directory);
+  return bootGuarded(embedded, deps, humanToken, config, storePath, transport, directory, doorTransport);
 }

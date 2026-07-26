@@ -53,6 +53,8 @@ export interface CreateAgentOptions {
   /** Durable object-model identity minted by the spawn path — the runtime
    * adopts it verbatim so there is exactly one agentId (ruling S4). */
   agentId?: string;
+  /** D-N6-2: the spawn's issued messaging credential → NVK_AGENT_TOKEN env. */
+  agentToken?: string;
 }
 
 /** Tracking starts now, with no output observed yet. */
@@ -156,7 +158,7 @@ export class TerminalManager {
     const agentId = options.agentId ?? `agent_${randomUUID()}`;
     if (this.agents.has(agentId)) throw new Error(`agentId "${agentId}" already exists in the terminal registry`);
     const requestedSessionId = randomUUID();
-    const launched = this.launcher(options.provider || 'claude', options.cwd, requestedSessionId, agentId);
+    const launched = this.launcher(options.provider || 'claude', options.cwd, requestedSessionId, agentId, options.agentToken);
     const provider = options.provider || 'claude';
     const info = buildAgentInfo(agentId, provider === 'claude' ? requestedSessionId : '', options, launched.process.pid);
     const buffer = new AgentBuffer();

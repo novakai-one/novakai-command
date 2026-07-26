@@ -18,6 +18,7 @@ import type { AgentInfo } from '../../terminal/manager.js';
 import type { TerminalRuntime } from '../../terminal/runtime/index.js';
 import { ObjectModel } from '../../objectModel/index.js';
 import { createNovakaiAuthority, personIdForAgentId } from '../authority/index.js';
+import { createTokenStore } from '../tokens/index.js';
 import { createNovakaiMembership } from '../membership/index.js';
 import { createTerminalHostTransport } from '../transport/index.js';
 import { createAgentLaneGlue } from './index.js';
@@ -98,11 +99,18 @@ const plainInfo = agentInfo('agent_plain', 'plain-1');
 const clock = createSystemClock();
 const terminals = new FakeTerminalRuntime([aliceInfo, bobInfo, plainInfo]);
 const transport = createTerminalHostTransport(terminals);
+// D-N6-2: agent credentials are issued tokens (agentId is NOT one).
+const tokens = createTokenStore(path.join(mkdtempSync(path.join(tmpdir(), 'nvk-mv2-presence-tokens-')), 'tokens.jsonl'));
+const tokenFor = (agentId: string): string => {
+  tokens.ensure(agentId);
+  return tokens.tokenForAgent(agentId) as string;
+};
 const embedded = createEmbeddedMessaging({
   clock,
   store: createMemoryStore(clock),
   authority: createNovakaiAuthority(model, clock, {
     humans: [{ token: 'human-secret', personId: 'person_user-chris' as never, roles: ['Human'] }],
+    tokenStore: tokens,
   }),
   membership: createNovakaiMembership(model, clock),
   transports: [transport],
@@ -110,7 +118,7 @@ const embedded = createEmbeddedMessaging({
 await embedded.start();
 const glueLogs: string[] = [];
 const glue = createAgentLaneGlue({
-  embedded, transport, terminals, objectModel: model, humanToken: 'human-secret',
+  embedded, transport, terminals, objectModel: model, tokenStore: tokens, humanToken: 'human-secret',
   briefingDelayMs: 5, 'log': (line) => glueLogs.push(line),
 });
 
@@ -131,14 +139,14 @@ console.log('boot lane tests passed');
 // --- D-N2-5 team contact bootstrap (host policy; DEC-14 deny-by-default intact) ------
 
 async function allowlistFor(token: string): Promise<unknown> {
-  const auth = await embedded.authenticate({ token });
+  const auth = await embedded.authenticate({ token }); // token: human-secret or tokenFor(agentId)
   if (auth.kind !== 'authenticated') throw new Error('unreachable');
   const policy = await auth.session.getPolicy({});
   if (policy.kind !== 'ok') throw new Error('unreachable');
   return policy.value.contact;
 }
 
-const aliceContact = await allowlistFor(aliceId) as { allowlist: string[]; defaultRule: string };
+const aliceContact = await allowlistFor(tokenFor(aliceId)) as { allowlist: string[]; defaultRule: string };
 assert.ok(aliceContact.allowlist.includes(bobPerson), 'co-member bob is reachable by alice');
 assert.ok(aliceContact.allowlist.includes('person_user-chris'), 'the human principal is reachable by alice');
 assert.ok(!aliceContact.allowlist.includes(carolPerson), 'carol shares no ref — NOT allowlisted');
@@ -150,7 +158,7 @@ for (const personId of [alicePerson, bobPerson, carolPerson]) {
 console.log('contact bootstrap policy tests passed');
 
 // agent→chris DMs send cleanly (delivery pends until N4 — expected); carol stays 403.
-const aliceAuth = await embedded.authenticate({ token: aliceId });
+const aliceAuth = await embedded.authenticate({ token: tokenFor(aliceId) });
 if (aliceAuth.kind !== 'authenticated') throw new Error('unreachable');
 const toChris = await aliceAuth.session.sendMessage({
   address: 'person:person_user-chris', body: { text: 'boss ping' },
@@ -236,12 +244,14 @@ console.log('policy-failure lane resilience test passed');
 // forever. The glue must re-mint on a timer and clean that timer up on close.
 
 const renewClock = createSystemClock();
+const renewTokens = createTokenStore(path.join(mkdtempSync(path.join(tmpdir(), 'nvk-mv2-renew-tokens-')), 'tokens.jsonl'));
 const renewEmbedded = createEmbeddedMessaging({
   clock: renewClock,
   store: createMemoryStore(renewClock),
   authority: createNovakaiAuthority(model, renewClock, {
     sessionTtlMs: 400,
     humans: [{ token: 'human-secret', personId: 'person_user-chris' as never, roles: ['Human'] }],
+    tokenStore: renewTokens,
   }),
   membership: createNovakaiMembership(model, renewClock),
   transports: [createTerminalHostTransport(terminals)],
@@ -255,7 +265,7 @@ renewEmbedded.authenticate = (credential: unknown) => {
 };
 const renewGlue = createAgentLaneGlue({
   embedded: renewEmbedded, transport: createTerminalHostTransport(terminals), terminals,
-  objectModel: model, humanToken: 'human-secret', briefingDelayMs: 5, 'log': () => {},
+  objectModel: model, tokenStore: renewTokens, humanToken: 'human-secret', briefingDelayMs: 5, 'log': () => {},
 });
 await renewGlue.openBootLanes();
 const staleSession = renewGlue.humanSession();
