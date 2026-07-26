@@ -3,7 +3,6 @@
 import {
   STORE_KINDS, REF_KINDS, RESOLVABLE_REF_KINDS, KIND_RULES, TS_PATTERN,
   idPattern, TOMBSTONE_STATUS, TOMBSTONE_TARGET_KINDS, EVIDENCE_TARGET_KINDS,
-  ARTIFACT_ANCHOR_KINDS,
 } from './schema.mjs';
 
 /**
@@ -210,17 +209,16 @@ function validateBlockedReason(block, addViolation) {
   }
 }
 
-/** An artifact names exactly one location (path xor url) and anchors to mission/task. */
+/**
+ * An artifact names exactly one location (path xor url). It carries NO anchor
+ * requirement — see schema.mjs: an artifact is created parentless and attached
+ * afterwards through ordinary refs (Chris, 2026-07-26).
+ */
 function validateArtifactShape(block, addViolation) {
   const hasPath = typeof block.path === 'string' && block.path !== '';
   const hasUrl = typeof block.url === 'string' && block.url !== '';
   if (hasPath === hasUrl) {
     addViolation('FIELD-INVALID', 'an artifact must carry exactly one of "path" or "url"');
-  }
-  const refs = Array.isArray(block.refs) ? block.refs : [];
-  const anchored = refs.some((ref) => ref !== null && typeof ref === 'object' && ARTIFACT_ANCHOR_KINDS.includes(ref.kind));
-  if (!anchored) {
-    addViolation('RELATION-MISSING', `an artifact must ref at least one ${ARTIFACT_ANCHOR_KINDS.join('|')}`);
   }
 }
 
