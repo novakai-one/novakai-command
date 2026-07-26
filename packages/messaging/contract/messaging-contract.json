@@ -3,7 +3,7 @@
   "$id": "https://novakai.local/messaging/contract/messaging-contract.json",
   "kind": "messaging-contract",
   "title": "Novakai Messaging — public contract source (Step 2)",
-  "contractVersion": "1.0.0",
+  "contractVersion": "1.1.0",
   "schemaVersion": 1,
   "authority": "Messaging-Ratification.md §9/§10; Messaging-Store-Seam.md §6 (and its §11 errata). This file is the SINGLE source of truth for every contract shape (law #3). Docs, validators, and the visual map generate from it; nothing is hand-copied into prose.",
   "constants": {
@@ -43,7 +43,7 @@
     "ClientMessageId": { "type": "string", "minLength": 1, "maxLength": 128, "description": "Client-supplied idempotency key, unique per sender (DEC-13)." },
     "Address": { "type": "string", "pattern": "^(person:person_|thread:thread_)[A-Za-z0-9-]+$", "description": "Typed destination (Plan §8): <kind>:<full durable ID> — e.g. person:person_7f3a, thread:thread_9b2c. person: resolves to the canonical direct Thread (DEC-03). thread: addresses a Thread by ID: for a DIRECT Thread the sender must be one of the canonical pair and the recipient is the other member (R4); for a Room Thread the R4 membership rule applies. Resolved at acceptance." },
     "Priority": { "type": "string", "enum": ["normal", "urgent"], "description": "DEC-12: one field, one policy decision point." },
-    "Grant": { "type": "string", "enum": ["priority.override", "policy.admin", "template.write"], "description": "Grants the core may verify via the Authority seam. priority.override is boolean per principal, global in v1 (R10); the role→grant mapping lives in authority-adapter config, never in core (DEC-07 amendment)." },
+    "Grant": { "type": "string", "enum": ["priority.override", "policy.admin", "template.write", "oversight.read"], "description": "Grants the core may verify via the Authority seam. priority.override is boolean per principal, global in v1 (R10); the role→grant mapping lives in authority-adapter config, never in core (DEC-07 amendment). oversight.read (A-R-N4-1): the holder may READ any direct Thread regardless of pair membership — lane oversight for the owner. READ-ONLY: send rules (R4 party-only) are unchanged." },
     "TransportKind": { "type": "string", "enum": ["ws", "pty"], "description": "Presence TRANSPORT adapters in the v1 suite — the outbound delivery effect. The CLI is an inbound protocol adapter (DEC-17), not a presence transport. webhook is deferred (O4)." },
     "MessageBody": {
       "type": "object",
@@ -607,7 +607,7 @@
     {
       "name": "GetThread",
       "summary": "Fetch one Thread's metadata.",
-      "authorization": "thread member (R3): direct — one of the pair; room — current member per the membership seam",
+      "authorization": "thread member (R3): direct — one of the pair; room — current member per the membership seam; or an oversight.read holder (A-R-N4-1)",
       "input": { "type": "object", "additionalProperties": false, "required": ["threadId"], "properties": { "threadId": { "$ref": "#/$defs/ThreadId" } } },
       "result": { "$ref": "#/$defs/ThreadView" },
       "errors": ["NotAuthenticated", "NotAuthorized", "UnknownThread", "DependencyUnavailable"],
@@ -616,7 +616,7 @@
     {
       "name": "ListThreadsForPerson",
       "summary": "Threads visible to a Person.",
-      "authorization": "self only (R3); policy.admin may list for others",
+      "authorization": "self only (R3); policy.admin may list for others; an oversight.read holder listing SELF also sees every direct lane (A-R-N4-1)",
       "input": { "type": "object", "additionalProperties": false, "properties": { "personId": { "$ref": "#/$defs/PersonId" } } },
       "result": { "$ref": "#/$defs/ThreadListResult" },
       "errors": ["NotAuthenticated", "NotAuthorized", "DependencyUnavailable"],
@@ -625,7 +625,7 @@
     {
       "name": "GetMessages",
       "summary": "Ordered slice of a Thread's history, cursor-based, sequence ascending (DEC-19).",
-      "authorization": "thread member (R3)",
+      "authorization": "thread member (R3); or an oversight.read holder (A-R-N4-1)",
       "input": { "type": "object", "additionalProperties": false, "required": ["threadId"], "properties": { "threadId": { "$ref": "#/$defs/ThreadId" }, "cursor": { "$ref": "#/$defs/Cursor" }, "limit": { "type": "integer", "minimum": 1 } } },
       "result": { "$ref": "#/$defs/MessagePage" },
       "errors": ["NotAuthenticated", "NotAuthorized", "UnknownThread", "ValidationFailed", "DependencyUnavailable"],
@@ -643,7 +643,7 @@
     {
       "name": "GetDelivery",
       "summary": "Per-recipient delivery state for one Message (MSG-016: failure truth without an agent turn).",
-      "authorization": "thread member (R3)",
+      "authorization": "thread member (R3); or an oversight.read holder (A-R-N4-1)",
       "input": { "type": "object", "additionalProperties": false, "required": ["messageId"], "properties": { "messageId": { "$ref": "#/$defs/MessageId" } } },
       "result": { "$ref": "#/$defs/DeliveryListResult" },
       "errors": ["NotAuthenticated", "NotAuthorized", "UnknownMessage", "DependencyUnavailable"],
@@ -690,7 +690,7 @@
     {
       "name": "Subscribe",
       "summary": "R1: the push contract (MSG-007, MSG-023). A connected principal receives committed-fact events pushed over its live Presence — polling is a catch-up fallback after disconnect, never the liveness mechanism.",
-      "authorization": "any authenticated principal; event payload filtered to threads the subscriber may read (R3). An explicit threads[] naming a Thread the subscriber may NOT read fails the whole Subscribe with NotAuthorized — scope is never silently dropped (G6).",
+      "authorization": "any authenticated principal; event payload filtered to threads the subscriber may read (R3). An explicit threads[] naming a Thread the subscriber may NOT read fails the whole Subscribe with NotAuthorized — scope is never silently dropped (G6). An oversight.read holder passes direct-lane payload filtering and may name foreign direct Threads in explicit scope (A-R-N4-1).",
       "input": { "$ref": "#/$defs/SubscribeInput" },
       "result": { "$ref": "#/$defs/SubscriptionMessage", "description": "A STREAM of SubscriptionMessage frames: started → event* → ended. Every frame carries subscriptionId." },
       "errors": ["NotAuthenticated", "NotAuthorized", "ValidationFailed", "DependencyUnavailable"],

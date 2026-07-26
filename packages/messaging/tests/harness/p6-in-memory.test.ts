@@ -91,7 +91,7 @@ describe("P6 — the full capability on in-memory everything", () => {
   it("discovery and authentication need no infrastructure", async () => {
     const { cap } = makeP6();
     const capabilities = cap.getCapabilities();
-    assert.equal(capabilities.contractVersion, "1.0.0");
+    assert.equal(capabilities.contractVersion, "1.1.0"); // A-R-N4-1 (oversight.read)
     assert.deepEqual([...capabilities.features].sort(), ["attention", "direct", "rooms", "subscribe", "templates"]);
 
     assert.equal((await cap.authenticate({ token: "wrong" })).kind, "rejected");

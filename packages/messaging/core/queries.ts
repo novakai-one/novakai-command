@@ -22,6 +22,15 @@
  * room unknown to the authority is omitted (the authority owns membership
  * truth — unknown room ⇒ cannot be a member).
  *
+ * A-R-N4-1 (contract 1.1.0, oversight.read): the holder READS any direct
+ * Thread regardless of pair membership — assertThreadMember's direct branch
+ * admits the grant (rooms unchanged). A holder listing SELF gets the
+ * interleaved §11.5 list PLUS the foreign lanes appended (non-holder output
+ * is byte-identical to the pre-amendment order; ordering remains
+ * non-contractual per §11.5); policy.admin acting for ANOTHER keeps the
+ * pair-scoped read — oversight is a self-list privilege, never a leak of
+ * unrelated lanes. READ-ONLY: the R4 party-only send rules are untouched.
+ *
  * GetPolicy has no NotFound in its error list, so an absent policy pair
  * returns the DEC-14 synthesized defaults (view-only, revision 0 — never
  * persisted; the first real write starts at revision 1).
@@ -124,6 +133,8 @@ export function createQueries(deps: QueriesDeps) {
     if (thread.threadKind === "direct" && thread.direct) {
       const [a, b] = thread.direct.pair;
       if (principal.personId === a || principal.personId === b) return;
+      // A-R-N4-1: the oversight.read holder READS any direct lane (read-only).
+      if (principal.grants.includes("oversight.read")) return;
       throw notAuthorized(`not a member of direct Thread ${thread.id} (R3)`);
     }
     if (!thread.room) {
@@ -186,6 +197,23 @@ export function createQueries(deps: QueriesDeps) {
       // target as a member — omit. Unavailable fails the whole query (G6).
       if (outcome.kind === "unknown") continue;
       throw outcome.error;
+    }
+    // A-R-N4-1 (F1): a holder listing SELF gets every direct lane — the
+    // FOREIGN half appended after the interleaved §11.5 list, so non-holder
+    // output stays byte-identical to the pre-amendment order (ordering
+    // remains non-contractual per §11.5 either way).
+    if (target === principal.personId && principal.grants.includes("oversight.read")) {
+      const lanes = await store.listDirectThreads();
+      if (lanes.kind === "error") {
+        // L9 (F2): this read folds/filters — it never resolves a record, so
+        // there is no honest Unknown* mapping. CursorInvalid → ValidationFailed.
+        if (lanes.error.name === "CursorInvalid") throw cursorInvalidError(lanes.error.cursor as Cursor);
+        throw storeDependencyError(lanes.error);
+      }
+      const held = new Set(visible.map((thread) => thread.id));
+      for (const lane of lanes.value) {
+        if (!held.has(lane.id)) visible.push(lane);
+      }
     }
     return { threads: visible };
   }

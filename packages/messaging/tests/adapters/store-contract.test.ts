@@ -920,6 +920,43 @@ for (const factory of storeAdapterFactories) {
       }
     });
 
+    it("listDirectThreads (A-R-N4-1): EVERY direct lane in creation order, no rooms, regardless of pair", async () => {
+      const handle = await factory.make();
+      try {
+        const nobody = "person_nobody" as PersonId;
+        const before = await handle.store.listDirectThreads();
+        assert.equal(before.kind, "ok");
+        if (before.kind === "ok") assert.equal(before.value.length, 0);
+
+        // Two unrelated direct lanes + a room — the amendment read is the
+        // UNSCOPED lane enumeration (oversight), never pair-matched.
+        await handle.store.commitAcceptance(
+          makeAcceptanceInput({ clock: handle.clock, sender: ALICE, recipient: BOB, clientMessageId: cmid("ld-1") }),
+        );
+        await handle.store.commitAcceptance(
+          makeAcceptanceInput({ clock: handle.clock, sender: BOB, recipient: nobody, clientMessageId: cmid("ld-2") }),
+        );
+        const room = await handle.store.createRoomThread({
+          threadKind: "team",
+          authority: "team-capability",
+          externalId: "team-ld",
+        });
+        assert.equal(room.kind, "ok");
+
+        const lanes = await handle.store.listDirectThreads();
+        assert.equal(lanes.kind, "ok");
+        if (lanes.kind === "ok") {
+          assert.equal(lanes.value.length, 2, "every direct lane, no rooms");
+          assert.ok(lanes.value.every((thread) => thread.threadKind === "direct"));
+          const pairs = lanes.value.map((thread) => [...(thread.direct?.pair ?? [])].sort().join("+"));
+          assert.deepEqual(pairs, [[ALICE, BOB].sort().join("+"), [BOB, nobody].sort().join("+")], "creation order");
+        }
+      } finally {
+        await handle.store.close();
+        handle.cleanup();
+      }
+    });
+
     it("getSnapshot (§11.6): the frozen snapshot by messageId — membership evidence + blocked; unknown → RecordNotFound", async () => {
       const handle = await factory.make();
       let store = handle.store;

@@ -50,7 +50,7 @@ describe("P2 — external Chief over the published wire protocol (MSG-004, MSG-0
       // Pre-authentication discovery (R3): versions + limits only.
       const capabilities = await chief.getCapabilities();
       assert.equal(capabilities["protocolVersion"], "1.0.0");
-      assert.equal(capabilities["contractVersion"], "1.0.0");
+      assert.equal(capabilities["contractVersion"], "1.1.0"); // A-R-N4-1 (oversight.read)
       assert.ok((capabilities["features"] as string[]).includes("subscribe"));
       assert.deepEqual(capabilities["limits"], {
         messageMaxBytes: 32768,

@@ -23,7 +23,7 @@ import type { TerminalRuntime } from '../../terminal/runtime/index.js';
 import { ObjectModel } from '../../objectModel/index.js';
 import { startMessagingV2 } from '../index.js';
 import type { MessagingV2Handle } from '../index.js';
-import { createNovakaiAuthority } from '../authority/index.js';
+import { createNovakaiAuthority, personIdForAgentId } from '../authority/index.js';
 import { createNovakaiMembership } from '../membership/index.js';
 import { registerMessagingV2UserRoutes } from './index.js';
 
@@ -233,6 +233,35 @@ assert.equal(deadMessages.status, 503, 'the readTrailingPage throw path is 503, 
 await deadEmbedded.close();
 deadServer.close();
 console.log('dead-session 503 tests passed');
+
+// --- A-R-N4-1: the owner's oversight.read — agent↔agent lanes are visible ------
+// PR #72 ruling: the owner MUST see agent↔agent DM lanes. The human
+// principal carries the grant (host policy in the composition), so the
+// user-threads route serves lanes the human is NOT a party to.
+
+const aliceAuth = await handle.embedded.authenticate({ token: aliceId });
+if (aliceAuth.kind !== 'authenticated') throw new Error('unreachable');
+const agentLane = await aliceAuth.session.sendMessage({
+  address: `person:${personIdForAgentId(bobId)}`,
+  body: { text: 'agent-to-agent oversight target' },
+  priority: 'normal', clientMessageId: 'rn41-lane-1',
+});
+assert.equal(agentLane.kind, 'ok', 'the agent↔agent lane commits');
+if (agentLane.kind !== 'ok') throw new Error('unreachable');
+
+const humanPrincipal = handle.lanes?.humanSession()?.principal;
+assert.ok(humanPrincipal?.grants.includes('oversight.read'), 'the human principal authenticates WITH oversight.read');
+
+const oversightThreads = await userGet('/api/messaging/v2/user/threads');
+assert.equal(oversightThreads.status, 200);
+const oversightList = oversightThreads.json['threads'] as Array<Record<string, unknown>>;
+assert.ok(
+  oversightList.some((thread) => thread['id'] === agentLane.value.threadId),
+  'the user-threads route includes an agent↔agent direct lane (A-R-N4-1)',
+);
+const humanSends = await userSend({ 'to': 'worker-b', body: 'owner dm still works' });
+assert.equal(humanSends.status, 201, 'oversight is additive — the human lane still sends');
+console.log('oversight.read tests passed');
 
 await handle.close();
 server.close();

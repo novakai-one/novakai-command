@@ -196,10 +196,11 @@ export function sequenceFromCursor(cursor: Cursor): Sequence {
 
 /**
  * R3 member rule (S2): direct-pair member, or CURRENT room member per the
- * membership seam. On the implicit filtering path a membership outage or an
- * unknown room collapses to unreadable — no push, no leak (never a silent
- * allow); the explicit-scope path uses assertReadable instead, which fails
- * loudly with the typed outcome.
+ * membership seam — or, per A-R-N4-1, an oversight.read holder (direct lanes
+ * only; rooms unchanged). On the implicit filtering path a membership outage
+ * or an unknown room collapses to unreadable — no push, no leak (never a
+ * silent allow); the explicit-scope path uses assertReadable instead, which
+ * fails loudly with the typed outcome.
  */
 export async function mayReadThread(
   membership: MembershipSource,
@@ -208,7 +209,8 @@ export async function mayReadThread(
 ): Promise<boolean> {
   if (thread.threadKind === "direct" && thread.direct) {
     const [a, b] = thread.direct.pair;
-    return principal.personId === a || principal.personId === b;
+    if (principal.personId === a || principal.personId === b) return true;
+    return principal.grants.includes("oversight.read"); // A-R-N4-1
   }
   if (!thread.room) return false; // corrupt payload — no leak
   const outcome = await membership.isMember(thread.room, principal.personId);
@@ -224,6 +226,7 @@ async function assertReadable(
   if (thread.threadKind === "direct" && thread.direct) {
     const [a, b] = thread.direct.pair;
     if (principal.personId === a || principal.personId === b) return;
+    if (principal.grants.includes("oversight.read")) return; // A-R-N4-1
     throw notAuthorized(
       `subscriber may not read Thread ${thread.id} (R3) — explicit scope fails the whole Subscribe`,
     );
