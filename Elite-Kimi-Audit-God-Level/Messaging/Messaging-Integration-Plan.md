@@ -121,6 +121,16 @@ code.** If a slice needs a core change, that is a new R-item and a contract amen
   policy in the host: the app's human principal carries the grant explicitly;
   package DEFAULT_ROLE_GRANTS unchanged (DEC-07 second-host test). Record:
   `Messaging-R-N4-1-Review.md` (audit LOW, 5 findings disposed at source).
+- **D-N6-1..5 (N6):** the DEC-17 door lives IN the app (third listener, 3032,
+  127.0.0.1 default — remote reachability is the owner's opt-in, NO TLS in
+  N6); real token issuance/revocation retires D-N2-2 (nvkt_ mints, SHA-256 at
+  rest, printed once, raw agentId rejected; boot-mint zero-touch; spawn
+  injects NVK_AGENT_TOKEN; the routes' token-as-senderAgentId conflation
+  fixed at source); connect-your-agent = `nvk-agent token issue` +
+  `nvk-connect.mjs` (protocol-only frames client, resume + transparent
+  re-auth); issuance triggers the policy sync (N4 allowlist-timing debt
+  disposed). Record: `Messaging-N6-Review.md` (audit MODERATE, F1–F3/F5/F6
+  disposed at source, F4/F7 debt).
 - **D-BRIDGE-1 (2026-07-26):** D7 descoped. A v0 Slack bridge
   (`scripts/nvk-slack-bridge.mjs`, branch `kimi/slack-bridge-v0`) precedes N7:
   own workspace, human principal ONLY (agent→chris DMs appear in Slack;

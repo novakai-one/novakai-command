@@ -102,7 +102,7 @@
       <header><span class="tag">PHASE 2</span><h3>Open the door</h3></header>
       <div class="goal">External terminals become first-class — tokens, TLS, a connect-your-agent flow. The protocol is already proven (P2/P3); this makes it operable.</div>
       <div class="slices">
-        <div class="slice"><span class="id">N6</span><div><b>External access</b><span class="exit"> <b>Exit:</b> an agent on a foreign machine connects and messages — no manual step.</span></div></div>
+        <div class="slice sealed"><span class="id">N6</span><div><b>External access</b> — the DEC-17 frames endpoint serves from the app itself (3032, localhost default); real token issuance/revocation retires token=agentId; <code>nvk-connect</code> is the two-command foreign-machine flow.<span class="exit"> <b>Exit:</b> an agent on a foreign machine connects and messages — no manual step.</span> <span class="seal">SEALED 2026-07-26 — audit moderate, F1–F3/F5/F6 disposed at source (<code>Messaging-N6-Review.md</code>); amendments D-N6-1..5 (<code>Messaging-Integration-Plan.md</code>).</span></div></div>
       </div>
     </div>
 
