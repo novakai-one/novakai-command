@@ -14,11 +14,17 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import express from 'express';
 import type { Server } from 'node:http';
+import { createSystemClock } from '../../../../packages/messaging/adapters/clock-system.js';
+import { createMemoryStore } from '../../../../packages/messaging/adapters/store-memory.js';
+import { createEmbeddedMessaging } from '../../../../packages/messaging/composition/embedded.js';
 import type { SubmitJob } from '../../terminal/host/protocol/index.js';
 import type { AgentInfo } from '../../terminal/manager.js';
 import type { TerminalRuntime } from '../../terminal/runtime/index.js';
 import { ObjectModel } from '../../objectModel/index.js';
 import { startMessagingV2 } from '../index.js';
+import type { MessagingV2Handle } from '../index.js';
+import { createNovakaiAuthority } from '../authority/index.js';
+import { createNovakaiMembership } from '../membership/index.js';
 import { registerMessagingV2UserRoutes } from './index.js';
 
 const STAMP = '2026-07-22T10:00:00+10:00';
@@ -179,6 +185,54 @@ assert.equal(missingThread.status, 400);
 const unknownThread = await userGet('/api/messaging/v2/user/messages?threadId=thread_ghost');
 assert.equal(unknownThread.status, 404, 'an unknown thread is a 404, never a 500');
 console.log('user read tests passed');
+
+// --- hotfix: a dead human session answers 503 (transient), never a bare 500 ----
+// Observed in production: the 1h session lapsed, every /user route returned
+// NotAuthenticated, and statusForError/readFailure had no case for it → 500.
+// An auth lapse while the session re-mints is transient 'capability down'.
+
+const deadClock = createSystemClock();
+const deadEmbedded = createEmbeddedMessaging({
+  clock: deadClock,
+  store: createMemoryStore(deadClock),
+  authority: createNovakaiAuthority(model, deadClock, {
+    sessionTtlMs: 60,
+    humans: [{ token: 'human-secret', personId: 'person_user-chris' as never, roles: ['Human'] }],
+  }),
+  membership: createNovakaiMembership(model, deadClock),
+});
+await deadEmbedded.start();
+const deadAuth = await deadEmbedded.authenticate({ token: 'human-secret' });
+if (deadAuth.kind !== 'authenticated') throw new Error('unreachable');
+const deadSession = deadAuth.session;
+await new Promise((resolve) => setTimeout(resolve, 120)); // lazy expiry past the 60 ms TTL
+const deadHandle: MessagingV2Handle = {
+  embedded: deadEmbedded,
+  lanes: { humanSession: () => deadSession } as never,
+  rooms: null,
+  close: () => deadEmbedded.close(),
+};
+const deadApp = express();
+deadApp.use(express.json());
+registerMessagingV2UserRoutes(deadApp, { getHandle: () => deadHandle, terminals, objectModel: model });
+const deadServer: Server = await new Promise((resolve) => {
+  const listening = deadApp.listen(0, '127.0.0.1', () => resolve(listening));
+});
+const deadBase = `http://127.0.0.1:${(deadServer.address() as { port: number }).port}`;
+
+const deadThreads = await fetch(`${deadBase}/api/messaging/v2/user/threads`);
+assert.equal(deadThreads.status, 503, 'threads on a dead session is 503, never 500');
+const deadSend = await fetch(`${deadBase}/api/messaging/v2/user/send`, {
+  method: 'POST', headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ 'to': 'worker-b', body: 'still here?' }),
+});
+assert.equal(deadSend.status, 503, 'send on a dead session is 503, never 500');
+const deadMessages = await fetch(`${deadBase}/api/messaging/v2/user/messages?threadId=${fleetThreadId}`);
+assert.equal(deadMessages.status, 503, 'the readTrailingPage throw path is 503, never 500');
+
+await deadEmbedded.close();
+deadServer.close();
+console.log('dead-session 503 tests passed');
 
 await handle.close();
 server.close();

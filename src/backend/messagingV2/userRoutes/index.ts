@@ -48,7 +48,9 @@ function statusForError(error: MessagingError): number {
     case 'NotAuthorized': case 'BlockedByContactPolicy': return 403;
     case 'UnknownRecipient': case 'UnknownThread': return 404;
     case 'ValidationFailed': return 400;
-    case 'DependencyUnavailable': return 503;
+    // An auth lapse is transient 'capability down' — the held session is
+    // re-minting (presence-glue renewal hotfix). Never a bare 500.
+    case 'NotAuthenticated': case 'DependencyUnavailable': return 503;
     default: return 500;
   }
 }
@@ -189,10 +191,12 @@ function threadIdParam(request: Request, response: Response): string | null {
   return null;
 }
 
-/** The read failure grammar: unknown thread 404, dependency 503, else 500. */
+/** The read failure grammar: unknown thread 404, auth lapse/dependency 503
+ * (transient — the session re-mints), else 500. */
 function readFailure(error: unknown, response: Response): void {
   const name = error instanceof Error ? error.name : '';
-  const status = name === 'UnknownThread' ? 404 : name === 'DependencyUnavailable' ? 503 : 500;
+  const transient = name === 'DependencyUnavailable' || name === 'NotAuthenticated';
+  const status = name === 'UnknownThread' ? 404 : transient ? 503 : 500;
   response.status(status).json({ error: error instanceof Error ? error.message : String(error), name });
 }
 
