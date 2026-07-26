@@ -1,11 +1,12 @@
 # Messaging Integration (N-Program) — Handover to the Next Agent
 
 **Written:** 2026-07-25 by kimi-cli, at N-program kickoff.
-**Updated:** 2026-07-26 by kimi-cli — **slices N1, N2, N3 (+N3.1), N4, N5 SEALED,
+**Updated:** 2026-07-26 by kimi-cli — **slices N1–N5 + R-N4-1 SEALED,
 merged, and deployed** (each after its own law-#6 0-context adversarial audit with
-findings disposed at source — see `Messaging-N1/N2/N3/N4/N5-Review.md`). Next:
+findings disposed at source — see `Messaging-N1/N2/N3/N4/N5/R-N4-1-Review.md`). Next:
 **slice N6 (Open the door — external terminals)**. **You are:** the agent
-executing slice N6 or later. Read this first, every session.
+executing slice N6 or later. Read this first, every session. The MASTER
+handover for the run to N8 is `Messaging-Road-to-N8-HANDOVER.md` — read it next.
 
 ---
 
@@ -50,10 +51,12 @@ The Messaging pass-2 program is COMPLETE (S1–S4, P1–P6, 253/253 tests, score
   rotation/query question); watchdog union refreshes on restart only; mirror
   raw-threadId/FRAGILE-inverse/no-⚠ debt; the N4 carryovers (ExternalSessions
   allowlist timing, F8b, browser presence transport = the N6 option).
-- **R-N4-1 is RULED (PR #72, Chris 2026-07-26: YES)** — the owner MUST see
-  agent↔agent DM lanes. Contract amendment (assertThreadMember + subscription
-  filtering) scheduled as its OWN slice after N5 seals; never snuck into an
-  unrelated branch.
+- **R-N4-1 SEALED (PR #80, deployed `b8ef813b`)** — the owner sees agent↔agent
+  DM lanes: contract 1.0.0 → 1.1.0 (A-R-N4-1), the `oversight.read` grant
+  (READ-ONLY; host policy on the app's human principal; store seam gained
+  `listDirectThreads()`). Audit LOW, 5 findings disposed at source
+  (`Messaging-R-N4-1-Review.md`). Debt: jsonl restart-fold test for the new
+  seam read (test-debt batch).
 - **D-BRIDGE-1 (PR #72):** the v0 Slack bridge (`scripts/nvk-slack-bridge.mjs`,
   merged PR #74) owns ALL Slack bridging — own workspace, human principal only.
   No N-slice builds Slack bridging; N7 generalizes v0. The one-way mirror
