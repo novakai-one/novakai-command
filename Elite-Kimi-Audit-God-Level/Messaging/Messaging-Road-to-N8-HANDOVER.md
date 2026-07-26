@@ -73,9 +73,16 @@ slice seals before the next starts.
   created by the bot; config wired `fleet:team`; bridge restarted).
   FULL DUPLEX verified: agent → #team → top-level Slack post; Chris's
   Slack post → fleet room as person_user-chris.
-- Main is clean. Deployed snapshot `7c78dd78`. **Next: N8 — IN FLIGHT on
-  branch `kimi/n8-external-principals` (WIP `d19056f9`, unverified). Resume
-  instructions in §5 N8.**
+- **N8 SEALED, merged (PR #89), deployed `c26f06d5` — THE PROGRAM IS
+  COMPLETE.** The moment is live: PartnerChris is provisioned
+  (`person_ext-partnerchris`), invited to `#novakai-fleet`, his bridge door
+  client holds a ws presence; an agent's #team post bridged to the channel
+  and his delivery closed (`delivered adapter-effect` in the journal).
+  **The law-#6 auditor was SKIPPED for N8 at Chris's explicit instruction
+  (usage ceiling) — the top follow-up debt** (`Messaging-N8-Review.md`).
+  His first reply exercises the external inbound path in production.
+- Main is clean. Deployed snapshot `c26f06d5`. **Program: R-N4-1, N6, N7,
+  N8 — all sealed. Follow-ups live in §8.**
 
 ## 3. The per-slice ritual (follow it exactly — it's what made N1–N5 elite)
 

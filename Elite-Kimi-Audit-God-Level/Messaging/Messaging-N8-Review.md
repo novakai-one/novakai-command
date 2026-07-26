@@ -64,9 +64,16 @@ full diff and caught three defects the gates alone surfaced or hid:
 - Door e2e (app harness, from the WIP): an external authenticates through
   the door, opens ws presence, sends `thread:<fleet room>` — commits with
   senderId = the external; an agent recipient is pushed.
-- Live-fire: **the moment itself** — PartnerChris provisioned, invited to
-  `#novakai-fleet`; agent posts → visible in Slack; his reply lands as
-  `person_ext-partner-chris` with delivery truth (evidence below when fired).
+- **LIVE-FIRED 2026-07-26 (deployed `c26f06d5`):** PartnerChris provisioned
+  (`person_ext-partnerchris`, token issued + placed in the bridge config,
+  600) and invited to `#novakai-fleet`; the bridge's external door client
+  authenticated (`external door ready: U0BKR7HTK53`) holding his ws
+  presence. An agent posted to #team → bridged top-level to the channel
+  (seen in Slack) → the journal shows **`person_ext-partnerchris →
+  delivered adapter-effect`** — the delivery loop closed through his held
+  presence. His first REPLY exercises the external inbound path in
+  production (harness-proven: own token, room address, never as chris) —
+  the one step that needs his fingers, not ours.
 
 ## Follow-up debt
 
