@@ -87,8 +87,13 @@ branches untouched, and second-host containment. Five findings, all LOW:
 - Root: `npx tsc --noEmit` clean; full src tsx sweep **90/90**; scripts
   sweep **7/7**; `npm run lint` 192 at baseline; `npm run stores:test` +
   `stores:gate` PASS; `npm run build` green.
-- Live-fire (post-deploy): the human thread list + a live agent↔agent lane,
-  verified against the deployed app (recorded in the PR body).
+- Live (deployed `b8ef813b`): app/api/threads 200, v2 agent route 401 without
+  Bearer, old routes 404, principals=6, serving snapshot `b8ef813b6ee1`. The
+  production journal contains zero agent↔agent direct lanes (agent traffic is
+  agent→chris only so far), so the live NEGATIVE case is verified (no foreign
+  lanes listed when none exist) and the positive live moment arrives with the
+  first real agent↔agent conversation — the route-level integration proof
+  above covers the exact production composition path until then.
 
 ## Follow-up debt for N6+
 

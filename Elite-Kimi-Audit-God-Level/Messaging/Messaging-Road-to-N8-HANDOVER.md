@@ -44,7 +44,18 @@ slice seals before the next starts.
 - **The other Kimi lane is RETIRED.** Its PRs (#72 docs/D-BRIDGE-1, #73
   agent→human DM by name, #74 bridge v0) are merged; its 3 worktrees +
   branches deleted; `stores-baseline.json` ratchet committed.
-- Main is clean. Deployed snapshot `00fa8961ff0d` (+ docs-only merges after).
+- **R-N4-1 SEALED, merged (PR #80), deployed `b8ef813b`** (2026-07-26):
+  contract **1.0.0 → 1.1.0** (A-R-N4-1) — the `oversight.read` grant lets the
+  owner READ every agent↔agent DM lane (reads, self-list, push live+replay,
+  explicit scope). READ-ONLY; sends stay party-only. The grant rides the
+  app's human principal as HOST policy (package DEFAULT_ROLE_GRANTS
+  unchanged). Store seam gained `listDirectThreads()`. Audit LOW (5 findings
+  disposed at source); package 263/263 + NO DRIFT. Record:
+  `Messaging-R-N4-1-Review.md`. Live note: production has zero agent↔agent
+  lanes so far (agent traffic is agent→chris) — the negative case is
+  live-verified; the positive moment arrives with the first real agent↔agent
+  conversation. `Messaging-Parked-Ideas.md` seeded (idea-parking is live).
+- Main is clean. Deployed snapshot `b8ef813b`. **Next slice: N6.**
 
 ## 3. The per-slice ritual (follow it exactly — it's what made N1–N5 elite)
 
@@ -103,19 +114,13 @@ slice seals before the next starts.
 
 ## 5. The remaining slices
 
-### R-N4-1 — owner sees agent↔agent DMs (SMALL, do first)
-- Chris RULED YES (PR #72). Today agent↔agent direct threads are party-only
-  (`assertThreadMember` has no admin bypass — verified at N4), so Chris lost
-  visibility of agent↔agent lanes.
-- The amendment: the human principal (owner) bypasses party-only reads +
-  subscription filtering includes agent↔agent lanes for the owner. This
-  TOUCHES the contract surface by Chris's explicit ruling — follow the
-  amendment process (record in plan, contract versioning per the contract's
-  own rules, package tests + app integration proof, fresh auditor). It is NOT
-  a quiet edit and NOT to ride an unrelated branch.
-- Watch: `packages/messaging/` drift guard (43 modules, 4 traces) must stay
-  NO DRIFT — update map enumerations via the contract source, never the
-  generated files.
+### R-N4-1 — owner sees agent↔agent DMs (SEALED 2026-07-26, PR #80)
+- Chris RULED YES (PR #72). Shipped as contract amendment **A-R-N4-1**
+  (1.0.0 → 1.1.0): the `oversight.read` grant — holder READS any direct
+  Thread (assertThreadMember + subscription filtering + explicit scope +
+  self-list via the new store-seam `listDirectThreads()`). READ-ONLY; the
+  grant rides the app's human principal as host policy. Record:
+  `Messaging-R-N4-1-Review.md` (audit LOW, 5 disposed at source).
 
 ### N6 — Open the door (external terminals)
 - Done-definition (plan §5): an agent spawned on a FOREIGN machine connects,
@@ -226,6 +231,9 @@ slice seals before the next starts.
 - ExternalSessions allowlist timing (N6's call); F8b quiet sub-tip failures;
   browser presence transport (N6 option); N1 authority revalidate disk scan.
 - Bridge polish (see N7 parked list above).
+- R-N4-1 audit F4 remainder: jsonl close/reopen fold test for
+  `listDirectThreads` (sound by construction — the same op-application path
+  rebuilds the index §11.5 already survives restart on). Test-debt batch.
 
 ## 9. Idea parking (Chris asked for this mechanism)
 
