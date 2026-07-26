@@ -92,13 +92,15 @@ function loadConfig() {
     chrisEmail: file.chrisEmail,
     // D-N7-2: channel↔room map. ABSENT or empty means the channel code stays
     // dormant (production runs exactly that until the click-work lands) —
-    // DM lanes are unaffected.
+    // DM lanes are unaffected. D-N8-3: externals ride the DEC-17 door as
+    // THEMSELVES — ABSENT or empty = no door connections (dormant).
     channels: Array.isArray(file.channels) ? file.channels : [],
+    externals: Array.isArray(file.externals) ? file.externals : [],
   };
 }
 
 const config = DRY_RUN
-  ? { botToken: 'dry-run', appToken: 'dry-run', chrisUserId: 'U_DRY_RUN', channels: [] }
+  ? { botToken: 'dry-run', appToken: 'dry-run', chrisUserId: 'U_DRY_RUN', channels: [], externals: [] }
   : loadConfig();
 
 if (!config.botToken || !config.appToken) {
@@ -773,9 +775,12 @@ function tooBigForBridge(text) {
 }
 
 /** D-N7-4: one message on a MAPPED channel → a room send as the human.
- * Slack-thread replies bridge identically — the room is linear. */
+ * Slack-thread replies bridge identically — the room is linear. D-N8-3: a
+ * configured EXTERNAL goes through their own door connection instead. */
 async function handleChannelMessage(event, lane) {
   const slackUserId = event.user ?? event.message?.user;
+  const external = externalBySlackUser.get(slackUserId);
+  if (external !== undefined) return forwardViaExternal(external, lane, event);
   if (!isOwnerSlackUser(slackUserId)) return;
   const text = (await decodeInboundText(event.text ?? '')).trim();
   if (tooBigForBridge(text)) {
@@ -827,6 +832,142 @@ function isOwnEcho(event) {
   if (event.user === botUserId) return true;                      // our bot user (auth.test)
   if (event.metadata?.event_type === META_TAG) return true;       // our tagged posts
   return false;
+}
+
+// --- D-N8-3/4: the DEC-17 door clients, one per external principal --------------
+// A mapped EXTERNAL Slack user's channel message goes through the door AS
+// THEM (their own nvkt_ credential) — identity is stamped by the wire auth,
+// never text, never as chris. The connection also holds a ws Presence: the
+// external's deliveries ride it and CLOSE THE LOOP (delivered = handed to
+// the Slack lane). Delivery frames are confirmation-only — content posts
+// stay on the N7 room path, never double-posted.
+
+const DOOR_URL = process.env.NVK_SLACK_BRIDGE_DOOR_URL ?? 'ws://127.0.0.1:3032';
+const externalBySlackUser = new Map(); // slackUserId → door client (below)
+let externalRequestCounter = 0;
+
+function makeExternalDoor(entry) {
+  const client = {
+    entry,
+    socket: null,
+    ready: false,
+    attempts: 0,
+    pending: new Map(),
+    connect: () => connectExternalDoor(client),
+    send: (frame) => {
+      if (client.socket !== null && client.ready) client.socket.send(JSON.stringify(frame));
+    },
+  };
+  return client;
+}
+
+function externalCall(client, frame) {
+  externalRequestCounter += 1;
+  const requestId = `bridge-ext-${externalRequestCounter}`;
+  return new Promise((resolve) => {
+    client.pending.set(requestId, resolve);
+    client.socket.send(JSON.stringify({ ...frame, requestId }));
+  });
+}
+
+async function externalHandshake(client) {
+  const authenticated = await externalCall(client, {
+    kind: 'authenticate', credential: { token: client.entry.token }, protocolVersion: '1.0.0',
+  });
+  if (authenticated.kind === 'error') throw new Error(`external auth failed: ${authenticated.error?.message}`);
+  const opened = await externalCall(client, {
+    kind: 'command', name: 'OpenPresence', input: { transport: 'ws', clientLabel: `slack-${client.entry.slackUserId}` },
+  });
+  if (opened.kind === 'error') throw new Error(`external OpenPresence failed: ${opened.error?.message}`);
+  client.ready = true;
+  log(`external door ready: ${client.entry.displayName ?? client.entry.slackUserId} (${client.entry.personId})`);
+}
+
+function onExternalFrame(client, frame) {
+  if (frame.requestId !== undefined && client.pending.has(frame.requestId)) {
+    client.pending.get(frame.requestId)(frame);
+    client.pending.delete(frame.requestId);
+    return;
+  }
+  if (frame.kind === 'delivery') {
+    // D-N8-4: confirmation ONLY — content posts stay on the N7 room path.
+    vlog(`delivery confirmed for ${client.entry.slackUserId}: ${frame.message?.id ?? '?'}`);
+    return;
+  }
+  if (frame.kind === 'error' && frame.error?.name === 'NotAuthenticated') client.socket.close(); // reconnect + re-auth
+}
+
+function connectExternalDoor(client) {
+  client.socket = new WebSocket(DOOR_URL);
+  client.socket.on('open', () => {
+    client.attempts = 0;
+    externalHandshake(client).catch((error) => {
+      warn(`external handshake failed for ${client.entry.slackUserId}: ${error.message}`);
+      client.socket.close();
+    });
+  });
+  client.socket.on('message', (data) => {
+    try {
+      onExternalFrame(client, JSON.parse(data.toString('utf8')));
+    } catch {
+      // malformed frames never reach the consumer (protocol discipline)
+    }
+  });
+  client.socket.on('close', () => {
+    client.ready = false;
+    client.attempts += 1;
+    const waitMs = Math.min(500 * 2 ** (client.attempts - 1), 8000);
+    vlog(`external door closed (${client.entry.slackUserId}) — reconnecting in ${waitMs}ms`);
+    setTimeout(() => connectExternalDoor(client), waitMs);
+  });
+  client.socket.on('error', () => client.socket.close());
+}
+
+/** Boot: one door connection per configured external (none when unconfigured). */
+function connectExternals() {
+  for (const entry of config.externals) {
+    externalBySlackUser.set(entry.slackUserId, makeExternalDoor(entry));
+    externalBySlackUser.get(entry.slackUserId).connect();
+  }
+  if (config.externals.length > 0) log(`external door clients: ${config.externals.length} (${DOOR_URL})`);
+}
+
+/** D-N8-3: one external's channel message → a door SendMessage as THEM. */
+async function forwardViaExternal(client, lane, event) {
+  const text = (await decodeInboundText(event.text ?? '')).trim();
+  if (tooBigForBridge(text)) {
+    await postToSlack({ text: '⚠ too big to bridge (>32 KiB) — not forwarded', thread_ts: event.thread_ts }, event.channel);
+    return;
+  }
+  if (!client.ready) {
+    warn(`external door DOWN for ${client.entry.slackUserId} — message dropped loudly (never bridged as anyone else)`);
+    await postToSlack({
+      text: `✗ could not reach the messaging door as *${client.entry.displayName ?? client.entry.slackUserId}* — reconnect pending, try again`,
+      thread_ts: event.thread_ts,
+    }, event.channel);
+    return;
+  }
+  const result = await externalCall(client, {
+    kind: 'command',
+    name: 'SendMessage',
+    input: {
+      address: `thread:${lane.threadId}`,
+      body: { text },
+      priority: 'normal',
+      clientMessageId: `bridge-ext_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    },
+  });
+  if (result.kind === 'error') {
+    warn(`external send failed for ${client.entry.slackUserId}: ${result.error?.message}`);
+    touchHealth({ lastError: result.error?.message });
+    await postToSlack({
+      text: `✗ could not reach *${client.entry.displayName ?? client.entry.slackUserId}*: ${result.error?.message}`,
+      thread_ts: event.thread_ts,
+    }, event.channel);
+    return;
+  }
+  log(`slack → ${lane.label} as ${client.entry.displayName ?? client.entry.slackUserId} (external door): committed ${result.result?.messageId ?? '?'}`);
+  touchHealth({ lastBridgedAt: new Date().toISOString() });
 }
 
 function handleSlackEvent(event) {
@@ -939,6 +1080,7 @@ if (DRY_RUN) {
     .then(() => {
       connectAppSocket();
       connectSlackSocket();
+      connectExternals(); // D-N8-3: door clients (no-op when externals is absent/empty)
       log(`bridging ${APP_BASE} ↔ Slack (cursor s_${state.cursor})`);
     })
     .catch((error) => {

@@ -274,6 +274,60 @@ function startFakeApp() {
   });
 }
 
+// --- fake DEC-17 door (D-N8-3): the external principals' endpoint ---------------
+// Minimal frames dialect: authenticate (token → personId map), OpenPresence,
+// SendMessage (recorded). pushDelivery simulates the confirmation frame the
+// bridge must treat as confirmation-only (D-N8-4).
+
+function startFakeDoor() {
+  const auths = [];
+  const sends = [];
+  const doorSockets = new Set();
+  const tokenPersons = { nvkt_partner: 'person_ext-partner-chris' };
+  let counter = 0;
+
+  const server = http.createServer();
+  const wss = new WebSocketServer({ server, path: '/door' });
+  wss.on('connection', (socket) => {
+    doorSockets.add(socket);
+    socket.on('close', () => doorSockets.delete(socket));
+    socket.on('message', (data) => {
+      const frame = JSON.parse(data.toString());
+      const reply = (outcome) => socket.send(JSON.stringify({ ...outcome, requestId: frame.requestId }));
+      if (frame.kind === 'authenticate') {
+        auths.push(frame.credential);
+        reply({ kind: 'authenticated', principal: { personId: tokenPersons[frame.credential.token] ?? 'person_ext-unknown', grants: [], expiresAt: new Date(Date.now() + 3_600_000).toISOString() } });
+        return;
+      }
+      if (frame.kind === 'command' && frame.name === 'OpenPresence') {
+        reply({ kind: 'command-result', result: { presenceId: 'presence_1' } });
+        return;
+      }
+      if (frame.kind === 'command' && frame.name === 'SendMessage') {
+        counter += 1;
+        sends.push({ token: auths.at(-1)?.token, input: frame.input });
+        reply({ kind: 'command-result', result: { messageId: `msg_door_${counter}`, threadId: String(frame.input.address).slice('thread:'.length) } });
+        return;
+      }
+      reply({ kind: 'error', error: { name: 'ValidationFailed', message: 'unknown frame', retryable: false, fields: {} } });
+    });
+  });
+
+  return new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', () => resolve({
+      port: server.address().port,
+      auths,
+      sends,
+      connections: () => doorSockets.size,
+      totalConnections: (() => { let total = 0; return () => total; })(),
+      pushDelivery: (message) => {
+        for (const socket of doorSockets) socket.send(JSON.stringify({ kind: 'delivery', message }));
+      },
+      close: () => { for (const socket of doorSockets) socket.terminate(); wss.close(); server.close(); },
+    }));
+  });
+}
+
 // --- daemon lifecycle -------------------------------------------------------------
 
 function startDaemon(env) {
@@ -294,12 +348,14 @@ function startDaemon(env) {
 
 const slack = await startFakeSlack();
 const app = await startFakeApp();
+const door = await startFakeDoor();
 const work = fs.mkdtempSync(path.join(os.tmpdir(), 'nvk-slack-bridge-test-'));
 const stateFile = path.join(work, 'bridge-state.json');
 const configFile = path.join(work, 'bridge.json');
 fs.writeFileSync(configFile, JSON.stringify({
   chrisUserId: CHRIS,
   channels: [{ slackChannelId: 'C_TEAM', room: 'team' }],
+  externals: [{ slackUserId: 'U_PARTNER', personId: 'person_ext-partner-chris', token: 'nvkt_partner' }],
 }));
 
 const env = {
@@ -312,6 +368,7 @@ const env = {
   NVK_SLACK_BRIDGE_STATE: stateFile,
   NVK_SLACK_BRIDGE_RETRY_MS: '300', // test seam: Slack post retry delay
   NVK_SLACK_BRIDGE_PING_MS: '200',  // test seam: heartbeat interval
+  NVK_SLACK_BRIDGE_DOOR_URL: `ws://127.0.0.1:${door.port}/door`, // test seam: the DEC-17 door
 };
 
 let checks = 0;
@@ -611,6 +668,28 @@ assert.equal(app.sends.length, sendsBeforeLoopN7 + 1, 'bot/metadata echoes never
 assert.equal(slack.posts.length, postsBeforeLoopN7, "the human's own room message never mirrors back to Slack");
 ok('D-N7-5: channel loop hunt — tag/bot/redelivery/human-echo all absorbed');
 
+// D-N8-3/4 — an external-mapped Slack user rides the DOOR as THEMSELF (the
+// wire auth carries the identity — never text, never as chris), and the
+// delivery frames are confirmation-only (no double-post).
+{
+  assert.ok(door.auths.length >= 1, 'the external door client connected and authenticated');
+  assert.equal(door.auths.at(-1)?.token, 'nvkt_partner', 'the door auth used the external’s OWN token');
+  const sendsBeforeExternal = app.sends.length;
+  slack.sendSlackEvent({ type: 'message', channel: 'C_TEAM', channel_type: 'channel', user: 'U_PARTNER', text: 'reply as partner', ts: '1900.000050' });
+  await waitFor(() => door.sends.length === 1, 'the external message goes through the door');
+  assert.equal(door.sends[0].input.address, 'thread:thread_room_team', 'the wire send addresses the fleet room thread');
+  assert.equal(door.sends[0].input.body.text, 'reply as partner');
+  assert.equal(app.sends.length, sendsBeforeExternal, 'an external message NEVER touches the /user/send human path');
+
+  // The commit flows back on the app feed → the N7 room path posts it ONCE.
+  app.pushMessage(34, { threadId: 'thread_room_team', senderId: 'person_ext-partner-chris', body: { text: 'reply as partner' } });
+  await waitFor(() => postsWith('reply as partner').length === 1, 'the room path posts the external message once');
+  door.pushDelivery({ id: 'msg_34' });
+  await sleep(400);
+  assert.equal(postsWith('reply as partner').length, 1, 'the delivery confirmation never re-posts content (D-N8-4)');
+  ok('D-N8-3/4: external rides the door as themself — own token, room address, confirmation-only deliveries');
+}
+
 // D-N7-6: message_changed / message_deleted become follow-up NOTES in the app
 // lane — never a mutation of history.
 slack.sendSlackEvent({
@@ -638,7 +717,7 @@ ok('D-N7-6: edits in the DM lane note the agent (never a mutation)');
 // D-N7-6: app→Slack chunking over the 32 KiB contract cap, (i/n) markers.
 const bigBody = `chunk-${'x'.repeat(70_000)}`;
 const postsBeforeChunk = postsWith('chunk-').length;
-app.pushMessage(31, { threadId: 'thread_room_team', body: { text: bigBody } });
+app.pushMessage(35, { threadId: 'thread_room_team', body: { text: bigBody } });
 await waitFor(() => postsWith('(3/3)').length === 1, 'oversized room message chunked');
 assert.ok(postsWith('(1/3)').length === 1 && postsWith('(2/3)').length === 1, 'chunks carry (1/3)…(3/3) markers');
 assert.ok(postsWith('chunk-').every((p) => p.channel === 'C_TEAM'), 'chunks land on the mapped channel');
@@ -646,7 +725,7 @@ ok('D-N7-6: >32 KiB app→Slack messages chunk with (i/n) markers');
 
 // D-N7-3: the follow-up bridge line is a real log line (was vlog) — asserted
 // on a message bridged by the CURRENT daemon (the restart wiped the buffer).
-assert.ok(daemon.output().includes('bridged msg_31 → #team C_TEAM'), 'D-N7-3: one log line per bridged message (any lane)');
+assert.ok(daemon.output().includes('bridged msg_35 → #team C_TEAM'), 'D-N7-3: one log line per bridged message (any lane)');
 ok('D-N7-3: the per-message bridge line is promoted to log');
 
 // D-N7-6: an oversized Slack→app body gets a posted note, never a failed send.
@@ -659,7 +738,7 @@ ok('D-N7-6: oversized inbound → "too big to bridge" note, never a failed send'
 // D-N7-6: Slack 429s honor Retry-After (bounded retries, final drop loud).
 slack.rateLimitNextPosts(1, 1);
 const rateLimitedAt = Date.now();
-app.pushMessage(32, { threadId: 'thread_room_team', body: { text: 'worth the wait' } });
+app.pushMessage(36, { threadId: 'thread_room_team', body: { text: 'worth the wait' } });
 await waitFor(() => postsWith('worth the wait').length === 1, 'the post lands after the 429');
 assert.ok(Date.now() - rateLimitedAt >= 900, 'Retry-After was honored (the retry waited, not hammered)');
 assert.equal(slack.attempts429.length, 1, 'exactly one attempt was rate-limited before the landing');
@@ -780,12 +859,14 @@ await sleep(400);
 assert.equal(app.sends.length, sendsBeforeDormant, 'a channel event with no channel map is dropped');
 slack.sendSlackEvent({ type: 'message', channel_type: 'im', user: CHRIS, text: 'dormant dm still routed', thread_ts: root.ts, ts: '1800.000013' });
 await waitFor(() => app.sends.some((s) => s.body === 'dormant dm still routed' && s.to === 'fable-v2'), 'DM lane unaffected without channels');
+assert.equal(door.connections(), 0, 'no external door connections when externals is unconfigured');
 ok('D-N7-2: channels ABSENT → channel code dormant, DM lanes unaffected');
 
 await daemon.stop();
 app.resumeAll();
 slack.close();
 app.close();
+door.close();
 fs.rmSync(work, { recursive: true, force: true });
 console.log(`nvk-slack-bridge.test.mjs: all ${checks} checks passed`);
 process.exit(0);

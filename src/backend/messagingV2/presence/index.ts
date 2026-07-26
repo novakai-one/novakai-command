@@ -37,6 +37,7 @@
 
 import type { EmbeddedMessaging } from '../../../../packages/messaging/composition/embedded.js';
 import type { MessagingSession } from '../../../../packages/messaging/public/capability.js';
+import type { PersonId } from '../../../../packages/messaging/public/contract/index.js';
 import type { ObjectModel } from '../../objectModel/index.js';
 import type { AgentInfo } from '../../terminal/manager.js';
 import type { TerminalRuntime } from '../../terminal/runtime/index.js';
@@ -67,6 +68,9 @@ export interface AgentLaneGlueDeps {
   /** D-N6-2: agent credentials come from the token store (agentId is NOT
    * one); ensure() mints on demand so boot/launch stay zero-touch. */
   tokenStore: TokenStore;
+  /** D-N8-1: external principals (policy sync co-membership). Optional —
+   * absent means no externals (the fleet roster and sync are agent+human). */
+  externalsStore?: { activePersonIds(): string[] };
   /** When set, the human principal's session is held and its allowlist seeded. */
   humanToken?: string;
   /** Test hook; defaults to 3000 ms (the old hub's delay). */
@@ -154,19 +158,40 @@ async function ensureHuman(state: GlueState): Promise<void> {
   armHumanRenewal(state, Math.max(100, Math.floor((state.humanExpiresAtMs - Date.now()) * RENEW_FRACTION)), 0);
 }
 
+/** Ensure + authenticate ONE policy session (agent or external credential). */
+async function authPolicySession(
+  state: GlueState,
+  kind: 'agent' | 'external',
+  principal: string,
+): Promise<MessagingSession | null> {
+  if (kind === 'agent') state.deps.tokenStore.ensure(principal);
+  else state.deps.tokenStore.ensureExternal(principal);
+  const token = kind === 'agent' ? state.deps.tokenStore.tokenForAgent(principal) : state.deps.tokenStore.tokenForExternal(principal);
+  if (token === null) return null; // unreachable after ensure — skip honestly
+  const auth = await state.deps.embedded.authenticate({ token });
+  return auth.kind === 'authenticated' ? auth.session : null;
+}
+
 /** Every sync covers EVERY active durable agent (audit F9's exposed gap):
  * an agent with no live lane gets a throwaway policy session, so Chris can
  * DM offline teammates — the lane sessions alone left never-live agents at
- * DEC-14's deny-by-default. */
+ * DEC-14's deny-by-default. Sessions key by personId (lane sessions are
+ * agentId-keyed). D-N8-2: active externals get the same throwaway session —
+ * the sync writes their fleet-wide allowlist too. */
 async function policySessions(state: GlueState): Promise<Map<string, MessagingSession>> {
-  const resolved = new Map(state.sessions);
+  const resolved = new Map(
+    [...state.sessions].map(([agentId, session]) => [personIdForAgentId(agentId), session] as const),
+  );
   for (const block of state.deps.objectModel.listAgents().filter(isActiveAgent)) {
-    if (resolved.has(block.id)) continue;
-    state.deps.tokenStore.ensure(block.id);
-    const token = state.deps.tokenStore.tokenForAgent(block.id);
-    if (token === null) continue; // unreachable after ensure — skip honestly
-    const auth = await state.deps.embedded.authenticate({ token });
-    if (auth.kind === 'authenticated') resolved.set(block.id, auth.session);
+    const personId = personIdForAgentId(block.id);
+    if (resolved.has(personId)) continue;
+    const session = await authPolicySession(state, 'agent', block.id);
+    if (session !== null) resolved.set(personId, session);
+  }
+  for (const personId of state.deps.externalsStore?.activePersonIds() ?? []) {
+    if (resolved.has(personId as PersonId)) continue;
+    const session = await authPolicySession(state, 'external', personId);
+    if (session !== null) resolved.set(personId as PersonId, session);
   }
   return resolved;
 }
@@ -308,7 +333,7 @@ function freshGlueState(deps: AgentLaneGlueDeps): GlueState {
     humanRenewTimer: null,
     humanRenewing: false,
     closed: false,
-    bootstrap: createContactBootstrap(deps.objectModel),
+    bootstrap: createContactBootstrap(deps.objectModel, () => deps.externalsStore?.activePersonIds() ?? []),
     failureTruth: createFailureTruth({ terminals: deps.terminals, ...(deps.log !== undefined ? { 'log': deps.log } : {}) }),
   };
 }

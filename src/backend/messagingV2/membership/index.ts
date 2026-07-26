@@ -82,11 +82,14 @@ function revisionFor(members: PersonId[]): string {
 }
 
 /** Fresh roster resolution (R8 — no cache); null when the room is unknown. */
-function resolveFresh(objectModel: ObjectModel, room: RoomRef): PersonId[] | null {
+function resolveFresh(objectModel: ObjectModel, room: RoomRef, externals?: () => string[]): PersonId[] | null {
   if (room.authority === 'fleet') {
     // D-N3-1: one fleet room only — any other externalId is an unknown room.
     if (room.externalId !== FLEET_EXTERNAL_ID) return null;
-    return rosterOf(objectModel.listAgents());
+    // D-N8-2: ACTIVE external principals ride the fleet roster ONLY (team
+    // and mission rosters stay ref-derived). Room sends reach them as
+    // recipients (R4/§11.7 frozen snapshots) and they may send into #team.
+    return [...rosterOf(objectModel.listAgents()), ...(externals?.() ?? []).map((personId) => personId as PersonId)];
   }
   if (room.authority === 'mission') {
     if (objectModel.missionRecord(room.externalId) === null) return null;
@@ -104,9 +107,9 @@ function resolveFresh(objectModel: ObjectModel, room: RoomRef): PersonId[] | nul
 }
 
 /** §3.3: a read throw is a typed dependency failure, never a leaked exception. */
-function resolveSafely(objectModel: ObjectModel, room: RoomRef): PersonId[] | null | MessagingError {
+function resolveSafely(objectModel: ObjectModel, room: RoomRef, externals?: () => string[]): PersonId[] | null | MessagingError {
   try {
-    return resolveFresh(objectModel, room);
+    return resolveFresh(objectModel, room, externals);
   } catch (error) {
     return membershipUnavailable(
       `membership read failed: ${error instanceof Error ? error.message : String(error)}`,
@@ -118,10 +121,11 @@ function makeResolveMembers(
   objectModel: ObjectModel,
   clock: ClockIds,
   humanPersonId: PersonId | undefined,
+  externals?: () => string[],
 ): MembershipSource['resolveMembers'] {
   return async (room): Promise<ResolveMembersOutcome> => {
     if (!KNOWN_AUTHORITIES.has(room.authority)) return { kind: 'unknown', error: unknownRoom(room) };
-    const resolved = resolveSafely(objectModel, room);
+    const resolved = resolveSafely(objectModel, room, externals);
     if (resolved instanceof MessagingError) return { kind: 'unavailable', error: resolved };
     if (resolved === null) return { kind: 'unknown', error: unknownRoom(room) };
     const members = withHuman(resolved, humanPersonId);
@@ -136,10 +140,11 @@ function makeResolveMembers(
 function makeIsMember(
   objectModel: ObjectModel,
   humanPersonId: PersonId | undefined,
+  externals?: () => string[],
 ): MembershipSource['isMember'] {
   return async (room, personId): Promise<IsMemberOutcome> => {
     if (!KNOWN_AUTHORITIES.has(room.authority)) return { kind: 'unknown', error: unknownRoom(room) };
-    const resolved = resolveSafely(objectModel, room);
+    const resolved = resolveSafely(objectModel, room, externals);
     if (resolved instanceof MessagingError) return { kind: 'unavailable', error: resolved };
     if (resolved === null) return { kind: 'unknown', error: unknownRoom(room) };
     return { kind: 'known', member: withHuman(resolved, humanPersonId).includes(personId) };
@@ -151,9 +156,11 @@ export function createNovakaiMembership(
   clock: ClockIds,
   /** D-N3-1: the human principal, included in every served roster when set. */
   humanPersonId?: PersonId,
+  /** D-N8-2: active external personIds (fleet roster only). */
+  externals?: () => string[],
 ): MembershipSource {
   return {
-    resolveMembers: makeResolveMembers(objectModel, clock, humanPersonId),
-    isMember: makeIsMember(objectModel, humanPersonId),
+    resolveMembers: makeResolveMembers(objectModel, clock, humanPersonId, externals),
+    isMember: makeIsMember(objectModel, humanPersonId, externals),
   };
 }

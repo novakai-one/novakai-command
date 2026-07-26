@@ -37,6 +37,7 @@ import type { TerminalRuntime } from '../terminal/runtime/index.js';
 import { createSeatWatch, tickSafely } from '../terminal/seatWatch/index.js';
 import { ensureWatchdogIdentity, WATCHDOG_AGENT_NAME } from './watchdogIdentity/index.js';
 import { createTokenStore } from '../messagingV2/tokens/index.js';
+import { createExternalsStore } from '../messagingV2/externals/index.js';
 import type { MessagingSession } from '../../../packages/messaging/public/capability.js';
 
 const PROJECT_RE = /^[A-Za-z0-9._-]+$/;
@@ -105,6 +106,9 @@ export class ServerController {
   /** D-N6-2: the one token store shared by the authority, the lane glue,
    * spawn env injection, and the in-process consumers (never printed). */
   private readonly tokenStore = createTokenStore();
+  /** D-N8-1: external principals (PartnerChris) — provision/list/revoke via
+   * the CLI's REST surface; the fleet roster and policy sync read it. */
+  private readonly externalsStore = createExternalsStore();
 
   constructor(
     private readonly port: number,
@@ -291,6 +295,42 @@ export class ServerController {
     this.app.post('/api/messaging/v2/tokens', (request, response) => void this.issueToken(request, response));
     this.app.post('/api/messaging/v2/tokens/revoke', (request, response) => this.revokeTokens(request, response));
     this.app.get('/api/messaging/v2/tokens', (request, response) => this.listTokens(request, response));
+    // D-N8-1: external principals (the PartnerChris surface).
+    this.app.post('/api/messaging/v2/externals', (request, response) => void this.provisionExternal(request, response));
+    this.app.get('/api/messaging/v2/externals', (_request, response) => this.listExternals(response));
+    this.app.post('/api/messaging/v2/externals/revoke', (request, response) => this.revokeExternal(request, response));
+  }
+
+  /** D-N8-1: provision an external principal + mint its door token (printed
+   * ONCE, agent-token posture) + the D-N6-5-style policy sync so its first
+   * room send never 403s on deny-by-default. */
+  private async provisionExternal(request: express.Request, response: express.Response): Promise<void> {
+    const { slackUserId, displayName } = request.body ?? {};
+    if (typeof slackUserId !== 'string' || slackUserId === '' || typeof displayName !== 'string' || displayName === '') {
+      response.status(400).json({ error: 'slackUserId and displayName are required' });
+      return;
+    }
+    const external = this.externalsStore.provision({ slackUserId, displayName });
+    const { token } = this.tokenStore.issueExternal(external.personId);
+    await this.messagingV2?.lanes?.syncPoliciesNow();
+    response.status(201).json({ personId: external.personId, recordId: external.id, token });
+  }
+
+  private listExternals(response: express.Response): void {
+    response.json({ externals: this.externalsStore.list() });
+  }
+
+  /** Revoking an external kills its principal AND its tokens (both stores). */
+  private revokeExternal(request: express.Request, response: express.Response): void {
+    const slackUserId = request.body?.slackUserId;
+    if (typeof slackUserId !== 'string' || slackUserId === '') {
+      response.status(400).json({ error: 'slackUserId is required' });
+      return;
+    }
+    const revoked = this.externalsStore.revokeBySlackUser(slackUserId);
+    let tokensRevoked = 0;
+    for (const record of revoked) tokensRevoked += this.tokenStore.revokeAllForExternal(record.personId).length;
+    response.json({ revoked: revoked.length, tokensRevoked });
   }
 
   private agentIdOrReply(request: express.Request, response: express.Response): string | null {
@@ -727,6 +767,20 @@ export class ServerController {
     this.startSeatWatchSafely();
   }
 
+  /** D-N6-1: the DEC-17 door options — production defaults to 3032 on
+   * localhost; scratch backends (NOVAKAI_SERVER_PORT set) stay doorless so
+   * parallel rigs never fight over the port. Remote reachability is the
+   * owner's opt-in via NVK_MESSAGING_V2_DOOR_HOST (docs/operations/CONNECT-EXTERNAL.md). */
+  private doorOptions(): { door: { port: number; host: string } } | Record<string, never> {
+    if (process.env.NOVAKAI_SERVER_PORT) return {};
+    return {
+      door: {
+        port: Number(process.env.NVK_MESSAGING_V2_DOOR_PORT) || 3032,
+        host: process.env.NVK_MESSAGING_V2_DOOR_HOST || '127.0.0.1',
+      },
+    };
+  }
+
   /** A v2 boot failure must never take down the app (the old surface still
    * serves). Fail LOUD, continue — the v2 routes answer 503 this run. */
   private async bootMessagingV2Safely(): Promise<void> {
@@ -735,17 +789,9 @@ export class ServerController {
         objectModel: this.objectModel,
         storePath: process.env.NVK_MESSAGING_V2_STORE || undefined,
         tokenStore: this.tokenStore,
+        externalsStore: this.externalsStore,
         humanToken: process.env.NVK_MESSAGING_V2_HUMAN_TOKEN || undefined,
-        // D-N6-1: the DEC-17 door — production defaults to 3032 on localhost;
-        // scratch backends (NOVAKAI_SERVER_PORT set) stay doorless so parallel
-        // rigs never fight over the port. Remote reachability is the owner's
-        // opt-in via NVK_MESSAGING_V2_DOOR_HOST (docs/operations/CONNECT-EXTERNAL.md).
-        ...(process.env.NOVAKAI_SERVER_PORT ? {} : {
-          door: {
-            port: Number(process.env.NVK_MESSAGING_V2_DOOR_PORT) || 3032,
-            host: process.env.NVK_MESSAGING_V2_DOOR_HOST || '127.0.0.1',
-          },
-        }),
+        ...this.doorOptions(),
         // N2: the agent direct lane — pty presence transport over the terminal
         // runtime; the glue opens lanes for live agents and briefs new spawns.
         terminals: this.agentsHub.terminals,

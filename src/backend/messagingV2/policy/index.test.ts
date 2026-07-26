@@ -53,8 +53,8 @@ const badId = model.createAgent({ name: 'worker-bad', provider: 'claude', teamId
 
 const written: PersonId[][] = [];
 const sessions = new Map<string, MessagingSession>([
-  [badId, fakeSession(personIdForAgentId(badId), 'policy store on fire', written)],
-  [goodId, fakeSession(personIdForAgentId(goodId), null, written)],
+  [personIdForAgentId(badId), fakeSession(personIdForAgentId(badId), 'policy store on fire', written)],
+  [personIdForAgentId(goodId), fakeSession(personIdForAgentId(goodId), null, written)],
 ]);
 
 const bootstrap = createContactBootstrap(model);
@@ -68,7 +68,7 @@ assert.ok(written[0]?.includes(personIdForAgentId(badId)), 'co-membership conten
 
 // An Outcome-error (not a throw) is a failure too — honesty both ways.
 const erroring = new Map<string, MessagingSession>([
-  [badId, {
+  [personIdForAgentId(badId), {
     principal: { personId: personIdForAgentId(badId) },
     getPolicy: () => Promise.resolve({ kind: 'ok', value: { contact: { allowlist: [] }, 'dnd': {} } }),
     setContactPolicy: () => Promise.resolve({ kind: 'error', error: { name: 'NotAuthenticated', message: 'ended' } }),
@@ -79,3 +79,34 @@ assert.equal(outcomeFailures.length, 1, 'an error outcome is collected, not swal
 
 rmSync(scratch, { recursive: true, force: true });
 console.log('contact bootstrap resilience tests passed');
+
+// --- D-N8-2: externals are fleet co-members of EVERYONE -------------------------
+
+{
+  const n8Scratch = scratchStores();
+  const n8Model = new ObjectModel({ storesDir: n8Scratch });
+  const crewId = n8Model.createTeam({ name: 'Crew', missionId: 'mission_alpha' });
+  const agentId = n8Model.createAgent({ name: 'worker-a', provider: 'claude', teamId: crewId, missionId: 'mission_alpha' });
+  const partner = 'person_ext-partner-chris' as PersonId;
+  const human = 'person_user-chris' as PersonId;
+
+  const n8Written: PersonId[][] = [];
+  const agentSession = fakeSession(personIdForAgentId(agentId), null, n8Written);
+  const partnerSession = fakeSession(partner, null, n8Written);
+  const humanSession = fakeSession(human, null, n8Written);
+  const n8Bootstrap = createContactBootstrap(n8Model, () => [partner]);
+  const n8Failures = await n8Bootstrap.sync(
+    new Map<string, MessagingSession>([[personIdForAgentId(agentId), agentSession], [partner, partnerSession]]),
+    humanSession,
+  );
+  assert.equal(n8Failures.length, 0, 'a clean sync with externals collects nothing');
+  const agentList = n8Written[0] ?? [];
+  assert.ok(agentList.includes(partner), "after external add + sync, the agent's allowlist includes the external");
+  const partnerList = n8Written[1] ?? [];
+  assert.ok(partnerList.includes(personIdForAgentId(agentId)), "the external's allowlist includes every agent");
+  assert.ok(partnerList.includes(human), "the external's allowlist includes the human");
+  const humanList = n8Written[2] ?? [];
+  assert.ok(humanList.includes(partner), "the human's allowlist includes the external (D-N6-5 parity)");
+  rmSync(n8Scratch, { recursive: true, force: true });
+  console.log('D-N8-2 external co-membership tests passed');
+}

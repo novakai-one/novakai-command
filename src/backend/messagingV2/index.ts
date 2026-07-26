@@ -46,6 +46,7 @@ import type { AgentLaneGlue } from './presence/index.js';
 import { createRoomDirectory, createRoomsGlue } from './rooms/index.js';
 import type { RoomsGlue } from './rooms/index.js';
 import type { TokenStore } from './tokens/index.js';
+import type { ExternalsStore } from './externals/index.js';
 import { createDoorTransport, startDoor } from './door/index.js';
 import type { DoorOptions, MessagingDoor } from './door/index.js';
 
@@ -86,6 +87,9 @@ export interface StartMessagingV2Deps {
   /** D-N6-2: agent credential issuance/resolution (REQUIRED — the authority
    * rejects every agent credential without it). */
   tokenStore: TokenStore;
+  /** D-N8-1: external principals (fleet roster + policy co-membership +
+   * boot-minted sync credentials). Optional — absent means no externals. */
+  externalsStore?: ExternalsStore;
   /** D-N6-1: the DEC-17 door. Absent = disabled (scratch rigs); port 0 =
    * ephemeral (tests). Boot failure never kills the capability (loud log). */
   door?: DoorOptions;
@@ -135,10 +139,14 @@ async function bootGuarded(
 
 /** D-N6-2 zero-touch issuance: every active durable agent holds a token
  * before ANY consumer (lanes, the door, spawn env) can need one. The launch
- * path re-ensures per spawn (presence glue's openLane). */
+ * path re-ensures per spawn (presence glue's openLane). D-N8-1: active
+ * externals get the same treatment (the policy sync authenticates them). */
 function bootMintTokens(deps: StartMessagingV2Deps): void {
   for (const block of deps.objectModel.listAgents().filter(isActiveAgent)) {
     deps.tokenStore.ensure(block.id);
+  }
+  for (const personId of deps.externalsStore?.activePersonIds() ?? []) {
+    deps.tokenStore.ensureExternal(personId);
   }
 }
 
@@ -216,6 +224,7 @@ function makeLaneGlue(
     terminals: deps.terminals as TerminalRuntime,
     objectModel: deps.objectModel,
     tokenStore: deps.tokenStore,
+    ...(deps.externalsStore !== undefined ? { externalsStore: deps.externalsStore } : {}),
     humanToken,
     ...(deps.log !== undefined ? { 'log': deps.log } : {}),
   });
@@ -306,6 +315,21 @@ function makeTransports(
   return { transports, doorTransport };
 }
 
+/** The authority + membership adapters (pure — no resources to leak if
+ * construction throws). D-N3-1: the human rides EVERY roster; D-N8-1/2: the
+ * externals store feeds auth, provisioning, and the fleet roster. */
+function makeAdapters(deps: StartMessagingV2Deps, clock: ReturnType<typeof createSystemClock>, config: Omit<NovakaiAuthorityConfig, 'tokenStore'>) {
+  const authority = createNovakaiAuthority(deps.objectModel, clock, {
+    ...config, tokenStore: deps.tokenStore,
+    ...(deps.externalsStore !== undefined ? { externalsStore: deps.externalsStore } : {}),
+  });
+  const membership = createNovakaiMembership(
+    deps.objectModel, clock, HUMAN_PERSON_ID,
+    () => deps.externalsStore?.activePersonIds() ?? [],
+  );
+  return { authority, membership };
+}
+
 export async function startMessagingV2(deps: StartMessagingV2Deps): Promise<MessagingV2Handle> {
   const clock = createSystemClock();
   const storePath = deps.storePath ?? path.resolve('.novakai-command/messaging-v2/journal.jsonl');
@@ -316,10 +340,7 @@ export async function startMessagingV2(deps: StartMessagingV2Deps): Promise<Mess
   // the process. NVK_MESSAGING_V2_HUMAN_TOKEN remains an override.
   const humanToken = deps.humanToken ?? `human_${randomUUID()}`;
   const config = humanConfig(humanToken);
-  // Pure adapters first — no resources to leak if construction throws.
-  const authority = createNovakaiAuthority(deps.objectModel, clock, { ...config, tokenStore: deps.tokenStore });
-  // D-N3-1: the human principal rides EVERY roster the membership adapter serves.
-  const membership = createNovakaiMembership(deps.objectModel, clock, HUMAN_PERSON_ID);
+  const { authority, membership } = makeAdapters(deps, clock, config);
   const store = await openJsonlStore(clock, { path: storePath });
   const directory = createRoomDirectory();
   const transport = makeTransport(deps, directory);
