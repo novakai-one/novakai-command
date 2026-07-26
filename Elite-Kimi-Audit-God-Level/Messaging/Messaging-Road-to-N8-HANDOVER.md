@@ -73,8 +73,9 @@ slice seals before the next starts.
   created by the bot; config wired `fleet:team`; bridge restarted).
   FULL DUPLEX verified: agent → #team → top-level Slack post; Chris's
   Slack post → fleet room as person_user-chris.
-- Main is clean. Deployed snapshot `7c78dd78`. **Next: N8 — the
-  PartnerChris moment. UNBLOCKED.**
+- Main is clean. Deployed snapshot `7c78dd78`. **Next: N8 — IN FLIGHT on
+  branch `kimi/n8-external-principals` (WIP `d19056f9`, unverified). Resume
+  instructions in §5 N8.**
 
 ## 3. The per-slice ritual (follow it exactly — it's what made N1–N5 elite)
 
@@ -169,18 +170,51 @@ slice seals before the next starts.
   duplex live-fired. Remaining Chris-social step: invite PartnerChris to
   the channel — at N8 live-fire time, his call.
 
-### N8 — The PartnerChris moment
+### N8 — The PartnerChris moment (IN FLIGHT — resume here)
 - **A-N8-1 (Chris, 2026-07-26): the external target is PartnerChris, replacing
   Luke — and PartnerChris is ALREADY a colleague in Chris's Slack workspace.**
   The cross-company Slack Connect invite dependency (old D8) is OFF the
   critical path: no invite acceptance to wait for.
-- Done-definition: a shared channel in OUR workspace; PartnerChris's team as
-  external principals behind deny-by-default contact policy; a Novakai agent
-  posts → visible to PartnerChris's team in Slack → their reply lands in the
-  app with delivery truth.
-- No external blocker remains — N8 unblocks when N7 (rooms ↔ channels, fleet
-  identity, echo-safe) seals. The channel creation itself is a Chris-visible
-  step (which channel, who joins) — surface it at the N7 seal, not before.
+- Done-definition: a shared channel in OUR workspace (`#novakai-fleet` =
+  `C0BKV3G4CH0`, live since N7); PartnerChris's team as external principals
+  behind deny-by-default contact policy; a Novakai agent posts → visible in
+  Slack → their reply lands in the app AS THEM, with delivery truth.
+- **Ratified design (D-N8-1..5, silence-accepted 2026-07-26):**
+  - **D-N8-1:** externals are a real principal kind —
+    `src/backend/messagingV2/externals/` +
+    `.novakai-command/messaging-v2/externals.jsonl` (append-only, 600,
+    gitignored): `{ personId: person_ext_<slug>, slackUserId, displayName,
+    revoked? }`. Token store resolves external tokens to personIds directly;
+    authority authenticates them with NO grants (revoked → NotAuthenticated,
+    revalidate re-checks §2.1); `isProvisioned` includes them (MSG-014).
+    CLI: `nvk-agent external add/list/revoke`.
+  - **D-N8-2:** externals join the FLEET roster ONLY (room sends reach them,
+    they may send into #team, D-N2-5 policy sync covers them — deny-by-default
+    stays the gate; team/mission rosters unchanged).
+  - **D-N8-3:** the bridge becomes a DEC-17 client per external — config
+    `externals: [{ slackUserId, personId, token }]` in slack-bridge.json;
+    a mapped Slack message → frames SendMessage `thread:<fleet room>` through
+    the door (3032) AS THAT PRINCIPAL (identity from the authenticated Slack
+    user id, own credential — never text, never as chris). chris inbound
+    stays on `/user/send`; unmapped users drop loudly; externals absent =
+    dormant.
+  - **D-N8-4:** real delivery truth — one held ws presence per external
+    through the door; delivery effects close the loop (delivered = handed to
+    the Slack lane); content posts stay on the N7 room path (NO double-post);
+    presence down = pending (honest).
+  - **D-N8-5:** live-fire = the moment: provision PartnerChris, invite him to
+    `#novakai-fleet` (Chris's social OK), agent posts → he replies → lands as
+    him. Luke Moulton can be provisioned identically, anytime.
+- **STATE AT CHECKPOINT (2026-07-26, usage stop):** branch
+  `kimi/n8-external-principals` pushed at `d19056f9` — WIP commit, 17 files
+  (+920), the externals module + authority/membership/policy/tokens/bridge/
+  CLI changes in flight. **tsc clean but NOTHING ELSE verified: no gates, no
+  RED-first evidence, no auditor, NOT sealed.** RESUME: resume coder
+  agent-30 if alive (it holds the build context) or a fresh implementer;
+  complete the build per the brief (tests RED-first incl. bridge harness +
+  door e2e), then the FULL ritual (§3): personal gates → fresh 0-context
+  auditor → disposals → review → PR → merge → deploy → the PartnerChris
+  live-fire.
 
 ## 6. Live infrastructure + verification playbook
 
