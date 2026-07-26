@@ -181,7 +181,9 @@ export class AgentsHub {
       return;
     }
     const updatedAt = typeof parsed.health?.updatedAt === 'string' ? parsed.health.updatedAt : null;
-    const staleMs = updatedAt === null ? Number.POSITIVE_INFINITY : Date.now() - Date.parse(updatedAt);
+    // F8: a non-ISO updatedAt is stale/503 honestly — never 200-garbage.
+    const parsedAt = updatedAt === null ? Number.NaN : Date.parse(updatedAt);
+    const staleMs = Number.isFinite(parsedAt) ? Date.now() - parsedAt : Number.POSITIVE_INFINITY;
     if (staleMs > 5 * 60_000) {
       response.status(503).json({ error: 'slack-bridge health is stale (bridge down or wedged)', updatedAt });
       return;
@@ -189,7 +191,8 @@ export class AgentsHub {
     response.json({ cursor: parsed.cursor ?? 0, health: parsed.health });
   }
 
-  private agentHealth(request: Request, response: Response): void {    const info = this.manager.list().find((agent) => agent.agentId === request.params.agentId);
+  private agentHealth(request: Request, response: Response): void {
+    const info = this.manager.list().find((agent) => agent.agentId === request.params.agentId);
     if (!info) {
       response.status(404).json({ error: 'Agent not found' });
       return;

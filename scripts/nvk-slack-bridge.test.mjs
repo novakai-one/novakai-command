@@ -40,7 +40,7 @@ const THREADS = [
   { id: THREAD_FABLE, threadKind: 'direct', direct: { pair: ['person_user-chris', PERSON_FABLE] } },
   { id: THREAD_GABLE, threadKind: 'direct', direct: { pair: ['person_user-chris', 'person_agent-gable'] } },
   { id: THREAD_MABEL, threadKind: 'direct', direct: { pair: ['person_user-chris', 'person_agent-mabel'] } },
-  { id: 'thread_room_team', threadKind: 'team', room: { authority: 'auth', externalId: 'team' }, label: '#team' },
+  { id: 'thread_room_team', threadKind: 'team', room: { authority: 'fleet', externalId: 'team' }, label: '#team' },
 ];
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -65,6 +65,7 @@ function startFakeSlack() {
   const acks = [];
   let tsCounter = 0;
   let failCount = 0;
+  let failSkip = 0;
   let rateLimitCount = 0;
   let retryAfterSeconds = 1;
   const attempts429 = [];
@@ -98,7 +99,9 @@ function startFakeSlack() {
           response.end(JSON.stringify({ ok: false, error: 'ratelimited' }));
           return;
         }
-        if (failCount > 0) {
+        if (failSkip > 0) {
+          failSkip -= 1; // let this one land — failures start after the skip
+        } else if (failCount > 0) {
           failCount -= 1;
           reply({ ok: false, error: 'slack_is_sad' }); // Slack-style 200 + ok:false
           return;
@@ -147,7 +150,7 @@ function startFakeSlack() {
   return new Promise((resolve) => {
     server.listen(0, '127.0.0.1', () => resolve({
       port: server.address().port, posts, acks, sendSlackEvent,
-      failNextPosts: (n) => { failCount = n; },
+      failNextPosts: (n, skip = 0) => { failCount = n; failSkip = skip; },
       rateLimitNextPosts: (n, seconds = 1) => { rateLimitCount = n; retryAfterSeconds = seconds; },
       attempts429,
       pings: () => pings,
@@ -167,6 +170,7 @@ function startFakeApp() {
   let pings = 0;
   let connectionCount = 0;
   const sockets = new Set();
+  let failThreads = false;
   let roster = [FABLE, GABLE, MABEL];
   const messageStore = new Map(); // threadId → messages (REST catch-up source)
 
@@ -182,6 +186,7 @@ function startFakeApp() {
       return;
     }
     if (request.method === 'GET' && url.pathname === '/api/messaging/v2/user/threads') {
+      if (failThreads) { json(500, { error: 'threads on fire' }); return; }
       json(200, { threads: THREADS });
       return;
     }
@@ -253,6 +258,8 @@ function startFakeApp() {
       pushEnded: (reason) => broadcast({ event: 'messaging-v2', payload: { kind: 'ended', reason } }),
       pushAgentsChanged: () => broadcast({ type: 'agents-changed', agents: roster }),
       addAgent: (agent) => { roster = [...roster, agent]; },
+      addThread: (thread) => { THREADS.push(thread); },
+      setFailThreads: (flag) => { failThreads = flag; },
       renameAgent: (agentId, title) => {
         roster = roster.map((agent) => (agent.agentId === agentId ? { ...agent, title } : agent));
       },
@@ -658,6 +665,28 @@ assert.ok(Date.now() - rateLimitedAt >= 900, 'Retry-After was honored (the retry
 assert.equal(slack.attempts429.length, 1, 'exactly one attempt was rate-limited before the landing');
 ok('D-N7-6: 429 → Retry-After-honoring bounded retry, post lands');
 
+// F3 — a chunk that PARTIALLY fails resumes per-part: the at-least-once
+// replay must post the missing parts only, never repost the landed one, and
+// the cursor holds until completion.
+{
+  slack.failNextPosts(3, 1); // part 0 lands; part 1's post + retries all fail
+  const partialBody = `partial-${'z'.repeat(70_000)}`;
+  app.pushMessage(40, { threadId: 'thread_room_team', body: { text: partialBody } });
+  await sleep(2500); // part 0 lands; part 1's retries exhaust
+  // Baselines: the seq-31 chunk already posted one of each (i/3) marker, and
+  // only part 0 of THIS message carries the 'partial-' prefix.
+  assert.equal(postsWith('(1/3)').filter((p) => p.text.includes('partial-')).length, 1, 'part 1 landed');
+  assert.equal(postsWith('(2/3)').length, 1, 'part 2 never landed — the chunk is incomplete (only seq-31’s)');
+  assert.ok(readState().cursor < 40, 'the cursor holds on a partial chunk');
+  app.pushMessage(40, { threadId: 'thread_room_team', body: { text: partialBody } }); // the replay
+  await waitFor(() => postsWith('(3/3)').length === 2, 'the replay completes the chunk');
+  assert.equal(postsWith('(1/3)').filter((p) => p.text.includes('partial-')).length, 1, 'part 1 is NOT reposted on resume');
+  assert.equal(postsWith('(2/3)').length, 2, 'part 2 posts from the resume point');
+  assert.equal(readState().cursor, 40, 'the cursor advances only after completion');
+  ok('F3: partial chunk failure resumes per-part — no repost, no truncation');
+}
+
+
 // D-N7-7: the state file carries the health block (never breaking the old keys).
 const healthState = readState();
 assert.ok(healthState.health, 'state file gains a health key');
@@ -667,6 +696,76 @@ for (const key of ['updatedAt', 'appRetryCount', 'slackRetryCount', 'lastError',
 assert.ok(Number.isFinite(Date.parse(healthState.health.lastBridgedAt)), 'lastBridgedAt is an ISO stamp');
 assert.ok(Number.isFinite(healthState.cursor) && healthState.roots && healthState.agents, 'cursor/roots/agents readers unaffected');
 ok('D-N7-7: health keys written alongside cursor/roots/agents');
+
+// F1 — an OUTBOUND-ONLY bridge still serves fresh health: every saveState
+// refreshes updatedAt (liveness = the daemon persisting state), and a room
+// outbound sets lastBridgedAt too. Re-seed the state file WITHOUT a health
+// block (roots/agents preserved so no replay floods), restart, bridge one
+// room message app→Slack, send NOTHING inbound.
+await daemon.stop();
+const subsBeforeF1 = app.subs.length;
+const preserved = readState();
+fs.writeFileSync(stateFile, JSON.stringify({ cursor: preserved.cursor, roots: preserved.roots, agents: preserved.agents }));
+daemon = startDaemon(env);
+await waitFor(() => app.subs.length === subsBeforeF1 + 1, 'daemon reboots on the re-seeded state');
+app.pushMessage(50, { threadId: 'thread_room_team', body: { text: 'outbound only health' } });
+await waitFor(() => postsWith('outbound only health').length === 1, 'the outbound room message bridges');
+await waitFor(() => {
+  const fileHealth = readState().health ?? {};
+  return Number.isFinite(Date.parse(fileHealth.updatedAt ?? '')) && Number.isFinite(Date.parse(fileHealth.lastBridgedAt ?? ''));
+}, 'outbound-only bridging still writes fresh updatedAt + lastBridgedAt');
+ok('F1: outbound-only bridge → fresh updatedAt + lastBridgedAt (staleness honest)');
+
+// F2 — channels configured but the app refuses /user/threads at boot: the
+// daemon must BOOT ANYWAY (DM lanes unaffected), and resolution must retry
+// on the next app-ws (re)connect — a racing app restart is not a kill loop.
+await daemon.stop();
+const subsBeforeF2 = app.subs.length;
+app.setFailThreads(true);
+daemon = startDaemon(env);
+await waitFor(() => app.subs.length === subsBeforeF2 + 1, 'daemon boots with the app refusing threads');
+await waitFor(() => daemon.output().includes('channel resolution failed'), 'the failure is a loud warn, not an exit');
+const sendsBeforeF2 = app.sends.length;
+slack.sendSlackEvent({ type: 'message', channel_type: 'im', user: CHRIS, text: 'dm survives the app race', thread_ts: root.ts, ts: '1800.000030' });
+await waitFor(() => app.sends.length === sendsBeforeF2 + 1, 'the DM lane bridges with channels unresolved');
+slack.sendSlackEvent({ type: 'message', channel: 'C_TEAM', channel_type: 'channel', user: CHRIS, text: 'dropped while unresolved', ts: '1900.000030' });
+await sleep(400);
+assert.equal(app.sends.length, sendsBeforeF2 + 1, 'channel events stay dormant while unresolved');
+app.setFailThreads(false);
+app.pauseNewestSocket(); // force the app-ws reconnect — resolution retries there
+await waitFor(() => daemon.output().includes('channel map: C_TEAM'), 'resolution retried on reconnect');
+slack.sendSlackEvent({ type: 'message', channel: 'C_TEAM', channel_type: 'channel', user: CHRIS, text: 'channels recovered', ts: '1900.000031' });
+await waitFor(() => app.sends.some((s) => s.body === 'channels recovered'), 'the channel lane comes up WITHOUT a daemon restart');
+ok('F2: app-down boot race → loud + dormant, resolution retries on reconnect');
+
+// F4 — composite room keys (authority:externalId), ambiguity, and duplicate
+// channels refused loudly.
+app.addThread({ id: 'thread_room_crew_a', threadKind: 'team', room: { authority: 'team', externalId: 'shared' }, label: '#crew-a' });
+app.addThread({ id: 'thread_room_crew_b', threadKind: 'mission', room: { authority: 'mission', externalId: 'shared' }, label: '#crew-b' });
+await daemon.stop();
+const subsBeforeF4 = app.subs.length;
+fs.writeFileSync(configFile, JSON.stringify({
+  chrisUserId: CHRIS,
+  channels: [
+    { slackChannelId: 'C_FLEET', room: 'fleet:team' },
+    { slackChannelId: 'C_FLEET', room: 'fleet:team' }, // duplicate channel id
+    { slackChannelId: 'C_AMBI', room: 'shared' },      // bare key, ambiguous (two rooms share the externalId, neither is its label)
+  ],
+}));
+daemon = startDaemon(env);
+await waitFor(() => app.subs.length === subsBeforeF4 + 1, 'daemon reboots on the collision config');
+await waitFor(
+  () => daemon.output().includes('ambiguous') && daemon.output().includes('duplicate'),
+  'ambiguity + duplicate channel are refused loudly at boot',
+);
+const sendsBeforeF4 = app.sends.length;
+slack.sendSlackEvent({ type: 'message', channel: 'C_FLEET', channel_type: 'channel', user: CHRIS, text: 'composite hello', ts: '1900.000040' });
+await waitFor(() => app.sends.length === sendsBeforeF4 + 1, 'the composite key binds the fleet room');
+assert.deepEqual(app.sends.at(-1), { to: '#team', body: 'composite hello' }, "'fleet:team' resolves to the fleet room");
+slack.sendSlackEvent({ type: 'message', channel: 'C_AMBI', channel_type: 'channel', user: CHRIS, text: 'ambiguous room post', ts: '1900.000041' });
+await sleep(400);
+assert.ok(!app.sends.some((s) => s.body === 'ambiguous room post'), 'the ambiguous bare key never binds');
+ok('F4: composite room keys; ambiguity + duplicate channels refused loudly');
 
 // D-N7-2: channels ABSENT — the channel code is dormant, DM lanes unaffected
 // (production runs exactly this until the click-work lands).

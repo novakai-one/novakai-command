@@ -192,6 +192,11 @@ const harness = await makeHarness();
     }));
     const stale = await fetch(`${harness.base}/api/agents/slack-bridge/health`);
     assert.equal(stale.status, 503, 'a stale health block → 503');
+
+    // F8: a non-ISO updatedAt is stale honestly, never 200-garbage.
+    writeFileSync(bridgeStatePath, JSON.stringify({ cursor: 42, health: { updatedAt: 'not-a-date' } }));
+    const garbage = await fetch(`${harness.base}/api/agents/slack-bridge/health`);
+    assert.equal(garbage.status, 503, 'a non-ISO updatedAt → 503, never 200-garbage');
   } finally {
     delete process.env.NVK_SLACK_BRIDGE_STATE;
   }

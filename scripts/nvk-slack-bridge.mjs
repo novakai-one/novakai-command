@@ -155,6 +155,10 @@ function saveState() {
     fs.mkdirSync(path.dirname(STATE_FILE), { recursive: true });
     health.appRetryCount = appRetryCount;
     health.slackRetryCount = slackRetryCount;
+    // F1: liveness IS the daemon persisting state — cursor advances, settles,
+    // and touches all refresh updatedAt (an idle or outbound-only bridge
+    // must never 503).
+    health.updatedAt = new Date().toISOString();
     const tmp = `${STATE_FILE}.tmp`;
     fs.writeFileSync(tmp, JSON.stringify({ ...state, health }, null, 2));
     fs.renameSync(tmp, STATE_FILE);
@@ -224,8 +228,10 @@ async function postToSlack(payload, channelId = dmChannelId) {
         touchHealth({ lastError: error.message });
         return null;
       }
+      // D-N7-6/F6: Retry-After + jitter, CAPPED — one wedged channel must
+      // never head-of-line-block every lane behind it.
       const waitMs = error.retryAfterSeconds !== undefined
-        ? error.retryAfterSeconds * 1000 + Math.floor(Math.random() * 250) // D-N7-6: Retry-After + jitter
+        ? Math.min(error.retryAfterSeconds * 1000, 30_000) + Math.floor(Math.random() * 250)
         : RETRY_DELAY_MS;
       warn(`Slack post failed (${error.message}); retrying in ${waitMs}ms`);
       await sleep(waitMs);
@@ -278,12 +284,43 @@ async function nameForSend(stored) {
 // --- outbound: capability → Slack ----------------------------------------------
 
 const threadCache = new Map(); // threadId → capability thread (REST, F12-style refresh)
-const postedMessages = new Map(); // capability messageId → { ts, channelId } (bounded; dedupe + delivery follow-ups)
+// capability messageId → { ts, channelId, partsPosted, complete } (bounded).
+// F3: per-part progress — only COMPLETE entries dedupe; a partial failure
+// resumes from partsPosted (never reposts, never truncates). `ts` is part
+// 0's ts — delivery follow-ups (⚠) amend there.
+const postedMessages = new Map();
 
-function rememberPosted(messageId, ts, channelId = dmChannelId) {
+function rememberPosted(messageId, entry) {
   if (postedMessages.has(messageId)) postedMessages.delete(messageId);
-  postedMessages.set(messageId, { ts, channelId });
+  postedMessages.set(messageId, entry);
   if (postedMessages.size > POSTED_MAX) postedMessages.delete(postedMessages.keys().next().value);
+}
+
+/** F3: post one message's parts with per-part progress — on a partial
+ * failure the cursor holds and the at-least-once replay resumes from
+ * partsPosted. onFirstPart fires once when part 0 lands (the DM lane mints
+ * its Slack root there). False = the Slack post failed; retry via replay. */
+async function postParts(message, parts, channelId, rootTs, onFirstPart) {
+  const prior = postedMessages.get(message.id) ?? { ts: undefined, channelId, partsPosted: 0, complete: false };
+  let laneRootTs = rootTs ?? prior.ts;
+  for (let index = prior.partsPosted; index < parts.length; index += 1) {
+    const payload = laneRootTs === undefined ? { text: parts[index] } : { text: parts[index], thread_ts: laneRootTs };
+    const posted = await postToSlack(payload, channelId);
+    if (posted === null) {
+      rememberPosted(message.id, prior);
+      return false;
+    }
+    prior.partsPosted = index + 1;
+    if (index === 0) {
+      prior.ts = posted.ts;
+      if (rootTs === undefined) laneRootTs = posted.ts;
+      onFirstPart?.(posted.ts);
+    }
+    rememberPosted(message.id, prior);
+  }
+  prior.complete = true;
+  rememberPosted(message.id, prior);
+  return true;
 }
 
 async function refreshThreads() {
@@ -310,24 +347,65 @@ const channelRooms = new Map();
 const roomChannels = new Map();
 
 /** Boot resolution: configured label → room threadId. An unresolvable label
- * is a LOUD boot warning (never silent, never fatal — DM lanes boot anyway). */
+ * is a LOUD boot warning (never silent, never fatal — DM lanes boot anyway).
+ * F2: a DOWN app (refused fetch) is the same posture — dormant this boot,
+ * retried on every app-ws (re)connect. F4: room keys are exact label first,
+ * then 'authority:externalId', then a bare externalId ONLY when it matches
+ * exactly one room (composite keys are the truth — 'team' alone can collide);
+ * duplicate slackChannelId entries are refused loudly. */
 async function resolveChannels() {
   if (config.channels.length === 0) return;
-  const data = await appRest('/api/messaging/v2/user/threads');
-  const threads = data.threads ?? [];
+  let threads;
+  try {
+    const data = await appRest('/api/messaging/v2/user/threads');
+    threads = data.threads ?? [];
+  } catch (error) {
+    warn(`channel resolution failed (${error.message}) — channels dormant this boot; retrying on the next app-ws connect`);
+    return;
+  }
+  const seen = new Set();
   for (const entry of config.channels) {
-    const thread = threads.find((candidate) =>
-      candidate.threadKind !== 'direct'
-      && (candidate.room?.externalId === entry.room || candidate.label === `#${entry.room}` || candidate.label === entry.room));
-    if (thread === undefined) {
-      warn(`configured channel ${entry.slackChannelId} → room "${entry.room}" does NOT resolve to a room thread — check the label (/user/threads)`);
+    if (seen.has(entry.slackChannelId)) {
+      warn(`duplicate slackChannelId ${entry.slackChannelId} in channels config — skipping the duplicate entry`);
       continue;
     }
+    seen.add(entry.slackChannelId);
+    const thread = resolveRoomThread(threads, entry.room);
+    if (thread === undefined) continue; // resolveRoomThread warned already
     const label = thread.label ?? `#${entry.room}`;
     channelRooms.set(entry.slackChannelId, { label, threadId: thread.id });
     roomChannels.set(thread.id, { label, channelId: entry.slackChannelId });
     log(`channel map: ${entry.slackChannelId} ↔ ${label} (${thread.id})`);
   }
+}
+
+/** One config room key → its room thread, or undefined (warned). */
+function resolveRoomThread(threads, roomKey) {
+  const rooms = threads.filter((thread) => thread.threadKind !== 'direct');
+  const byLabel = rooms.find((thread) => thread.label === roomKey || thread.label === `#${roomKey}`);
+  if (byLabel !== undefined) return byLabel;
+  if (roomKey.includes(':')) {
+    const [authority, externalId] = roomKey.split(':', 2);
+    const composite = rooms.find((thread) =>
+      thread.room?.authority === authority && thread.room?.externalId === externalId);
+    if (composite !== undefined) return composite;
+  } else {
+    const candidates = rooms.filter((thread) => thread.room?.externalId === roomKey);
+    if (candidates.length === 1) return candidates[0];
+    if (candidates.length > 1) {
+      warn(`room "${roomKey}" is ambiguous (${candidates.length} room threads share the externalId) — use authority:externalId or the exact label`);
+      return undefined;
+    }
+  }
+  warn(`configured room "${roomKey}" does NOT resolve to a room thread — check the key (/user/threads)`);
+  return undefined;
+}
+
+/** F2: configured-but-unresolved — a reconnect should retry resolution. */
+function channelsPending() {
+  return config.channels.length > 0 && channelRooms.size < config.channels.filter(
+    (entry, index, all) => all.findIndex((other) => other.slackChannelId === entry.slackChannelId) === index,
+  ).length;
 }
 
 const timeOf = (iso) => {
@@ -352,7 +430,7 @@ function chunkText(text) {
 /** true when the message is SETTLED (posted, or intentionally skipped); false
  * when the Slack post failed — the caller must NOT advance the cursor. */
 async function bridgeMessage(message) {
-  if (postedMessages.has(message.id)) {
+  if (postedMessages.get(message.id)?.complete === true) {
     vlog(`dupe ${message.id} (already posted) — skipped`);
     return true;
   }
@@ -374,16 +452,16 @@ async function bridgeMessage(message) {
   if (agentPersonId === null) return bridgeRoomMessage(message, thread);
   const rootTs = state.roots[message.threadId];
   const text = `*${nameForPersonId(agentPersonId)}* · ${timeOf(message.createdAt)}\n${message.body?.text ?? ''}`;
-  let laneRootTs = rootTs;
-  for (const [index, part] of chunkText(text).entries()) {
-    const payload = laneRootTs === undefined ? { text: part } : { text: part, thread_ts: laneRootTs };
-    const posted = await postToSlack(payload);
-    if (posted === null) return false;
-    if (index === 0) {
-      settlePosted(message, posted, agentPersonId, rootTs);
-      laneRootTs = rootTs ?? posted.ts; // a fresh DM's first post IS the root
-    }
+  const mintRoot = (firstTs) => {
+    state.roots[message.threadId] = firstTs;
+    state.agents[firstTs] = agentPersonId;
+    saveState();
+    log(`bridged new DM thread: ${nameForPersonId(agentPersonId)} → Slack ${firstTs}`);
+  };
+  if (!(await postParts(message, chunkText(text), dmChannelId, rootTs, rootTs === undefined ? mintRoot : undefined))) {
+    return false;
   }
+  health.lastBridgedAt = new Date().toISOString(); // piggybacks on the next saveState
   log(`bridged ${message.id} → DM ${nameForPersonId(agentPersonId)}`);
   return true;
 }
@@ -394,25 +472,10 @@ async function bridgeRoomMessage(message, thread) {
   const lane = roomChannels.get(message.threadId);
   if (lane === undefined) return true; // unmapped room/agent↔agent — settled, out of scope
   const text = `*${nameForPersonId(message.senderId)}* · ${timeOf(message.createdAt)}\n${message.body?.text ?? ''}`;
-  for (const [index, part] of chunkText(text).entries()) {
-    const posted = await postToSlack({ text: part }, lane.channelId);
-    if (posted === null) return false;
-    if (index === 0) rememberPosted(message.id, posted.ts, lane.channelId);
-  }
+  if (!(await postParts(message, chunkText(text), lane.channelId, undefined))) return false;
+  health.lastBridgedAt = new Date().toISOString(); // F1: room outbound counts
   log(`bridged ${message.id} → ${lane.label} ${lane.channelId}`);
   return true;
-}
-
-/** First-part settlement: dedupe memory + the DM thread maps (roots/agents). */
-function settlePosted(message, posted, agentPersonId, rootTs) {
-  rememberPosted(message.id, posted.ts);
-  health.lastBridgedAt = new Date().toISOString(); // piggybacks on the next saveState
-  if (rootTs === undefined) {
-    state.roots[message.threadId] = posted.ts;
-    state.agents[posted.ts] = agentPersonId;
-    saveState();
-    log(`bridged new DM thread: ${nameForPersonId(agentPersonId)} → Slack ${posted.ts}`);
-  }
 }
 
 async function bridgeDelivery(delivery) {
@@ -544,6 +607,9 @@ function connectAppSocket() {
     appRetryCount = 0;
     log(`app socket connected (${appWsUrl()})`);
     subscribeLive();
+    // F2: configured-but-unresolved channels retry resolution on every
+    // (re)connect — an app recovery brings the lane up without a restart.
+    if (channelsPending()) void resolveChannels();
   });
   appSocket.on('message', (data) => {
     let frame;
@@ -614,11 +680,12 @@ async function nameForSlackUser(userId) {
   return name;
 }
 
-/** Full inbound decode: wire text + <@U…> mentions → readable text. */
+/** Full inbound decode: wire text + <@U…> mentions → readable text. F9:
+ * mentions match on the RAW wire text FIRST — a literally typed "<@U123>"
+ * arrives escaped (&lt;@U123&gt;) and must stay literal, never decode. */
 async function decodeInboundText(text) {
-  const decoded = decodeSlackText(text);
-  const mentions = [...decoded.matchAll(/<@([A-Z0-9_]+)>/g)];
-  let result = decoded;
+  const mentions = [...text.matchAll(/<@([A-Z0-9_]+)>/g)];
+  let result = decodeSlackText(text);
   for (const mention of mentions) {
     result = result.replace(mention[0], `@${await nameForSlackUser(mention[1])}`);
   }
@@ -698,9 +765,11 @@ function isOwnerSlackUser(slackUserId) {
 }
 
 /** D-N7-6: an inbound body over the 32 KiB contract cap gets a posted note
- * instead of a failed send (the capability would reject it anyway). */
+ * instead of a failed send (the capability would reject it anyway). F7: the
+ * cap is BYTES — measure bytes here (chunk slicing stays char-based for
+ * display; a multi-byte body can legitimately note earlier than it chunks). */
 function tooBigForBridge(text) {
-  return text.length > SLACK_PART_SIZE;
+  return Buffer.byteLength(text, 'utf8') > SLACK_PART_SIZE;
 }
 
 /** D-N7-4: one message on a MAPPED channel → a room send as the human.
