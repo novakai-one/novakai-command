@@ -40,7 +40,7 @@ const THREADS = [
   { id: THREAD_FABLE, threadKind: 'direct', direct: { pair: ['person_user-chris', PERSON_FABLE] } },
   { id: THREAD_GABLE, threadKind: 'direct', direct: { pair: ['person_user-chris', 'person_agent-gable'] } },
   { id: THREAD_MABEL, threadKind: 'direct', direct: { pair: ['person_user-chris', 'person_agent-mabel'] } },
-  { id: 'thread_room_team', threadKind: 'team', room: { authority: 'auth', externalId: 'team' }, label: '#team' },
+  { id: 'thread_room_team', threadKind: 'team', room: { authority: 'fleet', externalId: 'team' }, label: '#team' },
 ];
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -65,6 +65,10 @@ function startFakeSlack() {
   const acks = [];
   let tsCounter = 0;
   let failCount = 0;
+  let failSkip = 0;
+  let rateLimitCount = 0;
+  let retryAfterSeconds = 1;
+  const attempts429 = [];
   let pings = 0;
   let socketMode = null;
   const nextTs = () => { tsCounter += 1; return `1700.${String(tsCounter).padStart(6, '0')}`; };
@@ -72,6 +76,7 @@ function startFakeSlack() {
   const routes = {
     'POST /auth.test': () => ({ ok: true, user_id: BOT, bot_id: 'B_BOT' }),
     'GET /users.lookupByEmail': () => ({ ok: true, user: { id: CHRIS } }),
+    'GET /users.info': () => ({ ok: true, user: { id: 'U_MATE', name: 'mate', profile: { display_name: 'Mate', real_name: 'Mate S' } } }),
     'POST /conversations.open': () => ({ ok: true, channel: { id: DM_CHANNEL } }),
     'POST /apps.connections.open': (port) => ({ ok: true, url: `ws://127.0.0.1:${port}/socketmode` }),
   };
@@ -87,7 +92,16 @@ function startFakeSlack() {
       request.on('data', (chunk) => { body += chunk; });
       request.on('end', () => {
         const payload = JSON.parse(body);
-        if (failCount > 0) {
+        if (rateLimitCount > 0) {
+          rateLimitCount -= 1;
+          attempts429.push(payload);
+          response.writeHead(429, { 'retry-after': String(retryAfterSeconds), 'content-type': 'application/json' });
+          response.end(JSON.stringify({ ok: false, error: 'ratelimited' }));
+          return;
+        }
+        if (failSkip > 0) {
+          failSkip -= 1; // let this one land — failures start after the skip
+        } else if (failCount > 0) {
           failCount -= 1;
           reply({ ok: false, error: 'slack_is_sad' }); // Slack-style 200 + ok:false
           return;
@@ -136,7 +150,9 @@ function startFakeSlack() {
   return new Promise((resolve) => {
     server.listen(0, '127.0.0.1', () => resolve({
       port: server.address().port, posts, acks, sendSlackEvent,
-      failNextPosts: (n) => { failCount = n; },
+      failNextPosts: (n, skip = 0) => { failCount = n; failSkip = skip; },
+      rateLimitNextPosts: (n, seconds = 1) => { rateLimitCount = n; retryAfterSeconds = seconds; },
+      attempts429,
       pings: () => pings,
       close: () => { socketMode?.terminate(); wss.close(); server.close(); },
     }));
@@ -154,6 +170,7 @@ function startFakeApp() {
   let pings = 0;
   let connectionCount = 0;
   const sockets = new Set();
+  let failThreads = false;
   let roster = [FABLE, GABLE, MABEL];
   const messageStore = new Map(); // threadId → messages (REST catch-up source)
 
@@ -169,6 +186,7 @@ function startFakeApp() {
       return;
     }
     if (request.method === 'GET' && url.pathname === '/api/messaging/v2/user/threads') {
+      if (failThreads) { json(500, { error: 'threads on fire' }); return; }
       json(200, { threads: THREADS });
       return;
     }
@@ -182,7 +200,9 @@ function startFakeApp() {
       request.on('end', () => {
         const parsed = JSON.parse(body);
         sends.push(parsed);
-        if (roster.some((agent) => agent.title === parsed.to)) {
+        if (parsed.to === '#team') {
+          json(201, { messageId: `msg_app_${sends.length}`, threadId: 'thread_room_team' });
+        } else if (roster.some((agent) => agent.title === parsed.to)) {
           json(201, { messageId: `msg_app_${sends.length}`, threadId: THREAD_FABLE });
         } else {
           json(404, { error: `recipient "${parsed.to}" is not a live agent`, roster: roster.map((a) => a.title) });
@@ -238,6 +258,8 @@ function startFakeApp() {
       pushEnded: (reason) => broadcast({ event: 'messaging-v2', payload: { kind: 'ended', reason } }),
       pushAgentsChanged: () => broadcast({ type: 'agents-changed', agents: roster }),
       addAgent: (agent) => { roster = [...roster, agent]; },
+      addThread: (thread) => { THREADS.push(thread); },
+      setFailThreads: (flag) => { failThreads = flag; },
       renameAgent: (agentId, title) => {
         roster = roster.map((agent) => (agent.agentId === agentId ? { ...agent, title } : agent));
       },
@@ -275,7 +297,10 @@ const app = await startFakeApp();
 const work = fs.mkdtempSync(path.join(os.tmpdir(), 'nvk-slack-bridge-test-'));
 const stateFile = path.join(work, 'bridge-state.json');
 const configFile = path.join(work, 'bridge.json');
-fs.writeFileSync(configFile, JSON.stringify({ chrisUserId: CHRIS }));
+fs.writeFileSync(configFile, JSON.stringify({
+  chrisUserId: CHRIS,
+  channels: [{ slackChannelId: 'C_TEAM', room: 'team' }],
+}));
 
 const env = {
   ...process.env,
@@ -323,11 +348,16 @@ ok('(a) follow-up in the same agent DM thread → Slack thread reply');
 
 // Never mirror chris's own capability messages back into Slack.
 app.pushMessage(3, { senderId: 'person_user-chris', body: { text: 'chris typing in the app' } });
-// Room traffic is out of scope for v0 (DMs only).
+// D-N7-3: traffic on a MAPPED room thread bridges — top-level in the channel.
 app.pushMessage(4, { threadId: 'thread_room_team', body: { text: 'room noise' } });
-await sleep(400);
-assert.equal(slack.posts.length, 2, "chris's own messages and room traffic are not bridged");
-ok('(a) chris echo + room traffic stay out of Slack');
+await waitFor(() => postsWith('room noise').length === 1, 'mapped room traffic bridges to its Slack channel');
+const roomNoise = postsWith('room noise')[0];
+assert.equal(roomNoise.channel, 'C_TEAM', 'D-N7-3: room posts land on the mapped channel');
+assert.equal(roomNoise.thread_ts, undefined, 'D-N7-3: room posts are TOP-LEVEL, never threaded');
+assert.match(roomNoise.text, /^\*fable\* · \d\d:\d\d\nroom noise$/, 'identity stamped from the roster, never message text');
+assert.equal(roomNoise.metadata?.event_type, 'nvk_slack_bridge', 'room posts carry the echo-guard tag');
+assert.ok(!postsWith('chris typing in the app').length, "chris's own messages are never mirrored");
+ok('(a)+D-N7-3: mapped room → top-level channel post (header + tag); chris echo stays out');
 
 // (b) chris's Slack thread reply → /user/send to the thread's agent.
 slack.sendSlackEvent({ type: 'message', channel_type: 'im', user: CHRIS, text: 'reply from slack', thread_ts: root.ts, ts: '1800.000001' });
@@ -397,7 +427,7 @@ ok('F3: concurrent frames for a new thread → one root + one reply, never two r
 // F4 — cursor advances only AFTER the Slack post lands: both post attempts
 // fail, the cursor must not move, and the server's at-least-once replay must
 // be bridged (not deduped away by a premature cursor).
-slack.failNextPosts(2); // initial attempt + the one retry
+slack.failNextPosts(3); // initial attempt + the bounded retries (D-N7-6: 3 attempts)
 app.pushMessage(12);
 await waitFor(() => readState().cursor >= 11, 'cursor settled after mabel');
 await sleep(1200); // both failed attempts (300ms retry seam) have run their course
@@ -513,6 +543,244 @@ ok('F6: ping heartbeat runs on both sockets');
 app.pauseNewestSocket();
 await waitFor(() => app.connections() >= 3, 'zombie app socket terminated, daemon reconnected');
 ok('F6: missed pongs → terminate → reconnect (no silent zombie)');
+
+// ============================ N7 — Slack grows up ==============================
+// D-N7-2: the configured channel↔room map resolved at boot (config above).
+// D-N7-3: (a) already pinned the outbound room shape + the roster-stamped
+// header. Here: the promoted per-message bridge line, <@U> mention decode.
+
+// D-N7-3: Slack <@U…> mentions decode to a display name inbound (users.info,
+// bounded cache — cosmetic, never blocks the send).
+slack.sendSlackEvent({ type: 'message', channel_type: 'im', user: CHRIS, text: '@fable-v2 tell <@U_MATE> hi', thread_ts: root.ts, ts: '1800.000012' });
+await waitFor(() => app.sends.some((s) => s.body?.includes('tell @Mate hi')), '<@U_MATE> decodes inbound');
+ok('D-N7-3: <@U…> mentions decode via users.info (bounded cache)');
+
+// D-N7-4: mapped-channel inbound → room send as the human (#label target).
+const sendsBeforeN7 = app.sends.length;
+slack.sendSlackEvent({ type: 'message', channel: 'C_TEAM', channel_type: 'channel', user: CHRIS, text: 'fleet hello', ts: '1900.000001' });
+await waitFor(() => app.sends.length === sendsBeforeN7 + 1, 'mapped-channel message reaches the capability');
+assert.deepEqual(app.sends.at(-1), { to: '#team', body: 'fleet hello' });
+ok('D-N7-4: mapped channel inbound → /user/send {to: #team} as the human');
+
+// D-N7-4: a thread reply inside the channel bridges the same (rooms are linear).
+slack.sendSlackEvent({ type: 'message', channel: 'C_TEAM', channel_type: 'channel', user: CHRIS, text: 'in a slack thread', thread_ts: '1900.000001', ts: '1900.000002' });
+await waitFor(() => app.sends.length === sendsBeforeN7 + 2, 'channel thread reply bridges');
+assert.deepEqual(app.sends.at(-1), { to: '#team', body: 'in a slack thread' });
+ok('D-N7-4: channel thread replies bridge like top-level (the room is linear)');
+
+// D-N7-4: an UNMAPPED channel is dropped (vlog only — never a send).
+slack.sendSlackEvent({ type: 'message', channel: 'C_OTHER', channel_type: 'channel', user: CHRIS, text: 'wrong room', ts: '1900.000003' });
+await sleep(400);
+assert.equal(app.sends.length, sendsBeforeN7 + 2, 'unmapped channel never reaches the capability');
+ok('D-N7-4: unmapped channel dropped');
+
+// D-N7-4: an UNMAPPED Slack user on a mapped channel is dropped with ONE loud
+// line per user (never silent, never a flood).
+slack.sendSlackEvent({ type: 'message', channel: 'C_TEAM', channel_type: 'channel', user: 'U_STRANGER', text: 'who dis', ts: '1900.000004' });
+slack.sendSlackEvent({ type: 'message', channel: 'C_TEAM', channel_type: 'channel', user: 'U_STRANGER', text: 'who dis again', ts: '1900.000005' });
+await waitFor(() => daemon.output().includes('U_STRANGER'), 'unmapped user noted');
+await sleep(300);
+assert.equal(app.sends.length, sendsBeforeN7 + 2, 'unmapped user never reaches the capability');
+assert.equal(daemon.output().split('U_STRANGER').length - 1, 1, 'exactly ONE loud line per unmapped user');
+ok('D-N7-4: unmapped Slack user dropped with one loud line');
+
+// D-N7-4 (honest identity): a non-chris Slack user can NEVER land in the
+// room as the human principal — external principals arrive at N8; until
+// then they drop with one loud line.
+const sendsBeforeMate = app.sends.length;
+slack.sendSlackEvent({ type: 'message', channel: 'C_TEAM', channel_type: 'channel', user: 'U_MATE', text: 'mate says hi', ts: '1900.000006' });
+await waitFor(() => daemon.output().includes('external principals arrive at N8'), 'the N8 drop line fires');
+await sleep(300);
+assert.equal(app.sends.length, sendsBeforeMate, 'a non-chris user never bridges — and never lands AS CHRIS');
+ok('D-N7-4: honest identity — non-chris users drop loud until N8');
+
+// D-N7-5: the loop hunt, channel edition — the daemon's own tagged channel
+// post echoed back, a bot_id echo, and a redelivered channel event must never
+// re-enter. And the human's own room message echoed from the app feed must
+// never mirror back to Slack.
+const sendsBeforeLoopN7 = app.sends.length;
+const postsBeforeLoopN7 = slack.posts.length;
+slack.sendSlackEvent({ type: 'message', channel: 'C_TEAM', channel_type: 'channel', user: BOT, text: 'echo via bot user', ts: '1900.000007' });
+slack.sendSlackEvent({ type: 'message', channel: 'C_TEAM', channel_type: 'channel', user: 'U_OTHER', text: 'echo via metadata', ts: '1900.000008', metadata: { event_type: 'nvk_slack_bridge' } });
+slack.sendSlackEvent({ type: 'message', channel: 'C_TEAM', channel_type: 'channel', user: CHRIS, text: 'channel exactly once', ts: '1900.000009' });
+slack.sendSlackEvent({ type: 'message', channel: 'C_TEAM', channel_type: 'channel', user: CHRIS, text: 'channel exactly once', ts: '1900.000009' });
+app.pushMessage(30, { threadId: 'thread_room_team', senderId: 'person_user-chris', body: { text: 'fleet hello' } });
+await sleep(600);
+assert.equal(app.sends.filter((s) => s.body === 'channel exactly once').length, 1, 'redelivered channel event is deduped');
+assert.equal(app.sends.length, sendsBeforeLoopN7 + 1, 'bot/metadata echoes never re-enter from the channel');
+assert.equal(slack.posts.length, postsBeforeLoopN7, "the human's own room message never mirrors back to Slack");
+ok('D-N7-5: channel loop hunt — tag/bot/redelivery/human-echo all absorbed');
+
+// D-N7-6: message_changed / message_deleted become follow-up NOTES in the app
+// lane — never a mutation of history.
+slack.sendSlackEvent({
+  type: 'message', subtype: 'message_changed', channel: 'C_TEAM', channel_type: 'channel', user: CHRIS,
+  message: { user: CHRIS, text: 'fleet hello (edited)', ts: '1900.000001' }, ts: '1901.000001',
+});
+await waitFor(() => app.sends.some((s) => s.body === '[edited on Slack] fleet hello (edited)'), 'edit note reaches the room');
+ok('D-N7-6: message_changed → "[edited on Slack] <new text>" follow-up note');
+slack.sendSlackEvent({
+  type: 'message', subtype: 'message_deleted', channel: 'C_TEAM', channel_type: 'channel', user: CHRIS,
+  previous_message: { user: CHRIS, text: 'fleet hello (edited)', ts: '1900.000001' }, ts: '1901.000002',
+});
+await waitFor(() => app.sends.some((s) => s.body === '[deleted on Slack]'), 'delete note reaches the room');
+ok('D-N7-6: message_deleted → "[deleted on Slack]" follow-up note');
+assert.ok(!app.sends.some((s) => s.body === 'fleet hello (edited)'), 'the edited body never REPLACES the original — history is immutable');
+
+// D-N7-6: an edit in the DM lane notes the agent, too.
+slack.sendSlackEvent({
+  type: 'message', subtype: 'message_changed', channel_type: 'im', user: CHRIS,
+  message: { user: CHRIS, text: 'reply from slack (edited)', thread_ts: root.ts, ts: '1800.000002' }, ts: '1901.000003',
+});
+await waitFor(() => app.sends.some((s) => s.body === '[edited on Slack] reply from slack (edited)' && s.to === 'fable-v2'), 'DM edit notes the agent');
+ok('D-N7-6: edits in the DM lane note the agent (never a mutation)');
+
+// D-N7-6: app→Slack chunking over the 32 KiB contract cap, (i/n) markers.
+const bigBody = `chunk-${'x'.repeat(70_000)}`;
+const postsBeforeChunk = postsWith('chunk-').length;
+app.pushMessage(31, { threadId: 'thread_room_team', body: { text: bigBody } });
+await waitFor(() => postsWith('(3/3)').length === 1, 'oversized room message chunked');
+assert.ok(postsWith('(1/3)').length === 1 && postsWith('(2/3)').length === 1, 'chunks carry (1/3)…(3/3) markers');
+assert.ok(postsWith('chunk-').every((p) => p.channel === 'C_TEAM'), 'chunks land on the mapped channel');
+ok('D-N7-6: >32 KiB app→Slack messages chunk with (i/n) markers');
+
+// D-N7-3: the follow-up bridge line is a real log line (was vlog) — asserted
+// on a message bridged by the CURRENT daemon (the restart wiped the buffer).
+assert.ok(daemon.output().includes('bridged msg_31 → #team C_TEAM'), 'D-N7-3: one log line per bridged message (any lane)');
+ok('D-N7-3: the per-message bridge line is promoted to log');
+
+// D-N7-6: an oversized Slack→app body gets a posted note, never a failed send.
+const sendsBeforeBig = app.sends.length;
+slack.sendSlackEvent({ type: 'message', channel: 'C_TEAM', channel_type: 'channel', user: CHRIS, text: `big-${'y'.repeat(40_000)}`, ts: '1900.000010' });
+await waitFor(() => postsWith('too big to bridge').length === 1, 'too-big note posted back to the channel');
+assert.equal(app.sends.length, sendsBeforeBig, 'an oversized inbound body never produces a failed send');
+ok('D-N7-6: oversized inbound → "too big to bridge" note, never a failed send');
+
+// D-N7-6: Slack 429s honor Retry-After (bounded retries, final drop loud).
+slack.rateLimitNextPosts(1, 1);
+const rateLimitedAt = Date.now();
+app.pushMessage(32, { threadId: 'thread_room_team', body: { text: 'worth the wait' } });
+await waitFor(() => postsWith('worth the wait').length === 1, 'the post lands after the 429');
+assert.ok(Date.now() - rateLimitedAt >= 900, 'Retry-After was honored (the retry waited, not hammered)');
+assert.equal(slack.attempts429.length, 1, 'exactly one attempt was rate-limited before the landing');
+ok('D-N7-6: 429 → Retry-After-honoring bounded retry, post lands');
+
+// F3 — a chunk that PARTIALLY fails resumes per-part: the at-least-once
+// replay must post the missing parts only, never repost the landed one, and
+// the cursor holds until completion.
+{
+  slack.failNextPosts(3, 1); // part 0 lands; part 1's post + retries all fail
+  const partialBody = `partial-${'z'.repeat(70_000)}`;
+  app.pushMessage(40, { threadId: 'thread_room_team', body: { text: partialBody } });
+  await sleep(2500); // part 0 lands; part 1's retries exhaust
+  // Baselines: the seq-31 chunk already posted one of each (i/3) marker, and
+  // only part 0 of THIS message carries the 'partial-' prefix.
+  assert.equal(postsWith('(1/3)').filter((p) => p.text.includes('partial-')).length, 1, 'part 1 landed');
+  assert.equal(postsWith('(2/3)').length, 1, 'part 2 never landed — the chunk is incomplete (only seq-31’s)');
+  assert.ok(readState().cursor < 40, 'the cursor holds on a partial chunk');
+  app.pushMessage(40, { threadId: 'thread_room_team', body: { text: partialBody } }); // the replay
+  await waitFor(() => postsWith('(3/3)').length === 2, 'the replay completes the chunk');
+  assert.equal(postsWith('(1/3)').filter((p) => p.text.includes('partial-')).length, 1, 'part 1 is NOT reposted on resume');
+  assert.equal(postsWith('(2/3)').length, 2, 'part 2 posts from the resume point');
+  assert.equal(readState().cursor, 40, 'the cursor advances only after completion');
+  ok('F3: partial chunk failure resumes per-part — no repost, no truncation');
+}
+
+
+// D-N7-7: the state file carries the health block (never breaking the old keys).
+const healthState = readState();
+assert.ok(healthState.health, 'state file gains a health key');
+for (const key of ['updatedAt', 'appRetryCount', 'slackRetryCount', 'lastError', 'lastBridgedAt']) {
+  assert.ok(key in healthState.health, `health.${key} present`);
+}
+assert.ok(Number.isFinite(Date.parse(healthState.health.lastBridgedAt)), 'lastBridgedAt is an ISO stamp');
+assert.ok(Number.isFinite(healthState.cursor) && healthState.roots && healthState.agents, 'cursor/roots/agents readers unaffected');
+ok('D-N7-7: health keys written alongside cursor/roots/agents');
+
+// F1 — an OUTBOUND-ONLY bridge still serves fresh health: every saveState
+// refreshes updatedAt (liveness = the daemon persisting state), and a room
+// outbound sets lastBridgedAt too. Re-seed the state file WITHOUT a health
+// block (roots/agents preserved so no replay floods), restart, bridge one
+// room message app→Slack, send NOTHING inbound.
+await daemon.stop();
+const subsBeforeF1 = app.subs.length;
+const preserved = readState();
+fs.writeFileSync(stateFile, JSON.stringify({ cursor: preserved.cursor, roots: preserved.roots, agents: preserved.agents }));
+daemon = startDaemon(env);
+await waitFor(() => app.subs.length === subsBeforeF1 + 1, 'daemon reboots on the re-seeded state');
+app.pushMessage(50, { threadId: 'thread_room_team', body: { text: 'outbound only health' } });
+await waitFor(() => postsWith('outbound only health').length === 1, 'the outbound room message bridges');
+await waitFor(() => {
+  const fileHealth = readState().health ?? {};
+  return Number.isFinite(Date.parse(fileHealth.updatedAt ?? '')) && Number.isFinite(Date.parse(fileHealth.lastBridgedAt ?? ''));
+}, 'outbound-only bridging still writes fresh updatedAt + lastBridgedAt');
+ok('F1: outbound-only bridge → fresh updatedAt + lastBridgedAt (staleness honest)');
+
+// F2 — channels configured but the app refuses /user/threads at boot: the
+// daemon must BOOT ANYWAY (DM lanes unaffected), and resolution must retry
+// on the next app-ws (re)connect — a racing app restart is not a kill loop.
+await daemon.stop();
+const subsBeforeF2 = app.subs.length;
+app.setFailThreads(true);
+daemon = startDaemon(env);
+await waitFor(() => app.subs.length === subsBeforeF2 + 1, 'daemon boots with the app refusing threads');
+await waitFor(() => daemon.output().includes('channel resolution failed'), 'the failure is a loud warn, not an exit');
+const sendsBeforeF2 = app.sends.length;
+slack.sendSlackEvent({ type: 'message', channel_type: 'im', user: CHRIS, text: 'dm survives the app race', thread_ts: root.ts, ts: '1800.000030' });
+await waitFor(() => app.sends.length === sendsBeforeF2 + 1, 'the DM lane bridges with channels unresolved');
+slack.sendSlackEvent({ type: 'message', channel: 'C_TEAM', channel_type: 'channel', user: CHRIS, text: 'dropped while unresolved', ts: '1900.000030' });
+await sleep(400);
+assert.equal(app.sends.length, sendsBeforeF2 + 1, 'channel events stay dormant while unresolved');
+app.setFailThreads(false);
+app.pauseNewestSocket(); // force the app-ws reconnect — resolution retries there
+await waitFor(() => daemon.output().includes('channel map: C_TEAM'), 'resolution retried on reconnect');
+slack.sendSlackEvent({ type: 'message', channel: 'C_TEAM', channel_type: 'channel', user: CHRIS, text: 'channels recovered', ts: '1900.000031' });
+await waitFor(() => app.sends.some((s) => s.body === 'channels recovered'), 'the channel lane comes up WITHOUT a daemon restart');
+ok('F2: app-down boot race → loud + dormant, resolution retries on reconnect');
+
+// F4 — composite room keys (authority:externalId), ambiguity, and duplicate
+// channels refused loudly.
+app.addThread({ id: 'thread_room_crew_a', threadKind: 'team', room: { authority: 'team', externalId: 'shared' }, label: '#crew-a' });
+app.addThread({ id: 'thread_room_crew_b', threadKind: 'mission', room: { authority: 'mission', externalId: 'shared' }, label: '#crew-b' });
+await daemon.stop();
+const subsBeforeF4 = app.subs.length;
+fs.writeFileSync(configFile, JSON.stringify({
+  chrisUserId: CHRIS,
+  channels: [
+    { slackChannelId: 'C_FLEET', room: 'fleet:team' },
+    { slackChannelId: 'C_FLEET', room: 'fleet:team' }, // duplicate channel id
+    { slackChannelId: 'C_AMBI', room: 'shared' },      // bare key, ambiguous (two rooms share the externalId, neither is its label)
+  ],
+}));
+daemon = startDaemon(env);
+await waitFor(() => app.subs.length === subsBeforeF4 + 1, 'daemon reboots on the collision config');
+await waitFor(
+  () => daemon.output().includes('ambiguous') && daemon.output().includes('duplicate'),
+  'ambiguity + duplicate channel are refused loudly at boot',
+);
+const sendsBeforeF4 = app.sends.length;
+slack.sendSlackEvent({ type: 'message', channel: 'C_FLEET', channel_type: 'channel', user: CHRIS, text: 'composite hello', ts: '1900.000040' });
+await waitFor(() => app.sends.length === sendsBeforeF4 + 1, 'the composite key binds the fleet room');
+assert.deepEqual(app.sends.at(-1), { to: '#team', body: 'composite hello' }, "'fleet:team' resolves to the fleet room");
+slack.sendSlackEvent({ type: 'message', channel: 'C_AMBI', channel_type: 'channel', user: CHRIS, text: 'ambiguous room post', ts: '1900.000041' });
+await sleep(400);
+assert.ok(!app.sends.some((s) => s.body === 'ambiguous room post'), 'the ambiguous bare key never binds');
+ok('F4: composite room keys; ambiguity + duplicate channels refused loudly');
+
+// D-N7-2: channels ABSENT — the channel code is dormant, DM lanes unaffected
+// (production runs exactly this until the click-work lands).
+await daemon.stop();
+const subsBeforeDormant = app.subs.length;
+fs.writeFileSync(configFile, JSON.stringify({ chrisUserId: CHRIS }));
+daemon = startDaemon(env);
+await waitFor(() => app.subs.length === subsBeforeDormant + 1, 'daemon reboots without channel config');
+const sendsBeforeDormant = app.sends.length;
+slack.sendSlackEvent({ type: 'message', channel: 'C_TEAM', channel_type: 'channel', user: CHRIS, text: 'dormant lane', ts: '1900.000011' });
+await sleep(400);
+assert.equal(app.sends.length, sendsBeforeDormant, 'a channel event with no channel map is dropped');
+slack.sendSlackEvent({ type: 'message', channel_type: 'im', user: CHRIS, text: 'dormant dm still routed', thread_ts: root.ts, ts: '1800.000013' });
+await waitFor(() => app.sends.some((s) => s.body === 'dormant dm still routed' && s.to === 'fable-v2'), 'DM lane unaffected without channels');
+ok('D-N7-2: channels ABSENT → channel code dormant, DM lanes unaffected');
 
 await daemon.stop();
 app.resumeAll();

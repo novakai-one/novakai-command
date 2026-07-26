@@ -4,6 +4,7 @@
 // lines per docs/persistent-agents.md §3, §5, §6.
 import type { Express, Request, Response } from 'express';
 import path from 'node:path';
+import { readFileSync } from 'node:fs';
 import { WebSocket } from 'ws';
 import { PROVIDER_IDS } from '../../shared/project/schema.js';
 import type { ProviderId } from '../../shared/project/schema.js';
@@ -135,6 +136,9 @@ export class AgentsHub {
   registerRoutes(application: Express): void {
     application.post('/api/agents', (request, response) => this.createAgent(request, response));
     application.get('/api/agents', (_request, response) => response.json({ agents: this.listWithHealth() }));
+    // D-N7-7: registered BEFORE the parameterized route ('slack-bridge' must
+    // never resolve as an agentId).
+    application.get('/api/agents/slack-bridge/health', (_request, response) => this.slackBridgeHealth(response));
     application.get('/api/agents/:agentId/health', (request, response) => this.agentHealth(request, response));
     application.post('/api/agents/:agentId/nudge', (request, response) => this.nudgeAgent(request, response));
     application.get('/api/agents/:agentId/identity', (request, response) => this.agentIdentity(request, response));
@@ -160,6 +164,31 @@ export class AgentsHub {
 
   private listWithHealth(): Array<AgentInfo & { health: AgentHealth | null }> {
     return this.manager.list().map((info) => ({ ...info, health: this.healthFor(info) }));
+  }
+
+  /** D-N7-7: the Slack bridge's health block + cursor, read from its state
+   * file (the bridge is the only writer). 404 when the file is absent (the
+   * bridge never ran); 503 when stale — updatedAt older than 5 minutes
+   * means the bridge is down or wedged. */
+  private slackBridgeHealth(response: Response): void {
+    const statePath = process.env.NVK_SLACK_BRIDGE_STATE
+      ?? path.resolve('.novakai-command', 'slack-bridge-state.json');
+    let parsed: { cursor?: unknown; health?: { updatedAt?: string } };
+    try {
+      parsed = JSON.parse(readFileSync(statePath, 'utf8')) as typeof parsed;
+    } catch {
+      response.status(404).json({ error: 'slack-bridge state file not found' });
+      return;
+    }
+    const updatedAt = typeof parsed.health?.updatedAt === 'string' ? parsed.health.updatedAt : null;
+    // F8: a non-ISO updatedAt is stale/503 honestly — never 200-garbage.
+    const parsedAt = updatedAt === null ? Number.NaN : Date.parse(updatedAt);
+    const staleMs = Number.isFinite(parsedAt) ? Date.now() - parsedAt : Number.POSITIVE_INFINITY;
+    if (staleMs > 5 * 60_000) {
+      response.status(503).json({ error: 'slack-bridge health is stale (bridge down or wedged)', updatedAt });
+      return;
+    }
+    response.json({ cursor: parsed.cursor ?? 0, health: parsed.health });
   }
 
   private agentHealth(request: Request, response: Response): void {

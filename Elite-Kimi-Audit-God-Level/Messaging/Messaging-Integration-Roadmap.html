@@ -110,7 +110,7 @@
       <header><span class="tag">PHASE 3</span><h3>Slack bridge</h3></header>
       <div class="goal">A small daemon that is a client of Messaging — Slack channel ↔ app room, both directions, echo-safe, real identities.</div>
       <div class="slices">
-        <div class="slice"><span class="id">N7</span><div><b>Slack bridge (our workspace)</b><span class="exit"> <b>Exit:</b> message from Slack shows in the app; agent reply shows in Slack.</span></div></div>
+        <div class="slice sealed"><span class="id">N7</span><div><b>Slack bridge (our workspace)</b> — the v0 bridge generalized in place: one Slack channel ↔ one room Thread joins the DM lanes, echo-safe both ways, owner-only inbound, edit/delete as notes, 32 KiB chunking, health route. Dormant until the Slack click-work lands.<span class="exit"> <b>Exit:</b> message from Slack shows in the app; agent reply shows in Slack.</span> <span class="seal">SEALED 2026-07-26 — audit moderate, all 9 findings disposed at source (<code>Messaging-N7-Review.md</code>); bridge suite 26 → 46 checks.</span></div></div>
       </div>
     </div>
 
