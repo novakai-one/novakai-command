@@ -1,0 +1,247 @@
+# Road to N8 — Master Handover (read this first, every session)
+
+**Written:** 2026-07-26 by kimi-cli (main lane), at Chris's instruction, so the
+session can compact and the next agent can run the remaining program
+**autonomously to N8 without stopping to ask questions.**
+**You are:** the main-lane orchestrator. You are in charge. Chris's words:
+"you know more than the auditor"; "if I am in bed, test things yourself";
+"keep committing and merging."
+
+---
+
+## 1. The mission and the moment
+
+The app's messaging is rebuilt as a sealed capability
+(`packages/messaging/`, FROZEN). The N-program wires it everywhere. **N8 is the
+moment the program exists for: a Novakai agent posts in a shared cross-company
+Slack channel → Luke's team sees it in their Slack → their reply lands in the
+app with real delivery truth.** Do not let phase perfectionism delay the
+phase gates. Sequence: **R-N4-1 → N6 → N7 → N8.** Phase gates are hard: a
+slice seals before the next starts.
+
+## 2. Where things stand (2026-07-26, all live-verified)
+
+- **N1–N5 sealed, merged, deployed** (PRs #63–#71, #75). Records:
+  `Messaging-N1..N5-Review.md`; plan + amendments:
+  `Messaging-Integration-Plan.md`; roadmap visual:
+  `Messaging-Integration-Roadmap.html` (N1–N5 struck). N-program handover
+  (N6 inheritance): `Messaging-Integration-HANDOVER.md`.
+- **PR #76 (hotfix, deployed `00fa8961ff0d`):** the human session renewal.
+  The N3.1 boot-minted human session carried a 1h TTL and died; the lane glue
+  now re-mints at ~50% TTL + reactive belt; user routes map NotAuthenticated→503.
+  LESSON: long-lived consumers (daemons) surface what browser tabs never do.
+- **Slack-for-Chris is LIVE** (arrived early — was N7's scope):
+  - The v0 bridge `scripts/nvk-slack-bridge.mjs` (PR #74) runs as launchd
+    `com.novakai.slackbridge` (PR #78; plist `scripts/com.novakai.slackbridge.plist`,
+    KeepAlive, APP_BASE=http://localhost:3030, log `/tmp/nvk-slack-bridge.log`).
+  - Config: `.novakai-command/slack-bridge.json` (chmod 600, gitignored —
+    xoxb bot token + xapp Socket-Mode token + chrisUserId; Slack app "Novakai
+    Mirror" provisioned by Chris). Cursor state:
+    `.novakai-command/slack-bridge-state.json` (gitignored). Both live in the
+    MAIN repo; the daemon survives reboots and terminal deaths.
+  - Multi-word @mentions work (PR #77: longest roster-title match).
+  - Both directions live-verified. Ops runbook: `docs/operations/SLACK-BRIDGE.md`.
+- **The other Kimi lane is RETIRED.** Its PRs (#72 docs/D-BRIDGE-1, #73
+  agent→human DM by name, #74 bridge v0) are merged; its 3 worktrees +
+  branches deleted; `stores-baseline.json` ratchet committed.
+- Main is clean. Deployed snapshot `00fa8961ff0d` (+ docs-only merges after).
+
+## 3. The per-slice ritual (follow it exactly — it's what made N1–N5 elite)
+
+1. Read this file + `Messaging-Integration-HANDOVER.md` + the plan's §5 row
+   for the slice + the last review's §follow-up debt.
+2. Decide the slice design; post a compact decision batch to Chris
+   (recommendations baked in — **silence = accepted**, never grill, batch,
+   don't drip-feed). Record decisions as D-items in the plan (law #2).
+3. Branch from fresh main. Brief the implementer (coder subagent — resume
+   `agent-30` if the session lives; it holds N2–N5 + hotfix context) with the
+   decided design, anchors, gates, and hard rules. Regression tests shown RED
+   before fixes. TDD where it helps.
+4. **Personally verify every gate** (never trust the report):
+   `npx tsc --noEmit`; full `src/**/*.test.ts` via `npx tsx <file>` +
+   `scripts/**/*.test.mjs` via node; `npm run stores:test`; `npm run lint`
+   (baseline 192 — ratchet DOWN only, after deletions, via
+   `npm run lint -- --update`); `npm run stores:gate`; `npm run build`;
+   `npm run messaging:test` (253/253 + NO DRIFT).
+5. **Law #6: a FRESH 0-context adversarial auditor** (new explore-type
+   subagent, never a resumed one) pressure-tests `main...HEAD` — briefed to
+   apply `~/.agents/skills/elite-codebase-engineering/SKILL.md`, hunt
+   logical/engineering/standards errors, give severity + confidence % +
+   assumptions + evidence, verdict LOW/MODERATE/SEVERELY CRITICAL. (Template
+   in the N5 session; see `Messaging-N5-Review.md` for the shape.)
+6. **You rule on findings.** In-scope: dispose at source, RED-first
+   regression tests. Out-of-scope: record as debt, do NOT chase. Write
+   `Messaging-N<n>-Review.md` (N2–N5 are the template), record plan
+   amendments, strike the roadmap HTML.
+7. PR → **`gh pr checks <n>` green BEFORE merge, always** → merge (delegated
+   to you) → `npm run redeploy` → verify live (see §6) → update this file +
+   the roadmap + `Messaging-Integration-HANDOVER.md`.
+8. Commit at every checkpoint. Explicit-path `git add` only — NEVER
+   `git add -A`. Main is protected; everything via PR.
+
+## 4. The laws and Chris-protocols (in force, verbatim spirit)
+
+- **Six laws** (`Messaging-HANDOVER.md` §laws): anti-inheritance; ratification
+  gate with recorded amendments; contract single-source (`packages/messaging/`
+  FROZEN — a core change is an R-item surfaced to Chris, never a quiet edit);
+  Chris-visual / silence-accepted / never-grill; mandatory skills; fresh
+  0-context auditor per slice.
+- **Skills at session start (mandatory):** `elite-codebase-engineering` +
+  `codebase-design`; superpowers `verification-before-completion` +
+  `requesting-code-review`; `handoff` at slice close. TDD skill when useful.
+- **How Chris works:** visual thinker (keep `Messaging-Integration-Roadmap.html`
+  current — that's how he understands the program); spews ideas — compile
+  them, don't obey each one (see §9 idea parking); plain language, never
+  dramatic-thriller style in reports; "you are in charge"; he sleeps — test
+  things yourself, including live Slack.
+- **Your ruling authority:** everything in-scope (messaging + what N6–N8
+  need). MUST surface to Chris (R-items): any `packages/messaging/` contract
+  change beyond the ratified R-N4-1 amendment; adding new external
+  principals/workspaces; anything Luke-facing before N8; spend.
+- **Audit disposal:** regression tests shown RED pre-fix; findings disposed
+  at source; debt recorded in the review's follow-up section.
+
+## 5. The remaining slices
+
+### R-N4-1 — owner sees agent↔agent DMs (SMALL, do first)
+- Chris RULED YES (PR #72). Today agent↔agent direct threads are party-only
+  (`assertThreadMember` has no admin bypass — verified at N4), so Chris lost
+  visibility of agent↔agent lanes.
+- The amendment: the human principal (owner) bypasses party-only reads +
+  subscription filtering includes agent↔agent lanes for the owner. This
+  TOUCHES the contract surface by Chris's explicit ruling — follow the
+  amendment process (record in plan, contract versioning per the contract's
+  own rules, package tests + app integration proof, fresh auditor). It is NOT
+  a quiet edit and NOT to ride an unrelated branch.
+- Watch: `packages/messaging/` drift guard (43 modules, 4 traces) must stay
+  NO DRIFT — update map enumerations via the contract source, never the
+  generated files.
+
+### N6 — Open the door (external terminals)
+- Done-definition (plan §5): an agent spawned on a FOREIGN machine connects,
+  authenticates, messages — no manual step.
+- Ratified: **D6** — expose the DEC-17 endpoint from the app itself (one less
+  process; external principals are the primary consumer). Real token
+  issuance/revocation **retires D-N2-2** (token=agentId was a localhost
+  threat decision — its comment in `src/backend/messagingV2/routes/index.ts`
+  says so). Connect-your-agent flow.
+- Inheritance: ExternalSessions allowlist timing (a fresh external's announce
+  can 403 until next bootstrap sync — N6's call); browser presence transport
+  (N6 option); journal fold growth (core-side question — R-item if it
+  bites); N1 authority revalidate is a full disk scan (presence heartbeats
+  make it hot).
+- Watch: TLS/reachability decisions are Chris-visible (bind posture changes);
+  keep the localhost default.
+
+### N7 — Slack grows up (own workspace)
+- **D-BRIDGE-1 governs:** N7 GENERALIZES the v0 bridge
+  (`scripts/nvk-slack-bridge.mjs`) — rooms, fleet identity, rate limits. NO
+  new Slack bridging from scratch; no other Slack work before then. The
+  one-way `nvk-slack-mirror.mjs` stays N5's (D5), unaffected.
+- Done-definition: one Slack channel ↔ one room Thread, echo-safe, identity
+  stamped from Slack user IDs (never message text — same law as the core),
+  both directions durable, no loops (loop hunt before sealing).
+- Ratified risk notes (plan §6): echo loops (drop own posts — v0 already does
+  metadata tags + bot_id + auth.test); Slack edit/delete → follow-up note,
+  NEVER a mutation (immutable history); rate limits + 32 KiB cap (chunk or
+  reply-too-big — decide at N7 contract time); cross-boundary cosmetic
+  interleaving accepted.
+- Parked bridge polish for N7 (from 2026-07-26 ops): thread-reply
+  visibility (agents' answers hide in Slack threads — consider top-level or
+  reply_broadcast); follow-up bridges log at verbose level only (vlog→log
+  one-liner); Slack `<@U...>` mention syntax undecoded in bodies (cosmetic);
+  in-app surface for bridge health.
+
+### N8 — The Luke moment
+- Done-definition: Slack Connect channel; cross-company room; Luke's team as
+  external principals behind deny-by-default contact policy; a Novakai agent
+  posts → visible in Luke's Slack → reply lands in the app with delivery
+  truth.
+- **D8 dependency: Luke must accept a Slack Connect invite — CHRIS owns that
+  conversation. He has been reminded TWICE (N2 and N5 seals). DO NOT remind
+  again.** If N7 seals and D8 hasn't happened, surface it ONCE as a
+  phase-gate blocker, then wait.
+
+## 6. Live infrastructure + verification playbook
+
+- **Services (launchd, gui domain):** `com.novakai.prod` (the app: api :3031,
+  app :3030 — binds 127.0.0.1), `com.novakai.slackbridge`, `com.novakai.shot`
+  (screenshotter). `com.novakai.watchdog` is DEAD (N5; plist archived at
+  `N5-watchdog-plist-archive.txt`).
+- **Deploy:** `npm run redeploy` (snapshot → SIGHUP swap). Serve log:
+  `.novakai-command/deploy/serve.out`. Verify after EVERY deploy:
+  `curl :3030/` 200, `:3031/api/agents` 200,
+  `/api/messaging/v2/user/threads` 200, v2 agent route 401 without Bearer,
+  old routes 404, and `principals=` count + no error loops in serve.out.
+- **Live Slack test:** send as a durable agent
+  (`NVK_AGENT_ID=agent_<id> node scripts/nvk-msg.mjs send --to chris "…"`)
+  → watch `/tmp/nvk-slack-bridge.log` for the bridge line. NOTE: follow-up
+  bridges log at VERBOSE only — only "bridged new DM thread" appears in the
+  normal log. Debug rig: bootout the launchd job, run the bridge foreground
+  with `NVK_SLACK_BRIDGE_APP_BASE=http://localhost:3030
+  NVK_SLACK_BRIDGE_STATE=/tmp/x.json --verbose --dry-run` (posts print to
+  stdout, inbound off), re-bootstrap after.
+- **A live agent for conversation tests:** durable agents
+  (`.novakai/stores/agents.jsonl`) may be exited — mailbox accepts, nobody
+  answers. For a real conversation, an agent must be RUNNING (Chris spawns
+  the chief from terminal; or you spawn per the app's normal launch flow).
+- **ObjectModel stores:** `.novakai/stores/*.jsonl` (append-only; records
+  carry id/kind/ts/…/updated — the `updated` field is strictly forward,
+  previous+1ms floor in test-side flips). The capability journal:
+  `.novakai-command/messaging-v2/journal.jsonl`. The old
+  `.novakai-command/messages.jsonl` is a FROZEN archive — zero production
+  readers (N5 exit condition; keep it true).
+
+## 7. Landmines (learned the hard way — don't relearn)
+
+- **Background coder subagents SHARE your working tree.** While one runs,
+  do NOT run git mutations (checkout/commit/stash) in the repo — a baseline
+  commit landed on the wrong branch once this way. Do your git work before
+  dispatching or after completion.
+- **Human/session TTLs:** anything minted at boot dies at its TTL unless
+  re-minted (PR #76). When you add a long-lived consumer, ask "what expires?"
+- **Cursor semantics:** the bridge/capability cursor is the GLOBAL journal
+  sequence; "left behind for replay" only works if later events can't advance
+  the cursor past a failed item (delivery events advance unconditionally —
+  known shape, worked at v0; revisit if bridging semantics change).
+- **launchd:** manage with `launchctl bootstrap/bootout/kickstart -k
+  gui/$(id -u)/<label>`; plists live in `scripts/com.novakai.*.plist`
+  (tracked) + `~/Library/LaunchAgents/` (installed). KeepAlive without a
+  throttle is a crash-loop — always set ThrottleInterval.
+- **`stores-baseline.json`** gets ratcheted when live stores legitimately
+  grow (the gate passes either way) — commit the ratchet as a chore.
+- **Secrets:** never print tokens. Copy config files; chmod 600; the
+  gitignored paths are `.novakai-command/slack-bridge.json` +
+  `slack-bridge-state.json`.
+- **CI is the full-sweep gate** (ci.yml runs every src test file) — but
+  personally run gates before every PR anyway.
+
+## 8. Debt register (carry into reviews' follow-up sections)
+
+- Journal fold reads whole history per request (N5 F9 — core-side rotation/
+  query surface question; R-item if it bites).
+- Watchdog union refreshes on restart only (mid-run-created teams/missions).
+- Slack-mirror: DM-lane raw-threadId fallback; FRAGILE `agentIdForPersonId`
+  inverse; no `⚠ partial` line (no such delivery state exists).
+- ExternalSessions allowlist timing (N6's call); F8b quiet sub-tip failures;
+  browser presence transport (N6 option); N1 authority revalidate disk scan.
+- Bridge polish (see N7 parked list above).
+
+## 9. Idea parking (Chris asked for this mechanism)
+
+Chris fires ideas constantly — compile, don't obey. Maintain
+`Elite-Kimi-Audit-God-Level/Messaging/Messaging-Parked-Ideas.md` (create it on
+the R-N4-1 branch): each idea one line + a "when it matters" tag (N6 / N7 /
+N8 / later / never-urgent). Only ideas tagged to the current phase get
+worked; promote at phase gates; nothing is lost, nothing interrupts a slice.
+Seed entries: Slack thread-reply visibility (N7); bridge health surface
+(N7); `<@U>` decoding (N7); agent↔agent DM visibility = R-N4-1 (NOW).
+
+## 10. Suggested skills (mandatory at session start — law #5)
+
+`elite-codebase-engineering` + `codebase-design` (user scope); superpowers
+`verification-before-completion` + `requesting-code-review` (and
+`systematic-debugging` for bugs, `test-driven-development` when it helps);
+`handoff` when closing a slice. For the R-N4-1 contract amendment: the
+elite-codebase-engineering contract-first discipline is the whole game —
+contract surface changes are R-items with recorded amendments, never edits.
