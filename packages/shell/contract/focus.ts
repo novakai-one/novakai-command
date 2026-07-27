@@ -6,20 +6,26 @@ import type { ActionNotFoundError } from './errors.js';
 
 export type FocusRef = Ref | 'none';
 
-let currentFocus: FocusRef = 'none';
-const focusListeners = new Set<(f: FocusRef) => void>();
-
-/** Focus refs are {kind,id} or none — never UI state (B §12). */
-export function publishFocus(ref: FocusRef): void {
-  currentFocus = ref;
-  for (const l of focusListeners) l(ref);
+/** DEC-S2-7: Focus = { app, ref }. Ephemeral — never persisted (C §10). */
+export interface FocusState {
+  app: string;
+  ref: FocusRef;
 }
 
-export function getFocus(): FocusRef {
+let currentFocus: FocusState = { app: 'messaging', ref: 'none' };
+const focusListeners = new Set<(f: FocusState) => void>();
+
+/** Focus refs are {kind,id} or none — never UI paths (B §12). */
+export function publishFocus(ref: FocusRef, app = 'messaging'): void {
+  currentFocus = { app, ref };
+  for (const l of focusListeners) l(currentFocus);
+}
+
+export function getFocus(): FocusState {
   return currentFocus;
 }
 
-export function subscribeFocus(l: (f: FocusRef) => void): () => void {
+export function subscribeFocus(l: (f: FocusState) => void): () => void {
   focusListeners.add(l);
   return () => focusListeners.delete(l);
 }

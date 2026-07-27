@@ -4,6 +4,7 @@
 import type { AgentEvent, LayoutRecord, PresenceSource, SettingsRecord } from './types.js';
 import type { SetSettingError } from './settings.js';
 import type { PersistFailedError } from './errors.js';
+import type { ScreenContext } from './context.js';
 
 /**
  * S2a: shell-side view of an agent definition v2 (plain data — the browser
@@ -68,6 +69,9 @@ export interface ChatMessage {
   createdAt: string;
   pending?: boolean;
   failed?: string;        // typed inline error message (never blank — red gate 5)
+  /** S2b (SHL-008): send-time screen context snapshot — present on every
+   * human-composed message (red gate 2; {app, ref:'none'} counts). */
+  context?: ScreenContext;
 }
 
 export interface MessagingEvents {
@@ -103,6 +107,11 @@ export interface ShellServices {
   // presence (agents-lite seam; the demo bridge wires the REAL packages/agents
   // agentEvent stream; tests/mock inject an in-memory source)
   presence: PresenceSource;
+
+  // S2b context bus (SHL-008): the UI publishes every focus change; the shell
+  // host (demo bridge / future Electron) is the focus authority and attaches
+  // the send-time snapshot to each human-composed message. Fire-and-forget.
+  publishFocus?(focus: ScreenContext): void;
 
   // Demo affordance (SHL-006/007 end-to-end proof): define + spawn a mock
   // agent session so presence dot / typing bubble / activity line move live.

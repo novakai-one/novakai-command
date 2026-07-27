@@ -27,7 +27,17 @@ const mintOpId = () => `op_${randomUUID()}` as never;
 import { composeShellPersistence, objectVersion } from '../contract/persistence.node.js';
 import { getLayoutVersioned, setLayout as writeLayout } from '../contract/layout.js';
 import * as settingsContract from '../contract/settings.js';
+import type { ScreenContext } from '../contract/context.js';
 import type { AgentDefView } from '../contract/services.js';
+
+// ── S2b context bus (SHL-008, DEC-S2-6) ─────────────────────────────────────
+// The bridge is the focus AUTHORITY for this host (the browser publishes every
+// focus change here; nvk-context pulls it here). Ephemeral, never persisted.
+// Default satisfies red gate 2 from boot: {app, ref:'none'} is PRESENT (ruling 7).
+let currentFocus: ScreenContext = { app: 'messaging', ref: 'none' };
+/** The send-time snapshot line prepended to session-bound input (AGT-006). */
+const contextLine = (ctx: ScreenContext): string =>
+  `[novakai context] ${JSON.stringify(ctx)}`;
 
 /** Map an agents-contract definition to the shell view (with CAS version). */
 async function toAgentView(a: {
@@ -204,6 +214,14 @@ const broadcast = (name: string, data: unknown) => {
 presenceSubs.add((e) => broadcast('presence', e));
 
 const methods: Record<string, (p: never) => Promise<unknown>> = {
+  // S2b context bus: the UI publishes every focus change; nvk-context pulls.
+  async publishFocus(p: ScreenContext) {
+    currentFocus = p;
+    return { ok: true };
+  },
+  async getFocus() {
+    return currentFocus;
+  },
   async listConversations() {
     return [...convos.values()].filter((c) => !c.archived || true).map(toSummary);
   },
@@ -347,17 +365,21 @@ const methods: Record<string, (p: never) => Promise<unknown>> = {
     });
     if (res.kind !== 'ok') return { ok: false, error: `${res.error.name}: ${res.error.message}` };
     if (!c.threadId) c.threadId = res.value.threadId;
+    // SHL-008 red gate: the send-time snapshot attaches to EVERY human-composed
+    // message. currentFocus is always present (default {app, ref:'none'}).
     const message = {
       id: res.value.messageId, conversationId: p.conversationId, senderId: 'me',
       text: p.text, createdAt: new Date().toISOString(),
+      context: currentFocus,
     };
     broadcast('message', message);
     // REAL kimi conversations: forward the text through the CONTRACT send
     // path (S2a — onMessagePre/onMessagePost hooks fire, injections prepend);
     // the reply comes back through the live lane as a messaging message.
+    // AGT-006: the send-time context snapshot travels WITH the message.
     const real = realSessions.get(p.conversationId);
     if (real) {
-      const sent = await agents.sendToSession(real.sessionId as never, p.text);
+      const sent = await agents.sendToSession(real.sessionId as never, `${contextLine(currentFocus)}\n${p.text}`);
       if (!sent) broadcast('message', {
         id: `note_${randomUUID().slice(0, 8)}`, conversationId: p.conversationId,
         senderId: real.personId, text: '⚠️ session is no longer running',

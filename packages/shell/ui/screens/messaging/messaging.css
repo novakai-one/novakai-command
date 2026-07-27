@@ -95,3 +95,11 @@
 
 .composer-wrap { position: relative; }
 .composer-wrap .nv-palette { bottom: 100%; left: 12px; margin-bottom: 6px; }
+
+/* S2b context chip (SHL-008): shows what travels with the next message */
+.nv-composer-row { display: flex; justify-content: flex-end; padding: 0 14px 2px; }
+.nv-context-chip {
+  font-size: var(--text-3); color: var(--ink-3);
+  border: 1px solid var(--hairline); border-radius: 999px;
+  padding: 1px 10px; user-select: none;
+}

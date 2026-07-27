@@ -6,6 +6,7 @@ export * from './mount.js';
 export * from './layout.js';
 export * from './settings.js';
 export * from './focus.js';
+export * from './context.js';
 export * from './presence.js';
 export * from './composer.js';
 export * from './renderer.js';

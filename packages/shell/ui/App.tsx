@@ -4,7 +4,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import type { SettingsRecord, ShellServices } from '../contract/index.js';
 import {
-  PresenceTracker, SlashRegistry, publishFocus, settingValue,
+  PresenceTracker, SlashRegistry, publishFocus, getFocus, settingValue,
 } from '../contract/index.js';
 import { Frame, type BreadcrumbItem } from './frame/Frame.js';
 import { MessagingScreen, MessagingRail } from './screens/messaging/MessagingScreen.js';
@@ -44,7 +44,8 @@ export function App(props: { services: ShellServices; models?: string[] }) {
   const onSelectConvo = useCallback((id: string | null) => {
     setSelectedConvo(id);
     publishFocus(id ? { kind: 'conversation', id } : 'none');
-  }, []);
+    services.publishFocus?.(getFocus()); // forward to the host focus authority (SHL-008)
+  }, [services]);
 
   const onBreadcrumb = useCallback((id: string | null) => {
     if (id === null) setBreadcrumb([]);                      // breadcrumb back

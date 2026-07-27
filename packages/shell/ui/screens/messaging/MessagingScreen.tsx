@@ -5,11 +5,12 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import type {
   ChatMessage, ConversationSummary, PresenceSnapshot, ShellServices,
 } from '../../../contract/index.js';
-import { PresenceTracker, SlashRegistry, renderSpeedKey, DEFAULT_RENDER_SPEED, settingValue, mintShellOpId } from '../../../contract/index.js';
+import { PresenceTracker, SlashRegistry, renderSpeedKey, DEFAULT_RENDER_SPEED, settingValue, mintShellOpId, subscribeFocus, getFocus, type ScreenContext } from '../../../contract/index.js';
 import { ConversationList } from './ConversationList.js';
 import { ThreadView } from './ThreadView.js';
 import { Composer } from './Composer.js';
 import { CommandPalette } from './CommandPalette.js';
+import { FocusChip } from './FocusChip.js';
 import './messaging.css';
 
 export function MessagingScreen(props: {
@@ -30,6 +31,9 @@ export function MessagingScreen(props: {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [, setPresenceTick] = useState(0);
+  const [focus, setFocus] = useState<ScreenContext>(getFocus());
+
+  useEffect(() => subscribeFocus(setFocus), []);
 
   useEffect(() => { void services.listConversations().then(setConversations); }, [services]);
   useEffect(() => props.tracker.subscribe(() => setPresenceTick((n) => n + 1)), [props.tracker]);
@@ -140,6 +144,9 @@ export function MessagingScreen(props: {
         focused={true}
         selfId="me"
       />
+      <div className="nv-composer-row">
+        <FocusChip focus={focus} />
+      </div>
       <Composer
         registry={props.registry}
         height={props.composerHeight}

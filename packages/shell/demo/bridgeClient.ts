@@ -52,6 +52,7 @@ export function createBridgeServices(url: string, onPresence: (e: AgentEvent) =>
       archiveConversation: (id, archived) => call('archiveConversation', { id, archived }),
       getMessages: (conversationId) => call('getMessages', { conversationId }),
       sendMessage: (conversationId, text) => call('sendMessage', { conversationId, text }),
+      publishFocus: (focus) => { void call('publishFocus', focus).catch(() => undefined); },
       spawnMockAgent: (title) => call('spawnMockAgent', { title }),
       subscribe(events) {
         const ml = (m: unknown) => events.onMessage?.(m as never);

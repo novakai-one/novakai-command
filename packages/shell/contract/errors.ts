@@ -17,6 +17,8 @@ export type UnknownSettingKeyError = ContractError<'UnknownSettingKey', { key: s
 export type InvalidSettingValueError = ContractError<'InvalidSettingValue', { key: string; reason: string }>;
 /** M4: a store-layer write failure crossing the shell seam — typed, never thrown. */
 export type PersistFailedError = ContractError<'PersistFailed', { store: string; storeCode: string; cause: string }>;
+/** S2b red gate 2: a human-composed message without a send-time context snapshot. */
+export type MissingContextError = ContractError<'MissingContext', Record<string, never>>;
 
 export type ShellOwnError =
   | UnknownCommandError
@@ -58,4 +60,11 @@ export const persistFailed = (store: string, storeCode: string, cause: string): 
   message: `${store} write failed (${storeCode}): ${cause}`,
   details: { store, storeCode, cause },
   retryable: true, // store errors carry their own retryable flag; writes are safe to retry with the same clientOpId
+});
+
+export const missingContext = (): MissingContextError => ({
+  code: 'MissingContext',
+  message: 'human-composed message is missing its send-time screen context (red gate: SHL-008)',
+  details: {},
+  retryable: false,
 });

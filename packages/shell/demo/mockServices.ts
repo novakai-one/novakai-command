@@ -7,6 +7,7 @@ import type {
 } from '../contract/index.js';
 import { defaultLayoutRecord } from '../contract/layout.js';
 import { validateSetting } from '../contract/settings.js';
+import { composeHumanMessage, type ScreenContext } from '../contract/context.js';
 
 export function createMockServices(opts: { seeded?: boolean } = {}): ShellServices {
   let convos: ConversationSummary[] = opts.seeded === false ? [] : [
@@ -23,6 +24,9 @@ export function createMockServices(opts: { seeded?: boolean } = {}): ShellServic
     version: 1,
   };
   const emit = (fn: (l: MessagingEvents) => void) => listeners.forEach(fn);
+
+  // S2b context bus: the mock holds focus like the bridge does (host authority).
+  let focus: ScreenContext = { app: 'messaging', ref: 'none' };
 
   // demo presence: Kimi breathes online, Fable types occasionally
   setInterval(() => {
@@ -52,11 +56,10 @@ export function createMockServices(opts: { seeded?: boolean } = {}): ShellServic
       emit((l) => { const c = convos.find((x) => x.id === id); if (c) l.onConversation?.(c); });
     },
     async getMessages(conversationId) { return messages.get(conversationId) ?? []; },
+    publishFocus(f) { focus = f; },
     async sendMessage(conversationId, text) {
-      const m: ChatMessage = {
-        id: `msg_${Math.random().toString(36).slice(2, 10)}`,
-        conversationId, senderId: 'me', text, createdAt: new Date().toISOString(),
-      };
+      // SHL-008: the send-time snapshot attaches to every human-composed message.
+      const m: ChatMessage = composeHumanMessage({ conversationId, text }, focus);
       messages.set(conversationId, [...(messages.get(conversationId) ?? []), m]);
       return { ok: true as const, message: m };
     },
