@@ -5,6 +5,49 @@ import type { AgentEvent, LayoutRecord, PresenceSource, SettingsRecord } from '.
 import type { SetSettingError } from './settings.js';
 import type { PersistFailedError } from './errors.js';
 
+/**
+ * S2a: shell-side view of an agent definition v2 (plain data — the browser
+ * never imports packages/agents; the bridge maps contract objects to these).
+ */
+export interface AgentDefView {
+  id: string;
+  displayName: string;
+  provider: 'kimi' | 'claude' | 'codex' | 'mock';
+  model: string;
+  instructions: string;
+  hooks: Array<{ id: string; event: string; action: { kind: string; text?: string; message?: string } }>;
+  skills: string[]; // skill id refs
+  status: 'defined' | 'archived';
+  version: number; // CAS version for updateAgent
+}
+
+export interface SkillView {
+  id: string;
+  name: string;
+  path: string;
+  description: string;
+}
+
+export type AgentOpError = { code: string; message: string };
+
+export interface ShellAgentsServices {
+  listAgents(): Promise<AgentDefView[]>;
+  defineAgent(input: {
+    displayName: string; provider: AgentDefView['provider']; model: string;
+    instructions?: string; skills?: string[];
+  }, clientOpId: string): Promise<{ ok: true; value: AgentDefView } | { ok: false; error: AgentOpError }>;
+  updateAgent(id: string, patch: Partial<Pick<AgentDefView, 'displayName' | 'provider' | 'instructions' | 'skills'>>,
+    expectedVersion: number, clientOpId: string):
+    Promise<{ ok: true; value: AgentDefView } | { ok: false; error: AgentOpError }>;
+  /** AGT-003/DEC-S2-5: def-level model writes go through agents.setModel ONLY. */
+  setModel(agentId: string, model: string, clientOpId: string):
+    Promise<{ ok: true; value: AgentDefView } | { ok: false; error: AgentOpError }>;
+  listSkills(): Promise<SkillView[]>;
+}
+
+/** Mint a clientOpId at the interaction layer (M5/DEC-S2-12). Browser + node safe. */
+export const mintShellOpId = (): string => `op_${globalThis.crypto.randomUUID()}`;
+
 export interface ConversationSummary {
   id: string;             // ConversationId — shell-side conversation identity
   threadId: string;       // messaging ThreadId backing it
@@ -46,11 +89,16 @@ export interface ShellServices {
 
   // layout + settings (shell-owned kinds)
   // M4: write/materialise failures are typed PersistFailed Results, never rejections.
+  // M5/DEC-S2-12: clientOpId REQUIRED on every UI-originated mutation.
   getLayout(): Promise<{ ok: true; value: { record: LayoutRecord; version: number } } | { ok: false; error: PersistFailedError }>;
-  setLayout(patch: Partial<LayoutRecord>): Promise<{ ok: true; value: { record: LayoutRecord; version: number } } | { ok: false; error: PersistFailedError }>;
+  setLayout(patch: Partial<LayoutRecord>, clientOpId: string): Promise<{ ok: true; value: { record: LayoutRecord; version: number } } | { ok: false; error: PersistFailedError }>;
   getSettings(): Promise<SettingsRecord[]>;
-  setSetting(key: string, value: unknown, opts?: { derivedFrom?: string; theme?: 'dark' | 'light' }):
+  setSetting(key: string, value: unknown, opts: { derivedFrom?: string; theme?: 'dark' | 'light'; clientOpId: string }):
     Promise<{ ok: true; value: SettingsRecord } | { ok: false; error: SetSettingError }>;
+
+  // agents (S2a: agent-def UI + model picker; shell keeps NO model truth —
+  // every write goes through the agents contract via this seam)
+  agents?: ShellAgentsServices;
 
   // presence (agents-lite seam; the demo bridge wires the REAL packages/agents
   // agentEvent stream; tests/mock inject an in-memory source)

@@ -5,7 +5,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import type {
   ChatMessage, ConversationSummary, PresenceSnapshot, ShellServices,
 } from '../../../contract/index.js';
-import { PresenceTracker, SlashRegistry, renderSpeedKey, DEFAULT_RENDER_SPEED, settingValue } from '../../../contract/index.js';
+import { PresenceTracker, SlashRegistry, renderSpeedKey, DEFAULT_RENDER_SPEED, settingValue, mintShellOpId } from '../../../contract/index.js';
 import { ConversationList } from './ConversationList.js';
 import { ThreadView } from './ThreadView.js';
 import { Composer } from './Composer.js';
@@ -110,7 +110,7 @@ export function MessagingScreen(props: {
         if (selected) {
           const n = Number(args);
           if (Number.isFinite(n)) {
-            await services.setSetting(renderSpeedKey(selected.id), n);
+            await services.setSetting(renderSpeedKey(selected.id), n, { clientOpId: mintShellOpId() });
             await props.refreshSettings();
           }
         }
@@ -118,7 +118,7 @@ export function MessagingScreen(props: {
       }
       case 'theme':
         if (args === 'dark' || args === 'light') {
-          await services.setSetting('theme', args);
+          await services.setSetting('theme', args, { clientOpId: mintShellOpId() });
           await props.refreshSettings();
         }
         break;

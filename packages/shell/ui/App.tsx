@@ -9,12 +9,13 @@ import {
 import { Frame, type BreadcrumbItem } from './frame/Frame.js';
 import { MessagingScreen, MessagingRail } from './screens/messaging/MessagingScreen.js';
 import { SettingsScreen } from './screens/settings/SettingsScreen.js';
+import { AgentsScreen } from './screens/agents/AgentsScreen.js';
 import { ListRow } from './kit/index.js';
 
 export function App(props: { services: ShellServices; models?: string[] }) {
   const { services } = props;
   const [settings, setSettings] = useState<SettingsRecord[]>([]);
-  const [view, setView] = useState<'messaging' | 'settings'>('messaging');
+  const [view, setView] = useState<'messaging' | 'agents' | 'settings'>('messaging');
   const [selectedConvo, setSelectedConvo] = useState<string | null>(null);
   const [inspected, setInspected] = useState<{ title: string; body: React.ReactNode } | null>(null);
   const [breadcrumb, setBreadcrumb] = useState<BreadcrumbItem[]>([]);
@@ -61,6 +62,7 @@ export function App(props: { services: ShellServices; models?: string[] }) {
   const railTop = (
     <div className="nv-rail__wide" style={{ padding: '2px 6px' }}>
       <ListRow label="Messages" selected={view === 'messaging'} onClick={() => setView('messaging')} />
+      <ListRow label="Agents" selected={view === 'agents'} onClick={() => setView('agents')} />
       <ListRow label="Settings" selected={view === 'settings'} onClick={() => setView('settings')} />
     </div>
   );
@@ -87,6 +89,8 @@ export function App(props: { services: ShellServices; models?: string[] }) {
           settings={settings}
           refreshSettings={refreshSettings}
         />
+      ) : view === 'agents' ? (
+        <AgentsScreen services={services} />
       ) : (
         <SettingsScreen services={services} settings={settings} refresh={refreshSettings}
           models={props.models ?? ['kimi-k2', 'claude-sonnet-4', 'codex-1']} />

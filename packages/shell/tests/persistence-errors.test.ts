@@ -17,7 +17,7 @@ describe('M4: typed persistence failures (no raw throws)', () => {
     const p = composeShellPersistence({
       root, principal: 'person_test', failNextObjectAppend: { cause: 'ENOSPC: no space left on device' },
     });
-    const res = await setLayout(p.layoutDriver, { composer: { height: 200 } });
+    const res = await setLayout(p.layoutDriver, { composer: { height: 200 } }, 'op_test_layout_fail');
     expect(res.ok).toBe(false);
     if (!res.ok) {
       expect(res.error.code).toBe('PersistFailed');
@@ -29,14 +29,14 @@ describe('M4: typed persistence failures (no raw throws)', () => {
     const p = composeShellPersistence({
       root, principal: 'person_test', failNextObjectAppend: { cause: 'EIO: i/o error' },
     });
-    const res = await setSetting(p.settingsDriver, 'theme', 'light');
+    const res = await setSetting(p.settingsDriver, 'theme', 'light', { clientOpId: 'op_test_settings_fail' });
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.error.code).toBe('PersistFailed');
   });
 
   it('healthy path still commits (no regression on the Result shape)', async () => {
     const p = composeShellPersistence({ root, principal: 'person_test' });
-    const res = await setLayout(p.layoutDriver, { composer: { height: 210 } });
+    const res = await setLayout(p.layoutDriver, { composer: { height: 210 } }, 'op_test_layout_ok');
     expect(res.ok).toBe(true);
     if (res.ok) expect(res.value.record.composer.height).toBe(210);
   });

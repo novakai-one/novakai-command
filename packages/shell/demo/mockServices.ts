@@ -80,7 +80,7 @@ export function createMockServices(opts: { seeded?: boolean } = {}): ShellServic
       return { ok: true as const, conversation: c };
     },
     async getLayout() { return { ok: true as const, value: layout }; },
-    async setLayout(patch) {
+    async setLayout(patch, _clientOpId) {
       layout = {
         record: { ...layout.record, ...patch } as LayoutRecord,
         version: layout.version + 1,
@@ -100,6 +100,47 @@ export function createMockServices(opts: { seeded?: boolean } = {}): ShellServic
       settingsStore = [...settingsStore.filter((r) => r.key !== key), rec];
       return { ok: true as const, value: rec };
     },
+    // S2a: in-memory agents seam (agent-def UI + model picker demo/tests)
+    agents: (() => {
+      let defs: import('../contract/services.js').AgentDefView[] = [
+        { id: 'agent_kimi', displayName: 'Kimi', provider: 'kimi', model: 'kimi-k2', instructions: '', hooks: [], skills: [], status: 'defined', version: 1 },
+        { id: 'agent_fable', displayName: 'Fable', provider: 'mock', model: 'mock-model', instructions: '', hooks: [], skills: [], status: 'defined', version: 1 },
+      ];
+      const skills: import('../contract/services.js').SkillView[] = [
+        { id: 'skill_tdd', name: 'TDD', path: '.novakai/skills/tdd', description: 'test-driven development' },
+      ];
+      const toView = (d: import('../contract/services.js').AgentDefView) => ({ ...d });
+      return {
+        async listAgents() { return defs.map(toView); },
+        async defineAgent(input, _clientOpId) {
+          const d = {
+            id: `agent_${Math.random().toString(36).slice(2, 10)}`,
+            displayName: input.displayName, provider: input.provider, model: input.model,
+            instructions: input.instructions ?? '', hooks: [], skills: input.skills ?? [],
+            status: 'defined' as const, version: 1,
+          };
+          defs = [...defs, d];
+          return { ok: true as const, value: toView(d) };
+        },
+        async updateAgent(id, patch, expectedVersion, _clientOpId) {
+          const cur = defs.find((d) => d.id === id);
+          if (!cur) return { ok: false as const, error: { code: 'NotFound', message: `no agent ${id}` } };
+          if (cur.version !== expectedVersion) return { ok: false as const, error: { code: 'CasConflict', message: `expected v${expectedVersion}, actual v${cur.version}` } };
+          const next = { ...cur, ...patch, version: cur.version + 1 };
+          defs = defs.map((d) => (d.id === id ? next : d));
+          return { ok: true as const, value: toView(next) };
+        },
+        async setModel(agentId, model, _clientOpId) {
+          const cur = defs.find((d) => d.id === agentId);
+          if (!cur) return { ok: false as const, error: { code: 'NotFound', message: `no agent ${agentId}` } };
+          if (!model) return { ok: false as const, error: { code: 'InvalidEnvelope', message: 'model must be non-empty' } };
+          const next = { ...cur, model, version: cur.version + 1 };
+          defs = defs.map((d) => (d.id === agentId ? next : d));
+          return { ok: true as const, value: toView(next) };
+        },
+        async listSkills() { return skills.map((s) => ({ ...s })); },
+      };
+    })(),
     presence: {
       subscribeAgentEvents(handler) {
         presenceHandlers.add(handler);

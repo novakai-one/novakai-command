@@ -35,6 +35,11 @@ interface LogicalSession {
   /** Serializes per-message child processes: one prompt in flight at a time. */
   queue: Promise<void>;
   current: ChildProcess | null;
+  /** S2a (§22 ruling 5): provider-native spawn config honored per message
+   * child — argv (e.g. `--skills-dir <dir>`) is PREPENDED to every
+   * invocation; env is merged over process.env. */
+  argv: string[];
+  env: Record<string, string>;
 }
 
 export interface KimiCliRuntime extends TerminalRuntimeLike {
@@ -70,9 +75,9 @@ export function createKimiCliRuntime(options: { cwd: string; cliPath?: string })
 
   /** One user message → one child process; resolves when the reply is fully read. */
   const runPrompt = (rec: LogicalSession, text: string): Promise<void> => new Promise((resolve) => {
-    const args = ['-p', text, '--output-format', 'stream-json'];
+    const args = [...rec.argv, '-p', text, '--output-format', 'stream-json'];
     if (rec.cliSessionId) args.push('-S', rec.cliSessionId);
-    const child = spawn(cliPath, args, { cwd: options.cwd, env: process.env });
+    const child = spawn(cliPath, args, { cwd: options.cwd, env: { ...process.env, ...rec.env } });
     rec.current = child;
     let buf = '';
     child.stdout.on('data', (chunk: Buffer) => {
@@ -120,6 +125,7 @@ export function createKimiCliRuntime(options: { cwd: string; cliPath?: string })
       }
       sessions.set(agentId, {
         agentId, status: 'running', cliSessionId: null, queue: Promise.resolve(), current: null,
+        argv: createOptions.argv ?? [], env: createOptions.env ?? {},
       });
       return { agentId, status: 'running' as const };
     },

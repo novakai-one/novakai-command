@@ -96,7 +96,7 @@ export function validateSetting(
 // ── Driver seam (foundation-backed in node; bridge-backed in browser) ───────
 export interface SettingsDriver {
   readAll(): Promise<SettingsRecord[]>;
-  write(record: { key: string; value: unknown; derivedFrom?: string }): Promise<Result<SettingsRecord, PersistFailedError>>;
+  write(record: { key: string; value: unknown; derivedFrom?: string }, clientOpId: string): Promise<Result<SettingsRecord, PersistFailedError>>;
 }
 
 export async function getSettings(driver: SettingsDriver): Promise<SettingsRecord[]> {
@@ -107,11 +107,13 @@ export async function setSetting(
   driver: SettingsDriver,
   key: string,
   value: unknown,
-  opts: { derivedFrom?: string; theme?: 'dark' | 'light' } = {},
+  // M5/DEC-S2-12: clientOpId is REQUIRED (generated at the interaction layer,
+  // threaded to foundation meta — R3-10 dedup covers UI retries).
+  opts: { derivedFrom?: string; theme?: 'dark' | 'light'; clientOpId: string },
 ): Promise<Result<SettingsRecord, SetSettingError>> {
   const v = validateSetting(key, value, opts);
   if (!v.ok) return fail(v.error);
-  const written = await driver.write({ key, value, derivedFrom: opts.derivedFrom });
+  const written = await driver.write({ key, value, derivedFrom: opts.derivedFrom }, opts.clientOpId);
   if (!written.ok) return fail(written.error); // M4: typed store failure, never a throw
   return ok(written.value);
 }

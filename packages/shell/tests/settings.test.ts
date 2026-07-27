@@ -59,10 +59,10 @@ describe('settings persistence round-trip (foundation-backed)', () => {
 
   it('setSetting → fresh composition reads it back (last good wins)', async () => {
     const a = composeShellPersistence({ root, principal: 'person_test' });
-    const r1 = await setSetting(a.settingsDriver, 'theme', 'light');
+    const r1 = await setSetting(a.settingsDriver, 'theme', 'light', { clientOpId: 'op_test_theme' });
     expect(r1.ok).toBe(true);
-    await setSetting(a.settingsDriver, 'renderSpeed.default', 480);
-    await setSetting(a.settingsDriver, 'lastUsedModel', 'kimi-k2', { derivedFrom: 'agents.setModel' });
+    await setSetting(a.settingsDriver, 'renderSpeed.default', 480, { clientOpId: 'op_test_speed' });
+    await setSetting(a.settingsDriver, 'lastUsedModel', 'kimi-k2', { derivedFrom: 'agents.setModel', clientOpId: 'op_test_model' });
 
     const b = composeShellPersistence({ root, principal: 'person_test' });
     const records = await getSettings(b.settingsDriver);
@@ -75,7 +75,7 @@ describe('settings persistence round-trip (foundation-backed)', () => {
 
   it('validation fires before any write reaches the store', async () => {
     const a = composeShellPersistence({ root, principal: 'person_test' });
-    const bad = await setSetting(a.settingsDriver, 'unknown.key', 1);
+    const bad = await setSetting(a.settingsDriver, 'unknown.key', 1, { clientOpId: 'op_test_bad' });
     expect(bad.ok).toBe(false);
     const records = await getSettings(a.settingsDriver);
     expect(records.find((r) => r.key === 'unknown.key')).toBeUndefined();

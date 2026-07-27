@@ -60,10 +60,20 @@ export function createBridgeServices(url: string, onPresence: (e: AgentEvent) =>
         return () => { msgListeners.delete(ml); convListeners.delete(cl); };
       },
       getLayout: () => call('getLayout'),
-      setLayout: (patch) => call('setLayout', { patch }),
+      // M5/DEC-S2-12: clientOpId minted HERE (the interaction layer) and sent
+      // with the mutation; the bridge threads it to foundation meta.
+      setLayout: (patch, clientOpId) => call('setLayout', { patch, clientOpId }),
       getSettings: () => call('getSettings'),
       setSetting: async (key, value, opts) =>
         call<{ ok: true; value: SettingsRecord } | { ok: false; error: SetSettingError }>('setSetting', { key, value, opts }),
+      agents: {
+        listAgents: () => call('listAgents'),
+        defineAgent: (input, clientOpId) => call('defineAgent', { input, clientOpId }),
+        updateAgent: (id, patch, expectedVersion, clientOpId) =>
+          call('updateAgent', { id, patch, expectedVersion, clientOpId }),
+        setModel: (agentId, model, clientOpId) => call('setAgentModel', { agentId, model, clientOpId }),
+        listSkills: () => call('listSkills'),
+      },
       presence: {
         subscribeAgentEvents(handler) {
           const h = (e: AgentEvent) => handler(e);

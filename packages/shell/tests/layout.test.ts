@@ -36,7 +36,7 @@ describe('layout persistence (SHL-003)', () => {
       rail: { ...before.value.record.rail, side: 'right', width: 300, collapsed: false },
       inspector: { width: 280, collapsed: false },
       composer: { height: 180 },
-    });
+    }, 'op_test_drill');
 
     // "Restart": a brand-new composition against the same root reads the store.
     const restored = await getLayout(compose().layoutDriver);
@@ -51,7 +51,7 @@ describe('layout persistence (SHL-003)', () => {
 
   it('partial patches merge — untouched panels keep their values', async () => {
     await getLayoutVersioned(compose().layoutDriver);
-    await setLayout(compose().layoutDriver, { composer: { height: 200 } });
+    await setLayout(compose().layoutDriver, { composer: { height: 200 } }, 'op_test_partial');
     const after = await getLayout(compose().layoutDriver);
     expect(after.ok).toBe(true);
     if (!after.ok) return;
@@ -61,10 +61,10 @@ describe('layout persistence (SHL-003)', () => {
 
   it('collapsing and re-expanding the rail persists both directions', async () => {
     await getLayoutVersioned(compose().layoutDriver);
-    const collapsed = await setLayout(compose().layoutDriver, { rail: { side: 'left', width: 264, collapsed: true, order: ['messaging'] } });
+    const collapsed = await setLayout(compose().layoutDriver, { rail: { side: 'left', width: 264, collapsed: true, order: ['messaging'] } }, 'op_test_collapse');
     expect(collapsed.ok).toBe(true);
     if (collapsed.ok) expect(collapsed.value.record.rail.collapsed).toBe(true);
-    const expanded = await setLayout(compose().layoutDriver, { rail: { side: 'left', width: 264, collapsed: false, order: ['messaging'] } });
+    const expanded = await setLayout(compose().layoutDriver, { rail: { side: 'left', width: 264, collapsed: false, order: ['messaging'] } }, 'op_test_expand');
     expect(expanded.ok).toBe(true);
     if (expanded.ok) expect(expanded.value.record.rail.collapsed).toBe(false);
     const restored = await getLayout(compose().layoutDriver);

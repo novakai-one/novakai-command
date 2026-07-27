@@ -195,3 +195,38 @@ body {
   color: var(--ink-3);
   font-size: var(--text-2);
 }
+
+/* ── Choice controls (kit v1.1, M8/DEC-S2-13) ─────────────────────────────── */
+.k-seg { display: inline-flex; border: 1px solid var(--hairline); border-radius: var(--radius); overflow: hidden; }
+.k-seg button {
+  appearance: none; border: none; background: transparent; font: inherit;
+  color: var(--ink-2); padding: 5px 12px; cursor: pointer;
+}
+.k-seg button[data-on="true"] { background: var(--selected); color: var(--ink); }
+.k-seg button:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
+
+.k-select {
+  appearance: none; font: inherit; color: var(--ink);
+  background: transparent; border: 1px solid var(--hairline);
+  border-radius: var(--radius); padding: 6px 28px 6px 10px; cursor: pointer;
+  background-image: linear-gradient(45deg, transparent 50%, var(--ink-3) 50%), linear-gradient(135deg, var(--ink-3) 50%, transparent 50%);
+  background-position: calc(100% - 14px) 55%, calc(100% - 9px) 55%;
+  background-size: 5px 5px;
+  background-repeat: no-repeat;
+}
+.k-select:focus { outline: none; border-color: var(--focus-ring); }
+
+.k-swatch {
+  width: 22px; height: 22px; border-radius: 50%;
+  border: 2px solid transparent; cursor: pointer; padding: 0;
+}
+.k-swatch[data-on="true"] { border-color: var(--ink); }
+.k-swatch:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+
+/* ── Layout + field + inline error (kit v1.1) ─────────────────────────────── */
+.k-stack { display: flex; flex-direction: column; gap: 10px; }
+.k-stack--horizontal { flex-direction: row; align-items: center; }
+.k-field { display: flex; flex-direction: column; gap: 5px; }
+.k-field__label { color: var(--ink); font-size: var(--text-2, 13px); }
+.k-field__hint { color: var(--ink-3); font-size: var(--text-3); }
+.k-error { color: var(--danger); font-size: var(--text-3); }

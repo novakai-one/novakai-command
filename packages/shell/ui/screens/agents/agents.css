@@ -1,0 +1,16 @@
+/* shell/ui/screens/agents/agents.css — Agents screen layout. No accent-token
+   use (SHL-010: one attention signal per viewport, enforced by lint-accent). */
+.nv-agents-screen { flex: 1; align-items: stretch; }
+.nv-agents-screen__list {
+  width: 260px; flex-shrink: 0;
+  border-right: 1px solid var(--hairline);
+  display: flex; flex-direction: column;
+}
+.nv-agents-screen__list .k-panel { flex: 1; display: flex; flex-direction: column; border: none; }
+.nv-agents-screen__new { padding: 8px; border-top: 1px solid var(--hairline); }
+.nv-agents-screen__editor { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.nv-agents-screen__editor .k-panel { flex: 1; border: none; }
+.nv-agents { padding: 14px; max-width: 520px; }
+.nv-agents__model .k-input { flex: 1; }
+.nv-agents__hooks { flex-wrap: wrap; }
+.nv-agents__actions { padding-top: 8px; }

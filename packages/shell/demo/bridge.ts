@@ -18,14 +18,29 @@ import {
 // Demo-scoped REAL provider path: drives the actual `kimi` CLI in print mode
 // (see kimiCliRuntime.ts for why this replaces the TUI terminal host here).
 import { existsSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { createKimiCliRuntime, defaultKimiCliPath } from './kimiCliRuntime.js';
 
 // foundation brands mints `op_${uuid}`; shell never imports foundation from
 // the demo, so mint the same shape locally for defineAgent calls.
 const mintOpId = () => `op_${randomUUID()}` as never;
-import { composeShellPersistence } from '../contract/persistence.node.js';
+import { composeShellPersistence, objectVersion } from '../contract/persistence.node.js';
 import { getLayoutVersioned, setLayout as writeLayout } from '../contract/layout.js';
 import * as settingsContract from '../contract/settings.js';
+import type { AgentDefView } from '../contract/services.js';
+
+/** Map an agents-contract definition to the shell view (with CAS version). */
+async function toAgentView(a: {
+  id: string; displayName: string; provider: 'kimi' | 'claude' | 'codex' | 'mock';
+  model: string; instructions: string; skills: string[]; status: 'defined' | 'archived';
+  hooks: Array<{ id: string; event: string; action: { kind: string; text?: string; message?: string } }>;
+}): Promise<AgentDefView> {
+  return {
+    id: a.id, displayName: a.displayName, provider: a.provider, model: a.model,
+    instructions: a.instructions, hooks: a.hooks, skills: a.skills, status: a.status,
+    version: await objectVersion(agentsCtx.handle, 'agent', a.id),
+  };
+}
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const shellRoot = path.resolve(here, '..');
@@ -134,6 +149,18 @@ const kimiAgentId = await defineDemoAgent('Kimi');
 const fableAgentId = await defineDemoAgent('Fable');
 seedConvo('conv_kimi', 'person:person_kimi', 'Kimi', 'agent', kimiAgentId, true);
 seedConvo('conv_fable', 'person:person_fable', 'Fable', 'agent', fableAgentId);
+
+// Demo affordance (S2a): seed one registry skill so the Agents screen's
+// skills multi-select has something real to show (idempotent per root).
+{
+  const existing = await agents.listSkills();
+  if (existing.ok && existing.value.items.length === 0) {
+    await agents.registerSkill(
+      { name: 'TDD', path: path.join(homedir(), '.agents', 'skills', 'tdd'), description: 'test-driven development' },
+      mintOpId(),
+    );
+  }
+}
 
 const toSummary = (c: Convo) => ({
   id: c.id, threadId: c.threadId ?? c.address, title: c.title, kind: c.kind,
@@ -325,11 +352,12 @@ const methods: Record<string, (p: never) => Promise<unknown>> = {
       text: p.text, createdAt: new Date().toISOString(),
     };
     broadcast('message', message);
-    // REAL kimi conversations: forward the text into the live CLI session;
+    // REAL kimi conversations: forward the text through the CONTRACT send
+    // path (S2a — onMessagePre/onMessagePost hooks fire, injections prepend);
     // the reply comes back through the live lane as a messaging message.
     const real = realSessions.get(p.conversationId);
     if (real) {
-      const sent = agentsCtx.adapters.kimi.send(real.sessionId, p.text);
+      const sent = await agents.sendToSession(real.sessionId as never, p.text);
       if (!sent) broadcast('message', {
         id: `note_${randomUUID().slice(0, 8)}`, conversationId: p.conversationId,
         senderId: real.personId, text: '⚠️ session is no longer running',
@@ -341,14 +369,42 @@ const methods: Record<string, (p: never) => Promise<unknown>> = {
   async getLayout() {
     return getLayoutVersioned(persistence.layoutDriver);
   },
-  async setLayout(p: { patch: Record<string, unknown> }) {
-    return writeLayout(persistence.layoutDriver, p.patch as never);
+  async setLayout(p: { patch: Record<string, unknown>; clientOpId: string }) {
+    // M5: the interaction layer's clientOpId threads through to foundation meta.
+    return writeLayout(persistence.layoutDriver, p.patch as never, p.clientOpId);
   },
   async getSettings() {
     return settingsContract.getSettings(persistence.settingsDriver);
   },
-  async setSetting(p: { key: string; value: unknown; opts?: { derivedFrom?: string; theme?: 'dark' | 'light' } }) {
-    return settingsContract.setSetting(persistence.settingsDriver, p.key, p.value, p.opts ?? {});
+  async setSetting(p: { key: string; value: unknown; opts: { derivedFrom?: string; theme?: 'dark' | 'light'; clientOpId: string } }) {
+    return settingsContract.setSetting(persistence.settingsDriver, p.key, p.value, p.opts);
+  },
+  // ── S2a agents seam: agent-def UI + model picker over the REAL contract ──
+  async listAgents() {
+    const res = await agents.listAgents();
+    if (!res.ok) return [];
+    return Promise.all(res.value.items.map((a) => toAgentView(a)));
+  },
+  async defineAgent(p: { input: { displayName: string; provider: 'kimi' | 'claude' | 'codex' | 'mock'; model: string; instructions?: string; skills?: string[] }; clientOpId: string }) {
+    const res = await agents.defineAgent(p.input, p.clientOpId as never);
+    if (!res.ok) return { ok: false as const, error: { code: res.error.code, message: res.error.message } };
+    return { ok: true as const, value: await toAgentView(res.value) };
+  },
+  async updateAgent(p: { id: string; patch: Record<string, unknown>; expectedVersion: number; clientOpId: string }) {
+    const res = await agents.updateAgent(p.id as never, p.patch as never, p.expectedVersion, p.clientOpId as never);
+    if (!res.ok) return { ok: false as const, error: { code: res.error.code, message: res.error.message } };
+    return { ok: true as const, value: await toAgentView(res.value) };
+  },
+  async setAgentModel(p: { agentId: string; model: string; clientOpId: string }) {
+    // DEC-S2-5: model truth lives in agents — the UI writes via setModel only.
+    const res = await agents.setModel(p.agentId as never, p.model, p.clientOpId as never);
+    if (!res.ok) return { ok: false as const, error: { code: res.error.code, message: res.error.message } };
+    return { ok: true as const, value: await toAgentView(res.value) };
+  },
+  async listSkills() {
+    const res = await agents.listSkills();
+    if (!res.ok) return [];
+    return res.value.items.map((s) => ({ id: s.id, name: s.name, path: s.path, description: s.description }));
   },
 };
 

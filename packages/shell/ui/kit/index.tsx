@@ -1,5 +1,7 @@
-// shell/ui/kit/index.tsx — kit v1. The ONLY component library (red gate 3:
+// shell/ui/kit/index.tsx — kit v1.1. The ONLY component library (red gate 3:
 // screens compose kit components, nothing else). Calm by default.
+// v1.1 (M8/DEC-S2-13, additive): RadioGroup, Select, Swatch — needed by the
+// agent-def UI, accent picker, density picker. Old screens unbroken.
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import './tokens.css';
 import './kit.css';
@@ -21,6 +23,70 @@ export const TextInput = React.forwardRef<HTMLInputElement, React.InputHTMLAttri
     return <input ref={ref} className="k-input" {...props} />;
   },
 );
+
+// ── Choice controls (kit v1.1, M8/DEC-S2-13) ────────────────────────────────
+export function RadioGroup(props: {
+  label: string;
+  options: ReadonlyArray<{ value: string; label?: React.ReactNode }>;
+  value: string;
+  onChange(value: string): void;
+}) {
+  return (
+    <div className="k-seg" role="radiogroup" aria-label={props.label}>
+      {props.options.map((o) => (
+        <button
+          key={o.value}
+          type="button"
+          role="radio"
+          aria-checked={props.value === o.value}
+          data-on={props.value === o.value ? 'true' : 'false'}
+          onClick={() => props.onChange(o.value)}
+        >
+          {o.label ?? o.value}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+export function Select(props: {
+  label: string;
+  options: ReadonlyArray<{ value: string; label?: string }>;
+  value: string;
+  onChange(value: string): void;
+  disabled?: boolean;
+}) {
+  return (
+    <select
+      className="k-select"
+      aria-label={props.label}
+      value={props.value}
+      disabled={props.disabled}
+      onChange={(e) => props.onChange(e.target.value)}
+    >
+      {props.options.map((o) => <option key={o.value} value={o.value}>{o.label ?? o.value}</option>)}
+    </select>
+  );
+}
+
+export function Swatch(props: {
+  color: string;
+  selected?: boolean;
+  label: string;
+  onSelect?(): void;
+}) {
+  return (
+    <button
+      type="button"
+      className="k-swatch"
+      style={{ background: props.color }}
+      aria-label={props.label}
+      aria-pressed={props.selected ? 'true' : 'false'}
+      data-on={props.selected ? 'true' : 'false'}
+      onClick={props.onSelect}
+    />
+  );
+}
 
 // ── List rows ───────────────────────────────────────────────────────────────
 export function ListRow(props: {
@@ -51,6 +117,40 @@ export function Panel(props: { head?: string; children: React.ReactNode; style?:
       {props.children}
     </section>
   );
+}
+
+// ── Labelled field (kit v1.1) — one label + one control + optional hint ─────
+export function Field(props: { label: string; hint?: string; children: React.ReactNode }) {
+  return (
+    <div className="k-field">
+      <div className="k-field__label">{props.label}</div>
+      {props.hint && <div className="k-field__hint">{props.hint}</div>}
+      {props.children}
+    </div>
+  );
+}
+
+// ── Layout primitive (kit v1.1) — screens never write raw containers ───────
+export function Stack(props: {
+  horizontal?: boolean;
+  gap?: number;
+  className?: string;
+  style?: React.CSSProperties;
+  children: React.ReactNode;
+}) {
+  return (
+    <div
+      className={`k-stack${props.horizontal ? ' k-stack--horizontal' : ''}${props.className ? ` ${props.className}` : ''}`}
+      style={{ ...(props.gap !== undefined ? { gap: props.gap } : {}), ...props.style }}
+    >
+      {props.children}
+    </div>
+  );
+}
+
+// ── Inline typed error (kit v1.1) — failures are drawn, never blank ────────
+export function InlineError(props: { children: React.ReactNode }) {
+  return <div className="k-error" role="alert">{props.children}</div>;
 }
 
 export function EmptyState(props: { children: React.ReactNode }) {

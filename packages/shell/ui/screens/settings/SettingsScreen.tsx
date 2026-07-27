@@ -3,7 +3,7 @@
 // writes a last-used UI default labelled derivedFrom 'agents.setModel').
 import React, { useState } from 'react';
 import type { SettingsRecord, ShellServices } from '../../../contract/index.js';
-import { settingValue, DEFAULT_RENDER_SPEED } from '../../../contract/index.js';
+import { settingValue, DEFAULT_RENDER_SPEED, mintShellOpId } from '../../../contract/index.js';
 import { Button, ScrollArea } from '../../kit/index.js';
 import './settings.css';
 
@@ -26,7 +26,8 @@ export function SettingsScreen(props: {
   const model = settingValue<string>(settings, 'lastUsedModel') ?? props.models[0] ?? '';
 
   const apply = async (key: string, value: unknown, opts?: { derivedFrom?: string }) => {
-    const res = await services.setSetting(key, value, { ...opts, theme });
+    // M5/DEC-S2-12: clientOpId minted at the interaction layer, per mutation.
+    const res = await services.setSetting(key, value, { ...opts, theme, clientOpId: mintShellOpId() });
     if (res.ok) { setError(null); await props.refresh(); }
     else setError(`${res.error.code}: ${res.error.message}`); // typed, drawn
   };

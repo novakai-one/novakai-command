@@ -93,3 +93,26 @@ describe.skipIf(!hasCli)('kimiCliRuntime (REAL kimi CLI integration)', () => {
     rt.kill('it_agent');
   }, 200_000);
 });
+
+describe('kimiCliRuntime — S2a skills pass-through (§22 ruling 5)', () => {
+  it('create argv is prepended to the CLI invocation (kimi native --skills-dir mechanism)', async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'kimi-args-'));
+    const p = path.join(dir, 'kimi');
+    writeFileSync(p, [
+      '#!/bin/sh',
+      'printf \'%s\\n\' "{\\"role\\":\\"assistant\\",\\"content\\":\\"ARGS:$*\\"}"',
+      '',
+    ].join('\n'));
+    chmodSync(p, 0o755);
+    const rt = createKimiCliRuntime({ cwd: process.cwd(), cliPath: p });
+    const chunks: string[] = [];
+    rt.onData((_id, d) => chunks.push(d));
+    await rt.create({
+      agentId: 'sk1', cwd: process.cwd(),
+      argv: ['--skills-dir', '/tmp/novakai-skills/tdd'],
+    });
+    rt.write('sk1', 'hello');
+    await vi.waitFor(() => expect(chunks.join('')).toContain('--skills-dir /tmp/novakai-skills/tdd'), { timeout: 5000 });
+    rt.kill('sk1');
+  });
+});

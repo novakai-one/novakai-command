@@ -5,6 +5,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type { LayoutRecord } from '../../contract/types.js';
 import type { ShellServices } from '../../contract/services.js';
+import { mintShellOpId } from '../../contract/services.js';
 import { IconButton, Splitter } from '../kit/index.js';
 import './frame.css';
 
@@ -47,7 +48,7 @@ export function Frame(props: {
       if (persistTimer.current) clearTimeout(persistTimer.current);
       persistTimer.current = setTimeout(() => {
         // M4: surface setLayout failures as a small inline error — never void-swallowed
-        void props.services.setLayout(merged).then((res) => {
+        void props.services.setLayout(merged, mintShellOpId()).then((res) => {
           setPersistError(res.ok ? null : res.error.message);
         });
       }, 400);

@@ -2,7 +2,6 @@
 // layout/settings drivers to packages/foundation's store contract (R3-7:
 // writes go through the foundation contract only — enveloped, traced,
 // CAS-guarded; no shell-private write path). Browser code never imports this.
-import { randomUUID } from 'node:crypto';
 import {
   composeHandle, createObject, updateObject, getObject, listObjects,
   type ScopedStoreHandle, type ObjectId, type ClientOpId,
@@ -18,8 +17,6 @@ export interface ShellPersistence {
   layoutDriver: LayoutDriver;
   settingsDriver: SettingsDriver;
 }
-
-const clientOpId = () => `op_${randomUUID()}` as unknown as ClientOpId;
 
 export function composeShellPersistence(opts: {
   root: string;
@@ -47,14 +44,15 @@ export function composeShellPersistence(opts: {
       if (!parsed.success) return null; // corrupt → treated as absent; store layer traces it
       return { record: parsed.data, version: res.value.version };
     },
-    async write(patch, expectedVersion) {
+    async write(patch, expectedVersion, clientOpId) {
       // M4: store failures are typed PersistFailed Results, never raw throws.
+      // M5: the CALLER's clientOpId threads to foundation meta (R3-10 dedup).
       if (expectedVersion === 0) {
-        const res = await createObject<LayoutRecord>(handle, patch as LayoutRecord, clientOpId());
+        const res = await createObject<LayoutRecord>(handle, patch as LayoutRecord, clientOpId as unknown as ClientOpId);
         if (!res.ok) return fail(persistFailed('layout', res.error.code, res.error.message));
         return ok({ record: res.value.object as LayoutRecord, version: res.value.version });
       }
-      const res = await updateObject<LayoutRecord>(handle, LAYOUT_MAIN_ID as unknown as ObjectId, patch, expectedVersion, clientOpId());
+      const res = await updateObject<LayoutRecord>(handle, LAYOUT_MAIN_ID as unknown as ObjectId, patch, expectedVersion, clientOpId as unknown as ClientOpId);
       if (!res.ok) return fail(persistFailed('layout', res.error.code, res.error.message));
       return ok({ record: res.value.object as LayoutRecord, version: res.value.version });
     },
@@ -71,7 +69,7 @@ export function composeShellPersistence(opts: {
       }
       return out;
     },
-    async write({ key, value, derivedFrom }) {
+    async write({ key, value, derivedFrom }, clientOpId) {
       const record: SettingsRecord = {
         kind: 'settings',
         id: `settings_${key.replace(/[^A-Za-z0-9_.-]/g, '_')}`,
@@ -83,17 +81,30 @@ export function composeShellPersistence(opts: {
         value,
         ...(derivedFrom ? { derivedFrom } : {}),
       };
+      const op = clientOpId as unknown as ClientOpId; // M5: caller-supplied, never re-minted
       const existing = await getObject<SettingsRecord>(handle, 'settings', record.id as unknown as ObjectId);
       if (existing.ok && !('absent' in existing.value)) {
-        const res = await updateObject<SettingsRecord>(handle, record.id as unknown as ObjectId, record, existing.value.version, clientOpId());
+        const res = await updateObject<SettingsRecord>(handle, record.id as unknown as ObjectId, record, existing.value.version, op);
         if (!res.ok) return fail(persistFailed('settings', res.error.code, res.error.message));
         return ok(res.value.object as SettingsRecord);
       }
-      const res = await createObject<SettingsRecord>(handle, record, clientOpId());
+      const res = await createObject<SettingsRecord>(handle, record, op);
       if (!res.ok) return fail(persistFailed('settings', res.error.code, res.error.message));
       return ok(res.value.object as SettingsRecord);
     },
   };
 
   return { handle, layoutDriver, settingsDriver };
+}
+
+/**
+ * S2a: stored CAS version of any object on ANY composed handle (the agents
+ * contract hides versions; the shell's agent-def editor needs them for
+ * updateAgent CAS). Read-only.
+ */
+export async function objectVersion(
+  handle: ScopedStoreHandle, kind: 'agent' | 'skill' | 'layout' | 'settings', id: string,
+): Promise<number> {
+  const res = await getObject(handle, kind, id as unknown as ObjectId);
+  return res.ok && !('absent' in res.value) ? res.value.version : 0;
 }

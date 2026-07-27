@@ -120,3 +120,29 @@ packages/shell/
 
 - **L6** — Frame debounces setLayout by 400 ms; a crash inside the window loses the last geometry edit (acceptable for S1; consider flush-on-beforeunload).
 - **L7** — settingsDriver.readAll returns [] on any store read failure (indistinguishable from "no settings"); surface a typed read-degraded flag in a follow-up.
+
+## S2a additions (Agents screen · kit v1.1 · M5 clientOpId)
+
+7. **Kit v1.1 (M8/DEC-S2-13, additive):** RadioGroup, Select, Swatch +
+   Field/Stack/InlineError (layout/label primitives the agent-def UI needed —
+   same additive versioning law). Older screens unmigrated.
+8. **lint-kit (red gate 3, incremental):** tools/lint-kit.mjs covers
+   ui/screens/agents/** only — the S2a screen is the first under the gate;
+   pre-S2a screens migrate as touched (wired into `npm test`).
+9. **M5 (DEC-S2-12):** clientOpId is a REQUIRED param on contract setLayout/
+   setSetting and ShellServices setLayout/setSetting; minted at the
+   interaction layer (mintShellOpId) or in bridgeClient per call; the bridge
+   threads it to foundation meta. Layout first-boot default uses a
+   system-minted op id (not UI-originated).
+10. **AgentDefView.version:** the agents contract hides CAS versions; the
+    bridge reads them via objectVersion() in persistence.node (foundation
+    import stays in the contract composition file — the demo bridge itself
+    still doesn't import foundation).
+11. **Mock services agents seam** is in-memory (demo fallback + tests); the
+    real seam is the WS bridge methods listAgents/defineAgent/updateAgent/
+    setAgentModel/listSkills over the REAL agents contract.
+12. **kimiCliRuntime** honors create argv/env (prepended argv — kimi's native
+    `--skills-dir` is how resolved skill dirs reach the real CLI session).
+13. **AgentsView provider dropdown** offers kimi/claude/codex (spec scope);
+    a stored 'mock' provider displays as kimi in the editor draft (demo seed
+    agents are mock) — display-only, never written back unless saved.
