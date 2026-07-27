@@ -70,6 +70,8 @@ export class StoreEngine {
   readonly legacyRoot?: string;
   readonly lockTimeoutMs: number;
   private booted = false;
+  /** @internal typed LockBusy recorded when boot could not take the lock. */
+  private bootLockError: StoreError | null = null;
   /** @internal test seam: fail the next trace append once. */
   failNextTraceAppend?: { cause: string };
 
@@ -107,6 +109,12 @@ export class StoreEngine {
     }
     const truncatedBytes = buf.length - (lastNewline + 1);
     writeFileSync(filePath, buf.subarray(0, lastNewline + 1));
+    const fd = openSync(filePath, 'r');
+    try {
+      fsyncSync(fd); // M2: the truncate is durable before boot proceeds
+    } finally {
+      closeSync(fd);
+    }
     return { truncatedBytes };
   }
 
@@ -286,10 +294,43 @@ export class StoreEngine {
   }
 
   // ── boot reconciliation (sys_reconciler) ─────────────────────────────
+  /**
+   * M2: boot reconciliation (torn-line truncate + orphan stamping) runs UNDER
+   * the global mutation lock — never underneath a live writer. If the lock
+   * stays held past lockTimeoutMs, boot records a typed LockBusy (bounded
+   * wait, §0) instead of reconciling unlocked; mutating contract ops surface
+   * it via bootError().
+   */
   boot(): void {
     if (this.booted) return;
-    this.booted = true;
     mkdirSync(this.root, { recursive: true });
+    let lock;
+    try {
+      lock = acquireLock(this.root, { timeoutMs: this.lockTimeoutMs });
+      this.bootLockError = null;
+    } catch (error) {
+      if (error instanceof LockTimeout) {
+        this.bootLockError = err('LockBusy', error.message,
+          { waitedMs: error.waitedMs, timeoutMs: error.timeoutMs }, true);
+        return;
+      }
+      throw error;
+    }
+    try {
+      this.booted = true;
+      this.reconcileLocked();
+    } finally {
+      releaseLock(lock);
+    }
+  }
+
+  /** Non-null when boot could not reconcile because the lock stayed busy. */
+  bootError(): StoreError | null {
+    return this.bootLockError;
+  }
+
+  /** Boot body — caller holds the mutation lock. */
+  private reconcileLocked(): void {
     for (const kind of [...RECORD_KINDS, 'trace']) {
       this.migrateStoreIfNeeded(kind);
     }
@@ -494,6 +535,51 @@ export class StoreEngine {
       };
       this.appendLineFsync(this.storePath('trace'), JSON.stringify(trace));
       return { ok: true, value: null };
+    });
+  }
+
+  /**
+   * M1: the WHOLE resolveQuarantine mutation — optional reconcile-trace +
+   * tombstone status line + lifecycle trace — inside ONE lock hold. Nothing
+   * is written outside the lock; a busy lock yields typed LockBusy and no
+   * partial writes.
+   */
+  resolveQuarantine(opts: {
+    next: TombstoneT;
+    version: number;
+    actor: string;
+    clientOpId: ClientOpId;
+    reconcile?: { kind: string; flat: EnvelopeT & Record<string, unknown>; opId: ServerOpId; clientOpId: ClientOpId };
+  }): EngineResult<TombstoneT> {
+    return this.withLock(() => {
+      let seq = this.nextSeq(this.readTraces());
+      const appendTrace = (trace: TraceLineT): void => {
+        this.appendLineFsync(this.storePath('trace'), JSON.stringify(trace));
+        seq += 1;
+      };
+      if (opts.reconcile) {
+        const r = opts.reconcile;
+        appendTrace({
+          kind: 'trace', id: `trace_${randomUUID()}`, schemaVersion: 1,
+          createdAt: nowIso(), permissionLevel: 'team', createdBy: r.flat.createdBy,
+          seq, opId: r.opId, clientOpId: r.clientOpId, action: 'create',
+          target: { kind: r.kind, id: r.flat.id },
+        });
+      }
+      this.appendLineFsync(
+        this.storePath('quarantine'),
+        JSON.stringify(this.wrapRecord(opts.next as EnvelopeT & Record<string, unknown>, {
+          opId: mintServerOpId(), clientOpId: opts.clientOpId, version: opts.version,
+        })),
+      );
+      appendTrace({
+        kind: 'trace', id: `trace_${randomUUID()}`, schemaVersion: 1,
+        createdAt: nowIso(), permissionLevel: 'team', createdBy: opts.actor,
+        seq, opId: mintServerOpId(), clientOpId: opts.clientOpId, action: 'resolveQuarantine',
+        target: { kind: 'quarantine', id: opts.next.id },
+        meta: { resolution: opts.next.resolution },
+      });
+      return { ok: true, value: opts.next };
     });
   }
 

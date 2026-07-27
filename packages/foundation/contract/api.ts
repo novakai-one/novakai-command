@@ -123,6 +123,8 @@ export async function createObject<T>(
   clientOpId: ClientOpId,
 ): Promise<Result<StoredObject<T>, StoreError>> {
   const engine = engineOf(handle);
+  const bootFailure = engine.bootError();
+  if (bootFailure) return fail(bootFailure);
   const { flat, error } = validateEnvelope(payload);
   if (error) return fail(error);
   const kind = flat!.kind;
@@ -167,6 +169,8 @@ export async function updateObject<T>(
   clientOpId: ClientOpId,
 ): Promise<Result<StoredObject<T>, StoreError>> {
   const engine = engineOf(handle);
+  const bootFailure = engine.bootError();
+  if (bootFailure) return fail(bootFailure);
   const ref = Ref.safeParse(id && typeof id === 'string' ? { kind: (patch as Record<string, unknown>)?.kind, id } : {});
   void ref;
   // locate the object across the handle's allowed kinds (id carries its kind prefix)
@@ -289,6 +293,8 @@ export async function resolveQuarantine(
   clientOpId: ClientOpId,
 ): Promise<Result<TombstoneT, StoreError>> {
   const engine = engineOf(handle);
+  const bootFailure = engine.bootError();
+  if (bootFailure) return fail(bootFailure);
   const scoped = scopeCheck(handle, 'quarantine');
   if (scoped) return fail(scoped);
   const tombstone = engine.readTombstones().find((t) => t.id === id);
@@ -296,14 +302,19 @@ export async function resolveQuarantine(
     return fail(err('NotFound', `no tombstone with id "${id}"`, { ref: { kind: 'quarantine', id } }, false));
   }
   const actor = principalOf(handle);
+  let reconcile: { kind: string; flat: EnvelopeT & Record<string, unknown>; opId: ServerOpId; clientOpId: ClientOpId } | undefined;
   if (resolution === 'reconcile') {
     // re-stamp the trace for the orphaned object if it still exists
     const ref = tombstone.quarantinedRef;
     if (ref.kind in KIND_FILES) {
       const rec = readAllRecords(engine, ref.kind).find((r) => r.envelope.id === ref.id);
       if (rec && rec.opId) {
-        engine.completeTrace(ref.kind, { ...rec.payload, ...rec.envelope } as EnvelopeT & Record<string, unknown>,
-          'create', rec.opId as ServerOpId, (rec.clientOpId || `op_${crypto.randomUUID()}`) as ClientOpId);
+        reconcile = {
+          kind: ref.kind,
+          flat: { ...rec.payload, ...rec.envelope } as EnvelopeT & Record<string, unknown>,
+          opId: rec.opId as ServerOpId,
+          clientOpId: (rec.clientOpId || `op_${crypto.randomUUID()}`) as ClientOpId,
+        };
       }
     }
   }
@@ -315,11 +326,10 @@ export async function resolveQuarantine(
     resolvedAt: new Date().toISOString(),
     resolvedBy: actor,
   });
-  engine.appendRecordLine('quarantine', next as EnvelopeT & Record<string, unknown>, {
-    opId: `srv_${crypto.randomUUID()}`, clientOpId, version,
-  });
-  engine.appendLifecycleTrace('resolveQuarantine', { kind: 'quarantine', id }, actor, clientOpId, { resolution });
-  return ok(next);
+  // M1: reconcile-trace + tombstone + lifecycle trace commit in ONE lock hold
+  const res = engine.resolveQuarantine({ next, version, actor, clientOpId, ...(reconcile ? { reconcile } : {}) });
+  if (!res.ok) return fail(res.error);
+  return ok(res.value);
 }
 
 function countTombstoneLines(engine: StoreEngine, id: string): number {
