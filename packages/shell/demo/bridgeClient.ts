@@ -1,7 +1,7 @@
 // shell/demo/bridgeClient.ts — browser-side ShellServices over the WS bridge
 // (real packages/messaging + foundation on the node side). Falls back handled
 // by the demo entry: if the socket never opens, the caller swaps in the mock.
-import type { ShellServices, SettingsRecord, LayoutRecord, AgentEvent } from '../contract/index.js';
+import type { ShellServices, SettingsRecord, AgentEvent } from '../contract/index.js';
 import type { SetSettingError } from '../contract/index.js';
 
 interface Pending { resolve(v: unknown): void; reject(e: Error): void }
@@ -68,6 +68,5 @@ export function createBridgeServices(url: string, onPresence: (e: AgentEvent) =>
     const presenceHandlers = new Set<(e: AgentEvent) => void>();
     const origOnPresence = onPresence;
     onPresence = (e) => { origOnPresence(e); presenceHandlers.forEach((h) => h(e)); };
-    void (0 as unknown as LayoutRecord); // type-anchor only
   });
 }

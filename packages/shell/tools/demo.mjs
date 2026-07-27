@@ -6,8 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const shellRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const repoRoot = path.resolve(shellRoot, '..', '..');
-const tsx = path.join(repoRoot, 'node_modules', '.bin', 'tsx');
+const tsx = path.join(shellRoot, 'node_modules', '.bin', 'tsx');
 
 const procs = [];
 function run(name, cmd, args, cwd) {
@@ -23,7 +22,7 @@ function shutdown(code) {
 process.on('SIGINT', () => shutdown(0));
 process.on('SIGTERM', () => shutdown(0));
 
-run('bridge', tsx, [path.join(shellRoot, 'demo', 'bridge.ts')], repoRoot);
+run('bridge', tsx, [path.join(shellRoot, 'demo', 'bridge.ts')], shellRoot);
 run('vite', path.join(shellRoot, 'node_modules', '.bin', 'vite'), ['--host', '127.0.0.1'], shellRoot);
 
 console.log('[demo] open http://127.0.0.1:5180 — messaging runs on the REAL packages/messaging backend');
