@@ -142,6 +142,11 @@ const agents = createAgentsContract(agentsCtx);
 const mockAdapter = mockOf(agentsCtx);
 /** convoId → live REAL-kimi session (for forwarding Chris's messages). */
 const realSessions = new Map<string, { sessionId: string; personId: string }>();
+/** S2b: live-lane session ids by provider — focus-change advisories push only
+ * to mock sessions here. For the REAL kimi CLI (prompt mode), a between-turn
+ * advisory would consume a full provider turn per focus change — the send-time
+ * context line covers req 9 there (recorded in shell NOTES.md). */
+const laneSessions = new Map<string, 'mock' | 'kimi'>();
 
 async function defineDemoAgent(displayName: string, provider: 'mock' | 'kimi' = 'mock'): Promise<string> {
   const res = await agents.defineAgent(
@@ -217,6 +222,11 @@ const methods: Record<string, (p: never) => Promise<unknown>> = {
   // S2b context bus: the UI publishes every focus change; nvk-context pulls.
   async publishFocus(p: ScreenContext) {
     currentFocus = p;
+    // §22 ruling 1: in-app sessions get the advisory via the live lane as a
+    // system context line BETWEEN turns (queued mid-turn by the lane).
+    for (const [sid, kind] of laneSessions) {
+      if (kind === 'mock') agents.pushContextAdvisory(sid as never, contextLine(currentFocus));
+    }
     return { ok: true };
   },
   async getFocus() {
@@ -279,6 +289,7 @@ const methods: Record<string, (p: never) => Promise<unknown>> = {
       },
     };
     agents.attachLiveLane({ sessionId, address: `person:${ME}`, sender });
+    laneSessions.set(sessionId, 'mock');
 
     // Script the session lifecycle through the mock adapter (test seam):
     // spawned/online already published by spawnAgent; now activity → reply → exit.
@@ -330,6 +341,7 @@ const methods: Record<string, (p: never) => Promise<unknown>> = {
       },
     };
     agents.attachLiveLane({ sessionId, address: `person:${ME}`, sender });
+    laneSessions.set(sessionId, 'kimi');
     return { ok: true as const, conversation: s };
   },
   async pinConversation(p: { id: string; pinned: boolean }) {

@@ -146,3 +146,18 @@ packages/shell/
 13. **AgentsView provider dropdown** offers kimi/claude/codex (spec scope);
     a stored 'mock' provider displays as kimi in the editor draft (demo seed
     agents are mock) — display-only, never written back unless saved.
+
+## S2b additions (2026-07-28)
+
+- **Focus authority**: the shell HOST process (demo bridge today) holds current
+  focus; the browser publishes every change over WS (`publishFocus`), agents in
+  raw terminals pull via `nvk-context` (shell/cli, spec §8 "shell adapter").
+  Default `{app:'messaging', ref:'none'}` satisfies red gate 2 from boot.
+- **nvk-context placement**: spec §8 owner is "shell adapter"; shell had no CLI
+  harness, so `cli/nvk-context.ts` + `npm run nvk-context` (tsx) was created
+  here rather than in agents/cli. Needs Node ≥22 (global WebSocket).
+- **Real-CLI advisories**: between-turn push advisories are wired for mock lane
+  sessions only in the demo. For the real kimi CLI (prompt mode) each
+  between-turn advisory would consume a full provider turn per focus change;
+  real sessions rely on the send-time context line (ruling 1's push mechanism
+  itself is proven in packages/agents tests + the mock path).

@@ -15,7 +15,7 @@ import type { AgentsContext } from './composition.js';
 import * as registry from './registry/registry.js';
 import * as skillsStore from './skills/skills.js';
 import { mergeInput, runEventHooks } from './hooks/engine.js';
-import { attachLiveLane, type LiveLaneSender } from './live-lane/liveLane.js';
+import { attachLiveLane, pushContextAdvisory, type LiveLaneSender } from './live-lane/liveLane.js';
 
 export interface AgentsContract {
   defineAgent(def: registry.DefineAgentInput, clientOpId: ClientOpId)
@@ -49,6 +49,9 @@ export interface AgentsContract {
   subscribeAgentEvents(handler: (e: AgentEvent) => void): Unsubscribe;
   /** Bind the live lane (R3-1) for a spawned session. */
   attachLiveLane(binding: { sessionId: string; address: string; sender: LiveLaneSender }): Unsubscribe;
+  /** S2b (§22 ruling 1): push a focus-change advisory to an in-app session —
+   * system context line BETWEEN turns. False for pull-only/unknown sessions. */
+  pushContextAdvisory(sessionId: SessionId, line: string): boolean;
   /** End a session (terminal mini-contract close; maps to offline(closed), §7.2). */
   closeSession(sessionId: SessionId): boolean;
 }
@@ -190,6 +193,8 @@ export function createAgentsContract(ctx: AgentsContext): AgentsContract {
     subscribeAgentEvents: (handler) => ctx.bus.subscribe(handler),
 
     attachLiveLane: (binding) => attachLiveLane(ctx, binding),
+
+    pushContextAdvisory: (sessionId, line) => pushContextAdvisory(ctx, sessionId, line),
 
     closeSession(sessionId) {
       const meta = ctx.sessions.get(sessionId);

@@ -25,6 +25,14 @@ export interface AgentsContext {
   pendingInjections: Map<string, string[]>;
   /** S2a hooks: onExit fires exactly once per session (close OR natural exit). */
   exitHooksFired: Set<string>;
+  /**
+   * S2b context advisories (DEC-S2-6, §22 ruling 1): sessions with an attached
+   * live lane get focus-change advisories as system context lines BETWEEN
+   * turns. busyUntil tracks the streaming turn; queue holds mid-turn advisories.
+   */
+  laneState: Map<string, { queue: string[]; busyUntil: number; timer: ReturnType<typeof setTimeout> | null }>;
+  /** Quiet window that ends a turn for advisory delivery (ruling 12's 5s; tests shrink it). */
+  advisoryQuietMs: number;
   /** @internal test seam: override the hook action executor (timeout/failure tests). */
   __hookExecutor?: (
     action: HookAction, refs: HookRefs & { event: HookEvent; agentId: string },
@@ -43,6 +51,9 @@ export interface ComposeAgentsOptions {
    */
   terminalRuntime?: TerminalRuntimeLike;
   cwd?: string;
+  /** S2b: quiet window (ms) after which a live-lane session's turn is over and
+   * queued context advisories flush. Default 5000 (§22 ruling 12's quiet window). */
+  advisoryQuietMs?: number;
 }
 
 export function composeAgents(options: ComposeAgentsOptions): AgentsContext {
@@ -72,6 +83,8 @@ export function composeAgents(options: ComposeAgentsOptions): AgentsContext {
     closedSessions: new Set(),
     pendingInjections: new Map(),
     exitHooksFired: new Set(),
+    laneState: new Map(),
+    advisoryQuietMs: options.advisoryQuietMs ?? 5000,
   };
 }
 
