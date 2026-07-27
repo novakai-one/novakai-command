@@ -36,12 +36,14 @@ export function App(props: { services: ShellServices; models?: string[] }) {
   // theme/density/accent application — CSS variables only, one source of truth
   const theme = settingValue<'dark' | 'light'>(settings, 'theme') ?? 'dark';
   const density = settingValue<'comfortable' | 'compact'>(settings, 'density') ?? 'comfortable';
+  const motion = settingValue<'full' | 'reduced'>(settings, 'motion') ?? 'full';
   const accent = settingValue<string>(settings, 'accent');
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
     document.documentElement.dataset.density = density;
+    document.documentElement.dataset.motion = motion;
     if (accent) document.documentElement.style.setProperty('--accent', accent);
-  }, [theme, density, accent]);
+  }, [theme, density, motion, accent]);
 
   const onSelectConvo = useCallback((id: string | null) => {
     setSelectedConvo(id);

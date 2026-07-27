@@ -49,6 +49,11 @@ export const SETTING_KEYS: Record<string, KeyRule> = {
     pattern: /^density$/,
     validate: (v) => (v === 'comfortable' || v === 'compact' ? null : 'density must be "comfortable" or "compact"'),
   },
+  // DEC-S2-9: reduced-motion is an EXPOSED setting, not only the OS media query.
+  motion: {
+    pattern: /^motion$/,
+    validate: (v) => (v === 'full' || v === 'reduced' ? null : 'motion must be "full" or "reduced"'),
+  },
   'renderSpeed.default': speedRule,
   lastUsedModel: {
     pattern: /^lastUsedModel$/,

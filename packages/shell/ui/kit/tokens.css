@@ -75,11 +75,19 @@
   --row-pad-x: 12px;
 }
 
-/* §20: reduced motion honoured — every animation collapses to instant. */
+/* §20: reduced motion honoured — every animation collapses to instant.
+   Two doors: the OS media query AND the exposed `motion` setting (DEC-S2-9). */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+}
+[data-motion="reduced"] *,
+[data-motion="reduced"] *::before,
+[data-motion="reduced"] *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
 }

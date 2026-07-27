@@ -21,6 +21,7 @@ export function SettingsScreen(props: {
   const theme = settingValue<'dark' | 'light'>(settings, 'theme') ?? 'dark';
   const accent = settingValue<string>(settings, 'accent') ?? '#d0a14b';
   const density = settingValue<'comfortable' | 'compact'>(settings, 'density') ?? 'comfortable';
+  const motion = settingValue<'full' | 'reduced'>(settings, 'motion') ?? 'full';
   const bubbleStyle = settingValue<'bubbles' | 'minimal'>(settings, 'bubbleStyle') ?? 'bubbles';
   const speed = settingValue<number>(settings, 'renderSpeed.default') ?? DEFAULT_RENDER_SPEED;
   const model = settingValue<string>(settings, 'lastUsedModel') ?? props.models[0] ?? '';
@@ -101,6 +102,19 @@ export function SettingsScreen(props: {
             {(['comfortable', 'compact'] as const).map((d) => (
               <button key={d} role="radio" aria-checked={density === d} data-on={density === d ? 'true' : 'false'}
                 onClick={() => void apply('density', d)}>{d}</button>
+            ))}
+          </div>
+        </div>
+
+        <div className="nv-setting">
+          <div className="nv-setting__label">
+            <div className="nv-setting__name">Motion</div>
+            <div className="nv-setting__desc">Reduced collapses every animation to instant — on top of your OS setting.</div>
+          </div>
+          <div className="nv-seg" role="radiogroup" aria-label="Motion">
+            {(['full', 'reduced'] as const).map((m) => (
+              <button key={m} role="radio" aria-checked={motion === m} data-on={motion === m ? 'true' : 'false'}
+                onClick={() => void apply('motion', m)}>{m}</button>
             ))}
           </div>
         </div>
