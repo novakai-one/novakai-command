@@ -11,6 +11,10 @@ import type { SpawnedSession, TerminalAdapter, TerminalRuntimeLike } from './ada
 interface SessionRecord {
   sessionId: string;
   agentId: string;
+  /** S3: the runtime keys terminals by its own agentId string, so each session
+   * gets a UNIQUE runtime key (the sessionId) — a second spawn of the same
+   * agent can never overwrite the first session's routing. */
+  runtimeKey: string;
   provider: ProviderName;
   state: 'running' | 'exited';
   closedByUs: boolean;
@@ -22,24 +26,24 @@ export function createTerminalAdapter(
   defaults: { cwd: string },
 ): TerminalAdapter {
   const sessions = new Map<string, SessionRecord>();
-  const byAgentId = new Map<string, SessionRecord>();
+  const byRuntimeKey = new Map<string, SessionRecord>();
 
   const emit = (rec: SessionRecord, e: PtyEvent): void => {
     for (const h of rec.handlers) h(e);
   };
 
   // The runtime's data/exit callbacks are GLOBAL (one registration each) —
-  // register once, demux by agentId.
+  // register once, demux by the per-session runtime key (S3), never agentId.
   let wired = false;
   const wire = (): void => {
     if (wired) return;
     wired = true;
-    runtime.onData((agentId, data) => {
-      const rec = byAgentId.get(agentId);
+    runtime.onData((runtimeKey, data) => {
+      const rec = byRuntimeKey.get(runtimeKey);
       if (rec) emit(rec, { type: 'output', sessionId: rec.sessionId, at: new Date().toISOString(), data });
     });
-    runtime.onExit((agentId, exitCode) => {
-      const rec = byAgentId.get(agentId);
+    runtime.onExit((runtimeKey, exitCode) => {
+      const rec = byRuntimeKey.get(runtimeKey);
       if (!rec) return;
       rec.state = 'exited';
       emit(rec, {
@@ -58,20 +62,20 @@ export function createTerminalAdapter(
         title: `agent:${agentId}`,
         cwd: opts.cwd ?? defaults.cwd,
         provider,
-        agentId,
+        agentId: sessionId, // S3: unique per-session runtime key
       });
       const rec: SessionRecord = {
-        sessionId, agentId: info.agentId, provider,
+        sessionId, agentId, runtimeKey: info.agentId, provider,
         state: 'running', closedByUs: false, handlers: [],
       };
       sessions.set(sessionId, rec);
-      byAgentId.set(info.agentId, rec);
+      byRuntimeKey.set(info.agentId, rec);
       if (info.terminalPid !== undefined) {
         queueMicrotask(() => emit(rec, {
           type: 'spawned', sessionId, at: new Date().toISOString(), pid: info.terminalPid!,
         }));
       }
-      return { sessionId, agentId: info.agentId, provider, model: opts.model ?? '' };
+      return { sessionId, agentId, provider, model: opts.model ?? '' };
     },
     attach(sessionId) {
       const rec = sessions.get(sessionId);
@@ -79,7 +83,7 @@ export function createTerminalAdapter(
     },
     send(sessionId, input) {
       const rec = sessions.get(sessionId);
-      return rec ? runtime.write(rec.agentId, input) : false;
+      return rec ? runtime.write(rec.runtimeKey, input) : false;
     },
     subscribe(sessionId, handler): Unsubscribe {
       const rec = sessions.get(sessionId);
@@ -93,7 +97,7 @@ export function createTerminalAdapter(
       const rec = sessions.get(sessionId);
       if (!rec) return false;
       rec.closedByUs = true;
-      return runtime.kill(rec.agentId);
+      return runtime.kill(rec.runtimeKey);
     },
   };
 }

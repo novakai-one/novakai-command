@@ -39,10 +39,10 @@ test('attachHook returns typed UnsupportedOperation blockedBy OD-C2 (R3-16)', as
 class FakeRuntime implements TerminalRuntimeLike {
   private dataCb: ((agentId: string, data: string) => void) | null = null;
   private exitCbs: Array<(agentId: string, code: number | null) => void> = [];
-  readonly created: Array<{ agentId?: string; provider?: string; cwd: string }> = [];
+  readonly created: Array<{ agentId?: string; provider?: string; cwd: string; title?: string }> = [];
   readonly written: Array<{ agentId: string; data: string }> = [];
   readonly killed: string[] = [];
-  async create(options: { agentId?: string; provider?: string; cwd: string }) {
+  async create(options: { agentId?: string; provider?: string; cwd: string; title?: string }) {
     this.created.push(options);
     return { agentId: options.agentId ?? 'agent_runtime', status: 'running' as const, terminalPid: 777 };
   }
@@ -69,21 +69,28 @@ test('terminal-host adapter: create/write/kill/onData/onExit demux into per-sess
   const spawn = await agents.spawnAgent(def.value.id as AgentId);
   assert.equal(spawn.ok, true);
   if (!spawn.ok) return;
-  // spawn went through the existing runtime with provider + durable agentId + cwd
-  assert.deepEqual(runtime.created[0], { agentId: def.value.id, provider: 'kimi', cwd: '/tmp/work', title: `agent:${def.value.id}` });
+  // spawn went through the existing runtime with provider + cwd; the runtime
+  // key is the UNIQUE per-session key (S3), never the shared agentId — while
+  // the caller-facing SpawnResponse keeps the durable agentId
+  assert.equal(spawn.value.agentId, def.value.id);
+  assert.equal(runtime.created[0].agentId, spawn.value.sessionId);
+  assert.equal(runtime.created[0].provider, 'kimi');
+  assert.equal(runtime.created[0].cwd, '/tmp/work');
+  assert.equal(runtime.created[0].title, `agent:${def.value.id}`);
+  const runtimeKey = runtime.created[0].agentId as string;
   const adapter = ctx.adapters.kimi;
   adapter.subscribe(spawn.value.sessionId, (e) => events.push(e));
-  runtime.emitData(def.value.id as string, 'partial output');
+  runtime.emitData(runtimeKey, 'partial output');
   assert.equal(events[0]?.type, 'output');
   assert.equal(events[0]?.type === 'output' && events[0].data, 'partial output');
-  // send writes to the runtime keyed by agentId
+  // send writes to the runtime keyed by the per-session runtime key
   assert.equal(adapter.send(spawn.value.sessionId, 'ping'), true);
-  assert.deepEqual(runtime.written, [{ agentId: def.value.id, data: 'ping' }]);
+  assert.deepEqual(runtime.written, [{ agentId: runtimeKey, data: 'ping' }]);
   // exit flows through as PtyEvent exited
-  runtime.emitExit(def.value.id as string, 0);
+  runtime.emitExit(runtimeKey, 0);
   const last = events.at(-1);
   assert.equal(last?.type, 'exited');
   // close kills via the runtime
   assert.equal(adapter.close(spawn.value.sessionId), true);
-  assert.deepEqual(runtime.killed, [def.value.id]);
+  assert.deepEqual(runtime.killed, [runtimeKey]);
 });
