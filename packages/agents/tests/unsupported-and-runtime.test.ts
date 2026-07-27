@@ -24,15 +24,13 @@ test('setSessionModel returns typed UnsupportedOperation blockedBy OD-C3 (R3-15)
   }
 });
 
-test('attachHook returns typed UnsupportedOperation blockedBy OD-C2 (R3-16)', async () => {
+test('attachHook validates against the closed v1 sets (S2a shipped the engine; OD-C2 disposed)', async () => {
   const root = mkdtempSync(path.join(tmpdir(), 'nvk-agents-unsup-'));
   const agents = createAgentsContract(composeAgents({ root, principal: 'person_chris' }));
-  const res = await agents.attachHook('agent_x' as AgentId, 'pre_message', { kind: 'agent', id: 'agent_y' }, mintClientOpId());
+  // unknown agent → typed NotFound
+  const res = await agents.attachHook('agent_x' as AgentId, 'onSpawn', { kind: 'log-to-trace', message: 'x' }, mintClientOpId());
   assert.equal(res.ok, false);
-  if (!res.ok) {
-    assert.equal(res.error.code, 'UnsupportedOperation');
-    assert.equal(res.error.details.blockedBy, 'OD-C2');
-  }
+  if (!res.ok) assert.equal(res.error.code, 'NotFound');
 });
 
 /** A TerminalRuntimeLike fake — same shape as TerminalManager/TerminalHostClient. */

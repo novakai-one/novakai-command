@@ -11,6 +11,9 @@ export interface MockSession {
   model: string;
   state: 'running' | 'exited';
   sent: string[];
+  /** S2a (§22 ruling 5): resolved skill dirs received at spawn — the mock's
+   * declared mechanism is to RECORD the list (observable proof). */
+  skills: string[];
 }
 
 export interface MockTerminalAdapter extends TerminalAdapter {
@@ -33,7 +36,8 @@ export function createMockAdapter(): MockTerminalAdapter {
       const sessionId = `sess_${randomUUID()}`;
       const rec = {
         sessionId, agentId, provider, model: opts.model ?? 'mock-model',
-        state: 'running' as const, sent: [] as string[], handlers: [] as Array<(e: PtyEvent) => void>,
+        state: 'running' as const, sent: [] as string[], skills: opts.skills ?? [],
+        handlers: [] as Array<(e: PtyEvent) => void>,
       };
       sessions.set(sessionId, rec);
       queueMicrotask(() => emit(rec, {

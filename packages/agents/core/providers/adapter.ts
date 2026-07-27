@@ -39,6 +39,16 @@ export interface TerminalRuntimeLike {
     provider?: string;
     agentId?: string;
     agentToken?: string;
+    /**
+     * S2a (§22 ruling 5): optional argv/env channels the runtime MAY honor.
+     * The kimi CLI's native skills mechanism is `--skills-dir <dir>`
+     * (verified via `kimi --help`); providers without a verified native
+     * mechanism receive NOVAKAI_SKILLS (colon-joined dirs) as the declared
+     * env mechanism. Runtimes that cannot forward them ignore the fields —
+     * the gap is recorded in NOTES.md, not hidden.
+     */
+    argv?: string[];
+    env?: Record<string, string>;
   }): Promise<{ agentId: string; status: 'running' | 'exited'; terminalPid?: number }>;
   write(agentId: string, data: string): boolean;
   kill(agentId: string): boolean;

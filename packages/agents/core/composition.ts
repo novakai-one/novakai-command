@@ -2,11 +2,13 @@
 // into one AgentsContext. Consumers (CLI, shell) call createAgentsContract(ctx).
 import { composeHandle, type ScopedStoreHandle } from '@novakai/foundation/dist/contract/index.js';
 import type { CapabilityId } from '@novakai/foundation/dist/contract/brands.js';
-import type { ProviderName } from '../contract/schemas.js';
+import type { HookAction, ProviderName } from '../contract/schemas.js';
 import type { TerminalAdapter, TerminalRuntimeLike } from './providers/adapter.js';
 import { createTerminalAdapter } from './providers/terminal.js';
 import { createMockAdapter, type MockTerminalAdapter } from './providers/mock.js';
 import { AgentEventBus } from './events/bus.js';
+import type { HookRefs } from './hooks/engine.js';
+import type { HookEvent } from '../contract/schemas.js';
 
 export interface AgentsContext {
   handle: ScopedStoreHandle;
@@ -16,6 +18,17 @@ export interface AgentsContext {
   sessions: Map<string, { agentId: string; provider: ProviderName }>;
   /** Sessions ended via closeSession — exit maps to offline(closed) (§7.2). */
   closedSessions: Set<string>;
+  /**
+   * S2a hooks: inject-context-text text buffered at onSpawn/onMessagePost,
+   * prepended to the session's NEXT input (DEC-S2-2: "the agent's next input").
+   */
+  pendingInjections: Map<string, string[]>;
+  /** S2a hooks: onExit fires exactly once per session (close OR natural exit). */
+  exitHooksFired: Set<string>;
+  /** @internal test seam: override the hook action executor (timeout/failure tests). */
+  __hookExecutor?: (
+    action: HookAction, refs: HookRefs & { event: HookEvent; agentId: string },
+  ) => Promise<string | void>;
 }
 
 export interface ComposeAgentsOptions {
@@ -37,7 +50,7 @@ export function composeAgents(options: ComposeAgentsOptions): AgentsContext {
     root: options.root,
     legacyRoot: options.legacyRoot,
     capability: 'agents' as CapabilityId,
-    allowedKinds: ['agent'],
+    allowedKinds: ['agent', 'skill'], // S2a: agents owns both stores (req 10 one-store)
     principal: options.principal,
     lockTimeoutMs: options.lockTimeoutMs,
   });
@@ -45,9 +58,9 @@ export function composeAgents(options: ComposeAgentsOptions): AgentsContext {
   const mock = createMockAdapter();
   const adapters: Record<ProviderName, TerminalAdapter> = options.terminalRuntime
     ? {
-      kimi: createTerminalAdapter(options.terminalRuntime, { cwd }),
-      claude: createTerminalAdapter(options.terminalRuntime, { cwd }),
-      codex: createTerminalAdapter(options.terminalRuntime, { cwd }),
+      kimi: createTerminalAdapter(options.terminalRuntime, { cwd, provider: 'kimi' }),
+      claude: createTerminalAdapter(options.terminalRuntime, { cwd, provider: 'claude' }),
+      codex: createTerminalAdapter(options.terminalRuntime, { cwd, provider: 'codex' }),
       mock,
     }
     : { kimi: mock, claude: mock, codex: mock, mock };
@@ -57,6 +70,8 @@ export function composeAgents(options: ComposeAgentsOptions): AgentsContext {
     bus: new AgentEventBus(),
     sessions: new Map(),
     closedSessions: new Set(),
+    pendingInjections: new Map(),
+    exitHooksFired: new Set(),
   };
 }
 

@@ -7,3 +7,5 @@ export { createMockAdapter, type MockTerminalAdapter } from '../core/providers/m
 export { createTerminalAdapter } from '../core/providers/terminal.js';
 export type { TerminalAdapter, TerminalRuntimeLike, SpawnedSession } from '../core/providers/adapter.js';
 export type { LiveLaneSender, LiveLaneBinding } from '../core/live-lane/liveLane.js';
+export type { RegisterSkillInput } from '../core/skills/skills.js';
+export type { DefineAgentInput } from '../core/registry/registry.js';

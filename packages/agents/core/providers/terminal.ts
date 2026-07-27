@@ -23,10 +23,23 @@ interface SessionRecord {
 
 export function createTerminalAdapter(
   runtime: TerminalRuntimeLike,
-  defaults: { cwd: string },
+  defaults: { cwd: string; provider?: ProviderName },
 ): TerminalAdapter {
   const sessions = new Map<string, SessionRecord>();
   const byRuntimeKey = new Map<string, SessionRecord>();
+
+  /**
+   * S2a (§22 ruling 5): per-provider DECLARED skills mechanism.
+   * - kimi: native `--skills-dir <dir>` CLI flag (verified via `kimi --help`).
+   * - claude/codex: NOVAKAI_SKILLS env (colon-joined dirs) — declared
+   *   mechanism; native support unverified, recorded in NOTES.md.
+   */
+  const skillsSpawnConfig = (provider: ProviderName, dirs: string[]):
+    { argv?: string[]; env?: Record<string, string> } => {
+    if (dirs.length === 0) return {};
+    if (provider === 'kimi') return { argv: dirs.flatMap((d) => ['--skills-dir', d]) };
+    return { env: { NOVAKAI_SKILLS: dirs.join(':') } };
+  };
 
   const emit = (rec: SessionRecord, e: PtyEvent): void => {
     for (const h of rec.handlers) h(e);
@@ -63,6 +76,7 @@ export function createTerminalAdapter(
         cwd: opts.cwd ?? defaults.cwd,
         provider,
         agentId: sessionId, // S3: unique per-session runtime key
+        ...skillsSpawnConfig(provider, opts.skills ?? []),
       });
       const rec: SessionRecord = {
         sessionId, agentId, runtimeKey: info.agentId, provider,
@@ -106,6 +120,8 @@ export function createTerminalAdapter(
 // a fourth provider. Today they share the terminal host because all three CLIs
 // are PTY-driven; the seam is what AGT-001/R3-28 ratifies.
 export const createKimiAdapter = (runtime: TerminalRuntimeLike, cwd: string): TerminalAdapter =>
-  createTerminalAdapter(runtime, { cwd });
-export const createClaudeAdapter = createKimiAdapter;
-export const createCodexAdapter = createKimiAdapter;
+  createTerminalAdapter(runtime, { cwd, provider: 'kimi' });
+export const createClaudeAdapter = (runtime: TerminalRuntimeLike, cwd: string): TerminalAdapter =>
+  createTerminalAdapter(runtime, { cwd, provider: 'claude' });
+export const createCodexAdapter = (runtime: TerminalRuntimeLike, cwd: string): TerminalAdapter =>
+  createTerminalAdapter(runtime, { cwd, provider: 'codex' });

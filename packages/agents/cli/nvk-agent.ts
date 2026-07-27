@@ -89,10 +89,35 @@ async function main(): Promise<void> {
     }
     case 'send': {
       const sessionId = str(args.session, 'session') as SessionId;
-      const adapter = Object.values(ctx.adapters).find((a) => a.attach(sessionId));
-      if (!adapter) die({ code: 'NotFound', message: `no live session "${sessionId}" in this process` });
-      const okSend = adapter!.send(sessionId, str(args.input, 'input'));
-      return okSend ? out({ sent: true, sessionId }) : die({ code: 'SendFailed', message: 'session not running' });
+      // Contract-level send path (S2a): hooks fire (onMessagePre/onMessagePost).
+      const okSend = await agents.sendToSession(sessionId, str(args.input, 'input'));
+      return okSend ? out({ sent: true, sessionId }) : die({ code: 'SendFailed', message: 'no live session in this process, or session not running' });
+    }
+    case 'attach-hook': {
+      const res = await agents.attachHook(
+        str(args.agent, 'agent') as AgentId,
+        str(args.event, 'event') as never,
+        args.text !== undefined
+          ? { kind: 'inject-context-text', text: str(args.text, 'text') }
+          : { kind: 'log-to-trace', message: typeof args.message === 'string' ? args.message : '' },
+        mintClientOpId());
+      return res.ok ? out(res.value) : die(res.error);
+    }
+    case 'detach-hook': {
+      const res = await agents.detachHook(
+        str(args.agent, 'agent') as AgentId, str(args.hook, 'hook'), mintClientOpId());
+      return res.ok ? out(res.value) : die(res.error);
+    }
+    case 'register-skill': {
+      const res = await agents.registerSkill({
+        name: str(args.name, 'name'), path: str(args.path, 'path'),
+        ...(typeof args.description === 'string' ? { description: args.description } : {}),
+      }, mintClientOpId());
+      return res.ok ? out(res.value) : die(res.error);
+    }
+    case 'list-skills': {
+      const res = await agents.listSkills();
+      return res.ok ? out(res.value) : die(res.error);
     }
     case 'events': {
       const ms = typeof args.ms === 'string' ? Number(args.ms) : 1000;

@@ -1,4 +1,4 @@
-// The agents-lite public contract (Pass 2 §5), bound to a composed context.
+// The agents public contract (Pass 2 §5 + S2a), bound to a composed context.
 // Every op is the same function the CLI calls (DEC-F11 parity).
 import type { AgentId, ClientOpId, SessionId } from '@novakai/foundation/dist/contract/brands.js';
 import { mintClientOpId } from '@novakai/foundation/dist/contract/brands.js';
@@ -6,29 +6,46 @@ import type { Absent, ListFilter, Page, Result } from '@novakai/foundation/dist/
 import { isAbsent } from '@novakai/foundation/dist/contract/types.js';
 import { err } from '@novakai/foundation/dist/contract/errors.js';
 import type {
-  AgentDefinitionLiteT as AgentDefinitionLite, AgentEvent, SpawnOpts, SpawnResponse, Unsubscribe,
+  AgentDefinitionT, AgentEvent, HookAction, HookEvent, SkillDefinitionT,
+  SpawnOpts, SpawnResponse, Unsubscribe,
 } from '../contract/schemas.js';
 import type { AgentsError, UnsupportedOperationError } from '../contract/errors.js';
 import { spawnFailed, unsupportedOperation } from '../contract/errors.js';
 import type { AgentsContext } from './composition.js';
 import * as registry from './registry/registry.js';
+import * as skillsStore from './skills/skills.js';
+import { mergeInput, runEventHooks } from './hooks/engine.js';
 import { attachLiveLane, type LiveLaneSender } from './live-lane/liveLane.js';
 
 export interface AgentsContract {
   defineAgent(def: registry.DefineAgentInput, clientOpId: ClientOpId)
-    : Promise<Result<AgentDefinitionLite, AgentsError>>;
-  updateAgent(id: AgentId, patch: Partial<AgentDefinitionLite>, expectedVersion: number, clientOpId: ClientOpId)
-    : Promise<Result<AgentDefinitionLite, AgentsError>>;
-  getAgent(id: AgentId): Promise<Result<AgentDefinitionLite | Absent, never>>;
-  listAgents(filter?: ListFilter): Promise<Result<Page<AgentDefinitionLite>, AgentsError>>;
+    : Promise<Result<AgentDefinitionT, AgentsError>>;
+  updateAgent(id: AgentId, patch: Partial<AgentDefinitionT>, expectedVersion: number, clientOpId: ClientOpId)
+    : Promise<Result<AgentDefinitionT, AgentsError>>;
+  getAgent(id: AgentId): Promise<Result<AgentDefinitionT | Absent, never>>;
+  listAgents(filter?: ListFilter): Promise<Result<Page<AgentDefinitionT>, AgentsError>>;
   spawnAgent(agentId: AgentId, opts?: SpawnOpts, clientOpId?: ClientOpId)
     : Promise<Result<SpawnResponse, AgentsError>>;
   setModel(agentId: AgentId, model: string, clientOpId: ClientOpId)
-    : Promise<Result<AgentDefinitionLite, AgentsError>>;
+    : Promise<Result<AgentDefinitionT, AgentsError>>;
   setSessionModel(sessionId: SessionId, model: string)
     : Promise<Result<never, UnsupportedOperationError>>;
-  attachHook(agentId: AgentId, event: string, action: { kind: string; id: string }, clientOpId: ClientOpId)
-    : Promise<Result<never, UnsupportedOperationError>>;
+  /** S2a: hooks engine v1 — subscriptions live on the agent object (R3-18). */
+  attachHook(agentId: AgentId, event: HookEvent, action: HookAction, clientOpId: ClientOpId)
+    : Promise<Result<AgentDefinitionT, AgentsError>>;
+  detachHook(agentId: AgentId, hookId: string, clientOpId: ClientOpId)
+    : Promise<Result<AgentDefinitionT, AgentsError>>;
+  /** S2a: provider-neutral skills registry (DEC-S2-4). */
+  registerSkill(input: skillsStore.RegisterSkillInput, clientOpId: ClientOpId)
+    : Promise<Result<SkillDefinitionT, AgentsError>>;
+  getSkill(id: string): Promise<Result<SkillDefinitionT | Absent, never>>;
+  listSkills(filter?: ListFilter): Promise<Result<Page<SkillDefinitionT>, AgentsError>>;
+  /**
+   * S2a: the contract-level session send path. onMessagePre hooks run (500ms
+   * budget), buffered + fresh injections prepend the input, the adapter send
+   * fires, then onMessagePost hooks. Hooks never block the send.
+   */
+  sendToSession(sessionId: SessionId, input: string): Promise<boolean>;
   subscribeAgentEvents(handler: (e: AgentEvent) => void): Unsubscribe;
   /** Bind the live lane (R3-1) for a spawned session. */
   attachLiveLane(binding: { sessionId: string; address: string; sender: LiveLaneSender }): Unsubscribe;
@@ -39,6 +56,14 @@ export interface AgentsContract {
 export function createAgentsContract(ctx: AgentsContext): AgentsContract {
   const publish = (e: AgentEvent): void => ctx.bus.publish(e);
   const now = (): string => new Date().toISOString();
+
+  /** onExit fires exactly once per session, on close OR natural exit. */
+  const fireExitHooks = (agentId: string, sessionId: string, def: AgentDefinitionT): void => {
+    if (ctx.exitHooksFired.has(sessionId)) return;
+    ctx.exitHooksFired.add(sessionId);
+    void runEventHooks(ctx, def, 'onExit', { sessionId });
+    void agentId;
+  };
 
   return {
     defineAgent: (def, clientOpId) => registry.defineAgent(ctx, def, clientOpId),
@@ -58,10 +83,16 @@ export function createAgentsContract(ctx: AgentsContext): AgentsContract {
       }
       const def = found.value;
       const model = opts?.model ?? def.model; // at-spawn override GUARANTEED (AGT-003)
+      // S2a (§22 ruling 5): resolve skill id refs → dirs BEFORE spawning; an
+      // unknown id fails typed — no session starts without its declared skills.
+      const resolved = await skillsStore.resolveSkillDirs(ctx, def.skills);
+      if (!resolved.ok) return { ok: false, error: resolved.error };
       const adapter = ctx.adapters[def.provider];
       let spawned;
       try {
-        spawned = await adapter.spawn(agentId, def.provider, { ...(opts ?? {}), model });
+        spawned = await adapter.spawn(agentId, def.provider, {
+          ...(opts ?? {}), model, skills: [...resolved.value, ...(opts?.skills ?? [])],
+        });
       } catch (cause) {
         // C §11: provider outage = typed error + presence offline; never silent stall
         publish({
@@ -79,12 +110,20 @@ export function createAgentsContract(ctx: AgentsContext): AgentsContract {
         if (e.type === 'activity') {
           publish({ type: 'activity', agentId, sessionId: spawned.sessionId, at: e.at, activity: e.activity });
         } else if (e.type === 'exited') {
+          fireExitHooks(agentId, spawned.sessionId, def);
           publish({
             type: 'offline', agentId, sessionId: spawned.sessionId, at: e.at,
             reason: ctx.closedSessions.has(spawned.sessionId) ? 'closed' : 'exited',
           });
         }
       });
+      // S2a hooks: onSpawn fires on the spawn path (2s budget); injections are
+      // buffered and prepend the session's FIRST input (DEC-S2-2). A failing
+      // hook never blocks the spawn (DEC-S2-3).
+      const spawnHooks = await runEventHooks(ctx, def, 'onSpawn', { sessionId: spawned.sessionId });
+      if (spawnHooks.injections.length > 0) {
+        ctx.pendingInjections.set(spawned.sessionId, spawnHooks.injections);
+      }
       publish({ type: 'spawned', agentId, sessionId: spawned.sessionId, at: now() });
       publish({ type: 'online', agentId, sessionId: spawned.sessionId, at: now() });
       return {
@@ -106,12 +145,46 @@ export function createAgentsContract(ctx: AgentsContext): AgentsContract {
       };
     },
 
-    // OD-C2 (R3-16): hook engine ships S2; signature declared for stability.
-    async attachHook(_agentId, _event, _action, _clientOpId) {
-      return {
-        ok: false,
-        error: unsupportedOperation('attachHook', 'hook engine ships in S2', 'OD-C2'),
-      };
+    attachHook: (agentId, event, action, clientOpId) =>
+      registry.attachHook(ctx, agentId, { event, action }, clientOpId),
+    detachHook: (agentId, hookId, clientOpId) =>
+      registry.detachHook(ctx, agentId, hookId, clientOpId),
+
+    registerSkill: (input, clientOpId) => skillsStore.registerSkill(ctx, input, clientOpId),
+    getSkill: (id) => skillsStore.getSkill(ctx, id),
+    listSkills: (filter) => skillsStore.listSkills(ctx, filter),
+
+    async sendToSession(sessionId, input) {
+      const meta = ctx.sessions.get(sessionId);
+      const adapter = meta
+        ? ctx.adapters[meta.provider]
+        : Object.values(ctx.adapters).find((a) => a.attach(sessionId));
+      if (!adapter) return false;
+      let out = input;
+      if (meta) {
+        const found = await registry.getAgent(ctx, meta.agentId as AgentId);
+        if (found.ok && !isAbsent(found.value)) {
+          // buffered injections (onSpawn/onMessagePost) prepend FIRST, then
+          // this event's onMessagePre injections (creation order within each).
+          const pending = ctx.pendingInjections.get(sessionId) ?? [];
+          ctx.pendingInjections.delete(sessionId);
+          const pre = await runEventHooks(ctx, found.value, 'onMessagePre', { sessionId, messageText: input });
+          out = mergeInput([...pending, ...pre.injections], input);
+          const sent = adapter.send(sessionId, out);
+          // onMessagePost runs even when the send fails (the event happened);
+          // its injections buffer for the next input.
+          const post = await runEventHooks(ctx, found.value, 'onMessagePost', { sessionId, messageText: input });
+          if (post.injections.length > 0) {
+            ctx.pendingInjections.set(sessionId, [
+              ...(ctx.pendingInjections.get(sessionId) ?? []), ...post.injections,
+            ]);
+          }
+          return sent;
+        }
+      }
+      // Session unknown to this process (DEC-C1: sessions are in-memory) —
+      // no agent context, so no hooks; recorded in NOTES.md.
+      return adapter.send(sessionId, out);
     },
 
     subscribeAgentEvents: (handler) => ctx.bus.subscribe(handler),
@@ -119,9 +192,15 @@ export function createAgentsContract(ctx: AgentsContext): AgentsContract {
     attachLiveLane: (binding) => attachLiveLane(ctx, binding),
 
     closeSession(sessionId) {
+      const meta = ctx.sessions.get(sessionId);
       const adapter = Object.values(ctx.adapters).find((a) => a.attach(sessionId));
       if (!adapter) return false;
       ctx.closedSessions.add(sessionId);
+      if (meta) {
+        void registry.getAgent(ctx, meta.agentId as AgentId).then((found) => {
+          if (found.ok && !isAbsent(found.value)) fireExitHooks(meta.agentId, sessionId, found.value);
+        });
+      }
       return adapter.close(sessionId);
     },
   };

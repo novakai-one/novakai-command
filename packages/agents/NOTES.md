@@ -55,3 +55,31 @@ Ambiguities and judgment calls, one line each. Nothing here invents requirements
 - **M10** — mock adapter `__emit` test seam ships in production build; gate it behind an env flag or strip from dist in a follow-up.
 - **L4** — CLI `events --ms` is a fixed sleep, not "until session exit"; fine for S1 demos.
 - **L5** — terminal adapter close() doesn't await the runtime's exit event before reporting; state may briefly read 'running' after a successful kill.
+
+## S2a additions (agent def v2 · hooks engine v1 · skills store v1)
+
+10. **Lite→v2 upgrade-on-read:** S1 lite defs stored `hooks` as placeholder
+    `Ref[]` — uninterpretable as v2 subscriptions, so normalization maps them
+    to `[]` (in memory only; stored lines never rewritten, DEC-F10). Missing
+    `skills`/`instructions` default to `[]`/`''`.
+11. **Skills mechanism per adapter (§22 ruling 5):** mock RECORDS the resolved
+    dir list on the session (observable proof). kimi: native `--skills-dir
+    <dir>` flag (verified via `kimi --help`, repeatable). claude/codex:
+    `NOVAKAI_SKILLS` env (colon-joined dirs) is the DECLARED mechanism —
+    native support unverified, named gap. `TerminalRuntimeLike.create` gained
+    optional `argv`/`env` channels; runtimes that cannot forward them (the
+    S1 terminal host) silently ignore the fields — gap recorded here, not hidden.
+12. **Unknown skill id at spawn** → typed `NotFound`, no session starts
+    (never a silent drop).
+13. **onExit budget:** §22 ruling 14 specifies spawn-path 2s / send-path
+    500ms only; onExit rides the send-path 500ms budget (unspecified, chose
+    the stricter). onExit injections are traced but dropped (session is
+    ending; no next input exists).
+14. **sendToSession on a session unknown to this process** (DEC-C1 in-memory
+    sessions) sends WITHOUT hooks — no agent context exists; hooks require
+    the def. Cross-process CLI `send` therefore runs hook-free (noted, S3
+    session registry would close this).
+15. **Hook trace clientOpIds** are system-minted per fired action (they are
+    not retries of a user op; R3-10 dedup semantics don't apply).
+16. **attachHook validation errors** reuse `InvalidEnvelope` (closed-set
+    rejection) — no new error code invented.
