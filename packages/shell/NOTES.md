@@ -161,3 +161,15 @@ packages/shell/
   between-turn advisory would consume a full provider turn per focus change;
   real sessions rely on the send-time context line (ruling 1's push mechanism
   itself is proven in packages/agents tests + the mock path).
+- **Inspector (S2b)**: UI-side component registry `ui/inspector/registry.ts`
+  maps kind → React screen; the mount contract's `registerScreen(kindRef,
+  screenId)` remains the declaration seam. Generic inspector (envelope +
+  payload) is the ruling-10 fallback; message kind has a proper screen with
+  Reply as its one primary action (`invokeAction` handlers are per
+  (kind, actionId) — breaking change to the S1 plumbing, no prior consumers).
+- **Themes (S2b)**: `motion` setting (full/reduced) added — reduced-motion is
+  now an exposed setting on top of the OS media query (DEC-S2-9). Density +
+  sub-AA accent blocking were already live from S1 and are now test-pinned.
+- **Activity (S2b)**: adapter heuristic emits `activity: 'idle'` after the
+  quiet window; PresenceTracker maps it to online (calm), not typing. Verified
+  live: real kimi session emitted working → idle 5s later (2026-07-28).
