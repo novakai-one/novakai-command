@@ -43,6 +43,8 @@ export interface EngineOptions {
   lockTimeoutMs?: number;        // default 5000 (§0)
   /** @internal test seam: fail the next trace append once. */
   failNextTraceAppend?: { cause: string };
+  /** @internal test seam: fail the next object append once. */
+  failNextObjectAppend?: { cause: string };
 }
 
 export interface ReadRecord {
@@ -74,12 +76,15 @@ export class StoreEngine {
   private bootLockError: StoreError | null = null;
   /** @internal test seam: fail the next trace append once. */
   failNextTraceAppend?: { cause: string };
+  /** @internal test seam: fail the next object append once. */
+  failNextObjectAppend?: { cause: string };
 
   constructor(options: EngineOptions) {
     this.root = options.root;
     this.legacyRoot = options.legacyRoot;
     this.lockTimeoutMs = options.lockTimeoutMs ?? 5000;
     if (options.failNextTraceAppend) this.failNextTraceAppend = options.failNextTraceAppend;
+    if (options.failNextObjectAppend) this.failNextObjectAppend = options.failNextObjectAppend;
   }
 
   // ── file helpers ──────────────────────────────────────────────────────
@@ -470,7 +475,21 @@ export class StoreEngine {
         }
       }
       const line = JSON.stringify(this.wrapRecord(flat, { opId, clientOpId, version }));
-      this.appendLineFsync(this.storePath(kind), line); // (1) object append + fsync
+      try {
+        const failObj = this.failNextObjectAppend;
+        if (failObj) {
+          delete this.failNextObjectAppend;
+          throw new Error(failObj.cause); // test seam: injected disk failure
+        }
+        this.appendLineFsync(this.storePath(kind), line); // (1) object append + fsync
+      } catch (cause) {
+        // M4: a failed object append is typed data, never a raw throw across
+        // the contract seam. Nothing was appended; the op is retryable.
+        return {
+          ok: false,
+          error: err('ObjectWriteFailed', `object append failed: ${String(cause)}`, { opId, cause: String(cause) }, true),
+        };
+      }
       const traces = this.readTraces();
       const trace: TraceLineT = {
         kind: 'trace', id: `trace_${randomUUID()}`, schemaVersion: 1,

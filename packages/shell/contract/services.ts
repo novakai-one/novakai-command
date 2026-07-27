@@ -3,6 +3,7 @@
 // bridge (real packages/messaging + foundation) or an in-memory mock (tests).
 import type { AgentEvent, LayoutRecord, PresenceSource, SettingsRecord } from './types.js';
 import type { SetSettingError } from './settings.js';
+import type { PersistFailedError } from './errors.js';
 
 export interface ConversationSummary {
   id: string;             // ConversationId — shell-side conversation identity
@@ -44,8 +45,9 @@ export interface ShellServices {
   subscribe(events: MessagingEvents): () => void;
 
   // layout + settings (shell-owned kinds)
-  getLayout(): Promise<{ record: LayoutRecord; version: number }>;
-  setLayout(patch: Partial<LayoutRecord>): Promise<{ record: LayoutRecord; version: number }>;
+  // M4: write/materialise failures are typed PersistFailed Results, never rejections.
+  getLayout(): Promise<{ ok: true; value: { record: LayoutRecord; version: number } } | { ok: false; error: PersistFailedError }>;
+  setLayout(patch: Partial<LayoutRecord>): Promise<{ ok: true; value: { record: LayoutRecord; version: number } } | { ok: false; error: PersistFailedError }>;
   getSettings(): Promise<SettingsRecord[]>;
   setSetting(key: string, value: unknown, opts?: { derivedFrom?: string; theme?: 'dark' | 'light' }):
     Promise<{ ok: true; value: SettingsRecord } | { ok: false; error: SetSettingError }>;

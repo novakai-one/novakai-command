@@ -11,6 +11,7 @@ import {
 import { LAYOUT_MAIN_ID, LayoutRecord, SettingsRecord } from './types.js';
 import type { LayoutDriver } from './layout.js';
 import type { SettingsDriver } from './settings.js';
+import { fail, ok, persistFailed } from './errors.js';
 
 export interface ShellPersistence {
   handle: ScopedStoreHandle;
@@ -25,6 +26,8 @@ export function composeShellPersistence(opts: {
   legacyRoot?: string;
   principal: string;
   lockTimeoutMs?: number;
+  /** @internal test seam: injected object-append failure (M4 typed-error tests). */
+  failNextObjectAppend?: { cause: string };
 }): ShellPersistence {
   const handle = composeHandle({
     root: opts.root,
@@ -33,6 +36,7 @@ export function composeShellPersistence(opts: {
     allowedKinds: ['layout', 'settings'],
     principal: opts.principal,
     lockTimeoutMs: opts.lockTimeoutMs,
+    ...(opts.failNextObjectAppend ? { failNextObjectAppend: opts.failNextObjectAppend } : {}),
   });
 
   const layoutDriver: LayoutDriver = {
@@ -44,14 +48,15 @@ export function composeShellPersistence(opts: {
       return { record: parsed.data, version: res.value.version };
     },
     async write(patch, expectedVersion) {
+      // M4: store failures are typed PersistFailed Results, never raw throws.
       if (expectedVersion === 0) {
         const res = await createObject<LayoutRecord>(handle, patch as LayoutRecord, clientOpId());
-        if (!res.ok) throw new Error(`layout create failed: ${res.error.code} ${res.error.message}`);
-        return { record: res.value.object as LayoutRecord, version: res.value.version };
+        if (!res.ok) return fail(persistFailed('layout', res.error.code, res.error.message));
+        return ok({ record: res.value.object as LayoutRecord, version: res.value.version });
       }
       const res = await updateObject<LayoutRecord>(handle, LAYOUT_MAIN_ID as unknown as ObjectId, patch, expectedVersion, clientOpId());
-      if (!res.ok) throw new Error(`layout update failed: ${res.error.code} ${res.error.message}`);
-      return { record: res.value.object as LayoutRecord, version: res.value.version };
+      if (!res.ok) return fail(persistFailed('layout', res.error.code, res.error.message));
+      return ok({ record: res.value.object as LayoutRecord, version: res.value.version });
     },
   };
 
@@ -81,12 +86,12 @@ export function composeShellPersistence(opts: {
       const existing = await getObject<SettingsRecord>(handle, 'settings', record.id as unknown as ObjectId);
       if (existing.ok && !('absent' in existing.value)) {
         const res = await updateObject<SettingsRecord>(handle, record.id as unknown as ObjectId, record, existing.value.version, clientOpId());
-        if (!res.ok) throw new Error(`settings update failed: ${res.error.code} ${res.error.message}`);
-        return res.value.object as SettingsRecord;
+        if (!res.ok) return fail(persistFailed('settings', res.error.code, res.error.message));
+        return ok(res.value.object as SettingsRecord);
       }
       const res = await createObject<SettingsRecord>(handle, record, clientOpId());
-      if (!res.ok) throw new Error(`settings create failed: ${res.error.code} ${res.error.message}`);
-      return res.value.object as SettingsRecord;
+      if (!res.ok) return fail(persistFailed('settings', res.error.code, res.error.message));
+      return ok(res.value.object as SettingsRecord);
     },
   };
 

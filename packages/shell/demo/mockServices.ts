@@ -79,13 +79,13 @@ export function createMockServices(opts: { seeded?: boolean } = {}): ShellServic
       setTimeout(() => pe({ type: 'offline', agentId, sessionId: 'sess_mock', at: at(), reason: 'closed' }), 6000);
       return { ok: true as const, conversation: c };
     },
-    async getLayout() { return layout; },
+    async getLayout() { return { ok: true as const, value: layout }; },
     async setLayout(patch) {
       layout = {
         record: { ...layout.record, ...patch } as LayoutRecord,
         version: layout.version + 1,
       };
-      return layout;
+      return { ok: true as const, value: layout };
     },
     async getSettings() { return settingsStore; },
     async setSetting(key, value, o) {

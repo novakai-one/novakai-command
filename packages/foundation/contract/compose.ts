@@ -17,6 +17,8 @@ export interface ComposeOptions {
   lockTimeoutMs?: number;
   /** @internal test seam: injected trace failure. */
   failNextTraceAppend?: { cause: string };
+  /** @internal test seam: injected object-append failure. */
+  failNextObjectAppend?: { cause: string };
 }
 
 const engineCache = new Map<string, StoreEngine>();
@@ -35,6 +37,7 @@ export function composeEngine(options: ComposeOptions): StoreEngine {
   // Failure-injection seam applies per composition, not per cache key, so a
   // within-session retry reconciles against the SAME booted engine (R3-10).
   if (options.failNextTraceAppend) engine.failNextTraceAppend = options.failNextTraceAppend;
+  if (options.failNextObjectAppend) engine.failNextObjectAppend = options.failNextObjectAppend;
   return engine;
 }
 

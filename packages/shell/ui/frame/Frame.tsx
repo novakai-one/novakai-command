@@ -20,11 +20,17 @@ export function Frame(props: {
   railTop?: React.ReactNode;
 }) {
   const [layout, setLayoutState] = useState<LayoutRecord | null>(null);
+  const [persistError, setPersistError] = useState<string | null>(null);
   const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     let alive = true;
-    props.services.getLayout().then(({ record }) => { if (alive) setLayoutState(record); });
+    props.services.getLayout().then((res) => {
+      if (!alive) return;
+      // M4: typed Result — a failed read/materialise surfaces inline, never swallowed
+      if (res.ok) setLayoutState(res.value.record);
+      else setPersistError(res.error.message);
+    });
     return () => { alive = false; };
   }, [props.services]);
 
@@ -39,12 +45,22 @@ export function Frame(props: {
         composer: { ...cur.composer, ...(patch.composer ?? {}) },
       };
       if (persistTimer.current) clearTimeout(persistTimer.current);
-      persistTimer.current = setTimeout(() => { void props.services.setLayout(merged); }, 400);
+      persistTimer.current = setTimeout(() => {
+        // M4: surface setLayout failures as a small inline error — never void-swallowed
+        void props.services.setLayout(merged).then((res) => {
+          setPersistError(res.ok ? null : res.error.message);
+        });
+      }, 400);
       return merged;
     });
   }, [props.services]);
 
-  if (!layout) return null; // layout read is instant; blank paint avoided by CSS ground
+  // layout read failed at the seam — draw the error, never a blank frame
+  if (!layout) {
+    return persistError ? (
+      <div className="nv-frame"><p className="nv-persist-error" role="alert">Layout could not be loaded: {persistError}</p></div>
+    ) : null; // layout read is instant; blank paint avoided by CSS ground
+  }
 
   const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
   const railEl = (
@@ -88,6 +104,12 @@ export function Frame(props: {
 
   return (
     <div className="nv-frame">
+      {persistError && (
+        <p className="nv-persist-error" role="alert"
+           style={{ position: 'absolute', bottom: 8, right: 12, margin: 0, fontSize: 12 }}>
+          Layout change not saved: {persistError}
+        </p>
+      )}
       {layout.rail.side === 'left' && <>{railEl}{railSplitter}</>}
       <main className="nv-workspace" style={{ minWidth: layout.workspace.minWidth }}>
         {props.breadcrumb.length > 0 && (

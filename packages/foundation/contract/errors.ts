@@ -21,6 +21,7 @@ export type LockBusyError = ContractError<'LockBusy', { waitedMs: number; timeou
 export type TraceIncompleteError = ContractError<'TraceIncomplete',
   { opId: ServerOpId; clientOpId: ClientOpId; objectId: ObjectId }>;
 export type TraceWriteFailedError = ContractError<'TraceWriteFailed', { opId: ServerOpId; cause: string }>;
+export type ObjectWriteFailedError = ContractError<'ObjectWriteFailed', { opId: ServerOpId; cause: string }>;
 export type FilterInvalidError = ContractError<'FilterInvalid', { filter: unknown; reason: string }>;
 export type NotFoundError = ContractError<'NotFound', { ref: Ref }>;
 // §11 ruling 5: writes to a quarantined id are rejected `Quarantined` until resolveQuarantine.
@@ -30,7 +31,7 @@ export type AuthError = ContractError<'AuthFailed', { cause: string }>;
 
 export type StoreError =
   | InvalidEnvelopeError | KindUnknownError | ScopeViolationError | CasConflictError
-  | LockBusyError | TraceIncompleteError | TraceWriteFailedError | FilterInvalidError
+  | LockBusyError | TraceIncompleteError | TraceWriteFailedError | ObjectWriteFailedError | FilterInvalidError
   | NotFoundError | QuarantinedError | AuthError;
 
 export function err<C extends string, P>(code: C, message: string, details: P, retryable: boolean): ContractError<C, P> {

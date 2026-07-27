@@ -8,10 +8,10 @@ import { THEMES, accentPasses, contrastRatio, GRAPHIC_FLOOR } from './contrast.j
 import {
   invalidSettingValue, unknownSettingKey, contrastBlocked, ok, fail,
   type Result,
-  type ContrastBlockedError, type InvalidSettingValueError, type UnknownSettingKeyError,
+  type ContrastBlockedError, type InvalidSettingValueError, type PersistFailedError, type UnknownSettingKeyError,
 } from './errors.js';
 
-export type SetSettingError = UnknownSettingKeyError | InvalidSettingValueError | ContrastBlockedError;
+export type SetSettingError = UnknownSettingKeyError | InvalidSettingValueError | ContrastBlockedError | PersistFailedError;
 
 // ── Key registry ────────────────────────────────────────────────────────────
 interface KeyRule {
@@ -96,7 +96,7 @@ export function validateSetting(
 // ── Driver seam (foundation-backed in node; bridge-backed in browser) ───────
 export interface SettingsDriver {
   readAll(): Promise<SettingsRecord[]>;
-  write(record: { key: string; value: unknown; derivedFrom?: string }): Promise<SettingsRecord>;
+  write(record: { key: string; value: unknown; derivedFrom?: string }): Promise<Result<SettingsRecord, PersistFailedError>>;
 }
 
 export async function getSettings(driver: SettingsDriver): Promise<SettingsRecord[]> {
@@ -111,8 +111,9 @@ export async function setSetting(
 ): Promise<Result<SettingsRecord, SetSettingError>> {
   const v = validateSetting(key, value, opts);
   if (!v.ok) return fail(v.error);
-  const record = await driver.write({ key, value, derivedFrom: opts.derivedFrom });
-  return ok(record);
+  const written = await driver.write({ key, value, derivedFrom: opts.derivedFrom });
+  if (!written.ok) return fail(written.error); // M4: typed store failure, never a throw
+  return ok(written.value);
 }
 
 /** Convenience: current value of one key from a record list (last line wins). */

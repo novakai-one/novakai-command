@@ -1,11 +1,13 @@
 // shell/contract/layout.ts — layout object API (SHL-002/003, DEC-S3, R3-7).
 // Layout is DATA, not code; every frame mutation is a settings edit.
+// M4: write failures cross the seam as typed PersistFailed Results, never throws.
 import { DEFAULT_LAYOUT, LAYOUT_MAIN_ID, LayoutRecord } from './types.js';
+import { fail, ok, type PersistFailedError, type Result } from './errors.js';
 
 /** Persistence seam. Node composition: foundation CAS-backed. Browser: bridge. */
 export interface LayoutDriver {
   read(): Promise<{ record: LayoutRecord; version: number } | null>;
-  write(patch: Partial<LayoutRecord>, expectedVersion: number): Promise<{ record: LayoutRecord; version: number }>;
+  write(patch: Partial<LayoutRecord>, expectedVersion: number): Promise<Result<{ record: LayoutRecord; version: number }, PersistFailedError>>;
 }
 
 export function defaultLayoutRecord(now: string, createdBy: string): LayoutRecord {
@@ -20,17 +22,18 @@ export function defaultLayoutRecord(now: string, createdBy: string): LayoutRecor
   };
 }
 
-export async function getLayout(driver: LayoutDriver): Promise<LayoutRecord> {
+export async function getLayout(driver: LayoutDriver): Promise<Result<LayoutRecord, PersistFailedError>> {
   const cur = await driver.read();
-  if (cur) return cur.record;
+  if (cur) return ok(cur.record);
   // First boot: persist the default so "last good" always exists.
   const created = await driver.write(defaultLayoutRecord(new Date().toISOString(), 'sys_shell'), 0);
-  return created.record;
+  if (!created.ok) return fail(created.error);
+  return ok(created.value.record);
 }
 
-export async function getLayoutVersioned(driver: LayoutDriver): Promise<{ record: LayoutRecord; version: number }> {
+export async function getLayoutVersioned(driver: LayoutDriver): Promise<Result<{ record: LayoutRecord; version: number }, PersistFailedError>> {
   const cur = await driver.read();
-  if (cur) return cur;
+  if (cur) return ok(cur);
   return driver.write(defaultLayoutRecord(new Date().toISOString(), 'sys_shell'), 0);
 }
 
@@ -38,16 +41,17 @@ export async function getLayoutVersioned(driver: LayoutDriver): Promise<{ record
 export async function setLayout(
   driver: LayoutDriver,
   patch: Partial<LayoutRecord>,
-): Promise<{ record: LayoutRecord; version: number }> {
+): Promise<Result<{ record: LayoutRecord; version: number }, PersistFailedError>> {
   const cur = await getLayoutVersioned(driver);
+  if (!cur.ok) return fail(cur.error);
   const merged: LayoutRecord = {
-    ...cur.record,
+    ...cur.value.record,
     ...patch,
-    rail: { ...cur.record.rail, ...(patch.rail ?? {}) },
-    workspace: { ...cur.record.workspace, ...(patch.workspace ?? {}) },
-    inspector: { ...cur.record.inspector, ...(patch.inspector ?? {}) },
-    composer: { ...cur.record.composer, ...(patch.composer ?? {}) },
+    rail: { ...cur.value.record.rail, ...(patch.rail ?? {}) },
+    workspace: { ...cur.value.record.workspace, ...(patch.workspace ?? {}) },
+    inspector: { ...cur.value.record.inspector, ...(patch.inspector ?? {}) },
+    composer: { ...cur.value.record.composer, ...(patch.composer ?? {}) },
   };
   LayoutRecord.parse(merged); // never persist a record the schema rejects
-  return driver.write(merged, cur.version);
+  return driver.write(merged, cur.value.version);
 }

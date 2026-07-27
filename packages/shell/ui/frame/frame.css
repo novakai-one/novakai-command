@@ -70,3 +70,10 @@
 .nv-collapse-btn {
   margin: auto 8px 10px;
 }
+
+/* M4: small inline persistence error — failures are drawn, never swallowed */
+.nv-persist-error {
+  color: var(--danger, #e06c75);
+  font: 12px/1.4 var(--font-ui, system-ui, sans-serif);
+  z-index: 30;
+}

@@ -15,6 +15,8 @@ export type ActionNotFoundError = ContractError<'ActionNotFound', { ref: { kind:
 export type ContrastBlockedError = ContractError<'ContrastBlocked', { accent: string; ratio: number; floor: number }>;
 export type UnknownSettingKeyError = ContractError<'UnknownSettingKey', { key: string; registered: string[] }>;
 export type InvalidSettingValueError = ContractError<'InvalidSettingValue', { key: string; reason: string }>;
+/** M4: a store-layer write failure crossing the shell seam — typed, never thrown. */
+export type PersistFailedError = ContractError<'PersistFailed', { store: string; storeCode: string; cause: string }>;
 
 export type ShellOwnError =
   | UnknownCommandError
@@ -49,4 +51,11 @@ export const invalidSettingValue = (key: string, reason: string): InvalidSetting
   message: `invalid value for "${key}": ${reason}`,
   details: { key, reason },
   retryable: false,
+});
+
+export const persistFailed = (store: string, storeCode: string, cause: string): PersistFailedError => ({
+  code: 'PersistFailed',
+  message: `${store} write failed (${storeCode}): ${cause}`,
+  details: { store, storeCode, cause },
+  retryable: true, // store errors carry their own retryable flag; writes are safe to retry with the same clientOpId
 });
