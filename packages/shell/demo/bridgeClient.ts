@@ -15,7 +15,13 @@ export function createBridgeServices(url: string, onPresence: (e: AgentEvent) =>
 
     const timeout = setTimeout(() => { ws.close(); reject(new Error('bridge timeout')); }, 3000);
 
-    ws.onopen = () => { clearTimeout(timeout); resolve(api); };
+    ws.onopen = () => {
+      clearTimeout(timeout);
+      // Show the real-Kimi affordance only when the bridge has the CLI.
+      void call<{ realKimi: boolean }>('getCapabilities').then((caps) => {
+        if (caps.realKimi) api.spawnRealKimiAgent = (title) => call('spawnRealKimi', { title });
+      }).catch(() => undefined).finally(() => resolve(api));
+    };
     ws.onerror = () => { clearTimeout(timeout); reject(new Error('bridge unreachable')); };
     ws.onmessage = (ev) => {
       const frame = JSON.parse(String(ev.data));

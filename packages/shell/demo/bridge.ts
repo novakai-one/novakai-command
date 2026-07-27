@@ -15,6 +15,10 @@ import type { PersonId } from '../../messaging/public/index.js';
 import {
   composeAgents, createAgentsContract, mockOf, type LiveLaneSender,
 } from '../../agents/contract/index.js';
+// Demo-scoped REAL provider path: drives the actual `kimi` CLI in print mode
+// (see kimiCliRuntime.ts for why this replaces the TUI terminal host here).
+import { existsSync } from 'node:fs';
+import { createKimiCliRuntime, defaultKimiCliPath } from './kimiCliRuntime.js';
 
 // foundation brands mints `op_${uuid}`; shell never imports foundation from
 // the demo, so mint the same shape locally for defineAgent calls.
@@ -70,11 +74,13 @@ for (const [token, allow] of [['demo-token-kimi', ME], ['demo-token-fable', ME],
 }
 // Pool persons open their doors to Chris too (user-created agent chats).
 const poolTokens: string[] = [];
+const poolSessions = new Map<string, messaging.MessagingSession>();
 for (let i = 0; i < 10; i++) {
   poolTokens.push(`demo-token-pool-${i}`);
   const a = await embedded.authenticate({ token: `demo-token-pool-${i}` });
   if (a.kind === 'authenticated') {
     await a.session.setContactPolicy({ allowlist: [ME], defaultRule: 'deny' });
+    poolSessions.set(`person_pool${i}`, a.session);
   }
 }
 let poolNext = 0;
@@ -94,15 +100,27 @@ interface Convo {
 }
 const convos = new Map<string, Convo>();
 // ── REAL packages/agents as the PresenceSource (SHL-006) ───────────────────
-// No terminal runtime in the demo → every provider uses the mock adapter
-// (same seam, AGT-001); events still flow agents bus → bridge → shell UI.
-const agentsCtx = composeAgents({ root: NOVAKAI_ROOT, principal: ME });
+// When the real kimi CLI is installed, inject the demo-scoped kimiCliRuntime
+// as the terminal runtime: provider 'kimi' spawns go to the REAL CLI, while
+// claude/codex (unused in the demo) resolve through the same seam and mock
+// stays mock. Without the CLI, behavior is exactly the pre-existing all-mock
+// composition.
+const kimiCliPath = defaultKimiCliPath();
+const realKimiAvailable = existsSync(kimiCliPath);
+const kimiRuntime = realKimiAvailable ? createKimiCliRuntime({ cwd: repoRoot, cliPath: kimiCliPath }) : null;
+const agentsCtx = composeAgents({
+  root: NOVAKAI_ROOT,
+  principal: ME,
+  ...(kimiRuntime ? { terminalRuntime: kimiRuntime, cwd: repoRoot } : {}),
+});
 const agents = createAgentsContract(agentsCtx);
 const mockAdapter = mockOf(agentsCtx);
+/** convoId → live REAL-kimi session (for forwarding Chris's messages). */
+const realSessions = new Map<string, { sessionId: string; personId: string }>();
 
-async function defineDemoAgent(displayName: string): Promise<string> {
+async function defineDemoAgent(displayName: string, provider: 'mock' | 'kimi' = 'mock'): Promise<string> {
   const res = await agents.defineAgent(
-    { displayName, provider: 'mock', model: 'mock-model', hooks: [], status: 'defined', permissionLevel: 'private' },
+    { displayName, provider, model: provider === 'kimi' ? 'kimi-cli' : 'mock-model', hooks: [], status: 'defined', permissionLevel: 'private' },
     mintOpId(),
   );
   if (!res.ok) throw new Error(`defineAgent failed: ${res.error.message}`);
@@ -226,6 +244,49 @@ const methods: Record<string, (p: never) => Promise<unknown>> = {
     setTimeout(() => agents.closeSession(sessionId as never), 6000);
     return { ok: true as const, conversation: s };
   },
+  async getCapabilities() {
+    return { realKimi: realKimiAvailable };
+  },
+  // REAL provider affordance: define + spawn an agents-registry agent on the
+  // REAL kimi CLI (demo-scoped kimiCliRuntime), then bind the live lane so
+  // the CLI's actual replies land in the thread. Chris's messages are
+  // forwarded into the session in sendMessage below.
+  async spawnRealKimi(p: { title?: string }) {
+    if (!kimiRuntime) return { ok: false as const, error: `kimi CLI not found at ${kimiCliPath}` };
+    if (poolNext >= poolTokens.length) return { ok: false as const, error: 'demo pool exhausted (10 agent chats per restart)' };
+    const title = p.title?.trim() || `Kimi (real) ${realSessions.size + 1}`;
+    const agentId = await defineDemoAgent(title, 'kimi');
+    const spawn = await agents.spawnAgent(agentId as never);
+    if (!spawn.ok) return { ok: false as const, error: spawn.error.message };
+    const sessionId = spawn.value.sessionId;
+    const personId = `person_pool${poolNext++}`;
+    const agentSession = poolSessions.get(personId)!;
+    const convoId = `conv_${randomUUID().slice(0, 8)}`;
+    seedConvo(convoId, `person:${personId}`, title, 'agent', agentId);
+    const c = convos.get(convoId)!;
+    const s = toSummary(c);
+    broadcast('conversation', s);
+    realSessions.set(convoId, { sessionId, personId });
+
+    // Live lane (R3-1): REAL CLI output chunks → real messaging replies.
+    const sender: LiveLaneSender = {
+      async sendMessage(input: unknown) {
+        const res = await agentSession.sendMessage(input as never);
+        if (res.kind === 'ok') {
+          const v = res.value as { threadId: string; messageId: string };
+          if (!c.threadId) c.threadId = v.threadId;
+          broadcast('message', {
+            id: v.messageId, conversationId: convoId, senderId: personId,
+            text: (input as { body: { text: string } }).body.text,
+            createdAt: new Date().toISOString(),
+          });
+        }
+        return res;
+      },
+    };
+    agents.attachLiveLane({ sessionId, address: `person:${ME}`, sender });
+    return { ok: true as const, conversation: s };
+  },
   async pinConversation(p: { id: string; pinned: boolean }) {
     const c = convos.get(p.id); if (c) { c.pinned = p.pinned; broadcast('conversation', toSummary(c)); }
   },
@@ -264,6 +325,17 @@ const methods: Record<string, (p: never) => Promise<unknown>> = {
       text: p.text, createdAt: new Date().toISOString(),
     };
     broadcast('message', message);
+    // REAL kimi conversations: forward the text into the live CLI session;
+    // the reply comes back through the live lane as a messaging message.
+    const real = realSessions.get(p.conversationId);
+    if (real) {
+      const sent = agentsCtx.adapters.kimi.send(real.sessionId, p.text);
+      if (!sent) broadcast('message', {
+        id: `note_${randomUUID().slice(0, 8)}`, conversationId: p.conversationId,
+        senderId: real.personId, text: '⚠️ session is no longer running',
+        createdAt: new Date().toISOString(),
+      });
+    }
     return { ok: true, message };
   },
   async getLayout() {

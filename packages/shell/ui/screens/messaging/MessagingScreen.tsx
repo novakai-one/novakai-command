@@ -187,6 +187,12 @@ export function MessagingRail(props: {
           if (r.ok) props.onSelect(r.conversation.id);
         });
       } : undefined}
+      onSpawnReal={props.services.spawnRealKimiAgent ? () => {
+        void props.services.spawnRealKimiAgent!().then((r) => {
+          void props.services.listConversations().then(setConversations);
+          if (r.ok) props.onSelect(r.conversation.id);
+        });
+      } : undefined}
     />
   );
 }

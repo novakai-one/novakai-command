@@ -26,6 +26,7 @@ export function ConversationList(props: {
   onSelect(id: string): void;
   onNew(): void;
   onSpawnMock?(): void;
+  onSpawnReal?(): void;
 }) {
   const byGroup = new Map<GroupKey, ConversationSummary[]>();
   for (const c of props.conversations) {
@@ -41,6 +42,11 @@ export function ConversationList(props: {
         {props.onSpawnMock && (
           <Button style={{ width: '100%', marginTop: 6 }} onClick={props.onSpawnMock}>
             ⚡ Spawn mock agent
+          </Button>
+        )}
+        {props.onSpawnReal && (
+          <Button style={{ width: '100%', marginTop: 6 }} onClick={props.onSpawnReal}>
+            🌙 Spawn real Kimi
           </Button>
         )}
       </div>

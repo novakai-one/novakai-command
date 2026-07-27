@@ -60,4 +60,8 @@ export interface ShellServices {
   // agent session so presence dot / typing bubble / activity line move live.
   // Optional: only demo backends implement it.
   spawnMockAgent?(title?: string): Promise<{ ok: true; conversation: ConversationSummary } | { ok: false; error: string }>;
+  // Demo affordance: spawn a REAL kimi-CLI-backed agent (present only when
+  // the demo bridge reports the CLI is installed). Replies stream through the
+  // agents live-lane into the thread.
+  spawnRealKimiAgent?(title?: string): Promise<{ ok: true; conversation: ConversationSummary } | { ok: false; error: string }>;
 }
