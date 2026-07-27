@@ -1,0 +1,85 @@
+/* shell/ui/kit/tokens.css — the ONE token source (DESIGN-LAWS §16).
+   Dark theme default; light theme is a real design, not an inversion.
+   Elevation ramps one direction (16a): rail → workspace → inspector, ascending.
+   Every pair in contract/contrast.ts is computed-checked by tools/check-contrast.mjs. */
+
+:root, [data-theme="dark"] {
+  color-scheme: dark;
+  --ground: #0d0d0f;
+  --rail: #121214;
+  --workspace: #1b1b1e;
+  --inspector: #252529;
+  --ink: #ececee;
+  --ink-2: #b4b4bb;
+  --ink-3: #8e8e97;
+  --accent: #d0a14b;        /* ONE signal. Attention only. */
+  --sage: #78a886;          /* resolved + presence liveness — never a signal */
+  --brand: #c98f2f;         /* wordmark amber — separate from accent (16b) */
+  --danger: #cf7675;
+  --live-dot: var(--sage);          /* dedicated liveness token (R3-25) */
+  --live-ring: rgba(120, 168, 134, 0.45);
+  --hairline: rgba(236, 236, 238, 0.07);
+  --hover: rgba(236, 236, 238, 0.045);
+  --selected: rgba(236, 236, 238, 0.085);
+  --focus-ring: rgba(236, 236, 238, 0.5);
+  --bubble-theirs: #252529;
+  --bubble-mine: #2e2e33;
+}
+
+[data-theme="light"] {
+  color-scheme: light;
+  --ground: #d9d9dc;
+  --rail: #e6e6e9;
+  --workspace: #f2f2f4;
+  --inspector: #fbfbfc;
+  --ink: #1a1a1e;
+  --ink-2: #3f3f46;
+  --ink-3: #60606a;
+  --accent: #8a6210;
+  --sage: #2f6b4a;
+  --brand: #8a6210;
+  --danger: #9c3534;
+  --live-dot: var(--sage);
+  --live-ring: rgba(47, 107, 74, 0.35);
+  --hairline: rgba(26, 26, 30, 0.1);
+  --hover: rgba(26, 26, 30, 0.05);
+  --selected: rgba(26, 26, 30, 0.09);
+  --focus-ring: rgba(26, 26, 30, 0.45);
+  --bubble-theirs: #ffffff;
+  --bubble-mine: #e4e4e8;
+}
+
+:root {
+  --font: "Inter", -apple-system, "SF Pro Text", "Segoe UI", sans-serif;
+  --mono: "SF Mono", "JetBrains Mono", ui-monospace, Menlo, monospace;
+  --radius: 5px;            /* 4–6px band (§16) */
+  --radius-sm: 4px;
+  --text-1: 13.5px;
+  --text-2: 12.5px;
+  --text-3: 11.5px;
+  --leading: 1.55;          /* generous line-height */
+  --motion-structural: 700ms;  /* §17: calm is slow */
+  --motion-micro: 260ms;
+  --ease: cubic-bezier(0.25, 0.1, 0.25, 1);
+}
+
+/* density: comfortable default; compact is a setting */
+[data-density="compact"] {
+  --text-1: 12.5px;
+  --text-2: 11.5px;
+  --row-pad-y: 5px;
+  --row-pad-x: 10px;
+}
+:root, [data-density="comfortable"] {
+  --row-pad-y: 8px;
+  --row-pad-x: 12px;
+}
+
+/* §20: reduced motion honoured — every animation collapses to instant. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

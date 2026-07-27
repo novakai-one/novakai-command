@@ -1,0 +1,19 @@
+{
+  // Node-side typecheck: the foundation-backed persistence layer + tools.
+  // The demo bridge (demo/bridge.ts) runs under tsx against messaging's TS
+  // source and is verified by RUNNING, not by this check (messaging's own
+  // sources are checked by its own package config).
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2022", "DOM"],
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "strict": true,
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "types": ["node"]
+  },
+  "include": ["contract/**/*.ts", "tools/**/*.ts", "demo/bridgeClient.ts", "demo/mockServices.ts"]
+}

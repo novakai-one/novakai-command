@@ -1,0 +1,32 @@
+{
+  "name": "@novakai/shell",
+  "version": "0.1.0",
+  "description": "Novakai Shell — frame, kit v1, messaging screens, composer, presence, settings (S1).",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "test": "vitest run && npm run test:contrast && npm run lint:accent",
+    "test:unit": "vitest run",
+    "test:contrast": "tsx tools/check-contrast.ts",
+    "lint:accent": "node tools/lint-accent.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "demo": "node tools/demo.mjs"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.1",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "@types/ws": "^8.18.1",
+    "@vitejs/plugin-react": "^4.3.1",
+    "tsx": "^4.15.7",
+    "typescript": "^5.5.2",
+    "vite": "^5.3.1",
+    "vitest": "^2.1.9",
+    "ws": "^8.17.0"
+  }
+}
