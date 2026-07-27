@@ -34,22 +34,68 @@ function plantOrphan(root: string, id: string): void {
   appendFileSync(path.join(root, 'settings.jsonl'), line + '\n');
 }
 
-test('crash recovery: kill between object and trace append → boot reconciliation quarantines the orphan', async () => {
+/** Plant an open quarantine tombstone directly (corrupt-record ruling path):
+ * tombstones apply ONLY to corrupt/unparseable records and trace-orphans —
+ * never to objects with a missing trace (S2 ruling). */
+function plantTombstone(root: string, refId: string): void {
+  const line = JSON.stringify({
+    envelope: {
+      kind: 'quarantine', id: `quarantine_${refId}`, schemaVersion: 1,
+      createdAt: new Date().toISOString(), permissionLevel: 'private', createdBy: 'sys_reconciler',
+    },
+    payload: {
+      quarantinedRef: { kind: 'settings', id: refId }, reason: 'corrupt_record', status: 'open',
+    },
+    meta: { opId: `srv_tomb-${refId}`, clientOpId: `op_tomb-${refId}`, version: 1 },
+  });
+  mkdirSync(root, { recursive: true });
+  appendFileSync(path.join(root, 'quarantine.jsonl'), line + '\n');
+}
+
+test('crash recovery (S2 ruling): kill between object and trace append → object readable with incomplete:true, NEVER tombstoned', async () => {
   const root = freshRoot();
   try {
     plantOrphan(root, 'settings_orphan');
     // new "process": fresh engine instance boots and reconciles
     const engine = new StoreEngine({ root });
     engine.boot();
+    // NO tombstone for a missing trace (tombstones = corrupt records / trace-orphans only)
     const quarantine = await listQuarantineBound(engine);
-    const tombstone = quarantine.items.find((t) => t.quarantinedRef.id === 'settings_orphan');
-    assert.ok(tombstone, 'orphan object must be tombstoned');
-    assert.equal(tombstone.reason, 'orphan_object_no_trace');
-    assert.equal(tombstone.status, 'open');
-    assert.equal(tombstone.createdBy, 'sys_reconciler');
+    assert.equal(quarantine.items.some((t) => t.quarantinedRef.id === 'settings_orphan'), false);
+    // readable with the incomplete flag, not hidden
+    const h = composeHandle({ root, capability: 'foundation', allowedKinds: ['settings'], principal: 'person_chris' });
+    const got = await getObject(h, 'settings', 'settings_orphan' as ObjectId);
+    assert.equal(got.ok, true);
+    if (got.ok && !isAbsent(got.value)) assert.equal(got.value.incomplete, true);
+    else assert.fail('orphan object must be readable, never hidden');
     // original line NEVER moved or rewritten (R3-4)
     const raw = readFileSync(path.join(root, 'settings.jsonl'), 'utf8');
     assert.ok(raw.includes('settings_orphan'));
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('crash recovery (S2 ruling): retry with same clientOpId reconciles — trace completed, flag cleared, no double-apply', async () => {
+  const root = freshRoot();
+  try {
+    plantOrphan(root, 'settings_retry');
+    new StoreEngine({ root }).boot(); // new "process"
+    const h = composeHandle({ root, capability: 'foundation', allowedKinds: ['settings'], principal: 'person_chris' });
+    // retry the original op after the restart: same payload, same clientOpId
+    const retry = await createObject(h, settingsPayload('settings_retry'), 'op_orphan-settings_retry' as ReturnType<typeof mintClientOpId>);
+    assert.equal(retry.ok, true);
+    if (retry.ok) assert.equal(retry.value.incomplete, false, 'reconciled object must have the flag cleared');
+    // no double-apply: exactly one object line for the id
+    const lines = readFileSync(path.join(root, 'settings.jsonl'), 'utf8')
+      .split('\n').filter((l) => l.includes('"id":"settings_retry"'));
+    assert.equal(lines.length, 1);
+    // trace now exists for the original opId
+    const traces = queryTraceBound(composeEngine({ root, capability: 'foundation', allowedKinds: ['settings'], principal: 'person_chris' }), { opId: 'srv_orphan-settings_retry' as never });
+    assert.equal((await traces).items.length, 1);
+    // getObject agrees: readable, complete
+    const got = await getObject(h, 'settings', 'settings_retry' as ObjectId);
+    assert.equal(got.ok, true);
+    if (got.ok && !isAbsent(got.value)) assert.equal(got.value.incomplete, false);
+    else assert.fail('reconciled object must be readable');
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -57,6 +103,7 @@ test('quarantine: readers skip quarantined ids; writers get Quarantined; resolve
   const root = freshRoot();
   try {
     plantOrphan(root, 'settings_orphan');
+    plantTombstone(root, 'settings_orphan'); // corrupt-record tombstone (the only kind that hides an object)
     const engine = new StoreEngine({ root });
     engine.boot();
     const h = composeHandle({ root, capability: 'foundation', allowedKinds: ['settings', 'quarantine'], principal: 'person_chris' });
@@ -96,6 +143,7 @@ test('quarantine: resolveQuarantine(dismiss) → status dismissed (human path)',
   const root = freshRoot();
   try {
     plantOrphan(root, 'settings_orphan2');
+    plantTombstone(root, 'settings_orphan2');
     new StoreEngine({ root }).boot();
     const engine = composeEngine({ root, capability: 'foundation', allowedKinds: ['settings'], principal: 'person_chris' });
     const quarantine = await listQuarantineBound(engine);

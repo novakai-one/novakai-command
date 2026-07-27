@@ -133,12 +133,9 @@ export async function createObject<T>(
       `schemaVersion ${flat!.schemaVersion} is newer than this code supports (${CURRENT_SCHEMA_VERSION})`,
       { kind, registered: Object.keys(KIND_FILES) }, false));
   }
-  if (engine.quarantinedIds().has(flat!.id)) {
-    const tombstone = engine.readTombstones().find((t) => t.quarantinedRef.id === flat!.id && t.status === 'open');
-    return fail(err('Quarantined', `object "${flat!.id}" is quarantined until resolveQuarantine`,
-      { ref: { kind, id: flat!.id }, tombstoneId: tombstone?.id ?? '' }, false));
-  }
-  // dedup: retry with same clientOpId returns prior outcome, no double-apply
+  // dedup FIRST (R3-10): a retry with the same clientOpId returns the prior
+  // outcome and reconciles a missing trace — even after a restart — instead of
+  // hitting the quarantine gate (S2 ruling).
   const prior = findPriorOp(engine, kind, clientOpId);
   if (prior) {
     if (!prior.traceComplete) {
@@ -148,15 +145,16 @@ export async function createObject<T>(
     const rec = readAllRecords(engine, kind).find((r) => r.envelope.id === prior.id);
     if (rec) return ok(toStoredObject<T>(engine, rec));
   }
-  const existing = readAllRecords(engine, kind).find((r) => r.envelope.id === flat!.id);
-  if (existing) {
-    return fail(err('CasConflict',
-      `object "${flat!.id}" already exists (version ${existing.version}) — use updateObject`,
-      { id: flat!.id as ObjectId, expectedVersion: 0, actualVersion: existing.version }, true));
+  if (engine.quarantinedIds().has(flat!.id)) {
+    const tombstone = engine.readTombstones().find((t) => t.quarantinedRef.id === flat!.id && t.status === 'open');
+    return fail(err('Quarantined', `object "${flat!.id}" is quarantined until resolveQuarantine`,
+      { ref: { kind, id: flat!.id }, tombstoneId: tombstone?.id ?? '' }, false));
   }
   // red gate 4: createdBy is system-derived from the token principal — always overridden
   const stamped = { ...flat!, createdBy: principalOf(handle) };
-  const res = engine.appendMutation(kind, stamped, 'create', clientOpId, 1);
+  // create-CAS runs INSIDE the engine lock (S1): a concurrent create on the
+  // same id loses with CasConflict instead of double-appending.
+  const res = engine.appendMutation(kind, stamped, 'create', clientOpId, 1, undefined, { mustBeAbsent: true });
   if (!res.ok) return fail(res.error);
   return ok({ object: res.value.object as T & EnvelopeT, version: res.value.version, incomplete: res.value.incomplete });
 }
@@ -189,10 +187,6 @@ export async function updateObject<T>(
     return fail(err('Quarantined', `object "${id}" is quarantined until resolveQuarantine`,
       { ref: { kind, id }, tombstoneId: tombstone?.id ?? '' }, false));
   }
-  if (rec.version !== expectedVersion) {
-    return fail(err('CasConflict', `CAS conflict on "${id}": expected v${expectedVersion}, actual v${rec.version}`,
-      { id, expectedVersion, actualVersion: rec.version }, true));
-  }
   const prior = findPriorOp(engine, kind, clientOpId);
   if (prior) {
     if (!prior.traceComplete) {
@@ -206,7 +200,10 @@ export async function updateObject<T>(
   const patchObj = { ...(patch as Record<string, unknown>) };
   for (const f of ENVELOPE_FIELDS) delete patchObj[f]; // envelope identity never patched
   const merged = { ...currentFlat, ...patchObj, schemaVersion: CURRENT_SCHEMA_VERSION };
-  const res = engine.appendMutation(kind, merged as EnvelopeT & Record<string, unknown>, 'update', clientOpId, rec.version + 1);
+  // CAS compare runs INSIDE the engine lock (S1): a concurrent updater at the
+  // same expectedVersion loses with CasConflict; the next version derives from
+  // the authoritative locked read.
+  const res = engine.appendMutation(kind, merged as EnvelopeT & Record<string, unknown>, 'update', clientOpId, rec.version + 1, undefined, { expectedVersion });
   if (!res.ok) return fail(res.error);
   return ok({ object: res.value.object as T & EnvelopeT, version: res.value.version, incomplete: res.value.incomplete });
 }

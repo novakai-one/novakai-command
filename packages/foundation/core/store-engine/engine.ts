@@ -309,11 +309,14 @@ export class StoreEngine {
         this.appendLineFsync(this.storePath('trace'), JSON.stringify(trace));
       }
     }
-    // orphan detection → quarantine tombstones (R3-4). Flagged incomplete
-    // objects (opId present but trace missing) stay readable AND get flagged —
-    // tombstones apply to orphans surfaced for human resolution.
+    // Orphan detection (R3-4, amended PASS1.3 R3-4 / S1-contracts §3):
+    // an object whose opId lacks a trace is NEVER tombstoned or hidden — it
+    // stays readable with `incomplete:true` and a retry with the same
+    // clientOpId reconciles (completes the trace, clears the flag).
+    // Tombstones apply ONLY to trace-without-object orphans surfaced for
+    // human resolution (and corrupt/unparseable records, which never parse
+    // into a readable object in the first place).
     const traces = this.readTraces();
-    const tracedOpIds = new Set(traces.map((t) => t.opId));
     const knownIds = new Map<string, string>(); // id → kind
     for (const kind of RECORD_KINDS) {
       if (kind === 'quarantine') continue;
@@ -340,13 +343,6 @@ export class StoreEngine {
       );
       openTombstones.add(`${ref.id}:${reason}`);
     };
-    // object w/o trace (legacy v0 lines carry no opId — pre-trace records are not orphans)
-    for (const [id, kind] of knownIds) {
-      const rec = this.readLatestEffective(kind).get(id);
-      if (rec && rec.opId && !tracedOpIds.has(rec.opId)) {
-        stampTombstone({ kind, id }, 'orphan_object_no_trace');
-      }
-    }
     // trace w/o object
     for (const t of traces) {
       if (t.action === 'truncate') continue;
@@ -394,7 +390,10 @@ export class StoreEngine {
     }
   }
 
-  /** Append object line + trace line inside ONE lock hold (R3-2, write order A §9). */
+  /** Append object line + trace line inside ONE lock hold (R3-2, write order A §9).
+   * When `cas` is given, the compare runs INSIDE the lock hold (S1 ruling):
+   * mustBeAbsent rejects a create on an existing id; expectedVersion rejects a
+   * stale update — both as typed CasConflict before anything is appended. */
   appendMutation(
     kind: string,
     flat: EnvelopeT & Record<string, unknown>,
@@ -402,8 +401,33 @@ export class StoreEngine {
     clientOpId: ClientOpId,
     version: number,
     opId: ServerOpId = mintServerOpId(),
+    cas?: { mustBeAbsent?: boolean; expectedVersion?: number },
   ): EngineResult<MutationResult> {
     return this.withLock(() => {
+      if (cas) {
+        const existing = this.readLatestEffective(kind).get(flat.id);
+        if (cas.mustBeAbsent && existing) {
+          return {
+            ok: false,
+            error: err('CasConflict',
+              `object "${flat.id}" already exists (version ${existing.version}) — use updateObject`,
+              { id: flat.id as ObjectId, expectedVersion: 0, actualVersion: existing.version }, true),
+          };
+        }
+        if (cas.expectedVersion !== undefined) {
+          const actual = existing?.version ?? 0;
+          if (actual !== cas.expectedVersion) {
+            return {
+              ok: false,
+              error: err('CasConflict',
+                `CAS conflict on "${flat.id}": expected v${cas.expectedVersion}, actual v${actual}`,
+                { id: flat.id as ObjectId, expectedVersion: cas.expectedVersion, actualVersion: actual }, true),
+            };
+          }
+          // next version derives from the authoritative locked read
+          version = actual + 1;
+        }
+      }
       const line = JSON.stringify(this.wrapRecord(flat, { opId, clientOpId, version }));
       this.appendLineFsync(this.storePath(kind), line); // (1) object append + fsync
       const traces = this.readTraces();

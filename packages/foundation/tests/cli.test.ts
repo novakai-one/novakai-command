@@ -185,7 +185,8 @@ test('resolveQuarantine via CLI (parity on the human resolution path)', async ()
   const root = freshRoot();
   try {
     mkdirSync(root, { recursive: true });
-    // plant orphan + boot to tombstone it
+    // plant orphan + a corrupt-record tombstone (S2 ruling: a missing trace
+    // alone NEVER tombstones; tombstones apply to corrupt/parse-failed records)
     appendFileSync(path.join(root, 'settings.jsonl'), JSON.stringify({
       envelope: {
         kind: 'settings', id: 'settings_orphan', schemaVersion: 1,
@@ -193,6 +194,14 @@ test('resolveQuarantine via CLI (parity on the human resolution path)', async ()
       },
       payload: { key: 'k', value: 1 },
       meta: { opId: 'srv_orphan', clientOpId: 'op_orphan', version: 1 },
+    }) + '\n');
+    appendFileSync(path.join(root, 'quarantine.jsonl'), JSON.stringify({
+      envelope: {
+        kind: 'quarantine', id: 'quarantine_orphan', schemaVersion: 1,
+        createdAt: new Date().toISOString(), permissionLevel: 'private', createdBy: 'sys_reconciler',
+      },
+      payload: { quarantinedRef: { kind: 'settings', id: 'settings_orphan' }, reason: 'corrupt_record', status: 'open' },
+      meta: { opId: 'srv_tomb', clientOpId: 'op_tomb', version: 1 },
     }) + '\n');
     const engine = composeEngine({ root, capability: 'foundation', allowedKinds: ['settings'], principal: 'agent_cli' });
     engine.boot();
