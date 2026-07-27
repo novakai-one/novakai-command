@@ -18,6 +18,7 @@ export type Principal = AgentId | PersonId | SystemPrincipal;
 
 export type ObjectKind =
   | 'agent'
+  | 'skill'
   | 'layout'
   | 'settings'
   | 'quarantine'

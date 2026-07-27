@@ -1,6 +1,8 @@
 // core/registry — agent definitions in agents.jsonl via the foundation scoped
-// handle (kind 'agent'; engine enforces scope, R3-6). Envelope/trace laws are
-// foundation's; this module only shapes the lite payload (AGT-004 lite).
+// handle (kind 'agent'; the SCOPE CHECK lives in foundation's contract layer
+// (api.ts scopeCheck) — the engine performs no scope check; M3 audit
+// correction, DEC-S2-14). Envelope/trace laws are foundation's; this module
+// shapes the agent payload (AGT-004).
 import { randomUUID } from 'node:crypto';
 import {
   createObject, getObject, listObjects, updateObject,

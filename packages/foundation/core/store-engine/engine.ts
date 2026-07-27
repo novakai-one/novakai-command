@@ -22,6 +22,7 @@ export const CURRENT_SCHEMA_VERSION = 1;
 // one file per token under tokens/ and is handled by core/token, not here.
 export const KIND_FILES: Readonly<Record<Exclude<ObjectKind, 'token'>, string>> = Object.freeze({
   agent: 'agents.jsonl',
+  skill: 'skills.jsonl', // S2a: provider-neutral skills registry (S2-pass1 §C)
   layout: 'layout.jsonl',
   settings: 'settings.jsonl',
   quarantine: 'quarantine.jsonl',
@@ -29,7 +30,7 @@ export const KIND_FILES: Readonly<Record<Exclude<ObjectKind, 'token'>, string>> 
 });
 
 // Kinds the engine treats as ordinary wrapped-record stores.
-const RECORD_KINDS: readonly string[] = ['agent', 'layout', 'settings', 'quarantine'];
+const RECORD_KINDS: readonly string[] = ['agent', 'skill', 'layout', 'settings', 'quarantine'];
 
 // Lazy upgrade registry (DEC-F10): pure v_n → v_n+1 transforms per kind,
 // applied in memory on read; the stored line is NEVER rewritten.
@@ -392,6 +393,9 @@ export class StoreEngine {
     // trace w/o object
     for (const t of traces) {
       if (t.action === 'truncate') continue;
+      // S2a: system.action lines (hook_log/context.inject/hook_error) are
+      // event records, not mutation evidence — never orphan-tombstoned.
+      if (t.opKind === 'system.action') continue;
       if (!knownIds.has(t.target.id)) {
         stampTombstone(t.target, 'orphan_trace_no_object');
       }
@@ -599,6 +603,30 @@ export class StoreEngine {
         meta: { resolution: opts.next.resolution },
       });
       return { ok: true, value: opts.next };
+    });
+  }
+
+  /**
+   * S2a (S2-pass1 §22 ruling 3): append a named SYSTEM ACTION trace line
+   * (hook_log / context.inject / hook_error). opKind 'system.action' marks it
+   * as an event record — boot reconcile never tombstones it. Read-only journal
+   * law unchanged: no update/delete, append under the same lock.
+   */
+  appendSystemActionTrace(
+    action: 'hook_log' | 'context.inject' | 'hook_error', target: z.infer<typeof Ref>,
+    actor: string, clientOpId: ClientOpId, meta?: Record<string, unknown>,
+  ): EngineResult<null> {
+    return this.withLock(() => {
+      const traces = this.readTraces();
+      const trace: TraceLineT = {
+        kind: 'trace', id: `trace_${randomUUID()}`, schemaVersion: 1,
+        createdAt: nowIso(), permissionLevel: 'team', createdBy: actor,
+        seq: this.nextSeq(traces), opId: mintServerOpId(), clientOpId, action,
+        opKind: 'system.action', target,
+        ...(meta ? { meta } : {}),
+      };
+      this.appendLineFsync(this.storePath('trace'), JSON.stringify(trace));
+      return { ok: true, value: null };
     });
   }
 

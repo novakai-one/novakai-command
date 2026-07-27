@@ -338,6 +338,31 @@ function countTombstoneLines(engine: StoreEngine, id: string): number {
   return rec?.version ?? 0;
 }
 
+// ── Named system actions (S2a; S2-pass1 §22 ruling 3) ───────────────────────
+
+/**
+ * Append a system.action trace line (hook_log / context.inject / hook_error)
+ * through the caller's scoped handle. createdBy derives from the handle
+ * principal (red gate 4); the journal stays append-only (red gate 5).
+ */
+export async function recordSystemAction(
+  handle: ScopedStoreHandle,
+  input: {
+    action: 'hook_log' | 'context.inject' | 'hook_error';
+    target: z.infer<typeof Ref>;
+    clientOpId: ClientOpId;
+    meta?: Record<string, unknown>;
+  },
+): Promise<Result<null, StoreError>> {
+  const engine = engineOf(handle);
+  const bootFailure = engine.bootError();
+  if (bootFailure) return fail(bootFailure);
+  const res = engine.appendSystemActionTrace(
+    input.action, input.target, principalOf(handle), input.clientOpId, input.meta);
+  if (!res.ok) return fail(res.error);
+  return ok(null);
+}
+
 // ── default engine for handle-free reads (CLI composes explicitly) ─────────
 let sharedDefault: StoreEngine | null = null;
 export function defaultEngine(): StoreEngine {

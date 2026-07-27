@@ -21,7 +21,7 @@ const settingsPayload = (id: string) => ({
   permissionLevel: 'private', createdBy: 'person_chris', key: id, value: 1,
 });
 
-test('FND-002: mis-scoped handle write → ScopeViolation from the ENGINE check', async () => {
+test('FND-002: mis-scoped handle write → ScopeViolation from the CONTRACT-layer scope check (api.ts scopeCheck; the engine has no scope check — M3)', async () => {
   const root = freshRoot();
   try {
     // shell handle is NOT allowed to write agents

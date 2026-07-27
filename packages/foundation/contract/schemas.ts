@@ -50,7 +50,12 @@ export const TraceLine = z.object({
   seq: z.number().int().nonnegative(),
   opId: z.string().min(1),
   clientOpId: z.string().min(1),
-  action: z.enum(['create', 'update', 'quarantine', 'resolveQuarantine', 'truncate']),
+  action: z.enum(['create', 'update', 'quarantine', 'resolveQuarantine', 'truncate',
+    // S2a (S2-pass1 §22 rulings 3/9): named system actions live in the same
+    // journal — hook_log, context.inject, hook_error.
+    'hook_log', 'context.inject', 'hook_error']),
+  // 'mutation' lines (absent opKind, pre-S2a) vs 'system.action' lines (S2a+).
+  opKind: z.enum(['mutation', 'system.action']).optional(),
   target: Ref,
   meta: z.record(z.unknown()).optional(),
 });

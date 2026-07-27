@@ -1,7 +1,9 @@
 // Composition: bind an engine + principal into a scoped store handle (R3-6).
 // Consumers call composeHandle once (composition root), then use the free
 // contract functions. Handles carrying another capability's kinds get
-// ScopeViolation from the ENGINE runtime check on every write.
+// ScopeViolation from the CONTRACT layer (scopeCheck in api.ts) on every
+// write — the engine itself performs NO scope check (M3 audit correction:
+// earlier comments here claimed engine-level enforcement; that was wrong).
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import type { CapabilityId, ObjectKind } from './brands.js';

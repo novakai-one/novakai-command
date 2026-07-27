@@ -8,7 +8,7 @@ export * from './compose.js';
 export {
   createObject, updateObject, getObject, listObjects, resolveRef,
   queryTrace, queryTraceBound, listQuarantine, listQuarantineBound,
-  resolveQuarantine, defaultEngine, __resetDefaultEngine,
+  resolveQuarantine, recordSystemAction, defaultEngine, __resetDefaultEngine,
 } from './api.js';
 // Token ops (mint/authenticate) are foundation-internal but part of the legal
 // import surface so the CLI never reaches into core/ (red gate 6).
