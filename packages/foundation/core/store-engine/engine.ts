@@ -70,14 +70,14 @@ export class StoreEngine {
   readonly legacyRoot?: string;
   readonly lockTimeoutMs: number;
   private booted = false;
+  /** @internal test seam: fail the next trace append once. */
+  failNextTraceAppend?: { cause: string };
 
   constructor(options: EngineOptions) {
     this.root = options.root;
     this.legacyRoot = options.legacyRoot;
     this.lockTimeoutMs = options.lockTimeoutMs ?? 5000;
-    if (options.failNextTraceAppend) {
-      (this as { failNextTraceAppend?: { cause: string } }).failNextTraceAppend = options.failNextTraceAppend;
-    }
+    if (options.failNextTraceAppend) this.failNextTraceAppend = options.failNextTraceAppend;
   }
 
   // ── file helpers ──────────────────────────────────────────────────────
@@ -413,9 +413,9 @@ export class StoreEngine {
         seq: this.nextSeq(traces), opId, clientOpId, action,
         target: { kind, id: flat.id },
       };
-      const fail = (this as { failNextTraceAppend?: { cause: string } }).failNextTraceAppend;
+      const fail = this.failNextTraceAppend;
       if (fail) {
-        delete (this as { failNextTraceAppend?: { cause: string } }).failNextTraceAppend;
+        delete this.failNextTraceAppend;
         // trace append FAILED (crash window): mutation STANDS, object readable
         // with incomplete:true; retry with same clientOpId reconciles (R3-10).
         return {

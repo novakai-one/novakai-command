@@ -22,17 +22,19 @@ export interface ComposeOptions {
 const engineCache = new Map<string, StoreEngine>();
 
 export function composeEngine(options: ComposeOptions): StoreEngine {
-  const key = `${path.resolve(options.root)}::${options.lockTimeoutMs ?? 5000}::${options.failNextTraceAppend ? 'fail' : 'ok'}`;
+  const key = `${path.resolve(options.root)}::${options.lockTimeoutMs ?? 5000}`;
   let engine = engineCache.get(key);
   if (!engine) {
     engine = new StoreEngine({
       root: options.root,
       legacyRoot: options.legacyRoot ?? defaultLegacyRoot(options.root),
       lockTimeoutMs: options.lockTimeoutMs,
-      ...(options.failNextTraceAppend ? { failNextTraceAppend: options.failNextTraceAppend } : {}),
     });
     engineCache.set(key, engine);
   }
+  // Failure-injection seam applies per composition, not per cache key, so a
+  // within-session retry reconciles against the SAME booted engine (R3-10).
+  if (options.failNextTraceAppend) engine.failNextTraceAppend = options.failNextTraceAppend;
   return engine;
 }
 
