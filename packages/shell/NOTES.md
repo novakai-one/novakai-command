@@ -115,3 +115,8 @@ packages/shell/
   management, reduced-motion — are done).
 - No electron main; demo is the vite page + node bridge (`npm run demo`).
 - 10k-message thread performance not measured (Pass-2 budget unnamed).
+
+## Follow-ups after seal (adversarial audit — deferred, NOT fixed in S1)
+
+- **L6** — Frame debounces setLayout by 400 ms; a crash inside the window loses the last geometry edit (acceptable for S1; consider flush-on-beforeunload).
+- **L7** — settingsDriver.readAll returns [] on any store read failure (indistinguishable from "no settings"); surface a typed read-degraded flag in a follow-up.

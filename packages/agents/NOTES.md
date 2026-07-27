@@ -48,3 +48,10 @@ Ambiguities and judgment calls, one line each. Nothing here invents requirements
     binds `attachLiveLane` with a messaging-session sender so mock output
     lands in a real thread. No agents code was changed for this; no new
     deviations on this side.
+
+## Follow-ups after seal (adversarial audit — deferred, NOT fixed in S1)
+
+- **M9** — `sessions`/`closedSessions` maps are in-memory per process (DEC-C1 temporary); `send`/`events`/`close` from a second CLI process can't see sessions spawned elsewhere — needs a persisted session registry.
+- **M10** — mock adapter `__emit` test seam ships in production build; gate it behind an env flag or strip from dist in a follow-up.
+- **L4** — CLI `events --ms` is a fixed sleep, not "until session exit"; fine for S1 demos.
+- **L5** — terminal adapter close() doesn't await the runtime's exit event before reporting; state may briefly read 'running' after a successful kill.

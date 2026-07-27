@@ -48,3 +48,13 @@ One-line notes where the contract was ambiguous or the simplest reading was chos
     composed consumers use.
 13. **No npm workspace config exists at repo root**, so packages/foundation is
     self-contained (own package.json, own node_modules, zod dependency local).
+
+## Follow-ups after seal (adversarial audit — deferred, NOT fixed in S1)
+
+- **M3** — engine comments claim enforcement that actually lives in the contract layer (e.g. "ENGINE runtime check" for scope, red-gate-4 createdBy stamping); the comments are false and MUST be corrected to match the code in this follow-up.
+- **M5** — dual-read shim migration (`migrateStoreIfNeeded`) copies the legacy store outside the boot lock's per-store ordering guarantees; verify cross-process first-write migration can't interleave with a concurrent appender.
+- **M7** — lock takeover uses pid-liveness only; a recycled pid on a shared machine could break a live holder's lock. Consider flock-style kernel locks in a follow-up.
+- **M8** — `readTraces()`/`readLatestEffective()` re-read full files per op; fine at S1 scale, but listObject-heavy paths are O(n) per call — index or cache with invalidation later.
+- **L1** — `paginate` cursor is a plain array offset; inserts between pages shift results (documented as acceptable for S1).
+- **L2** — `queryTrace`/`listQuarantine` handle-free variants share a process-wide default engine; long-running processes with multiple roots should always use the Bound variants.
+- **L3** — token files are world-readable within the repo dir; consider chmod 0600 at mint time.
