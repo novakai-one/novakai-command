@@ -11,7 +11,8 @@
     "lint:accent": "node tools/lint-accent.mjs",
     "lint:kit": "node tools/lint-kit.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "demo": "node tools/demo.mjs"
+    "demo": "node tools/demo.mjs",
+    "nvk-context": "tsx cli/nvk-context.ts"
   },
   "dependencies": {
     "react": "^18.3.1",
