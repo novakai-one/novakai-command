@@ -45,6 +45,10 @@ const embedded = messaging.createEmbeddedMessaging({
       { token: 'demo-token-fable', personId: 'person_fable' as PersonId, roles: ['Worker'] },
       // mock spawn agents (spawnMockAgent) reply through this person's session
       { token: 'demo-token-mock', personId: MOCK_PERSON as PersonId, roles: ['Worker'] },
+      // Pool of provisioned agent persons for user-created conversations (demo scope).
+      ...Array.from({ length: 10 }, (_, i) => ({
+        token: `demo-token-pool-${i}`, personId: `person_pool${i}` as PersonId, roles: ['Worker'] as ['Worker'],
+      })),
     ],
     roleGrants: messaging.DEFAULT_ROLE_GRANTS,
   },
@@ -64,6 +68,16 @@ for (const [token, allow] of [['demo-token-kimi', ME], ['demo-token-fable', ME],
     await a.session.setContactPolicy({ allowlist: [allow], defaultRule: 'deny' });
   }
 }
+// Pool persons open their doors to Chris too (user-created agent chats).
+const poolTokens: string[] = [];
+for (let i = 0; i < 10; i++) {
+  poolTokens.push(`demo-token-pool-${i}`);
+  const a = await embedded.authenticate({ token: `demo-token-pool-${i}` });
+  if (a.kind === 'authenticated') {
+    await a.session.setContactPolicy({ allowlist: [ME], defaultRule: 'deny' });
+  }
+}
+let poolNext = 0;
 
 // Mock spawn agents send through their own messaging session (live lane, R3-1).
 const mockAuth = await embedded.authenticate({ token: 'demo-token-mock' });
@@ -150,8 +164,20 @@ const methods: Record<string, (p: never) => Promise<unknown>> = {
   },
   async createConversation(p: { title: string; kind: Convo['kind'] }) {
     const id = `conv_${randomUUID().slice(0, 8)}`;
-    const address = p.kind === 'agent' ? 'person:person_kimi' : `thread:thread_${randomUUID().slice(0, 8)}`;
-    seedConvo(id, address, p.title, p.kind, p.kind === 'agent' ? kimiAgentId : undefined);
+    // Every conversation gets a UNIQUE counterpart — sharing person_kimi made all
+    // new agent chats resolve to the same messaging thread (audit fix, Claude's catch).
+    let address: string;
+    let agentId: string | undefined;
+    if (p.kind === 'agent') {
+      agentId = await defineDemoAgent(p.title);
+      // Assign a provisioned pool person (unique per conversation) so the thread
+      // is separate AND the recipient actually exists in messaging.
+      if (poolNext >= poolTokens.length) return { ok: false, error: 'demo pool exhausted (10 new agent chats per restart)' };
+      address = `person:person_pool${poolNext++}`;
+    } else {
+      address = `thread:thread_${randomUUID().slice(0, 8)}`;
+    }
+    seedConvo(id, address, p.title, p.kind, agentId);
     const c = convos.get(id)!;
     const s = toSummary(c);
     broadcast('conversation', s);
