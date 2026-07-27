@@ -9,19 +9,54 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { mintClientOpId, type AgentId } from '@novakai/foundation/dist/contract/brands.js';
 import { isAbsent } from '@novakai/foundation/dist/contract/types.js';
+import { mintToken } from '@novakai/foundation/dist/contract/index.js';
 import { composeAgents } from '../core/composition.js';
 import { createAgentsContract } from '../core/contract.js';
 
 const run = promisify(execFile);
 const CLI = path.resolve('dist/cli/nvk-agent.js');
 
+/** M6: nvk-agent requires bearer auth — mint a token, pass via NOVAKAI_TOKEN. */
+function authed(root: string, principal = 'person_chris'): NodeJS.ProcessEnv {
+  const token = mintToken(root, principal, ['agent'], 'person_local');
+  return { ...process.env, NOVAKAI_ROOT: root, NOVAKAI_TOKEN: token.bearer };
+}
+
 async function cli(root: string, ...args: string[]): Promise<unknown> {
-  const { stdout } = await run(process.execPath, [CLI, ...args], {
-    env: { ...process.env, NOVAKAI_ROOT: root, NOVAKAI_PRINCIPAL: 'person_chris' },
-  });
+  const { stdout } = await run(process.execPath, [CLI, ...args], { env: authed(root) });
   const text = stdout.trim();
   return text ? JSON.parse(text) : null;
 }
+
+test('M6: no bearer token → exit 2; unknown token → exit 1 AuthFailed', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'nvk-agents-cli-'));
+  await assert.rejects(
+    run(process.execPath, [CLI, 'list'], { env: { ...process.env, NOVAKAI_ROOT: root, NOVAKAI_TOKEN: '', NOVAKAI_PRINCIPAL: 'person_sneaky' } }),
+    (e: unknown) => {
+      const err = e as { code: number; stderr: string };
+      assert.equal(err.code, 2);
+      assert.match(err.stderr, /token/i);
+      return true;
+    });
+  await assert.rejects(
+    run(process.execPath, [CLI, 'list'], { env: { ...process.env, NOVAKAI_ROOT: root, NOVAKAI_TOKEN: 'nvk_bogus' } }),
+    (e: unknown) => {
+      const err = e as { code: number; stderr: string };
+      assert.equal(err.code, 1);
+      assert.match(err.stderr, /AuthFailed/);
+      return true;
+    });
+});
+
+test('M6: principal derives from the TOKEN — NOVAKAI_PRINCIPAL is ignored', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'nvk-agents-cli-'));
+  const env = authed(root, 'person_token'); // token says person_token
+  const { stdout } = await run(process.execPath, [CLI, 'define', '--display-name', 'TokenBorn', '--provider', 'mock', '--model', 'm1'], {
+    env: { ...env, NOVAKAI_PRINCIPAL: 'person_spoofed' }, // spoof attempt
+  });
+  const defined = JSON.parse(stdout.trim()) as { createdBy: string };
+  assert.equal(defined.createdBy, 'person_token');
+});
 
 test('CLI define → in-process list sees it (same store, same contract)', async () => {
   const root = mkdtempSync(path.join(tmpdir(), 'nvk-agents-cli-'));
@@ -73,7 +108,7 @@ test('CLI failure path: spawn unknown agent exits non-zero with the typed error'
   const root = mkdtempSync(path.join(tmpdir(), 'nvk-agents-cli-'));
   await assert.rejects(
     run(process.execPath, [CLI, 'spawn', '--agent', 'agent_ghost'], {
-      env: { ...process.env, NOVAKAI_ROOT: root },
+      env: authed(root),
     }),
     (e: unknown) => {
       const err = e as { code: number; stderr: string };

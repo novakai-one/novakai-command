@@ -1,12 +1,14 @@
 #!/usr/bin/env node
 // nvk-agent — CLI adapter over the SAME contract functions (DEC-F11 parity).
 // Verbs: define | get | list | set-model | spawn | send | events | close
-// Root: NOVAKAI_ROOT (default ./.novakai). Principal: NVK_AGENT_PRINCIPAL
-// (default 'person_local' — the app seam passes the token-derived principal).
+// Root: NOVAKAI_ROOT (default ./.novakai).
+// Auth (M6): bearer token from .novakai/tokens/ via --token or NOVAKAI_TOKEN
+// (mirrors nvk-store, R3-5/R3-6); the token's principal is the ONLY createdBy
+// source — NOVAKAI_PRINCIPAL is NOT honored (red gate 4).
 // Adapter: NVK_AGENTS_ADAPTER=mock (default) — the real terminal runtime is
 // wired by the app composition root (TerminalManager / TerminalHostClient);
 // a CLI without a host gets the mock seam, recorded in NOTES.md.
-import { mintClientOpId } from '@novakai/foundation/dist/contract/brands.js';
+import { mintClientOpId, authenticate } from '@novakai/foundation/dist/contract/index.js';
 import type { AgentId, SessionId } from '@novakai/foundation/dist/contract/brands.js';
 import { composeAgents } from '../core/composition.js';
 import { createAgentsContract } from '../core/contract.js';
@@ -38,7 +40,19 @@ const str = (v: unknown, name: string): string => {
 async function main(): Promise<void> {
   const { verb, args } = parseArgs(process.argv.slice(2));
   const root = process.env.NOVAKAI_ROOT ?? '.novakai';
-  const ctx = composeAgents({ root, principal: process.env.NOVAKAI_PRINCIPAL ?? 'person_local' });
+
+  // M6: every verb requires bearer auth against .novakai/tokens/ (same law as
+  // nvk-store); the principal derives from the token, never from the env.
+  const bearer = typeof args.token === 'string' ? args.token : (process.env.NOVAKAI_TOKEN ?? '');
+  if (!bearer) {
+    process.stderr.write('auth: provide --token <bearer> or NOVAKAI_TOKEN\n');
+    process.exit(2);
+  }
+  const token = authenticate(root, bearer);
+  if (!token) {
+    die({ code: 'AuthFailed', message: 'bearer token not recognized', details: { cause: 'unknown bearer' }, retryable: false });
+  }
+  const ctx = composeAgents({ root, principal: token!.principal });
   const agents = createAgentsContract(ctx);
 
   switch (verb) {
