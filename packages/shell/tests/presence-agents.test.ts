@@ -102,3 +102,15 @@ describe('agents → presence → bridge → UI state (SHL-006/007)', () => {
     await new Promise<void>((r) => wss.close(() => r()));
   });
 });
+
+describe('S2b idle activity (ruling 12: 5s quiet → idle)', () => {
+  it('an "idle" activity maps back to online, clearing the activity line', () => {
+    const tracker = new PresenceTracker();
+    tracker.apply({ type: 'online', agentId: 'a1', sessionId: 's1', at: new Date().toISOString() });
+    tracker.apply({ type: 'activity', agentId: 'a1', sessionId: 's1', at: new Date().toISOString(), activity: 'working' });
+    expect(tracker.get('a1')).toMatchObject({ state: 'active', activity: 'working' });
+    tracker.apply({ type: 'activity', agentId: 'a1', sessionId: 's1', at: new Date().toISOString(), activity: 'idle' });
+    expect(tracker.get('a1')).toMatchObject({ state: 'online' });
+    expect(tracker.get('a1').activity).toBeUndefined();
+  });
+});

@@ -26,7 +26,13 @@ export class PresenceTracker {
         this.snapshots.set(e.agentId, { agentId: e.agentId, state: 'online', activity: prev?.activity, at: e.at });
         break;
       case 'activity':
-        this.snapshots.set(e.agentId, { agentId: e.agentId, state: 'active', activity: e.activity, at: e.at });
+        // ruling 12: the adapter's quiet-window heuristic signals 'idle' —
+        // that reads as online (calm), never as typing.
+        if (e.activity === 'idle') {
+          this.snapshots.set(e.agentId, { agentId: e.agentId, state: 'online', at: e.at });
+        } else {
+          this.snapshots.set(e.agentId, { agentId: e.agentId, state: 'active', activity: e.activity, at: e.at });
+        }
         break;
       case 'offline':
         this.snapshots.set(e.agentId, { agentId: e.agentId, state: 'offline', at: e.at });

@@ -19,12 +19,25 @@ interface SessionRecord {
   state: 'running' | 'exited';
   closedByUs: boolean;
   handlers: Array<(e: PtyEvent) => void>;
+  /** S2b activity heuristic (ruling 12): last emitted activity time + idle timer. */
+  lastActivityAt: number;
+  idle: boolean;
+  idleTimer: ReturnType<typeof setTimeout> | null;
+}
+
+/** Ruling 12 defaults: ≤1 activity event per 2s per session; 5s quiet → idle. */
+export interface ActivityHeuristicOpts {
+  activityIntervalMs?: number;
+  idleMs?: number;
 }
 
 export function createTerminalAdapter(
   runtime: TerminalRuntimeLike,
   defaults: { cwd: string; provider?: ProviderName },
+  heuristic: ActivityHeuristicOpts = {},
 ): TerminalAdapter {
+  const activityIntervalMs = heuristic.activityIntervalMs ?? 2000;
+  const idleMs = heuristic.idleMs ?? 5000;
   const sessions = new Map<string, SessionRecord>();
   const byRuntimeKey = new Map<string, SessionRecord>();
 
@@ -45,6 +58,32 @@ export function createTerminalAdapter(
     for (const h of rec.handlers) h(e);
   };
 
+  /**
+   * S2b (DEC-S2-15, ruling 12): derive activity from raw output. A chunk while
+   * the window has elapsed emits ONE 'working' signal; a quiet window emits
+   * ONE 'idle'. Adapter-internal heuristic — the contract sees only the
+   * standard PtyEvent shape.
+   */
+  const noteOutput = (rec: SessionRecord): void => {
+    const now = Date.now();
+    if (rec.idle || now - rec.lastActivityAt >= activityIntervalMs) {
+      rec.lastActivityAt = now;
+      rec.idle = false;
+      emit(rec, { type: 'activity', sessionId: rec.sessionId, at: new Date().toISOString(), activity: 'working' });
+    }
+    if (rec.idleTimer) clearTimeout(rec.idleTimer);
+    rec.idleTimer = setTimeout(() => {
+      if (rec.state !== 'running' || rec.idle) return;
+      rec.idle = true;
+      emit(rec, { type: 'activity', sessionId: rec.sessionId, at: new Date().toISOString(), activity: 'idle' });
+    }, idleMs);
+  };
+
+  const clearHeuristic = (rec: SessionRecord): void => {
+    if (rec.idleTimer) clearTimeout(rec.idleTimer);
+    rec.idleTimer = null;
+  };
+
   // The runtime's data/exit callbacks are GLOBAL (one registration each) —
   // register once, demux by the per-session runtime key (S3), never agentId.
   let wired = false;
@@ -53,12 +92,16 @@ export function createTerminalAdapter(
     wired = true;
     runtime.onData((runtimeKey, data) => {
       const rec = byRuntimeKey.get(runtimeKey);
-      if (rec) emit(rec, { type: 'output', sessionId: rec.sessionId, at: new Date().toISOString(), data });
+      if (rec) {
+        emit(rec, { type: 'output', sessionId: rec.sessionId, at: new Date().toISOString(), data });
+        noteOutput(rec);
+      }
     });
     runtime.onExit((runtimeKey, exitCode) => {
       const rec = byRuntimeKey.get(runtimeKey);
       if (!rec) return;
       rec.state = 'exited';
+      clearHeuristic(rec);
       emit(rec, {
         type: 'exited', sessionId: rec.sessionId, at: new Date().toISOString(),
         code: exitCode, signal: null,
@@ -81,6 +124,7 @@ export function createTerminalAdapter(
       const rec: SessionRecord = {
         sessionId, agentId, runtimeKey: info.agentId, provider,
         state: 'running', closedByUs: false, handlers: [],
+        lastActivityAt: 0, idle: false, idleTimer: null,
       };
       sessions.set(sessionId, rec);
       byRuntimeKey.set(info.agentId, rec);
@@ -111,6 +155,7 @@ export function createTerminalAdapter(
       const rec = sessions.get(sessionId);
       if (!rec) return false;
       rec.closedByUs = true;
+      clearHeuristic(rec);
       return runtime.kill(rec.runtimeKey);
     },
   };
