@@ -10,3 +10,7 @@ export {
   queryTrace, queryTraceBound, listQuarantine, listQuarantineBound,
   resolveQuarantine, defaultEngine, __resetDefaultEngine,
 } from './api.js';
+// Token ops (mint/authenticate) are foundation-internal but part of the legal
+// import surface so the CLI never reaches into core/ (red gate 6).
+export { mintToken, authenticate, loadTokens } from '../core/token.js';
+// NOTE: no trace update/delete API exists anywhere in this surface (red gate 5).
