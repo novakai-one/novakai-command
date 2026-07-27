@@ -9,6 +9,16 @@ import { randomUUID } from 'node:crypto';
 // tsx resolves the .js specifiers to messaging's TS source (NodeNext style).
 import * as messaging from '../../messaging/public/index.js';
 import type { PersonId } from '../../messaging/public/index.js';
+// REAL packages/agents (TS source via tsx) — the demo PresenceSource (SHL-006).
+// No terminal runtime in the demo context, so every provider resolves to the
+// mock adapter (AGT-001 seam is identical); the wiring agents → bridge → UI is real.
+import {
+  composeAgents, createAgentsContract, mockOf, type LiveLaneSender,
+} from '../../agents/contract/index.js';
+
+// foundation brands mints `op_${uuid}`; shell never imports foundation from
+// the demo, so mint the same shape locally for defineAgent calls.
+const mintOpId = () => `op_${randomUUID()}` as never;
 import { composeShellPersistence } from '../contract/persistence.node.js';
 import { getLayoutVersioned, setLayout as writeLayout } from '../contract/layout.js';
 import * as settingsContract from '../contract/settings.js';
@@ -20,6 +30,7 @@ const NOVAKAI_ROOT = path.join(repoRoot, '.novakai');
 
 const ME = 'person_chris';
 const TOKEN = 'demo-token-chris';
+const MOCK_PERSON = 'person_mock';
 
 // ── real messaging (embedded mode) ─────────────────────────────────────────
 const clock = messaging.createSystemClock();
@@ -32,6 +43,8 @@ const embedded = messaging.createEmbeddedMessaging({
       { token: TOKEN, personId: ME as PersonId, roles: ['Human'] },
       { token: 'demo-token-kimi', personId: 'person_kimi' as PersonId, roles: ['Chief'] },
       { token: 'demo-token-fable', personId: 'person_fable' as PersonId, roles: ['Worker'] },
+      // mock spawn agents (spawnMockAgent) reply through this person's session
+      { token: 'demo-token-mock', personId: MOCK_PERSON as PersonId, roles: ['Worker'] },
     ],
     roleGrants: messaging.DEFAULT_ROLE_GRANTS,
   },
@@ -40,15 +53,22 @@ await embedded.start();
 const auth = await embedded.authenticate({ token: TOKEN });
 if (auth.kind !== 'authenticated') throw new Error(`demo auth failed: ${auth.kind}`);
 const session = auth.session;
+// Chris accepts mail from the demo agent people (incl. spawned mock agents).
+await session.setContactPolicy({ allowlist: ['person_kimi', 'person_fable', MOCK_PERSON], defaultRule: 'deny' });
 
 // Let the two demo agents accept Chris's messages: each principal owns its
 // own ContactPolicy (DEC-14), so each agent session opens the door itself.
-for (const [token, allow] of [['demo-token-kimi', ME], ['demo-token-fable', ME]] as const) {
+for (const [token, allow] of [['demo-token-kimi', ME], ['demo-token-fable', ME], ['demo-token-mock', ME]] as const) {
   const a = await embedded.authenticate({ token });
   if (a.kind === 'authenticated') {
     await a.session.setContactPolicy({ allowlist: [allow], defaultRule: 'deny' });
   }
 }
+
+// Mock spawn agents send through their own messaging session (live lane, R3-1).
+const mockAuth = await embedded.authenticate({ token: 'demo-token-mock' });
+if (mockAuth.kind !== 'authenticated') throw new Error('demo mock-agent auth failed');
+const mockSession = mockAuth.session;
 
 const persistence = composeShellPersistence({ root: NOVAKAI_ROOT, principal: ME });
 
@@ -59,11 +79,29 @@ interface Convo {
   lastActivityAt: string; agentId?: string;
 }
 const convos = new Map<string, Convo>();
-function seedConvo(id: string, address: string, title: string, kind: Convo['kind'], agentId?: string, pinned = false) {
-  convos.set(id, { id, address, title, kind, pinned, archived: false, lastActivityAt: new Date().toISOString(), agentId });
+// ── REAL packages/agents as the PresenceSource (SHL-006) ───────────────────
+// No terminal runtime in the demo → every provider uses the mock adapter
+// (same seam, AGT-001); events still flow agents bus → bridge → shell UI.
+const agentsCtx = composeAgents({ root: NOVAKAI_ROOT, principal: ME });
+const agents = createAgentsContract(agentsCtx);
+const mockAdapter = mockOf(agentsCtx);
+
+async function defineDemoAgent(displayName: string): Promise<string> {
+  const res = await agents.defineAgent(
+    { displayName, provider: 'mock', model: 'mock-model', hooks: [], status: 'defined', permissionLevel: 'private' },
+    mintOpId(),
+  );
+  if (!res.ok) throw new Error(`defineAgent failed: ${res.error.message}`);
+  return res.value.id;
 }
-seedConvo('conv_kimi', 'person:person_kimi', 'Kimi', 'agent', 'agent_kimi', true);
-seedConvo('conv_fable', 'person:person_fable', 'Fable', 'agent', 'agent_fable');
+
+const seedConvo = (id: string, address: string, title: string, kind: Convo['kind'], agentId?: string, pinned = false) => {
+  convos.set(id, { id, address, title, kind, pinned, archived: false, lastActivityAt: new Date().toISOString(), agentId });
+};
+const kimiAgentId = await defineDemoAgent('Kimi');
+const fableAgentId = await defineDemoAgent('Fable');
+seedConvo('conv_kimi', 'person:person_kimi', 'Kimi', 'agent', kimiAgentId, true);
+seedConvo('conv_fable', 'person:person_fable', 'Fable', 'agent', fableAgentId);
 
 const toSummary = (c: Convo) => ({
   id: c.id, threadId: c.threadId ?? c.address, title: c.title, kind: c.kind,
@@ -82,14 +120,20 @@ async function threadFor(c: Convo): Promise<string | null> {
   return null;
 }
 
-// ── presence: agents package is not built yet — demo drives a mock source ───
+// ── presence: agents bus → bridge broadcast (the real PresenceSource seam) ──
 const presenceSubs = new Set<(e: unknown) => void>();
 const emitPresence = (e: unknown) => presenceSubs.forEach((h) => h(e));
-setInterval(() => {
-  emitPresence({ type: 'activity', agentId: 'agent_kimi', sessionId: 'sess_demo', at: new Date().toISOString(), activity: 'watching the thread' });
-  setTimeout(() => emitPresence({ type: 'online', agentId: 'agent_kimi', sessionId: 'sess_demo', at: new Date().toISOString() }), 4000);
-}, 12000);
-emitPresence({ type: 'online', agentId: 'agent_kimi', sessionId: 'sess_demo', at: new Date().toISOString() });
+agents.subscribeAgentEvents(emitPresence);
+
+// Kimi "breathes": a spawned mock session with scripted activity, so the demo
+// rail shows a live dot driven by the REAL agentEvent pipeline.
+const kimiSpawn = await agents.spawnAgent(kimiAgentId as never);
+if (kimiSpawn.ok && mockAdapter) {
+  const sid = kimiSpawn.value.sessionId;
+  setInterval(() => {
+    mockAdapter.__emit(sid, { type: 'activity', sessionId: sid, at: new Date().toISOString(), activity: 'watching the thread' });
+  }, 12000);
+}
 
 // ── WS JSON-RPC ─────────────────────────────────────────────────────────────
 const wss = new WebSocketServer({ port: 4173, host: '127.0.0.1' });
@@ -107,11 +151,54 @@ const methods: Record<string, (p: never) => Promise<unknown>> = {
   async createConversation(p: { title: string; kind: Convo['kind'] }) {
     const id = `conv_${randomUUID().slice(0, 8)}`;
     const address = p.kind === 'agent' ? 'person:person_kimi' : `thread:thread_${randomUUID().slice(0, 8)}`;
-    seedConvo(id, address, p.title, p.kind, p.kind === 'agent' ? 'agent_kimi' : undefined);
+    seedConvo(id, address, p.title, p.kind, p.kind === 'agent' ? kimiAgentId : undefined);
     const c = convos.get(id)!;
     const s = toSummary(c);
     broadcast('conversation', s);
     return s;
+  },
+  // Demo affordance (SHL-006/007 proof): define + spawn a REAL agents-registry
+  // agent on the mock provider, script its session lifecycle, and bind the live
+  // lane so its output lands in the thread as a real messaging reply.
+  async spawnMockAgent(p: { title?: string }) {
+    const title = p.title?.trim() || `Mock agent ${convos.size - 1}`;
+    const agentId = await defineDemoAgent(title);
+    const spawn = await agents.spawnAgent(agentId as never);
+    if (!spawn.ok) return { ok: false as const, error: spawn.error.message };
+    const sessionId = spawn.value.sessionId;
+    const convoId = `conv_${randomUUID().slice(0, 8)}`;
+    seedConvo(convoId, `person:${MOCK_PERSON}`, title, 'agent', agentId);
+    const c = convos.get(convoId)!;
+    const s = toSummary(c);
+    broadcast('conversation', s);
+
+    // Live lane (R3-1): mock session output → real messaging reply to Chris,
+    // then mirrored to the UI as a message event for this conversation.
+    const sender: LiveLaneSender = {
+      async sendMessage(input: unknown) {
+        const res = await mockSession.sendMessage(input as never);
+        if (res.kind === 'ok') {
+          const v = res.value as { threadId: string; messageId: string };
+          if (!c.threadId) c.threadId = v.threadId;
+          broadcast('message', {
+            id: v.messageId, conversationId: convoId, senderId: MOCK_PERSON,
+            text: (input as { body: { text: string } }).body.text,
+            createdAt: new Date().toISOString(),
+          });
+        }
+        return res;
+      },
+    };
+    agents.attachLiveLane({ sessionId, address: `person:${ME}`, sender });
+
+    // Script the session lifecycle through the mock adapter (test seam):
+    // spawned/online already published by spawnAgent; now activity → reply → exit.
+    const at = () => new Date().toISOString();
+    setTimeout(() => mockAdapter?.__emit(sessionId, { type: 'activity', sessionId, at: at(), activity: 'reading the thread' }), 800);
+    setTimeout(() => mockAdapter?.__emit(sessionId, { type: 'activity', sessionId, at: at(), activity: 'typing a reply' }), 1800);
+    setTimeout(() => mockAdapter?.__emit(sessionId, { type: 'output', sessionId, at: at(), data: `👋 ${title} here — live lane reply via packages/agents.` }), 2800);
+    setTimeout(() => agents.closeSession(sessionId as never), 6000);
+    return { ok: true as const, conversation: s };
   },
   async pinConversation(p: { id: string; pinned: boolean }) {
     const c = convos.get(p.id); if (c) { c.pinned = p.pinned; broadcast('conversation', toSummary(c)); }
@@ -184,4 +271,4 @@ wss.on('connection', (ws: Ws) => {
   });
 });
 
-console.log('[shell demo] bridge listening on ws://127.0.0.1:4173 (real messaging + foundation, root .novakai/)');
+console.log('[shell demo] bridge listening on ws://127.0.0.1:4173 (real messaging + foundation + agents, root .novakai/)');

@@ -61,6 +61,24 @@ export function createMockServices(opts: { seeded?: boolean } = {}): ShellServic
       return { ok: true as const, message: m };
     },
     subscribe(events) { listeners.add(events); return () => listeners.delete(events); },
+    async spawnMockAgent(title) {
+      const agentId = `agent_mock_${Math.random().toString(36).slice(2, 8)}`;
+      const c: ConversationSummary = {
+        id: `conv_${Math.random().toString(36).slice(2, 10)}`,
+        threadId: `thread_${Math.random().toString(36).slice(2, 10)}`,
+        title: title?.trim() || 'Mock agent', kind: 'agent', pinned: false, archived: false,
+        lastActivityAt: new Date().toISOString(), unreadCount: 0, agentId,
+      };
+      convos = [c, ...convos];
+      emit((l) => l.onConversation?.(c));
+      const at = () => new Date().toISOString();
+      const pe = (e: AgentEvent) => presenceHandlers.forEach((h) => h(e));
+      pe({ type: 'spawned', agentId, sessionId: 'sess_mock', at: at() });
+      pe({ type: 'online', agentId, sessionId: 'sess_mock', at: at() });
+      setTimeout(() => pe({ type: 'activity', agentId, sessionId: 'sess_mock', at: at(), activity: 'typing a reply' }), 1500);
+      setTimeout(() => pe({ type: 'offline', agentId, sessionId: 'sess_mock', at: at(), reason: 'closed' }), 6000);
+      return { ok: true as const, conversation: c };
+    },
     async getLayout() { return layout; },
     async setLayout(patch) {
       layout = {

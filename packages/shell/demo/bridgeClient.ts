@@ -46,6 +46,7 @@ export function createBridgeServices(url: string, onPresence: (e: AgentEvent) =>
       archiveConversation: (id, archived) => call('archiveConversation', { id, archived }),
       getMessages: (conversationId) => call('getMessages', { conversationId }),
       sendMessage: (conversationId, text) => call('sendMessage', { conversationId, text }),
+      spawnMockAgent: (title) => call('spawnMockAgent', { title }),
       subscribe(events) {
         const ml = (m: unknown) => events.onMessage?.(m as never);
         const cl = (c: unknown) => events.onConversation?.(c as never);

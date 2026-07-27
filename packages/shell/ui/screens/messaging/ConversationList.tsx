@@ -25,6 +25,7 @@ export function ConversationList(props: {
   presenceOf(agentId: string | undefined): PresenceSnapshot;
   onSelect(id: string): void;
   onNew(): void;
+  onSpawnMock?(): void;
 }) {
   const byGroup = new Map<GroupKey, ConversationSummary[]>();
   for (const c of props.conversations) {
@@ -37,6 +38,11 @@ export function ConversationList(props: {
         <Button primary style={{ width: '100%' }} onClick={props.onNew}>
           New chat&nbsp;&nbsp;⌘N
         </Button>
+        {props.onSpawnMock && (
+          <Button style={{ width: '100%', marginTop: 6 }} onClick={props.onSpawnMock}>
+            ⚡ Spawn mock agent
+          </Button>
+        )}
       </div>
       {props.conversations.length === 0 && (
         <EmptyState>No chats yet — start one above.</EmptyState>

@@ -181,6 +181,12 @@ export function MessagingRail(props: {
           props.onSelect(c.id);
         });
       }}
+      onSpawnMock={props.services.spawnMockAgent ? () => {
+        void props.services.spawnMockAgent!().then((r) => {
+          void props.services.listConversations().then(setConversations);
+          if (r.ok) props.onSelect(r.conversation.id);
+        });
+      } : undefined}
     />
   );
 }

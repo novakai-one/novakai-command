@@ -40,3 +40,11 @@ Ambiguities and judgment calls, one line each. Nothing here invents requirements
    throw consumers must catch).
 10. **PtyEvent.spawned from the real adapter is emitted only when the runtime
     reports a pid** (`terminalPid` optional on restored/registry entries).
+11. **Shell demo consumption (S1 integration):** packages/shell's demo bridge
+    composes this package (`composeAgents` + `createAgentsContract`, TS source
+    via tsx) as its real `PresenceSource`; with no `terminalRuntime` passed,
+    every provider resolves to the mock adapter (seam identical, AGT-001).
+    The bridge scripts session lifecycles through the `__emit` test seam and
+    binds `attachLiveLane` with a messaging-session sender so mock output
+    lands in a real thread. No agents code was changed for this; no new
+    deviations on this side.

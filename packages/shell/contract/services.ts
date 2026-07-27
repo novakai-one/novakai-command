@@ -50,6 +50,12 @@ export interface ShellServices {
   setSetting(key: string, value: unknown, opts?: { derivedFrom?: string; theme?: 'dark' | 'light' }):
     Promise<{ ok: true; value: SettingsRecord } | { ok: false; error: SetSettingError }>;
 
-  // presence (agents-lite seam; mocked until the sibling package lands)
+  // presence (agents-lite seam; the demo bridge wires the REAL packages/agents
+  // agentEvent stream; tests/mock inject an in-memory source)
   presence: PresenceSource;
+
+  // Demo affordance (SHL-006/007 end-to-end proof): define + spawn a mock
+  // agent session so presence dot / typing bubble / activity line move live.
+  // Optional: only demo backends implement it.
+  spawnMockAgent?(title?: string): Promise<{ ok: true; conversation: ConversationSummary } | { ok: false; error: string }>;
 }

@@ -44,9 +44,21 @@ packages/shell/
    added (envelope law would allow it — currently NOT done to avoid inventing
    a kind).
 3. **Presence.** `PresenceSource` interface kept exactly as instructed
-   (`subscribeAgentEvents`); packages/agents is NOT imported even though it
-   now exists. The demo drives a mock presence source (documented in
-   demo/bridge.ts). Wiring = orchestrator's job.
+   (`subscribeAgentEvents`). The demo bridge now wires the REAL packages/agents
+   as the source (S1 integration pass): `composeAgents` + `createAgentsContract`
+   on the node side, bus → WS broadcast → `bridgeClient` → UI `PresenceTracker`.
+   No terminal runtime exists in the demo context, so every provider resolves
+   to agents' mock adapter (AGT-001: seam identical); events flow for real.
+   The in-browser `mockServices` fallback keeps its own in-memory source.
+   Proven by `tests/presence-agents.test.ts` (agentEvent → snapshot → WS →
+   client tracker transitions) and the "⚡ Spawn mock agent" rail button
+   (`spawnMockAgent` bridge method + optional `ShellServices` seam) — dot /
+   typing bubble / activity line move live, and the mock session's scripted
+   output rides the REAL live lane into the thread as a messaging reply.
+   Deviations: (a) demo adds one messaging principal `person_mock` for spawned
+   mock agents and widens Chris's demo contact policy to accept agent people;
+   (b) `ShellServices.spawnMockAgent?` is an optional demo-only seam, not a
+   Pass-2 contract op.
 4. **Provider slash commands.** Registry + dispatch order implemented;
    `onProvider` in MessagingScreen is a deliberate no-op until the agents
    package declares its slash set at registration (R3-13). Structured
