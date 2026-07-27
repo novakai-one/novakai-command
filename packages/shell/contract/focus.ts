@@ -31,28 +31,32 @@ export function subscribeFocus(l: (f: FocusState) => void): () => void {
 }
 
 // ── invokeAction: routed to the owning capability's registered handler ──────
+// S2b (§22 ruling 10): handlers are per (kind, actionId) — an unknown actionId
+// on a known kind AND an absent owner both yield typed ActionNotFound.
 type ActionHandler = (ref: Ref, actionId: string) => Promise<unknown>;
-const actionHandlers = new Map<string, ActionHandler>(); // key: kind
+const actionHandlers = new Map<string, ActionHandler>(); // key: `${kind}·${actionId}`
 
-export function registerActionHandler(kind: string, handler: ActionHandler): void {
-  actionHandlers.set(kind, handler);
+export function registerActionHandler(kind: string, actionId: string, handler: ActionHandler): void {
+  actionHandlers.set(`${kind}·${actionId}`, handler);
 }
+
+/** Test/boot seam: clear registered action handlers. */
+export function __resetActionHandlers(): void {
+  actionHandlers.clear();
+}
+
+const actionNotFound = (ref: Ref, actionId: string): ActionNotFoundError => ({
+  code: 'ActionNotFound',
+  message: `no action handler registered for "${actionId}" on kind "${ref.kind}"`,
+  details: { ref, actionId },
+  retryable: false,
+});
 
 export async function invokeAction(
   ref: Ref,
   actionId: string,
 ): Promise<{ ok: true; value: unknown } | { ok: false; error: ActionNotFoundError }> {
-  const handler = actionHandlers.get(ref.kind);
-  if (!handler) {
-    return {
-      ok: false,
-      error: {
-        code: 'ActionNotFound',
-        message: `no action handler registered for kind "${ref.kind}"`,
-        details: { ref, actionId },
-        retryable: false,
-      },
-    };
-  }
+  const handler = actionHandlers.get(`${ref.kind}·${actionId}`);
+  if (!handler) return { ok: false, error: actionNotFound(ref, actionId) };
   return { ok: true, value: await handler(ref, actionId) };
 }

@@ -12,6 +12,7 @@ export function ThreadView(props: {
   focused: boolean;
   selfId: string;
   renderSegments?: { text: string; gapBefore: boolean }[];
+  onInspectMessage?(m: ChatMessage): void;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -44,7 +45,12 @@ export function ThreadView(props: {
           )}
           {props.messages.map((m) => (
             <div key={m.id} className={`nv-msg${m.senderId === props.selfId ? ' nv-msg--mine' : ''}`}>
-              <div className="nv-msg__bubble" data-pending={m.pending ? 'true' : 'false'}>{m.text}</div>
+              <div
+                className="nv-msg__bubble" data-pending={m.pending ? 'true' : 'false'}
+                role={props.onInspectMessage ? 'button' : undefined}
+                title={props.onInspectMessage ? 'Inspect message' : undefined}
+                onClick={props.onInspectMessage ? () => props.onInspectMessage!(m) : undefined}
+              >{m.text}</div>
               {m.failed
                 ? <div className="nv-msg__error">{m.failed}</div>
                 : <div className="nv-msg__meta">{m.pending ? 'Sending…' : new Date(m.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>}

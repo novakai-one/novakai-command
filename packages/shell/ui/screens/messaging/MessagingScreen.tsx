@@ -5,12 +5,14 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import type {
   ChatMessage, ConversationSummary, PresenceSnapshot, ShellServices,
 } from '../../../contract/index.js';
-import { PresenceTracker, SlashRegistry, renderSpeedKey, DEFAULT_RENDER_SPEED, settingValue, mintShellOpId, subscribeFocus, getFocus, type ScreenContext } from '../../../contract/index.js';
+import { PresenceTracker, SlashRegistry, renderSpeedKey, DEFAULT_RENDER_SPEED, settingValue, mintShellOpId, subscribeFocus, getFocus, registerActionHandler, type ScreenContext, type ChatMessage as ChatMessageT } from '../../../contract/index.js';
 import { ConversationList } from './ConversationList.js';
 import { ThreadView } from './ThreadView.js';
 import { Composer } from './Composer.js';
 import { CommandPalette } from './CommandPalette.js';
 import { FocusChip } from './FocusChip.js';
+import { registerInspectorScreen } from '../../inspector/registry.js';
+import { MessageInspector } from '../../inspector/MessageInspector.js';
 import './messaging.css';
 
 export function MessagingScreen(props: {
@@ -20,6 +22,7 @@ export function MessagingScreen(props: {
   selectedId: string | null;
   onSelect(id: string | null): void;
   onInspectConversation(c: ConversationSummary): void;
+  onInspectMessage(m: ChatMessageT): void;
   onOpenSettings(): void;
   registry: SlashRegistry;
   tracker: PresenceTracker;
@@ -37,6 +40,17 @@ export function MessagingScreen(props: {
 
   useEffect(() => { void services.listConversations().then(setConversations); }, [services]);
   useEffect(() => props.tracker.subscribe(() => setPresenceTick((n) => n + 1)), [props.tracker]);
+
+  // S2b inspector (DEC-S2-8): the message kind's screen + its primary action.
+  // "Inspect and act": reply selects the conversation and focuses the composer.
+  useEffect(() => {
+    registerInspectorScreen('message', MessageInspector);
+    registerActionHandler('message', 'reply', async (ref) => {
+      const el = document.querySelector<HTMLTextAreaElement>('.composer-wrap textarea');
+      el?.focus();
+      return { focused: true, ref };
+    });
+  }, []);
 
   const selected = conversations.find((c) => c.id === props.selectedId) ?? null;
 
@@ -143,6 +157,7 @@ export function MessagingScreen(props: {
         presence={selected?.agentId ? props.tracker.get(selected.agentId) : null}
         focused={true}
         selfId="me"
+        onInspectMessage={(m) => props.onInspectMessage(m)}
       />
       <div className="nv-composer-row">
         <FocusChip focus={focus} />

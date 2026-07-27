@@ -1,0 +1,15 @@
+/* shell/ui/inspector/inspector.css — peek + expanded inspector views */
+.nv-inspector-view { padding: 14px; font-size: var(--text-2); color: var(--ink-2); }
+.nv-inspector-view__kind { margin: 0 0 10px; font-size: var(--text-1); color: var(--ink); }
+.nv-inspector-view__envelope { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 0 0 12px; }
+.nv-inspector-view__envelope dt { color: var(--ink-3); font-size: var(--text-3); }
+.nv-inspector-view__envelope dd { margin: 0; color: var(--ink); overflow-wrap: anywhere; }
+.nv-inspector-view__payload {
+  margin: 0; padding: 10px; background: var(--ground); border-radius: var(--radius-sm);
+  font-family: var(--mono); font-size: var(--text-3); overflow: auto; max-height: 320px;
+}
+.nv-msg-inspector__text {
+  margin: 0 0 12px; padding: 8px 12px; border-left: 2px solid var(--hairline);
+  color: var(--ink); white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.nv-expanded { flex: 1; overflow: auto; }
