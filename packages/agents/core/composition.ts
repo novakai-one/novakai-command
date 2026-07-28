@@ -7,7 +7,7 @@ import type { TerminalAdapter, TerminalRuntimeLike } from './providers/adapter.j
 import { createTerminalAdapter } from './providers/terminal.js';
 import { createMockAdapter, type MockTerminalAdapter } from './providers/mock.js';
 import { AgentEventBus } from './events/bus.js';
-import type { HookRefs } from './hooks/engine.js';
+import type { HookRefs, PendingInjection } from './hooks/engine.js';
 import type { HookEvent } from '../contract/schemas.js';
 
 export interface AgentsContext {
@@ -21,10 +21,16 @@ export interface AgentsContext {
   /**
    * S2a hooks: inject-context-text text buffered at onSpawn/onMessagePost,
    * prepended to the session's NEXT input (DEC-S2-2: "the agent's next input").
+   * Entries carry their deferred provenance-trace payload (L14).
    */
-  pendingInjections: Map<string, string[]>;
+  pendingInjections: Map<string, PendingInjection[]>;
   /** S2a hooks: onExit fires exactly once per session (close OR natural exit). */
   exitHooksFired: Set<string>;
+  /**
+   * M7: trace-write failures that could not be surfaced even as hook_error
+   * traces land here — inspectable, never silent; the host action is unaffected.
+   */
+  hookTraceFailures: Array<{ event: HookEvent; agentId: string; reason: string; at: string }>;
   /**
    * S2b context advisories (DEC-S2-6, §22 ruling 1): sessions with an attached
    * live lane get focus-change advisories as system context lines BETWEEN
@@ -83,6 +89,7 @@ export function composeAgents(options: ComposeAgentsOptions): AgentsContext {
     closedSessions: new Set(),
     pendingInjections: new Map(),
     exitHooksFired: new Set(),
+    hookTraceFailures: [],
     laneState: new Map(),
     advisoryQuietMs: options.advisoryQuietMs ?? 5000,
   };

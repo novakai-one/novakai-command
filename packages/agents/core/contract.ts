@@ -14,7 +14,7 @@ import { spawnFailed, unsupportedOperation } from '../contract/errors.js';
 import type { AgentsContext } from './composition.js';
 import * as registry from './registry/registry.js';
 import * as skillsStore from './skills/skills.js';
-import { mergeInput, runEventHooks } from './hooks/engine.js';
+import { fireInjectionTrace, mergeInput, runEventHooks } from './hooks/engine.js';
 import { attachLiveLane, pushContextAdvisory, type LiveLaneSender } from './live-lane/liveLane.js';
 
 export interface AgentsContract {
@@ -188,8 +188,19 @@ export function createAgentsContract(ctx: AgentsContext): AgentsContract {
           const pending = ctx.pendingInjections.get(sessionId) ?? [];
           ctx.pendingInjections.delete(sessionId);
           const pre = await runEventHooks(ctx, found.value, 'onMessagePre', { sessionId, messageText: input });
-          out = mergeInput([...pending, ...pre.injections], input);
+          const injections = [...pending, ...pre.injections];
+          out = mergeInput(injections, input);
           const sent = adapter.send(sessionId, out);
+          if (sent) {
+            // L14: provenance traces fire ONLY on send success — an injection
+            // that never went out is neither traced nor consumed.
+            for (const inj of injections) await fireInjectionTrace(ctx, inj);
+          } else if (injections.length > 0) {
+            // send failed: re-buffer the injections for the next attempt.
+            ctx.pendingInjections.set(sessionId, [
+              ...injections, ...(ctx.pendingInjections.get(sessionId) ?? []),
+            ]);
+          }
           // onMessagePost runs even when the send fails (the event happened);
           // its injections buffer for the next input.
           const post = await runEventHooks(ctx, found.value, 'onMessagePost', { sessionId, messageText: input });

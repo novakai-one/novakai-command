@@ -118,7 +118,7 @@ test('log-to-trace hook fires a hook_log system.action line (onMessagePost)', as
   assert.equal((logs[0].meta as { event: string }).event, 'onMessagePost');
 });
 
-test('hook timeout (send-path 500ms) = skipped + hook_error trace; the send is NOT blocked', async () => {
+test('hook timeout = skipped + hook_error trace; the send is NOT blocked (L13: 500ms TOTAL chain budget)', async () => {
   const { root, ctx, agents } = freshCtx();
   // @internal test seam: make one action hang forever
   ctx.__hookExecutor = async (action, refs) => {
@@ -139,12 +139,87 @@ test('hook timeout (send-path 500ms) = skipped + hook_error trace; the send is N
   assert.equal(sent, true); // host action completed despite the hung hook
   assert.ok(Date.now() - started < 2000, 'send-path budget must stay near 500ms');
   const rec = mockOf(ctx)!.__session(spawn.value.sessionId)!;
-  assert.equal(rec.sent[0], 'FAST\nhi'); // SLOW skipped, later hooks still ran
+  // L13 ruled: the chain shares ONE 500ms budget — SLOW consumed it, so FAST
+  // is skipped too (chain budget exhausted), never a per-hook 500ms.
+  assert.equal(rec.sent[0], 'hi');
+  const errors = await traces(root, 'hook_error');
+  assert.equal(errors.length, 2);
+  assert.match((errors[0].meta as { reason: string }).reason, /timeout/);
+  assert.match((errors[1].meta as { reason: string }).reason, /budget/);
+});
+
+test('L13: two healthy-but-slow hooks share the 500ms chain budget — the second is skipped, never silently', async () => {
+  const { root, ctx, agents } = freshCtx();
+  ctx.__hookExecutor = async (action, refs) => {
+    if (action.kind === 'inject-context-text') {
+      await new Promise((r) => setTimeout(r, 320)); // each hook is "healthy" but slow
+    }
+    return executeAction(ctx, action, refs);
+  };
+  const def = await define(agents, [
+    { event: 'onMessagePre', action: { kind: 'inject-context-text', text: 'FIRST' } },
+    { event: 'onMessagePre', action: { kind: 'inject-context-text', text: 'SECOND' } },
+  ]);
+  const spawn = await agents.spawnAgent(def.id as AgentId);
+  assert.equal(spawn.ok, true);
+  if (!spawn.ok) return;
+  const started = Date.now();
+  const sent = await agents.sendToSession(spawn.value.sessionId as SessionId, 'hi');
+  assert.equal(sent, true);
+  assert.ok(Date.now() - started < 900, 'chain total stays ~500ms, not 2×500ms');
+  const rec = mockOf(ctx)!.__session(spawn.value.sessionId)!;
+  assert.equal(rec.sent[0], 'FIRST\nhi'); // SECOND skipped: budget was gone
   const errors = await traces(root, 'hook_error');
   assert.equal(errors.length, 1);
-  assert.equal(errors[0].opKind, 'system.action');
-  assert.equal((errors[0].meta as { event: string }).event, 'onMessagePre');
-  assert.match((errors[0].meta as { reason: string }).reason, /timeout/);
+  assert.match((errors[0].meta as { reason: string }).reason, /budget|timeout/);
+});
+
+test('M7: a trace-write failure inside a hook is NEVER silent — hook_error trace records it, host action unaffected', async () => {
+  const { root, ctx, agents } = freshCtx();
+  const def = await define(agents, [
+    { event: 'onSpawn', action: { kind: 'log-to-trace', message: 'x' } },
+  ]);
+  // one injected trace failure: the hook_log write fails → surfaced as hook_error
+  (ctx.handle.__engine as { failNextTraceAppend?: { cause: string } }).failNextTraceAppend = { cause: 'disk full (injected)' };
+  const spawn = await agents.spawnAgent(def.id as AgentId);
+  assert.equal(spawn.ok, true); // host action unaffected
+  const errors = await traces(root, 'hook_error');
+  assert.equal(errors.length, 1);
+  assert.match((errors[0].meta as { reason: string }).reason, /trace|disk full/i);
+});
+
+test('M7: if even the hook_error trace fails, the failure is recorded on the context (never silent)', async () => {
+  const { ctx, agents } = freshCtx();
+  ctx.__hookExecutor = async () => { throw new Error('boom'); };
+  const def = await define(agents, [
+    { event: 'onSpawn', action: { kind: 'log-to-trace', message: 'x' } },
+  ]);
+  // the hook_error trace write itself fails → the failure must still surface
+  (ctx.handle.__engine as { failNextTraceAppend?: { cause: string } }).failNextTraceAppend = { cause: 'disk full (injected)' };
+  const spawn = await agents.spawnAgent(def.id as AgentId);
+  assert.equal(spawn.ok, true);
+  assert.equal(ctx.hookTraceFailures.length, 1, 'the double failure is inspectable, never swallowed');
+  assert.match(ctx.hookTraceFailures[0].reason, /boom/);
+  assert.match(ctx.hookTraceFailures[0].reason, /disk full/);
+});
+
+test('L14: when adapter.send fails, the injection is NOT consumed and NO context.inject trace fires', async () => {
+  const { root, ctx, agents } = freshCtx();
+  const def = await define(agents, [
+    { event: 'onMessagePre', action: { kind: 'inject-context-text', text: 'PRE' } },
+  ]);
+  const spawn = await agents.spawnAgent(def.id as AgentId);
+  assert.equal(spawn.ok, true);
+  if (!spawn.ok) return;
+  // kill the session so adapter.send returns false
+  agents.closeSession(spawn.value.sessionId as SessionId);
+  await new Promise((r) => setTimeout(r, 30));
+  const sent = await agents.sendToSession(spawn.value.sessionId as SessionId, 'hi');
+  assert.equal(sent, false);
+  const injectTraces = await traces(root, 'context.inject');
+  assert.equal(injectTraces.length, 0, 'no provenance trace for an injection that never went out');
+  const pending = ctx.pendingInjections.get(spawn.value.sessionId) ?? [];
+  assert.deepEqual(pending.map((p) => p.text), ['PRE'], 'the injection is re-buffered, not consumed');
 });
 
 test('a failing onSpawn hook never blocks the spawn (liveness wins, DEC-S2-3)', async () => {

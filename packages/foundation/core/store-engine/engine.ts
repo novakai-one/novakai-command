@@ -625,7 +625,23 @@ export class StoreEngine {
         opKind: 'system.action', target,
         ...(meta ? { meta } : {}),
       };
-      this.appendLineFsync(this.storePath('trace'), JSON.stringify(trace));
+      const fail = this.failNextTraceAppend;
+      if (fail) {
+        delete this.failNextTraceAppend;
+        return {
+          ok: false,
+          error: err('TraceWriteFailed', `system.action trace append failed: ${fail.cause}`, { opId: trace.opId as ServerOpId, cause: fail.cause }, true),
+        };
+      }
+      try {
+        this.appendLineFsync(this.storePath('trace'), JSON.stringify(trace));
+      } catch (cause) {
+        // typed across the seam — hook engines CHECK this Result (M7)
+        return {
+          ok: false,
+          error: err('TraceWriteFailed', `system.action trace append failed: ${String(cause)}`, { opId: trace.opId as ServerOpId, cause: String(cause) }, true),
+        };
+      }
       return { ok: true, value: null };
     });
   }
