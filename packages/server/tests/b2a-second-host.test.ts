@@ -13,6 +13,14 @@ import { fileURLToPath } from 'node:url';
 const SCRIPT = path.resolve('../../scripts/b2a-second-host.ts');
 const TSX = fileURLToPath(import.meta.resolve('tsx/cli'));
 
+function readJsonl<T>(filePath: string): T[] {
+  return readFileSync(filePath, 'utf8')
+    .trim()
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as T);
+}
+
 test('the CLI-only second host proves the complete B2a lifecycle without Server or UI', () => {
   const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-second-host-'));
   const root = path.join(workspace, '.novakai');
@@ -63,12 +71,39 @@ test('the CLI-only second host proves the complete B2a lifecycle without Server 
     assert.equal(proof.serverStarted, false);
     assert.equal(proof.uiUsed, false);
 
-    const journal = readFileSync(
+    const journal = readJsonl<{
+      envelope: { createdBy: string };
+      payload: { state: string };
+    }>(
       path.join(root, 'stores', 'spineSteps.jsonl'),
-      'utf8',
     );
-    assert.match(journal, /"state":"accepted"/);
-    assert.match(journal, /"state":"abandoned"/);
+    assert.equal(
+      journal.every(({ envelope }) =>
+        envelope.createdBy === 'person_secondhost'),
+      true,
+      'offline Spine journal identity derives from the authenticated token',
+    );
+    assert.equal(
+      journal.some(({ payload }) => payload.state === 'accepted'),
+      true,
+    );
+    assert.equal(
+      journal.some(({ payload }) => payload.state === 'abandoned'),
+      true,
+    );
+
+    const spineTraces = readJsonl<{
+      createdBy: string;
+      target: { kind: string };
+    }>(path.join(root, 'stores', 'traces.jsonl'))
+      .filter(({ target }) => target.kind === 'spineStep');
+    assert.ok(spineTraces.length > 0);
+    assert.equal(
+      spineTraces.every(({ createdBy }) =>
+        createdBy === 'person_secondhost'),
+      true,
+      'offline Spine trace identity derives from the authenticated token',
+    );
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }
