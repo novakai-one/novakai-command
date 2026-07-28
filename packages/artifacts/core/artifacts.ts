@@ -17,6 +17,7 @@ import type {
 import type {
   Absent,
   Page,
+  PageOptions,
   Result,
 } from '@novakai/foundation/dist/contract/types.js';
 import {
@@ -218,8 +219,14 @@ export async function getArtifactMeta(
 
 export async function listArtifacts(
   ctx: ArtifactsContext,
+  page?: PageOptions,
 ): Promise<Result<Page<ArtifactT>, ArtifactsError>> {
-  const listed = await listObjects<ArtifactT>(ctx.handle, 'artifact');
+  const listed = await listObjects<ArtifactT>(
+    ctx.handle,
+    'artifact',
+    undefined,
+    page,
+  );
   if (!listed.ok) return listed;
   const items: ArtifactT[] = [];
   for (const { object } of listed.value.items) {
@@ -244,6 +251,23 @@ export async function listArtifacts(
         : { nextCursor: listed.value.nextCursor }),
     },
   };
+}
+
+export async function listAllArtifacts(
+  ctx: ArtifactsContext,
+): Promise<Result<ArtifactT[], ArtifactsError>> {
+  const items: ArtifactT[] = [];
+  let cursor: string | undefined;
+  do {
+    const page = await listArtifacts(
+      ctx,
+      cursor === undefined ? undefined : { cursor },
+    );
+    if (!page.ok) return page;
+    items.push(...page.value.items);
+    cursor = page.value.nextCursor;
+  } while (cursor !== undefined);
+  return { ok: true, value: items };
 }
 
 export async function getArtifactBytes(

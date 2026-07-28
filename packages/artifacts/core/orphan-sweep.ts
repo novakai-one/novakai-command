@@ -18,7 +18,7 @@ import type {
 } from '../contract/schemas.js';
 import type { ArtifactsError } from '../contract/errors.js';
 import type { ArtifactsContext } from './composition.js';
-import { listArtifacts } from './artifacts.js';
+import { listAllArtifacts } from './artifacts.js';
 
 interface OrphanEntry {
   artifactId: ArtifactId;
@@ -144,9 +144,9 @@ async function sweepOrphan(
 export async function sweepOrphans(
   ctx: ArtifactsContext,
 ): Promise<Result<OrphanSweepResult, ArtifactsError>> {
-  const listed = await listArtifacts(ctx);
+  const listed = await listAllArtifacts(ctx);
   if (!listed.ok) return listed;
-  const recordedIds = new Set(listed.value.items.map((item) => item.id));
+  const recordedIds = new Set(listed.value.map((item) => item.id));
   const scanned = await scanOrphans(ctx.bytesRoot);
   if (!scanned.ok) return scanned;
   const orphans = scanned.value.filter(
