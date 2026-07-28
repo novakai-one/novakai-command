@@ -7,14 +7,14 @@ const repoRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   '..',
 );
-const adapters = {
-  project: path.join(repoRoot, 'packages/projects/cli/nvk-project.ts'),
-  artifact: path.join(repoRoot, 'packages/artifacts/cli/nvk-artifact.ts'),
-  spine: path.join(repoRoot, 'packages/spine/cli/nvk-spine.ts'),
-};
+const adapters = new Map([
+  ['project', path.join(repoRoot, 'packages/projects/cli/nvk-project.ts')],
+  ['artifact', path.join(repoRoot, 'packages/artifacts/cli/nvk-artifact.ts')],
+  ['spine', path.join(repoRoot, 'packages/spine/cli/nvk-spine.ts')],
+]);
 
 const [group, ...args] = process.argv.slice(2);
-const adapter = adapters[group];
+const adapter = adapters.get(group);
 if (!adapter) {
   process.stderr.write(`${JSON.stringify({
     code: 'Usage',
