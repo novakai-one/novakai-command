@@ -307,3 +307,30 @@ test('getArtifactMeta translates unreadable Foundation storage to a typed error'
     rmSync(workspace, { recursive: true, force: true });
   }
 });
+
+test('listArtifacts translates unreadable Foundation storage to a typed error', async () => {
+  const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-artifact-list-eisdir-'));
+  const root = path.join(workspace, '.novakai');
+  try {
+    mkdirSync(
+      path.join(root, 'stores', 'artifacts.jsonl'),
+      { recursive: true },
+    );
+    const artifacts = composeArtifacts({
+      root,
+      principal: 'person_chris',
+    }).operations;
+
+    const result = await artifacts.listArtifacts();
+
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    assert.equal(result.error.code, 'ArtifactStoreReadFailed');
+    assert.equal(
+      (result.error.details as { operation: string }).operation,
+      'list',
+    );
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
