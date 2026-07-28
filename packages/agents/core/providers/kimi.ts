@@ -132,6 +132,10 @@ export function createKimiCliRuntime(options: KimiCliRuntimeOptions): KimiCliRun
 
   /** One user message → one child process; resolves when the reply is fully read. */
   const runPrompt = (rec: LogicalSession, text: string): Promise<void> => new Promise((resolve) => {
+    if (rec.status !== 'running') {
+      resolve();
+      return;
+    }
     const startedAt = new Date().toISOString();
     const modelUsed = rec.model && !NO_MODEL_FLAG.has(rec.model) ? rec.model : null;
     const child = spawn(cliPath, argvFor(rec, text), {
@@ -222,6 +226,7 @@ export function createKimiCliRuntime(options: KimiCliRuntimeOptions): KimiCliRun
       if (rec.status !== 'exited') {
         rec.status = 'exited';
         rec.current?.kill();
+        rec.queue = Promise.resolve();
         for (const cb of exitCallbacks) cb(key, null);
       }
       return true;

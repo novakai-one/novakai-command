@@ -141,6 +141,25 @@ test('messages are serialized: one child process at a time, in order', async () 
   assert.deepEqual(prompts, ['a', 'b', 'c']);
 });
 
+test('M6: kill after turn one completes cancels every prompt still queued behind it', async () => {
+  const fake = fakeKimi();
+  const runtime = createKimiCliRuntime({ cwd: process.cwd(), cliPath: fake.cliPath });
+  await runtime.create({ cwd: process.cwd(), agentId: 'sess_cancel_queue' });
+  let completed = 0;
+  runtime.onTurn(() => {
+    completed += 1;
+    if (completed === 1) runtime.kill('sess_cancel_queue');
+  });
+
+  runtime.write('sess_cancel_queue', 'first');
+  runtime.write('sess_cancel_queue', 'must never spawn');
+  await runtime.drain('sess_cancel_queue');
+
+  const prompts = fake.invocations().map((argv) => argv[argv.indexOf('-p') + 1]);
+  assert.deepEqual(prompts, ['first']);
+  assert.equal(completed, 1);
+});
+
 test('spawn config is honored per message: skills argv is prepended, env is merged', async () => {
   const fake = fakeKimi();
   const runtime = createKimiCliRuntime({ cwd: process.cwd(), cliPath: fake.cliPath });
