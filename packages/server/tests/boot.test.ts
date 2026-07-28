@@ -25,6 +25,15 @@ import {
 import {
   getConversationView, setConversationView,
 } from '../../shell/contract/conversationView.js';
+import {
+  composeArtifacts,
+} from '../../artifacts/contract/index.js';
+import {
+  composeProjects,
+} from '../../projects/contract/index.js';
+import {
+  composeSpine,
+} from '../../spine/contract/index.js';
 import { fakeKimi } from './fakeKimi.js';
 
 const root = () => mkdtempSync(path.join(tmpdir(), 'nvk-boot-'));
@@ -74,6 +83,77 @@ async function seedLegacyConversationWithoutThread(dir: string): Promise<void> {
   assert.equal(seeded.ok, true);
 }
 
+async function seedAcceptedArtifactWorkflow(
+  dir: string,
+): Promise<{
+  projectId: string;
+  projects: ReturnType<typeof composeProjects>;
+  spine: ReturnType<typeof composeSpine>;
+}> {
+  const projects = composeProjects({
+    root: dir,
+    principal: 'person_chris',
+  });
+  const project = await projects.operations.createProject(
+    { title: 'Boot recovery proof' },
+    'op_boot_recovery_project' as never,
+  );
+  assert.equal(project.ok, true);
+  if (!project.ok) throw new Error('public Project seed failed');
+
+  const artifacts = composeArtifacts({
+    root: dir,
+    principal: 'person_chris',
+  });
+  const artifact = await artifacts.operations.putArtifact({
+    bytes: Buffer.from('boot recovery artifact', 'utf8'),
+    mimeType: 'text/plain',
+  }, 'op_boot_recovery_artifact' as never);
+  assert.equal(artifact.ok, true);
+  if (!artifact.ok) throw new Error('public Artifact seed failed');
+
+  const dependencies = {
+    messaging: {
+      async getDelivery() {
+        return { kind: 'ok' as const, value: { deliveries: [] } };
+      },
+    },
+    projects: projects.spine,
+    artifacts: artifacts.operations,
+  };
+  const priorFailpoint = process.env.NVK_FAILPOINT;
+  try {
+    process.env.NVK_FAILPOINT = 'spine.journal.accepted.after';
+    const interrupted = await composeSpine({
+      root: dir,
+      principal: 'person_chris',
+      ...dependencies,
+    }).operations.attachArtifactToProject({
+      artifactId: artifact.value.id,
+      projectId: project.value.id,
+    }, 'op_boot_recovery_workflow' as never);
+    assert.equal(interrupted.ok, false);
+    assert.equal(
+      interrupted.ok ? null : interrupted.error.code,
+      'SpineFailpoint',
+    );
+  } finally {
+    if (priorFailpoint === undefined) delete process.env.NVK_FAILPOINT;
+    else process.env.NVK_FAILPOINT = priorFailpoint;
+  }
+
+  const spine = composeSpine({
+    root: dir,
+    principal: 'person_chris',
+    ...dependencies,
+  });
+  const accepted = await spine.boot.scanWorkflows();
+  assert.equal(accepted.ok, true);
+  assert.equal(accepted.ok ? accepted.value.items.length : -1, 1);
+  assert.equal(accepted.ok ? accepted.value.items[0]?.state : null, 'accepted');
+  return { projectId: project.value.id, projects, spine };
+}
+
 test('boot refuses to start without a human principal, and names the runbook', async () => {
   const dir = root();
   const res = await bootServer({ root: dir, port: 0, cwd: dir, transcripts: false, watchdogDir: dir });
@@ -82,21 +162,86 @@ test('boot refuses to start without a human principal, and names the runbook', a
   assert.match(res.error.message, /nvk-token.*mint/s, 'the operator is told exactly what to run');
 });
 
-test('boot runs all nine steps in order and serves bootstrap.json', async () => {
+test('boot discovers accepted Spine work without auto-continuing it', async (t) => {
+  const dir = root();
+  await mintChris(dir);
+  const seeded = await seedAcceptedArtifactWorkflow(dir);
+
+  const server = await boot(dir);
+  t.after(() => server.close());
+
+  const spineStep = server.steps.find(({ name }) => name === 'spine');
+  assert.ok(
+    spineStep,
+    'Server boot must report its public Spine recovery scan',
+  );
+  assert.match(spineStep.detail, /^1 resumable workflow/);
+
+  const pending = await seeded.spine.boot.scanWorkflows();
+  assert.equal(pending.ok, true);
+  assert.equal(pending.ok ? pending.value.items.length : -1, 1);
+  assert.equal(pending.ok ? pending.value.items[0]?.state : null, 'accepted');
+
+  const items = await seeded.projects.operations.getProjectItems(
+    seeded.projectId as never,
+  );
+  assert.equal(items.ok, true);
+  assert.equal(
+    items.ok ? items.value.items.length : -1,
+    0,
+    'boot discovery never executes the pending attachment',
+  );
+});
+
+test('boot composes B2a capabilities in order, traces each step, and serves bootstrap.json', async (t) => {
   const dir = root();
   await mintChris(dir);
   const server = await boot(dir);
+  t.after(() => server.close());
 
-  assert.deepEqual(server.steps.map((s) => s.step), [1, 2, 3, 4, 5, 6, 7, 8, 9]);
+  assert.deepEqual(
+    server.steps.map((s) => s.step),
+    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+  );
   assert.deepEqual(
     server.steps.map((s) => s.name),
-    ['config', 'foundation', 'messaging', 'agents', 'transcript', 'shell', 'sessions', 'supervision', 'transport'],
+    [
+      'config',
+      'foundation',
+      'messaging',
+      'agents',
+      'transcript',
+      'shell',
+      'sessions',
+      'artifacts',
+      'projects',
+      'spine',
+      'supervision',
+      'transport',
+    ],
+  );
+
+  const engine = composeEngine({
+    root: dir,
+    capability: 'server',
+    allowedKinds: ['artifact', 'project', 'spineStep'],
+    principal: 'sys_spine',
+  });
+  const traces = await queryTraceBound(engine, {});
+  const capabilityBootTraces = traces.items.filter((item) =>
+    item.opKind === 'system.action'
+    && item.action === 'hook_log'
+    && (item.meta as { event?: string } | undefined)?.event
+      === 'server.boot.capability');
+  assert.deepEqual(
+    capabilityBootTraces.map((trace) =>
+      (trace.meta as { capability: string }).capability),
+    ['artifacts', 'projects', 'spine'],
   );
 
   const bootstrap = await (await fetch(`${server.url}/bootstrap.json`)).json() as { token: string; protocolVersion: number };
   assert.equal(bootstrap.token, server.token);
   assert.equal(bootstrap.protocolVersion, 1);
-  await server.close();
 });
 
 test('boot archives a legacy thread-less conversation and send refuses it with a typed recovery message', async () => {
