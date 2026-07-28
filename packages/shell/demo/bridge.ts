@@ -17,8 +17,7 @@ import {
 } from '../../agents/contract/index.js';
 // Demo-scoped REAL provider path: drives the actual `kimi` CLI in print mode
 // (see kimiCliRuntime.ts for why this replaces the TUI terminal host here).
-import { existsSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { createKimiCliRuntime, defaultKimiCliPath } from './kimiCliRuntime.js';
 
 // foundation brands mints `op_${uuid}`; shell never imports foundation from
@@ -167,11 +166,18 @@ seedConvo('conv_fable', 'person:person_fable', 'Fable', 'agent', fableAgentId);
 
 // Demo affordance (S2a): seed one registry skill so the Agents screen's
 // skills multi-select has something real to show (idempotent per root).
+// M10: skill path refs must live under .novakai/skills/ — the seed creates the
+// directory it references (a real, minimal skill dir).
 {
   const existing = await agents.listSkills();
   if (existing.ok && existing.value.items.length === 0) {
+    const seedDir = path.join(NOVAKAI_ROOT, 'skills', 'tdd');
+    mkdirSync(seedDir, { recursive: true });
+    if (!existsSync(path.join(seedDir, 'SKILL.md'))) {
+      writeFileSync(path.join(seedDir, 'SKILL.md'), '# TDD\n\nTest-driven development: RED first, then GREEN, then refactor.\n');
+    }
     await agents.registerSkill(
-      { name: 'TDD', path: path.join(homedir(), '.agents', 'skills', 'tdd'), description: 'test-driven development' },
+      { name: 'TDD', path: `.novakai/skills/tdd`, description: 'test-driven development' },
       mintOpId(),
     );
   }

@@ -1,5 +1,6 @@
 // Composition root: bind foundation handle + provider adapters + event bus
 // into one AgentsContext. Consumers (CLI, shell) call createAgentsContract(ctx).
+import path from 'node:path';
 import { composeHandle, type ScopedStoreHandle } from '@novakai/foundation/dist/contract/index.js';
 import type { CapabilityId } from '@novakai/foundation/dist/contract/brands.js';
 import type { HookAction, ProviderName } from '../contract/schemas.js';
@@ -12,6 +13,8 @@ import type { HookEvent } from '../contract/schemas.js';
 
 export interface AgentsContext {
   handle: ScopedStoreHandle;
+  /** M10: skill path refs are constrained to .novakai/skills/ (one store, req 10). */
+  skillsRoot: string;
   adapters: Record<ProviderName, TerminalAdapter>;
   bus: AgentEventBus;
   /** sessionId → agentId for sessions this process spawned (DEC-C1: temporary). */
@@ -83,6 +86,7 @@ export function composeAgents(options: ComposeAgentsOptions): AgentsContext {
     : { kimi: mock, claude: mock, codex: mock, mock };
   return {
     handle,
+    skillsRoot: path.join(options.root, 'skills'),
     adapters,
     bus: new AgentEventBus(),
     sessions: new Map(),

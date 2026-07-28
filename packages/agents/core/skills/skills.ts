@@ -3,6 +3,7 @@
 // v1 stores path refs only — no parsing, no execution (red gate S2-1: one
 // store, never inside a provider adapter).
 import { randomUUID } from 'node:crypto';
+import path from 'node:path';
 import {
   createObject, getObject, listObjects,
 } from '@novakai/foundation/dist/contract/index.js';
@@ -31,6 +32,22 @@ export async function registerSkill(
         missingFields: [...(!input.name ? ['name'] : []), ...(!input.path ? ['path'] : [])],
         invalidFields: [],
       }, false),
+    };
+  }
+  // M10 (req 10, one store): skill path refs are constrained to
+  // .novakai/skills/ — the canonical relative form, or an absolute path that
+  // resolves under this root's skills/ dir. Anything else is a typed rejection.
+  const compliant =
+    input.path.startsWith('.novakai/skills/')
+    || path.resolve(input.path).startsWith(path.resolve(ctx.skillsRoot) + path.sep);
+  if (!compliant) {
+    return {
+      ok: false,
+      error: err('InvalidEnvelope',
+        `skill path must live under .novakai/skills/ (got "${input.path}")`, {
+          missingFields: [],
+          invalidFields: [{ field: 'path', reason: 'outside .novakai/skills/' }],
+        }, false),
     };
   }
   const record: SkillDefinitionT = {

@@ -78,8 +78,19 @@ export async function defineAgent(
     skills: def.skills ?? [],
     status: def.status ?? 'defined',
   };
-  // validate every hook input against the closed sets (events + v1 actions)
-  for (const h of def.hooks ?? []) HookInput.parse(h);
+  // validate every hook input against the closed sets (events + v1 actions).
+  // M8: typed InvalidEnvelope like attachHook — never a raw ZodError throw.
+  for (const h of def.hooks ?? []) {
+    const parsed = HookInput.safeParse(h);
+    if (!parsed.success) {
+      return {
+        ok: false,
+        error: err('InvalidEnvelope',
+          `hook rejected: ${parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ')}`,
+          { missingFields: [], invalidFields: parsed.error.issues.map((i) => ({ field: i.path.join('.') || '(root)', reason: i.message })) }, false),
+      };
+    }
+  }
   const res = await createObject<AgentDefinitionT>(ctx.handle, AgentDefinition.parse(record), clientOpId);
   if (!res.ok) return res;
   return { ok: true, value: res.value.object };

@@ -79,3 +79,17 @@ test('spawn with an unknown skill id fails typed (NotFound) — no silent drop',
   assert.equal(spawn.ok, false);
   if (!spawn.ok) assert.equal(spawn.error.code, 'NotFound');
 });
+
+test('M10: registerSkill constrains paths to .novakai/skills/ — anything else is a typed rejection', async () => {
+  const { root, agents } = freshCtx();
+  const outside = await agents.registerSkill({ name: 'Home', path: '/Users/chris/.agents/skills/tdd' }, mintClientOpId());
+  assert.equal(outside.ok, false);
+  if (!outside.ok) assert.equal(outside.error.code, 'InvalidEnvelope');
+  const relative = await agents.registerSkill({ name: 'Up', path: '../../etc/skills/x' }, mintClientOpId());
+  assert.equal(relative.ok, false);
+  // compliant: the canonical relative form AND an absolute path under <root>/skills/
+  const rel = await agents.registerSkill({ name: 'TDD', path: '.novakai/skills/tdd' }, mintClientOpId());
+  assert.equal(rel.ok, true);
+  const abs = await agents.registerSkill({ name: 'Abs', path: path.join(root, 'skills', 'review') }, mintClientOpId());
+  assert.equal(abs.ok, true);
+});

@@ -96,3 +96,16 @@ test('updateAgent patches v2 fields (single-object mutation, R3-18); CAS still e
   assert.equal(stale.ok, false);
   if (!stale.ok) assert.equal(stale.error.code, 'CasConflict');
 });
+
+test('M8: defineAgent with an invalid hook returns typed InvalidEnvelope — never a raw ZodError throw', async () => {
+  const { agents } = freshCtx();
+  const res = await agents.defineAgent({
+    displayName: 'BadHooks', provider: 'mock', model: 'm',
+    hooks: [{ event: 'onExplode', action: { kind: 'run-script', text: 'x' } }] as never,
+  }, mintClientOpId());
+  assert.equal(res.ok, false, 'typed rejection, not a throw');
+  if (!res.ok) {
+    assert.equal(res.error.code, 'InvalidEnvelope');
+    assert.ok(res.error.message.length > 0);
+  }
+});
