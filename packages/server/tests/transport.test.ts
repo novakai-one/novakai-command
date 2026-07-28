@@ -4,6 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, statSync, readFileSync, writeFileSync } from 'node:fs';
+import { request as requestHttp } from 'node:http';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { WebSocket } from 'ws';
@@ -33,7 +34,7 @@ async function boot(options: { staticDir?: string } = {}): Promise<Harness> {
   return { transport, dispatched, dir };
 }
 
-async function bootWithArtifacts(): Promise<{
+async function bootWithArtifacts(maxUploadBytes?: number): Promise<{
   transport: RunningTransport;
   calls: string[];
   stored: {
@@ -59,10 +60,11 @@ async function bootWithArtifacts(): Promise<{
     mimeType: 'application/octet-stream',
     byteSize: 0,
   };
-  const transport = await startTransport({
+  const transportOptions = {
     root: dir,
     port: 0,
     methods: {},
+    artifactMaxUploadBytes: maxUploadBytes,
     artifacts: {
       operations: {
         async putArtifact(input, clientOpId) {
@@ -109,7 +111,8 @@ async function bootWithArtifacts(): Promise<{
         },
       },
     },
-  });
+  };
+  const transport = await startTransport(transportOptions);
   return {
     transport,
     calls,
@@ -117,6 +120,46 @@ async function bootWithArtifacts(): Promise<{
       return stored;
     },
   };
+}
+
+function postArtifactChunks(
+  url: string,
+  token: string,
+  chunks: readonly Uint8Array[],
+  contentLength?: number,
+): Promise<{ status: number; body: unknown }> {
+  return new Promise((resolve, reject) => {
+    const request = requestHttp(url, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${token}`,
+        'content-type': 'application/octet-stream',
+        'x-novakai-client-op-id': 'op_http_oversized',
+        ...(contentLength === undefined
+          ? {}
+          : { 'content-length': String(contentLength) }),
+      },
+    }, (response) => {
+      const responseChunks: Buffer[] = [];
+      response.on('data', (chunk: Buffer) => responseChunks.push(chunk));
+      response.on('end', () => {
+        const body = Buffer.concat(responseChunks).toString('utf8');
+        let parsed: unknown = body;
+        try {
+          parsed = JSON.parse(body) as unknown;
+        } catch {
+          // Authentication failures intentionally use the transport's text body.
+        }
+        resolve({
+          status: response.statusCode ?? 0,
+          body: parsed,
+        });
+      });
+    });
+    request.on('error', reject);
+    for (const chunk of chunks) request.write(chunk);
+    request.end();
+  });
 }
 
 const connect = (url: string): Promise<WebSocket> => new Promise((resolve, reject) => {
@@ -316,4 +359,66 @@ test('Artifact HTTP authenticates before access and preserves exact bytes with s
     bytes,
   );
   assert.deepEqual(h.calls, ['getArtifactMeta', 'getArtifactBytes']);
+});
+
+test('Artifact HTTP rejects declared oversized uploads before capability access', async (t) => {
+  const h = await bootWithArtifacts(4);
+  t.after(() => h.transport.close());
+  const bytes = Uint8Array.from([1, 2, 3, 4, 5]);
+
+  const unauthenticated = await postArtifactChunks(
+    `${h.transport.url}/artifacts`,
+    'wrong',
+    [bytes],
+    bytes.byteLength,
+  );
+  assert.equal(unauthenticated.status, 401);
+  assert.deepEqual(h.calls, [], 'authentication remains the first boundary');
+
+  const oversized = await postArtifactChunks(
+    `${h.transport.url}/artifacts`,
+    h.transport.token,
+    [bytes],
+    bytes.byteLength,
+  );
+  assert.equal(oversized.status, 413);
+  assert.deepEqual(oversized.body, {
+    code: 'ArtifactUploadTooLarge',
+    message: 'artifact upload exceeds the 4 byte limit',
+    details: { maxUploadBytes: 4 },
+    retryable: false,
+  });
+  assert.deepEqual(h.calls, [], 'declared overflow never reaches Artifact capabilities');
+
+  const artifactHttp = await import('../core/b2a/artifact-http.js') as {
+    MAX_ARTIFACT_UPLOAD_BYTES?: number;
+  };
+  assert.equal(
+    artifactHttp.MAX_ARTIFACT_UPLOAD_BYTES,
+    64 * 1024 * 1024,
+    'the production default is declared at the internal HTTP adapter',
+  );
+});
+
+test('Artifact HTTP bounds chunked uploads and rejects streaming overflow', async (t) => {
+  const h = await bootWithArtifacts(4);
+  t.after(() => h.transport.close());
+
+  const oversized = await postArtifactChunks(
+    `${h.transport.url}/artifacts`,
+    h.transport.token,
+    [
+      Uint8Array.from([1, 2, 3]),
+      Uint8Array.from([4, 5, 6]),
+    ],
+  );
+
+  assert.equal(oversized.status, 413);
+  assert.deepEqual(oversized.body, {
+    code: 'ArtifactUploadTooLarge',
+    message: 'artifact upload exceeds the 4 byte limit',
+    details: { maxUploadBytes: 4 },
+    retryable: false,
+  });
+  assert.deepEqual(h.calls, [], 'streaming overflow never reaches Artifact capabilities');
 });
