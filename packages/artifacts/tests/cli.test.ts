@@ -25,6 +25,10 @@ function invoke(args: string[]) {
   });
 }
 
+function invokeBytes(args: string[]) {
+  return spawnSync(process.execPath, [cli, ...args]);
+}
+
 test('offline CLI put derives the artifact principal from bearer auth', () => {
   const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-artifact-cli-put-'));
   const root = path.join(workspace, '.novakai');
@@ -146,6 +150,43 @@ test('offline CLI list returns the same metadata collection', () => {
       page.items.every((artifact) => artifact.bytes === undefined),
       true,
     );
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test('offline CLI get-bytes returns the exact binary payload', () => {
+  const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-artifact-cli-bytes-'));
+  const root = path.join(workspace, '.novakai');
+  const source = path.join(workspace, 'binary.dat');
+  try {
+    const bytes = Buffer.from([0, 255, 128, 64, 32, 16, 8, 4, 2, 1]);
+    writeFileSync(source, bytes);
+    const token = mintToken(
+      root,
+      'person_cli',
+      ['artifact'],
+      'sys_spine',
+    );
+    const put = invoke([
+      'put',
+      source,
+      '--root', root,
+      '--token', token.bearer,
+      '--client-op-id', mintClientOpId(),
+    ]);
+    assert.equal(put.status, 0, put.stderr);
+    const artifact = JSON.parse(put.stdout) as { id: string };
+
+    const found = invokeBytes([
+      'get-bytes',
+      artifact.id,
+      '--root', root,
+      '--token', token.bearer,
+    ]);
+
+    assert.equal(found.status, 0, found.stderr.toString('utf8'));
+    assert.deepEqual(found.stdout, bytes);
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }
