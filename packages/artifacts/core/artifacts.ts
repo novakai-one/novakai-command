@@ -178,7 +178,25 @@ export async function putArtifact(
       return { ok: false, error: afterWrite };
     }
     effect = 'temp-fsync';
+    const beforeFsync = injectedFailpoint(
+      artifactId,
+      'artifacts.put.before-temp-fsync',
+    );
+    if (beforeFsync) {
+      await file.close();
+      file = undefined;
+      return { ok: false, error: beforeFsync };
+    }
     await file.sync();
+    const afterFsync = injectedFailpoint(
+      artifactId,
+      'artifacts.put.after-temp-fsync',
+    );
+    if (afterFsync) {
+      await file.close();
+      file = undefined;
+      return { ok: false, error: afterFsync };
+    }
     await file.close();
     file = undefined;
     effect = 'rename';
