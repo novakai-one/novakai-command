@@ -36,7 +36,7 @@ export function createMockServices(opts: { seeded?: boolean } = {}): ShellServic
 
   return {
     async listConversations() { return convos; },
-    async createConversation(title, kind) {
+    async createConversation(title, kind, _clientOpId) {
       const c: ConversationSummary = {
         id: `conv_${Math.random().toString(36).slice(2, 10)}`,
         threadId: `thread_${Math.random().toString(36).slice(2, 10)}`,
@@ -47,11 +47,11 @@ export function createMockServices(opts: { seeded?: boolean } = {}): ShellServic
       emit((l) => l.onConversation?.(c));
       return c;
     },
-    async pinConversation(id, pinned) {
+    async pinConversation(id, pinned, _clientOpId) {
       convos = convos.map((c) => (c.id === id ? { ...c, pinned } : c));
       emit((l) => { const c = convos.find((x) => x.id === id); if (c) l.onConversation?.(c); });
     },
-    async archiveConversation(id, archived) {
+    async archiveConversation(id, archived, _clientOpId) {
       convos = convos.map((c) => (c.id === id ? { ...c, archived } : c));
       emit((l) => { const c = convos.find((x) => x.id === id); if (c) l.onConversation?.(c); });
     },

@@ -21,6 +21,7 @@ export type ObjectKind =
   | 'skill'
   | 'layout'
   | 'settings'
+  | 'conversationView' // S2 F1/DEC-S2-11: shell-owned pin/archive view state
   | 'quarantine'
   | 'token'
   | 'trace';

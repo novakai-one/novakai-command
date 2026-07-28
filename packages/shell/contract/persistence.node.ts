@@ -10,12 +10,14 @@ import {
 import { LAYOUT_MAIN_ID, LayoutRecord, SettingsRecord } from './types.js';
 import type { LayoutDriver } from './layout.js';
 import type { SettingsDriver } from './settings.js';
+import { ConversationViewRecord, type ConversationViewDriver } from './conversationView.js';
 import { fail, ok, persistFailed } from './errors.js';
 
 export interface ShellPersistence {
   handle: ScopedStoreHandle;
   layoutDriver: LayoutDriver;
   settingsDriver: SettingsDriver;
+  conversationViewDriver: ConversationViewDriver;
 }
 
 export function composeShellPersistence(opts: {
@@ -30,7 +32,8 @@ export function composeShellPersistence(opts: {
     root: opts.root,
     legacyRoot: opts.legacyRoot,
     capability: 'shell',
-    allowedKinds: ['layout', 'settings'],
+    // F1/DEC-S2-11: shell's permitted kinds = layout, settings, conversationView.
+    allowedKinds: ['layout', 'settings', 'conversationView'],
     principal: opts.principal,
     lockTimeoutMs: opts.lockTimeoutMs,
     ...(opts.failNextObjectAppend ? { failNextObjectAppend: opts.failNextObjectAppend } : {}),
@@ -94,7 +97,38 @@ export function composeShellPersistence(opts: {
     },
   };
 
-  return { handle, layoutDriver, settingsDriver };
+  const conversationViewDriver: ConversationViewDriver = {
+    async list() {
+      const res = await listObjects<ConversationViewRecord>(handle, 'conversationView');
+      if (!res.ok) return [];
+      const out: ConversationViewRecord[] = [];
+      for (const item of res.value.items) {
+        const parsed = ConversationViewRecord.safeParse(item.object);
+        if (parsed.success) out.push(parsed.data); // "last good" — corrupt lines skipped
+      }
+      return out;
+    },
+    async get(id) {
+      const res = await getObject<ConversationViewRecord>(handle, 'conversationView', id as unknown as ObjectId);
+      if (!res.ok || 'absent' in res.value) return null;
+      const parsed = ConversationViewRecord.safeParse(res.value.object);
+      if (!parsed.success) return null; // corrupt → treated as absent
+      return { record: parsed.data, version: res.value.version };
+    },
+    async create(record, clientOpId) {
+      const res = await createObject<ConversationViewRecord>(handle, record, clientOpId as unknown as ClientOpId);
+      if (!res.ok) return fail(persistFailed('conversationView', res.error.code, res.error.message));
+      return ok({ record: res.value.object as ConversationViewRecord, version: res.value.version });
+    },
+    async update(id, patch, expectedVersion, clientOpId) {
+      const res = await updateObject<ConversationViewRecord>(
+        handle, id as unknown as ObjectId, patch, expectedVersion, clientOpId as unknown as ClientOpId);
+      if (!res.ok) return fail(persistFailed('conversationView', res.error.code, res.error.message));
+      return ok({ record: res.value.object as ConversationViewRecord, version: res.value.version });
+    },
+  };
+
+  return { handle, layoutDriver, settingsDriver, conversationViewDriver };
 }
 
 /**

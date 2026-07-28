@@ -68,7 +68,7 @@ export function MessagingScreen(props: {
 
   // ⌘N new chat · ⌘K palette (SHL-004)
   const newChat = useCallback(async () => {
-    const c = await services.createConversation('New chat', 'agent');
+    const c = await services.createConversation('New chat', 'agent', mintShellOpId());
     setConversations((cur) => [c, ...cur]);
     props.onSelect(c.id);
   }, [services, props]);
@@ -114,13 +114,15 @@ export function MessagingScreen(props: {
       case 'new': await newChat(); break;
       case 'pin':
         if (selected) {
-          await services.pinConversation(selected.id, !selected.pinned);
+          // F1/DEC-S2-12: clientOpId minted at the interaction layer, persisted
+          // as a conversationView record (survives restart).
+          await services.pinConversation(selected.id, !selected.pinned, mintShellOpId());
           setConversations(await services.listConversations());
         }
         break;
       case 'archive':
         if (selected) {
-          await services.archiveConversation(selected.id, !selected.archived);
+          await services.archiveConversation(selected.id, !selected.archived, mintShellOpId());
           setConversations(await services.listConversations());
         }
         break;
@@ -198,7 +200,7 @@ export function MessagingRail(props: {
       presenceOf={(id) => (id ? props.tracker.get(id) : { agentId: '', state: 'offline' })}
       onSelect={props.onSelect}
       onNew={() => {
-        void props.services.createConversation('New chat', 'agent').then((c) => {
+        void props.services.createConversation('New chat', 'agent', mintShellOpId()).then((c) => {
           setConversations((cur) => [c, ...cur]);
           props.onSelect(c.id);
         });

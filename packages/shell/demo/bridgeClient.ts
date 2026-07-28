@@ -47,9 +47,9 @@ export function createBridgeServices(url: string, onPresence: (e: AgentEvent) =>
 
     const api: ShellServices = {
       listConversations: () => call('listConversations'),
-      createConversation: (title, kind) => call('createConversation', { title, kind }),
-      pinConversation: (id, pinned) => call('pinConversation', { id, pinned }),
-      archiveConversation: (id, archived) => call('archiveConversation', { id, archived }),
+      createConversation: (title, kind, clientOpId) => call('createConversation', { title, kind, clientOpId }),
+      pinConversation: (id, pinned, clientOpId) => call('pinConversation', { id, pinned, clientOpId }),
+      archiveConversation: (id, archived, clientOpId) => call('archiveConversation', { id, archived, clientOpId }),
       getMessages: (conversationId) => call('getMessages', { conversationId }),
       sendMessage: (conversationId, text) => call('sendMessage', { conversationId, text }),
       publishFocus: (focus) => { void call('publishFocus', focus).catch(() => undefined); },

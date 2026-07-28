@@ -82,9 +82,12 @@ export interface MessagingEvents {
 export interface ShellServices {
   // conversations (messaging owns CRUD — §11 ruling 9; shell calls its contract)
   listConversations(): Promise<ConversationSummary[]>;
-  createConversation(title: string, kind: ConversationSummary['kind']): Promise<ConversationSummary>;
-  pinConversation(id: string, pinned: boolean): Promise<void>;
-  archiveConversation(id: string, archived: boolean): Promise<void>;
+  // F1/DEC-S2-12: creation is a UI-originated mutation — clientOpId REQUIRED.
+  createConversation(title: string, kind: ConversationSummary['kind'], clientOpId: string): Promise<ConversationSummary>;
+  // F1/DEC-S2-11: pin/archive persist as shell-owned conversationView records;
+  // clientOpId REQUIRED (R3-10 — minted at the interaction layer).
+  pinConversation(id: string, pinned: boolean, clientOpId: string): Promise<void>;
+  archiveConversation(id: string, archived: boolean, clientOpId: string): Promise<void>;
 
   // messages
   getMessages(conversationId: string): Promise<ChatMessage[]>;

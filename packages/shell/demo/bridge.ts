@@ -26,6 +26,7 @@ const mintOpId = () => `op_${randomUUID()}` as never;
 import { composeShellPersistence, objectVersion } from '../contract/persistence.node.js';
 import { getLayoutVersioned, setLayout as writeLayout } from '../contract/layout.js';
 import * as settingsContract from '../contract/settings.js';
+import { setConversationView, listConversationViews } from '../contract/conversationView.js';
 import type { ScreenContext } from '../contract/context.js';
 import type { AgentDefView } from '../contract/services.js';
 
@@ -116,7 +117,10 @@ const mockSession = mockAuth.session;
 
 const persistence = composeShellPersistence({ root: NOVAKAI_ROOT, principal: ME });
 
-// ── shell-side conversation metadata (ephemeral view state — see NOTES.md) ──
+// ── shell-side conversation metadata ─────────────────────────────────────────
+// F1/DEC-S2-11: pin/archive/title-override are PERSISTED conversationView
+// records (foundation scoped handle, kind 'conversationView') — the store is
+// the source of truth; this Map is an in-memory cache hydrated at boot.
 interface Convo {
   id: string; threadId?: string; address: string; title: string;
   kind: 'agent' | 'room' | 'direct'; pinned: boolean; archived: boolean;
@@ -163,6 +167,35 @@ const kimiAgentId = await defineDemoAgent('Kimi');
 const fableAgentId = await defineDemoAgent('Fable');
 seedConvo('conv_kimi', 'person:person_kimi', 'Kimi', 'agent', kimiAgentId, true);
 seedConvo('conv_fable', 'person:person_fable', 'Fable', 'agent', fableAgentId);
+
+// F1/DEC-S2-11: conversationView is the SOURCE OF TRUTH for pin/archive/title.
+// Boot hydration: stored views apply onto the cache (restart → pin/archive
+// restored); conversations without a stored view get one (system op id —
+// first-boot materialisation, same pattern as the layout default).
+async function persistConvoView(c: Convo, clientOpId: string): Promise<void> {
+  const res = await setConversationView(persistence.conversationViewDriver, c.id, {
+    threadRef: c.threadId ? { kind: 'thread', id: c.threadId } : null,
+    pinned: c.pinned,
+    archived: c.archived,
+    lastActivityAt: c.lastActivityAt,
+  }, clientOpId);
+  if (!res.ok) console.error(`[shell demo] conversationView persist failed for ${c.id}: ${res.error.code} ${res.error.message}`);
+}
+{
+  const stored = await listConversationViews(persistence.conversationViewDriver);
+  const byId = new Map(stored.map((v) => [v.id, v]));
+  for (const c of convos.values()) {
+    const v = byId.get(c.id);
+    if (v) {
+      c.pinned = v.pinned;
+      c.archived = v.archived;
+      if (v.titleOverride) c.title = v.titleOverride;
+      if (v.threadRef?.kind === 'thread' && !c.threadId) c.threadId = v.threadRef.id;
+    } else {
+      await persistConvoView(c, `op_${randomUUID()}`); // first boot: materialise
+    }
+  }
+}
 
 // Demo affordance (S2a): seed one registry skill so the Agents screen's
 // skills multi-select has something real to show (idempotent per root).
@@ -241,7 +274,7 @@ const methods: Record<string, (p: never) => Promise<unknown>> = {
   async listConversations() {
     return [...convos.values()].filter((c) => !c.archived || true).map(toSummary);
   },
-  async createConversation(p: { title: string; kind: Convo['kind'] }) {
+  async createConversation(p: { title: string; kind: Convo['kind']; clientOpId: string }) {
     const id = `conv_${randomUUID().slice(0, 8)}`;
     // Every conversation gets a UNIQUE counterpart — sharing person_kimi made all
     // new agent chats resolve to the same messaging thread (audit fix, Claude's catch).
@@ -258,6 +291,7 @@ const methods: Record<string, (p: never) => Promise<unknown>> = {
     }
     seedConvo(id, address, p.title, p.kind, agentId);
     const c = convos.get(id)!;
+    await persistConvoView(c, p.clientOpId); // F1: persisted view state from birth
     const s = toSummary(c);
     broadcast('conversation', s);
     return s;
@@ -274,6 +308,7 @@ const methods: Record<string, (p: never) => Promise<unknown>> = {
     const convoId = `conv_${randomUUID().slice(0, 8)}`;
     seedConvo(convoId, `person:${MOCK_PERSON}`, title, 'agent', agentId);
     const c = convos.get(convoId)!;
+    await persistConvoView(c, mintOpId()); // F1: persisted view state from birth
     const s = toSummary(c);
     broadcast('conversation', s);
 
@@ -326,6 +361,7 @@ const methods: Record<string, (p: never) => Promise<unknown>> = {
     const convoId = `conv_${randomUUID().slice(0, 8)}`;
     seedConvo(convoId, `person:${personId}`, title, 'agent', agentId);
     const c = convos.get(convoId)!;
+    await persistConvoView(c, mintOpId()); // F1: persisted view state from birth
     const s = toSummary(c);
     broadcast('conversation', s);
     realSessions.set(convoId, { sessionId, personId });
@@ -350,11 +386,24 @@ const methods: Record<string, (p: never) => Promise<unknown>> = {
     laneSessions.set(sessionId, 'kimi');
     return { ok: true as const, conversation: s };
   },
-  async pinConversation(p: { id: string; pinned: boolean }) {
-    const c = convos.get(p.id); if (c) { c.pinned = p.pinned; broadcast('conversation', toSummary(c)); }
+  async pinConversation(p: { id: string; pinned: boolean; clientOpId: string }) {
+    // F1: UI-originated mutation — clientOpId threads to foundation meta (R3-10).
+    const c = convos.get(p.id);
+    if (c) {
+      c.pinned = p.pinned;
+      c.lastActivityAt = new Date().toISOString();
+      await persistConvoView(c, p.clientOpId);
+      broadcast('conversation', toSummary(c));
+    }
   },
-  async archiveConversation(p: { id: string; archived: boolean }) {
-    const c = convos.get(p.id); if (c) { c.archived = p.archived; broadcast('conversation', toSummary(c)); }
+  async archiveConversation(p: { id: string; archived: boolean; clientOpId: string }) {
+    const c = convos.get(p.id);
+    if (c) {
+      c.archived = p.archived;
+      c.lastActivityAt = new Date().toISOString();
+      await persistConvoView(c, p.clientOpId);
+      broadcast('conversation', toSummary(c));
+    }
   },
   async getMessages(p: { conversationId: string }) {
     const c = convos.get(p.conversationId);
