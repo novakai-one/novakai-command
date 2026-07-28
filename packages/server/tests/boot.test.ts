@@ -244,6 +244,44 @@ test('boot composes B2a capabilities in order, traces each step, and serves boot
   assert.equal(bootstrap.protocolVersion, 1);
 });
 
+test('a B2a boot trace failure aborts boot with typed storage failure', async () => {
+  const dir = root();
+  await mintChris(dir);
+  const booted = await bootServer({
+    root: dir,
+    port: 0,
+    cwd: dir,
+    transcripts: false,
+    watchdogDir: dir,
+    recordSystemAction: async (_handle, input) =>
+      (input.meta as { capability?: string } | undefined)?.capability
+        === 'projects'
+        ? {
+            ok: false as const,
+            error: {
+              code: 'TraceWriteFailed' as const,
+              message: 'injected Projects boot trace failure',
+              details: {
+                opId: 'srv_b2a_boot_injected' as never,
+                cause: 'disk full',
+              },
+              retryable: true,
+            },
+          }
+        : { ok: true as const, value: null },
+  });
+  if (booted.ok) {
+    await booted.value.close();
+    assert.fail('a missing capability boot trace must fail boot loudly');
+  }
+  assert.deepEqual(booted.error, {
+    code: 'StoreUnavailable',
+    message:
+      'projects boot trace failed (TraceWriteFailed): '
+      + 'injected Projects boot trace failure',
+  });
+});
+
 test('boot archives a legacy thread-less conversation and send refuses it with a typed recovery message', async () => {
   const dir = root();
   await mintChris(dir);
@@ -733,13 +771,19 @@ test('M4: a ReplyInterrupted trace failure is logged with its typed error', asyn
     const booted = await bootServer({
       root: dir, port: 0, cwd: dir, transcripts: false, watchdogDir: dir,
       processProbe: { alive: () => false, startedAt: () => null },
-      recordSystemAction: async () => ({
-        ok: false,
-        error: {
-          code: 'TraceWriteFailed', message: 'injected interruption trace failure',
-          details: { opId: 'srv_injected', cause: 'disk full' }, retryable: true,
-        },
-      }),
+      recordSystemAction: async (_handle: unknown, input: {
+        target: { kind: string };
+      }) => input.target.kind === 'providerSession'
+        ? {
+            ok: false,
+            error: {
+              code: 'TraceWriteFailed',
+              message: 'injected interruption trace failure',
+              details: { opId: 'srv_injected', cause: 'disk full' },
+              retryable: true,
+            },
+          }
+        : { ok: true, value: null },
     } as never);
     assert.equal(booted.ok, true);
     if (booted.ok) server = booted.value;
