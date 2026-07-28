@@ -216,8 +216,10 @@ export async function updateObject<T>(
 
 export async function getObject<T>(
   handle: ScopedStoreHandle, kind: ObjectKind, id: ObjectId,
-): Promise<Result<StoredObject<T> | Absent, never>> {
+): Promise<Result<StoredObject<T> | Absent, StoreError>> {
   const engine = engineOf(handle);
+  const bootFailure = engine.bootError();
+  if (bootFailure) return fail(bootFailure);
   if (!(kind in KIND_FILES)) return ok(ABSENT({ kind, id }));
   if (engine.quarantinedIds().has(id)) return ok(ABSENT({ kind, id }));
   const rec = readAllRecords(engine, kind).find((r) => r.envelope.id === id);
@@ -257,6 +259,8 @@ export async function listObjects<T>(
   handle: ScopedStoreHandle, kind: ObjectKind, filter?: ListFilter, page?: PageOptions,
 ): Promise<Result<Page<StoredObject<T>>, StoreError>> {
   const engine = engineOf(handle);
+  const bootFailure = engine.bootError();
+  if (bootFailure) return fail(bootFailure);
   if (!(kind in KIND_FILES)) {
     return fail(err('KindUnknown', `kind "${kind}" is not registered`, { kind, registered: Object.keys(KIND_FILES) }, false));
   }
@@ -278,7 +282,7 @@ export async function listObjects<T>(
 
 export async function resolveRef<T>(
   handle: ScopedStoreHandle, ref: z.infer<typeof Ref>,
-): Promise<Result<StoredObject<T> | Absent, never>> {
+): Promise<Result<StoredObject<T> | Absent, StoreError>> {
   return getObject<T>(handle, ref.kind as ObjectKind, ref.id as ObjectId);
 }
 

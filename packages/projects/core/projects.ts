@@ -125,7 +125,8 @@ export async function archiveProject(
   const missingClientOpId = requireClientOpId(clientOpId);
   if (missingClientOpId) return { ok: false, error: missingClientOpId };
   const current = await findProject(ctx, projectId);
-  if (!current.ok || isAbsent(current.value)) {
+  if (!current.ok) return current;
+  if (isAbsent(current.value)) {
     return { ok: false, error: projectNotFound(projectId) };
   }
   const updated = await updateObject<ProjectT>(
@@ -144,7 +145,8 @@ export async function getProjectItems(
   projectId: ProjectId,
 ): Promise<Result<Page<ProjectItemT>, StoreError>> {
   const project = await findProject(ctx, projectId);
-  if (!project.ok || isAbsent(project.value)) {
+  if (!project.ok) return project;
+  if (isAbsent(project.value)) {
     return { ok: false, error: projectNotFound(projectId) };
   }
   const listed = await listObjects<ProjectItemT>(
@@ -182,7 +184,8 @@ export async function attach(
     return { ok: true, value: ProjectItem.parse(replay.value.object) };
   }
   const project = await findProject(ctx, projectId);
-  if (!project.ok || isAbsent(project.value)) {
+  if (!project.ok) return project;
+  if (isAbsent(project.value)) {
     return { ok: false, error: projectNotFound(projectId) };
   }
   if (project.value.object.status !== 'active') {
