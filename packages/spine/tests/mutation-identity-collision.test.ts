@@ -124,6 +124,40 @@ function assertConflict(
   assert.equal(result.ok ? null : result.error.retryable, false);
 }
 
+function journalSnapshot(root: string) {
+  const content = readFileSync(
+    path.join(root, 'stores', 'spineSteps.jsonl'),
+    'utf8',
+  );
+  return {
+    content,
+    count: content.trim().length === 0
+      ? 0
+      : content.trimEnd().split('\n').length,
+  };
+}
+
+function assertJournalUnchanged(
+  before: ReturnType<typeof journalSnapshot>,
+  after: ReturnType<typeof journalSnapshot>,
+) {
+  assert.equal(after.count, before.count);
+  assert.equal(after.content, before.content);
+}
+
+async function assertLegitimateContinuationCompletes(
+  root: string,
+  workflowId: Awaited<ReturnType<typeof acceptedWorkflow>>,
+  clientOpId: string,
+) {
+  const result = await host(root).operations.continueWorkflow(
+    workflowId,
+    clientOpId as never,
+  );
+  assert.equal(result.ok, true);
+  assert.equal(result.ok ? result.value.state : null, 'done');
+}
+
 for (const scope of ['same', 'cross'] as const) {
   for (const command of ['continue', 'abandon'] as const) {
     test(`${command} rejects a ${scope}-workflow journal transition ID`, async () => {
@@ -247,3 +281,83 @@ test('deduplicated journal append rejects a semantically different stored step',
     rmSync(workspace, { recursive: true, force: true });
   }
 });
+
+for (const scope of ['same', 'cross'] as const) {
+  for (const command of ['continue', 'abandon'] as const) {
+    test(`${command} preflights a ${scope}-workflow future transition ID`, async () => {
+      const workspace = mkdtempSync(
+        path.join(tmpdir(), `nvk-spine-${command}-${scope}-future-`),
+      );
+      const root = path.join(workspace, '.novakai');
+      const priorFailpoint = process.env.NVK_FAILPOINT;
+      try {
+        const sourceOpId = `op_${command}_${scope}_future_source`;
+        const sourceWorkflowId = await acceptedWorkflow(root, sourceOpId);
+        const targetWorkflowId = scope === 'same'
+          ? sourceWorkflowId
+          : await acceptedWorkflow(
+              root,
+              `op_${command}_${scope}_future_target`,
+            );
+        const reservedFutureId =
+          `${sourceOpId}:journal:step:1:done` as never;
+        const before = journalSnapshot(root);
+
+        const result = command === 'continue'
+          ? await host(root).operations.continueWorkflow(
+              targetWorkflowId,
+              reservedFutureId,
+            )
+          : await host(root).operations.abandonWorkflow(
+              targetWorkflowId,
+              reservedFutureId,
+            );
+
+        assertConflict(result);
+        assertJournalUnchanged(before, journalSnapshot(root));
+        await assertLegitimateContinuationCompletes(
+          root,
+          targetWorkflowId,
+          `op_${command}_${scope}_legitimate`,
+        );
+      } finally {
+        if (priorFailpoint === undefined) delete process.env.NVK_FAILPOINT;
+        else process.env.NVK_FAILPOINT = priorFailpoint;
+        rmSync(workspace, { recursive: true, force: true });
+      }
+    });
+  }
+}
+
+for (const step of [1, 2] as const) {
+  for (const state of ['running', 'done', 'failed'] as const) {
+    test(`workflow acceptance preflights reserved step ${step} ${state} identity`, async () => {
+      const workspace = mkdtempSync(
+        path.join(tmpdir(), `nvk-spine-start-future-${step}-${state}-`),
+      );
+      const root = path.join(workspace, '.novakai');
+      const priorFailpoint = process.env.NVK_FAILPOINT;
+      try {
+        const sourceOpId = `op_start_future_${step}_${state}_source`;
+        const sourceWorkflowId = await acceptedWorkflow(root, sourceOpId);
+        const before = journalSnapshot(root);
+        const result = await host(root).operations.addMessageToProject({
+          messageId: `message_start_future_${step}_${state}` as never,
+          projectId: `proj_start_future_${step}_${state}` as never,
+        }, `${sourceOpId}:journal:step:${step}:${state}` as never);
+
+        assertConflict(result);
+        assertJournalUnchanged(before, journalSnapshot(root));
+        await assertLegitimateContinuationCompletes(
+          root,
+          sourceWorkflowId,
+          `op_start_future_${step}_${state}_legitimate`,
+        );
+      } finally {
+        if (priorFailpoint === undefined) delete process.env.NVK_FAILPOINT;
+        else process.env.NVK_FAILPOINT = priorFailpoint;
+        rmSync(workspace, { recursive: true, force: true });
+      }
+    });
+  }
+}
