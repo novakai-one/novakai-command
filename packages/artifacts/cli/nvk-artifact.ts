@@ -2,6 +2,7 @@
 import { readFile } from 'node:fs/promises';
 import {
   authenticate,
+  isAbsent,
   type ArtifactId,
   type ClientOpId,
 } from '@novakai/foundation/dist/contract/index.js';
@@ -134,10 +135,19 @@ async function main(): Promise<void> {
     const result = await artifacts.listArtifacts();
     return result.ok ? output(result.value) : fail(result.error);
   }
+  if (verb === 'get-bytes') {
+    const result = await artifacts.getArtifactBytes(
+      required(positional[0], 'get-bytes <artifactId>') as ArtifactId,
+    );
+    if (!result.ok) return fail(result.error);
+    if (isAbsent(result.value)) return output(result.value);
+    process.stdout.write(Buffer.from(result.value));
+    return;
+  }
 
   fail({
     code: 'Usage',
-    message: 'verbs: put | get-meta | list',
+    message: 'verbs: put | get-meta | list | get-bytes',
   }, 2);
 }
 
