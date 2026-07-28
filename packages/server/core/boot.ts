@@ -23,7 +23,7 @@ import {
 import { composeShellPersistence } from '../../shell/contract/persistence.node.js';
 import { listConversationViews } from '../../shell/contract/conversationView.js';
 import type { ScreenContext } from '../../shell/contract/context.js';
-import { createTranscriptWatcher, defaultSources } from '../../transcript/core/watcher.js';
+import { createTranscriptWatcher, defaultSources } from '../../transcript/contract/index.js';
 import { recordSystemAction } from '@novakai/foundation/dist/contract/index.js';
 import { openConfigStore, type ConfigStore } from './config/store.js';
 import type { ServerConfig } from '../contract/config.js';

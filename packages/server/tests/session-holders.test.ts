@@ -133,3 +133,31 @@ test('RED GATE 5 (mechanism, not discipline): nothing in the server calls authen
   assert.deepEqual(offenders, [],
     'messaging sessions are vended ONLY by the holder factory (§13 disposition 11)');
 });
+
+test('architecture: server never imports another package private core or dist-internal path', () => {
+  const serverRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+  const packagesRoot = path.dirname(serverRoot);
+  const offenders: string[] = [];
+  const walk = (dir: string): void => {
+    for (const entry of readdirSync(dir)) {
+      const full = path.join(dir, entry);
+      if (entry === 'node_modules' || entry === 'tests') continue;
+      if (statSync(full).isDirectory()) { walk(full); continue; }
+      if (!entry.endsWith('.ts')) continue;
+      const source = readFileSync(full, 'utf8');
+      for (const match of source.matchAll(/\bfrom\s+['"]([^'"]+)['"]/g)) {
+        const specifier = match[1]!;
+        if (!/(?:^|\/)(?:core|dist-internal)\//.test(specifier)) continue;
+        const importedPath = specifier.startsWith('.')
+          ? path.resolve(path.dirname(full), specifier)
+          : path.join(packagesRoot, specifier);
+        if (!importedPath.startsWith(`${serverRoot}${path.sep}`)) {
+          offenders.push(`${path.relative(serverRoot, full)} -> ${specifier}`);
+        }
+      }
+    }
+  };
+  walk(serverRoot);
+  assert.deepEqual(offenders, [],
+    'server may consume another package through its public/contract seam only');
+});

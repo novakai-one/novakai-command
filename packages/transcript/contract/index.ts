@@ -32,3 +32,5 @@ export interface TranscriptWatcher {
   stop(): Promise<void>;
   status(): WatcherStatus;
 }
+
+export { createTranscriptWatcher, defaultSources } from '../core/watcher.js';
