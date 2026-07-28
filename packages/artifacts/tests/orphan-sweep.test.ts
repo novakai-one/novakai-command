@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   mkdtempSync,
   mkdirSync,
+  readFileSync,
   readdirSync,
   rmSync,
   utimesSync,
@@ -12,6 +13,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
   __resetDefaultEngine,
+  composeHandle,
+  createObject,
   mintClientOpId,
   queryTrace,
   type ArtifactId,
@@ -359,6 +362,64 @@ test('orphan sweep translates Foundation trace storage failures and preserves th
     if (swept.ok) return;
     assert.equal(swept.error.code, 'ArtifactOrphanTraceFailed');
     assert.deepEqual(readdirSync(bytesRoot), [artifactId]);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test('orphan sweep rechecks authoritative metadata after acquiring the publication lease', async () => {
+  const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-sweep-recheck-'));
+  const root = path.join(workspace, '.novakai');
+  const artifactId = 'artifact_publication-recheck' as ArtifactId;
+  const bytes = Buffer.from('recorded after sweep snapshot', 'utf8');
+  const bytesRoot = path.join(root, 'artifacts');
+  const leaseDir = path.join(
+    bytesRoot,
+    '.publication-locks',
+    `${artifactId}.lock`,
+  );
+  try {
+    mkdirSync(leaseDir, { recursive: true });
+    writeFileSync(path.join(bytesRoot, artifactId), bytes);
+    writeFileSync(
+      path.join(leaseDir, 'owner.json'),
+      `${JSON.stringify({ pid: process.pid, token: 'test-live-owner' })}\n`,
+    );
+    const host = composeArtifacts({
+      root,
+      principal: 'sys_reconciler',
+    });
+
+    const sweep = host.boot.sweepOrphans();
+    const recorded = await createObject(
+      composeHandle({
+        root,
+        dataRoot: path.join(root, 'stores'),
+        capability: 'artifacts',
+        allowedKinds: ['artifact'],
+        principal: 'person_chris',
+      }),
+      {
+        kind: 'artifact',
+        id: artifactId,
+        schemaVersion: 1,
+        createdAt: new Date().toISOString(),
+        permissionLevel: 'private',
+        createdBy: 'overridden-by-foundation',
+        mimeType: 'text/plain',
+        byteSize: bytes.byteLength,
+      },
+      mintClientOpId(),
+    );
+    assert.equal(recorded.ok, true);
+    rmSync(leaseDir, { recursive: true, force: true });
+
+    const swept = await sweep;
+
+    assert.equal(swept.ok, true);
+    if (!swept.ok) return;
+    assert.deepEqual(swept.value.swept, []);
+    assert.deepEqual(readFileSync(path.join(bytesRoot, artifactId)), bytes);
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }
