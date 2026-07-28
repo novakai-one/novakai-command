@@ -238,12 +238,26 @@ export async function putArtifact(
       ? {}
       : { originPath: parsed.data.originPath }),
   }) as ArtifactT;
+  const beforeRecordAppend = injectedFailpoint(
+    artifactId,
+    'artifacts.put.before-record-append',
+  );
+  if (beforeRecordAppend) {
+    return { ok: false, error: beforeRecordAppend };
+  }
   const created = await createObject<ArtifactT>(
     ctx.handle,
     record,
     clientOpId,
   );
   if (!created.ok) return created;
+  const afterRecordAppend = injectedFailpoint(
+    artifactId,
+    'artifacts.put.after-record-append',
+  );
+  if (afterRecordAppend) {
+    return { ok: false, error: afterRecordAppend };
+  }
   const stored = Artifact.safeParse(created.value.object);
   return stored.success
     ? { ok: true, value: stored.data as ArtifactT }
