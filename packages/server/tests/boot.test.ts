@@ -161,6 +161,42 @@ test('boot archives a legacy thread-less conversation and send refuses it with a
   }
 });
 
+test('a fresh unsent conversation survives restart and can send its first message', async () => {
+  const dir = root();
+  await mintChris(dir);
+
+  const first = await boot(dir);
+  const firstMethods = (await import('../core/methods.js')).buildMethods(first.runtime);
+  const created = await firstMethods.createConversation!({
+    title: 'Fresh before restart',
+    kind: 'agent',
+    clientOpId: 'op_create_fresh_before_restart',
+  } as never) as { id: string; archived: boolean };
+  assert.equal(created.archived, false);
+  await first.close();
+
+  const second = await boot(dir);
+  try {
+    const secondMethods = (await import('../core/methods.js')).buildMethods(second.runtime);
+    const conversations = await secondMethods.listConversations!(undefined as never) as
+      Array<{ id: string; archived: boolean }>;
+    assert.equal(
+      conversations.find((conversation) => conversation.id === created.id)?.archived,
+      false,
+      'threadRef:null is the valid pre-first-send state, not proof of demo-era data',
+    );
+
+    const sent = await secondMethods.sendMessage!({
+      conversationId: created.id,
+      text: 'first send after restart',
+      clientOpId: 'op_first_send_after_restart',
+    } as never) as { ok: boolean; error?: unknown };
+    assert.equal(sent.ok, true, JSON.stringify(sent.error));
+  } finally {
+    await second.close();
+  }
+});
+
 test('the method surface is the proven set minus the demo affordances', async () => {
   const dir = root();
   await mintChris(dir);
