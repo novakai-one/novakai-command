@@ -59,6 +59,20 @@ export interface ComposeAgentsOptions {
    * adapter — the seam is identical (AGT-001) and no PTY is opened.
    */
   terminalRuntime?: TerminalRuntimeLike;
+  /**
+   * B1 (§3 boot step 4): a runtime PER PROVIDER. The production server binds
+   * the kimi CLI runtime to 'kimi' and leaves claude/codex unbound until their
+   * B1b adapters land — an unbound provider fails TYPED at spawn rather than
+   * silently answering as a mock. Takes precedence over terminalRuntime.
+   */
+  providerRuntimes?: Partial<Record<ProviderName, TerminalRuntimeLike>>;
+  /**
+   * B1 (closes M10): register the mock adapter at all. Defaults to true so the
+   * demo and the existing suites are unchanged; the server passes
+   * config.dev.allowMock, so production compositions have no mock and no
+   * `__emit` test seam.
+   */
+  allowMock?: boolean;
   cwd?: string;
   /** S2b: quiet window (ms) after which a live-lane session's turn is over and
    * queued context advisories flush. Default 5000 (§22 ruling 12's quiet window). */
@@ -75,15 +89,25 @@ export function composeAgents(options: ComposeAgentsOptions): AgentsContext {
     lockTimeoutMs: options.lockTimeoutMs,
   });
   const cwd = options.cwd ?? process.cwd();
-  const mock = createMockAdapter();
-  const adapters: Record<ProviderName, TerminalAdapter> = options.terminalRuntime
-    ? {
-      kimi: createTerminalAdapter(options.terminalRuntime, { cwd, provider: 'kimi' }),
-      claude: createTerminalAdapter(options.terminalRuntime, { cwd, provider: 'claude' }),
-      codex: createTerminalAdapter(options.terminalRuntime, { cwd, provider: 'codex' }),
-      mock,
-    }
-    : { kimi: mock, claude: mock, codex: mock, mock };
+  const allowMock = options.allowMock ?? true;
+  const mock = allowMock ? createMockAdapter() : unavailableAdapter('mock', 'mock provider is disabled (dev.allowMock is off)');
+  const runtimeFor = (provider: ProviderName): TerminalRuntimeLike | undefined =>
+    options.providerRuntimes?.[provider] ?? (options.providerRuntimes ? undefined : options.terminalRuntime);
+  const cliAdapter = (provider: 'kimi' | 'claude' | 'codex'): TerminalAdapter => {
+    const runtime = runtimeFor(provider);
+    if (runtime) return createTerminalAdapter(runtime, { cwd, provider });
+    // No runtime for this provider: mock only when the composition allows it,
+    // otherwise a TYPED refusal — never a mock wearing a provider's name.
+    return allowMock && !options.providerRuntimes
+      ? mock
+      : unavailableAdapter(provider, `no runtime is configured for provider "${provider}"`);
+  };
+  const adapters: Record<ProviderName, TerminalAdapter> = {
+    kimi: cliAdapter('kimi'),
+    claude: cliAdapter('claude'),
+    codex: cliAdapter('codex'),
+    mock,
+  };
   return {
     handle,
     skillsRoot: path.join(options.root, 'skills'),
@@ -96,6 +120,21 @@ export function composeAgents(options: ComposeAgentsOptions): AgentsContext {
     hookTraceFailures: [],
     laneState: new Map(),
     advisoryQuietMs: options.advisoryQuietMs ?? 5000,
+  };
+}
+
+/**
+ * A provider with no runtime behind it. spawn() throws so the contract turns it
+ * into the typed ProviderSpawnFailed it already produces for a provider outage
+ * (C §11) — the failure is visible, not a mock pretending to be a CLI.
+ */
+function unavailableAdapter(provider: ProviderName, reason: string): TerminalAdapter {
+  return {
+    async spawn(): Promise<never> { throw new Error(reason); },
+    attach() { return null; },
+    send() { return false; },
+    subscribe() { return () => undefined; },
+    close() { return false; },
   };
 }
 

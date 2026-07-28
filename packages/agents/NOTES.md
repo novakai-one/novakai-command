@@ -83,3 +83,17 @@ Ambiguities and judgment calls, one line each. Nothing here invents requirements
     not retries of a user op; R3-10 dedup semantics don't apply).
 16. **attachHook validation errors** reuse `InvalidEnvelope` (closed-set
     rejection) — no new error code invented.
+17. **B1 kimi adapter — no machine-readable token usage.** kimi 0.29.1 in
+    `-p --output-format stream-json` mode emits exactly two line shapes
+    (verified live 2026-07-28): `{"role":"assistant","content":…}` and
+    `{"role":"meta","type":"session.resume_hint","session_id":…}`. There is
+    NO usage/token line. Per DEC-B1-7 the gap is recorded rather than a
+    format invented: the adapter reports real TURN records (`onTurn`) and no
+    token counts; token accounting for kimi comes from transcript parsing in
+    the B1b watchdog (DEC-B1-11).
+18. **B1 provider gating.** `composeAgents` gained `providerRuntimes` (a
+    runtime per provider) and `allowMock`. When `providerRuntimes` is given,
+    an unbound provider fails TYPED at spawn instead of resolving to the mock
+    — a mock must never answer under a CLI provider's name in production.
+    `allowMock` defaults to true so the existing suites and the demo are
+    unchanged; the server passes `config.dev.allowMock` (closes M10).
