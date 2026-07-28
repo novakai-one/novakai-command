@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   rmSync,
@@ -239,5 +240,75 @@ test('offline CLI rejects direct attach because attachment belongs to Spine', ()
     assert.equal(JSON.parse(bypass.stderr).code, 'Usage');
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('embedded and offline Projects hosts use canonical stores with root auth and lock', async () => {
+  const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-projects-layout-'));
+  const embeddedRoot = path.join(workspace, 'embedded', '.novakai');
+  const cliRoot = path.join(workspace, 'cli', '.novakai');
+  try {
+    const host = composeProjects({
+      root: embeddedRoot,
+      principal: 'sys_spine',
+    });
+    const created = await host.operations.createProject(
+      { title: 'Embedded canonical layout' },
+      mintClientOpId(),
+    );
+    assert.equal(created.ok, true);
+    if (!created.ok) return;
+    const attached = await host.spine.attach(
+      created.value.id,
+      { itemRef: { kind: 'trace', id: 'trace_layout' } },
+      mintClientOpId(),
+    );
+    assert.equal(attached.ok, true);
+
+    for (const filename of [
+      'projects.jsonl',
+      'projectItems.jsonl',
+      'traces.jsonl',
+    ]) {
+      assert.equal(existsSync(path.join(embeddedRoot, 'stores', filename)), true);
+      assert.equal(existsSync(path.join(embeddedRoot, filename)), false);
+    }
+
+    const token = mintToken(
+      cliRoot,
+      'person_cli',
+      ['project', 'projectItem'],
+      'person_local',
+    );
+    success(cliRoot, token.bearer, [
+      'create',
+      '--title', 'CLI canonical layout',
+      '--client-op-id', mintClientOpId(),
+    ]);
+    assert.equal(existsSync(path.join(cliRoot, 'stores', 'projects.jsonl')), true);
+    assert.equal(existsSync(path.join(cliRoot, 'stores', 'traces.jsonl')), true);
+    assert.equal(existsSync(path.join(cliRoot, 'projects.jsonl')), false);
+    assert.equal(existsSync(path.join(cliRoot, 'traces.jsonl')), false);
+    assert.equal(existsSync(path.join(cliRoot, 'tokens')), true);
+    assert.equal(existsSync(path.join(cliRoot, 'stores', 'tokens')), false);
+
+    const lockDir = path.join(cliRoot, 'lock');
+    mkdirSync(lockDir);
+    writeFileSync(
+      path.join(lockDir, 'owner.json'),
+      `${JSON.stringify({ pid: process.pid, token: 'layout-lock-holder' })}\n`,
+    );
+    const blocked = invoke(cliRoot, [
+      'create',
+      '--title', 'Blocked at canonical lock',
+      '--client-op-id', mintClientOpId(),
+      '--lock-timeout-ms', '50',
+    ], token.bearer);
+    assert.equal(blocked.status, 1);
+    assert.equal(JSON.parse(blocked.stderr).code, 'LockBusy');
+    assert.equal(existsSync(path.join(cliRoot, 'lock')), true);
+    assert.equal(existsSync(path.join(cliRoot, 'stores', 'lock')), false);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
   }
 });
