@@ -2,11 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
   rmSync,
   unlinkSync,
+  writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -200,6 +202,34 @@ test('getArtifactBytes reports typed missing bytes when metadata still exists', 
     assert.deepEqual(
       (found.error.details as { ref: { kind: string; id: string } }).ref,
       { kind: 'artifact', id: put.value.id },
+    );
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test('putArtifact returns a typed error when byte-directory creation fails', async () => {
+  const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-artifact-mkdir-'));
+  const root = path.join(workspace, '.novakai');
+  try {
+    mkdirSync(root, { recursive: true });
+    writeFileSync(path.join(root, 'artifacts'), 'blocks directory creation');
+    const artifacts = createArtifactsContract(composeArtifacts({
+      root,
+      principal: 'person_chris',
+    }));
+
+    const result = await artifacts.putArtifact({
+      bytes: Buffer.from('must return, not throw', 'utf8'),
+      mimeType: 'text/plain',
+    }, mintClientOpId());
+
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    assert.equal(result.error.code, 'ArtifactByteEffectFailed');
+    assert.equal(
+      (result.error.details as { effect: string }).effect,
+      'temp-write',
     );
   } finally {
     rmSync(workspace, { recursive: true, force: true });
