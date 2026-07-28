@@ -186,3 +186,39 @@ test('offline CLI lists Project items through the shared contract', async () => 
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('offline CLI archives a Project through the shared contract', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'nvk-projects-cli-archive-'));
+  try {
+    const token = mintToken(
+      root,
+      'person_cli',
+      ['project', 'projectItem'],
+      'person_local',
+    );
+    const projects = createProjectsContract(composeProjects({
+      root,
+      principal: 'person_cli',
+    }));
+    const created = await projects.createProject(
+      { title: 'Archived by CLI' },
+      mintClientOpId(),
+    );
+    assert.equal(created.ok, true);
+    if (!created.ok) return;
+
+    const archived = success<{ id: string; status: string }>(
+      root,
+      token.bearer,
+      [
+        'archive',
+        '--project', created.value.id,
+        '--client-op-id', mintClientOpId(),
+      ],
+    );
+    assert.equal(archived.id, created.value.id);
+    assert.equal(archived.status, 'archived');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
