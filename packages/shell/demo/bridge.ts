@@ -19,6 +19,10 @@ import {
 // (see kimiCliRuntime.ts for why this replaces the TUI terminal host here).
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { createKimiCliRuntime, defaultKimiCliPath } from './kimiCliRuntime.js';
+// G3: unique provisioned person per spawned mock agent (pool pattern).
+// G4: idempotent demo-agent seeding (no registry duplicates across boots).
+import { mockAgentPrincipals, MockPersonPool } from './mockPersons.js';
+import { ensureAgent, type EnsureAgentsContract } from './ensureAgent.js';
 
 // foundation brands mints `op_${uuid}`; shell never imports foundation from
 // the demo, so mint the same shape locally for defineAgent calls.
@@ -59,7 +63,6 @@ const NOVAKAI_ROOT = path.join(repoRoot, '.novakai');
 
 const ME = 'person_chris';
 const TOKEN = 'demo-token-chris';
-const MOCK_PERSON = 'person_mock';
 
 // ── real messaging (embedded mode) ─────────────────────────────────────────
 const clock = messaging.createSystemClock();
@@ -72,8 +75,10 @@ const embedded = messaging.createEmbeddedMessaging({
       { token: TOKEN, personId: ME as PersonId, roles: ['Human'] },
       { token: 'demo-token-kimi', personId: 'person_kimi' as PersonId, roles: ['Chief'] },
       { token: 'demo-token-fable', personId: 'person_fable' as PersonId, roles: ['Worker'] },
-      // mock spawn agents (spawnMockAgent) reply through this person's session
-      { token: 'demo-token-mock', personId: MOCK_PERSON as PersonId, roles: ['Worker'] },
+      // G3: mock spawn agents each reply through their OWN provisioned person
+      // (person_mockagent0..9) — sharing one person made every mock convo the
+      // same messaging thread.
+      ...mockAgentPrincipals().map((p) => ({ token: p.token, personId: p.personId as PersonId, roles: p.roles })),
       // Pool of provisioned agent persons for user-created conversations (demo scope).
       ...Array.from({ length: 10 }, (_, i) => ({
         token: `demo-token-pool-${i}`, personId: `person_pool${i}` as PersonId, roles: ['Worker'] as ['Worker'],
@@ -110,12 +115,15 @@ async function sessCall<T>(holder: SessionHolder, op: (s: messaging.MessagingSes
   await reauth(holder);
   return op(holder.session);
 }
-// Chris accepts mail from the demo agent people (incl. spawned mock agents).
-await session.setContactPolicy({ allowlist: ['person_kimi', 'person_fable', MOCK_PERSON], defaultRule: 'deny' });
+// Chris may address every provisioned demo person (agents, pool, mock spawns).
+await session.setContactPolicy({
+  allowlist: ['person_kimi', 'person_fable', ...mockAgentPrincipals().map((p) => p.personId)],
+  defaultRule: 'deny',
+});
 
 // Let the two demo agents accept Chris's messages: each principal owns its
 // own ContactPolicy (DEC-14), so each agent session opens the door itself.
-for (const [token, allow] of [['demo-token-kimi', ME], ['demo-token-fable', ME], ['demo-token-mock', ME]] as const) {
+for (const [token, allow] of [['demo-token-kimi', ME], ['demo-token-fable', ME]] as const) {
   const a = await embedded.authenticate({ token });
   if (a.kind === 'authenticated') {
     await a.session.setContactPolicy({ allowlist: [allow], defaultRule: 'deny' });
@@ -134,10 +142,16 @@ for (let i = 0; i < 10; i++) {
 }
 let poolNext = 0;
 
-// Mock spawn agents send through their own messaging session (live lane, R3-1).
-const mockAuth = await embedded.authenticate({ token: 'demo-token-mock' });
-if (mockAuth.kind !== 'authenticated') throw new Error('demo mock-agent auth failed');
-const mockHolder: SessionHolder = { token: 'demo-token-mock', session: mockAuth.session };
+// G3: mock-spawn persons — each opens its door to Chris and gets a
+// sessCall-wrapped holder for its live lane (unique person per spawn).
+const mockPool = new MockPersonPool();
+const mockSessions = new Map<string, SessionHolder>();
+for (const p of mockAgentPrincipals()) {
+  const a = await embedded.authenticate({ token: p.token });
+  if (a.kind !== 'authenticated') throw new Error(`demo mock-agent auth failed for ${p.personId}`);
+  await a.session.setContactPolicy({ allowlist: [ME], defaultRule: 'deny' });
+  mockSessions.set(p.personId, { token: p.token, session: a.session });
+}
 
 const persistence = composeShellPersistence({ root: NOVAKAI_ROOT, principal: ME });
 
@@ -325,27 +339,34 @@ const methods: Record<string, (p: never) => Promise<unknown>> = {
   // lane so its output lands in the thread as a real messaging reply.
   async spawnMockAgent(p: { title?: string }) {
     const title = p.title?.trim() || `Mock agent ${convos.size - 1}`;
+    // G3: a UNIQUE provisioned person per spawn — sharing person_mock made
+    // every mock conversation resolve to the same messaging thread, so agents
+    // replied into each other's chats.
+    const assigned = mockPool.assign();
+    if (!assigned) return { ok: false as const, error: 'demo mock pool exhausted (10 mock agents per restart)' };
+    const holder = mockSessions.get(assigned.personId)!;
     const agentId = await defineDemoAgent(title);
     const spawn = await agents.spawnAgent(agentId as never);
     if (!spawn.ok) return { ok: false as const, error: spawn.error.message };
     const sessionId = spawn.value.sessionId;
     const convoId = `conv_${randomUUID().slice(0, 8)}`;
-    seedConvo(convoId, `person:${MOCK_PERSON}`, title, 'agent', agentId);
+    seedConvo(convoId, `person:${assigned.personId}`, title, 'agent', agentId);
     const c = convos.get(convoId)!;
     await persistConvoView(c, mintOpId()); // F1: persisted view state from birth
     const s = toSummary(c);
     broadcast('conversation', s);
 
-    // Live lane (R3-1): mock session output → real messaging reply to Chris,
-    // then mirrored to the UI as a message event for this conversation.
+    // Live lane (R3-1): mock session output → real messaging reply to Chris
+    // THROUGH THE SPAWN'S OWN PERSON (sessCall-wrapped holder), then mirrored
+    // to the UI as a message event for this conversation.
     const sender: LiveLaneSender = {
       async sendMessage(input: unknown) {
-        const res = await sessCall(mockHolder, (s) => s.sendMessage(input as never));
+        const res = await sessCall(holder, (s) => s.sendMessage(input as never));
         if (res.kind === 'ok') {
           const v = res.value as { threadId: string; messageId: string };
           if (!c.threadId) c.threadId = v.threadId;
           broadcast('message', {
-            id: v.messageId, conversationId: convoId, senderId: MOCK_PERSON,
+            id: v.messageId, conversationId: convoId, senderId: assigned.personId,
             text: (input as { body: { text: string } }).body.text,
             createdAt: new Date().toISOString(),
           });
