@@ -367,6 +367,62 @@ test('orphan sweep translates Foundation trace storage failures and preserves th
   }
 });
 
+test('concurrent orphan sweeps converge without duplicate traces or ENOENT', async () => {
+  const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-sweep-concurrent-'));
+  const root = path.join(workspace, '.novakai');
+  const priorFailpoint = process.env.NVK_FAILPOINT;
+  const priorRoot = process.env.NOVAKAI_ROOT;
+  try {
+    process.env.NVK_FAILPOINT = 'artifacts.put.before-record-append';
+    const orphaned = await composeArtifacts({
+      root,
+      principal: 'sys_reconciler',
+    }).operations.putArtifact({
+      bytes: Buffer.from('one concurrently swept orphan', 'utf8'),
+      mimeType: 'text/plain',
+    }, mintClientOpId());
+    assert.equal(orphaned.ok, false);
+    delete process.env.NVK_FAILPOINT;
+
+    const [first, second] = await Promise.all([
+      composeArtifacts({
+        root,
+        principal: 'sys_reconciler',
+      }).boot.sweepOrphans(),
+      composeArtifacts({
+        root,
+        principal: 'sys_reconciler',
+      }).boot.sweepOrphans(),
+    ]);
+
+    assert.equal(first.ok, true);
+    assert.equal(second.ok, true);
+    if (!first.ok || !second.ok) return;
+    assert.equal(
+      first.value.swept.length + second.value.swept.length,
+      1,
+    );
+    assert.deepEqual(readdirSync(path.join(root, 'artifacts')), []);
+
+    process.env.NOVAKAI_ROOT = path.join(root, 'stores');
+    __resetDefaultEngine();
+    const traces = await queryTrace({});
+    assert.equal(
+      traces.items.filter(
+        (trace) => trace.action === 'artifact.orphan.sweep',
+      ).length,
+      1,
+    );
+  } finally {
+    if (priorFailpoint === undefined) delete process.env.NVK_FAILPOINT;
+    else process.env.NVK_FAILPOINT = priorFailpoint;
+    if (priorRoot === undefined) delete process.env.NOVAKAI_ROOT;
+    else process.env.NOVAKAI_ROOT = priorRoot;
+    __resetDefaultEngine();
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
 test('orphan sweep rechecks authoritative metadata after acquiring the publication lease', async () => {
   const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-sweep-recheck-'));
   const root = path.join(workspace, '.novakai');
