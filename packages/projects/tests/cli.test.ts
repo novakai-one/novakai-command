@@ -50,6 +50,32 @@ test('offline CLI requires a recognized bearer token', () => {
   }
 });
 
+test('offline CLI rejects a project mutation with an artifact-only token', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'nvk-projects-cli-grants-'));
+  try {
+    const token = mintToken(
+      root,
+      'person_artifact_operator',
+      ['artifact'],
+      'person_local',
+    );
+    const rejected = invoke(root, [
+      'create',
+      '--title', 'Under-granted project',
+      '--client-op-id', mintClientOpId(),
+    ], token.bearer);
+    assert.equal(rejected.status, 1);
+    assert.deepEqual(JSON.parse(rejected.stderr), {
+      code: 'AuthFailed',
+      message: 'bearer token lacks the project grant',
+      details: { cause: 'project grant missing' },
+      retryable: false,
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('offline CLI create preserves the shared Foundation lock failure', () => {
   const root = mkdtempSync(path.join(tmpdir(), 'nvk-projects-cli-lock-'));
   const lockDir = path.join(root, 'lock');
