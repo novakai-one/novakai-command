@@ -9,6 +9,8 @@ import {
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
+  composeHandle,
+  createObject,
   mintClientOpId,
   queryTraceBound,
 } from '@novakai/foundation/dist/contract/index.js';
@@ -320,6 +322,44 @@ test('Project-dependent operations preserve a Foundation LockBusy read failure',
       assert.equal(result.ok, false);
       assert.equal(result.ok ? null : result.error.code, 'LockBusy');
     }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('listProjects returns a typed corruption error for a malformed durable Project', async () => {
+  const root = freshRoot();
+  try {
+    const handle = composeHandle({
+      root,
+      capability: 'projects',
+      allowedKinds: ['project', 'projectItem'],
+      principal: 'sys_spine',
+    });
+    const planted = await createObject(handle, {
+      kind: 'project',
+      id: 'proj_malformed',
+      schemaVersion: 1,
+      createdAt: new Date().toISOString(),
+      permissionLevel: 'team',
+      createdBy: 'overridden-by-foundation',
+      status: 'active',
+    }, mintClientOpId());
+    assert.equal(planted.ok, true);
+
+    const projects = createProjectsContract(composeProjects({
+      root,
+      principal: 'person_reader',
+    }));
+    const listed = await projects.listProjects();
+    assert.equal(listed.ok, false);
+    assert.equal(listed.ok ? null : listed.error.code, 'StoredRecordInvalid');
+    assert.deepEqual(
+      listed.ok
+        ? null
+        : (listed.error.details as { ref?: unknown }).ref,
+      { kind: 'project', id: 'proj_malformed' },
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
