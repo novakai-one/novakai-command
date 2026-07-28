@@ -48,3 +48,25 @@ test('createProject requires clientOpId and replays one traced result', async ()
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('listProjects returns created Projects filtered by lifecycle status', async () => {
+  const root = freshRoot();
+  try {
+    const projects = createProjectsContract(composeProjects({
+      root,
+      principal: 'person_chris',
+    }));
+    const first = await projects.createProject({ title: 'One' }, mintClientOpId());
+    const second = await projects.createProject({ title: 'Two' }, mintClientOpId());
+    assert.equal(first.ok && second.ok, true);
+
+    const active = await projects.listProjects({ status: 'active' });
+    assert.equal(active.ok, true);
+    assert.deepEqual(
+      active.ok ? active.value.items.map(({ title }) => title) : [],
+      ['One', 'Two'],
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
