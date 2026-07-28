@@ -15,6 +15,7 @@ import type {
 import type { ArtifactsError } from '../contract/errors.js';
 import type { ArtifactsContext } from './composition.js';
 import * as artifacts from './artifacts.js';
+import * as orphanSweep from './orphan-sweep.js';
 
 export interface ArtifactsContract {
   putArtifact(
@@ -42,6 +43,6 @@ export function createArtifactsContract(
     getArtifactBytes: (artifactId) =>
       artifacts.getArtifactBytes(ctx, artifactId),
     listArtifacts: () => artifacts.listArtifacts(ctx),
-    sweepOrphans: () => artifacts.sweepOrphans(ctx),
+    sweepOrphans: () => orphanSweep.sweepOrphans(ctx),
   };
 }

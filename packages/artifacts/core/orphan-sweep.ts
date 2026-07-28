@@ -1,0 +1,167 @@
+import {
+  readdir,
+  unlink,
+} from 'node:fs/promises';
+import path from 'node:path';
+import {
+  mintClientOpId,
+  recordSystemAction,
+} from '@novakai/foundation/dist/contract/index.js';
+import { err } from '@novakai/foundation/dist/contract/errors.js';
+import type {
+  ArtifactId,
+} from '@novakai/foundation/dist/contract/brands.js';
+import type { Result } from '@novakai/foundation/dist/contract/types.js';
+import type {
+  OrphanEntryType,
+  OrphanSweepResult,
+} from '../contract/schemas.js';
+import type { ArtifactsError } from '../contract/errors.js';
+import type { ArtifactsContext } from './composition.js';
+import { listArtifacts } from './artifacts.js';
+import { injectedFailpoint } from './failpoints.js';
+
+interface OrphanEntry {
+  artifactId: ArtifactId;
+  entryType: OrphanEntryType;
+  name: string;
+}
+
+function orphanEntry(name: string): OrphanEntry | null {
+  const temp = /^\.(artifact_[^.]+)\.[^.]+\.tmp$/.exec(name);
+  if (temp) {
+    return {
+      artifactId: temp[1] as ArtifactId,
+      entryType: 'temp',
+      name,
+    };
+  }
+  if (!/^artifact_[A-Za-z0-9-]+$/.test(name)) return null;
+  return {
+    artifactId: name as ArtifactId,
+    entryType: 'final',
+    name,
+  };
+}
+
+async function scanOrphans(
+  bytesRoot: string,
+): Promise<Result<OrphanEntry[], ArtifactsError>> {
+  try {
+    const entries = await readdir(bytesRoot, { withFileTypes: true });
+    return {
+      ok: true,
+      value: entries
+        .filter((entry) => entry.isFile())
+        .map((entry) => orphanEntry(entry.name))
+        .filter((entry): entry is OrphanEntry => entry !== null)
+        .sort((left, right) => left.name.localeCompare(right.name)),
+    };
+  } catch (cause) {
+    if ((cause as NodeJS.ErrnoException).code === 'ENOENT') {
+      return { ok: true, value: [] };
+    }
+    return {
+      ok: false,
+      error: err(
+        'ArtifactOrphanScanFailed',
+        `artifact orphan scan failed: ${String(cause)}`,
+        { cause: String(cause) },
+        true,
+      ),
+    };
+  }
+}
+
+async function traceOrphan(
+  ctx: ArtifactsContext,
+  orphan: OrphanEntry,
+): Promise<Result<null, ArtifactsError>> {
+  const before = injectedFailpoint(
+    orphan.artifactId,
+    'artifacts.sweep.before-trace-append',
+  );
+  if (before) return { ok: false, error: before };
+  const traced = await recordSystemAction(ctx.handle, {
+    action: 'artifact.orphan.sweep',
+    target: { kind: 'artifact', id: orphan.artifactId },
+    clientOpId: mintClientOpId(),
+    meta: { entryType: orphan.entryType },
+  });
+  if (!traced.ok) return traced;
+  const after = injectedFailpoint(
+    orphan.artifactId,
+    'artifacts.sweep.after-trace-append',
+  );
+  return after
+    ? { ok: false, error: after }
+    : { ok: true, value: null };
+}
+
+async function deleteOrphan(
+  bytesRoot: string,
+  orphan: OrphanEntry,
+): Promise<Result<null, ArtifactsError>> {
+  const before = injectedFailpoint(
+    orphan.artifactId,
+    'artifacts.sweep.before-delete',
+  );
+  if (before) return { ok: false, error: before };
+  try {
+    await unlink(path.join(bytesRoot, orphan.name));
+  } catch (cause) {
+    return {
+      ok: false,
+      error: err(
+        'ArtifactOrphanDeleteFailed',
+        `artifact orphan delete failed: ${String(cause)}`,
+        {
+          artifactId: orphan.artifactId,
+          entryType: orphan.entryType,
+          cause: String(cause),
+        },
+        true,
+      ),
+    };
+  }
+  const after = injectedFailpoint(
+    orphan.artifactId,
+    'artifacts.sweep.after-delete',
+  );
+  return after
+    ? { ok: false, error: after }
+    : { ok: true, value: null };
+}
+
+async function sweepOrphan(
+  ctx: ArtifactsContext,
+  orphan: OrphanEntry,
+): Promise<Result<null, ArtifactsError>> {
+  const traced = await traceOrphan(ctx, orphan);
+  if (!traced.ok) return traced;
+  return deleteOrphan(ctx.bytesRoot, orphan);
+}
+
+export async function sweepOrphans(
+  ctx: ArtifactsContext,
+): Promise<Result<OrphanSweepResult, ArtifactsError>> {
+  const listed = await listArtifacts(ctx);
+  if (!listed.ok) return listed;
+  const recordedIds = new Set(listed.value.items.map((item) => item.id));
+  const scanned = await scanOrphans(ctx.bytesRoot);
+  if (!scanned.ok) return scanned;
+  const orphans = scanned.value.filter(
+    (entry) => entry.entryType === 'temp'
+      || !recordedIds.has(entry.artifactId),
+  );
+  const swept: OrphanSweepResult['swept'] = [];
+  for (const orphan of orphans) {
+    const result = await sweepOrphan(ctx, orphan);
+    if (!result.ok) return result;
+    swept.push({
+      artifactId: orphan.artifactId,
+      entryType: orphan.entryType,
+    });
+  }
+  return { ok: true, value: { swept } };
+}
