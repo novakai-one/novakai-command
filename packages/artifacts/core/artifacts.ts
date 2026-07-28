@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import {
   mkdir,
   open,
+  readFile,
   rename,
   type FileHandle,
 } from 'node:fs/promises';
@@ -234,4 +235,31 @@ export async function listArtifacts(
         : { nextCursor: listed.value.nextCursor }),
     },
   };
+}
+
+export async function getArtifactBytes(
+  ctx: ArtifactsContext,
+  artifactId: ArtifactId,
+): Promise<Result<Uint8Array | Absent, ArtifactsError>> {
+  const metadata = await getArtifactMeta(ctx, artifactId);
+  if (!metadata.ok) return metadata;
+  if (isAbsent(metadata.value)) {
+    return { ok: true, value: metadata.value };
+  }
+  try {
+    return {
+      ok: true,
+      value: await readFile(path.join(ctx.bytesRoot, artifactId)),
+    };
+  } catch (cause) {
+    return {
+      ok: false,
+      error: err(
+        'ArtifactBytesReadFailed',
+        `artifact bytes could not be read: ${String(cause)}`,
+        { artifactId, cause: String(cause) },
+        false,
+      ),
+    };
+  }
 }

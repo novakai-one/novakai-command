@@ -23,6 +23,9 @@ export interface ArtifactsContract {
   getArtifactMeta(
     artifactId: ArtifactId,
   ): Promise<Result<Artifact | Absent, ArtifactsError>>;
+  getArtifactBytes(
+    artifactId: ArtifactId,
+  ): Promise<Result<Uint8Array | Absent, ArtifactsError>>;
   listArtifacts(): Promise<Result<Page<Artifact>, ArtifactsError>>;
 }
 
@@ -34,6 +37,8 @@ export function createArtifactsContract(
       artifacts.putArtifact(ctx, input, clientOpId),
     getArtifactMeta: (artifactId) =>
       artifacts.getArtifactMeta(ctx, artifactId),
+    getArtifactBytes: (artifactId) =>
+      artifacts.getArtifactBytes(ctx, artifactId),
     listArtifacts: () => artifacts.listArtifacts(ctx),
   };
 }

@@ -29,7 +29,16 @@ export type StoredArtifactInvalidError = ContractError<
   }
 >;
 
+export type ArtifactBytesReadFailedError = ContractError<
+  'ArtifactBytesReadFailed',
+  {
+    artifactId: ArtifactId;
+    cause: string;
+  }
+>;
+
 export type ArtifactsError =
   | StoreError
   | ArtifactByteEffectFailedError
+  | ArtifactBytesReadFailedError
   | StoredArtifactInvalidError;
