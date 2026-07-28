@@ -19,6 +19,34 @@ import { registerInspectorScreen } from '../../inspector/registry.js';
 import { MessageInspector } from '../../inspector/MessageInspector.js';
 import './messaging.css';
 
+type SendOutcome = Awaited<ReturnType<ShellServices['sendMessage']>>;
+
+const rejectedSendMessage = (cause: unknown): string => {
+  if (cause instanceof Error && cause.message.trim()) return cause.message;
+  if (typeof cause === 'string' && cause.trim()) return cause;
+  return 'The server rejected the send.';
+};
+
+/** RPC error frames reject; the interaction seam turns them back into typed UI data. */
+export async function sendMessageFromInteraction(
+  services: ShellServices,
+  conversationId: string,
+  text: string,
+  clientOpId: string,
+): Promise<SendOutcome> {
+  try {
+    return await services.sendMessage(conversationId, text, clientOpId);
+  } catch (cause) {
+    return {
+      ok: false,
+      error: {
+        code: 'SendRejected',
+        message: rejectedSendMessage(cause),
+      },
+    };
+  }
+}
+
 /** The UI resend path: the original key is mandatory and is never re-minted. */
 export function resendFailedMessage(services: ShellServices, message: ChatMessage) {
   if (!message.clientOpId) {
@@ -27,7 +55,12 @@ export function resendFailedMessage(services: ShellServices, message: ChatMessag
       error: { code: 'MissingClientOpId', message: 'cannot safely resend without the original clientOpId' },
     });
   }
-  return services.sendMessage(message.conversationId, message.text, message.clientOpId);
+  return sendMessageFromInteraction(
+    services,
+    message.conversationId,
+    message.text,
+    message.clientOpId,
+  );
 }
 
 export function MessagingScreen(props: {
@@ -129,7 +162,7 @@ export function MessagingScreen(props: {
       clientOpId,
     };
     setMessages((cur) => [...cur, optimistic]); // pending drawn immediately (red gate 5)
-    const res = await services.sendMessage(selected.id, text, clientOpId);
+    const res = await sendMessageFromInteraction(services, selected.id, text, clientOpId);
     // G1: if the broadcast beat the RPC resolve, the real id is already in the
     // list — replacing the pending bubble would duplicate it. Dedup by id.
     setMessages((cur) => settleOptimisticMessage(cur, optimistic.id, res));
