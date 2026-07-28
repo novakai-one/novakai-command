@@ -29,7 +29,8 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
-import type { TerminalRuntimeLike } from './adapter.js';
+import type { ProviderCliRuntime, ProviderTurnRecord } from './adapter.js';
+import { parseJsonLine, readLines } from './cli.js';
 
 /** Where the kimi CLI lives on a standard install. */
 export function defaultKimiCliPath(): string {
@@ -43,17 +44,13 @@ export function defaultKimiCliPath(): string {
  */
 const NO_MODEL_FLAG = new Set(['cli-default', 'kimi-cli', '']);
 
-export interface KimiTurnRecord {
-  /** The logical session key (the agents sessionId). */
-  key: string;
-  /** The CLI conversation this turn ran in, if known by then. */
-  cliSessionId: string | null;
-  startedAt: string;
-  endedAt: string;
-  exitCode: number | null;
-  /** Model alias actually passed, or null when the CLI default was used. */
-  model: string | null;
-}
+/**
+ * B1b: kimi turns are now the shared provider turn record. kimi always reports
+ * `usage: null` — 0.29.1 stream-json carries no usage line — so the supervision
+ * engine reads kimi token counts from the CLI's own wire.jsonl transcript
+ * instead (DEC-B1-11). The gap is stated, never guessed.
+ */
+export type KimiTurnRecord = ProviderTurnRecord;
 
 interface LogicalSession {
   key: string;
@@ -71,20 +68,9 @@ interface LogicalSession {
   turns: number;
 }
 
-export interface KimiCliRuntime extends TerminalRuntimeLike {
-  isAvailable(): boolean;
-  /** The provider-native resume handle for a session (persisted by the registry). */
-  resumeHint(key: string): string | null;
-  /** Rebind a session to a known CLI conversation after a server restart. */
-  adopt(key: string, options: { cliSessionId: string | null; model?: string | null; argv?: string[]; env?: Record<string, string> }): void;
-  /**
-   * Resolves when every message queued for this session has finished its child
-   * process. The server awaits this on graceful shutdown so a turn in flight is
-   * never orphaned; tests use it instead of sleeping.
-   */
-  drain(key: string): Promise<void>;
-  /** Per-turn completion records — the session registry's usage input (DEC-B1-7). */
-  onTurn(callback: (record: KimiTurnRecord) => void): void;
+export interface KimiCliRuntime extends ProviderCliRuntime {
+  /** OD-C3 RULED: kimi is the ONE provider with a verified mid-session switch. */
+  setModel(key: string, model: string): boolean;
 }
 
 export interface KimiCliRuntimeOptions {
@@ -105,8 +91,8 @@ export function createKimiCliRuntime(options: KimiCliRuntimeOptions): KimiCliRun
 
   /** Extract displayable text from one stream-json line; null = not user-facing. */
   const parseLine = (line: string, rec: LogicalSession): string | null => {
-    let parsed: { role?: string; type?: string; session_id?: string; content?: unknown };
-    try { parsed = JSON.parse(line); } catch { return null; }
+    const parsed = parseJsonLine<{ role?: string; type?: string; session_id?: string; content?: unknown }>(line);
+    if (!parsed) return null;
     if (parsed.role === 'meta' && parsed.type === 'session.resume_hint' && typeof parsed.session_id === 'string') {
       rec.cliSessionId = parsed.session_id;
       return null;
@@ -143,16 +129,9 @@ export function createKimiCliRuntime(options: KimiCliRuntimeOptions): KimiCliRun
       env: { ...process.env, ...rec.env },
     });
     rec.current = child;
-    let buf = '';
-    child.stdout.on('data', (chunk: Buffer) => {
-      buf += chunk.toString('utf8');
-      const lines = buf.split('\n');
-      buf = lines.pop() ?? '';
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        const out = parseLine(line, rec);
-        if (out) emitData(rec.key, out);
-      }
+    const flush = readLines(child.stdout, (line) => {
+      const out = parseLine(line, rec);
+      if (out) emitData(rec.key, out);
     });
     let stderr = '';
     child.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString('utf8'); });
@@ -162,6 +141,8 @@ export function createKimiCliRuntime(options: KimiCliRuntimeOptions): KimiCliRun
       const record: KimiTurnRecord = {
         key: rec.key, cliSessionId: rec.cliSessionId, startedAt,
         endedAt: new Date().toISOString(), exitCode, model: modelUsed,
+        // kimi 0.29.1 stream-json emits NO usage line: absent, never invented.
+        usage: null,
       };
       for (const cb of turnCallbacks) cb(record);
       resolve();
@@ -171,11 +152,7 @@ export function createKimiCliRuntime(options: KimiCliRuntimeOptions): KimiCliRun
       finish(null);
     });
     child.on('close', (code) => {
-      const tail = buf.trim();
-      if (tail) {
-        const out = parseLine(tail, rec);
-        if (out) emitData(rec.key, out);
-      }
+      flush();
       if (code !== 0) {
         const detail = stderr.trim().split('\n').slice(-3).join(' ').slice(0, 300);
         emitData(rec.key, `⚠️ kimi CLI exited with code ${code}${detail ? ` — ${detail}` : ''}`);

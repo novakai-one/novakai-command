@@ -44,6 +44,71 @@ export interface TerminalAdapter {
 }
 
 /**
+ * DEC-B1-7: what one completed provider turn cost, as the PROVIDER reported it.
+ *
+ * `cumulative` is the honesty field. codex's rollout `total_token_usage` is a
+ * running session total, not a turn cost; kimi's transcript records are
+ * per-step. A consumer that adds cumulative numbers together invents a bill, so
+ * the shape says which kind it is holding and the usage table subtracts a
+ * baseline for the cumulative ones (B1b supervision/usage.ts).
+ */
+export interface ProviderTurnUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  cumulative: boolean;
+}
+
+/**
+ * One completed physical turn. Every print-mode CLI adapter emits these; the
+ * session registry and the supervision engine consume them. `usage: null` means
+ * the provider emitted NO machine-readable usage for this turn — reported as
+ * absent, never guessed (red gate: no invented numbers).
+ */
+export interface ProviderTurnRecord {
+  /** The logical session key (the agents sessionId). */
+  key: string;
+  /** The CLI conversation this turn ran in, if known by then. */
+  cliSessionId: string | null;
+  startedAt: string;
+  endedAt: string;
+  exitCode: number | null;
+  /** Model alias actually passed, or null when the CLI default was used. */
+  model: string | null;
+  usage: ProviderTurnUsage | null;
+}
+
+/**
+ * The shape every B1 print-mode CLI runtime satisfies (kimi, codex, claude).
+ * It is TerminalRuntimeLike plus the four things the per-message process model
+ * requires of a runtime: availability, the resume handle, restart adoption, and
+ * deterministic quiescence. `setModel` stays OPTIONAL — kimi declares it, codex
+ * and claude do not, and their absence is what produces the typed
+ * UnsupportedOperation at the contract layer (OD-C3).
+ */
+export interface ProviderCliRuntime extends TerminalRuntimeLike {
+  isAvailable(): boolean;
+  /** The provider-native resume handle for a session (persisted by the registry). */
+  resumeHint(key: string): string | null;
+  /** Rebind a session to a known CLI conversation after a server restart. */
+  adopt(key: string, options: {
+    cliSessionId: string | null;
+    model?: string | null;
+    argv?: string[];
+    env?: Record<string, string>;
+  }): void;
+  /**
+   * Resolves when every message queued for this session has finished its child
+   * process. The server awaits this on graceful shutdown so a turn in flight is
+   * never orphaned; tests use it instead of sleeping.
+   */
+  drain(key: string): Promise<void>;
+  /** Per-turn completion records — the usage/supervision input (DEC-B1-7). */
+  onTurn(callback: (record: ProviderTurnRecord) => void): void;
+}
+
+/**
  * Structural view of the existing terminal runtime (src/backend/terminal
  * manager.ts TerminalManager and host/client TerminalHostClient share exactly
  * this surface — verified against both). Agents wires to it; it is never

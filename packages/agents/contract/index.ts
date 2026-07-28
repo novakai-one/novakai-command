@@ -11,7 +11,17 @@ export {
   createKimiCliRuntime, defaultKimiCliPath,
   type KimiCliRuntime, type KimiCliRuntimeOptions, type KimiTurnRecord,
 } from '../core/providers/kimi.js';
-export type { TerminalAdapter, TerminalRuntimeLike, SpawnedSession } from '../core/providers/adapter.js';
+// B1b DEC-B1-4: the codex adapter. `codex exec` per message, resume via
+// `codex exec resume <thread_id>` (OD-B1-1 CLOSED — the mechanism exists and
+// is verified live), no mid-session model switch (typed UnsupportedOperation).
+export {
+  createCodexCliRuntime, defaultCodexCliPath, isInsideGitRepo,
+  type CodexCliRuntime, type CodexCliRuntimeOptions,
+} from '../core/providers/codex.js';
+export type {
+  TerminalAdapter, TerminalRuntimeLike, SpawnedSession,
+  ProviderCliRuntime, ProviderTurnRecord, ProviderTurnUsage,
+} from '../core/providers/adapter.js';
 export type { LiveLaneSender, LiveLaneBinding } from '../core/live-lane/liveLane.js';
 // B1 DEC-B1-6: the providerSession registry — agents owns the kind and is its
 // sole writer; the server drives it from the composition root.
