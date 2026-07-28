@@ -155,3 +155,70 @@ test('NVK_FAILPOINT names deterministic before/after orphan trace-append failure
     }
   }
 });
+
+test('NVK_FAILPOINT names deterministic before/after orphan-delete failures', async () => {
+  for (const expectation of [
+    {
+      point: 'artifacts.sweep.before-delete',
+      remaining: 1,
+    },
+    {
+      point: 'artifacts.sweep.after-delete',
+      remaining: 0,
+    },
+  ]) {
+    const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-sweep-delete-'));
+    const root = path.join(workspace, '.novakai');
+    const priorFailpoint = process.env.NVK_FAILPOINT;
+    const priorRoot = process.env.NOVAKAI_ROOT;
+    try {
+      const artifacts = createArtifactsContract(composeArtifacts({
+        root,
+        principal: 'sys_reconciler',
+      }));
+      process.env.NVK_FAILPOINT = 'artifacts.put.before-record-append';
+      const orphaned = await artifacts.putArtifact({
+        bytes: Buffer.from('delete failure orphan bytes', 'utf8'),
+        mimeType: 'text/plain',
+      }, mintClientOpId());
+      assert.equal(orphaned.ok, false);
+
+      process.env.NVK_FAILPOINT = expectation.point;
+      const swept = await artifacts.sweepOrphans();
+
+      assert.equal(swept.ok, false);
+      if (swept.ok) return;
+      assert.equal(swept.error.code, 'ArtifactFailpoint');
+      assert.equal(
+        (swept.error.details as { point: string }).point,
+        expectation.point,
+      );
+      assert.equal(
+        readdirSync(path.join(root, 'artifacts')).length,
+        expectation.remaining,
+      );
+
+      delete process.env.NVK_FAILPOINT;
+      process.env.NOVAKAI_ROOT = root;
+      __resetDefaultEngine();
+      const traces = await queryTrace({});
+      assert.equal(
+        traces.items.filter(
+          (trace) => trace.action === 'artifact.orphan.sweep',
+        ).length,
+        1,
+      );
+      assert.equal(
+        JSON.stringify(traces.items).includes('orphan bytes'),
+        false,
+      );
+    } finally {
+      if (priorFailpoint === undefined) delete process.env.NVK_FAILPOINT;
+      else process.env.NVK_FAILPOINT = priorFailpoint;
+      if (priorRoot === undefined) delete process.env.NOVAKAI_ROOT;
+      else process.env.NOVAKAI_ROOT = priorRoot;
+      __resetDefaultEngine();
+      rmSync(workspace, { recursive: true, force: true });
+    }
+  }
+});
