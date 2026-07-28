@@ -130,10 +130,14 @@ async function main(): Promise<void> {
     );
     return result.ok ? output(result.value) : fail(result.error);
   }
+  if (verb === 'list') {
+    const result = await artifacts.listArtifacts();
+    return result.ok ? output(result.value) : fail(result.error);
+  }
 
   fail({
     code: 'Usage',
-    message: 'verbs: put | get-meta',
+    message: 'verbs: put | get-meta | list',
   }, 2);
 }
 
