@@ -7,7 +7,6 @@ import type {
 } from '@novakai/foundation/dist/contract/types.js';
 import type {
   DeliveryListResult,
-  MessagingError,
   Outcome,
 } from '@novakai/messaging/dist/public/index.js';
 import type {
@@ -27,7 +26,7 @@ export interface SpineOperations {
   addMessageToProject(
     input: AddMessageToProjectInput,
     clientOpId: ClientOpId,
-  ): Promise<Result<SpineWorkflow, SpineError | MessagingError>>;
+  ): Promise<Result<SpineWorkflow, SpineError>>;
   attachArtifactToProject(
     input: AttachArtifactToProjectInput,
     clientOpId: ClientOpId,

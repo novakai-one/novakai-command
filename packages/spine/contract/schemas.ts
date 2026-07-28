@@ -47,6 +47,13 @@ export const SpineSourceRef = z.discriminatedUnion('kind', [
 ]);
 export type SpineSourceRef = z.infer<typeof SpineSourceRef>;
 
+export const SpineFailure = z.object({
+  code: z.string().min(1),
+  message: z.string().min(1),
+  retryable: z.boolean(),
+}).strict();
+export type SpineFailure = z.infer<typeof SpineFailure>;
+
 export const SpineStep = z.object({
   kind: z.literal('spineStep'),
   id: z.string().regex(/^spineStep_/),
@@ -64,6 +71,7 @@ export const SpineStep = z.object({
   step: z.number().int().min(0).max(2),
   eventIndex: z.number().int().nonnegative(),
   effectOpId: z.string().min(1).optional(),
+  failure: SpineFailure.optional(),
 }).strict();
 export type SpineStep = z.infer<typeof SpineStep>;
 
@@ -111,6 +119,7 @@ export interface SpineWorkflow {
   state: SpineWorkflowState;
   acceptedAt: string;
   steps: [SpineWorkflowStep, SpineWorkflowStep];
+  failure?: SpineFailure;
   nextStep: 1 | 2 | null;
   resumable: boolean;
 }

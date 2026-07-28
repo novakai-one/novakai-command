@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import {
   createObject,
+  isAbsent,
   listObjects,
   type ClientOpId,
   type Page,
@@ -12,6 +13,7 @@ import type {
   AttachArtifactToProjectInput,
   SpineSourceRef,
   SpineStep,
+  SpineFailure,
   SpineWorkflow,
   SpineWorkflowId,
   SpineWorkflowState,
@@ -36,7 +38,7 @@ function stepEffectOpId(
 function journalMutationOpId(
   originalClientOpId: ClientOpId,
   step: 1 | 2,
-  state: 'running' | 'done',
+  state: 'running' | 'done' | 'failed',
 ): ClientOpId {
   return `${originalClientOpId}:journal:step:${step}:${state}` as ClientOpId;
 }
@@ -50,10 +52,11 @@ async function appendStep(
     projectId: ProjectId;
     sourceRef: SpineSourceRef;
     note?: string;
-    state: 'accepted' | 'running' | 'done';
+    state: 'accepted' | 'running' | 'done' | 'failed';
     step: 0 | 1 | 2;
     eventIndex: number;
     effectOpId?: string;
+    failure?: SpineFailure;
   },
   mutationClientOpId: ClientOpId,
 ): Promise<Result<SpineStep, SpineError>> {
@@ -159,6 +162,7 @@ function foldWorkflow(facts: SpineStep[]): SpineWorkflow {
     },
   ];
   let state: SpineWorkflowState = 'accepted';
+  let failure: SpineFailure | undefined;
   for (const fact of ordered) {
     if (fact.step === 1 || fact.step === 2) {
       const step = steps[fact.step - 1];
@@ -177,6 +181,7 @@ function foldWorkflow(facts: SpineStep[]): SpineWorkflow {
     if (fact.state === 'failed' || fact.state === 'abandoned') {
       state = fact.state;
     }
+    if (fact.failure) failure = fact.failure;
   }
   const next = steps.find((step) => step.state !== 'done')?.number ?? null;
   return {
@@ -189,6 +194,7 @@ function foldWorkflow(facts: SpineStep[]): SpineWorkflow {
     state,
     acceptedAt: accepted.createdAt,
     steps,
+    ...(failure === undefined ? {} : { failure }),
     nextStep: state === 'done' || state === 'failed' || state === 'abandoned'
       ? null
       : next,
@@ -256,6 +262,37 @@ export async function addMessageToProject(
     messageId: input.messageId,
   });
   if (message.kind === 'error') {
+    const failure = message.error.name === 'UnknownMessage'
+      ? {
+          code: 'SpineSourceMissing',
+          message: `Message "${input.messageId}" does not exist`,
+          retryable: false,
+        }
+      : {
+          code: 'SpineDependencyFailed',
+          message: `Messaging getDelivery failed: ${message.error.message}`,
+          retryable: message.error.retryable,
+        };
+    const failed = await appendStep(ctx, {
+      ...common,
+      state: 'failed',
+      step: 1,
+      eventIndex: 2,
+      effectOpId: stepEffectOpId(originalClientOpId, 1),
+      failure,
+    }, journalMutationOpId(originalClientOpId, 1, 'failed'));
+    if (!failed.ok) return failed;
+    if (message.error.name === 'UnknownMessage') {
+      return {
+        ok: false,
+        error: {
+          code: 'SpineSourceMissing',
+          message: failure.message,
+          details: { sourceRef },
+          retryable: false,
+        },
+      };
+    }
     return {
       ok: false,
       error: {
@@ -383,6 +420,31 @@ export async function attachArtifactToProject(
           cause: artifact.error.code,
         },
         retryable: artifact.error.retryable,
+      },
+    };
+  }
+  if (isAbsent(artifact.value)) {
+    const failure = {
+      code: 'SpineSourceMissing',
+      message: `Artifact "${input.artifactId}" does not exist`,
+      retryable: false,
+    };
+    const failed = await appendStep(ctx, {
+      ...common,
+      state: 'failed',
+      step: 1,
+      eventIndex: 2,
+      effectOpId: stepEffectOpId(originalClientOpId, 1),
+      failure,
+    }, journalMutationOpId(originalClientOpId, 1, 'failed'));
+    if (!failed.ok) return failed;
+    return {
+      ok: false,
+      error: {
+        code: 'SpineSourceMissing',
+        message: failure.message,
+        details: { sourceRef },
+        retryable: false,
       },
     };
   }

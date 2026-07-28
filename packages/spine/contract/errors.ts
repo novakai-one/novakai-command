@@ -21,7 +21,15 @@ export type SpineDependencyFailedError = ContractError<
   }
 >;
 
+export type SpineSourceMissingError = ContractError<
+  'SpineSourceMissing',
+  {
+    sourceRef: Ref;
+  }
+>;
+
 export type SpineError =
   | StoreError
   | StoredSpineStepInvalidError
-  | SpineDependencyFailedError;
+  | SpineDependencyFailedError
+  | SpineSourceMissingError;
