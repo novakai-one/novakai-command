@@ -7,7 +7,9 @@
 // materialization. See packages/server/tests/boot.test.ts.
 import { describe, it, expect } from 'vitest';
 import type { ChatMessage } from '../contract/index.js';
-import { dedupeById, appendDedup } from '../ui/screens/messaging/messageList.js';
+import {
+  appendDedup, dedupeById, reconcileLoadedMessages, settleOptimisticMessage,
+} from '../ui/screens/messaging/messageList.js';
 import { shouldAutoOpenInspector } from '../ui/frame/inspectorVisibility.js';
 
 const msg = (id: string, text = id): ChatMessage => ({
@@ -35,6 +37,37 @@ describe('G1 — message dedup (optimistic echo vs server broadcast)', () => {
   it('dedupeById keeps first occurrence order', () => {
     const out = dedupeById([msg('a'), msg('b'), msg('a'), msg('c'), msg('b')]);
     expect(out.map((m) => m.id)).toEqual(['a', 'b', 'c']);
+  });
+});
+
+describe('S0 — the first failed send is never erased by initial thread loading', () => {
+  it('preserves the optimistic row until its typed failure is settled inline', () => {
+    const optimistic: ChatMessage = {
+      ...msg('pending_first', 'cannot send this legacy thread'),
+      pending: true,
+      clientOpId: 'op_first_failure',
+    };
+
+    // Exact live ordering: the composer draws first, then the getMessages()
+    // request started on conversation selection resolves with the old history,
+    // then sendMessage() returns its typed refusal.
+    let list = [optimistic];
+    list = reconcileLoadedMessages(list, [], 'conv_1');
+    list = settleOptimisticMessage(list, optimistic.id, {
+      ok: false,
+      error: {
+        code: 'ConversationUnavailable',
+        message: 'This legacy conversation has no resolvable person or thread.',
+      },
+    });
+
+    expect(list).toHaveLength(1);
+    expect(list[0]).toMatchObject({
+      id: 'pending_first',
+      pending: false,
+      failed: 'ConversationUnavailable: This legacy conversation has no resolvable person or thread.',
+      clientOpId: 'op_first_failure',
+    });
   });
 });
 
