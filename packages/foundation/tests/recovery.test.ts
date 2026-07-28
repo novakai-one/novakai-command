@@ -7,9 +7,10 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
   composeHandle, createObject, getObject, listObjects, resolveQuarantine,
-  listQuarantineBound, queryTraceBound, composeEngine, mintClientOpId, isAbsent,
+  listQuarantineBound, queryTraceBound, mintClientOpId, isAbsent,
   type ObjectId,
 } from '../contract/index.js';
+import { composeEngine } from '../contract/compose.js'; // M11: internal import
 import { StoreEngine } from '../core/store-engine/engine.js';
 
 const freshRoot = () => mkdtempSync(path.join(tmpdir(), 'nvk-fnd-'));

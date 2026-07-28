@@ -9,10 +9,12 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import {
   composeHandle, createObject, updateObject, getObject, listObjects, resolveRef,
-  queryTraceBound, listQuarantineBound, resolveQuarantine, composeEngine,
+  queryTraceBound, listQuarantineBound, resolveQuarantine,
   mintClientOpId, mintToken, authenticate,
   type ClientOpId, type ObjectId, type ObjectKind,
 } from '../contract/index.js';
+// M11: foundation-internal CLI may use the raw engine factory directly.
+import { composeEngine } from '../contract/compose.js';
 
 interface Args { [k: string]: string | boolean | undefined }
 

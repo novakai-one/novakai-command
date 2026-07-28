@@ -10,10 +10,11 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   composeHandle, createObject, updateObject, getObject, listObjects, resolveRef,
-  queryTraceBound, listQuarantineBound, resolveQuarantine, composeEngine,
+  queryTraceBound, listQuarantineBound, resolveQuarantine,
   mintClientOpId, isAbsent,
   type ClientOpId, type ObjectId, type ScopedStoreHandle,
 } from '../contract/index.js';
+import { composeEngine } from '../contract/compose.js'; // M11: internal import
 import { mintToken } from '../core/token.js';
 
 const CLI = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../cli/nvk-store.js');

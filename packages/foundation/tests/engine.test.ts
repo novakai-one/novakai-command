@@ -6,9 +6,10 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
   composeHandle, createObject, updateObject, getObject, listObjects, resolveRef,
-  queryTraceBound, composeEngine, mintClientOpId, isAbsent,
+  queryTraceBound, mintClientOpId, isAbsent,
   type ObjectId, type ScopedStoreHandle,
 } from '../contract/index.js';
+import { composeEngine } from '../contract/compose.js'; // M11: internal import
 
 const freshRoot = () => mkdtempSync(path.join(tmpdir(), 'nvk-fnd-'));
 

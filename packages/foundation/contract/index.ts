@@ -4,7 +4,11 @@ export * from './brands.js';
 export * from './errors.js';
 export * from './schemas.js';
 export * from './types.js';
-export * from './compose.js';
+// M11: composeHandle ONLY — composeEngine (the raw, scope-free engine factory)
+// is foundation-internal. Consumers bind a SCOPED handle (R3-6); the contract
+// layer enforces scope on every write. Tests/CLIs inside foundation may import
+// contract/compose.js directly.
+export { composeHandle, type ComposeOptions } from './compose.js';
 export {
   createObject, updateObject, getObject, listObjects, resolveRef,
   queryTrace, queryTraceBound, listQuarantine, listQuarantineBound,

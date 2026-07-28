@@ -10,7 +10,9 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { mintClientOpId, type AgentId, type SessionId } from '@novakai/foundation/dist/contract/brands.js';
-import { composeEngine, queryTraceBound } from '@novakai/foundation/dist/contract/index.js';
+import { queryTraceBound } from '@novakai/foundation/dist/contract/index.js';
+// M11: composeEngine is foundation-internal (the public surface exports composeHandle only).
+import { composeEngine } from '@novakai/foundation/dist/contract/compose.js';
 import { isAbsent } from '@novakai/foundation/dist/contract/types.js';
 import { composeAgents, type AgentsContext } from '../core/composition.js';
 import { createAgentsContract, type AgentsContract } from '../core/contract.js';

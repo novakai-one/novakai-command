@@ -9,8 +9,10 @@ import { composeShellPersistence } from '../contract/persistence.node.js';
 import { setLayout } from '../contract/layout.js';
 import { setSetting } from '../contract/settings.js';
 import {
-  composeEngine, queryTraceBound, mintClientOpId,
+  queryTraceBound, mintClientOpId,
 } from '../../foundation/dist/contract/index.js';
+// M11: composeEngine is foundation-internal (the public surface exports composeHandle only).
+import { composeEngine } from '../../foundation/dist/contract/compose.js';
 
 const compose = () => {
   const root = mkdtempSync(path.join(tmpdir(), 'nvk-shell-opid-'));
