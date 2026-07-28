@@ -68,6 +68,14 @@ function authenticateProjects(
       retryable: false,
     });
   }
+  if (!token.grants.includes('project')) {
+    fail({
+      code: 'AuthFailed',
+      message: 'bearer token lacks the project grant',
+      details: { cause: 'project grant missing' },
+      retryable: false,
+    });
+  }
   return composeProjects({
     root,
     principal: token.principal,
