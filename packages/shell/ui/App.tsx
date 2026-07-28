@@ -102,12 +102,17 @@ export function App(props: { services: ShellServices; models?: string[] }) {
               envelope={{ kind: 'conversation', id: c.id, title: c.title, conversationKind: c.kind }}
               payload={c} />,
           })}
-          onInspectMessage={(m) => setInspected({
-            title: `Message · ${m.senderId}`,
-            body: <Inspector kind="message" refId={m.id}
-              envelope={{ kind: 'message', id: m.id }}
-              payload={m} />,
-          })}
+          onInspectMessage={(m) => {
+            // G2/S2: click → publish focus → peek in the inspector.
+            publishFocus({ kind: 'message', id: m.id });
+            services.publishFocus?.(getFocus());
+            setInspected({
+              title: `Message · ${m.senderId}`,
+              body: <Inspector kind="message" refId={m.id}
+                envelope={{ kind: 'message', id: m.id }}
+                payload={m} />,
+            });
+          }}
           onOpenSettings={() => setView('settings')}
           registry={registry}
           tracker={tracker}

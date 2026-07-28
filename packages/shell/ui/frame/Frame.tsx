@@ -7,6 +7,7 @@ import type { LayoutRecord } from '../../contract/types.js';
 import type { ShellServices } from '../../contract/services.js';
 import { mintShellOpId } from '../../contract/services.js';
 import { IconButton, Splitter } from '../kit/index.js';
+import { shouldAutoOpenInspector } from './inspectorVisibility.js';
 import './frame.css';
 
 export interface BreadcrumbItem { id: string; label: string }
@@ -55,6 +56,17 @@ export function Frame(props: {
       return merged;
     });
   }, [props.services]);
+
+  // G2: a NEW inspect target (click message/conversation) always opens the
+  // pane — a persisted collapsed layout must not swallow the peek. A manual
+  // close is respected until the NEXT inspect (content reference changes).
+  const prevInspector = useRef<typeof props.inspector>(null);
+  useEffect(() => {
+    if (layout && shouldAutoOpenInspector(prevInspector.current, props.inspector, layout.inspector.collapsed)) {
+      applyPatch({ inspector: { ...layout.inspector, collapsed: false } });
+    }
+    prevInspector.current = props.inspector;
+  }, [props.inspector, layout, applyPatch]);
 
   // layout read failed at the seam — draw the error, never a blank frame
   if (!layout) {
