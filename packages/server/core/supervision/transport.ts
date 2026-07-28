@@ -28,49 +28,118 @@ export interface SupervisedTransportDeps {
 const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000; // a real build turn can be long
 
 export function createSupervisedTransport(deps: SupervisedTransportDeps): SupervisedTransport {
-  /** sessionId → the chunks of the turn currently being awaited. */
+  interface PendingAsk {
+    id: string;
+    sessionId: string;
+    complete(): void;
+    turnDone: Promise<void>;
+  }
+
+  /** askId → only that ask's chunks. */
   const buffers = new Map<string, string[]>();
+  const asks = new Map<string, PendingAsk>();
+  /** Provider output carries sessionId only; provider turn order selects askId. */
+  const queues = new Map<string, string[]>();
+  /** Preserve call order while provider lookup + send are asynchronous. */
+  const dispatchChains = new Map<string, Promise<void>>();
+  let nextAskId = 0;
+
+  const removeFromQueue = (sessionId: string, askId: string): void => {
+    const queue = queues.get(sessionId);
+    if (!queue) return;
+    const index = queue.indexOf(askId);
+    if (index >= 0) queue.splice(index, 1);
+    if (queue.length === 0) queues.delete(sessionId);
+  };
 
   // ONE onData registration per runtime, for the process's whole life. A
   // registration per ask() would leak a listener per supervised turn.
   for (const runtime of Object.values(deps.runtimes)) {
-    runtime?.onData((key, data) => {
-      buffers.get(key)?.push(data);
+    runtime?.onData((sessionId, data) => {
+      const askId = queues.get(sessionId)?.[0];
+      if (askId) buffers.get(askId)?.push(data);
+    });
+    runtime?.onTurn((record) => {
+      const queue = queues.get(record.key);
+      const askId = queue?.shift();
+      if (!askId) return;
+      if (queue?.length === 0) queues.delete(record.key);
+      const ask = asks.get(askId);
+      asks.delete(askId);
+      ask?.complete();
     });
   }
 
+  const dispatchInOrder = <T>(sessionId: string, work: () => Promise<T>): Promise<T> => {
+    const previous = dispatchChains.get(sessionId) ?? Promise.resolve();
+    const current = previous.then(work, work);
+    const tail = current.then(() => undefined, () => undefined);
+    dispatchChains.set(sessionId, tail);
+    void tail.then(() => {
+      if (dispatchChains.get(sessionId) === tail) dispatchChains.delete(sessionId);
+    });
+    return current;
+  };
+
   return {
     async ask(sessionId, prompt, opts): Promise<AskResult> {
-      const provider = await deps.providerOf(sessionId);
-      const runtime = provider ? deps.runtimes[provider] : undefined;
-      if (!provider || !runtime) {
-        return { ok: false, reason: 'unknown-session', text: '' };
-      }
-      buffers.set(sessionId, []);
-      try {
-        const sent = await deps.agents.sendToSession(sessionId, prompt);
-        if (!sent) return { ok: false, reason: 'send-failed', text: '' };
+      const askId = `ask_${++nextAskId}`;
+      let complete!: () => void;
+      const turnDone = new Promise<void>((resolve) => { complete = resolve; });
+      const ask: PendingAsk = { id: askId, sessionId, complete, turnDone };
 
-        let timer: ReturnType<typeof setTimeout> | null = null;
-        const timedOut = await Promise.race([
-          runtime.drain(sessionId).then(() => false),
-          new Promise<boolean>((resolve) => {
-            timer = setTimeout(() => resolve(true), opts?.timeoutMs ?? deps.timeoutMs ?? DEFAULT_TIMEOUT_MS);
-            timer.unref?.();
-          }),
-        ]);
-        if (timer) clearTimeout(timer);
+      const dispatched = await dispatchInOrder(sessionId, async () => {
+        const provider = await deps.providerOf(sessionId);
+        const runtime = provider ? deps.runtimes[provider] : undefined;
+        if (!provider || !runtime) return 'unknown-session' as const;
 
-        const text = (buffers.get(sessionId) ?? []).join('');
-        if (timedOut) return { ok: false, reason: 'timeout', text };
-        // An empty reply is a REFUSAL, not an ok-with-nothing: the skills gate
-        // depends on being able to tell "said nothing" from "said the wrong
-        // thing", and so does the drift check.
-        if (!text.trim()) return { ok: false, reason: 'no-reply', text: '' };
-        return { ok: true, text };
-      } finally {
-        buffers.delete(sessionId);
+        buffers.set(askId, []);
+        asks.set(askId, ask);
+        const queue = queues.get(sessionId) ?? [];
+        queue.push(askId);
+        queues.set(sessionId, queue);
+
+        try {
+          const sent = await deps.agents.sendToSession(sessionId, prompt);
+          if (sent) return 'sent' as const;
+        } catch {
+          // The public transport result stays typed as send-failed.
+        }
+        removeFromQueue(sessionId, askId);
+        asks.delete(askId);
+        buffers.delete(askId);
+        return 'send-failed' as const;
+      });
+
+      if (dispatched !== 'sent') {
+        return { ok: false, reason: dispatched, text: '' };
       }
+
+      let timer: ReturnType<typeof setTimeout> | null = null;
+      const timedOut = await Promise.race([
+        turnDone.then(() => false),
+        new Promise<boolean>((resolve) => {
+          timer = setTimeout(
+            () => resolve(true),
+            opts?.timeoutMs ?? deps.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+          );
+          timer.unref?.();
+        }),
+      ]);
+      if (timer) clearTimeout(timer);
+
+      const text = (buffers.get(askId) ?? []).join('');
+      buffers.delete(askId);
+      if (timedOut) {
+        // Keep the ask id at the head as a discard sink until onTurn proves
+        // this provider turn ended. Its late chunks can never reach the next.
+        return { ok: false, reason: 'timeout', text };
+      }
+      // An empty reply is a REFUSAL, not an ok-with-nothing: the skills gate
+      // depends on being able to tell "said nothing" from "said the wrong
+      // thing", and so does the drift check.
+      if (!text.trim()) return { ok: false, reason: 'no-reply', text: '' };
+      return { ok: true, text };
     },
   };
 }
