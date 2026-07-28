@@ -95,3 +95,33 @@ test('NVK_FAILPOINT names deterministic before/after temp-fsync failures', async
     }
   }
 });
+
+test('NVK_FAILPOINT names deterministic before/after atomic-rename failures', async () => {
+  for (const expectation of [
+    {
+      point: 'artifacts.put.before-rename',
+      final: false,
+    },
+    {
+      point: 'artifacts.put.after-rename',
+      final: true,
+    },
+  ]) {
+    const run = await runPutAt(expectation.point);
+    try {
+      assert.equal(run.result.ok, false);
+      if (run.result.ok) return;
+      assert.equal(run.result.error.code, 'ArtifactFailpoint');
+      assert.equal(
+        (run.result.error.details as { point: string }).point,
+        expectation.point,
+      );
+      const entries = readdirSync(path.join(run.root, 'artifacts'));
+      assert.equal(entries.length, 1);
+      assert.equal(entries[0].startsWith('.'), !expectation.final);
+      assert.equal(existsSync(path.join(run.root, 'artifacts.jsonl')), false);
+    } finally {
+      rmSync(run.workspace, { recursive: true, force: true });
+    }
+  }
+});
