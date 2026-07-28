@@ -236,8 +236,12 @@ export function createAgentsContract(ctx: AgentsContext): AgentsContract {
     reattachSession(input) {
       const adapter = ctx.adapters[input.provider];
       if (typeof adapter.adopt !== 'function') return false;
+      const alreadyKnown = ctx.sessions.has(input.sessionId);
       if (!adapter.adopt(input)) return false;
       ctx.sessions.set(input.sessionId, { agentId: input.agentId, provider: input.provider });
+      // A freshly spawned replacement is already subscribed and online. Only
+      // process-start reattachment needs to rebuild those bindings.
+      if (alreadyKnown) return true;
       // Same event wiring as a fresh spawn (R3-17), so presence and exit hooks
       // behave identically for a reattached session.
       adapter.subscribe(input.sessionId, (e) => {

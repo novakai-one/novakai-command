@@ -152,11 +152,15 @@ export function createTerminalAdapter(
       };
       if (typeof adoptable.adopt !== 'function') return false;
       wire();
-      if (sessions.has(input.sessionId)) return true;
       adoptable.adopt(input.sessionId, {
         cliSessionId: input.providerConversationId,
         model: input.model,
       });
+      // A supervision restart first allocates the replacement session through
+      // spawn(), then binds its provider-native resume handle. The adapter
+      // record already exists in that path, but the runtime still needs adopt()
+      // so its next child process receives -S / --resume / `exec resume`.
+      if (sessions.has(input.sessionId)) return true;
       const rec: SessionRecord = {
         sessionId: input.sessionId, agentId: input.agentId, runtimeKey: input.sessionId,
         provider: input.provider, state: 'running', closedByUs: false, handlers: [],

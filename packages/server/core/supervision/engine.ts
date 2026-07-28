@@ -63,7 +63,10 @@ export interface SupervisionLifecycle {
     cwd: string;
     resumeFrom?: string | null;
   }):
-    Promise<{ ok: true; value: { sessionId: string; model: string } } | { ok: false; error: { code: string; message: string } }>;
+    Promise<{
+      ok: true;
+      value: { sessionId: string; model: string; /** Provider runtime adopted resumeFrom. */ resumed: boolean };
+    } | { ok: false; error: { code: string; message: string } }>;
 }
 
 export type AskResult =
@@ -463,13 +466,28 @@ export function createSupervisionEngine(deps: SupervisionDeps): SupervisionEngin
     });
     if (!fresh.ok) return { ok: false, error: fresh.error };
     const mechanism = 'restart-fresh' as const;
+    const resumedFrom = fresh.value.resumed ? record.providerConversationId : null;
+    // A cumulative provider transcript already contains the old session's
+    // spend. Prime the baseline now, before the caller can send the first
+    // post-restart turn; baselining on the next usage tick would erase that
+    // first turn by clamping its delta to zero.
+    deps.usage.trackSession(fresh.value.sessionId, {
+      threadPreexisting: fresh.value.resumed,
+    });
+    if (fresh.value.resumed && resumedFrom) {
+      await deps.usage.read({
+        sessionId: fresh.value.sessionId,
+        provider: record.provider,
+        providerConversationId: resumedFrom,
+        cwd: record.cwd,
+      });
+    }
     await traced(carryContext ? 'supervision.restart' : 'supervision.compact', fresh.value.sessionId, {
       agentId: record.agentId, previousSessionId: sessionId,
-      resumedFrom: carryContext ? record.providerConversationId : null,
+      resumed: fresh.value.resumed,
+      resumedFrom,
       mechanism,
     });
-    // Fresh thread: bill it in full rather than baselining away its first turn.
-    deps.usage.trackSession(fresh.value.sessionId, { threadPreexisting: carryContext });
     return { ok: true, sessionId: fresh.value.sessionId, mechanism };
   };
 

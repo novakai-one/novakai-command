@@ -266,16 +266,24 @@ export async function bootServer(options: BootOptions): Promise<BootResult> {
         if (!spawned.ok || !spawned.value) {
           return { ok: false, error: { code: spawned.error?.code ?? 'SpawnFailed', message: spawned.error?.message ?? 'spawn failed' } };
         }
+        const resumed = Boolean(input.resumeFrom) && agents.reattachSession({
+          sessionId: spawned.value.sessionId,
+          agentId: input.agentId,
+          provider: input.provider,
+          providerConversationId: input.resumeFrom ?? null,
+          model: spawned.value.model || 'cli-default',
+          cwd: input.cwd,
+        });
         const registered = await sessions.register({
           sessionId: spawned.value.sessionId, agentId: input.agentId,
           provider: input.provider, cwd: input.cwd,
           model: spawned.value.model || 'cli-default',
-          providerConversationId: input.resumeFrom ?? null,
+          providerConversationId: resumed ? input.resumeFrom ?? null : null,
         });
         if (!registered.ok) {
           return { ok: false, error: { code: registered.error.code, message: registered.error.message } };
         }
-        return { ok: true, value: spawned.value };
+        return { ok: true, value: { ...spawned.value, resumed } };
       },
     },
     transport: supervisionTransport,

@@ -14,7 +14,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createSupervisionEngine, type SupervisionDeps } from '../core/supervision/engine.js';
-import { createUsageReader } from '../core/supervision/usage.js';
+import { createUsageReader, type UsageSessionRef } from '../core/supervision/usage.js';
 import type { ProviderSessionRecord } from '../../agents/contract/index.js';
 
 // ── fakes ──────────────────────────────────────────────────────────────────
@@ -37,6 +37,7 @@ function harness(options: {
   records?: ProviderSessionRecord[];
   replies?: string[];
   now?: () => string;
+  canResume?: boolean;
 } = {}) {
   const traces: TraceLine[] = [];
   const asked: Array<{ sessionId: string; prompt: string }> = [];
@@ -45,6 +46,7 @@ function harness(options: {
   const escalations: string[] = [];
   const broadcasts: Array<{ name: string; data: unknown }> = [];
   const appended: unknown[][] = [];
+  const usageReads: UsageSessionRef[] = [];
   const replies = [...(options.replies ?? [])];
   let records = options.records ?? [record()];
   let clock = Date.parse('2026-07-28T10:00:00.000Z');
@@ -62,12 +64,13 @@ function harness(options: {
       closeSession: (id) => { closed.push(id); return true; },
       async spawnFresh(input) {
         spawned.push(input.agentId);
+        const resumed = options.canResume !== false && Boolean(input.resumeFrom);
         const fresh = record({
           sessionId: `sess_fresh_${spawned.length}`, agentId: input.agentId,
-          providerConversationId: input.resumeFrom ?? null,
+          providerConversationId: resumed ? input.resumeFrom ?? null : null,
         });
         records = [...records, fresh];
-        return { ok: true, value: { sessionId: fresh.sessionId, model: fresh.model } };
+        return { ok: true, value: { sessionId: fresh.sessionId, model: fresh.model, resumed } };
       },
     },
     transport: {
@@ -79,7 +82,17 @@ function harness(options: {
           : { ok: true as const, text: next };
       },
     },
-    usage: createUsageReader({ home: mkdtempSync(path.join(tmpdir(), 'nvk-usage-home-')) }),
+    usage: (() => {
+      const reader = createUsageReader({ home: mkdtempSync(path.join(tmpdir(), 'nvk-usage-home-')) });
+      return {
+        trackSession: reader.trackSession,
+        forget: reader.forget,
+        read(session: UsageSessionRef) {
+          usageReads.push(session);
+          return reader.read(session);
+        },
+      };
+    })(),
     async trace(input) {
       traces.push({ action: input.action, targetId: input.target.id, meta: input.meta ?? {} });
       return { ok: true };
@@ -94,7 +107,7 @@ function harness(options: {
 
   return {
     engine: createSupervisionEngine(deps),
-    traces, asked, closed, spawned, escalations, broadcasts, appended,
+    traces, asked, closed, spawned, escalations, broadcasts, appended, usageReads,
     setRecords: (next: ProviderSessionRecord[]) => { records = next; },
     getRecords: () => records,
     advance: (seconds: number) => { clock += seconds * 1000; },
@@ -277,7 +290,24 @@ test('restart terminates and spawns fresh CARRYING the resume handle — context
   assert.equal(res.sessionId, 'sess_fresh_1');
   const fresh = h.getRecords().find((r) => r.sessionId === 'sess_fresh_1')!;
   assert.equal(fresh.providerConversationId, 'thread_1', 'the provider conversation is resumed');
-  assert.ok(actions(h.traces).includes('supervision.restart'));
+  const trace = h.traces.find((line) => line.meta.event === 'supervision.restart')!;
+  assert.equal(trace.meta.resumed, true);
+  assert.equal(trace.meta.resumedFrom, 'thread_1');
+  assert.equal(h.usageReads.some((read) => read.sessionId === 'sess_fresh_1'), true,
+    'the cumulative baseline is captured before the first post-restart turn');
+});
+
+test('restart degrades truthfully when a provider cannot resume at spawn', async () => {
+  const h = harness({ canResume: false });
+
+  const res = await h.engine.restart('sess_1');
+
+  assert.equal(res.ok, true, 'a fresh thread is still a viable restart fallback');
+  const fresh = h.getRecords().find((r) => r.sessionId === 'sess_fresh_1')!;
+  assert.equal(fresh.providerConversationId, null);
+  const trace = h.traces.find((line) => line.meta.event === 'supervision.restart')!;
+  assert.equal(trace.meta.resumed, false);
+  assert.equal(trace.meta.resumedFrom, null, 'the trace never claims continuity that did not happen');
 });
 
 test('compact is restart-fresh where no native compact exists — and SAYS so', async () => {
@@ -350,7 +380,7 @@ test('a failing trace write is surfaced, not swallowed', async () => {
     },
     lifecycle: {
       closeSession: () => true,
-      spawnFresh: async () => ({ ok: true, value: { sessionId: 'sess_x', model: 'm' } }),
+      spawnFresh: async () => ({ ok: true, value: { sessionId: 'sess_x', model: 'm', resumed: false } }),
     },
     transport: { ask: async () => ({ ok: true as const, text: 'SKILLS-CONFIRMED: tdd' }) },
     usage: createUsageReader({ home: mkdtempSync(path.join(tmpdir(), 'nvk-usage-home-')) }),

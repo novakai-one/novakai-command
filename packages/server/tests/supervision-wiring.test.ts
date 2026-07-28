@@ -39,12 +39,19 @@ async function mintChris(dir: string): Promise<void> {
  * can be made to answer differently turn by turn — which is what a gate test
  * needs (pass, then work) and a drift test needs (silence, then a status line).
  */
-function scriptedCodex(dir: string): { cliPath: string; say(text: string): void; silence(): void } {
+function scriptedCodex(dir: string): {
+  cliPath: string;
+  say(text: string): void;
+  silence(): void;
+  invocations(): string[][];
+} {
   const cliPath = path.join(dir, 'codex-fake');
   const replyFile = path.join(dir, 'reply.txt');
+  const invocationFile = path.join(dir, 'codex-invocations.jsonl');
   writeFileSync(replyFile, 'ok');
   writeFileSync(cliPath, `#!/usr/bin/env node
 const fs = require('node:fs');
+fs.appendFileSync(${JSON.stringify(invocationFile)}, JSON.stringify(process.argv.slice(2)) + '\\n');
 const reply = fs.readFileSync(${JSON.stringify(replyFile)}, 'utf8');
 process.stdout.write(JSON.stringify({ type: 'thread.started', thread_id: 'thread_fake' }) + '\\n');
 if (reply !== '__SILENCE__') {
@@ -57,6 +64,10 @@ process.stdout.write(JSON.stringify({ type: 'turn.completed', usage: { input_tok
     cliPath,
     say: (text: string) => writeFileSync(replyFile, text),
     silence: () => writeFileSync(replyFile, '__SILENCE__'),
+    invocations: () => existsSync(invocationFile)
+      ? readFileSync(invocationFile, 'utf8').trim().split('\n').filter(Boolean)
+        .map((line) => JSON.parse(line) as string[])
+      : [],
   };
 }
 
@@ -204,7 +215,7 @@ test('a live session costs zero provider turns to drift-check (SR-1, through the
   }
 });
 
-test('restartSession ends the old session, spawns a fresh one, and relinks the conversation', async () => {
+test('restartSession resumes the original provider thread on the next invocation and traces that truth', async () => {
   const dir = root();
   await mintChris(dir);
   const codex = scriptedCodex(dir);
@@ -229,7 +240,20 @@ test('restartSession ends the old session, spawns a fresh one, and relinks the c
       'restart CARRIES the provider conversation — the work continues');
     assert.equal(server.runtime.conversations.get(conversationId)!.sessionId, res.sessionId,
       'the conversation follows its session, or the thread would look alive while sends went nowhere');
-    assert.ok(supervisionEvents(await traces(dir)).includes('supervision.restart'));
+    codex.say('continued');
+    await server.runtime.agents.sendToSession(res.sessionId! as never, 'after restart');
+    await server.runtime.providerRuntimes.codex!.drain(res.sessionId!);
+    assert.deepEqual(codex.invocations()[1], [
+      'exec', 'resume', '--json', 'thread_fake', 'after restart',
+    ], 'the first post-restart turn resumes the original provider conversation');
+
+    const restartTrace = (await traces(dir)).find(
+      (line) => (line.meta as { event?: string } | undefined)?.event === 'supervision.restart',
+    );
+    assert.ok(restartTrace);
+    assert.equal((restartTrace!.meta as { resumed?: boolean }).resumed, true,
+      'the trace states what the provider invocation actually did');
+    assert.equal((restartTrace!.meta as { resumedFrom?: string }).resumedFrom, 'thread_fake');
   } finally {
     await server.close();
   }
