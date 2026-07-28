@@ -239,12 +239,17 @@ export async function listArtifacts(
   ctx: ArtifactsContext,
   page?: PageOptions,
 ): Promise<Result<Page<ArtifactT>, ArtifactsError>> {
-  const listed = await listObjects<ArtifactT>(
-    ctx.handle,
-    'artifact',
-    undefined,
-    page,
-  );
+  let listed;
+  try {
+    listed = await listObjects<ArtifactT>(
+      ctx.handle,
+      'artifact',
+      undefined,
+      page,
+    );
+  } catch (cause) {
+    return { ok: false, error: storeReadFailed('list', cause) };
+  }
   if (!listed.ok) return listed;
   const items: ArtifactT[] = [];
   for (const { object } of listed.value.items) {
