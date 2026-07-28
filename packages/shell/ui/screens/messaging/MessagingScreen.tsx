@@ -11,6 +11,7 @@ import { ThreadView } from './ThreadView.js';
 import { Composer } from './Composer.js';
 import { CommandPalette } from './CommandPalette.js';
 import { FocusChip } from './FocusChip.js';
+import { appendDedup, dedupeById } from './messageList.js';
 import { Stack } from '../../kit/index.js';
 import { registerInspectorScreen } from '../../inspector/registry.js';
 import { MessageInspector } from '../../inspector/MessageInspector.js';
@@ -62,7 +63,9 @@ export function MessagingScreen(props: {
 
   useEffect(() => services.subscribe({
     onMessage: (m) => {
-      if (m.conversationId === props.selectedId) setMessages((cur) => [...cur, m]);
+      // G1: the broadcast may duplicate the optimistic echo's real id — never
+      // append a message id that's already in the thread.
+      if (m.conversationId === props.selectedId) setMessages((cur) => appendDedup(cur, m));
     },
     onConversation: () => { void services.listConversations().then(setConversations); },
   }), [services, props.selectedId]);
@@ -105,9 +108,11 @@ export function MessagingScreen(props: {
     };
     setMessages((cur) => [...cur, optimistic]); // pending drawn immediately (red gate 5)
     const res = await services.sendMessage(selected.id, text);
-    setMessages((cur) => cur.map((m) => m.id === optimistic.id
+    // G1: if the broadcast beat the RPC resolve, the real id is already in the
+    // list — replacing the pending bubble would duplicate it. Dedup by id.
+    setMessages((cur) => dedupeById(cur.map((m) => m.id === optimistic.id
       ? (res.ok ? { ...res.message, pending: false } : { ...m, pending: false, failed: res.error })
-      : m));
+      : m)));
   };
 
   const onBuiltin = async (name: string, args: string) => {
