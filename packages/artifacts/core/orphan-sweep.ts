@@ -5,6 +5,7 @@ import {
 } from 'node:fs/promises';
 import path from 'node:path';
 import {
+  isAbsent,
   recordSystemAction,
 } from '@novakai/foundation/dist/contract/index.js';
 import { err } from '@novakai/foundation/dist/contract/errors.js';
@@ -19,7 +20,10 @@ import type {
 } from '../contract/schemas.js';
 import type { ArtifactsError } from '../contract/errors.js';
 import type { ArtifactsContext } from './composition.js';
-import { listAllArtifacts } from './artifacts.js';
+import {
+  getArtifactMeta,
+  listAllArtifacts,
+} from './artifacts.js';
 import {
   acquireArtifactPublication,
   releaseArtifactPublication,
@@ -174,17 +178,33 @@ async function deleteOrphan(
 async function sweepOrphan(
   ctx: ArtifactsContext,
   orphan: OrphanEntry,
-): Promise<Result<null, ArtifactsError>> {
+): Promise<Result<boolean, ArtifactsError>> {
   const acquired = await acquireArtifactPublication(
     ctx.bytesRoot,
     orphan.artifactId,
     ctx.publicationLockTimeoutMs,
   );
   if (!acquired.ok) return acquired;
-  const traced = await traceOrphan(ctx, orphan);
-  const result = traced.ok
-    ? await deleteOrphan(ctx, orphan)
-    : traced;
+  let result: Result<boolean, ArtifactsError>;
+  const current = await getArtifactMeta(ctx, orphan.artifactId);
+  if (!current.ok) {
+    result = current;
+  } else if (
+    orphan.entryType === 'final'
+    && !isAbsent(current.value)
+  ) {
+    result = { ok: true, value: false };
+  } else {
+    const traced = await traceOrphan(ctx, orphan);
+    if (!traced.ok) {
+      result = traced;
+    } else {
+      const deleted = await deleteOrphan(ctx, orphan);
+      result = deleted.ok
+        ? { ok: true, value: true }
+        : deleted;
+    }
+  }
   const released = await releaseArtifactPublication(acquired.value);
   return released.ok ? result : released;
 }
@@ -205,6 +225,7 @@ export async function sweepOrphans(
   for (const orphan of orphans) {
     const result = await sweepOrphan(ctx, orphan);
     if (!result.ok) return result;
+    if (!result.value) continue;
     swept.push({
       artifactId: orphan.artifactId,
       entryType: orphan.entryType,
