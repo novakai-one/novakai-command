@@ -11,14 +11,13 @@ import { ThreadView } from './ThreadView.js';
 import { Composer } from './Composer.js';
 import { CommandPalette } from './CommandPalette.js';
 import { FocusChip } from './FocusChip.js';
-import { appendDedup, dedupeById } from './messageList.js';
+import {
+  appendDedup, reconcileLoadedMessages, settleOptimisticMessage,
+} from './messageList.js';
 import { Stack } from '../../kit/index.js';
 import { registerInspectorScreen } from '../../inspector/registry.js';
 import { MessageInspector } from '../../inspector/MessageInspector.js';
 import './messaging.css';
-
-const sendErrorText = (error: string | { code: string; message?: string }): string =>
-  typeof error === 'string' ? error : `${error.code}${error.message ? `: ${error.message}` : ''}`;
 
 /** The UI resend path: the original key is mandatory and is never re-minted. */
 export function resendFailedMessage(services: ShellServices, message: ChatMessage) {
@@ -72,7 +71,14 @@ export function MessagingScreen(props: {
 
   useEffect(() => {
     if (!props.selectedId) { setMessages([]); return; }
-    void services.getMessages(props.selectedId).then(setMessages);
+    let live = true;
+    void services.getMessages(props.selectedId).then((loaded) => {
+      if (live) {
+        setMessages((current) =>
+          reconcileLoadedMessages(current, loaded, props.selectedId!));
+      }
+    });
+    return () => { live = false; };
   }, [services, props.selectedId]);
 
   useEffect(() => services.subscribe({
@@ -126,11 +132,7 @@ export function MessagingScreen(props: {
     const res = await services.sendMessage(selected.id, text, clientOpId);
     // G1: if the broadcast beat the RPC resolve, the real id is already in the
     // list — replacing the pending bubble would duplicate it. Dedup by id.
-    setMessages((cur) => dedupeById(cur.map((m) => m.id === optimistic.id
-      ? (res.ok ? { ...res.message, pending: false } : {
-        ...m, pending: false, failed: sendErrorText(res.error),
-      })
-      : m)));
+    setMessages((cur) => settleOptimisticMessage(cur, optimistic.id, res));
   };
 
   const resend = async (message: ChatMessage) => {
@@ -138,11 +140,7 @@ export function MessagingScreen(props: {
       ? { ...item, pending: true, failed: undefined }
       : item));
     const res = await resendFailedMessage(services, message);
-    setMessages((cur) => dedupeById(cur.map((item) => item.id === message.id
-      ? (res.ok ? { ...res.message, pending: false } : {
-        ...item, pending: false, failed: sendErrorText(res.error),
-      })
-      : item)));
+    setMessages((cur) => settleOptimisticMessage(cur, message.id, res));
   };
 
   const onBuiltin = async (name: string, args: string) => {
