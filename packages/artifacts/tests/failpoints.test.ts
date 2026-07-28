@@ -24,11 +24,12 @@ async function runPutAt(point: string) {
       root,
       principal: 'person_chris',
     }));
+    const clientOpId = mintClientOpId();
     const result = await artifacts.putArtifact({
       bytes: Buffer.from('failpoint payload', 'utf8'),
       mimeType: 'text/plain',
-    }, mintClientOpId());
-    return { workspace, root, result };
+    }, clientOpId);
+    return { workspace, root, clientOpId, result };
   } finally {
     if (prior === undefined) delete process.env.NVK_FAILPOINT;
     else process.env.NVK_FAILPOINT = prior;
@@ -123,5 +124,52 @@ test('NVK_FAILPOINT names deterministic before/after atomic-rename failures', as
     } finally {
       rmSync(run.workspace, { recursive: true, force: true });
     }
+  }
+});
+
+test('NVK_FAILPOINT names deterministic before/after record-append failures', async () => {
+  const before = await runPutAt('artifacts.put.before-record-append');
+  try {
+    assert.equal(before.result.ok, false);
+    if (before.result.ok) return;
+    assert.equal(before.result.error.code, 'ArtifactFailpoint');
+    assert.equal(
+      (before.result.error.details as { point: string }).point,
+      'artifacts.put.before-record-append',
+    );
+    assert.equal(readdirSync(path.join(before.root, 'artifacts')).length, 1);
+    assert.equal(existsSync(path.join(before.root, 'artifacts.jsonl')), false);
+  } finally {
+    rmSync(before.workspace, { recursive: true, force: true });
+  }
+
+  const after = await runPutAt('artifacts.put.after-record-append');
+  try {
+    assert.equal(after.result.ok, false);
+    if (after.result.ok) return;
+    assert.equal(after.result.error.code, 'ArtifactFailpoint');
+    assert.equal(
+      (after.result.error.details as { point: string }).point,
+      'artifacts.put.after-record-append',
+    );
+    const byteFiles = readdirSync(path.join(after.root, 'artifacts'));
+    assert.equal(byteFiles.length, 1);
+    assert.equal(existsSync(path.join(after.root, 'artifacts.jsonl')), true);
+
+    const artifacts = createArtifactsContract(composeArtifacts({
+      root: after.root,
+      principal: 'person_chris',
+    }));
+    const retried = await artifacts.putArtifact({
+      bytes: Buffer.from('failpoint payload', 'utf8'),
+      mimeType: 'text/plain',
+    }, after.clientOpId);
+    assert.equal(retried.ok, true);
+    assert.deepEqual(
+      readdirSync(path.join(after.root, 'artifacts')),
+      byteFiles,
+    );
+  } finally {
+    rmSync(after.workspace, { recursive: true, force: true });
   }
 });
