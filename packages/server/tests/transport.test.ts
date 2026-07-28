@@ -215,6 +215,57 @@ test('an authenticated request/response round-trips in the nvk-ws v1 frame shape
   await h.transport.close();
 });
 
+test('unsupported present protocol versions reject without dispatch while v1 and legacy absent versions dispatch', async (t) => {
+  const h = await boot();
+  t.after(() => h.transport.close());
+  const ws = await connect(
+    `${h.transport.url.replace('http', 'ws')}/ws?token=${h.transport.token}`,
+  );
+
+  const unsupported = await rpc(ws, {
+    id: 8,
+    method: 'echo',
+    params: 'must-not-dispatch',
+    v: 999,
+  });
+  assert.deepEqual(unsupported, {
+    id: 8,
+    error: {
+      code: 'UnsupportedProtocolVersion',
+      message: 'protocol version 999 is not supported; expected 1',
+      details: { received: 999, supported: [1] },
+      retryable: false,
+    },
+    v: 1,
+  });
+  assert.deepEqual(h.dispatched, []);
+
+  const explicitV1 = await rpc(ws, {
+    id: 9,
+    method: 'echo',
+    params: 'explicit-v1',
+    v: 1,
+  });
+  const legacyV1 = await rpc(ws, {
+    id: 10,
+    method: 'echo',
+    params: 'legacy-v1',
+  });
+  assert.deepEqual(explicitV1, {
+    id: 9,
+    result: { echoed: 'explicit-v1' },
+    v: 1,
+  });
+  assert.deepEqual(legacyV1, {
+    id: 10,
+    result: { echoed: 'legacy-v1' },
+    v: 1,
+  });
+  assert.deepEqual(h.dispatched, ['echo', 'echo']);
+
+  ws.close();
+});
+
 test('an unknown method and a throwing method both answer typed, and the socket survives', async () => {
   const h = await boot();
   const ws = await connect(`${h.transport.url.replace('http', 'ws')}/ws?token=${h.transport.token}`);
