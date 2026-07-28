@@ -4,6 +4,7 @@ import type {
 } from '@novakai/foundation/dist/contract/errors.js';
 import type {
   ArtifactId,
+  ClientOpId,
 } from '@novakai/foundation/dist/contract/brands.js';
 import type { Ref } from '@novakai/foundation/dist/contract/schemas.js';
 
@@ -52,6 +53,33 @@ export type ArtifactStoreReadFailedError = ContractError<
   }
 >;
 
+export type ArtifactIdempotencyConflictError = ContractError<
+  'ArtifactIdempotencyConflict',
+  {
+    artifactId: ArtifactId;
+    clientOpId: ClientOpId;
+    differingFields: string[];
+  }
+>;
+
+export type ArtifactPublicationBusyError = ContractError<
+  'ArtifactPublicationBusy',
+  {
+    artifactId: ArtifactId;
+    waitedMs: number;
+    timeoutMs: number;
+  }
+>;
+
+export type ArtifactPublicationLockFailedError = ContractError<
+  'ArtifactPublicationLockFailed',
+  {
+    artifactId: ArtifactId;
+    phase: 'acquire' | 'release';
+    cause: string;
+  }
+>;
+
 export type ArtifactFailpointError = ContractError<
   'ArtifactFailpoint',
   {
@@ -82,6 +110,9 @@ export type ArtifactsError =
   | ArtifactBytesMissingError
   | ArtifactBytesReadFailedError
   | ArtifactStoreReadFailedError
+  | ArtifactIdempotencyConflictError
+  | ArtifactPublicationBusyError
+  | ArtifactPublicationLockFailedError
   | ArtifactFailpointError
   | ArtifactOrphanScanFailedError
   | ArtifactOrphanDeleteFailedError

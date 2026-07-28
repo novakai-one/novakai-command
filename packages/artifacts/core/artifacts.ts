@@ -38,6 +38,10 @@ import {
   persistArtifactBytes,
   readArtifactBytes,
 } from './byte-storage.js';
+import {
+  acquireArtifactPublication,
+  releaseArtifactPublication,
+} from './publication-lock.js';
 
 function invalidInput(
   error: { issues: Array<{ path: PropertyKey[]; message: string }> },
@@ -145,6 +149,44 @@ function artifactRecord(
   }) as ArtifactT;
 }
 
+function equivalentValue(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function differingInputFields(
+  stored: ArtifactT | null,
+  input: PutArtifactInputT,
+  durableBytes: Uint8Array,
+): string[] {
+  const differing: string[] = [];
+  if (!Buffer.from(durableBytes).equals(Buffer.from(input.bytes))) {
+    differing.push('bytes');
+  }
+  if (!stored) return differing;
+  if (stored.mimeType !== input.mimeType) differing.push('mimeType');
+  if (stored.originPath !== input.originPath) differing.push('originPath');
+  if (stored.permissionLevel !== (input.permissionLevel ?? 'private')) {
+    differing.push('permissionLevel');
+  }
+  if (!equivalentValue(stored.sourceAttribution, input.sourceAttribution)) {
+    differing.push('sourceAttribution');
+  }
+  return differing;
+}
+
+function idempotencyConflict(
+  artifactId: ArtifactId,
+  clientOpId: ClientOpId,
+  differingFields: string[],
+): ArtifactsError {
+  return err(
+    'ArtifactIdempotencyConflict',
+    `clientOpId "${clientOpId}" was reused with different artifact input`,
+    { artifactId, clientOpId, differingFields },
+    false,
+  );
+}
+
 async function appendArtifactRecord(
   ctx: ArtifactsContext,
   record: ArtifactT,
@@ -176,6 +218,48 @@ async function appendArtifactRecord(
       };
 }
 
+async function publishArtifact(
+  ctx: ArtifactsContext,
+  input: PutArtifactInputT,
+  artifactId: ArtifactId,
+  clientOpId: ClientOpId,
+): Promise<Result<ArtifactT, ArtifactsError>> {
+  if (artifactBytesExist(ctx.bytesRoot, artifactId)) {
+    const bytes = await readArtifactBytes(ctx.bytesRoot, artifactId);
+    if (!bytes.ok) return bytes;
+    const replay = await replayArtifact(ctx, artifactId, clientOpId);
+    if (!replay.ok) return replay;
+    const differing = differingInputFields(replay.value, input, bytes.value);
+    if (differing.length > 0) {
+      return {
+        ok: false,
+        error: idempotencyConflict(
+          artifactId,
+          clientOpId,
+          differing,
+        ),
+      };
+    }
+    return appendArtifactRecord(
+      ctx,
+      artifactRecord(artifactId, input),
+      clientOpId,
+    );
+  }
+  const persisted = await persistArtifactBytes(
+    ctx.bytesRoot,
+    artifactId,
+    input.bytes,
+    ctx.failpoint,
+  );
+  if (!persisted.ok) return persisted;
+  return appendArtifactRecord(
+    ctx,
+    artifactRecord(artifactId, input),
+    clientOpId,
+  );
+}
+
 export async function putArtifact(
   ctx: ArtifactsContext,
   input: PutArtifactInputT,
@@ -189,29 +273,25 @@ export async function putArtifact(
     return { ok: false, error: invalidInput(parsed.error) };
   }
   const artifactId = artifactIdFor(clientOpId);
-  if (artifactBytesExist(ctx.bytesRoot, artifactId)) {
-    const replay = await replayArtifact(ctx, artifactId, clientOpId);
-    if (!replay.ok) return replay;
-    if (replay.value) {
-      return appendArtifactRecord(
-        ctx,
-        artifactRecord(artifactId, parsed.data),
-        clientOpId,
-      );
-    }
-  }
-  const persisted = await persistArtifactBytes(
+  const acquired = await acquireArtifactPublication(
     ctx.bytesRoot,
     artifactId,
-    parsed.data.bytes,
-    ctx.failpoint,
+    ctx.publicationLockTimeoutMs,
   );
-  if (!persisted.ok) return persisted;
-  return appendArtifactRecord(
-    ctx,
-    artifactRecord(artifactId, parsed.data),
-    clientOpId,
-  );
+  if (!acquired.ok) return acquired;
+  try {
+    const published = await publishArtifact(
+      ctx,
+      parsed.data,
+      artifactId,
+      clientOpId,
+    );
+    const released = await releaseArtifactPublication(acquired.value);
+    return released.ok ? published : released;
+  } catch (cause) {
+    await releaseArtifactPublication(acquired.value);
+    throw cause;
+  }
 }
 
 export async function getArtifactMeta(

@@ -17,6 +17,7 @@ export interface ArtifactsContext {
   readonly root: string;
   readonly bytesRoot: string;
   readonly failpoint: ArtifactFailpoint;
+  readonly publicationLockTimeoutMs: number;
 }
 
 export interface ComposeArtifactsOptions {
@@ -51,6 +52,7 @@ export function composeArtifacts(
     root,
     bytesRoot: path.join(root, 'artifacts'),
     failpoint: composeArtifactFailpoint(configuredFailpoint),
+    publicationLockTimeoutMs: options.lockTimeoutMs ?? 5000,
   };
   return createArtifactsHost(context);
 }
