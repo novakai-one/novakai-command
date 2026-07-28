@@ -29,6 +29,7 @@ import {
 import type {
   ArtifactsError,
   ArtifactStoreReadFailedError,
+  ArtifactStoreWriteFailedError,
   StoredArtifactInvalidError,
 } from '../contract/errors.js';
 import type { ArtifactsContext } from './composition.js';
@@ -103,6 +104,15 @@ function storeReadFailed(
     'ArtifactStoreReadFailed',
     `artifact ${operation} storage read failed: ${String(cause)}`,
     { operation, cause: String(cause) },
+    true,
+  );
+}
+
+function storeWriteFailed(cause: unknown): ArtifactStoreWriteFailedError {
+  return err(
+    'ArtifactStoreWriteFailed',
+    `artifact put storage write failed: ${String(cause)}`,
+    { operation: 'put', cause: String(cause) },
     true,
   );
 }
@@ -285,19 +295,19 @@ export async function putArtifact(
     ctx.publicationLockTimeoutMs,
   );
   if (!acquired.ok) return acquired;
+  let published: Result<ArtifactT, ArtifactsError>;
   try {
-    const published = await publishArtifact(
+    published = await publishArtifact(
       ctx,
       parsed.data,
       artifactId,
       clientOpId,
     );
-    const released = await releaseArtifactPublication(acquired.value);
-    return released.ok ? published : released;
   } catch (cause) {
-    await releaseArtifactPublication(acquired.value);
-    throw cause;
+    published = { ok: false, error: storeWriteFailed(cause) };
   }
+  const released = await releaseArtifactPublication(acquired.value);
+  return released.ok ? published : released;
 }
 
 export async function getArtifactMeta(

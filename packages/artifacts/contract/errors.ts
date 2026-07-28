@@ -53,6 +53,14 @@ export type ArtifactStoreReadFailedError = ContractError<
   }
 >;
 
+export type ArtifactStoreWriteFailedError = ContractError<
+  'ArtifactStoreWriteFailed',
+  {
+    operation: 'put';
+    cause: string;
+  }
+>;
+
 export type ArtifactIdempotencyConflictError = ContractError<
   'ArtifactIdempotencyConflict',
   {
@@ -110,6 +118,7 @@ export type ArtifactsError =
   | ArtifactBytesMissingError
   | ArtifactBytesReadFailedError
   | ArtifactStoreReadFailedError
+  | ArtifactStoreWriteFailedError
   | ArtifactIdempotencyConflictError
   | ArtifactPublicationBusyError
   | ArtifactPublicationLockFailedError
