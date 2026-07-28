@@ -9,6 +9,7 @@ import {
 import path from 'node:path';
 import {
   createObject,
+  getObjectByClientOpId,
   getObjectWithReadFailure,
   isAbsent,
   listObjects,
@@ -115,6 +116,26 @@ export async function putArtifact(
   const parsed = PutArtifactInput.safeParse(input);
   if (!parsed.success) {
     return { ok: false, error: invalidInput(parsed.error) };
+  }
+  const replay = await getObjectByClientOpId<ArtifactT>(
+    ctx.handle,
+    'artifact',
+    clientOpId,
+  );
+  if (!replay.ok) return replay;
+  if (replay.value) {
+    const stored = Artifact.safeParse(replay.value.object);
+    const replayId = (
+      typeof replay.value.object.id === 'string'
+        ? replay.value.object.id
+        : 'artifact_unknown'
+    ) as ArtifactId;
+    return stored.success
+      ? { ok: true, value: stored.data as ArtifactT }
+      : {
+          ok: false,
+          error: storedArtifactInvalid(replayId, stored.error),
+        };
   }
 
   const artifactId = `artifact_${randomUUID()}` as ArtifactId;
