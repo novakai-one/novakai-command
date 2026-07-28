@@ -13,7 +13,9 @@ import {
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
+  __resetDefaultEngine,
   mintClientOpId,
+  queryTrace,
 } from '@novakai/foundation/dist/contract/index.js';
 import {
   composeArtifacts,
@@ -180,6 +182,48 @@ test('putArtifact retry with the same clientOpId returns one durable artifact', 
     assert.equal(listed.value.items.length, 1);
     assert.deepEqual(readdirSync(path.join(root, 'artifacts')), [first.value.id]);
   } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test('putArtifact retry reconciles an incomplete Foundation trace exactly once', async () => {
+  const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-artifact-trace-retry-'));
+  const root = path.join(workspace, '.novakai');
+  const priorFailpoint = process.env.NVK_FAILPOINT;
+  const priorRoot = process.env.NOVAKAI_ROOT;
+  try {
+    const clientOpId = mintClientOpId();
+    const input = {
+      bytes: Buffer.from('trace reconciliation bytes', 'utf8'),
+      mimeType: 'text/plain',
+    };
+    process.env.NVK_FAILPOINT = 'artifacts.put.foundation-trace-incomplete';
+    const first = await composeArtifacts({
+      root,
+      principal: 'person_chris',
+    }).operations.putArtifact(input, clientOpId);
+    assert.equal(first.ok, false);
+    if (first.ok) return;
+    assert.equal(first.error.code, 'TraceIncomplete');
+
+    delete process.env.NVK_FAILPOINT;
+    const retried = await composeArtifacts({
+      root,
+      principal: 'person_chris',
+    }).operations.putArtifact(input, clientOpId);
+
+    assert.equal(retried.ok, true);
+    process.env.NOVAKAI_ROOT = path.join(root, 'stores');
+    __resetDefaultEngine();
+    const traces = await queryTrace({ clientOpId });
+    assert.equal(traces.items.length, 1);
+    assert.equal(traces.items[0].target.id, retried.ok ? retried.value.id : '');
+  } finally {
+    if (priorFailpoint === undefined) delete process.env.NVK_FAILPOINT;
+    else process.env.NVK_FAILPOINT = priorFailpoint;
+    if (priorRoot === undefined) delete process.env.NOVAKAI_ROOT;
+    else process.env.NOVAKAI_ROOT = priorRoot;
+    __resetDefaultEngine();
     rmSync(workspace, { recursive: true, force: true });
   }
 });
