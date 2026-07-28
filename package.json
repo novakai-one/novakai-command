@@ -4,6 +4,9 @@
   "description": "Local AI Multi-Agent Operations Command Center",
   "main": "src/index.ts",
   "type": "module",
+  "bin": {
+    "nvk": "./scripts/nvk.mjs"
+  },
   "scripts": {
     "dev:backend": "NOVAKAI_SERVER_PORT=${NOVAKAI_SERVER_PORT:-3131} tsx watch src/backend/index.ts",
     "dev:frontend": "vite --host",
