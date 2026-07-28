@@ -17,9 +17,11 @@ import {
   CreateProjectInput,
   ListProjectsFilter,
   Project,
+  ProjectItem,
   type CreateProjectInput as CreateProjectInputT,
   type ListProjectsFilter as ListProjectsFilterT,
   type Project as ProjectT,
+  type ProjectItem as ProjectItemT,
 } from '../contract/schemas.js';
 import type { ProjectsContext } from './composition.js';
 
@@ -92,6 +94,26 @@ export async function listProjects(
   };
 }
 
+async function findProject(
+  ctx: ProjectsContext,
+  projectId: ProjectId,
+) {
+  return getObject<ProjectT>(
+    ctx.handle,
+    'project',
+    projectId as unknown as ObjectId,
+  );
+}
+
+function projectNotFound(projectId: ProjectId): StoreError {
+  return err(
+    'NotFound',
+    `no project with id "${projectId}"`,
+    { ref: { kind: 'project', id: projectId } },
+    false,
+  );
+}
+
 export async function archiveProject(
   ctx: ProjectsContext,
   projectId: ProjectId,
@@ -99,21 +121,9 @@ export async function archiveProject(
 ): Promise<Result<ProjectT, StoreError>> {
   const missingClientOpId = requireClientOpId(clientOpId);
   if (missingClientOpId) return { ok: false, error: missingClientOpId };
-  const current = await getObject<ProjectT>(
-    ctx.handle,
-    'project',
-    projectId as unknown as ObjectId,
-  );
+  const current = await findProject(ctx, projectId);
   if (!current.ok || isAbsent(current.value)) {
-    return {
-      ok: false,
-      error: err(
-        'NotFound',
-        `no project with id "${projectId}"`,
-        { ref: { kind: 'project', id: projectId } },
-        false,
-      ),
-    };
+    return { ok: false, error: projectNotFound(projectId) };
   }
   const updated = await updateObject<ProjectT>(
     ctx.handle,
@@ -124,4 +134,27 @@ export async function archiveProject(
   );
   if (!updated.ok) return updated;
   return { ok: true, value: Project.parse(updated.value.object) as ProjectT };
+}
+
+export async function getProjectItems(
+  ctx: ProjectsContext,
+  projectId: ProjectId,
+): Promise<Result<Page<ProjectItemT>, StoreError>> {
+  const project = await findProject(ctx, projectId);
+  if (!project.ok || isAbsent(project.value)) {
+    return { ok: false, error: projectNotFound(projectId) };
+  }
+  const listed = await listObjects<ProjectItemT>(
+    ctx.handle,
+    'projectItem',
+    { projectId },
+  );
+  if (!listed.ok) return listed;
+  return {
+    ok: true,
+    value: {
+      items: listed.value.items.map(({ object }) => ProjectItem.parse(object)),
+      ...(listed.value.nextCursor ? { nextCursor: listed.value.nextCursor } : {}),
+    },
+  };
 }

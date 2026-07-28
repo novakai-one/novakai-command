@@ -8,6 +8,7 @@ import type {
   CreateProjectInput,
   ListProjectsFilter,
   Project,
+  ProjectItem,
 } from '../contract/schemas.js';
 import type { ProjectsContext } from './composition.js';
 import * as projects from './projects.js';
@@ -24,6 +25,9 @@ export interface ProjectsContract {
     projectId: ProjectId,
     clientOpId: ClientOpId,
   ): Promise<Result<Project, StoreError>>;
+  getProjectItems(
+    projectId: ProjectId,
+  ): Promise<Result<Page<ProjectItem>, StoreError>>;
 }
 
 export function createProjectsContract(ctx: ProjectsContext): ProjectsContract {
@@ -32,5 +36,6 @@ export function createProjectsContract(ctx: ProjectsContext): ProjectsContract {
     listProjects: (filter) => projects.listProjects(ctx, filter),
     archiveProject: (projectId, clientOpId) =>
       projects.archiveProject(ctx, projectId, clientOpId),
+    getProjectItems: (projectId) => projects.getProjectItems(ctx, projectId),
   };
 }
