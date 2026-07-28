@@ -86,6 +86,30 @@ await embedded.start();
 const auth = await embedded.authenticate({ token: TOKEN });
 if (auth.kind !== 'authenticated') throw new Error(`demo auth failed: ${auth.kind}`);
 const session = auth.session;
+
+// ── Session TTL survival (bug fix 2026-07-28) ─────────────────────────────
+// Messaging sessions expire after 1h (DEFAULT_SESSION_TTL_MS) and the config
+// authority has no refresh — a long-running demo bridge dies with
+// "NotAuthenticated: session is no longer valid". Wrap every long-lived
+// session: on an auth failure, re-authenticate with the same token and retry
+// the operation once.
+type SessionHolder = { token: string; session: messaging.MessagingSession };
+const chrisHolder: SessionHolder = { token: TOKEN, session };
+const isAuthFailure = (res: unknown): boolean => {
+  const r = res as { kind?: string; error?: { name?: string; message?: string } };
+  return r?.kind === 'error' && /NotAuthenticated|no longer valid/i.test(`${r.error?.name ?? ''} ${r.error?.message ?? ''}`);
+};
+async function reauth(holder: SessionHolder): Promise<void> {
+  const a = await embedded.authenticate({ token: holder.token });
+  if (a.kind !== 'authenticated') throw new Error(`re-auth failed for ${holder.token}`);
+  holder.session = a.session;
+}
+async function sessCall<T>(holder: SessionHolder, op: (s: messaging.MessagingSession) => Promise<T>): Promise<T> {
+  const first = await op(holder.session);
+  if (!isAuthFailure(first)) return first;
+  await reauth(holder);
+  return op(holder.session);
+}
 // Chris accepts mail from the demo agent people (incl. spawned mock agents).
 await session.setContactPolicy({ allowlist: ['person_kimi', 'person_fable', MOCK_PERSON], defaultRule: 'deny' });
 
@@ -99,13 +123,13 @@ for (const [token, allow] of [['demo-token-kimi', ME], ['demo-token-fable', ME],
 }
 // Pool persons open their doors to Chris too (user-created agent chats).
 const poolTokens: string[] = [];
-const poolSessions = new Map<string, messaging.MessagingSession>();
+const poolSessions = new Map<string, SessionHolder>();
 for (let i = 0; i < 10; i++) {
   poolTokens.push(`demo-token-pool-${i}`);
   const a = await embedded.authenticate({ token: `demo-token-pool-${i}` });
   if (a.kind === 'authenticated') {
     await a.session.setContactPolicy({ allowlist: [ME], defaultRule: 'deny' });
-    poolSessions.set(`person_pool${i}`, a.session);
+    poolSessions.set(`person_pool${i}`, { token: `demo-token-pool-${i}`, session: a.session });
   }
 }
 let poolNext = 0;
@@ -113,7 +137,7 @@ let poolNext = 0;
 // Mock spawn agents send through their own messaging session (live lane, R3-1).
 const mockAuth = await embedded.authenticate({ token: 'demo-token-mock' });
 if (mockAuth.kind !== 'authenticated') throw new Error('demo mock-agent auth failed');
-const mockSession = mockAuth.session;
+const mockHolder: SessionHolder = { token: 'demo-token-mock', session: mockAuth.session };
 
 const persistence = composeShellPersistence({ root: NOVAKAI_ROOT, principal: ME });
 
@@ -225,7 +249,7 @@ const toSummary = (c: Convo) => ({
 // Resolve the messaging thread behind a conversation (created on first send).
 async function threadFor(c: Convo): Promise<string | null> {
   if (c.threadId) return c.threadId;
-  const res = await session.listThreadsForPerson({});
+  const res = await sessCall(chrisHolder, (s) => s.listThreadsForPerson({}));
   if (res.kind !== 'ok') return null;
   const t = res.value.threads.find((t: { direct?: { pair: string[] } }) =>
     c.address.startsWith('person:') && t.direct?.pair.includes(c.address.slice('person:'.length)));
@@ -316,7 +340,7 @@ const methods: Record<string, (p: never) => Promise<unknown>> = {
     // then mirrored to the UI as a message event for this conversation.
     const sender: LiveLaneSender = {
       async sendMessage(input: unknown) {
-        const res = await mockSession.sendMessage(input as never);
+        const res = await sessCall(mockHolder, (s) => s.sendMessage(input as never));
         if (res.kind === 'ok') {
           const v = res.value as { threadId: string; messageId: string };
           if (!c.threadId) c.threadId = v.threadId;
@@ -369,7 +393,7 @@ const methods: Record<string, (p: never) => Promise<unknown>> = {
     // Live lane (R3-1): REAL CLI output chunks → real messaging replies.
     const sender: LiveLaneSender = {
       async sendMessage(input: unknown) {
-        const res = await agentSession.sendMessage(input as never);
+        const res = await sessCall(agentSession, (s) => s.sendMessage(input as never));
         if (res.kind === 'ok') {
           const v = res.value as { threadId: string; messageId: string };
           if (!c.threadId) c.threadId = v.threadId;
@@ -410,7 +434,7 @@ const methods: Record<string, (p: never) => Promise<unknown>> = {
     if (!c) return [];
     const threadId = await threadFor(c);
     if (!threadId) return [];
-    const res = await session.getMessages({ threadId, limit: 200 });
+    const res = await sessCall(chrisHolder, (s) => s.getMessages({ threadId, limit: 200 }));
     if (res.kind !== 'ok') return [];
     return res.value.messages.map((m: { id: string; threadId: string; senderId: string; body: { text: string }; createdAt: string }) => ({
       id: m.id,
@@ -424,12 +448,12 @@ const methods: Record<string, (p: never) => Promise<unknown>> = {
     const c = convos.get(p.conversationId);
     if (!c) return { ok: false, error: 'unknown conversation' };
     const address = c.threadId ? `thread:${c.threadId}` : c.address;
-    const res = await session.sendMessage({
+    const res = await sessCall(chrisHolder, (s) => s.sendMessage({
       address,
       body: { text: p.text },
       priority: 'normal',
       clientMessageId: `cmsg_${randomUUID()}`,
-    });
+    }));
     if (res.kind !== 'ok') return { ok: false, error: `${res.error.name}: ${res.error.message}` };
     if (!c.threadId) c.threadId = res.value.threadId;
     // SHL-008 red gate: the send-time snapshot attaches to EVERY human-composed
