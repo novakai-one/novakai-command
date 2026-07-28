@@ -357,6 +357,17 @@ export async function getArtifactBytes(
       value: await readFile(path.join(ctx.bytesRoot, artifactId)),
     };
   } catch (cause) {
+    if ((cause as NodeJS.ErrnoException).code === 'ENOENT') {
+      return {
+        ok: false,
+        error: err(
+          'ArtifactBytesMissing',
+          `metadata exists but bytes are absent for "${artifactId}"`,
+          { ref: { kind: 'artifact', id: artifactId } },
+          false,
+        ),
+      };
+    }
     return {
       ok: false,
       error: err(

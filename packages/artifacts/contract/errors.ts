@@ -37,6 +37,13 @@ export type ArtifactBytesReadFailedError = ContractError<
   }
 >;
 
+export type ArtifactBytesMissingError = ContractError<
+  'ArtifactBytesMissing',
+  {
+    ref: Ref;
+  }
+>;
+
 export type ArtifactFailpointError = ContractError<
   'ArtifactFailpoint',
   {
@@ -64,6 +71,7 @@ export type ArtifactOrphanDeleteFailedError = ContractError<
 export type ArtifactsError =
   | StoreError
   | ArtifactByteEffectFailedError
+  | ArtifactBytesMissingError
   | ArtifactBytesReadFailedError
   | ArtifactFailpointError
   | ArtifactOrphanScanFailedError
