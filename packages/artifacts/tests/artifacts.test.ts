@@ -6,6 +6,7 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  unlinkSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -169,6 +170,36 @@ test('putArtifact retry with the same clientOpId returns one durable artifact', 
     if (!listed.ok) return;
     assert.equal(listed.value.items.length, 1);
     assert.deepEqual(readdirSync(path.join(root, 'artifacts')), [first.value.id]);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test('getArtifactBytes reports typed missing bytes when metadata still exists', async () => {
+  const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-artifact-missing-'));
+  const root = path.join(workspace, '.novakai');
+  try {
+    const artifacts = createArtifactsContract(composeArtifacts({
+      root,
+      principal: 'person_chris',
+    }));
+    const put = await artifacts.putArtifact({
+      bytes: Buffer.from('will be externally removed', 'utf8'),
+      mimeType: 'text/plain',
+    }, mintClientOpId());
+    assert.equal(put.ok, true);
+    if (!put.ok) return;
+    unlinkSync(path.join(root, 'artifacts', put.value.id));
+
+    const found = await artifacts.getArtifactBytes(put.value.id);
+
+    assert.equal(found.ok, false);
+    if (found.ok) return;
+    assert.equal(found.error.code, 'ArtifactBytesMissing');
+    assert.deepEqual(
+      (found.error.details as { ref: { kind: string; id: string } }).ref,
+      { kind: 'artifact', id: put.value.id },
+    );
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }
