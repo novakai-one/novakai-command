@@ -12,6 +12,9 @@
   },
   "license": "UNLICENSED",
   "private": true,
+  "bin": {
+    "nvk-artifact": "./dist/cli/nvk-artifact.js"
+  },
   "dependencies": {
     "@novakai/foundation": "file:../foundation",
     "zod": "^3.23.8"
