@@ -401,7 +401,8 @@ function countTombstoneLines(engine: StoreEngine, id: string): number {
 export async function recordSystemAction(
   handle: ScopedStoreHandle,
   input: {
-    action: 'hook_log' | 'context.inject' | 'hook_error' | 'session.terminate';
+    action: 'hook_log' | 'context.inject' | 'hook_error' | 'session.terminate'
+      | 'artifact.orphan.sweep';
     target: z.infer<typeof Ref>;
     clientOpId: ClientOpId;
     meta?: Record<string, unknown>;

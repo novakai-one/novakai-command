@@ -623,7 +623,8 @@ export class StoreEngine {
    * law unchanged: no update/delete, append under the same lock.
    */
   appendSystemActionTrace(
-    action: 'hook_log' | 'context.inject' | 'hook_error' | 'session.terminate', target: z.infer<typeof Ref>,
+    action: 'hook_log' | 'context.inject' | 'hook_error' | 'session.terminate'
+      | 'artifact.orphan.sweep', target: z.infer<typeof Ref>,
     actor: string, clientOpId: ClientOpId, meta?: Record<string, unknown>,
   ): EngineResult<null> {
     return this.withLock(() => {
