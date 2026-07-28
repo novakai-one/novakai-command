@@ -1,8 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
@@ -187,6 +190,56 @@ test('offline CLI get-bytes returns the exact binary payload', () => {
 
     assert.equal(found.status, 0, found.stderr.toString('utf8'));
     assert.deepEqual(found.stdout, bytes);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test('offline CLI contends on the same Foundation global lock after byte durability', () => {
+  const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-artifact-cli-lock-'));
+  const root = path.join(workspace, '.novakai');
+  const source = path.join(workspace, 'locked.txt');
+  try {
+    const bytes = Buffer.from('durable before CLI lock failure', 'utf8');
+    writeFileSync(source, bytes);
+    const token = mintToken(
+      root,
+      'person_cli',
+      ['artifact'],
+      'sys_spine',
+    );
+    const lockDir = path.join(root, 'lock');
+    mkdirSync(lockDir);
+    writeFileSync(
+      path.join(lockDir, 'owner.json'),
+      `${JSON.stringify({ pid: process.pid, token: 'cli-test-holder' })}\n`,
+    );
+
+    const startedAt = Date.now();
+    const result = invoke([
+      'put',
+      source,
+      '--root', root,
+      '--token', token.bearer,
+      '--client-op-id', mintClientOpId(),
+      '--lock-timeout-ms', '50',
+    ]);
+    const elapsedMs = Date.now() - startedAt;
+
+    assert.equal(result.status, 1);
+    assert.equal(JSON.parse(result.stderr).code, 'LockBusy');
+    assert.equal(
+      elapsedMs < 1_000,
+      true,
+      `--lock-timeout-ms was ignored (elapsed ${elapsedMs}ms)`,
+    );
+    const byteFiles = readdirSync(path.join(root, 'artifacts'));
+    assert.equal(byteFiles.length, 1);
+    assert.deepEqual(
+      readFileSync(path.join(root, 'artifacts', byteFiles[0])),
+      bytes,
+    );
+    assert.equal(existsSync(path.join(root, 'artifacts.jsonl')), false);
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }
