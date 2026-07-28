@@ -52,3 +52,29 @@ test('putArtifact durably stores exact bytes before metadata and returns metadat
     rmSync(workspace, { recursive: true, force: true });
   }
 });
+
+test('getArtifactMeta retrieves metadata through the public contract', async () => {
+  const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-artifact-meta-'));
+  const root = path.join(workspace, '.novakai');
+  try {
+    const artifacts = createArtifactsContract(composeArtifacts({
+      root,
+      principal: 'person_chris',
+    }));
+    const put = await artifacts.putArtifact({
+      bytes: Buffer.from('metadata proof', 'utf8'),
+      mimeType: 'text/markdown',
+      originPath: '/evidence/proof.md',
+    }, mintClientOpId());
+    assert.equal(put.ok, true);
+    if (!put.ok) return;
+
+    const found = await artifacts.getArtifactMeta(put.value.id);
+
+    assert.equal(found.ok, true);
+    if (!found.ok || 'absent' in found.value) return;
+    assert.deepEqual(found.value, put.value);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
