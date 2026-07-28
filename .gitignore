@@ -31,3 +31,8 @@ node_modules
 # D-N6-2: agent messaging credentials live here (hash-only, never committed)
 .novakai-command/messaging-v2/
 tsconfig.tsbuildinfo
+
+# B1a: server/watchdog runtime state and browse artifacts (never source)
+.watchdog-sessions.json
+browse-shot.png
+packages/shell/dist/

@@ -27,6 +27,20 @@ export interface TerminalAdapter {
   close(sessionId: string): boolean;
   /** OD-C3: switch the session's model for real. False = unknown session. */
   setSessionModel?(sessionId: string, model: string): boolean;
+  /**
+   * B1 DEC-B1-6: rebind a session that outlived this process. The registry has
+   * the handle (sessionId + provider conversation id); nothing is live to
+   * attach TO — the next send spawns a fresh process carrying the resume id.
+   * Present only on adapters whose runtime can adopt a conversation.
+   */
+  adopt?(input: {
+    sessionId: string;
+    agentId: string;
+    provider: ProviderName;
+    providerConversationId: string | null;
+    model: string;
+    cwd: string;
+  }): boolean;
 }
 
 /**

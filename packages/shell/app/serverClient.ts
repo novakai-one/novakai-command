@@ -1,28 +1,59 @@
-// shell/demo/bridgeClient.ts — browser-side ShellServices over the WS bridge
-// (real packages/messaging + foundation on the node side). Falls back handled
-// by the demo entry: if the socket never opens, the caller swaps in the mock.
+// shell/app/serverClient.ts — browser-side ShellServices over nvk-ws v1.
+//
+// B1a: the page is served BY the Novakai server, so the connection facts come
+// from the same origin: GET /bootstrap.json → {wsUrl, token, protocolVersion}.
+// Every frame carries v:1; the socket is opened with the connection token
+// (without it the upgrade is refused before any method can dispatch).
+//
+// The demo's two spawn affordances collapse into the server's single
+// spawnAgentConversation (§7): the real-provider entry point is always wired,
+// and the mock entry point appears only when the server says dev.allowMock.
 import type { ShellServices, SettingsRecord, AgentEvent } from '../contract/index.js';
 import type { SetSettingError } from '../contract/index.js';
 
 interface Pending { resolve(v: unknown): void; reject(e: Error): void }
 
-export function createBridgeServices(url: string, onPresence: (e: AgentEvent) => void): Promise<ShellServices> {
+const PROTOCOL_VERSION = 1;
+
+export interface BootstrapDocument {
+  wsUrl: string;
+  token: string;
+  protocolVersion: number;
+}
+
+/** Same-origin bootstrap. The token is never hardcoded anywhere in the app. */
+export async function fetchBootstrap(origin = ''): Promise<BootstrapDocument> {
+  const res = await fetch(`${origin}/bootstrap.json`, { cache: 'no-store' });
+  if (!res.ok) throw new Error(`bootstrap failed: HTTP ${res.status}`);
+  const doc = await res.json() as BootstrapDocument;
+  if (doc.protocolVersion !== PROTOCOL_VERSION) {
+    throw new Error(`server speaks nvk-ws v${doc.protocolVersion}, this shell speaks v${PROTOCOL_VERSION}`);
+  }
+  return doc;
+}
+
+export function createServerServices(
+  bootstrap: BootstrapDocument,
+  onPresence: (e: AgentEvent) => void,
+): Promise<ShellServices> {
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(url);
+    const ws = new WebSocket(`${bootstrap.wsUrl}?token=${encodeURIComponent(bootstrap.token)}`);
     let seq = 0;
     const pending = new Map<number, Pending>();
     const msgListeners = new Set<(m: unknown) => void>();
 
-    const timeout = setTimeout(() => { ws.close(); reject(new Error('bridge timeout')); }, 3000);
+    const timeout = setTimeout(() => { ws.close(); reject(new Error('server timeout')); }, 3000);
 
     ws.onopen = () => {
       clearTimeout(timeout);
-      // Show the real-Kimi affordance only when the bridge has the CLI.
-      void call<{ realKimi: boolean }>('getCapabilities').then((caps) => {
-        if (caps.realKimi) api.spawnRealKimiAgent = (title) => call('spawnRealKimi', { title });
+      void call<{ providers?: { mock?: boolean } }>('getCapabilities').then((caps) => {
+        // Mock spawning is a DEV affordance now, gated by server config (M10).
+        if (caps.providers?.mock) {
+          api.spawnMockAgent = (title) => call('spawnAgentConversation', { title, provider: 'mock' });
+        }
       }).catch(() => undefined).finally(() => resolve(api));
     };
-    ws.onerror = () => { clearTimeout(timeout); reject(new Error('bridge unreachable')); };
+    ws.onerror = () => { clearTimeout(timeout); reject(new Error('server unreachable')); };
     ws.onmessage = (ev) => {
       const frame = JSON.parse(String(ev.data));
       if (frame.type === 'event') {
@@ -41,7 +72,7 @@ export function createBridgeServices(url: string, onPresence: (e: AgentEvent) =>
     const convListeners = new Set<(c: unknown) => void>();
     const call = <T>(method: string, params: unknown = {}): Promise<T> => {
       const id = ++seq;
-      ws.send(JSON.stringify({ id, method, params }));
+      ws.send(JSON.stringify({ id, method, params, v: PROTOCOL_VERSION }));
       return new Promise<T>((res, rej) => pending.set(id, { resolve: res as (v: unknown) => void, reject: rej }));
     };
 
@@ -53,7 +84,8 @@ export function createBridgeServices(url: string, onPresence: (e: AgentEvent) =>
       getMessages: (conversationId) => call('getMessages', { conversationId }),
       sendMessage: (conversationId, text) => call('sendMessage', { conversationId, text }),
       publishFocus: (focus) => { void call('publishFocus', focus).catch(() => undefined); },
-      spawnMockAgent: (title) => call('spawnMockAgent', { title }),
+      // The one spawn path (§7): a real provider session on the configured CLI.
+      spawnRealKimiAgent: (title) => call('spawnAgentConversation', { title, provider: 'kimi' }),
       subscribe(events) {
         const ml = (m: unknown) => events.onMessage?.(m as never);
         const cl = (c: unknown) => events.onConversation?.(c as never);
@@ -62,7 +94,7 @@ export function createBridgeServices(url: string, onPresence: (e: AgentEvent) =>
       },
       getLayout: () => call('getLayout'),
       // M5/DEC-S2-12: clientOpId minted HERE (the interaction layer) and sent
-      // with the mutation; the bridge threads it to foundation meta.
+      // with the mutation; the server threads it to foundation meta.
       setLayout: (patch, clientOpId) => call('setLayout', { patch, clientOpId }),
       getSettings: () => call('getSettings'),
       setSetting: async (key, value, opts) =>

@@ -31,7 +31,7 @@ import { createSessionHolderFactory, type MessagingSessionHolder, type SessionHo
 import { createLiveAuthority } from './session/authority.js';
 import { createWatchdogHook, type WatchdogHook } from './supervision/watchdog.js';
 import { startTransport, type RunningTransport } from './transport/server.js';
-import { buildMethods, type ServerRuntime, type Conversation } from './methods.js';
+import { buildMethods, restoreLiveSessions, type ServerRuntime, type Conversation } from './methods.js';
 
 export interface BootOptions {
   /** `.novakai/` root. */
@@ -145,15 +145,19 @@ export async function bootServer(options: BootOptions): Promise<BootResult> {
   note(4, 'agents', `providers: kimi=${kimiRuntime.isAvailable() ? kimiCliPath : 'CLI NOT FOUND'}, claude/codex=B1b, mock=${config.dev.allowMock ? 'dev' : 'disabled'}`);
 
   // ── 5. transcript watchers ───────────────────────────────────────────────
+  // Config decides (see DevConfigInput.watchTranscripts): the S2 watcher scans
+  // synchronously, so at real transcript volume it would starve this process's
+  // HTTP loop. The step still runs and still traces either way.
   let transcripts: { stop(): void } | null = null;
-  if (options.transcripts !== false) {
+  const watchTranscripts = options.transcripts ?? config.dev.watchTranscripts;
+  if (watchTranscripts) {
     const sources = defaultSources();
     const watcher = createTranscriptWatcher({ root: options.root, sources });
     watcher.start();
     transcripts = watcher;
     note(5, 'transcript', `watching ${sources.length} provider dir(s)`);
   } else {
-    note(5, 'transcript', 'disabled for this boot');
+    note(5, 'transcript', 'watchers disabled (config dev.watchTranscripts) — synchronous S2 scan would starve the HTTP loop; ingestion lands in B1b/S3');
   }
 
   // ── 6. shell persistence (composed at step 2; hydrate the view cache) ────
@@ -235,6 +239,12 @@ export async function bootServer(options: BootOptions): Promise<BootResult> {
       await sessions.markReplied(record.key);
     })();
   });
+
+  // 7b: rebind sessions that outlived the last process — to their provider
+  // runtime AND to their conversation, so a send after a restart reaches the
+  // CLI instead of quietly going nowhere (DEC-B1-6).
+  const restored = await restoreLiveSessions(runtime);
+  if (restored > 0) note(7, 'sessions', `${restored} session(s) reattached to their conversations`);
 
   // ── 9. HTTP + nvk-ws v1 ─────────────────────────────────────────────────
   const methods = buildMethods(runtime);

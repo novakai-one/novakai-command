@@ -71,20 +71,94 @@ const summarize = (c: Conversation) => ({
   unreadCount: 0, agentId: c.agentId,
 });
 
-export function buildMethods(runtime: ServerRuntime): MethodTable {
-  const persistView = async (c: Conversation, clientOpId: string): Promise<void> => {
-    const res = await setConversationView(runtime.persistence.conversationViewDriver, c.id, {
-      threadRef: c.threadId ? { kind: 'thread', id: c.threadId } : null,
-      pinned: c.pinned,
-      archived: c.archived,
-      lastActivityAt: c.lastActivityAt,
-      titleOverride: c.title,
-    }, clientOpId);
-    if (!res.ok) {
-      console.error(`[nvk-server] conversationView persist failed for ${c.id}: ${res.error?.code} ${res.error?.message}`);
-    }
-  };
+/**
+ * conversationView is the SOURCE OF TRUTH for a conversation across restarts
+ * (F1/DEC-S2-11), so it must be re-saved the moment the thread id is LEARNED —
+ * a thread is created on the first send, and a view still holding threadRef
+ * null cannot be relinked to its provider session on the next boot.
+ */
+async function persistView(runtime: ServerRuntime, c: Conversation, clientOpId: string): Promise<void> {
+  const res = await setConversationView(runtime.persistence.conversationViewDriver, c.id, {
+    threadRef: c.threadId ? { kind: 'thread', id: c.threadId } : null,
+    pinned: c.pinned,
+    archived: c.archived,
+    lastActivityAt: c.lastActivityAt,
+    titleOverride: c.title,
+  }, clientOpId);
+  if (!res.ok) {
+    console.error(`[nvk-server] conversationView persist failed for ${c.id}: ${res.error?.code} ${res.error?.message}`);
+  }
+}
 
+/** Live lane (R3-1): provider output → a REAL messaging reply from the agent's person. */
+function attachLane(runtime: ServerRuntime, conversation: Conversation, sessionId: string, personId: string): void {
+  const sender = {
+    async sendMessage(input: unknown) {
+      const holder = await runtime.holderForPerson(personId);
+      if (!holder) return { kind: 'error', error: { name: 'NotAuthenticated', message: `no holder for ${personId}` } };
+      const res = await holder.call((s) => (s as { sendMessage(i: unknown): Promise<unknown> }).sendMessage(input)) as
+        { kind: string; value?: { threadId: string; messageId: string } };
+      if (res.kind === 'ok' && res.value) {
+        const learnedThread = !conversation.threadId;
+        if (learnedThread) conversation.threadId = res.value.threadId;
+        conversation.lastActivityAt = now();
+        if (learnedThread) await persistView(runtime, conversation, runtime.mintOpId());
+        runtime.broadcast('message', {
+          id: res.value.messageId, conversationId: conversation.id, senderId: personId,
+          text: (input as { body: { text: string } }).body.text, createdAt: now(),
+        });
+      }
+      return res;
+    },
+  };
+  runtime.agents.attachLiveLane({ sessionId, address: `person:${runtime.human.personId}`, sender } as never);
+}
+
+/**
+ * Boot step 7b (DEC-B1-6): a session that outlived the process is rebound to
+ * BOTH its provider runtime and its conversation. Without the second half the
+ * thread would look alive while every send went nowhere — the failure a restart
+ * is supposed to make impossible.
+ */
+export async function restoreLiveSessions(runtime: ServerRuntime): Promise<number> {
+  const config = runtime.configStore.current();
+  const threads = await runtime.human.holder.call((s) =>
+    (s as { listThreadsForPerson(i: object): Promise<unknown> }).listThreadsForPerson({})) as
+    { kind: string; value?: { threads: Array<{ id: string; direct?: { pair: string[] } }> } };
+  const byPerson = new Map<string, string>();
+  if (threads.kind === 'ok' && threads.value) {
+    for (const thread of threads.value.threads) {
+      for (const person of thread.direct?.pair ?? []) byPerson.set(person, thread.id);
+    }
+  }
+
+  let restored = 0;
+  for (const record of await runtime.sessions.resumable()) {
+    const binding = config.bindings.find((b) => b.agentId === record.agentId);
+    if (!binding) continue;
+    const rebound = runtime.agents.reattachSession({
+      sessionId: record.sessionId,
+      agentId: record.agentId,
+      provider: record.provider,
+      providerConversationId: record.providerConversationId,
+      model: record.model,
+      cwd: record.cwd,
+    });
+    if (!rebound) continue;
+    const threadId = byPerson.get(binding.personId);
+    const conversation = [...runtime.conversations.values()].find((c) => c.threadId === threadId);
+    if (!conversation) continue;
+    conversation.sessionId = record.sessionId;
+    conversation.personId = binding.personId;
+    conversation.agentId = record.agentId;
+    conversation.address = `person:${binding.personId}`;
+    attachLane(runtime, conversation, record.sessionId, binding.personId);
+    restored += 1;
+  }
+  return restored;
+}
+
+export function buildMethods(runtime: ServerRuntime): MethodTable {
   /** Resolve the messaging thread behind a conversation (created on first send). */
   const threadFor = async (c: Conversation): Promise<string | null> => {
     if (c.threadId) return c.threadId;
@@ -164,28 +238,6 @@ export function buildMethods(runtime: ServerRuntime): MethodTable {
       .setContactPolicy({ allowlist: others, defaultRule: 'deny' }));
   };
 
-  /** Live lane (R3-1): provider output → a REAL messaging reply from the agent's person. */
-  const attachLane = (conversation: Conversation, sessionId: string, personId: string): void => {
-    const sender = {
-      async sendMessage(input: unknown) {
-        const holder = await runtime.holderForPerson(personId);
-        if (!holder) return { kind: 'error', error: { name: 'NotAuthenticated', message: `no holder for ${personId}` } };
-        const res = await holder.call((s) => (s as { sendMessage(i: unknown): Promise<unknown> }).sendMessage(input)) as
-          { kind: string; value?: { threadId: string; messageId: string } };
-        if (res.kind === 'ok' && res.value) {
-          if (!conversation.threadId) conversation.threadId = res.value.threadId;
-          conversation.lastActivityAt = now();
-          runtime.broadcast('message', {
-            id: res.value.messageId, conversationId: conversation.id, senderId: personId,
-            text: (input as { body: { text: string } }).body.text, createdAt: now(),
-          });
-        }
-        return res;
-      },
-    };
-    runtime.agents.attachLiveLane({ sessionId, address: `person:${runtime.human.personId}`, sender } as never);
-  };
-
   return {
     // ── S2b context bus (SHL-008): the server is the focus AUTHORITY ────────
     async publishFocus(params: never) {
@@ -222,7 +274,7 @@ export function buildMethods(runtime: ServerRuntime): MethodTable {
         lastActivityAt: now(), ...(agentId ? { agentId } : {}), ...(personId ? { personId } : {}),
       };
       runtime.conversations.set(id, conversation);
-      await persistView(conversation, p.clientOpId);
+      await persistView(runtime, conversation, p.clientOpId);
       const summary = summarize(conversation);
       runtime.broadcast('conversation', summary);
       return summary;
@@ -259,8 +311,8 @@ export function buildMethods(runtime: ServerRuntime): MethodTable {
         lastActivityAt: now(), agentId, sessionId, personId,
       };
       runtime.conversations.set(conversation.id, conversation);
-      await persistView(conversation, runtime.mintOpId());
-      attachLane(conversation, sessionId, personId);
+      await persistView(runtime, conversation, runtime.mintOpId());
+      attachLane(runtime, conversation, sessionId, personId);
 
       const summary = summarize(conversation);
       runtime.broadcast('conversation', summary);
@@ -288,7 +340,7 @@ export function buildMethods(runtime: ServerRuntime): MethodTable {
       if (!c) return { ok: false, error: 'unknown conversation' };
       c.pinned = p.pinned;
       c.lastActivityAt = now();
-      await persistView(c, p.clientOpId);
+      await persistView(runtime, c, p.clientOpId);
       runtime.broadcast('conversation', summarize(c));
       return { ok: true };
     },
@@ -299,7 +351,7 @@ export function buildMethods(runtime: ServerRuntime): MethodTable {
       if (!c) return { ok: false, error: 'unknown conversation' };
       c.archived = p.archived;
       c.lastActivityAt = now();
-      await persistView(c, p.clientOpId);
+      await persistView(runtime, c, p.clientOpId);
       runtime.broadcast('conversation', summarize(c));
       return { ok: true };
     },
@@ -338,8 +390,10 @@ export function buildMethods(runtime: ServerRuntime): MethodTable {
       if (res.kind !== 'ok' || !res.value) {
         return { ok: false, error: `${res.error?.name}: ${res.error?.message}` };
       }
-      if (!c.threadId) c.threadId = res.value.threadId;
+      const learnedThread = !c.threadId;
+      if (learnedThread) c.threadId = res.value.threadId;
       c.lastActivityAt = now();
+      if (learnedThread) await persistView(runtime, c, runtime.mintOpId());
 
       const message = {
         id: res.value.messageId, conversationId: p.conversationId, senderId: 'me',

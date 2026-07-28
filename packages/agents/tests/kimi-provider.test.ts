@@ -174,3 +174,16 @@ test('an unavailable CLI is a typed refusal at create, not a mystery later', asy
   await assert.rejects(() => runtime.create({ cwd: process.cwd(), agentId: 'sess_h' }), /kimi CLI not found/);
   assert.ok(defaultKimiCliPath().endsWith(path.join('.kimi-code', 'bin', 'kimi')));
 });
+
+// Ported from the deleted shell demo suite (packages/shell/tests/kimi-cli-runtime.test.ts):
+// the coverage moves with the code it guards, it does not evaporate.
+test('create with a duplicate session key throws (the terminal registry rule)', async () => {
+  const fake = fakeKimi();
+  const runtime = createKimiCliRuntime({ cwd: process.cwd(), cliPath: fake.cliPath });
+  await runtime.create({ cwd: process.cwd(), agentId: 'sess_dupe' });
+  await assert.rejects(
+    () => runtime.create({ cwd: process.cwd(), agentId: 'sess_dupe' }),
+    /already exists/,
+    'a second spawn can never silently take over the first session',
+  );
+});

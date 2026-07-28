@@ -53,6 +53,15 @@ export const DevConfigInput = z.object({
   configKind: z.literal('dev'),
   /** Gates the mock provider adapter out of production (closes M10). */
   allowMock: z.boolean(),
+  /**
+   * Start the S2 transcript watchers at boot. OFF by default in B1a: the S2
+   * watcher scans and copies SYNCHRONOUSLY, and at real provider-transcript
+   * volume (measured 2.5 GB on 2026-07-28) that starves the HTTP loop — every
+   * page and asset took 5–12 s to serve. Boot step 5 still runs and still
+   * traces; it reports "disabled" until the watcher moves off the main loop
+   * (B1b/S3, where transcript ingestion actually lands).
+   */
+  watchTranscripts: z.boolean().optional(),
 });
 
 export const ConfigObjectInput = z.discriminatedUnion('configKind', [
@@ -101,7 +110,7 @@ export interface ServerConfig {
   bindings: Array<{ agentId: string; personId: string }>;
   providers: Record<ProviderName, ProviderSettings>;
   supervision: SupervisionPolicy;
-  dev: { allowMock: boolean };
+  dev: { allowMock: boolean; watchTranscripts: boolean };
 }
 
 /** Defaults materialized on first boot. Principals are deliberately absent. */

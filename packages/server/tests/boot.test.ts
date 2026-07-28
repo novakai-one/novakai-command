@@ -154,6 +154,25 @@ test('kill the server mid-session → restart → the same conversation resumes 
   assert.equal(resumable[0]!.providerConversationId, 'session_boot_2',
     'the resume handle survived — the next send continues the same CLI conversation');
   assert.equal(second.interrupted.length, 0, 'a clean shutdown leaves nothing interrupted');
+
+  // The regression the browser caught: a restored conversation must still REACH
+  // the provider. Rebinding only the registry left the thread looking alive
+  // while every send went nowhere.
+  const before = cli.invocations().length;
+  const sent = await secondMethods.sendMessage!(
+    { conversationId: spawned.conversation.id, text: 'turn two, after the restart' } as never,
+  ) as { ok: boolean; error?: string };
+  assert.equal(sent.ok, true, sent.error);
+  await second.runtime.kimiRuntime.drain(spawned.sessionId);
+
+  const argv = cli.invocations();
+  assert.equal(argv.length, before + 1, 'the restarted server really spawned the provider');
+  const last = argv[argv.length - 1]!;
+  // AGT-006: every session-bound input carries the send-time focus snapshot, so
+  // the prompt is the context line + the text.
+  assert.match(last[last.indexOf('-p') + 1]!, /turn two, after the restart$/);
+  assert.deepEqual(last.slice(-2), ['-S', 'session_boot_2'],
+    'and it resumed the SAME CLI conversation');
   await second.close();
 });
 
@@ -219,4 +238,84 @@ test('config.jsonl is created under the real root and never holds a bearer', asy
     assert.equal(raw.includes(principal.token), false);
   }
   await server.close();
+});
+
+// Ported from the deleted demo suite (shell tests G3/G4): the regressions those
+// tests guarded are now guarded against the code that replaced the demo's
+// person pool (DEC-B1-8) and its in-code seeding (config materialization).
+test('G3, re-expressed: two agent conversations get DISTINCT persons and DISTINCT threads', async () => {
+  const dir = root();
+  await mintChris(dir);
+  const cli = fakeKimi({ reply: 'ack' });
+  const server = await boot(dir, { cliPath: cli.cliPath });
+  const methods = (await import('../core/methods.js')).buildMethods(server.runtime);
+
+  const one = await methods.spawnAgentConversation!({ title: 'Alpha' } as never) as
+    { conversation: { id: string }; sessionId: string };
+  const two = await methods.spawnAgentConversation!({ title: 'Beta' } as never) as
+    { conversation: { id: string }; sessionId: string };
+
+  const bindings = server.runtime.configStore.current().bindings;
+  assert.equal(bindings.length, 2);
+  assert.notEqual(bindings[0]!.personId, bindings[1]!.personId, 'one person per agent, never shared');
+
+  await methods.sendMessage!({ conversationId: one.conversation.id, text: 'to alpha' } as never);
+  await methods.sendMessage!({ conversationId: two.conversation.id, text: 'to beta' } as never);
+
+  const alpha = await methods.getMessages!({ conversationId: one.conversation.id } as never) as Array<{ text: string }>;
+  const beta = await methods.getMessages!({ conversationId: two.conversation.id } as never) as Array<{ text: string }>;
+  assert.deepEqual(alpha.map((m) => m.text), ['to alpha'], 'alpha only sees its own thread');
+  assert.deepEqual(beta.map((m) => m.text), ['to beta'], 'beta only sees its own thread');
+  await server.close();
+});
+
+test('G4, re-expressed: the same display name on a DIFFERENT provider is a different agent', async () => {
+  const dir = root();
+  await mintChris(dir);
+  const opened = await openConfigStore({ root: dir, principal: 'sys_spine' });
+  if (!opened.ok) throw new Error('config unavailable');
+  await opened.value.set({ configKind: 'dev', allowMock: true }, mintClientOpId());
+
+  const cli = fakeKimi();
+  const server = await boot(dir, { cliPath: cli.cliPath });
+  const methods = (await import('../core/methods.js')).buildMethods(server.runtime);
+
+  await methods.spawnAgentConversation!({ title: 'Kimi', provider: 'kimi' } as never);
+  await methods.spawnAgentConversation!({ title: 'Kimi', provider: 'mock' } as never);
+
+  const agents = await methods.listAgents!(undefined as never) as Array<{ displayName: string; provider: string }>;
+  const named = agents.filter((a) => a.displayName === 'Kimi');
+  assert.equal(named.length, 2, 'mock Kimi is not the same object as real Kimi');
+  assert.deepEqual(named.map((a) => a.provider).sort(), ['kimi', 'mock']);
+  await server.close();
+});
+
+test('a conversation that was only ever SENT to still relinks to its provider after a restart', async () => {
+  const dir = root();
+  await mintChris(dir);
+  const cli = fakeKimi({ sessionId: 'session_boot_4' });
+
+  const first = await boot(dir, { cliPath: cli.cliPath });
+  const firstMethods = (await import('../core/methods.js')).buildMethods(first.runtime);
+  const spawned = await firstMethods.spawnAgentConversation!({ title: 'Kimi' } as never) as
+    { conversation: { id: string }; sessionId: string };
+  // ONLY a send — nothing pins, renames or archives this conversation. The
+  // thread id is learned here and must be persisted here.
+  await firstMethods.sendMessage!({ conversationId: spawned.conversation.id, text: 'only ever sent' } as never);
+  await first.runtime.kimiRuntime.drain(spawned.sessionId);
+  await first.close();
+
+  const second = await boot(dir, { cliPath: cli.cliPath });
+  const secondMethods = (await import('../core/methods.js')).buildMethods(second.runtime);
+  const before = cli.invocations().length;
+  const sent = await secondMethods.sendMessage!(
+    { conversationId: spawned.conversation.id, text: 'after restart' } as never,
+  ) as { ok: boolean; error?: string };
+  assert.equal(sent.ok, true, sent.error);
+  await second.runtime.kimiRuntime.drain(spawned.sessionId);
+
+  const argv = cli.invocations();
+  assert.equal(argv.length, before + 1, 'the send reached the provider, not a dead end');
+  assert.equal(argv[argv.length - 1]![argv[argv.length - 1]!.indexOf('-S') + 1], 'session_boot_4');
+  await second.close();
 });

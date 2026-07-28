@@ -140,6 +140,32 @@ export function createTerminalAdapter(
       const rec = sessions.get(sessionId);
       return rec ? { sessionId, state: rec.state } : null;
     },
+    /**
+     * B1 DEC-B1-6: rebuild this adapter's record for a session that outlived
+     * the process, and hand the provider conversation id back to the runtime.
+     * Refused (false) when the runtime cannot adopt — a session must never
+     * LOOK reattached while sends go nowhere.
+     */
+    adopt(input) {
+      const adoptable = runtime as TerminalRuntimeLike & {
+        adopt?(key: string, options: { cliSessionId: string | null; model?: string | null }): void;
+      };
+      if (typeof adoptable.adopt !== 'function') return false;
+      wire();
+      if (sessions.has(input.sessionId)) return true;
+      adoptable.adopt(input.sessionId, {
+        cliSessionId: input.providerConversationId,
+        model: input.model,
+      });
+      const rec: SessionRecord = {
+        sessionId: input.sessionId, agentId: input.agentId, runtimeKey: input.sessionId,
+        provider: input.provider, state: 'running', closedByUs: false, handlers: [],
+        lastActivityAt: 0, idle: false, idleTimer: null,
+      };
+      sessions.set(input.sessionId, rec);
+      byRuntimeKey.set(input.sessionId, rec);
+      return true;
+    },
     send(sessionId, input) {
       const rec = sessions.get(sessionId);
       return rec ? runtime.write(rec.runtimeKey, input) : false;

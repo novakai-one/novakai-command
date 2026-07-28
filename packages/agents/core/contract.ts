@@ -8,6 +8,7 @@ import { err } from '@novakai/foundation/dist/contract/errors.js';
 import type {
   AgentDefinitionT, AgentEvent, HookAction, HookEvent, SkillDefinitionT,
   SpawnOpts, SpawnResponse, Unsubscribe,
+  ProviderName,
 } from '../contract/schemas.js';
 import type { AgentsError, UnsupportedOperationError } from '../contract/errors.js';
 import { spawnFailed, unsupportedOperation } from '../contract/errors.js';
@@ -53,6 +54,19 @@ export interface AgentsContract {
    * fires, then onMessagePost hooks. Hooks never block the send.
    */
   sendToSession(sessionId: SessionId, input: string): Promise<boolean>;
+  /**
+   * B1 DEC-B1-6: rebind a session that outlived the process, from its
+   * persisted registry record. Returns false when the provider has no runtime
+   * able to adopt it — a session never LOOKS reattached while sends go nowhere.
+   */
+  reattachSession(input: {
+    sessionId: string;
+    agentId: string;
+    provider: ProviderName;
+    providerConversationId: string | null;
+    model: string;
+    cwd: string;
+  }): boolean;
   subscribeAgentEvents(handler: (e: AgentEvent) => void): Unsubscribe;
   /** Bind the live lane (R3-1) for a spawned session. */
   attachLiveLane(binding: { sessionId: string; address: string; sender: LiveLaneSender }): Unsubscribe;
@@ -219,6 +233,26 @@ export function createAgentsContract(ctx: AgentsContext): AgentsContract {
 
     subscribeAgentEvents: (handler) => ctx.bus.subscribe(handler),
 
+    reattachSession(input) {
+      const adapter = ctx.adapters[input.provider];
+      if (typeof adapter.adopt !== 'function') return false;
+      if (!adapter.adopt(input)) return false;
+      ctx.sessions.set(input.sessionId, { agentId: input.agentId, provider: input.provider });
+      // Same event wiring as a fresh spawn (R3-17), so presence and exit hooks
+      // behave identically for a reattached session.
+      adapter.subscribe(input.sessionId, (e) => {
+        if (e.type === 'activity') {
+          publish({ type: 'activity', agentId: input.agentId, sessionId: input.sessionId, at: e.at, activity: e.activity });
+        } else if (e.type === 'exited') {
+          publish({
+            type: 'offline', agentId: input.agentId, sessionId: input.sessionId, at: e.at,
+            reason: ctx.closedSessions.has(input.sessionId) ? 'closed' : 'exited',
+          });
+        }
+      });
+      publish({ type: 'online', agentId: input.agentId, sessionId: input.sessionId, at: now() });
+      return true;
+    },
     attachLiveLane: (binding) => attachLiveLane(ctx, binding),
 
     pushContextAdvisory: (sessionId, line) => pushContextAdvisory(ctx, sessionId, line),

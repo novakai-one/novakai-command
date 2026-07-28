@@ -20,6 +20,8 @@ test('first boot with no config.jsonl materializes defaults with ZERO principals
   assert.deepEqual(cfg.principals, [], 'first boot must have EMPTY principals');
   assert.deepEqual(cfg.bindings, []);
   assert.equal(cfg.dev.allowMock, false, 'mock provider is off unless the operator turns it on');
+  assert.equal(cfg.dev.watchTranscripts, false,
+    'transcript watchers are off until they stop starving the HTTP loop (B1b/S3)');
   assert.equal(cfg.supervision.usageIntervalSec, 300);
   assert.equal(cfg.supervision.driftIntervalSec, 300);
   assert.ok(cfg.providers.kimi, 'provider settings materialize for kimi');

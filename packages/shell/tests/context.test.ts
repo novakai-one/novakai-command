@@ -10,7 +10,7 @@ import {
   type ScreenContext,
 } from '../contract/index.js';
 import { FocusChip } from '../ui/screens/messaging/FocusChip.js';
-import { createMockServices } from '../demo/mockServices.js';
+import { createMockServices } from '../app/mockServices.js';
 
 beforeEach(() => {
   publishFocus('none'); // reset module state between tests

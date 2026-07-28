@@ -7,7 +7,7 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { saveModel, saveDefinition } from '../ui/screens/agents/agentsController.js';
 import { AgentsView } from '../ui/screens/agents/AgentsScreen.js';
-import { createMockServices } from '../demo/mockServices.js';
+import { createMockServices } from '../app/mockServices.js';
 import type { AgentDefView } from '../contract/services.js';
 
 describe('agents screen — kit only (red gate 3)', () => {
