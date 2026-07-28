@@ -13,7 +13,12 @@ import type {
   ObjectId,
   ProjectId,
 } from '@novakai/foundation/dist/contract/brands.js';
-import type { Page, Result } from '@novakai/foundation/dist/contract/types.js';
+import type {
+  Absent,
+  Page,
+  Result,
+  StoredObject,
+} from '@novakai/foundation/dist/contract/types.js';
 import {
   CreateProjectInput,
   AttachProjectItemInput,
@@ -133,12 +138,27 @@ export async function listProjects(
 async function findProject(
   ctx: ProjectsContext,
   projectId: ProjectId,
-) {
-  return getObject<ProjectT>(
+): Promise<Result<StoredObject<ProjectT> | Absent, ProjectsError>> {
+  const found = await getObject<ProjectT>(
     ctx.handle,
     'project',
     projectId as unknown as ObjectId,
   );
+  if (!found.ok || isAbsent(found.value)) return found;
+  const project = Project.safeParse(found.value.object);
+  if (!project.success) {
+    return {
+      ok: false,
+      error: malformedProject(found.value.object, project.error.issues),
+    };
+  }
+  return {
+    ok: true,
+    value: {
+      ...found.value,
+      object: project.data as ProjectT,
+    },
+  };
 }
 
 function projectNotFound(projectId: ProjectId): StoreError {
