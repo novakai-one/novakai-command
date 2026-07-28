@@ -127,6 +127,14 @@ export function journalMutationOpId(
   return `${originalClientOpId}:journal:step:${step}:${state}` as ClientOpId;
 }
 
+function reservedTransitionOpIds(
+  originalClientOpId: ClientOpId,
+): ClientOpId[] {
+  return JOURNAL_TRANSITION_STEPS.flatMap((step) =>
+    JOURNAL_TRANSITION_STATES.map((state) =>
+      journalMutationOpId(originalClientOpId, step, state)));
+}
+
 function semanticDifferences(
   intended: SpineStep,
   stored: SpineStep,
@@ -344,28 +352,67 @@ export function findMutationIdentity(
   for (const fact of facts) {
     if (seenWorkflows.has(fact.workflowId)) continue;
     seenWorkflows.add(fact.workflowId);
-    for (const step of JOURNAL_TRANSITION_STEPS) {
-      for (const state of JOURNAL_TRANSITION_STATES) {
-        if (
-          journalMutationOpId(
-            fact.originalClientOpId as ClientOpId,
-            step,
-            state,
-          ) === clientOpId
-        ) {
-          return {
-            clientOpId,
-            role: 'transition',
-            fact,
-          };
-        }
-      }
+    if (
+      reservedTransitionOpIds(
+        fact.originalClientOpId as ClientOpId,
+      ).includes(clientOpId)
+    ) {
+      return {
+        clientOpId,
+        role: 'transition',
+        fact,
+      };
     }
   }
   return facts
     .map(mutationIdentityFor)
     .find((identity) => identity?.clientOpId === clientOpId)
     ?? undefined;
+}
+
+export function findProspectiveReservationConflict(
+  facts: SpineStep[],
+  originalClientOpId: ClientOpId,
+  workflowId: SpineWorkflowId,
+): SpineMutationIdentity | undefined {
+  const prospectiveIds = new Set(
+    reservedTransitionOpIds(originalClientOpId),
+  );
+  for (const fact of facts) {
+    const identity = mutationIdentityFor(fact);
+    if (
+      identity
+      && prospectiveIds.has(identity.clientOpId)
+      && !(
+        identity.role === 'transition'
+        && identity.fact.workflowId === workflowId
+      )
+    ) {
+      return identity;
+    }
+  }
+
+  const seenWorkflows = new Set<string>();
+  for (const fact of facts) {
+    if (
+      fact.workflowId === workflowId
+      || seenWorkflows.has(fact.workflowId)
+    ) {
+      continue;
+    }
+    seenWorkflows.add(fact.workflowId);
+    const collision = reservedTransitionOpIds(
+      fact.originalClientOpId as ClientOpId,
+    ).find((clientOpId) => prospectiveIds.has(clientOpId));
+    if (collision) {
+      return {
+        clientOpId: collision,
+        role: 'transition',
+        fact,
+      };
+    }
+  }
+  return undefined;
 }
 
 /** Mutating retries repair every previously durable but untraced fact. */

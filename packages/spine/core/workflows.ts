@@ -23,6 +23,7 @@ import {
   appendStep,
   existingWorkflow,
   findMutationIdentity,
+  findProspectiveReservationConflict,
   getSpineWorkflows,
   readAllSteps,
   reconcileIncompleteSteps,
@@ -111,6 +112,23 @@ async function startWorkflow(
           ? []
           : ['workflowId']),
         'mutationKind',
+      ],
+    );
+  }
+  const reservationConflict = findProspectiveReservationConflict(
+    facts.value,
+    originalClientOpId,
+    workflowId,
+  );
+  if (reservationConflict) {
+    return commandConflict(
+      reservationConflict.clientOpId,
+      reservationConflict.fact,
+      [
+        ...(reservationConflict.fact.workflowId === workflowId
+          ? []
+          : ['workflowId']),
+        'journalMutationId',
       ],
     );
   }
