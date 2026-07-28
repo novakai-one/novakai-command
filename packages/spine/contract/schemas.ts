@@ -72,6 +72,7 @@ export const SpineStep = z.object({
   eventIndex: z.number().int().nonnegative(),
   effectOpId: z.string().min(1).optional(),
   failure: SpineFailure.optional(),
+  commandClientOpId: z.string().min(1).optional(),
 }).strict();
 export type SpineStep = z.infer<typeof SpineStep>;
 

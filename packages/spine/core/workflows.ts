@@ -62,6 +62,7 @@ async function appendStep(
     eventIndex: number;
     effectOpId?: string;
     failure?: SpineFailure;
+    commandClientOpId?: string;
   },
   mutationClientOpId: ClientOpId,
 ): Promise<Result<SpineStep, SpineError>> {
@@ -328,6 +329,7 @@ function workflowFactInput(
     step: 1 | 2;
     eventIndex: number;
     failure?: SpineFailure;
+    commandClientOpId?: ClientOpId;
   },
 ) {
   return {
@@ -649,6 +651,35 @@ export async function continueWorkflow(
       },
     };
   }
+  const facts = await readAllSteps(ctx);
+  if (!facts.ok) return facts;
+  const priorCommand = facts.value.find(
+    (fact) =>
+      fact.commandClientOpId === callerClientOpId
+      || fact.originalClientOpId === callerClientOpId,
+  );
+  if (priorCommand) {
+    if (priorCommand.workflowId !== workflowId) {
+      return {
+        ok: false,
+        error: {
+          code: 'SpineIdempotencyConflict',
+          message: `clientOpId "${callerClientOpId}" already names a different workflow command`,
+          details: {
+            clientOpId: callerClientOpId,
+            workflowId: priorCommand.workflowId,
+            differingFields: ['workflowId'],
+          },
+          retryable: false,
+        },
+      };
+    }
+    const priorWorkflow = await workflowById(ctx, workflowId);
+    if (!priorWorkflow.ok) return priorWorkflow;
+    return priorWorkflow.value.resumable
+      ? resumeWorkflow(ctx, priorWorkflow.value)
+      : priorWorkflow;
+  }
   const found = await workflowById(ctx, workflowId);
   if (!found.ok) return found;
   if (
@@ -669,9 +700,21 @@ export async function continueWorkflow(
       },
     };
   }
-  // R3-10: the continuation command has its own caller id, while the
-  // dependency effects deliberately retain the original workflow ids for
-  // crash-safe replay. Journal mutations use deterministic state suffixes.
-  void callerClientOpId;
+  const nextStep = found.value.nextStep;
+  if (nextStep === null) return found;
+  // R3-10: continuation acceptance is its own immutable running fact under
+  // the caller id. Dependency effects retain the original workflow ids for
+  // crash-safe replay; their journal transitions use deterministic suffixes.
+  const commandAccepted = await appendStep(
+    ctx,
+    workflowFactInput(found.value, {
+      state: 'running',
+      step: nextStep,
+      eventIndex: nextStep === 1 ? 1 : 3,
+      commandClientOpId: callerClientOpId,
+    }),
+    callerClientOpId,
+  );
+  if (!commandAccepted.ok) return commandAccepted;
   return resumeWorkflow(ctx, found.value);
 }
