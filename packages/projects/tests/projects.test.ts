@@ -239,3 +239,48 @@ test('Spine attach stores only a dangling registered ref and stamps trusted iden
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('attach replay returns its original result after the Project is archived', async () => {
+  const root = freshRoot();
+  try {
+    const context = composeProjects({ root, principal: 'sys_spine' });
+    const projects = createProjectsContract(context);
+    const spine = createSpineProjectsContract(context);
+    const created = await projects.createProject({ title: 'Replay target' }, mintClientOpId());
+    assert.equal(created.ok, true);
+    if (!created.ok) return;
+
+    const attachOp = mintClientOpId();
+    const first = await spine.attach(
+      created.value.id,
+      { itemRef: { kind: 'trace', id: 'trace_replay_target' } },
+      attachOp,
+    );
+    assert.equal(first.ok, true);
+    if (!first.ok) return;
+    const archived = await projects.archiveProject(created.value.id, mintClientOpId());
+    assert.equal(archived.ok, true);
+
+    const retry = await spine.attach(
+      created.value.id,
+      { itemRef: { kind: 'trace', id: 'trace_replay_target' } },
+      attachOp,
+    );
+    assert.equal(retry.ok, true);
+    if (!retry.ok) return;
+    assert.equal(retry.value.id, first.value.id);
+
+    const items = await projects.getProjectItems(created.value.id);
+    assert.equal(items.ok && items.value.items.length, 1);
+    const engine = composeEngine({
+      root,
+      capability: 'projects',
+      allowedKinds: ['project', 'projectItem'],
+      principal: 'sys_spine',
+    });
+    const trace = await queryTraceBound(engine, { clientOpId: attachOp });
+    assert.equal(trace.items.length, 1);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
