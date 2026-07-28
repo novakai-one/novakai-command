@@ -1,5 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import * as projectsPackage from '../contract/index.js';
+
+const packageRoot = path.resolve(
+  path.dirname(new URL(import.meta.url).pathname),
+  '../..',
+);
 
 test('package root exposes the public contract and seals private core paths', async () => {
   const packageRoot = '@novakai/projects';
@@ -19,4 +32,46 @@ test('package root exposes the public contract and seals private core paths', as
       return true;
     },
   );
+});
+
+test('public composition exposes only opaque Projects consumer views', () => {
+  const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-projects-host-'));
+  try {
+    const host = projectsPackage.composeProjects({
+      root: path.join(workspace, '.novakai'),
+      principal: 'person_chris',
+    });
+
+    assert.deepEqual(Object.keys(host).sort(), ['operations', 'spine']);
+    assert.deepEqual(
+      Object.keys(host.operations).sort(),
+      ['archiveProject', 'createProject', 'getProjectItems', 'listProjects'],
+    );
+    assert.deepEqual(
+      Object.keys(host.spine).sort(),
+      [
+        'archiveProject',
+        'attach',
+        'createProject',
+        'getProjectItems',
+        'listProjects',
+      ],
+    );
+    assert.equal('handle' in host, false);
+    assert.equal('principal' in host, false);
+    assert.equal('root' in host, false);
+    assert.equal('createProjectsContract' in projectsPackage, false);
+    assert.equal('createSpineProjectsContract' in projectsPackage, false);
+
+    const declaration = readFileSync(
+      path.join(packageRoot, 'dist', 'contract', 'index.d.ts'),
+      'utf8',
+    );
+    assert.equal(declaration.includes('ProjectsContext'), false);
+    assert.equal(declaration.includes('ScopedStoreHandle'), false);
+    assert.equal(declaration.includes('createProjectsContract'), false);
+    assert.equal(declaration.includes('createSpineProjectsContract'), false);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
 });
