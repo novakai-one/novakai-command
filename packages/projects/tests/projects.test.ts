@@ -8,7 +8,11 @@ import {
   queryTraceBound,
 } from '@novakai/foundation/dist/contract/index.js';
 import { composeEngine } from '@novakai/foundation/dist/contract/compose.js';
-import { composeProjects, createProjectsContract } from '../contract/index.js';
+import {
+  composeProjects,
+  createProjectsContract,
+  createSpineProjectsContract,
+} from '../contract/index.js';
 
 const freshRoot = () => mkdtempSync(path.join(tmpdir(), 'nvk-projects-'));
 
@@ -129,6 +133,48 @@ test('getProjectItems requires an existing Project and starts empty', async () =
     const empty = await projects.getProjectItems(created.value.id);
     assert.equal(empty.ok, true);
     assert.deepEqual(empty.ok ? empty.value.items : null, []);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('only the Spine-facing contract can attach items to an active Project', async () => {
+  const root = freshRoot();
+  try {
+    const context = composeProjects({ root, principal: 'sys_spine' });
+    const ordinary = createProjectsContract(context);
+    assert.equal('attach' in ordinary, false);
+    const spine = createSpineProjectsContract(context);
+
+    const missing = await spine.attach(
+      'proj_missing' as never,
+      { itemRef: { kind: 'trace', id: 'trace_missing_project' } },
+      mintClientOpId(),
+    );
+    assert.equal(missing.ok, false);
+    assert.equal(missing.ok ? null : missing.error.code, 'NotFound');
+
+    const created = await ordinary.createProject({ title: 'Spine target' }, mintClientOpId());
+    assert.equal(created.ok, true);
+    if (!created.ok) return;
+    const attached = await spine.attach(
+      created.value.id,
+      { itemRef: { kind: 'trace', id: 'trace_first' } },
+      mintClientOpId(),
+    );
+    assert.equal(attached.ok, true);
+
+    await ordinary.archiveProject(created.value.id, mintClientOpId());
+    const archived = await spine.attach(
+      created.value.id,
+      { itemRef: { kind: 'trace', id: 'trace_blocked' } },
+      mintClientOpId(),
+    );
+    assert.equal(archived.ok, false);
+    assert.equal(archived.ok ? null : archived.error.code, 'InvalidEnvelope');
+
+    const retained = await ordinary.getProjectItems(created.value.id);
+    assert.equal(retained.ok && retained.value.items.length, 1);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
