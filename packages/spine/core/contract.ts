@@ -36,6 +36,10 @@ export interface SpineOperations {
     workflowId: SpineWorkflowId,
     clientOpId: ClientOpId,
   ): Promise<Result<SpineWorkflow, SpineError>>;
+  abandonWorkflow(
+    workflowId: SpineWorkflowId,
+    clientOpId: ClientOpId,
+  ): Promise<Result<SpineWorkflow, SpineError>>;
   getSpineWorkflows(): Promise<Result<Page<SpineWorkflow>, SpineError>>;
 }
 
@@ -58,6 +62,8 @@ export function createSpineHost(ctx: SpineContext): SpineHost {
         workflows.attachArtifactToProject(ctx, input, clientOpId),
       continueWorkflow: (workflowId, clientOpId) =>
         workflows.continueWorkflow(ctx, workflowId, clientOpId),
+      abandonWorkflow: (workflowId, clientOpId) =>
+        workflows.abandonWorkflow(ctx, workflowId, clientOpId),
       getSpineWorkflows,
     },
     boot: {

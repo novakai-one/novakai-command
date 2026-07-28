@@ -61,6 +61,14 @@ export type SpineWorkflowNotContinuableError = ContractError<
   }
 >;
 
+export type SpineWorkflowNotAbandonableError = ContractError<
+  'SpineWorkflowNotAbandonable',
+  {
+    workflowId: string;
+    state: 'done' | 'failed' | 'abandoned';
+  }
+>;
+
 export type SpineError =
   | StoreError
   | StoredSpineStepInvalidError
@@ -69,4 +77,5 @@ export type SpineError =
   | SpineIdempotencyConflictError
   | SpineFailpointError
   | SpineWorkflowNotFoundError
-  | SpineWorkflowNotContinuableError;
+  | SpineWorkflowNotContinuableError
+  | SpineWorkflowNotAbandonableError;

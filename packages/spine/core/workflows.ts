@@ -57,7 +57,7 @@ async function appendStep(
     projectId: ProjectId;
     sourceRef: SpineSourceRef;
     note?: string;
-    state: 'accepted' | 'running' | 'done' | 'failed';
+    state: 'accepted' | 'running' | 'done' | 'failed' | 'abandoned';
     step: 0 | 1 | 2;
     eventIndex: number;
     effectOpId?: string;
@@ -717,4 +717,87 @@ export async function continueWorkflow(
   );
   if (!commandAccepted.ok) return commandAccepted;
   return resumeWorkflow(ctx, found.value);
+}
+
+export async function abandonWorkflow(
+  ctx: SpineContext,
+  workflowId: SpineWorkflowId,
+  callerClientOpId: ClientOpId,
+): Promise<Result<SpineWorkflow, SpineError>> {
+  if (
+    typeof callerClientOpId !== 'string'
+    || callerClientOpId.length === 0
+  ) {
+    return {
+      ok: false,
+      error: {
+        code: 'InvalidEnvelope',
+        message: 'abandonWorkflow requires clientOpId',
+        details: {
+          missingFields: ['clientOpId'],
+          invalidFields: [],
+        },
+        retryable: false,
+      },
+    };
+  }
+  const facts = await readAllSteps(ctx);
+  if (!facts.ok) return facts;
+  const priorCommand = facts.value.find(
+    (fact) =>
+      fact.commandClientOpId === callerClientOpId
+      || fact.originalClientOpId === callerClientOpId,
+  );
+  if (priorCommand) {
+    if (priorCommand.workflowId !== workflowId) {
+      return {
+        ok: false,
+        error: {
+          code: 'SpineIdempotencyConflict',
+          message: `clientOpId "${callerClientOpId}" already names a different workflow command`,
+          details: {
+            clientOpId: callerClientOpId,
+            workflowId: priorCommand.workflowId,
+            differingFields: ['workflowId'],
+          },
+          retryable: false,
+        },
+      };
+    }
+    return workflowById(ctx, workflowId);
+  }
+  const found = await workflowById(ctx, workflowId);
+  if (!found.ok) return found;
+  if (
+    found.value.state === 'done'
+    || found.value.state === 'failed'
+    || found.value.state === 'abandoned'
+  ) {
+    return {
+      ok: false,
+      error: {
+        code: 'SpineWorkflowNotAbandonable',
+        message: `workflow "${workflowId}" is ${found.value.state}`,
+        details: {
+          workflowId,
+          state: found.value.state,
+        },
+        retryable: false,
+      },
+    };
+  }
+  const abandoned = await appendStep(ctx, {
+    workflowId: found.value.workflowId,
+    workflowType: found.value.workflowType,
+    originalClientOpId: found.value.originalClientOpId,
+    projectId: found.value.projectId,
+    sourceRef: found.value.sourceRef,
+    ...(found.value.note === undefined ? {} : { note: found.value.note }),
+    state: 'abandoned',
+    step: found.value.nextStep ?? 0,
+    eventIndex: 5,
+    commandClientOpId: callerClientOpId,
+  }, callerClientOpId);
+  if (!abandoned.ok) return abandoned;
+  return workflowById(ctx, workflowId);
 }
