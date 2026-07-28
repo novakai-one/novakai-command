@@ -44,6 +44,11 @@ export interface Conversation {
   personId?: string;
   /** Which provider that session runs on — decides advisory delivery. */
   provider?: ProviderName;
+  /** Boot migration classified this persisted view as address-less legacy data. */
+  unavailable?: {
+    code: 'ConversationUnavailable';
+    message: string;
+  };
 }
 
 /** Everything the methods operate on. Assembled once, by the composition root. */
@@ -522,6 +527,15 @@ export function buildMethods(runtime: ServerRuntime): MethodTable {
       const p = params as { conversationId: string; text: string; clientOpId?: string };
       const c = runtime.conversations.get(p.conversationId);
       if (!c) return { ok: false, error: 'unknown conversation' };
+      if (c.unavailable) {
+        return {
+          ok: false,
+          error: {
+            ...c.unavailable,
+            conversationId: c.id,
+          },
+        };
+      }
       const address = c.threadId ? `thread:${c.threadId}` : c.address;
       // §13 disposition 2: the SAME clientMessageId is reused on a manual
       // resend, so messaging idempotency prevents a double post.

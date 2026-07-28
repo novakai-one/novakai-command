@@ -23,7 +23,7 @@ import {
   type ProcessProbe, type ProviderCliRuntime, type ProviderSessionRegistry, type ProviderTurnRecord,
 } from '../../agents/contract/index.js';
 import { composeShellPersistence } from '../../shell/contract/persistence.node.js';
-import { listConversationViews } from '../../shell/contract/conversationView.js';
+import { listConversationViews, setConversationView } from '../../shell/contract/conversationView.js';
 import type { ScreenContext } from '../../shell/contract/context.js';
 import { createTranscriptWatcher, defaultSources } from '../../transcript/contract/index.js';
 import { recordSystemAction } from '@novakai/foundation/dist/contract/index.js';
@@ -195,7 +195,8 @@ export async function bootServer(options: BootOptions): Promise<BootResult> {
 
   // ── 6. shell persistence (composed at step 2; hydrate the view cache) ────
   const conversations = new Map<string, Conversation>();
-  for (const view of await listConversationViews(persistence.conversationViewDriver)) {
+  const conversationViews = await listConversationViews(persistence.conversationViewDriver);
+  for (const view of conversationViews) {
     conversations.set(view.id, {
       id: view.id,
       address: view.threadRef?.kind === 'thread' ? `thread:${view.threadRef.id}` : '',
@@ -207,7 +208,6 @@ export async function bootServer(options: BootOptions): Promise<BootResult> {
       ...(view.threadRef?.kind === 'thread' ? { threadId: view.threadRef.id } : {}),
     });
   }
-  note(6, 'shell', `layout/settings ready, ${conversations.size} conversation view(s) hydrated`);
 
   // ── 7. session layer + providerSession registry + orphan sweep ───────────
   // The factory takes the capability, not a plucked function: the server's ONLY
@@ -217,13 +217,97 @@ export async function bootServer(options: BootOptions): Promise<BootResult> {
   if (!humanHolder.ok) {
     return { ok: false, error: { code: 'MessagingUnavailable', message: humanHolder.error.message } };
   }
+  const appendSystemAction = options.recordSystemAction ?? recordSystemAction;
+
+  // §9 migration: a persisted view is usable only when its thread still
+  // resolves through messaging and, for a direct thread, every participant is
+  // still a configured principal. Null/empty demo views have no address to
+  // validate at all. They are preserved, archived, and typed as unavailable.
+  const listedThreads = await humanHolder.value.call((session) =>
+    (session as { listThreadsForPerson(input: object): Promise<unknown> })
+      .listThreadsForPerson({})) as {
+    kind: string;
+    value?: { threads: Array<{ id: string; direct?: { pair: string[] }; room?: unknown }> };
+    error?: { name?: string; message?: string };
+  };
+  const configuredPeople = new Set(config.principals.map((principal) => principal.personId));
+  const resolvableThreads = listedThreads.kind === 'ok' && listedThreads.value
+    ? new Set(listedThreads.value.threads
+      .filter((thread) =>
+        thread.room !== undefined
+        || (thread.direct?.pair.every((personId) => configuredPeople.has(personId)) ?? false))
+      .map((thread) => thread.id))
+    : null;
+  if (!resolvableThreads) {
+    console.error(
+      `[nvk-server] legacy conversation classification could not list messaging threads: `
+      + `${listedThreads.error?.name ?? 'Unknown'} ${listedThreads.error?.message ?? ''}`.trim(),
+    );
+  }
+
+  const unavailableMessage =
+    'This legacy conversation has no resolvable person or thread. It was archived; start a new conversation to send a message.';
+  let archivedLegacy = 0;
+  for (const view of conversationViews) {
+    const hasThreadRef = view.threadRef?.kind === 'thread';
+    const resolvable = hasThreadRef
+      ? (resolvableThreads?.has(view.threadRef!.id) ?? true)
+      : false;
+    if (resolvable) continue;
+
+    const conversation = conversations.get(view.id)!;
+    conversation.archived = true;
+    conversation.address = '';
+    delete conversation.threadId;
+    conversation.unavailable = {
+      code: 'ConversationUnavailable',
+      message: unavailableMessage,
+    };
+    if (view.archived) continue;
+
+    const migrated = await setConversationView(
+      persistence.conversationViewDriver,
+      view.id,
+      { archived: true },
+      `op_${randomUUID()}`,
+    );
+    if (!migrated.ok) {
+      console.error(
+        `[nvk-server] legacy conversation migration failed for ${view.id}: `
+        + `${migrated.error.code} ${migrated.error.message}`,
+      );
+      continue;
+    }
+    archivedLegacy += 1;
+    const traced = await appendSystemAction(persistence.handle, {
+      action: 'hook_log',
+      target: { kind: 'conversationView', id: view.id },
+      clientOpId: `op_${randomUUID()}` as never,
+      meta: {
+        event: 'conversation.migrate.archive-unresolvable',
+        previousThreadRef: view.threadRef,
+      },
+    });
+    if (!traced.ok) {
+      console.error(
+        `[nvk-server] legacy conversation migration trace failed for ${view.id} `
+        + `(${traced.error.code}): ${traced.error.message}`,
+      );
+    }
+  }
+  note(
+    6,
+    'shell',
+    `layout/settings ready, ${conversations.size} conversation view(s) hydrated; `
+    + `${archivedLegacy} unresolvable legacy view(s) archived`,
+  );
+
   const sessions = createProviderSessionRegistry(agentsCtx, options.processProbe ?? osProcessProbe);
   const sweep = await sessions.sweepOrphans();
   for (const error of sweep.errors) {
     console.error(`[nvk-server] orphan sweep registry patch failed (${error.code}): ${error.message}`);
   }
   note(7, 'sessions', `${holders.principals().length} holder(s); ${(await sessions.resumable()).length} resumable session(s); ${sweep.interrupted.length} interrupted, ${sweep.killed.length} orphan(s) reaped`);
-  const appendSystemAction = options.recordSystemAction ?? recordSystemAction;
   for (const interruption of sweep.interrupted) {
     const traced = await appendSystemAction(persistence.handle, {
       action: 'hook_log',
