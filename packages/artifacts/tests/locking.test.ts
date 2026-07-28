@@ -7,6 +7,7 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  utimesSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -113,6 +114,51 @@ test('same-operation concurrent puts serialize publication integrity', async () 
     assert.equal(matching.every((result) => result.ok), true);
     if (!matching[0].ok || !matching[1].ok) return;
     assert.deepEqual(matching[1].value, matching[0].value);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test('artifact publication recovers dead and abandoned leases', async () => {
+  const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-artifact-stale-lease-'));
+  try {
+    for (const scenario of ['dead-owner', 'ownerless'] as const) {
+      const root = path.join(workspace, scenario, '.novakai');
+      const host = composeArtifacts({
+        root,
+        principal: 'person_chris',
+        lockTimeoutMs: 100,
+      });
+      const clientOpId = mintClientOpId();
+      const input = {
+        bytes: Buffer.from(`recover ${scenario}`, 'utf8'),
+        mimeType: 'text/plain',
+      };
+      const created = await host.operations.putArtifact(input, clientOpId);
+      assert.equal(created.ok, true);
+      if (!created.ok) return;
+      const lockDir = path.join(
+        root,
+        'artifacts',
+        '.publication-locks',
+        `${created.value.id}.lock`,
+      );
+      mkdirSync(lockDir, { recursive: true });
+      if (scenario === 'dead-owner') {
+        writeFileSync(
+          path.join(lockDir, 'owner.json'),
+          `${JSON.stringify({ pid: 999999, token: 'dead-owner' })}\n`,
+        );
+      } else {
+        const staleAt = new Date(Date.now() - 60_000);
+        utimesSync(lockDir, staleAt, staleAt);
+      }
+
+      const retried = await host.operations.putArtifact(input, clientOpId);
+
+      assert.equal(retried.ok, true);
+      assert.equal(existsSync(lockDir), false);
+    }
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }
