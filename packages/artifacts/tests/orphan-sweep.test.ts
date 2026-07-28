@@ -2,8 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   mkdtempSync,
+  mkdirSync,
   readdirSync,
   rmSync,
+  writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -326,6 +328,36 @@ test('orphan sweep retry deletes once with one accepted no-byte trace', async ()
     if (priorRoot === undefined) delete process.env.NOVAKAI_ROOT;
     else process.env.NOVAKAI_ROOT = priorRoot;
     __resetDefaultEngine();
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test('orphan sweep translates Foundation trace storage failures and preserves the orphan', async () => {
+  const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-sweep-trace-store-'));
+  const root = path.join(workspace, '.novakai');
+  try {
+    const host = composeArtifacts({
+      root,
+      principal: 'sys_reconciler',
+    });
+    const initialized = await host.operations.listArtifacts();
+    assert.equal(initialized.ok, true);
+
+    const artifactId = 'artifact_trace-storage-failure';
+    const bytesRoot = path.join(root, 'artifacts');
+    mkdirSync(bytesRoot, { recursive: true });
+    writeFileSync(path.join(bytesRoot, artifactId), 'orphan bytes');
+    mkdirSync(path.join(root, 'stores', 'traces.jsonl'), {
+      recursive: true,
+    });
+
+    const swept = await host.boot.sweepOrphans();
+
+    assert.equal(swept.ok, false);
+    if (swept.ok) return;
+    assert.equal(swept.error.code, 'ArtifactOrphanTraceFailed');
+    assert.deepEqual(readdirSync(bytesRoot), [artifactId]);
+  } finally {
     rmSync(workspace, { recursive: true, force: true });
   }
 });
