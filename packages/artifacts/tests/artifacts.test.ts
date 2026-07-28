@@ -259,7 +259,7 @@ test('getArtifactBytes reports typed missing bytes when metadata still exists', 
   }
 });
 
-test('putArtifact returns a typed error when byte-directory creation fails', async () => {
+test('putArtifact keeps byte-directory failures typed before publication locking', async () => {
   const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-artifact-mkdir-'));
   const root = path.join(workspace, '.novakai');
   try {
@@ -281,6 +281,10 @@ test('putArtifact returns a typed error when byte-directory creation fails', asy
     assert.equal(
       (result.error.details as { effect: string }).effect,
       'temp-write',
+    );
+    assert.equal(
+      existsSync(path.join(root, 'artifacts', '.publication-locks')),
+      false,
     );
   } finally {
     rmSync(workspace, { recursive: true, force: true });
