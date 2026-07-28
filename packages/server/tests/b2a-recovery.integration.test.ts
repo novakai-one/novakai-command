@@ -112,6 +112,20 @@ function unwrap<T>(frame: { result?: unknown; error?: string }): T {
   return result.value as T;
 }
 
+function assertTypedFailure(
+  frame: { result?: unknown; error?: string },
+  expectedCode: string,
+): void {
+  assert.equal(frame.error, undefined, frame.error);
+  const result = frame.result as {
+    ok: boolean;
+    error?: { code?: string; message?: string };
+  };
+  assert.equal(result.ok, false);
+  assert.equal(result.error?.code, expectedCode);
+  assert.match(result.error?.message ?? '', /injected Spine failure/i);
+}
+
 test('Server restart discovers accepted WS workflows for explicit continue or abandon', async () => {
   const root = mkdtempSync(path.join(tmpdir(), 'nvk-b2a-recovery-'));
   const priorFailpoint = process.env.NVK_FAILPOINT;
@@ -181,7 +195,7 @@ test('Server restart discovers accepted WS workflows for explicit continue or ab
         clientOpId: 'op_server_pending_message',
       },
     );
-    assert.match(interruptedMessage.error ?? '', /failpoint/i);
+    assertTypedFailure(interruptedMessage, 'SpineFailpoint');
     const interruptedArtifact = await rpc(
       firstSocket,
       3,
@@ -192,7 +206,7 @@ test('Server restart discovers accepted WS workflows for explicit continue or ab
         clientOpId: 'op_server_pending_artifact',
       },
     );
-    assert.match(interruptedArtifact.error ?? '', /failpoint/i);
+    assertTypedFailure(interruptedArtifact, 'SpineFailpoint');
     const pendingBeforeRestart = unwrap<{ items: Array<{
       workflowId: string;
       workflowType: string;
@@ -210,7 +224,7 @@ test('Server restart discovers accepted WS workflows for explicit continue or ab
     delete process.env.NVK_FAILPOINT;
 
     mkdirSync(path.join(root, 'artifacts'), { recursive: true });
-    const orphanPath = path.join(root, 'artifacts', 'artifact_orphan_boot');
+    const orphanPath = path.join(root, 'artifacts', 'artifact_orphan-boot');
     writeFileSync(orphanPath, 'orphan');
     second = await boot(root);
     const artifactStep = second.steps.find(({ name }) => name === 'artifacts');
@@ -218,7 +232,7 @@ test('Server restart discovers accepted WS workflows for explicit continue or ab
     assert.match(artifactStep?.detail ?? '', /^1 orphan byte file/);
     assert.match(spineStep?.detail ?? '', /^2 resumable workflow/);
     assert.equal(
-      readdirSync(path.join(root, 'artifacts')).includes('artifact_orphan_boot'),
+      readdirSync(path.join(root, 'artifacts')).includes('artifact_orphan-boot'),
       false,
       'Artifact boot maintenance swept the orphan',
     );
