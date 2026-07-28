@@ -172,3 +172,41 @@ test('NVK_FAILPOINT names deterministic before/after record-append failures', as
     rmSync(after.workspace, { recursive: true, force: true });
   }
 });
+
+test('concurrent artifact hosts isolate failpoints captured at composition', async () => {
+  const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-artifact-failpoint-host-'));
+  const prior = process.env.NVK_FAILPOINT;
+  try {
+    process.env.NVK_FAILPOINT = 'artifacts.put.before-temp-write';
+    const failing = composeArtifacts({
+      root: path.join(workspace, 'failing', '.novakai'),
+      principal: 'person_chris',
+    }).operations;
+    delete process.env.NVK_FAILPOINT;
+    const succeeding = composeArtifacts({
+      root: path.join(workspace, 'succeeding', '.novakai'),
+      principal: 'person_chris',
+    }).operations;
+
+    const [failed, succeeded] = await Promise.all([
+      failing.putArtifact({
+        bytes: Buffer.from('isolated failure', 'utf8'),
+        mimeType: 'text/plain',
+      }, mintClientOpId()),
+      succeeding.putArtifact({
+        bytes: Buffer.from('isolated success', 'utf8'),
+        mimeType: 'text/plain',
+      }, mintClientOpId()),
+    ]);
+
+    assert.equal(failed.ok, false);
+    if (!failed.ok) {
+      assert.equal(failed.error.code, 'ArtifactFailpoint');
+    }
+    assert.equal(succeeded.ok, true);
+  } finally {
+    if (prior === undefined) delete process.env.NVK_FAILPOINT;
+    else process.env.NVK_FAILPOINT = prior;
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
