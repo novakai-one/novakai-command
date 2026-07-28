@@ -118,3 +118,34 @@ test('offline CLI create has parity with the in-process Projects contract', asyn
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('offline CLI lists Projects through the shared contract', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'nvk-projects-cli-list-'));
+  try {
+    const token = mintToken(
+      root,
+      'person_cli',
+      ['project', 'projectItem'],
+      'person_local',
+    );
+    const projects = createProjectsContract(composeProjects({
+      root,
+      principal: 'person_cli',
+    }));
+    const created = await projects.createProject(
+      { title: 'Listed by CLI' },
+      mintClientOpId(),
+    );
+    assert.equal(created.ok, true);
+    if (!created.ok) return;
+
+    const listed = success<{ items: Array<{ id: string }> }>(
+      root,
+      token.bearer,
+      ['list', '--status', 'active'],
+    );
+    assert.deepEqual(listed.items.map(({ id }) => id), [created.value.id]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
