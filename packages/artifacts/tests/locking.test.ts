@@ -53,3 +53,67 @@ test('artifact byte durability completes outside the held Foundation global lock
     rmSync(workspace, { recursive: true, force: true });
   }
 });
+
+test('same-operation concurrent puts serialize publication integrity', async () => {
+  const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-artifact-publication-'));
+  try {
+    const mismatchedRoot = path.join(workspace, 'mismatched', '.novakai');
+    const firstHost = composeArtifacts({
+      root: mismatchedRoot,
+      principal: 'person_chris',
+    });
+    const secondHost = composeArtifacts({
+      root: mismatchedRoot,
+      principal: 'person_chris',
+    });
+    const mismatchedOp = mintClientOpId();
+    const largeBytes = Buffer.alloc(8 * 1024 * 1024, 0x41);
+    const smallBytes = Buffer.from('different', 'utf8');
+
+    const mismatched = await Promise.all([
+      firstHost.operations.putArtifact({
+        bytes: largeBytes,
+        mimeType: 'application/octet-stream',
+      }, mismatchedOp),
+      secondHost.operations.putArtifact({
+        bytes: smallBytes,
+        mimeType: 'text/plain',
+      }, mismatchedOp),
+    ]);
+
+    assert.equal(mismatched.filter((result) => result.ok).length, 1);
+    assert.equal(mismatched.filter((result) => !result.ok).length, 1);
+    const conflict = mismatched.find((result) => !result.ok);
+    assert.equal(conflict?.ok, false);
+    if (conflict && !conflict.ok) {
+      assert.equal(conflict.error.code, 'ArtifactIdempotencyConflict');
+    }
+    const winner = mismatched.find((result) => result.ok);
+    assert.equal(winner?.ok, true);
+    if (!winner?.ok) return;
+    const published = await firstHost.http.getArtifactBytes(winner.value.id);
+    assert.equal(published.ok, true);
+    if (!published.ok || 'absent' in published.value) return;
+    assert.equal(published.value.byteLength, winner.value.byteSize);
+
+    const matchingRoot = path.join(workspace, 'matching', '.novakai');
+    const matchingHost = composeArtifacts({
+      root: matchingRoot,
+      principal: 'person_chris',
+    });
+    const matchingOp = mintClientOpId();
+    const matchingInput = {
+      bytes: Buffer.from('same publication', 'utf8'),
+      mimeType: 'text/plain',
+    };
+    const matching = await Promise.all([
+      matchingHost.operations.putArtifact(matchingInput, matchingOp),
+      matchingHost.operations.putArtifact(matchingInput, matchingOp),
+    ]);
+    assert.equal(matching.every((result) => result.ok), true);
+    if (!matching[0].ok || !matching[1].ok) return;
+    assert.deepEqual(matching[1].value, matching[0].value);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
