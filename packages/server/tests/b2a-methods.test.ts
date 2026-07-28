@@ -129,6 +129,59 @@ test('B2a WS methods expose exactly eleven non-byte operations through public co
   assert.deepEqual(h.calls.map(({ method }) => method), valid.map((entry) => entry[2]));
 });
 
+test('WS Artifact metadata omits operator provenance from get and list responses', async () => {
+  const h = harness();
+  const rawArtifact = {
+    id: 'artifact_private',
+    kind: 'artifact',
+    schemaVersion: 1,
+    createdAt: '2026-07-29T00:00:00.000Z',
+    permissionLevel: 'private',
+    createdBy: 'person_operator',
+    mimeType: 'text/plain',
+    byteSize: 42,
+    status: 'stored',
+    originPath: '/private/operator/path/secret.txt',
+    sourceAttribution: {
+      origin: 'operator-machine',
+      originalId: 'secret-source',
+      ingestedAt: '2026-07-29T00:00:00.000Z',
+    },
+  };
+  h.capabilities.artifacts.operations.getArtifactMeta = async () => ({
+    ok: true,
+    value: rawArtifact,
+  }) as never;
+  h.capabilities.artifacts.operations.listArtifacts = async () => ({
+    ok: true,
+    value: { items: [rawArtifact], nextCursor: 'artifact_cursor' },
+  }) as never;
+  const methods = buildB2aMethods(h.capabilities);
+  const expected = {
+    id: rawArtifact.id,
+    kind: rawArtifact.kind,
+    mimeType: rawArtifact.mimeType,
+    byteSize: rawArtifact.byteSize,
+    createdAt: rawArtifact.createdAt,
+    status: rawArtifact.status,
+  };
+
+  const metadata = await methods.getArtifactMeta!({
+    artifactId: rawArtifact.id,
+  } as never);
+  const listed = await methods.listArtifacts!({} as never);
+
+  assert.deepEqual(metadata, { ok: true, value: expected });
+  assert.deepEqual(listed, {
+    ok: true,
+    value: { items: [expected], nextCursor: 'artifact_cursor' },
+  });
+  assert.equal(JSON.stringify(metadata).includes('originPath'), false);
+  assert.equal(JSON.stringify(metadata).includes('sourceAttribution'), false);
+  assert.equal(JSON.stringify(listed).includes('originPath'), false);
+  assert.equal(JSON.stringify(listed).includes('sourceAttribution'), false);
+});
+
 test('every B2a WS method rejects malformed external input before delegation', async () => {
   const h = harness();
   const methods = buildB2aMethods(h.capabilities);
