@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import {
   readdir,
+  stat,
   unlink,
 } from 'node:fs/promises';
 import path from 'node:path';
@@ -143,7 +144,7 @@ async function traceOrphan(
 async function deleteOrphan(
   ctx: ArtifactsContext,
   orphan: OrphanEntry,
-): Promise<Result<null, ArtifactsError>> {
+): Promise<Result<boolean, ArtifactsError>> {
   const before = ctx.failpoint(
     orphan.artifactId,
     'artifacts.sweep.before-delete',
@@ -152,6 +153,9 @@ async function deleteOrphan(
   try {
     await unlink(path.join(ctx.bytesRoot, orphan.name));
   } catch (cause) {
+    if ((cause as NodeJS.ErrnoException).code === 'ENOENT') {
+      return { ok: true, value: false };
+    }
     return {
       ok: false,
       error: err(
@@ -172,7 +176,30 @@ async function deleteOrphan(
   );
   return after
     ? { ok: false, error: after }
-    : { ok: true, value: null };
+    : { ok: true, value: true };
+}
+
+async function orphanStillExists(
+  ctx: ArtifactsContext,
+  orphan: OrphanEntry,
+): Promise<Result<boolean, ArtifactsError>> {
+  try {
+    const candidate = await stat(path.join(ctx.bytesRoot, orphan.name));
+    return { ok: true, value: candidate.isFile() };
+  } catch (cause) {
+    if ((cause as NodeJS.ErrnoException).code === 'ENOENT') {
+      return { ok: true, value: false };
+    }
+    return {
+      ok: false,
+      error: err(
+        'ArtifactOrphanScanFailed',
+        `artifact orphan candidate check failed: ${String(cause)}`,
+        { cause: String(cause) },
+        true,
+      ),
+    };
+  }
 }
 
 async function sweepOrphan(
@@ -195,14 +222,16 @@ async function sweepOrphan(
   ) {
     result = { ok: true, value: false };
   } else {
-    const traced = await traceOrphan(ctx, orphan);
-    if (!traced.ok) {
-      result = traced;
+    const exists = await orphanStillExists(ctx, orphan);
+    if (!exists.ok) {
+      result = exists;
+    } else if (!exists.value) {
+      result = { ok: true, value: false };
     } else {
-      const deleted = await deleteOrphan(ctx, orphan);
-      result = deleted.ok
-        ? { ok: true, value: true }
-        : deleted;
+      const traced = await traceOrphan(ctx, orphan);
+      result = traced.ok
+        ? await deleteOrphan(ctx, orphan)
+        : traced;
     }
   }
   const released = await releaseArtifactPublication(acquired.value);
