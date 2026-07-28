@@ -9,10 +9,7 @@ import {
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import * as foundation from '@novakai/foundation/dist/contract/index.js';
-import {
-  composeProjects,
-  createProjectsContract,
-} from '../contract/index.js';
+import { composeProjects } from '../contract/index.js';
 
 test('legacy Foundation reads stay infallible while Projects opts into typed read failures', async () => {
   const root = mkdtempSync(path.join(tmpdir(), 'nvk-projects-read-compat-'));
@@ -68,11 +65,11 @@ test('legacy Foundation reads stay infallible while Projects opts into typed rea
     assert.equal(checked.ok, false);
     assert.equal(checked.ok ? null : checked.error.code, 'LockBusy');
 
-    const projects = createProjectsContract(composeProjects({
+    const projects = composeProjects({
       root,
       principal: 'person_reader',
       lockTimeoutMs: 50,
-    }));
+    }).operations;
     const items = await projects.getProjectItems('proj_unreadable' as never);
     assert.equal(items.ok, false);
     assert.equal(items.ok ? null : items.error.code, 'LockBusy');

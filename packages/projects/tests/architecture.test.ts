@@ -18,8 +18,6 @@ test('package root exposes the public contract and seals private core paths', as
   const packageRoot = '@novakai/projects';
   const publicContract = await import(packageRoot);
   assert.equal(typeof publicContract.composeProjects, 'function');
-  assert.equal(typeof publicContract.createProjectsContract, 'function');
-  assert.equal(typeof publicContract.createSpineProjectsContract, 'function');
 
   const privateCore = '@novakai/projects/core/projects.js';
   await assert.rejects(

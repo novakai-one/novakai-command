@@ -2,7 +2,12 @@ import {
   composeHandle,
   type ScopedStoreHandle,
 } from '@novakai/foundation/dist/contract/index.js';
+import {
+  createProjectsHost,
+  type ProjectsHost,
+} from './contract.js';
 
+/** @internal private composition authority; never published from the package root. */
 export interface ProjectsContext {
   readonly handle: ScopedStoreHandle;
   readonly principal: string;
@@ -15,8 +20,8 @@ export interface ComposeProjectsOptions {
   lockTimeoutMs?: number;
 }
 
-export function composeProjects(options: ComposeProjectsOptions): ProjectsContext {
-  return {
+export function composeProjects(options: ComposeProjectsOptions): ProjectsHost {
+  const context: ProjectsContext = {
     handle: composeHandle({
       root: options.root,
       legacyRoot: options.legacyRoot,
@@ -27,4 +32,5 @@ export function composeProjects(options: ComposeProjectsOptions): ProjectsContex
     }),
     principal: options.principal,
   };
+  return createProjectsHost(context);
 }

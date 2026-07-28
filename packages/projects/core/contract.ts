@@ -39,7 +39,12 @@ export interface SpineProjectsContract extends ProjectsContract {
   ): Promise<Result<ProjectItem, ProjectsError>>;
 }
 
-export function createProjectsContract(ctx: ProjectsContext): ProjectsContract {
+export interface ProjectsHost {
+  readonly operations: ProjectsContract;
+  readonly spine: SpineProjectsContract;
+}
+
+function createProjectsContract(ctx: ProjectsContext): ProjectsContract {
   return {
     createProject: (input, clientOpId) => projects.createProject(ctx, input, clientOpId),
     listProjects: (filter) => projects.listProjects(ctx, filter),
@@ -49,10 +54,17 @@ export function createProjectsContract(ctx: ProjectsContext): ProjectsContract {
   };
 }
 
-export function createSpineProjectsContract(ctx: ProjectsContext): SpineProjectsContract {
+function createSpineProjectsContract(ctx: ProjectsContext): SpineProjectsContract {
   return {
     ...createProjectsContract(ctx),
     attach: (projectId, input, clientOpId) =>
       projects.attach(ctx, projectId, input, clientOpId),
+  };
+}
+
+export function createProjectsHost(ctx: ProjectsContext): ProjectsHost {
+  return {
+    operations: createProjectsContract(ctx),
+    spine: createSpineProjectsContract(ctx),
   };
 }

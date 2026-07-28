@@ -13,11 +13,7 @@ import {
   mintClientOpId,
   mintToken,
 } from '@novakai/foundation/dist/contract/index.js';
-import {
-  composeProjects,
-  createProjectsContract,
-  createSpineProjectsContract,
-} from '../contract/index.js';
+import { composeProjects } from '../contract/index.js';
 
 const CLI = path.resolve('dist/cli/nvk-project.js');
 
@@ -106,10 +102,10 @@ test('offline CLI create has parity with the in-process Projects contract', asyn
     assert.equal(created.permissionLevel, 'team');
     assert.equal(created.status, 'active');
 
-    const projects = createProjectsContract(composeProjects({
+    const projects = composeProjects({
       root,
       principal: 'person_cli',
-    }));
+    }).operations;
     const listed = await projects.listProjects();
     assert.equal(
       listed.ok && listed.value.items.some(({ id }) => id === created.id),
@@ -129,10 +125,10 @@ test('offline CLI lists Projects through the shared contract', async () => {
       ['project', 'projectItem'],
       'person_local',
     );
-    const projects = createProjectsContract(composeProjects({
+    const projects = composeProjects({
       root,
       principal: 'person_cli',
-    }));
+    }).operations;
     const created = await projects.createProject(
       { title: 'Listed by CLI' },
       mintClientOpId(),
@@ -160,9 +156,9 @@ test('offline CLI lists Project items through the shared contract', async () => 
       ['project', 'projectItem'],
       'person_local',
     );
-    const context = composeProjects({ root, principal: 'sys_spine' });
-    const projects = createProjectsContract(context);
-    const spine = createSpineProjectsContract(context);
+    const host = composeProjects({ root, principal: 'sys_spine' });
+    const projects = host.operations;
+    const spine = host.spine;
     const created = await projects.createProject(
       { title: 'CLI item holder' },
       mintClientOpId(),
@@ -196,10 +192,10 @@ test('offline CLI archives a Project through the shared contract', async () => {
       ['project', 'projectItem'],
       'person_local',
     );
-    const projects = createProjectsContract(composeProjects({
+    const projects = composeProjects({
       root,
       principal: 'person_cli',
-    }));
+    }).operations;
     const created = await projects.createProject(
       { title: 'Archived by CLI' },
       mintClientOpId(),

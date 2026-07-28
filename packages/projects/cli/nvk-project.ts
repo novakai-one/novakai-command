@@ -8,7 +8,6 @@ import {
 } from '@novakai/foundation/dist/contract/index.js';
 import {
   composeProjects,
-  createProjectsContract,
   type ProjectStatus,
   type ProjectsContract,
 } from '../contract/index.js';
@@ -69,11 +68,11 @@ function authenticateProjects(
       retryable: false,
     });
   }
-  return createProjectsContract(composeProjects({
+  return composeProjects({
     root,
     principal: token.principal,
     lockTimeoutMs,
-  }));
+  }).operations;
 }
 
 async function main(): Promise<void> {

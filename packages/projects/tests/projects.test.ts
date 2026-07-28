@@ -15,21 +15,17 @@ import {
   queryTraceBound,
 } from '@novakai/foundation/dist/contract/index.js';
 import { composeEngine } from '@novakai/foundation/dist/contract/compose.js';
-import {
-  composeProjects,
-  createProjectsContract,
-  createSpineProjectsContract,
-} from '../contract/index.js';
+import { composeProjects } from '../contract/index.js';
 
 const freshRoot = () => mkdtempSync(path.join(tmpdir(), 'nvk-projects-'));
 
 test('createProject requires clientOpId and replays one traced result', async () => {
   const root = freshRoot();
   try {
-    const projects = createProjectsContract(composeProjects({
+    const projects = composeProjects({
       root,
       principal: 'person_chris',
-    }));
+    }).operations;
     const missingOp = await projects.createProject(
       { title: 'Missing op' },
       undefined as never,
@@ -63,10 +59,10 @@ test('createProject requires clientOpId and replays one traced result', async ()
 test('listProjects returns created Projects filtered by lifecycle status', async () => {
   const root = freshRoot();
   try {
-    const projects = createProjectsContract(composeProjects({
+    const projects = composeProjects({
       root,
       principal: 'person_chris',
-    }));
+    }).operations;
     const first = await projects.createProject({ title: 'One' }, mintClientOpId());
     const second = await projects.createProject({ title: 'Two' }, mintClientOpId());
     assert.equal(first.ok && second.ok, true);
@@ -85,10 +81,10 @@ test('listProjects returns created Projects filtered by lifecycle status', async
 test('archiveProject requires clientOpId and replays one traced lifecycle change', async () => {
   const root = freshRoot();
   try {
-    const projects = createProjectsContract(composeProjects({
+    const projects = composeProjects({
       root,
       principal: 'person_chris',
-    }));
+    }).operations;
     const created = await projects.createProject({ title: 'Archive me' }, mintClientOpId());
     assert.equal(created.ok, true);
     if (!created.ok) return;
@@ -126,10 +122,10 @@ test('archiveProject requires clientOpId and replays one traced lifecycle change
 test('getProjectItems requires an existing Project and starts empty', async () => {
   const root = freshRoot();
   try {
-    const projects = createProjectsContract(composeProjects({
+    const projects = composeProjects({
       root,
       principal: 'person_chris',
-    }));
+    }).operations;
     const missing = await projects.getProjectItems('proj_missing' as never);
     assert.equal(missing.ok, false);
     assert.equal(missing.ok ? null : missing.error.code, 'NotFound');
@@ -148,10 +144,10 @@ test('getProjectItems requires an existing Project and starts empty', async () =
 test('only the Spine-facing contract can attach items to an active Project', async () => {
   const root = freshRoot();
   try {
-    const context = composeProjects({ root, principal: 'sys_spine' });
-    const ordinary = createProjectsContract(context);
+    const host = composeProjects({ root, principal: 'sys_spine' });
+    const ordinary = host.operations;
     assert.equal('attach' in ordinary, false);
-    const spine = createSpineProjectsContract(context);
+    const spine = host.spine;
 
     const missing = await spine.attach(
       'proj_missing' as never,
@@ -190,9 +186,9 @@ test('only the Spine-facing contract can attach items to an active Project', asy
 test('Spine attach stores only a dangling registered ref and stamps trusted identity', async () => {
   const root = freshRoot();
   try {
-    const context = composeProjects({ root, principal: 'person_real' });
-    const projects = createProjectsContract(context);
-    const spine = createSpineProjectsContract(context);
+    const host = composeProjects({ root, principal: 'person_real' });
+    const projects = host.operations;
+    const spine = host.spine;
     const created = await projects.createProject({
       title: 'Reference holder',
       createdBy: 'person_spoofed',
@@ -250,9 +246,9 @@ test('Spine attach stores only a dangling registered ref and stamps trusted iden
 test('attach replay returns its original result after the Project is archived', async () => {
   const root = freshRoot();
   try {
-    const context = composeProjects({ root, principal: 'sys_spine' });
-    const projects = createProjectsContract(context);
-    const spine = createSpineProjectsContract(context);
+    const host = composeProjects({ root, principal: 'sys_spine' });
+    const projects = host.operations;
+    const spine = host.spine;
     const created = await projects.createProject({ title: 'Replay target' }, mintClientOpId());
     assert.equal(created.ok, true);
     if (!created.ok) return;
@@ -301,13 +297,13 @@ test('Project-dependent operations preserve a Foundation LockBusy read failure',
       path.join(lockDir, 'owner.json'),
       `${JSON.stringify({ pid: process.pid, token: 'projects-read-test' })}\n`,
     );
-    const context = composeProjects({
+    const host = composeProjects({
       root,
       principal: 'sys_spine',
       lockTimeoutMs: 50,
     });
-    const projects = createProjectsContract(context);
-    const spine = createSpineProjectsContract(context);
+    const projects = host.operations;
+    const spine = host.spine;
     const projectId = 'proj_unreadable' as never;
     const results = [
       await projects.archiveProject(projectId, mintClientOpId()),
@@ -347,10 +343,10 @@ test('listProjects returns a typed corruption error for a malformed durable Proj
     }, mintClientOpId());
     assert.equal(planted.ok, true);
 
-    const projects = createProjectsContract(composeProjects({
+    const projects = composeProjects({
       root,
       principal: 'person_reader',
-    }));
+    }).operations;
     const listed = await projects.listProjects();
     assert.equal(listed.ok, false);
     assert.equal(listed.ok ? null : listed.error.code, 'StoredRecordInvalid');
@@ -385,10 +381,10 @@ test('getProjectItems returns a typed corruption error for its malformed durable
     }, mintClientOpId());
     assert.equal(planted.ok, true);
 
-    const projects = createProjectsContract(composeProjects({
+    const projects = composeProjects({
       root,
       principal: 'person_reader',
-    }));
+    }).operations;
     const items = await projects.getProjectItems('proj_malformed_lookup' as never);
     assert.equal(items.ok, false);
     assert.equal(items.ok ? null : items.error.code, 'StoredRecordInvalid');
@@ -404,10 +400,10 @@ test('getProjectItems returns a typed corruption error for its malformed durable
 test('getProjectItems returns a typed corruption error for a malformed durable ProjectItem', async () => {
   const root = freshRoot();
   try {
-    const projects = createProjectsContract(composeProjects({
+    const projects = composeProjects({
       root,
       principal: 'person_reader',
-    }));
+    }).operations;
     const created = await projects.createProject(
       { title: 'Corrupt item holder' },
       mintClientOpId(),
@@ -449,9 +445,9 @@ test('getProjectItems returns a typed corruption error for a malformed durable P
 test('attach replay returns a typed corruption error for a malformed durable result', async () => {
   const root = freshRoot();
   try {
-    const context = composeProjects({ root, principal: 'sys_spine' });
-    const projects = createProjectsContract(context);
-    const spine = createSpineProjectsContract(context);
+    const host = composeProjects({ root, principal: 'sys_spine' });
+    const projects = host.operations;
+    const spine = host.spine;
     const created = await projects.createProject(
       { title: 'Corrupt replay holder' },
       mintClientOpId(),
