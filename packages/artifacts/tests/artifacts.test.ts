@@ -274,3 +274,36 @@ test('get and list queries return typed absence and empty-page outcomes', async 
     rmSync(workspace, { recursive: true, force: true });
   }
 });
+
+test('getArtifactMeta translates unreadable Foundation storage to a typed error', async () => {
+  const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-artifact-get-eisdir-'));
+  const root = path.join(workspace, '.novakai');
+  try {
+    mkdirSync(
+      path.join(root, 'stores', 'artifacts.jsonl'),
+      { recursive: true },
+    );
+    const artifacts = composeArtifacts({
+      root,
+      principal: 'person_chris',
+    }).operations;
+
+    const result = await artifacts.getArtifactMeta(
+      'artifact_unreadable' as ArtifactId,
+    );
+
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    const error = result.error as unknown as {
+      code: string;
+      details: { operation: string };
+    };
+    assert.equal(error.code, 'ArtifactStoreReadFailed');
+    assert.equal(
+      error.details.operation,
+      'get',
+    );
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
