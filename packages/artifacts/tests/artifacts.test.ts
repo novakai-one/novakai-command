@@ -16,6 +16,7 @@ import {
 import {
   composeArtifacts,
   createArtifactsContract,
+  type ArtifactId,
 } from '../contract/index.js';
 
 test('putArtifact durably stores exact bytes before metadata and returns metadata only', async () => {
@@ -200,6 +201,37 @@ test('getArtifactBytes reports typed missing bytes when metadata still exists', 
       (found.error.details as { ref: { kind: string; id: string } }).ref,
       { kind: 'artifact', id: put.value.id },
     );
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test('get and list queries return typed absence and empty-page outcomes', async () => {
+  const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-artifact-absent-'));
+  const root = path.join(workspace, '.novakai');
+  try {
+    const artifacts = createArtifactsContract(composeArtifacts({
+      root,
+      principal: 'person_chris',
+    }));
+    const artifactId = 'artifact_missing' as ArtifactId;
+
+    const metadata = await artifacts.getArtifactMeta(artifactId);
+    const bytes = await artifacts.getArtifactBytes(artifactId);
+    const listed = await artifacts.listArtifacts();
+
+    assert.deepEqual(metadata, {
+      ok: true,
+      value: {
+        absent: true,
+        ref: { kind: 'artifact', id: artifactId },
+      },
+    });
+    assert.deepEqual(bytes, metadata);
+    assert.deepEqual(listed, {
+      ok: true,
+      value: { items: [] },
+    });
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }
