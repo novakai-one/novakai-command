@@ -111,3 +111,25 @@ test('archiveProject requires clientOpId and replays one traced lifecycle change
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('getProjectItems requires an existing Project and starts empty', async () => {
+  const root = freshRoot();
+  try {
+    const projects = createProjectsContract(composeProjects({
+      root,
+      principal: 'person_chris',
+    }));
+    const missing = await projects.getProjectItems('proj_missing' as never);
+    assert.equal(missing.ok, false);
+    assert.equal(missing.ok ? null : missing.error.code, 'NotFound');
+
+    const created = await projects.createProject({ title: 'Items' }, mintClientOpId());
+    assert.equal(created.ok, true);
+    if (!created.ok) return;
+    const empty = await projects.getProjectItems(created.value.id);
+    assert.equal(empty.ok, true);
+    assert.deepEqual(empty.ok ? empty.value.items : null, []);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
