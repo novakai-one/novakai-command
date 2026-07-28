@@ -25,6 +25,16 @@ export type AuthOutcomeLike =
 
 export type AuthenticateFn = (credential: { token: string }) => Promise<AuthOutcomeLike>;
 
+/**
+ * The messaging capability, as the factory needs it. Taking the capability
+ * (rather than a plucked-off function) means the composition root never has to
+ * touch `.authenticate` itself — the only call site in the whole server is
+ * inside this module.
+ */
+export interface AuthenticatingCapability {
+  authenticate(credential: { token: string }): Promise<AuthOutcomeLike>;
+}
+
 export interface PrincipalCredential {
   token: string;
   personId: string;
@@ -60,15 +70,20 @@ export function isAuthFailure(result: unknown): boolean {
     && /NotAuthenticated|no longer valid/i.test(`${r.error?.name ?? ''} ${r.error?.message ?? ''}`);
 }
 
-export function createSessionHolderFactory(deps: { authenticate: AuthenticateFn }): SessionHolderFactory {
+export function createSessionHolderFactory(
+  deps: { authenticate: AuthenticateFn } | { messaging: AuthenticatingCapability },
+): SessionHolderFactory {
   const holders = new Map<string, MessagingSessionHolder>();
+  const authenticate: AuthenticateFn = 'messaging' in deps
+    ? (credential) => deps.messaging.authenticate(credential)
+    : deps.authenticate;
 
   return {
     async holderFor(credential) {
       const existing = holders.get(credential.personId);
       if (existing) return { ok: true, value: existing };
 
-      const first = await deps.authenticate({ token: credential.token });
+      const first = await authenticate({ token: credential.token });
       if (first.kind !== 'authenticated') {
         return {
           ok: false,
@@ -86,7 +101,7 @@ export function createSessionHolderFactory(deps: { authenticate: AuthenticateFn 
         async call<T>(op: (s: MessagingSessionLike) => Promise<T>): Promise<T> {
           const attempt = await op(session);
           if (!isAuthFailure(attempt)) return attempt;
-          const renewed = await deps.authenticate({ token: credential.token });
+          const renewed = await authenticate({ token: credential.token });
           if (renewed.kind !== 'authenticated') return attempt; // typed failure, never a throw
           session = (renewed as { session: MessagingSessionLike }).session;
           return op(session);

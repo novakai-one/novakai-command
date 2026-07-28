@@ -134,7 +134,11 @@ export const TokenRecord = z.object({
   permissionLevel: z.literal('private'),
   createdBy: z.string().min(1),
   principal: z.string().min(1),
-  grants: z.array(z.string()).nonempty(),
+  // B1: an EMPTY grant set is legal and meaningful — a messaging-only principal
+  // (an agent's person) writes no objects at all, and a token that grants
+  // nothing composes a handle that refuses every write. Previously
+  // unrepresentable, which forced callers to invent a grant.
+  grants: z.array(z.string()),
   bearer: z.string().min(1),
 });
 export type TokenRecord = z.infer<typeof TokenRecord>;

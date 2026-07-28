@@ -120,7 +120,11 @@ test('RED GATE 5 (mechanism, not discipline): nothing in the server calls authen
       if (entry === 'node_modules' || entry === 'tests') continue;
       if (statSync(full).isDirectory()) { walk(full); continue; }
       if (!entry.endsWith('.ts')) continue;
-      if (full.endsWith(path.join('core', 'session', 'holders.ts'))) continue; // the one legal caller
+      // holders.ts vends every session; authority.ts IS the messaging authority
+      // adapter (its authenticate answers messaging core, it never hands a
+      // session to server code). Every other file must go through a holder.
+      if (full.endsWith(path.join('core', 'session', 'holders.ts'))) continue;
+      if (full.endsWith(path.join('core', 'session', 'authority.ts'))) continue;
       const source = readFileSync(full, 'utf8');
       if (/\.authenticate\s*\(/.test(source)) offenders.push(path.relative(serverRoot, full));
     }
