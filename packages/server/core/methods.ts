@@ -12,7 +12,10 @@
 // (DEC-B1-8).
 import { randomUUID } from 'node:crypto';
 import { recordSystemAction } from '@novakai/foundation/dist/contract/index.js';
-import type { AgentsContract, ProviderSessionRegistry, KimiCliRuntime } from '../../agents/contract/index.js';
+import type {
+  AgentsContract, ProviderSessionRegistry, KimiCliRuntime, ProviderCliRuntime,
+} from '../../agents/contract/index.js';
+import type { SupervisionEngine } from './supervision/engine.js';
 import { composeShellPersistence, objectVersion } from '../../shell/contract/persistence.node.js';
 import { getLayoutVersioned, setLayout as writeLayout } from '../../shell/contract/layout.js';
 import * as settingsContract from '../../shell/contract/settings.js';
@@ -51,7 +54,11 @@ export interface ServerRuntime {
   holders: SessionHolderFactory;
   agents: AgentsContract;
   kimiRuntime: KimiCliRuntime;
+  /** B1b: every bound provider CLI runtime, for capability reporting. */
+  providerRuntimes: Partial<Record<ProviderName, ProviderCliRuntime>>;
   sessions: ProviderSessionRegistry;
+  /** B1b §8: the supervision engine owns lifecycle + usage. */
+  supervision: SupervisionEngine;
   watchdog: WatchdogHook;
   persistence: ShellPersistence;
   conversations: Map<string, Conversation>;
@@ -331,16 +338,21 @@ export function buildMethods(runtime: ServerRuntime): MethodTable {
 
     async getCapabilities() {
       const config = runtime.configStore.current();
+      // B1b: availability is MEASURED per provider (is the CLI on disk?), not
+      // declared. A provider whose CLI is missing reports false rather than
+      // letting a spawn fail later with a mystery.
+      const available = (provider: ProviderName): boolean =>
+        runtime.providerRuntimes[provider]?.isAvailable() ?? false;
       return {
         protocol: 'nvk-ws v1',
         providers: {
-          kimi: runtime.kimiRuntime.isAvailable(),
-          claude: false, // B1b
-          codex: false,  // B1b
+          kimi: available('kimi'),
+          claude: available('claude'),
+          codex: available('codex'),
           mock: config.dev.allowMock,
         },
         // The shell's existing capability check keeps working unchanged.
-        realKimi: runtime.kimiRuntime.isAvailable(),
+        realKimi: available('kimi'),
       };
     },
 
@@ -517,22 +529,62 @@ export function buildMethods(runtime: ServerRuntime): MethodTable {
       return { ok: true };
     },
     /**
-     * Real data only: turns, model, activity and status come from the registry.
-     * Token counts are NULL for kimi because kimi 0.29.1 stream-json emits no
-     * usage line — the gap is reported, never guessed (DEC-B1-7); the B1b
-     * watchdog fills it from transcripts.
+     * B1b: REAL per-session token counts, parsed from the providers' own
+     * transcripts (DEC-B1-11) — claude per-message, kimi wire.jsonl step.end,
+     * codex rollout totals with a baseline subtracted because they are
+     * cumulative. A session whose transcript cannot be read reports null and
+     * says why; no number here is ever invented.
      */
     async getUsageTable() {
-      const rows = await runtime.sessions.list();
-      return {
-        rows: rows.map((r) => ({
-          sessionId: r.sessionId, agentId: r.agentId, provider: r.provider, model: r.model,
-          turns: r.turns, lastActivityAt: r.lastActivityAt, status: r.status,
-          inputTokens: null, outputTokens: null,
-          interrupted: (r.lastInterruption as { clientOpId: string } | null)?.clientOpId ?? null,
-        })),
-        tokenAccounting: 'unavailable-in-B1a: kimi stream-json emits no usage records (B1b transcript parsing)',
-      };
+      return runtime.supervision.usageTable();
+    },
+
+    /**
+     * DEC-B1-13, Chris verbatim: "terminated after any meaningful work and
+     * re-started". The engine ends the session and spawns a fresh one for the
+     * same agent, CARRYING the provider conversation id so the work continues.
+     */
+    async restartSession(params: never) {
+      const p = params as { sessionId: string };
+      const res = await runtime.supervision.restart(p.sessionId);
+      if (!res.ok) return { ok: false as const, error: res.error };
+      relinkConversation(runtime, p.sessionId, res.sessionId);
+      return { ok: true as const, sessionId: res.sessionId };
+    },
+
+    /**
+     * Chris verbatim: "They should also have compact as an option." No B1
+     * provider declares a native compact, so restart-fresh IS the compact
+     * (DEC-B1-5) — the context is dropped rather than resumed, and the reply
+     * NAMES the mechanism instead of implying a native one.
+     */
+    async compactSession(params: never) {
+      const p = params as { sessionId: string };
+      const res = await runtime.supervision.compact(p.sessionId);
+      if (!res.ok) return { ok: false as const, error: res.error };
+      relinkConversation(runtime, p.sessionId, res.sessionId);
+      return { ok: true as const, sessionId: res.sessionId, mechanism: res.mechanism };
+    },
+
+    /** §8: one cheap-first drift check-in on demand (the timer runs it too). */
+    async checkDrift() {
+      return runtime.supervision.checkDrift();
     },
   };
+}
+
+/**
+ * A restarted session is a NEW sessionId. The conversation that was talking to
+ * the old one has to follow it, or the thread would look alive while every send
+ * went nowhere — the same failure mode B1a found after a server restart, which
+ * is exactly why it is handled here rather than left to the caller.
+ */
+function relinkConversation(runtime: ServerRuntime, oldSessionId: string, newSessionId: string): void {
+  for (const conversation of runtime.conversations.values()) {
+    if (conversation.sessionId !== oldSessionId) continue;
+    conversation.sessionId = newSessionId;
+    if (conversation.personId) {
+      attachLane(runtime, conversation, newSessionId, conversation.personId);
+    }
+  }
 }

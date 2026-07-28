@@ -53,10 +53,16 @@ export interface SupervisionLifecycle {
   closeSession(sessionId: string): boolean;
   /**
    * Spawn a replacement for the same agent. `resumeFrom` carries the provider
-   * conversation id when context should continue (restart) and is omitted when
-   * it should be dropped (compact).
+   * conversation id when context should continue (restart) and is null when it
+   * should be dropped (compact). The provider and cwd travel with the request
+   * so the host never has to re-derive the dead session's identity.
    */
-  spawnFresh(input: { agentId: string; resumeFrom?: string | null }):
+  spawnFresh(input: {
+    agentId: string;
+    provider: ProviderName;
+    cwd: string;
+    resumeFrom?: string | null;
+  }):
     Promise<{ ok: true; value: { sessionId: string; model: string } } | { ok: false; error: { code: string; message: string } }>;
 }
 
@@ -451,6 +457,8 @@ export function createSupervisionEngine(deps: SupervisionDeps): SupervisionEngin
     if (!ended.ok) return ended;
     const fresh = await deps.lifecycle.spawnFresh({
       agentId: record.agentId,
+      provider: record.provider,
+      cwd: record.cwd,
       resumeFrom: carryContext ? record.providerConversationId : null,
     });
     if (!fresh.ok) return { ok: false, error: fresh.error };
