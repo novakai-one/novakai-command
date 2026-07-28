@@ -445,3 +445,52 @@ test('getProjectItems returns a typed corruption error for a malformed durable P
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('attach replay returns a typed corruption error for a malformed durable result', async () => {
+  const root = freshRoot();
+  try {
+    const context = composeProjects({ root, principal: 'sys_spine' });
+    const projects = createProjectsContract(context);
+    const spine = createSpineProjectsContract(context);
+    const created = await projects.createProject(
+      { title: 'Corrupt replay holder' },
+      mintClientOpId(),
+    );
+    assert.equal(created.ok, true);
+    if (!created.ok) return;
+
+    const attachOp = mintClientOpId();
+    const handle = composeHandle({
+      root,
+      capability: 'projects',
+      allowedKinds: ['project', 'projectItem'],
+      principal: 'sys_spine',
+    });
+    const planted = await createObject(handle, {
+      kind: 'projectItem',
+      id: 'projectItem_malformed_replay',
+      schemaVersion: 1,
+      createdAt: new Date().toISOString(),
+      permissionLevel: 'private',
+      createdBy: 'overridden-by-foundation',
+      projectId: created.value.id,
+      addedBy: 'sys_spine',
+      addedVia: 'spine',
+    }, attachOp);
+    assert.equal(planted.ok, true);
+
+    const replay = await spine.attach(
+      created.value.id,
+      { itemRef: { kind: 'trace', id: 'trace_replay_ignored' } },
+      attachOp,
+    );
+    assert.equal(replay.ok, false);
+    assert.equal(replay.ok ? null : replay.error.code, 'StoredRecordInvalid');
+    assert.deepEqual(
+      replay.ok ? null : (replay.error.details as { ref?: unknown }).ref,
+      { kind: 'projectItem', id: 'projectItem_malformed_replay' },
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
