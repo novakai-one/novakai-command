@@ -143,9 +143,37 @@ packages/shell/
     setAgentModel/listSkills over the REAL agents contract.
 12. **kimiCliRuntime** honors create argv/env (prepended argv — kimi's native
     `--skills-dir` is how resolved skill dirs reach the real CLI session).
-13. **AgentsView provider dropdown** offers kimi/claude/codex (spec scope);
-    a stored 'mock' provider displays as kimi in the editor draft (demo seed
-    agents are mock) — display-only, never written back unless saved.
+13. **AgentsView provider dropdown** offers kimi/claude/codex/mock; the editor
+    draft shows the STORED provider verbatim (S2-audit L15 fixed the earlier
+    mock-displays-as-kimi rewrite — drafts are never silently rewritten).
+
+## S2 audit pass dispositions (2026-07-28, second pass)
+
+Fixed in this pass (see per-finding commits): F1 conversationView, F2 kit gate
+(full ui/screens + ui/inspector coverage; kit v1.2 primitives), F3/OD-C3 spike
+(RULED supported — setSessionModel implemented), M4 advisory latest-wins,
+M5 idle ends turn, M6 watcher typed skips, M7 hook trace-write failures never
+silent, M8 defineAgent typed InvalidEnvelope, M9 invokeAction clientOpId,
+M10 skill paths constrained to .novakai/skills/, M11 composeEngine off the
+public surface, M12 tail-hash regrow test, L13 500ms TOTAL send-path hook
+budget, L14 injection traces fire only on send success, L15 provider display
+fidelity.
+
+## Follow-ups (parked)
+
+- **L16–L20 (S2 audit, LOW)**: deferred per the fix directive — recorded here
+  so they are not lost; to be picked up with the next shell-touching slice.
+- **Renderer-level viewport lint for SHL-010**: still the static token lint;
+  a browser pass remains a candidate (pre-existing note #6).
+- **foundation M5/M7/M8** (migration lock ordering, pid-liveness lock, O(n)
+  reads): not S2 scope — ride the next foundation-touching slice (S2-pass1
+  §19 already records this).
+- **OD-S2-6**: persisted session registry (cross-process CLI session ops) —
+  in-memory sessions stay; registry is S3 with Operations.
+- **TUI mid-session model switch**: OD-C3 verified the print-mode path only
+  (sticky `-S <id> -m <alias>`). The interactive-TUI slash-command path is
+  unverified by design; runtimes without a declared mechanism keep typed
+  UnsupportedOperation.
 
 ## S2b additions (2026-07-28)
 
