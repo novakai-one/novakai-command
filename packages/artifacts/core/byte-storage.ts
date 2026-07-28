@@ -172,11 +172,9 @@ export function artifactBytesExist(
   return existsSync(path.join(bytesRoot, artifactId));
 }
 
-export async function persistArtifactBytes(
+export async function prepareArtifactBytesRoot(
   bytesRoot: string,
   artifactId: ArtifactId,
-  bytes: Uint8Array,
-  failpoint: ArtifactFailpoint,
 ): Promise<Result<null, ArtifactsError>> {
   try {
     await mkdir(bytesRoot, { recursive: true });
@@ -186,6 +184,17 @@ export async function persistArtifactBytes(
       error: byteEffectFailed(artifactId, 'temp-write', cause),
     };
   }
+  return { ok: true, value: null };
+}
+
+export async function persistArtifactBytes(
+  bytesRoot: string,
+  artifactId: ArtifactId,
+  bytes: Uint8Array,
+  failpoint: ArtifactFailpoint,
+): Promise<Result<null, ArtifactsError>> {
+  const prepared = await prepareArtifactBytesRoot(bytesRoot, artifactId);
+  if (!prepared.ok) return prepared;
   const tempPath = path.join(
     bytesRoot,
     `.${artifactId}.${randomUUID()}.tmp`,

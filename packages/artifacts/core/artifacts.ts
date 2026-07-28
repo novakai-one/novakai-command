@@ -36,6 +36,7 @@ import {
   artifactBytesExist,
   artifactIdFor,
   persistArtifactBytes,
+  prepareArtifactBytesRoot,
   readArtifactBytes,
 } from './byte-storage.js';
 import {
@@ -273,6 +274,11 @@ export async function putArtifact(
     return { ok: false, error: invalidInput(parsed.error) };
   }
   const artifactId = artifactIdFor(clientOpId);
+  const prepared = await prepareArtifactBytesRoot(
+    ctx.bytesRoot,
+    artifactId,
+  );
+  if (!prepared.ok) return prepared;
   const acquired = await acquireArtifactPublication(
     ctx.bytesRoot,
     artifactId,
