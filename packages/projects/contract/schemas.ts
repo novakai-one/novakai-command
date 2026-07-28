@@ -24,6 +24,11 @@ export const CreateProjectInput = z.object({
 });
 export type CreateProjectInput = z.infer<typeof CreateProjectInput>;
 
+export const ListProjectsFilter = z.object({
+  status: ProjectStatus.optional(),
+}).strict();
+export type ListProjectsFilter = z.infer<typeof ListProjectsFilter>;
+
 export type { ProjectId, ClientOpId } from '@novakai/foundation/dist/contract/brands.js';
-export type { Result } from '@novakai/foundation/dist/contract/types.js';
+export type { Page, Result } from '@novakai/foundation/dist/contract/types.js';
 export type { StoreError } from '@novakai/foundation/dist/contract/errors.js';

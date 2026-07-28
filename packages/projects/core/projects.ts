@@ -1,12 +1,17 @@
 import { randomUUID } from 'node:crypto';
-import { createObject } from '@novakai/foundation/dist/contract/index.js';
+import {
+  createObject,
+  listObjects,
+} from '@novakai/foundation/dist/contract/index.js';
 import { err, type StoreError } from '@novakai/foundation/dist/contract/errors.js';
 import type { ClientOpId } from '@novakai/foundation/dist/contract/brands.js';
-import type { Result } from '@novakai/foundation/dist/contract/types.js';
+import type { Page, Result } from '@novakai/foundation/dist/contract/types.js';
 import {
   CreateProjectInput,
+  ListProjectsFilter,
   Project,
   type CreateProjectInput as CreateProjectInputT,
+  type ListProjectsFilter as ListProjectsFilterT,
   type Project as ProjectT,
 } from '../contract/schemas.js';
 import type { ProjectsContext } from './composition.js';
@@ -61,4 +66,21 @@ export async function createProject(
   const created = await createObject<ProjectT>(ctx.handle, record, clientOpId);
   if (!created.ok) return created;
   return { ok: true, value: Project.parse(created.value.object) as ProjectT };
+}
+
+export async function listProjects(
+  ctx: ProjectsContext,
+  filter?: ListProjectsFilterT,
+): Promise<Result<Page<ProjectT>, StoreError>> {
+  const parsed = ListProjectsFilter.safeParse(filter ?? {});
+  if (!parsed.success) return { ok: false, error: invalidInput(parsed.error) };
+  const listed = await listObjects<ProjectT>(ctx.handle, 'project', parsed.data);
+  if (!listed.ok) return listed;
+  return {
+    ok: true,
+    value: {
+      items: listed.value.items.map(({ object }) => Project.parse(object) as ProjectT),
+      ...(listed.value.nextCursor ? { nextCursor: listed.value.nextCursor } : {}),
+    },
+  };
 }
