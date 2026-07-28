@@ -2,7 +2,9 @@
 // exercised through the real boot path against a real (temp) .novakai root.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, existsSync } from 'node:fs';
+import {
+  existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { bootServer, type NovakaiServer } from '../core/boot.js';
@@ -41,10 +43,14 @@ async function mintChris(dir: string): Promise<void> {
   );
 }
 
-async function boot(dir: string, options: { cliPath?: string } = {}): Promise<NovakaiServer> {
+async function boot(
+  dir: string,
+  options: { cliPath?: string; providerHome?: string } = {},
+): Promise<NovakaiServer> {
   const res = await bootServer({
     root: dir, port: 0, cwd: dir, transcripts: false, watchdogDir: dir,
     ...(options.cliPath ? { kimiCliPath: options.cliPath } : {}),
+    ...(options.providerHome ? { providerHome: options.providerHome } : {}),
   });
   if (!res.ok) throw new Error(`boot failed: ${res.error.code} ${res.error.message}`);
   return res.value;
@@ -219,6 +225,86 @@ test('spawn → send → the provider reply lands in the thread, and the session
   assert.equal((await server.sessions.get(spawned.sessionId))!.providerConversationId, 'session_boot_1');
   assert.equal((await server.sessions.get(spawned.sessionId))!.turns, 1);
   await server.close();
+});
+
+test('a kimi round-trip is measured from its Novakai transcript copy and backfilled onto providerSession', async () => {
+  const dir = root();
+  const emptyProviderHome = mkdtempSync(path.join(tmpdir(), 'nvk-empty-provider-home-'));
+  await mintChris(dir);
+  const cli = fakeKimi({ reply: 'usage reply', sessionId: 'session_usage_copy' });
+  const server = await boot(dir, { cliPath: cli.cliPath, providerHome: emptyProviderHome });
+  try {
+    const methods = (await import('../core/methods.js')).buildMethods(server.runtime);
+    const spawned = await methods.spawnAgentConversation!({ title: 'Measured Kimi' } as never) as
+      { ok: boolean; conversation: { id: string }; sessionId: string };
+    assert.equal(spawned.ok, true);
+    const sent = await methods.sendMessage!({
+      conversationId: spawned.conversation.id,
+      text: 'measure this turn',
+      clientOpId: 'op_usage_round_trip',
+    } as never) as { ok: boolean };
+    assert.equal(sent.ok, true);
+    await server.runtime.kimiRuntime.drain(spawned.sessionId);
+
+    const wire = path.join(
+      dir,
+      'transcripts', 'kimi', 'sessions', 'wd_fixture',
+      'session_usage_copy', 'agents', 'main', 'wire.jsonl',
+    );
+    mkdirSync(path.dirname(wire), { recursive: true });
+    writeFileSync(wire, [
+      JSON.stringify({
+        time: 1785225000000,
+        type: 'context.append_loop_event',
+        event: {
+          type: 'step.end',
+          usage: {
+            inputOther: 150,
+            output: 28,
+            inputCacheRead: 28170,
+            inputCacheCreation: 5,
+          },
+        },
+      }),
+      '',
+    ].join('\n'));
+
+    await server.supervision.emitUsage();
+    const table = await methods.getUsageTable!(undefined as never) as {
+      rows: Array<{
+        sessionId: string;
+        inputTokens: number | null;
+        outputTokens: number | null;
+        note: string;
+      }>;
+    };
+    const row = table.rows.find((item) => item.sessionId === spawned.sessionId);
+    assert.equal(row?.inputTokens, 150);
+    assert.equal(row?.outputTokens, 28);
+    assert.match(row?.note ?? '', /transcript/i);
+
+    const persisted = await server.sessions.get(spawned.sessionId) as
+      | {
+        tokenUsage?: {
+          inputTokens: number;
+          outputTokens: number;
+          source: string;
+        } | null;
+        usageUnavailable?: unknown;
+      }
+      | null;
+    assert.deepEqual(persisted?.tokenUsage, {
+      inputTokens: 150,
+      outputTokens: 28,
+      cacheReadTokens: 28170,
+      cacheCreationTokens: 5,
+      source: wire,
+      measuredAt: new Date(1785225000000).toISOString(),
+    });
+    assert.equal(persisted?.usageUnavailable, null);
+  } finally {
+    await server.close();
+  }
 });
 
 test('M3a: send marks its provider turn generating before the messaging post begins', async () => {
