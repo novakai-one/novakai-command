@@ -115,3 +115,29 @@ test('listArtifacts returns artifact metadata without byte payloads', async () =
     rmSync(workspace, { recursive: true, force: true });
   }
 });
+
+test('getArtifactBytes retrieves the exact durable byte payload', async () => {
+  const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-artifact-bytes-'));
+  const root = path.join(workspace, '.novakai');
+  try {
+    const artifacts = createArtifactsContract(composeArtifacts({
+      root,
+      principal: 'person_chris',
+    }));
+    const bytes = Buffer.from([0, 255, 17, 34, 51, 68]);
+    const put = await artifacts.putArtifact({
+      bytes,
+      mimeType: 'application/octet-stream',
+    }, mintClientOpId());
+    assert.equal(put.ok, true);
+    if (!put.ok) return;
+
+    const found = await artifacts.getArtifactBytes(put.value.id);
+
+    assert.equal(found.ok, true);
+    if (!found.ok || 'absent' in found.value) return;
+    assert.deepEqual(Buffer.from(found.value), bytes);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
