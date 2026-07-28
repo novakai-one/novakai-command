@@ -442,6 +442,11 @@ export async function sweepOrphans(
       'artifacts.sweep.after-trace-append',
     );
     if (afterTrace) return { ok: false, error: afterTrace };
+    const beforeDelete = injectedFailpoint(
+      orphan.artifactId,
+      'artifacts.sweep.before-delete',
+    );
+    if (beforeDelete) return { ok: false, error: beforeDelete };
     try {
       await unlink(path.join(ctx.bytesRoot, name));
     } catch (cause) {
@@ -459,6 +464,11 @@ export async function sweepOrphans(
         ),
       };
     }
+    const afterDelete = injectedFailpoint(
+      orphan.artifactId,
+      'artifacts.sweep.after-delete',
+    );
+    if (afterDelete) return { ok: false, error: afterDelete };
     swept.push(orphan);
   }
   return { ok: true, value: { swept } };
