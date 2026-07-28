@@ -16,19 +16,25 @@ export type ServerOpId = Brand<string, 'serverOpId'>; // "srv_<uuidv4>"
 export type SystemPrincipal = 'sys_ingester' | 'sys_reconciler' | 'sys_spine';
 export type Principal = AgentId | PersonId | SystemPrincipal;
 
-export type ObjectKind =
-  | 'agent'
-  | 'skill'
-  | 'layout'
-  | 'settings'
-  | 'conversationView' // S2 F1/DEC-S2-11: shell-owned pin/archive view state
-  | 'config'          // B1 DEC-B1-3: server-owned typed config objects
-  | 'providerSession' // B1 DEC-B1-6: agents-owned resumable provider handles
-  | 'project'         // B2a DEC-B2-1: projects-owned durable identity/lifecycle
-  | 'projectItem'     // B2a DEC-B2-1: projects-owned reference membership
-  | 'quarantine'
-  | 'token'
-  | 'trace';
+// Runtime schemas and TypeScript consumers share this one authoritative
+// registry. Adding a kind here updates both the compile-time union and the
+// boundary validator used by capabilities that persist refs.
+export const OBJECT_KINDS = [
+  'agent',
+  'skill',
+  'layout',
+  'settings',
+  'conversationView', // S2 F1/DEC-S2-11: shell-owned pin/archive view state
+  'config',           // B1 DEC-B1-3: server-owned typed config objects
+  'providerSession',  // B1 DEC-B1-6: agents-owned resumable provider handles
+  'project',          // B2a DEC-B2-1: projects-owned durable identity/lifecycle
+  'projectItem',      // B2a DEC-B2-1: projects-owned reference membership
+  'quarantine',
+  'token',
+  'trace',
+] as const;
+
+export type ObjectKind = typeof OBJECT_KINDS[number];
 
 export type CapabilityId =
   | 'foundation' | 'shell' | 'agents' | 'messaging'

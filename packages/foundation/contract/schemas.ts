@@ -1,5 +1,6 @@
 // §2 Envelope & Record Schemas (zod) — foundation-owned subset (§2 of S1 contracts).
 import { z } from 'zod';
+import { OBJECT_KINDS } from './brands.js';
 
 export const PermissionLevel = z.enum(['private', 'team', 'external']);
 export type PermissionLevel = z.infer<typeof PermissionLevel>;
@@ -25,6 +26,9 @@ export type Envelope = z.infer<typeof Envelope>;
 
 export const Ref = z.object({ kind: z.string().min(1), id: z.string().min(1) });
 export type Ref = z.infer<typeof Ref>;
+
+export const RegisteredObjectKind = z.enum(OBJECT_KINDS);
+export type RegisteredObjectKind = z.infer<typeof RegisteredObjectKind>;
 
 // §11 ruling 2 — record-line wrapper: { envelope, payload, meta: { opId, clientOpId } }.
 // meta.version carries the per-object CAS counter on each appended line (A §10 — see NOTES.md).

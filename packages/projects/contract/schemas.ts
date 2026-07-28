@@ -2,11 +2,17 @@ import { z } from 'zod';
 import {
   PermissionLevel,
   Ref,
+  RegisteredObjectKind,
 } from '@novakai/foundation/dist/contract/schemas.js';
 import type { ProjectId } from '@novakai/foundation/dist/contract/brands.js';
 
 export const ProjectStatus = z.enum(['active', 'archived']);
 export type ProjectStatus = z.infer<typeof ProjectStatus>;
+
+export const ProjectItemRef = Ref.extend({
+  kind: RegisteredObjectKind,
+});
+export type ProjectItemRef = z.infer<typeof ProjectItemRef>;
 
 export const Project = z.object({
   kind: z.literal('project'),
@@ -40,7 +46,7 @@ export const ProjectItem = z.object({
   permissionLevel: PermissionLevel,
   createdBy: z.string().min(1),
   projectId: z.string().regex(/^proj_/),
-  itemRef: Ref,
+  itemRef: ProjectItemRef,
   note: z.string().min(1).optional(),
   addedBy: z.string().min(1),
   addedVia: z.literal('spine'),
@@ -48,7 +54,7 @@ export const ProjectItem = z.object({
 export type ProjectItem = z.infer<typeof ProjectItem>;
 
 export const AttachProjectItemInput = z.object({
-  itemRef: Ref,
+  itemRef: ProjectItemRef,
   note: z.string().min(1).optional(),
 }).strict();
 export type AttachProjectItemInput = z.infer<typeof AttachProjectItemInput>;
