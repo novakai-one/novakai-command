@@ -2,13 +2,24 @@
 // Tests cross the PUBLIC contract (openConfigStore) only.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { mkdtempSync, existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { mintClientOpId } from '@novakai/foundation/dist/contract/index.js';
 import { openConfigStore } from '../contract/index.js';
 
 const root = () => mkdtempSync(path.join(tmpdir(), 'nvk-server-config-'));
+const here = path.dirname(fileURLToPath(import.meta.url));
+const serverCli = path.resolve(here, '..', 'cli', 'nvk-server.ts');
+
+function runServerCli(dir: string, args: string[]): string {
+  return execFileSync('npx', ['tsx', serverCli, ...args, '--root', dir], {
+    cwd: path.resolve(here, '..'),
+    encoding: 'utf8',
+  });
+}
 
 test('first boot with no config.jsonl materializes defaults with ZERO principals (no demo defaults)', async () => {
   const dir = root();
@@ -113,4 +124,23 @@ test('agent-person bindings and provider settings round-trip through the config 
   assert.deepEqual(cfg.bindings, [{ agentId: 'agent_a', personId: 'person_a' }]);
   assert.equal(cfg.providers.kimi.cliPath, '/tmp/kimi');
   assert.equal(cfg.dev.allowMock, true);
+});
+
+test('config-set writes through the server config engine and a live store reloads without restart', async () => {
+  const dir = root();
+  const opened = await openConfigStore({ root: dir, principal: 'sys_spine' });
+  assert.equal(opened.ok, true);
+  if (!opened.ok) return;
+  const watcher = opened.value.watch();
+
+  const output = runServerCli(dir, ['config-set', 'dev', JSON.stringify({ allowMock: true })]);
+  assert.match(output, /cfg_dev/);
+
+  const deadline = Date.now() + 2_000;
+  while (!opened.value.current().dev.allowMock && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  assert.equal(opened.value.current().dev.allowMock, true,
+    'the already-open store observed the CLI edit through its file watcher');
+  watcher.close();
 });

@@ -259,6 +259,10 @@ export async function bootServer(options: BootOptions): Promise<BootResult> {
   note(9, 'transport', `listening on ${transport.url} (nvk-ws v1, token-gated)`);
 
   config = configStore.current();
+  const configWatcher = configStore.watch((next) => {
+    config = next;
+    runtime.config = next;
+  });
 
   return {
     ok: true,
@@ -269,9 +273,10 @@ export async function bootServer(options: BootOptions): Promise<BootResult> {
       steps,
       interrupted: sweep.interrupted,
       sessions,
-      config,
+      get config() { return configStore.current(); },
       runtime,
       async close() {
+        configWatcher.close();
         transcripts?.stop();
         await transport.close();
         await embedded.close();

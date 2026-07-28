@@ -10,6 +10,8 @@
 import {
   composeHandle, createObject, updateObject, listObjects, loadTokens, mintToken,
 } from '@novakai/foundation/dist/contract/index.js';
+import { unwatchFile, watchFile } from 'node:fs';
+import path from 'node:path';
 import type { ClientOpId, ObjectId } from '@novakai/foundation/dist/contract/brands.js';
 import type { Result, ScopedStoreHandle } from '@novakai/foundation/dist/contract/types.js';
 import { err, type StoreError } from '@novakai/foundation/dist/contract/errors.js';
@@ -40,6 +42,8 @@ export interface ConfigStore {
   current(): ServerConfig;
   /** Re-read the store from disk (live-reload path, §13 disposition 6). */
   reload(): Promise<ServerConfig>;
+  /** Watch config.jsonl and reload this store's snapshot after an external server CLI write. */
+  watch(onReload?: (config: ServerConfig) => void): { close(): void };
   /** Write one config object; returns the snapshot it produced. */
   set(input: ConfigObjectInput, clientOpId: ClientOpId): Promise<Result<ServerConfig, StoreError>>;
   /** Mint a bearer token record for a principal. The secret never enters config. */
@@ -151,6 +155,7 @@ export async function openConfigStore(
 
   let objects: StoredConfig[] = [];
   let snapshot: ServerConfig = resolve(objects, options.root);
+  const configPath = path.join(options.root, 'config.jsonl');
 
   const refresh = async (): Promise<Result<ServerConfig, StoreError>> => {
     const read = await readObjects(handle);
@@ -209,6 +214,42 @@ export async function openConfigStore(
     reload: async () => {
       const res = await refresh();
       return res.ok ? res.value : snapshot;
+    },
+    watch: (onReload = () => undefined) => {
+      let closed = false;
+      let reloading = false;
+      let pending = false;
+      let debounce: ReturnType<typeof setTimeout> | null = null;
+      const reloadAfterChange = async (): Promise<void> => {
+        if (reloading) { pending = true; return; }
+        reloading = true;
+        do {
+          pending = false;
+          const next = await refresh();
+          if (next.ok) onReload(next.value);
+          else console.error(`[nvk-server] config reload failed: ${next.error.code} ${next.error.message}`);
+        } while (pending && !closed);
+        reloading = false;
+      };
+      const changed = (): void => {
+        if (debounce) clearTimeout(debounce);
+        debounce = setTimeout(() => {
+          debounce = null;
+          void reloadAfterChange().catch((cause) => {
+            console.error(`[nvk-server] config reload failed: ${cause instanceof Error ? cause.message : String(cause)}`);
+          });
+        }, 10);
+      };
+      // fs.watch drops cross-process append notifications on some macOS
+      // filesystems. watchFile is the reliable stat-based watcher for JSONL.
+      watchFile(configPath, { persistent: false, interval: 50 }, changed);
+      return {
+        close() {
+          closed = true;
+          if (debounce) clearTimeout(debounce);
+          unwatchFile(configPath, changed);
+        },
+      };
     },
     set: write,
     mintPrincipalToken: (input) => {
