@@ -40,6 +40,11 @@ interface AppendStepInput {
   commandClientOpId?: string;
 }
 
+interface StoredStep {
+  fact: SpineStep;
+  incomplete: boolean;
+}
+
 function stableId(prefix: 'spineStep' | 'spineWorkflow', value: string): string {
   return `${prefix}_${createHash('sha256').update(value).digest('hex').slice(0, 32)}`;
 }
@@ -125,7 +130,16 @@ export async function appendStep(
 export async function readAllSteps(
   ctx: SpineContext,
 ): Promise<Result<SpineStep[], SpineError>> {
-  const facts: SpineStep[] = [];
+  const stored = await readStoredSteps(ctx);
+  return stored.ok
+    ? { ok: true, value: stored.value.map(({ fact }) => fact) }
+    : stored;
+}
+
+async function readStoredSteps(
+  ctx: SpineContext,
+): Promise<Result<StoredStep[], SpineError>> {
+  const facts: StoredStep[] = [];
   let cursor: string | undefined;
   do {
     const page = await listObjects<unknown>(
@@ -157,11 +171,70 @@ export async function readAllSteps(
           },
         };
       }
-      facts.push(parsed.data);
+      facts.push({
+        fact: parsed.data,
+        incomplete: stored.incomplete,
+      });
     }
     cursor = page.value.nextCursor;
   } while (cursor !== undefined);
   return { ok: true, value: facts };
+}
+
+function mutationIdFor(fact: SpineStep): ClientOpId | null {
+  if (fact.state === 'accepted') {
+    return fact.originalClientOpId as ClientOpId;
+  }
+  if (fact.commandClientOpId) {
+    return fact.commandClientOpId as ClientOpId;
+  }
+  if (
+    (fact.state === 'running'
+      || fact.state === 'done'
+      || fact.state === 'failed')
+    && (fact.step === 1 || fact.step === 2)
+  ) {
+    return journalMutationOpId(
+      fact.originalClientOpId as ClientOpId,
+      fact.step,
+      fact.state,
+    );
+  }
+  return null;
+}
+
+/** Mutating retries repair every previously durable but untraced fact. */
+export async function reconcileIncompleteSteps(
+  ctx: SpineContext,
+): Promise<Result<null, SpineError>> {
+  const stored = await readStoredSteps(ctx);
+  if (!stored.ok) return stored;
+  for (const { fact, incomplete } of stored.value) {
+    if (!incomplete) continue;
+    const mutationClientOpId = mutationIdFor(fact);
+    if (!mutationClientOpId) {
+      return {
+        ok: false,
+        error: {
+          code: 'SpineJournalCorrupt',
+          message: `incomplete Spine fact "${fact.id}" has no reconstructible mutation identity`,
+          details: {
+            workflowId: fact.workflowId,
+            reason: 'incomplete fact has no mutation identity',
+            factIds: [fact.id],
+          },
+          retryable: false,
+        },
+      };
+    }
+    const reconciled = await createObject(
+      ctx.handle,
+      fact,
+      mutationClientOpId,
+    );
+    if (!reconciled.ok) return reconciled;
+  }
+  return { ok: true, value: null };
 }
 
 function foldWorkflow(facts: SpineStep[]): SpineWorkflow {

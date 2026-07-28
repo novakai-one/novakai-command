@@ -23,6 +23,7 @@ import {
   existingWorkflow,
   getSpineWorkflows,
   readAllSteps,
+  reconcileIncompleteSteps,
   scanWorkflows,
   workflowById,
   workflowFactInput,
@@ -89,6 +90,8 @@ async function startWorkflow(
   input: WorkflowStart,
   originalClientOpId: ClientOpId,
 ): Promise<Result<SpineWorkflow, SpineError>> {
+  const reconciled = await reconcileIncompleteSteps(ctx);
+  if (!reconciled.ok) return reconciled;
   const workflowId = workflowIdFor(originalClientOpId);
   const common = {
     workflowId,
@@ -97,7 +100,11 @@ async function startWorkflow(
   };
   const prior = await existingWorkflow(ctx, common);
   if (!prior.ok) return prior;
-  if (prior.value) return { ok: true, value: prior.value };
+  if (prior.value) {
+    return prior.value.resumable
+      ? resumeWorkflow(ctx, prior.value)
+      : { ok: true, value: prior.value };
+  }
 
   const accepted = await appendStep(ctx, {
     ...common,
@@ -193,6 +200,8 @@ export async function continueWorkflow(
 ): Promise<Result<SpineWorkflow, SpineError>> {
   const operationId = requireClientOpId(callerClientOpId);
   if (!operationId.ok) return operationId;
+  const reconciled = await reconcileIncompleteSteps(ctx);
+  if (!reconciled.ok) return reconciled;
   const facts = await readAllSteps(ctx);
   if (!facts.ok) return facts;
   const priorCommand = findPriorCommand(facts.value, operationId.value);
@@ -251,6 +260,8 @@ export async function abandonWorkflow(
 ): Promise<Result<SpineWorkflow, SpineError>> {
   const operationId = requireClientOpId(callerClientOpId);
   if (!operationId.ok) return operationId;
+  const reconciled = await reconcileIncompleteSteps(ctx);
+  if (!reconciled.ok) return reconciled;
   const facts = await readAllSteps(ctx);
   if (!facts.ok) return facts;
   const priorCommand = findPriorCommand(facts.value, operationId.value);
