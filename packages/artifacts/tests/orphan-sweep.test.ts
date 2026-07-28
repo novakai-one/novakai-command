@@ -272,3 +272,60 @@ test('NVK_FAILPOINT names deterministic before/after orphan-delete failures', as
     }
   }
 });
+
+test('orphan sweep retry deletes once with one accepted no-byte trace', async () => {
+  const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-sweep-retry-'));
+  const root = path.join(workspace, '.novakai');
+  const priorFailpoint = process.env.NVK_FAILPOINT;
+  const priorRoot = process.env.NOVAKAI_ROOT;
+  try {
+    process.env.NVK_FAILPOINT = 'artifacts.put.before-record-append';
+    const orphaned = await composeArtifacts({
+      root,
+      principal: 'sys_reconciler',
+    }).operations.putArtifact({
+      bytes: Buffer.from('retry orphan secret bytes', 'utf8'),
+      mimeType: 'text/plain',
+    }, mintClientOpId());
+    assert.equal(orphaned.ok, false);
+
+    process.env.NVK_FAILPOINT = 'artifacts.sweep.before-delete';
+    const firstSweep = await composeArtifacts({
+      root,
+      principal: 'sys_reconciler',
+    }).boot.sweepOrphans();
+    assert.equal(firstSweep.ok, false);
+
+    delete process.env.NVK_FAILPOINT;
+    const retriedSweep = await composeArtifacts({
+      root,
+      principal: 'sys_reconciler',
+    }).boot.sweepOrphans();
+
+    assert.equal(retriedSweep.ok, true);
+    if (!retriedSweep.ok) return;
+    assert.equal(readdirSync(path.join(root, 'artifacts')).length, 0);
+    process.env.NOVAKAI_ROOT = path.join(root, 'stores');
+    __resetDefaultEngine();
+    const traces = await queryTrace({});
+    const sweepTraces = traces.items.filter(
+      (trace) => trace.action === 'artifact.orphan.sweep',
+    );
+    assert.equal(sweepTraces.length, 1);
+    assert.deepEqual(sweepTraces[0].meta, {
+      entryType: 'final',
+      status: 'accepted',
+    });
+    assert.equal(
+      JSON.stringify(sweepTraces).includes('retry orphan secret bytes'),
+      false,
+    );
+  } finally {
+    if (priorFailpoint === undefined) delete process.env.NVK_FAILPOINT;
+    else process.env.NVK_FAILPOINT = priorFailpoint;
+    if (priorRoot === undefined) delete process.env.NOVAKAI_ROOT;
+    else process.env.NOVAKAI_ROOT = priorRoot;
+    __resetDefaultEngine();
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
