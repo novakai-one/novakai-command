@@ -11,6 +11,7 @@
 // mutation carries a clientOpId (R3-10). Persons come from config, never a pool
 // (DEC-B1-8).
 import { randomUUID } from 'node:crypto';
+import { recordSystemAction } from '@novakai/foundation/dist/contract/index.js';
 import type { AgentsContract, ProviderSessionRegistry, KimiCliRuntime } from '../../agents/contract/index.js';
 import { composeShellPersistence, objectVersion } from '../../shell/contract/persistence.node.js';
 import { getLayoutVersioned, setLayout as writeLayout } from '../../shell/contract/layout.js';
@@ -476,12 +477,27 @@ export function buildMethods(runtime: ServerRuntime): MethodTable {
     },
     async terminateSession(params: never) {
       const p = params as { sessionId: string };
+      const session = await runtime.sessions.get(p.sessionId);
+      if (!session) return { ok: false, error: { code: 'SessionNotFound', sessionId: p.sessionId } };
       runtime.agents.closeSession(p.sessionId as never);
-      await runtime.sessions.close(p.sessionId, 'closed');
+      const closed = await runtime.sessions.close(p.sessionId, 'closed');
+      if (!closed.ok) return { ok: false, error: closed.error };
       runtime.watchdog.close(p.sessionId);
       for (const c of runtime.conversations.values()) {
         if (c.sessionId === p.sessionId) delete c.sessionId;
       }
+      const traced = await recordSystemAction(runtime.persistence.handle, {
+        action: 'session.terminate',
+        target: { kind: 'session', id: p.sessionId },
+        clientOpId: runtime.mintOpId() as never,
+        meta: {
+          refs: [
+            { kind: 'session', id: p.sessionId },
+            { kind: 'agent', id: session.agentId },
+          ],
+        },
+      });
+      if (!traced.ok) return { ok: false, error: traced.error };
       return { ok: true };
     },
     /**

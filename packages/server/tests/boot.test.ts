@@ -7,7 +7,10 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { bootServer, type NovakaiServer } from '../core/boot.js';
 import { openConfigStore } from '../contract/index.js';
-import { mintClientOpId } from '@novakai/foundation/dist/contract/index.js';
+import {
+  mintClientOpId, queryTraceBound,
+} from '@novakai/foundation/dist/contract/index.js';
+import { composeEngine } from '@novakai/foundation/dist/contract/compose.js';
 import { fakeKimi } from './fakeKimi.js';
 
 const root = () => mkdtempSync(path.join(tmpdir(), 'nvk-boot-'));
@@ -123,6 +126,34 @@ test('spawn → send → the provider reply lands in the thread, and the session
   // The resume handle was learned and persisted (DEC-B1-6).
   assert.equal((await server.sessions.get(spawned.sessionId))!.providerConversationId, 'session_boot_1');
   assert.equal((await server.sessions.get(spawned.sessionId))!.turns, 1);
+  await server.close();
+});
+
+test('terminateSession appends a session.terminate system action with session and agent refs', async () => {
+  const dir = root();
+  await mintChris(dir);
+  const server = await boot(dir, { cliPath: fakeKimi().cliPath });
+  const methods = (await import('../core/methods.js')).buildMethods(server.runtime);
+  const spawned = await methods.spawnAgentConversation!({ title: 'Kimi' } as never) as
+    { sessionId: string };
+
+  const terminated = await methods.terminateSession!({ sessionId: spawned.sessionId } as never) as
+    { ok: boolean };
+  assert.equal(terminated.ok, true);
+
+  const engine = composeEngine({
+    root: dir, capability: 'server', allowedKinds: ['providerSession'], principal: 'sys_spine',
+  });
+  const page = await queryTraceBound(engine, {});
+  const trace = page.items.find((item) => item.action === 'session.terminate');
+  assert.ok(trace, 'terminate is an auditable system.action');
+  assert.equal(trace.opKind, 'system.action');
+  assert.deepEqual(trace.target, { kind: 'session', id: spawned.sessionId });
+  const refs = (trace.meta as { refs?: Array<{ kind: string; id: string }> } | undefined)?.refs ?? [];
+  assert.deepEqual(refs, [
+    { kind: 'session', id: spawned.sessionId },
+    { kind: 'agent', id: (await server.sessions.get(spawned.sessionId))!.agentId },
+  ]);
   await server.close();
 });
 
