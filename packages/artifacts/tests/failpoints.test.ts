@@ -71,3 +71,27 @@ test('NVK_FAILPOINT names deterministic before/after temp-write failures', async
     rmSync(after.workspace, { recursive: true, force: true });
   }
 });
+
+test('NVK_FAILPOINT names deterministic before/after temp-fsync failures', async () => {
+  for (const point of [
+    'artifacts.put.before-temp-fsync',
+    'artifacts.put.after-temp-fsync',
+  ]) {
+    const run = await runPutAt(point);
+    try {
+      assert.equal(run.result.ok, false);
+      if (run.result.ok) return;
+      assert.equal(run.result.error.code, 'ArtifactFailpoint');
+      assert.equal(
+        (run.result.error.details as { point: string }).point,
+        point,
+      );
+      const entries = readdirSync(path.join(run.root, 'artifacts'));
+      assert.equal(entries.length, 1);
+      assert.match(entries[0], /^\..+\.tmp$/);
+      assert.equal(existsSync(path.join(run.root, 'artifacts.jsonl')), false);
+    } finally {
+      rmSync(run.workspace, { recursive: true, force: true });
+    }
+  }
+});
