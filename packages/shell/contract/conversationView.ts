@@ -18,6 +18,11 @@ export const ConversationViewRecord = z.object({
   createdBy: z.string().min(1),
   /** {kind:'thread',id} once the messaging thread exists; null until then. */
   threadRef: z.object({ kind: z.string().min(1), id: z.string().min(1) }).nullable(),
+  /**
+   * Pre-thread messaging address. Older demo records may omit this or carry an
+   * empty/invalid value; boot classifies those conservatively.
+   */
+  address: z.string().optional(),
   pinned: z.boolean(),
   archived: z.boolean(),
   titleOverride: z.string().optional(),
@@ -37,6 +42,7 @@ export interface ConversationViewDriver {
 
 export interface ConversationViewPatch {
   threadRef?: { kind: string; id: string } | null;
+  address?: string;
   pinned?: boolean;
   archived?: boolean;
   titleOverride?: string;
@@ -64,6 +70,7 @@ export async function setConversationView(
       permissionLevel: 'private',
       createdBy: 'overridden-by-foundation',
       threadRef: patch.threadRef ?? null,
+      ...(patch.address !== undefined ? { address: patch.address } : {}),
       pinned: patch.pinned ?? false,
       archived: patch.archived ?? false,
       ...(patch.titleOverride !== undefined ? { titleOverride: patch.titleOverride } : {}),

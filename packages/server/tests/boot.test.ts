@@ -63,6 +63,7 @@ async function seedLegacyConversationWithoutThread(dir: string): Promise<void> {
     'conv_legacy_empty_thread',
     {
       threadRef: null,
+      address: '',
       pinned: true,
       archived: false,
       titleOverride: 'Legacy empty thread',
