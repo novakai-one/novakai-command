@@ -17,6 +17,12 @@ import {
 import {
   createServerServices, fetchBootstrap,
 } from '../../shell/app/serverClient.js';
+import {
+  composeShellPersistence,
+} from '../../shell/contract/persistence.node.js';
+import {
+  getConversationView, setConversationView,
+} from '../../shell/contract/conversationView.js';
 import { fakeKimi } from './fakeKimi.js';
 
 const root = () => mkdtempSync(path.join(tmpdir(), 'nvk-boot-'));
@@ -44,6 +50,23 @@ async function boot(dir: string, options: { cliPath?: string } = {}): Promise<No
   return res.value;
 }
 
+async function seedLegacyConversationWithoutThread(dir: string): Promise<void> {
+  const persistence = composeShellPersistence({ root: dir, principal: 'person_chris' });
+  const seeded = await setConversationView(
+    persistence.conversationViewDriver,
+    'conv_legacy_empty_thread',
+    {
+      threadRef: null,
+      pinned: true,
+      archived: false,
+      titleOverride: 'Legacy empty thread',
+      lastActivityAt: '2026-07-27T12:00:00.000Z',
+    },
+    mintClientOpId(),
+  );
+  assert.equal(seeded.ok, true);
+}
+
 test('boot refuses to start without a human principal, and names the runbook', async () => {
   const dir = root();
   const res = await bootServer({ root: dir, port: 0, cwd: dir, transcripts: false, watchdogDir: dir });
@@ -67,6 +90,69 @@ test('boot runs all nine steps in order and serves bootstrap.json', async () => 
   assert.equal(bootstrap.token, server.token);
   assert.equal(bootstrap.protocolVersion, 1);
   await server.close();
+});
+
+test('boot archives a legacy thread-less conversation and send refuses it with a typed recovery message', async () => {
+  const dir = root();
+  await mintChris(dir);
+  await seedLegacyConversationWithoutThread(dir);
+
+  const server = await boot(dir);
+  try {
+    const methods = (await import('../core/methods.js')).buildMethods(server.runtime);
+    const conversations = await methods.listConversations!(undefined as never) as
+      Array<{ id: string; threadId: string; pinned: boolean; archived: boolean }>;
+    const legacy = conversations.find((conversation) =>
+      conversation.id === 'conv_legacy_empty_thread');
+
+    assert.deepEqual(legacy, {
+      id: 'conv_legacy_empty_thread',
+      threadId: '',
+      title: 'Legacy empty thread',
+      kind: 'agent',
+      pinned: true,
+      archived: true,
+      lastActivityAt: '2026-07-27T12:00:00.000Z',
+      unreadCount: 0,
+      agentId: undefined,
+    });
+
+    const sent = await methods.sendMessage!({
+      conversationId: 'conv_legacy_empty_thread',
+      text: 'this must not reach messaging validation',
+      clientOpId: 'op_legacy_send',
+    } as never) as {
+      ok: boolean;
+      error?: { code?: string; message?: string; conversationId?: string };
+    };
+    assert.deepEqual(sent, {
+      ok: false,
+      error: {
+        code: 'ConversationUnavailable',
+        message: 'This legacy conversation has no resolvable person or thread. It was archived; start a new conversation to send a message.',
+        conversationId: 'conv_legacy_empty_thread',
+      },
+    });
+
+    const persisted = await getConversationView(
+      server.runtime.persistence.conversationViewDriver,
+      'conv_legacy_empty_thread',
+    );
+    assert.equal(persisted?.archived, true, 'the view is preserved and migrated, never deleted');
+
+    const engine = composeEngine({
+      root: dir, capability: 'server', allowedKinds: ['conversationView'], principal: 'sys_spine',
+    });
+    const traces = await queryTraceBound(engine, {});
+    const migration = traces.items.find((item) =>
+      item.opKind === 'system.action'
+      && item.action === 'hook_log'
+      && (item.meta as { event?: string } | undefined)?.event === 'conversation.migrate.archive-unresolvable');
+    assert.ok(migration, 'the migration action is never silent');
+    assert.deepEqual(migration.target, { kind: 'conversationView', id: 'conv_legacy_empty_thread' });
+  } finally {
+    await server.close();
+  }
 });
 
 test('the method surface is the proven set minus the demo affordances', async () => {
