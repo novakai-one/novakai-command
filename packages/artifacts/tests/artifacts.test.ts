@@ -4,6 +4,7 @@ import {
   existsSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   rmSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -137,6 +138,37 @@ test('getArtifactBytes retrieves the exact durable byte payload', async () => {
     assert.equal(found.ok, true);
     if (!found.ok || 'absent' in found.value) return;
     assert.deepEqual(Buffer.from(found.value), bytes);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test('putArtifact retry with the same clientOpId returns one durable artifact', async () => {
+  const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-artifact-retry-'));
+  const root = path.join(workspace, '.novakai');
+  try {
+    const artifacts = createArtifactsContract(composeArtifacts({
+      root,
+      principal: 'person_chris',
+    }));
+    const clientOpId = mintClientOpId();
+    const input = {
+      bytes: Buffer.from('retry once', 'utf8'),
+      mimeType: 'text/plain',
+    };
+
+    const first = await artifacts.putArtifact(input, clientOpId);
+    const retried = await artifacts.putArtifact(input, clientOpId);
+
+    assert.equal(first.ok, true);
+    assert.equal(retried.ok, true);
+    if (!first.ok || !retried.ok) return;
+    assert.deepEqual(retried.value, first.value);
+    const listed = await artifacts.listArtifacts();
+    assert.equal(listed.ok, true);
+    if (!listed.ok) return;
+    assert.equal(listed.value.items.length, 1);
+    assert.deepEqual(readdirSync(path.join(root, 'artifacts')), [first.value.id]);
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }
