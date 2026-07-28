@@ -30,6 +30,7 @@ export function composeArtifacts(
   options: ComposeArtifactsOptions,
 ): ArtifactsHost {
   const root = path.resolve(options.root);
+  const configuredFailpoint = process.env.NVK_FAILPOINT;
   const context: ArtifactsContext = {
     handle: composeHandle({
       root,
@@ -39,10 +40,17 @@ export function composeArtifacts(
       allowedKinds: ['artifact'],
       principal: options.principal,
       lockTimeoutMs: options.lockTimeoutMs,
+      ...(configuredFailpoint === 'artifacts.put.foundation-trace-incomplete'
+        ? {
+            failNextTraceAppend: {
+              cause: 'injected incomplete artifact mutation trace',
+            },
+          }
+        : {}),
     }),
     root,
     bytesRoot: path.join(root, 'artifacts'),
-    failpoint: composeArtifactFailpoint(process.env.NVK_FAILPOINT),
+    failpoint: composeArtifactFailpoint(configuredFailpoint),
   };
   return createArtifactsHost(context);
 }

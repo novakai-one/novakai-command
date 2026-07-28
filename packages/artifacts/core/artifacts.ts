@@ -192,7 +192,13 @@ export async function putArtifact(
   if (artifactBytesExist(ctx.bytesRoot, artifactId)) {
     const replay = await replayArtifact(ctx, artifactId, clientOpId);
     if (!replay.ok) return replay;
-    if (replay.value) return { ok: true, value: replay.value };
+    if (replay.value) {
+      return appendArtifactRecord(
+        ctx,
+        artifactRecord(artifactId, parsed.data),
+        clientOpId,
+      );
+    }
   }
   const persisted = await persistArtifactBytes(
     ctx.bytesRoot,
