@@ -112,6 +112,15 @@ export type ArtifactOrphanDeleteFailedError = ContractError<
   }
 >;
 
+export type ArtifactOrphanTraceFailedError = ContractError<
+  'ArtifactOrphanTraceFailed',
+  {
+    artifactId: ArtifactId;
+    entryType: 'final' | 'temp';
+    cause: string;
+  }
+>;
+
 export type ArtifactsError =
   | StoreError
   | ArtifactByteEffectFailedError
@@ -125,4 +134,5 @@ export type ArtifactsError =
   | ArtifactFailpointError
   | ArtifactOrphanScanFailedError
   | ArtifactOrphanDeleteFailedError
+  | ArtifactOrphanTraceFailedError
   | StoredArtifactInvalidError;

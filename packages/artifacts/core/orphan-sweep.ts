@@ -96,15 +96,32 @@ async function traceOrphan(
     'artifacts.sweep.before-trace-append',
   );
   if (before) return { ok: false, error: before };
-  const traced = await recordSystemAction(ctx.handle, {
-    action: 'artifact.orphan.sweep',
-    target: { kind: 'artifact', id: orphan.artifactId },
-    clientOpId: sweepClientOpId(orphan),
-    meta: {
-      entryType: orphan.entryType,
-      status: 'accepted',
-    },
-  });
+  let traced: Awaited<ReturnType<typeof recordSystemAction>>;
+  try {
+    traced = await recordSystemAction(ctx.handle, {
+      action: 'artifact.orphan.sweep',
+      target: { kind: 'artifact', id: orphan.artifactId },
+      clientOpId: sweepClientOpId(orphan),
+      meta: {
+        entryType: orphan.entryType,
+        status: 'accepted',
+      },
+    });
+  } catch (cause) {
+    return {
+      ok: false,
+      error: err(
+        'ArtifactOrphanTraceFailed',
+        `artifact orphan trace failed: ${String(cause)}`,
+        {
+          artifactId: orphan.artifactId,
+          entryType: orphan.entryType,
+          cause: String(cause),
+        },
+        true,
+      ),
+    };
+  }
   if (!traced.ok) return traced;
   const after = ctx.failpoint(
     orphan.artifactId,
