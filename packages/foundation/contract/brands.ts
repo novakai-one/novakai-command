@@ -24,13 +24,15 @@ export type ObjectKind =
   | 'conversationView' // S2 F1/DEC-S2-11: shell-owned pin/archive view state
   | 'config'          // B1 DEC-B1-3: server-owned typed config objects
   | 'providerSession' // B1 DEC-B1-6: agents-owned resumable provider handles
+  | 'project'         // B2a DEC-B2-1: projects-owned durable identity/lifecycle
+  | 'projectItem'     // B2a DEC-B2-1: projects-owned reference membership
   | 'quarantine'
   | 'token'
   | 'trace';
 
 export type CapabilityId =
   | 'foundation' | 'shell' | 'agents' | 'messaging'
-  | 'terminal' | 'transcript' | 'spine'
+  | 'terminal' | 'transcript' | 'projects' | 'spine'
   | 'server'; // B1: the production composition root (owns kind 'config')
 
 // ── Mint helpers (identity conventions: foundation owns conventions, §8) ──
