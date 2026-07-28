@@ -36,7 +36,7 @@ export async function ensureAgent(
     if (existing) return existing.id;
   }
   const res = await agents.defineAgent(
-    { displayName, provider, model: provider === 'kimi' ? 'kimi-cli' : 'mock-model', hooks: [], status: 'defined', permissionLevel: 'private' },
+    { displayName, provider, model: provider === 'kimi' ? 'cli-default' : 'mock-model', hooks: [], status: 'defined', permissionLevel: 'private' },
     mintOpId(),
   );
   if (!res.ok) throw new Error(`defineAgent failed: ${res.error.message}`);

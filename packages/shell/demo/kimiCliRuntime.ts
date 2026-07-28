@@ -81,7 +81,9 @@ export function createKimiCliRuntime(options: { cwd: string; cliPath?: string })
   const runPrompt = (rec: LogicalSession, text: string): Promise<void> => new Promise((resolve) => {
     const args = [...rec.argv, '-p', text, '--output-format', 'stream-json'];
     if (rec.cliSessionId) args.push('-S', rec.cliSessionId);
-    if (rec.model) args.push('-m', rec.model); // OD-C3: sticky per CLI session
+    // 'cli-default' (and the legacy 'kimi-cli' seed value) = no -m flag: let the
+    // CLI use the model configured in the user's own config.toml. Never invent a model name.
+    if (rec.model && rec.model !== 'cli-default' && rec.model !== 'kimi-cli') args.push('-m', rec.model); // OD-C3: sticky per CLI session
     const child = spawn(cliPath, args, { cwd: options.cwd, env: { ...process.env, ...rec.env } });
     rec.current = child;
     let buf = '';
