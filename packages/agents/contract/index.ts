@@ -35,6 +35,7 @@ export {
   providerTranscriptRoots,
   sanitizeProviderCwd,
   type ProviderTranscriptLookup,
+  type ProviderTranscriptSelection,
   type ProviderTranscriptUsage,
 } from '../core/providers/transcript.js';
 export type { LiveLaneSender, LiveLaneBinding } from '../core/live-lane/liveLane.js';

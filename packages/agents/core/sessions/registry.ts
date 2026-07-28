@@ -52,6 +52,8 @@ export interface ProviderSessionTokenUsage {
   cacheCreationTokens: number;
   source: string;
   measuredAt: string;
+  /** Present only when the measurement is a provably safe subset. */
+  usagePartial?: true;
 }
 
 /** Typed explanation for why a usage measurement could not be made. */
@@ -307,6 +309,7 @@ export function createProviderSessionRegistry(
           cacheCreationTokens: usage.cacheCreationTokens,
           source: usage.source,
           measuredAt: usage.measuredAt,
+          ...(usage.usagePartial ? { usagePartial: true as const } : {}),
         };
         if (
           JSON.stringify(found.record.tokenUsage) === JSON.stringify(measured)

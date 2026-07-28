@@ -64,6 +64,8 @@ export interface SessionUsage {
   /** What was subtracted, and when it was taken. Null = nothing subtracted. */
   baseline: UsageBaseline | null;
   cumulativeAdjusted: boolean;
+  /** True when only a provably attributable subset of provider evidence was counted. */
+  usagePartial: boolean;
   /** The transcript this row came from, so any number can be traced to a file. */
   source: string | null;
   /** Plain-language provenance — a gap always states itself here. */
@@ -71,6 +73,12 @@ export interface SessionUsage {
 }
 
 const ZERO = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 };
+
+const newerActivity = (a: string | null, b: string | null): string | null => {
+  if (!a) return b;
+  if (!b) return a;
+  return Date.parse(a) >= Date.parse(b) ? a : b;
+};
 
 /** Parse JSONL text into objects. A corrupt line is skipped, never fatal. */
 function parseJsonl(text: string): Array<Record<string, unknown>> {
@@ -175,7 +183,7 @@ export interface UsageReaderOptions {
 const unavailable = (note: string, source: string | null = null): SessionUsage => ({
   inputTokens: null, outputTokens: null, cacheReadTokens: null, cacheCreationTokens: null,
   lastActivityAt: null, basis: 'unavailable', providerTotal: null, baseline: null,
-  cumulativeAdjusted: false, source, note,
+  cumulativeAdjusted: false, usagePartial: false, source, note,
 });
 
 export function createUsageReader(options: UsageReaderOptions = {}): UsageReader {
@@ -188,11 +196,10 @@ export function createUsageReader(options: UsageReaderOptions = {}): UsageReader
   /** Sessions declared as ADOPTED. Everything else is a fresh thread. */
   const adopted = new Set<string>();
   /** One parse result per logical session, invalidated by file or mtime. */
-  const parsedBySession = new Map<string, {
-    file: string;
+  const parsedBySession = new Map<string, Map<string, {
     mtimeMs: number;
     parsed: ParsedUsage;
-  }>();
+  }>>();
   let manifest: { atMs: number; files: string[] } | null = null;
   let discoveryInFlight: Promise<string[]> | null = null;
 
@@ -223,27 +230,30 @@ export function createUsageReader(options: UsageReaderOptions = {}): UsageReader
   ): Promise<ParsedUsage | null> => {
     let mtimeMs: number;
     try { mtimeMs = (await stat(file)).mtimeMs; } catch { return null; }
-    const cached = parsedBySession.get(sessionId);
-    if (cached?.file === file && cached.mtimeMs === mtimeMs) return cached.parsed;
+    const sessionCache = parsedBySession.get(sessionId);
+    const cached = sessionCache?.get(file);
+    if (cached?.mtimeMs === mtimeMs) return cached.parsed;
     let text: string;
     try { text = await readFile(file, 'utf8'); } catch { return null; }
     const parsed = parseProviderTranscriptLines(provider, parseJsonl(text));
     if (!parsed) return null;
-    parsedBySession.set(sessionId, { file, mtimeMs, parsed });
+    const nextCache = sessionCache ?? new Map<string, { mtimeMs: number; parsed: ParsedUsage }>();
+    nextCache.set(file, { mtimeMs, parsed });
+    parsedBySession.set(sessionId, nextCache);
     return parsed;
   };
 
-  const newestCandidate = async (files: string[]): Promise<string | null> => {
-    const dated = await Promise.all(files.map(async (file) => {
-      try {
-        return { file, mtimeMs: (await stat(file)).mtimeMs };
-      } catch {
-        return null;
-      }
+  const newestCandidateGroup = async (groups: string[][]): Promise<string[]> => {
+    const dated = await Promise.all(groups.map(async (group) => {
+      const mtimes = await Promise.all(group.map(async (file) => {
+        try { return (await stat(file)).mtimeMs; } catch { return null; }
+      }));
+      const readable = mtimes.filter((mtime): mtime is number => mtime !== null);
+      return readable.length > 0 ? { group, mtimeMs: Math.max(...readable) } : null;
     }));
     return dated
-      .filter((candidate): candidate is { file: string; mtimeMs: number } => candidate !== null)
-      .sort((a, b) => b.mtimeMs - a.mtimeMs)[0]?.file ?? null;
+      .filter((candidate): candidate is { group: string[]; mtimeMs: number } => candidate !== null)
+      .sort((a, b) => b.mtimeMs - a.mtimeMs)[0]?.group ?? [];
   };
 
   const readFromManifest = async (
@@ -258,22 +268,39 @@ export function createUsageReader(options: UsageReaderOptions = {}): UsageReader
         'no provider conversation id yet — the handle is learned on the first reply',
       );
     }
-    const file = await newestCandidate(findProviderTranscriptCandidates(session.provider, {
+    const selection = findProviderTranscriptCandidates(session.provider, {
       conversationId: session.providerConversationId,
       cwd: session.cwd,
       home,
       ...(transcriptRoot ? { transcriptRoot } : {}),
       files,
-    }));
-    if (!file) {
+    });
+    const selectedFiles = await newestCandidateGroup(selection.fileGroups);
+    if (selectedFiles.length === 0) {
       return unavailable(
         `no ${session.provider} transcript found for conversation "${session.providerConversationId}"`,
       );
     }
-    const parsed = await parsedUsage(session.sessionId, session.provider, file);
-    if (!parsed) {
-      return unavailable(`${session.provider} transcript at ${file} could not be read`, file);
+    const parsedFiles = (await Promise.all(selectedFiles.map(async (file) => ({
+      file,
+      parsed: await parsedUsage(session.sessionId, session.provider, file),
+    })))).filter((item): item is { file: string; parsed: ParsedUsage } => item.parsed !== null);
+    const source = parsedFiles.map((item) => item.file).join(', ');
+    if (parsedFiles.length === 0) {
+      return unavailable(
+        `${session.provider} transcript at ${selectedFiles.join(', ')} could not be read`,
+        selectedFiles.join(', '),
+      );
     }
+    const usagePartial = selection.usagePartial || parsedFiles.length !== selectedFiles.length;
+    const parsed = parsedFiles.reduce<ParsedUsage>((total, item) => ({
+        inputTokens: total.inputTokens + item.parsed.inputTokens,
+        outputTokens: total.outputTokens + item.parsed.outputTokens,
+        cacheReadTokens: total.cacheReadTokens + item.parsed.cacheReadTokens,
+        cacheCreationTokens: total.cacheCreationTokens + item.parsed.cacheCreationTokens,
+        lastActivityAt: newerActivity(total.lastActivityAt, item.parsed.lastActivityAt),
+        cumulative: item.parsed.cumulative,
+      }), { ...ZERO, lastActivityAt: null, cumulative: parsedFiles[0]!.parsed.cumulative });
 
       if (!parsed.cumulative) {
         return {
@@ -286,8 +313,11 @@ export function createUsageReader(options: UsageReaderOptions = {}): UsageReader
           providerTotal: null,
           baseline: null,
           cumulativeAdjusted: false,
-          source: file,
-          note: `${session.provider} transcript records are per-turn — reported as measured`,
+          usagePartial,
+          source,
+          note: usagePartial
+            ? `${session.provider} main transcript is measured, but additional wire attribution could not be proven — usage is partial`
+            : `${session.provider} transcript records are per-turn — ${parsedFiles.length} file(s) reported as measured`,
         };
       }
 
@@ -321,7 +351,8 @@ export function createUsageReader(options: UsageReaderOptions = {}): UsageReader
         providerTotal: parsed,
         baseline,
         cumulativeAdjusted: true,
-        source: file,
+        usagePartial,
+        source,
         note: adopted.has(session.sessionId)
           ? `codex totals are cumulative; this thread was adopted, so the baseline ${baseline.inputTokens} in / ${baseline.outputTokens} out taken at ${baseline.at} is excluded`
           : 'codex totals are cumulative; this thread belongs to novakai, so the baseline is 0 and the full total is billed',

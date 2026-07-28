@@ -267,6 +267,7 @@ test('the kimi wire.jsonl layout is discovered under any working-dir bucket', as
   assert.equal(row.basis, 'transcript');
   assert.equal(row.inputTokens, 7);
   assert.equal(row.outputTokens, 2);
+  assert.equal(row.usagePartial, true, 'a path-fragment match is counted but never presented as complete');
 });
 
 test('kimi usage aggregates the main and sub-agent wires from the same session', async () => {

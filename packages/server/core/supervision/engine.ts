@@ -40,6 +40,7 @@ export interface SupervisionSessions {
       cacheCreationTokens: number;
       source: string;
       measuredAt: string;
+      usagePartial?: true;
     }
     | { kind: 'unavailable'; reason: string; checkedAt: string }
   ): Promise<{ ok: boolean; error?: unknown }>;
@@ -153,6 +154,8 @@ export interface UsageRow {
   cacheCreationTokens: number | null;
   /** True when a cumulative provider total had a baseline subtracted (codex). */
   cumulativeAdjusted: boolean;
+  /** True when provider evidence could only be safely attributed in part. */
+  usagePartial: boolean;
   /** The raw running total, when the provider reports one. */
   providerTotalInputTokens: number | null;
   /** Exact transcript evidence used for this measurement. */
@@ -491,6 +494,7 @@ export function createSupervisionEngine(deps: SupervisionDeps): SupervisionEngin
     cacheReadTokens: usage.cacheReadTokens,
     cacheCreationTokens: usage.cacheCreationTokens,
     cumulativeAdjusted: usage.cumulativeAdjusted,
+    usagePartial: usage.usagePartial,
     providerTotalInputTokens: usage.providerTotal?.inputTokens ?? null,
     source: usage.source,
     interrupted: record.lastInterruption?.clientOpId ?? null,
@@ -508,7 +512,8 @@ export function createSupervisionEngine(deps: SupervisionDeps): SupervisionEngin
       tokenAccounting:
         'read from provider transcripts: claude per-message (deduped by message id), '
         + 'kimi wire.jsonl step.end, codex rollout total_token_usage with a per-session '
-        + 'baseline subtracted (its totals are cumulative). null = no readable transcript.',
+        + 'baseline subtracted (its totals are cumulative). usagePartial=true means only '
+        + 'provably attributable files were counted. null = no readable transcript.',
     };
   };
 
@@ -528,6 +533,7 @@ export function createSupervisionEngine(deps: SupervisionDeps): SupervisionEngin
           cacheCreationTokens: row.cacheCreationTokens,
           source: row.source,
           measuredAt: row.lastActivityAt,
+          ...(row.usagePartial ? { usagePartial: true as const } : {}),
         })
         : await deps.sessions.recordUsage(row.sessionId, {
           kind: 'unavailable',
