@@ -219,6 +219,55 @@ export async function getSpineWorkflows(
   return { ok: true, value: { items } };
 }
 
+async function existingWorkflow(
+  ctx: SpineContext,
+  expected: {
+    workflowType: SpineWorkflow['workflowType'];
+    originalClientOpId: ClientOpId;
+    projectId: ProjectId;
+    sourceRef: SpineSourceRef;
+    note?: string;
+  },
+): Promise<Result<SpineWorkflow | null, SpineError>> {
+  const workflows = await getSpineWorkflows(ctx);
+  if (!workflows.ok) return workflows;
+  const existing = workflows.value.items.find(
+    (workflow) =>
+      workflow.originalClientOpId === expected.originalClientOpId,
+  );
+  if (!existing) return { ok: true, value: null };
+  const differingFields: string[] = [];
+  if (existing.workflowType !== expected.workflowType) {
+    differingFields.push('workflowType');
+  }
+  if (existing.projectId !== expected.projectId) {
+    differingFields.push('projectId');
+  }
+  if (
+    existing.sourceRef.kind !== expected.sourceRef.kind
+    || existing.sourceRef.id !== expected.sourceRef.id
+  ) {
+    differingFields.push('sourceRef');
+  }
+  if (existing.note !== expected.note) differingFields.push('note');
+  if (differingFields.length > 0) {
+    return {
+      ok: false,
+      error: {
+        code: 'SpineIdempotencyConflict',
+        message: `clientOpId "${expected.originalClientOpId}" already names a different workflow`,
+        details: {
+          clientOpId: expected.originalClientOpId,
+          workflowId: existing.workflowId,
+          differingFields,
+        },
+        retryable: false,
+      },
+    };
+  }
+  return { ok: true, value: existing };
+}
+
 export async function addMessageToProject(
   ctx: SpineContext,
   input: AddMessageToProjectInput,
@@ -240,6 +289,9 @@ export async function addMessageToProject(
     sourceRef,
     ...(input.note === undefined ? {} : { note: input.note }),
   };
+  const prior = await existingWorkflow(ctx, common);
+  if (!prior.ok) return prior;
+  if (prior.value) return { ok: true, value: prior.value };
 
   const accepted = await appendStep(ctx, {
     ...common,
@@ -389,6 +441,9 @@ export async function attachArtifactToProject(
     sourceRef,
     ...(input.note === undefined ? {} : { note: input.note }),
   };
+  const prior = await existingWorkflow(ctx, common);
+  if (!prior.ok) return prior;
+  if (prior.value) return { ok: true, value: prior.value };
 
   const accepted = await appendStep(ctx, {
     ...common,
