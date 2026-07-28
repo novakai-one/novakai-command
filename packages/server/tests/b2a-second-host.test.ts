@@ -64,7 +64,7 @@ test('the CLI-only second host proves the complete B2a lifecycle without Server 
     assert.equal(proof.uiUsed, false);
 
     const journal = readFileSync(
-      path.join(root, 'stores', 'spine.jsonl'),
+      path.join(root, 'stores', 'spineSteps.jsonl'),
       'utf8',
     );
     assert.match(journal, /"state":"accepted"/);
