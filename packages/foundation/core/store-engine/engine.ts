@@ -637,34 +637,14 @@ export class StoreEngine {
   ): EngineResult<null> {
     return this.withLock(() => {
       const traces = this.readTraces();
-      const prior = traces.find(
-        (trace) => trace.clientOpId === clientOpId,
-      );
-      if (prior) {
-        const sameAction = prior.action === action;
-        const sameTarget = prior.target.kind === target.kind
-          && prior.target.id === target.id;
-        const sameMeta = JSON.stringify(prior.meta ?? {})
-          === JSON.stringify(meta ?? {});
-        if (sameAction && sameTarget && sameMeta) {
-          return { ok: true, value: null };
-        }
-        return {
-          ok: false,
-          error: err(
-            'InvalidEnvelope',
-            `clientOpId "${clientOpId}" already names a different system action`,
-            {
-              missingFields: [],
-              invalidFields: [{
-                field: 'clientOpId',
-                reason: 'already used for a different system action',
-              }],
-            },
-            false,
-          ),
-        };
-      }
+      const prior = traces.find((line) =>
+        line.opKind === 'system.action'
+        && line.clientOpId === clientOpId
+        && line.action === action
+        && line.target.kind === target.kind
+        && line.target.id === target.id
+        && JSON.stringify(line.meta ?? {}) === JSON.stringify(meta ?? {}));
+      if (prior) return { ok: true, value: null };
       const trace: TraceLineT = {
         kind: 'trace', id: `trace_${randomUUID()}`, schemaVersion: 1,
         createdAt: nowIso(), permissionLevel: 'team', createdBy: actor,
