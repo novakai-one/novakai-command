@@ -382,3 +382,38 @@ test('listArtifacts translates unreadable Foundation storage to a typed error', 
     rmSync(workspace, { recursive: true, force: true });
   }
 });
+
+test('putArtifact translates Foundation storage throws after byte durability', async () => {
+  const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-artifact-put-eisdir-'));
+  const root = path.join(workspace, '.novakai');
+  try {
+    mkdirSync(
+      path.join(root, 'stores', 'artifacts.jsonl'),
+      { recursive: true },
+    );
+    const artifacts = composeArtifacts({
+      root,
+      principal: 'person_chris',
+    }).operations;
+
+    const result = await artifacts.putArtifact({
+      bytes: Buffer.from('durable before typed store failure', 'utf8'),
+      mimeType: 'text/plain',
+    }, mintClientOpId());
+
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    const error = result.error as unknown as {
+      code: string;
+      details: { operation: string };
+    };
+    assert.equal(error.code, 'ArtifactStoreWriteFailed');
+    assert.equal(
+      error.details.operation,
+      'put',
+    );
+    assert.equal(readdirSync(path.join(root, 'artifacts')).length, 1);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
