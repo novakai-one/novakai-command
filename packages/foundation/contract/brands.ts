@@ -30,6 +30,7 @@ export const OBJECT_KINDS = [
   'project',          // B2a DEC-B2-1: projects-owned durable identity/lifecycle
   'projectItem',      // B2a DEC-B2-1: projects-owned reference membership
   'artifact',         // B2a DEC-B2-2: artifacts-owned metadata; bytes stay outside JSONL
+  'spineStep',        // B2a DEC-B2-3: spine-owned immutable workflow journal fact
   'quarantine',
   'token',
   'trace',

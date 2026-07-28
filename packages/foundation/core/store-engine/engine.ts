@@ -31,6 +31,7 @@ export const KIND_FILES: Readonly<Record<Exclude<ObjectKind, 'token'>, string>> 
   project: 'projects.jsonl',                   // B2a DEC-B2-1 (projects-owned)
   projectItem: 'projectItems.jsonl',           // B2a DEC-B2-1 (projects-owned)
   artifact: 'artifacts.jsonl',                 // B2a DEC-B2-2 (artifacts-owned metadata)
+  spineStep: 'spineSteps.jsonl',               // B2a DEC-B2-3 (spine-owned journal)
   quarantine: 'quarantine.jsonl',
   trace: 'traces.jsonl',
 });
@@ -39,7 +40,7 @@ export const KIND_FILES: Readonly<Record<Exclude<ObjectKind, 'token'>, string>> 
 const RECORD_KINDS: readonly string[] = [
   'agent', 'skill', 'layout', 'settings', 'conversationView', 'config',
   'providerSession', 'project', 'projectItem', 'quarantine',
-  'artifact',
+  'artifact', 'spineStep',
 ];
 
 // Lazy upgrade registry (DEC-F10): pure v_n → v_n+1 transforms per kind,
