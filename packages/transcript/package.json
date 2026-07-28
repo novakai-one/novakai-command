@@ -1,7 +1,7 @@
 {
   "name": "@novakai/transcript",
   "version": "0.1.0",
-  "description": "Novakai Transcript capability — S2b: copy-only watchers for provider session dirs (TRN-001). Raw copies immutable (ruling 6); byte-offset checkpoints (R3-14); watch-while-running only (OD-D1). Ingestion is S3.",
+  "description": "Novakai Transcript capability — copy custody plus authoritative deduplicated transcript ingestion and read-only queries.",
   "type": "module",
   "engines": {
     "node": ">=20"
@@ -12,6 +12,16 @@
   },
   "license": "UNLICENSED",
   "private": true,
+  "exports": {
+    ".": {
+      "types": "./dist/contract/index.d.ts",
+      "import": "./dist/contract/index.js"
+    }
+  },
+  "dependencies": {
+    "@novakai/foundation": "file:../foundation",
+    "zod": "^3.23.8"
+  },
   "devDependencies": {
     "@types/node": "^20.14.9",
     "typescript": "^5.5.2"

@@ -31,6 +31,9 @@ export const OBJECT_KINDS = [
   'projectItem',      // B2a DEC-B2-1: projects-owned reference membership
   'artifact',         // B2a DEC-B2-2: artifacts-owned metadata; bytes stay outside JSONL
   'spineStep',        // B2a DEC-B2-3: spine-owned immutable workflow journal fact
+  'transcriptLine',       // B2b DEC-B2-4: transcript-owned normalized line
+  'transcriptJournal',    // B2b DEC-B2-4: transcript-owned ingestion journal
+  'transcriptCheckpoint', // B2b DEC-B2-4: transcript-owned incremental cursor
   'quarantine',
   'token',
   'trace',

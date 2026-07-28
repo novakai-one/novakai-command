@@ -2,7 +2,16 @@
 // .novakai/transcripts/ are evidence blobs EXEMPT from the envelope law
 // (§22 ruling 6); only transcriptLine objects (S3) will carry envelopes.
 
-export type ProviderName = 'kimi' | 'claude' | 'codex';
+import type { ProviderName } from './schemas.js';
+
+export * from './schemas.js';
+export * from './errors.js';
+export * from './source.js';
+export {
+  composeTranscript,
+  type ComposeTranscriptOptions,
+} from '../core/composition.js';
+export { type TranscriptContract } from '../core/contract.js';
 
 export interface WatcherSource {
   provider: ProviderName;
