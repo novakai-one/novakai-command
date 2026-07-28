@@ -22,6 +22,7 @@ import { resumeWorkflow } from './execution.js';
 import {
   appendStep,
   existingWorkflow,
+  findMutationIdentity,
   getSpineWorkflows,
   readAllSteps,
   reconcileIncompleteSteps,
@@ -29,6 +30,7 @@ import {
   workflowById,
   workflowFactInput,
   workflowIdFor,
+  type SpineMutationIdentity,
 } from './journal.js';
 
 export {
@@ -94,6 +96,24 @@ async function startWorkflow(
   const reconciled = await reconcileIncompleteSteps(ctx);
   if (!reconciled.ok) return reconciled;
   const workflowId = workflowIdFor(originalClientOpId);
+  const facts = await readAllSteps(ctx);
+  if (!facts.ok) return facts;
+  const priorMutation = findMutationIdentity(
+    facts.value,
+    originalClientOpId,
+  );
+  if (priorMutation && priorMutation.role !== 'acceptance') {
+    return commandConflict(
+      originalClientOpId,
+      priorMutation.fact,
+      [
+        ...(priorMutation.fact.workflowId === workflowId
+          ? []
+          : ['workflowId']),
+        'mutationKind',
+      ],
+    );
+  }
   const common = {
     workflowId,
     originalClientOpId,
@@ -164,17 +184,6 @@ export async function attachArtifactToProject(
   }, operationId.value);
 }
 
-function findPriorCommand(
-  facts: SpineStep[],
-  clientOpId: ClientOpId,
-): SpineStep | undefined {
-  return facts.find(
-    (fact) =>
-      fact.commandClientOpId === clientOpId
-      || fact.originalClientOpId === clientOpId,
-  );
-}
-
 function commandConflict(
   clientOpId: ClientOpId,
   prior: SpineStep,
@@ -184,7 +193,7 @@ function commandConflict(
     ok: false,
     error: {
       code: 'SpineIdempotencyConflict',
-      message: `clientOpId "${clientOpId}" already names a different workflow command`,
+      message: `clientOpId "${clientOpId}" already names a different Spine mutation`,
       details: {
         clientOpId,
         workflowId: prior.workflowId,
@@ -196,19 +205,22 @@ function commandConflict(
 }
 
 function priorCommandDifferences(
-  prior: SpineStep,
+  prior: SpineMutationIdentity,
   workflowId: SpineWorkflowId,
   commandKind: SpineCommandKind,
 ): string[] {
   const differingFields: string[] = [];
-  if (prior.workflowId !== workflowId) {
+  if (prior.fact.workflowId !== workflowId) {
     differingFields.push('workflowId');
   }
-  const durableCommandKind = prior.commandKind
-    ?? (prior.commandClientOpId
-      ? (prior.state === 'abandoned' ? 'abandon' : 'continue')
-      : undefined);
-  if (durableCommandKind !== commandKind) {
+  const durableCommandKind = prior.role === 'command'
+    ? (prior.fact.commandKind
+      ?? (prior.fact.state === 'abandoned' ? 'abandon' : 'continue'))
+    : undefined;
+  if (
+    prior.role !== 'command'
+    || durableCommandKind !== commandKind
+  ) {
     differingFields.push('commandKind');
   }
   return differingFields;
@@ -225,7 +237,7 @@ export async function continueWorkflow(
   if (!reconciled.ok) return reconciled;
   const facts = await readAllSteps(ctx);
   if (!facts.ok) return facts;
-  const priorCommand = findPriorCommand(facts.value, operationId.value);
+  const priorCommand = findMutationIdentity(facts.value, operationId.value);
   if (priorCommand) {
     const differingFields = priorCommandDifferences(
       priorCommand,
@@ -235,7 +247,7 @@ export async function continueWorkflow(
     if (differingFields.length > 0) {
       return commandConflict(
         operationId.value,
-        priorCommand,
+        priorCommand.fact,
         differingFields,
       );
     }
@@ -295,7 +307,7 @@ export async function abandonWorkflow(
   if (!reconciled.ok) return reconciled;
   const facts = await readAllSteps(ctx);
   if (!facts.ok) return facts;
-  const priorCommand = findPriorCommand(facts.value, operationId.value);
+  const priorCommand = findMutationIdentity(facts.value, operationId.value);
   if (priorCommand) {
     const differingFields = priorCommandDifferences(
       priorCommand,
@@ -305,7 +317,7 @@ export async function abandonWorkflow(
     if (differingFields.length > 0) {
       return commandConflict(
         operationId.value,
-        priorCommand,
+        priorCommand.fact,
         differingFields,
       );
     }

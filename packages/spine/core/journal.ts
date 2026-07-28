@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 import {
   createObject,
   listObjects,
@@ -45,6 +46,12 @@ interface AppendStepInput {
 interface StoredStep {
   fact: SpineStep;
   incomplete: boolean;
+}
+
+export interface SpineMutationIdentity {
+  clientOpId: ClientOpId;
+  role: 'acceptance' | 'command' | 'transition';
+  fact: SpineStep;
 }
 
 function causeMessage(cause: unknown): string {
@@ -114,6 +121,36 @@ export function journalMutationOpId(
   return `${originalClientOpId}:journal:step:${step}:${state}` as ClientOpId;
 }
 
+function semanticDifferences(
+  intended: SpineStep,
+  stored: SpineStep,
+): string[] {
+  // createdAt changes on a retry and createdBy is stamped by Foundation;
+  // neither field describes the intended journal transition.
+  const fields = [
+    'kind',
+    'id',
+    'schemaVersion',
+    'permissionLevel',
+    'workflowId',
+    'workflowType',
+    'originalClientOpId',
+    'projectId',
+    'sourceRef',
+    'note',
+    'state',
+    'step',
+    'eventIndex',
+    'effectOpId',
+    'failure',
+    'commandClientOpId',
+    'commandKind',
+  ] as const;
+  return fields.filter(
+    (field) => !isDeepStrictEqual(intended[field], stored[field]),
+  );
+}
+
 export async function appendStep(
   ctx: SpineContext,
   input: AppendStepInput,
@@ -168,6 +205,22 @@ export async function appendStep(
             field: issue.path.join('.') || '(root)',
             reason: issue.message,
           })),
+        },
+        retryable: false,
+      },
+    };
+  }
+  const differingFields = semanticDifferences(fact, parsed.data);
+  if (differingFields.length > 0) {
+    return {
+      ok: false,
+      error: {
+        code: 'SpineIdempotencyConflict',
+        message: `clientOpId "${mutationClientOpId}" already names a different Spine journal mutation`,
+        details: {
+          clientOpId: mutationClientOpId,
+          workflowId: input.workflowId,
+          differingFields,
         },
         retryable: false,
       },
@@ -241,12 +294,22 @@ async function readStoredSteps(
   return { ok: true, value: facts };
 }
 
-function mutationIdFor(fact: SpineStep): ClientOpId | null {
+export function mutationIdentityFor(
+  fact: SpineStep,
+): SpineMutationIdentity | null {
   if (fact.state === 'accepted') {
-    return fact.originalClientOpId as ClientOpId;
+    return {
+      clientOpId: fact.originalClientOpId as ClientOpId,
+      role: 'acceptance',
+      fact,
+    };
   }
   if (fact.commandClientOpId) {
-    return fact.commandClientOpId as ClientOpId;
+    return {
+      clientOpId: fact.commandClientOpId as ClientOpId,
+      role: 'command',
+      fact,
+    };
   }
   if (
     (fact.state === 'running'
@@ -254,13 +317,27 @@ function mutationIdFor(fact: SpineStep): ClientOpId | null {
       || fact.state === 'failed')
     && (fact.step === 1 || fact.step === 2)
   ) {
-    return journalMutationOpId(
-      fact.originalClientOpId as ClientOpId,
-      fact.step,
-      fact.state,
-    );
+    return {
+      clientOpId: journalMutationOpId(
+        fact.originalClientOpId as ClientOpId,
+        fact.step,
+        fact.state,
+      ),
+      role: 'transition',
+      fact,
+    };
   }
   return null;
+}
+
+export function findMutationIdentity(
+  facts: SpineStep[],
+  clientOpId: ClientOpId,
+): SpineMutationIdentity | undefined {
+  return facts
+    .map(mutationIdentityFor)
+    .find((identity) => identity?.clientOpId === clientOpId)
+    ?? undefined;
 }
 
 /** Mutating retries repair every previously durable but untraced fact. */
@@ -271,8 +348,8 @@ export async function reconcileIncompleteSteps(
   if (!stored.ok) return stored;
   for (const { fact, incomplete } of stored.value) {
     if (!incomplete) continue;
-    const mutationClientOpId = mutationIdFor(fact);
-    if (!mutationClientOpId) {
+    const mutationIdentity = mutationIdentityFor(fact);
+    if (!mutationIdentity) {
       return {
         ok: false,
         error: {
@@ -287,6 +364,7 @@ export async function reconcileIncompleteSteps(
         },
       };
     }
+    const mutationClientOpId = mutationIdentity.clientOpId;
     let reconciled;
     try {
       reconciled = await createObject(
