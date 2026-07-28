@@ -621,6 +621,13 @@ export class StoreEngine {
   ): EngineResult<null> {
     return this.withLock(() => {
       const traces = this.readTraces();
+      const prior = traces.find((line) =>
+        line.opKind === 'system.action'
+        && line.clientOpId === clientOpId
+        && line.action === action
+        && line.target.kind === target.kind
+        && line.target.id === target.id);
+      if (prior) return { ok: true, value: null };
       const trace: TraceLineT = {
         kind: 'trace', id: `trace_${randomUUID()}`, schemaVersion: 1,
         createdAt: nowIso(), permissionLevel: 'team', createdBy: actor,

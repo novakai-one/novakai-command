@@ -71,7 +71,12 @@ export interface BootStep {
 }
 
 export interface BootError {
-  code: 'ConfigUnavailable' | 'NoHumanPrincipal' | 'MessagingUnavailable' | 'StoreUnavailable';
+  code:
+    | 'ConfigUnavailable'
+    | 'NoHumanPrincipal'
+    | 'MessagingUnavailable'
+    | 'StoreUnavailable'
+    | 'MigrationTraceFailed';
   message: string;
 }
 
@@ -281,36 +286,46 @@ export async function bootServer(options: BootOptions): Promise<BootResult> {
       code: 'ConversationUnavailable',
       message: unavailableMessage,
     };
-    if (view.archived) continue;
-
-    const migrated = await setConversationView(
-      persistence.conversationViewDriver,
-      view.id,
-      { archived: true },
-      `op_${randomUUID()}`,
-    );
-    if (!migrated.ok) {
-      console.error(
-        `[nvk-server] legacy conversation migration failed for ${view.id}: `
-        + `${migrated.error.code} ${migrated.error.message}`,
+    const migrationClientOpId = `op_conversation_migrate_archive_${view.id}`;
+    if (!view.archived) {
+      const migrated = await setConversationView(
+        persistence.conversationViewDriver,
+        view.id,
+        { archived: true },
+        migrationClientOpId,
       );
-      continue;
+      if (!migrated.ok) {
+        console.error(
+          `[nvk-server] legacy conversation migration failed for ${view.id}: `
+          + `${migrated.error.code} ${migrated.error.message}`,
+        );
+        continue;
+      }
+      archivedLegacy += 1;
     }
-    archivedLegacy += 1;
+
     const traced = await appendSystemAction(persistence.handle, {
       action: 'hook_log',
       target: { kind: 'conversationView', id: view.id },
-      clientOpId: `op_${randomUUID()}` as never,
+      clientOpId: `${migrationClientOpId}_trace` as never,
       meta: {
         event: 'conversation.migrate.archive-unresolvable',
+        migrationClientOpId,
         previousThreadRef: view.threadRef,
       },
     });
     if (!traced.ok) {
-      console.error(
-        `[nvk-server] legacy conversation migration trace failed for ${view.id} `
-        + `(${traced.error.code}): ${traced.error.message}`,
-      );
+      transcripts?.stop();
+      await embedded.close();
+      return {
+        ok: false,
+        error: {
+          code: 'MigrationTraceFailed',
+          message:
+            `legacy conversation migration trace failed for ${view.id} `
+            + `(${traced.error.code}): ${traced.error.message}`,
+        },
+      };
     }
   }
   note(

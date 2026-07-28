@@ -178,7 +178,7 @@ test('migration trace failure aborts boot and the next boot recovers exactly one
       error: {
         code: 'TraceWriteFailed',
         message: 'injected migration trace failure',
-        details: { opId: 'sop_injected', cause: 'disk full' },
+        details: { opId: 'sop_injected' as never, cause: 'disk full' },
         retryable: true,
       },
     }),
