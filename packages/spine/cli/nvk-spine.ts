@@ -136,20 +136,21 @@ async function composeAuthenticatedSpine(
     };
   }
   const session: MessagingSession = authenticated.session;
+  const principal = token.principal;
   const projects = composeProjects({
     root,
-    principal: 'sys_spine',
+    principal,
     lockTimeoutMs,
   });
   const artifacts = composeArtifacts({
     root,
-    principal: 'sys_spine',
+    principal,
     lockTimeoutMs,
   });
   return {
     host: composeSpine({
       root,
-      principal: 'sys_spine',
+      principal,
       lockTimeoutMs,
       messaging: session,
       projects: projects.spine,
