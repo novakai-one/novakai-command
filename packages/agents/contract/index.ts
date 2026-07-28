@@ -18,6 +18,12 @@ export {
   createCodexCliRuntime, defaultCodexCliPath, isInsideGitRepo,
   type CodexCliRuntime, type CodexCliRuntimeOptions,
 } from '../core/providers/codex.js';
+// B1b DEC-B1-4: the claude adapter. `claude -p` per message, resume via
+// `--resume <session_id>`, no mid-session model switch.
+export {
+  createClaudeCliRuntime, defaultClaudeCliPath,
+  type ClaudeCliRuntime, type ClaudeCliRuntimeOptions,
+} from '../core/providers/claude.js';
 export type {
   TerminalAdapter, TerminalRuntimeLike, SpawnedSession,
   ProviderCliRuntime, ProviderTurnRecord, ProviderTurnUsage,
