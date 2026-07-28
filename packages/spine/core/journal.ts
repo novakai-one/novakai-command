@@ -26,6 +26,12 @@ import {
 } from './failpoints.js';
 
 const PAGE_LIMIT = 100;
+const JOURNAL_TRANSITION_STEPS = [1, 2] as const;
+const JOURNAL_TRANSITION_STATES = [
+  'running',
+  'done',
+  'failed',
+] as const;
 
 interface AppendStepInput {
   workflowId: SpineWorkflowId;
@@ -334,6 +340,28 @@ export function findMutationIdentity(
   facts: SpineStep[],
   clientOpId: ClientOpId,
 ): SpineMutationIdentity | undefined {
+  const seenWorkflows = new Set<string>();
+  for (const fact of facts) {
+    if (seenWorkflows.has(fact.workflowId)) continue;
+    seenWorkflows.add(fact.workflowId);
+    for (const step of JOURNAL_TRANSITION_STEPS) {
+      for (const state of JOURNAL_TRANSITION_STATES) {
+        if (
+          journalMutationOpId(
+            fact.originalClientOpId as ClientOpId,
+            step,
+            state,
+          ) === clientOpId
+        ) {
+          return {
+            clientOpId,
+            role: 'transition',
+            fact,
+          };
+        }
+      }
+    }
+  }
   return facts
     .map(mutationIdentityFor)
     .find((identity) => identity?.clientOpId === clientOpId)
