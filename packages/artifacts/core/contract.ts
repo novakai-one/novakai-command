@@ -4,6 +4,7 @@ import type {
 } from '@novakai/foundation/dist/contract/brands.js';
 import type {
   Absent,
+  Page,
   Result,
 } from '@novakai/foundation/dist/contract/types.js';
 import type {
@@ -22,6 +23,7 @@ export interface ArtifactsContract {
   getArtifactMeta(
     artifactId: ArtifactId,
   ): Promise<Result<Artifact | Absent, ArtifactsError>>;
+  listArtifacts(): Promise<Result<Page<Artifact>, ArtifactsError>>;
 }
 
 export function createArtifactsContract(
@@ -32,5 +34,6 @@ export function createArtifactsContract(
       artifacts.putArtifact(ctx, input, clientOpId),
     getArtifactMeta: (artifactId) =>
       artifacts.getArtifactMeta(ctx, artifactId),
+    listArtifacts: () => artifacts.listArtifacts(ctx),
   };
 }

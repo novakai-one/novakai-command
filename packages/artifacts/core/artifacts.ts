@@ -10,6 +10,7 @@ import {
   createObject,
   getObjectWithReadFailure,
   isAbsent,
+  listObjects,
 } from '@novakai/foundation/dist/contract/index.js';
 import {
   err,
@@ -22,6 +23,7 @@ import type {
 } from '@novakai/foundation/dist/contract/brands.js';
 import type {
   Absent,
+  Page,
   Result,
 } from '@novakai/foundation/dist/contract/types.js';
 import {
@@ -202,4 +204,34 @@ export async function getArtifactMeta(
         ok: false,
         error: storedArtifactInvalid(artifactId, stored.error),
       };
+}
+
+export async function listArtifacts(
+  ctx: ArtifactsContext,
+): Promise<Result<Page<ArtifactT>, ArtifactsError>> {
+  const listed = await listObjects<ArtifactT>(ctx.handle, 'artifact');
+  if (!listed.ok) return listed;
+  const items: ArtifactT[] = [];
+  for (const { object } of listed.value.items) {
+    const stored = Artifact.safeParse(object);
+    if (!stored.success) {
+      const artifactId = (
+        typeof object.id === 'string' ? object.id : 'artifact_unknown'
+      ) as ArtifactId;
+      return {
+        ok: false,
+        error: storedArtifactInvalid(artifactId, stored.error),
+      };
+    }
+    items.push(stored.data as ArtifactT);
+  }
+  return {
+    ok: true,
+    value: {
+      items,
+      ...(listed.value.nextCursor === undefined
+        ? {}
+        : { nextCursor: listed.value.nextCursor }),
+    },
+  };
 }
