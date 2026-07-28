@@ -21,6 +21,9 @@ interface JournalLine {
     state: string;
     step: number;
   };
+  meta: {
+    clientOpId: string;
+  };
 }
 
 function readJournal(root: string): JournalLine[] {
@@ -293,6 +296,180 @@ test('NVK_FAILPOINT names deterministically cover every workflow journal and eff
         );
         assert.equal(messageCalls, scenario.messageCalls, scenario.point);
         assert.equal(attachCalls, scenario.attachCalls, scenario.point);
+      } finally {
+        rmSync(workspace, { recursive: true, force: true });
+      }
+    }
+  } finally {
+    if (priorFailpoint === undefined) delete process.env.NVK_FAILPOINT;
+    else process.env.NVK_FAILPOINT = priorFailpoint;
+  }
+});
+
+test('abandon journal failpoints cover both sides of the terminal append', async () => {
+  const priorFailpoint = process.env.NVK_FAILPOINT;
+  try {
+    for (const phase of ['before', 'after'] as const) {
+      const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-spine-abandon-point-'));
+      const root = path.join(workspace, '.novakai');
+      let effects = 0;
+      const dependencies = {
+        messaging: {
+          async getDelivery() {
+            effects += 1;
+            return { kind: 'ok' as const, value: { deliveries: [] } };
+          },
+        },
+        artifacts: {
+          async getArtifactMeta() {
+            return assert.fail('artifact dependency must not be called');
+          },
+        },
+        projects: {
+          async attach() {
+            effects += 1;
+            return assert.fail('project dependency must not be called');
+          },
+        },
+      };
+      try {
+        process.env.NVK_FAILPOINT = 'spine.journal.accepted.after';
+        const accepting = composeSpine({
+          root,
+          principal: 'sys_spine',
+          ...dependencies,
+        });
+        const interrupted = await accepting.operations.addMessageToProject({
+          messageId: 'message_abandon_point' as never,
+          projectId: 'proj_abandon_point' as never,
+        }, `op_abandon_${phase}` as never);
+        assert.equal(interrupted.ok, false);
+
+        const point = `spine.journal.abandoned.${phase}`;
+        process.env.NVK_FAILPOINT = point;
+        const abandoning = composeSpine({
+          root,
+          principal: 'sys_spine',
+          ...dependencies,
+        });
+        const scan = await abandoning.boot.scanWorkflows();
+        assert.equal(scan.ok, true, point);
+        if (!scan.ok) continue;
+        const result = await abandoning.operations.abandonWorkflow(
+          scan.value.items[0]!.workflowId,
+          `op_abandon_command_${phase}` as never,
+        );
+
+        assert.equal(result.ok, false, point);
+        assert.equal(
+          result.ok ? null : result.error.code,
+          'SpineFailpoint',
+          point,
+        );
+        assert.equal(
+          result.ok || result.error.code !== 'SpineFailpoint'
+            ? null
+            : result.error.details.point,
+          point,
+          point,
+        );
+        assert.deepEqual(
+          readJournal(root).map(
+            ({ payload }) => `${payload.state}:${payload.step}`,
+          ),
+          phase === 'before'
+            ? ['accepted:0']
+            : ['accepted:0', 'abandoned:1'],
+          point,
+        );
+        assert.equal(effects, 0, point);
+      } finally {
+        rmSync(workspace, { recursive: true, force: true });
+      }
+    }
+  } finally {
+    if (priorFailpoint === undefined) delete process.env.NVK_FAILPOINT;
+    else process.env.NVK_FAILPOINT = priorFailpoint;
+  }
+});
+
+test('continuation caller acceptance obeys the running journal failpoints', async () => {
+  const priorFailpoint = process.env.NVK_FAILPOINT;
+  try {
+    for (const phase of ['before', 'after'] as const) {
+      const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-spine-continue-point-'));
+      const root = path.join(workspace, '.novakai');
+      let effects = 0;
+      const dependencies = {
+        messaging: {
+          async getDelivery() {
+            effects += 1;
+            return { kind: 'ok' as const, value: { deliveries: [] } };
+          },
+        },
+        artifacts: {
+          async getArtifactMeta() {
+            return assert.fail('artifact dependency must not be called');
+          },
+        },
+        projects: {
+          async attach() {
+            effects += 1;
+            return assert.fail('project dependency must not be called');
+          },
+        },
+      };
+      try {
+        process.env.NVK_FAILPOINT = 'spine.journal.accepted.after';
+        const accepting = composeSpine({
+          root,
+          principal: 'sys_spine',
+          ...dependencies,
+        });
+        const interrupted = await accepting.operations.addMessageToProject({
+          messageId: 'message_continue_point' as never,
+          projectId: 'proj_continue_point' as never,
+        }, `op_continue_source_${phase}` as never);
+        assert.equal(interrupted.ok, false);
+
+        const point = `spine.journal.step1.running.${phase}`;
+        process.env.NVK_FAILPOINT = point;
+        const continuing = composeSpine({
+          root,
+          principal: 'sys_spine',
+          ...dependencies,
+        });
+        const scan = await continuing.boot.scanWorkflows();
+        assert.equal(scan.ok, true, point);
+        if (!scan.ok) continue;
+        const commandClientOpId = `op_continue_command_${phase}`;
+        const result = await continuing.operations.continueWorkflow(
+          scan.value.items[0]!.workflowId,
+          commandClientOpId as never,
+        );
+
+        assert.equal(result.ok, false, point);
+        assert.equal(
+          result.ok ? null : result.error.code,
+          'SpineFailpoint',
+          point,
+        );
+        const journal = readJournal(root);
+        assert.deepEqual(
+          journal.map(({ payload }) => `${payload.state}:${payload.step}`),
+          phase === 'before'
+            ? ['accepted:0']
+            : ['accepted:0', 'running:1'],
+          point,
+        );
+        assert.equal(
+          journal.some(
+            (line) => line.meta.clientOpId === commandClientOpId,
+          ),
+          phase === 'after',
+          point,
+        );
+        assert.equal(effects, 0, point);
       } finally {
         rmSync(workspace, { recursive: true, force: true });
       }
