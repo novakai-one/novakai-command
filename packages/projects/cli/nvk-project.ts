@@ -1,7 +1,10 @@
 #!/usr/bin/env node
 // Offline adapter over the same Projects contract used in-process.
 // Deliberately composes only the ordinary contract: attach belongs to Spine.
-import { authenticate } from '@novakai/foundation/dist/contract/index.js';
+import {
+  authenticate,
+  type ClientOpId,
+} from '@novakai/foundation/dist/contract/index.js';
 import {
   composeProjects,
   createProjectsContract,
@@ -39,7 +42,18 @@ function fail(error: unknown, exitCode = 1): never {
   process.exit(exitCode);
 }
 
-function authenticateProjects(root: string, bearer: string): ProjectsContract {
+function required(value: unknown, name: string): string {
+  if (typeof value !== 'string' || value.length === 0) {
+    fail({ code: 'Usage', message: `--${name} is required` });
+  }
+  return value;
+}
+
+function authenticateProjects(
+  root: string,
+  bearer: string,
+  lockTimeoutMs?: number,
+): ProjectsContract {
   if (!bearer) {
     process.stderr.write('auth: provide --token <bearer> or NOVAKAI_TOKEN\n');
     process.exit(2);
@@ -56,10 +70,11 @@ function authenticateProjects(root: string, bearer: string): ProjectsContract {
   return createProjectsContract(composeProjects({
     root,
     principal: token.principal,
+    lockTimeoutMs,
   }));
 }
 
-function main(): void {
+async function main(): Promise<void> {
   const { verb, args } = parseArgs(process.argv.slice(2));
   const root = typeof args.root === 'string'
     ? args.root
@@ -67,8 +82,18 @@ function main(): void {
   const bearer = typeof args.token === 'string'
     ? args.token
     : (process.env.NOVAKAI_TOKEN ?? '');
-  authenticateProjects(root, bearer);
+  const lockTimeoutMs = typeof args['lock-timeout-ms'] === 'string'
+    ? Number(args['lock-timeout-ms'])
+    : undefined;
+  const projects = authenticateProjects(root, bearer, lockTimeoutMs);
+  if (verb === 'create') {
+    const result = await projects.createProject(
+      { title: required(args.title, 'title') },
+      required(args['client-op-id'], 'client-op-id') as ClientOpId,
+    );
+    return result.ok ? output(result.value) : fail(result.error);
+  }
   output({ authenticated: true, verb });
 }
 
-main();
+void main();
