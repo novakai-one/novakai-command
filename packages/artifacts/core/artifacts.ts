@@ -200,7 +200,17 @@ export async function putArtifact(
     await file.close();
     file = undefined;
     effect = 'rename';
+    const beforeRename = injectedFailpoint(
+      artifactId,
+      'artifacts.put.before-rename',
+    );
+    if (beforeRename) return { ok: false, error: beforeRename };
     await rename(tempPath, finalPath);
+    const afterRename = injectedFailpoint(
+      artifactId,
+      'artifacts.put.after-rename',
+    );
+    if (afterRename) return { ok: false, error: afterRename };
   } catch (cause) {
     if (file) {
       try {
