@@ -293,15 +293,7 @@ export async function getArtifactMeta(
   );
   if (!found.ok) return found;
   if (isAbsent(found.value)) {
-    return {
-      ok: false,
-      error: err(
-        'NotFound',
-        `no artifact with id "${artifactId}"`,
-        { ref: { kind: 'artifact', id: artifactId } },
-        false,
-      ),
-    };
+    return { ok: true, value: found.value };
   }
   const stored = Artifact.safeParse(found.value.object);
   return stored.success
