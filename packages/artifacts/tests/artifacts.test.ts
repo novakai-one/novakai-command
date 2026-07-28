@@ -78,3 +78,40 @@ test('getArtifactMeta retrieves metadata through the public contract', async () 
     rmSync(workspace, { recursive: true, force: true });
   }
 });
+
+test('listArtifacts returns artifact metadata without byte payloads', async () => {
+  const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-artifact-list-'));
+  const root = path.join(workspace, '.novakai');
+  try {
+    const artifacts = createArtifactsContract(composeArtifacts({
+      root,
+      principal: 'person_chris',
+    }));
+    const first = await artifacts.putArtifact({
+      bytes: Buffer.from('one', 'utf8'),
+      mimeType: 'text/plain',
+    }, mintClientOpId());
+    const second = await artifacts.putArtifact({
+      bytes: Buffer.from([0, 1, 2, 3]),
+      mimeType: 'application/octet-stream',
+    }, mintClientOpId());
+    assert.equal(first.ok, true);
+    assert.equal(second.ok, true);
+    if (!first.ok || !second.ok) return;
+
+    const listed = await artifacts.listArtifacts();
+
+    assert.equal(listed.ok, true);
+    if (!listed.ok) return;
+    assert.deepEqual(
+      new Set(listed.value.items.map((artifact) => artifact.id)),
+      new Set([first.value.id, second.value.id]),
+    );
+    assert.equal(
+      listed.value.items.every((artifact) => !('bytes' in artifact)),
+      true,
+    );
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
