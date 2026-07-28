@@ -105,6 +105,19 @@ function storedArtifactInvalid(
   );
 }
 
+function injectedFailpoint(
+  artifactId: ArtifactId,
+  point: string,
+): ArtifactsError | null {
+  if (process.env.NVK_FAILPOINT !== point) return null;
+  return err(
+    'ArtifactFailpoint',
+    `artifact failpoint injected at "${point}"`,
+    { artifactId, point },
+    true,
+  );
+}
+
 export async function putArtifact(
   ctx: ArtifactsContext,
   input: PutArtifactInputT,
@@ -148,8 +161,22 @@ export async function putArtifact(
   let effect: ArtifactByteEffect = 'temp-write';
   try {
     await mkdir(ctx.bytesRoot, { recursive: true });
+    const beforeWrite = injectedFailpoint(
+      artifactId,
+      'artifacts.put.before-temp-write',
+    );
+    if (beforeWrite) return { ok: false, error: beforeWrite };
     file = await open(tempPath, 'wx');
     await file.writeFile(parsed.data.bytes);
+    const afterWrite = injectedFailpoint(
+      artifactId,
+      'artifacts.put.after-temp-write',
+    );
+    if (afterWrite) {
+      await file.close();
+      file = undefined;
+      return { ok: false, error: afterWrite };
+    }
     effect = 'temp-fsync';
     await file.sync();
     await file.close();

@@ -37,8 +37,17 @@ export type ArtifactBytesReadFailedError = ContractError<
   }
 >;
 
+export type ArtifactFailpointError = ContractError<
+  'ArtifactFailpoint',
+  {
+    artifactId: ArtifactId;
+    point: string;
+  }
+>;
+
 export type ArtifactsError =
   | StoreError
   | ArtifactByteEffectFailedError
   | ArtifactBytesReadFailedError
+  | ArtifactFailpointError
   | StoredArtifactInvalidError;
