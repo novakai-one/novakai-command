@@ -28,6 +28,7 @@ import {
 } from '../contract/schemas.js';
 import type {
   ArtifactsError,
+  ArtifactStoreReadFailedError,
   StoredArtifactInvalidError,
 } from '../contract/errors.js';
 import type { ArtifactsContext } from './composition.js';
@@ -86,6 +87,18 @@ function storedArtifactInvalid(
       })),
     },
     false,
+  );
+}
+
+function storeReadFailed(
+  operation: 'get' | 'list',
+  cause: unknown,
+): ArtifactStoreReadFailedError {
+  return err(
+    'ArtifactStoreReadFailed',
+    `artifact ${operation} storage read failed: ${String(cause)}`,
+    { operation, cause: String(cause) },
+    true,
   );
 }
 
@@ -199,11 +212,16 @@ export async function getArtifactMeta(
   ctx: ArtifactsContext,
   artifactId: ArtifactId,
 ): Promise<Result<ArtifactT | Absent, ArtifactsError>> {
-  const found = await getObjectWithReadFailure<ArtifactT>(
-    ctx.handle,
-    'artifact',
-    artifactId as unknown as ObjectId,
-  );
+  let found;
+  try {
+    found = await getObjectWithReadFailure<ArtifactT>(
+      ctx.handle,
+      'artifact',
+      artifactId as unknown as ObjectId,
+    );
+  } catch (cause) {
+    return { ok: false, error: storeReadFailed('get', cause) };
+  }
   if (!found.ok) return found;
   if (isAbsent(found.value)) {
     return { ok: true, value: found.value };

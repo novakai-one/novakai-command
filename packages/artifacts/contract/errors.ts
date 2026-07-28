@@ -44,6 +44,14 @@ export type ArtifactBytesMissingError = ContractError<
   }
 >;
 
+export type ArtifactStoreReadFailedError = ContractError<
+  'ArtifactStoreReadFailed',
+  {
+    operation: 'get' | 'list';
+    cause: string;
+  }
+>;
+
 export type ArtifactFailpointError = ContractError<
   'ArtifactFailpoint',
   {
@@ -73,6 +81,7 @@ export type ArtifactsError =
   | ArtifactByteEffectFailedError
   | ArtifactBytesMissingError
   | ArtifactBytesReadFailedError
+  | ArtifactStoreReadFailedError
   | ArtifactFailpointError
   | ArtifactOrphanScanFailedError
   | ArtifactOrphanDeleteFailedError
