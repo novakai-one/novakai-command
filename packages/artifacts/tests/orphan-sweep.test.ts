@@ -101,6 +101,39 @@ test('boot orphan sweep removes final/temp orphans, preserves records, and trace
   }
 });
 
+test('boot orphan sweep preserves recorded bytes beyond the first metadata page', async () => {
+  const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-artifact-sweep-pages-'));
+  const root = path.join(workspace, '.novakai');
+  try {
+    const host = composeArtifacts({
+      root,
+      principal: 'sys_reconciler',
+    });
+    const recordedIds: string[] = [];
+    for (let index = 0; index < 101; index += 1) {
+      const recorded = await host.operations.putArtifact({
+        bytes: Buffer.from(`recorded-${index}`, 'utf8'),
+        mimeType: 'text/plain',
+      }, mintClientOpId());
+      assert.equal(recorded.ok, true);
+      if (!recorded.ok) return;
+      recordedIds.push(recorded.value.id);
+    }
+
+    const swept = await host.boot.sweepOrphans();
+
+    assert.equal(swept.ok, true);
+    if (!swept.ok) return;
+    assert.deepEqual(swept.value.swept, []);
+    assert.deepEqual(
+      new Set(readdirSync(path.join(root, 'artifacts'))),
+      new Set(recordedIds),
+    );
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
 test('NVK_FAILPOINT names deterministic before/after orphan trace-append failures', async () => {
   for (const expectation of [
     {
