@@ -6,7 +6,7 @@
 // the watcher must copy parent AND subagent files.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, appendFileSync, readFileSync, existsSync, readdirSync, truncateSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, appendFileSync, readFileSync, existsSync, readdirSync, truncateSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createTranscriptWatcher, defaultSources } from '../core/watcher.js';
@@ -121,7 +121,7 @@ test('truncation → full re-copy into a NEW copy record; the original copy is i
 test('status exposes watched files and copied bytes; app-closed = no watching, no error', async () => {
   const f = makeFixture();
   const w = watch(f);
-  assert.deepEqual(w.status(), { running: false, files: 0, bytesCopied: 0, lastScanAt: null });
+  assert.deepEqual(w.status(), { running: false, files: 0, bytesCopied: 0, lastScanAt: null, skips: [] });
   await w.start();
   await sleep(120);
   const st = w.status();
@@ -131,6 +131,47 @@ test('status exposes watched files and copied bytes; app-closed = no watching, n
   assert.ok(typeof st.lastScanAt === 'string');
   await w.stop();
   assert.equal(w.status().running, false);
+});
+
+test('M12 tail-hash regrow: bytes BEFORE the cursor rewritten while the file grows → full re-scan into a NEW copy record', async () => {
+  const f = makeFixture();
+  const w1 = watch(f);
+  await w1.start();
+  await sleep(120);
+  await w1.stop();
+  const copy = path.join(f.root, 'transcripts', 'claude', '-Users-chris-app', 'sess_1.jsonl');
+  const original = readFileSync(copy, 'utf8');
+  // Same inode, LARGER size, but the bytes before the old offset differ
+  // (provider rewrote history, then appended) — the tail hash at the cursor
+  // no longer matches → the copy must NOT be appended to blindly.
+  writeFileSync(f.parentFile, '{"role":"user","text":"REWRITTEN"}\n{"role":"assistant","text":"new"}\n');
+  const w2 = watch(f);
+  await w2.start();
+  await sleep(150);
+  await w2.stop();
+  assert.equal(readFileSync(copy, 'utf8'), original, 'original copy immutable');
+  const dir = path.join(f.root, 'transcripts', 'claude', '-Users-chris-app');
+  const rescans = readdirSync(dir).filter((n) => n.startsWith('sess_1.rescan-'));
+  assert.equal(rescans.length, 1, 'regrow past a rewritten cursor produced a rescan record');
+  assert.equal(readFileSync(path.join(dir, rescans[0]), 'utf8'), '{"role":"user","text":"REWRITTEN"}\n{"role":"assistant","text":"new"}\n');
+});
+
+test('M6: an unreadable source file is a typed skip — the scan NEVER throws out of the interval', async () => {
+  const f = makeFixture();
+  chmodSync(f.subagentFile, 0o000); // stat works, read fails (EACCES)
+  const w = watch(f);
+  await w.start();
+  await sleep(150);
+  await w.stop();
+  chmodSync(f.subagentFile, 0o644); // restore so tmp cleanup works
+  const st = w.status();
+  assert.equal(st.running, false);
+  assert.ok(st.skips.length >= 1, 'the skip was recorded, not swallowed');
+  assert.equal(st.skips[0].src, f.subagentFile);
+  assert.ok(st.skips[0].reason.length > 0);
+  // the OTHER files still copied — one bad file never stalls the scan
+  assert.ok(existsSync(path.join(f.root, 'transcripts', 'claude', '-Users-chris-app', 'sess_1.jsonl')));
+  assert.ok(existsSync(path.join(f.root, 'transcripts', 'kimi', 'server', 'events', 'session_k1.jsonl')));
 });
 
 test('defaultSources discovers real provider dirs, existing dirs only', () => {

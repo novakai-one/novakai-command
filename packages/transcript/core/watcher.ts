@@ -58,6 +58,8 @@ export function createTranscriptWatcher(options: WatcherOptions): TranscriptWatc
   let bytesCopied = 0;
   let lastScanAt: string | null = null;
   const tracked = new Set<string>();
+  /** M6: typed per-file skip records — a bad file NEVER throws out of the scan. */
+  const skips: Array<{ src: string; reason: string }> = [];
 
   const scanOnce = (): void => {
     if (scanning) return;
@@ -66,47 +68,56 @@ export function createTranscriptWatcher(options: WatcherOptions): TranscriptWatc
       for (const source of options.sources) {
         for (const rel of listJsonl(source.dir)) {
           const src = path.join(source.dir, rel);
-          let st;
-          try { st = statSync(src); } catch { continue; }
-          const srcKey = src;
-          const inode = `${st.dev}:${st.ino}`;
-          const prev = checkpoints[srcKey];
-          const destBase = path.join(transcriptsRoot, source.provider, rel);
-          tracked.add(srcKey);
-          const buf = st.size > 0 ? readFileSync(src) : Buffer.alloc(0);
+          // M6: every fs op for ONE file is guarded; a failure is a typed
+          // skip + continue — the interval never throws, other files copy.
+          try {
+            let st;
+            try { st = statSync(src); } catch { continue; }
+            const srcKey = src;
+            const inode = `${st.dev}:${st.ino}`;
+            const prev = checkpoints[srcKey];
+            const destBase = path.join(transcriptsRoot, source.provider, rel);
+            tracked.add(srcKey);
+            const buf = st.size > 0 ? readFileSync(src) : Buffer.alloc(0);
 
-          const rescan = (rescans: number): void => {
-            const rescanDest = `${destBase.replace(/\.jsonl$/, '')}.rescan-${rescans}.jsonl`;
-            mkdirSync(path.dirname(rescanDest), { recursive: true });
-            if (st.size > 0) {
-              writeFileSync(rescanDest, buf);
-              bytesCopied += st.size;
-            }
-            checkpoints[srcKey] = { offset: st.size, inode, rescans, tail: tailHash(buf, st.size) };
-          };
+            const rescan = (rescans: number): void => {
+              const rescanDest = `${destBase.replace(/\.jsonl$/, '')}.rescan-${rescans}.jsonl`;
+              mkdirSync(path.dirname(rescanDest), { recursive: true });
+              if (st.size > 0) {
+                writeFileSync(rescanDest, buf);
+                bytesCopied += st.size;
+              }
+              checkpoints[srcKey] = { offset: st.size, inode, rescans, tail: tailHash(buf, st.size) };
+            };
 
-          if (!prev) {
-            // first sight: full copy
-            if (st.size > 0) {
+            if (!prev) {
+              // first sight: full copy
+              if (st.size > 0) {
+                mkdirSync(path.dirname(destBase), { recursive: true });
+                appendFileSync(destBase, buf);
+                bytesCopied += st.size;
+              } else mkdirSync(path.dirname(destBase), { recursive: true });
+              checkpoints[srcKey] = { offset: st.size, inode, rescans: 0, tail: tailHash(buf, st.size) };
+            } else if (
+              prev.inode !== inode
+              || st.size < prev.offset
+              || (st.size > prev.offset && prev.offset > 0 && tailHash(buf, prev.offset) !== prev.tail)
+            ) {
+              // rotation/truncation/regrowth-over-rewritten-bytes (R3-14): full
+              // re-copy into a NEW copy record; the original copy is immutable;
+              // S2 tolerates duplicate raws (§13.4).
+              rescan(prev.rescans + 1);
+            } else if (st.size > prev.offset) {
               mkdirSync(path.dirname(destBase), { recursive: true });
-              appendFileSync(destBase, buf);
-              bytesCopied += st.size;
-            } else mkdirSync(path.dirname(destBase), { recursive: true });
-            checkpoints[srcKey] = { offset: st.size, inode, rescans: 0, tail: tailHash(buf, st.size) };
-          } else if (
-            prev.inode !== inode
-            || st.size < prev.offset
-            || (st.size > prev.offset && prev.offset > 0 && tailHash(buf, prev.offset) !== prev.tail)
-          ) {
-            // rotation/truncation/regrowth-over-rewritten-bytes (R3-14): full
-            // re-copy into a NEW copy record; the original copy is immutable;
-            // S2 tolerates duplicate raws (§13.4).
-            rescan(prev.rescans + 1);
-          } else if (st.size > prev.offset) {
-            mkdirSync(path.dirname(destBase), { recursive: true });
-            appendFileSync(destBase, buf.subarray(prev.offset, st.size));
-            bytesCopied += st.size - prev.offset;
-            checkpoints[srcKey] = { ...prev, offset: st.size, tail: tailHash(buf, st.size) };
+              appendFileSync(destBase, buf.subarray(prev.offset, st.size));
+              bytesCopied += st.size - prev.offset;
+              checkpoints[srcKey] = { ...prev, offset: st.size, tail: tailHash(buf, st.size) };
+            }
+          } catch (cause) {
+            // typed skip: recorded once per file, surfaced via status, scan continues
+            if (!skips.some((s) => s.src === src)) {
+              skips.push({ src, reason: cause instanceof Error ? cause.message : String(cause) });
+            }
           }
         }
       }
@@ -129,7 +140,7 @@ export function createTranscriptWatcher(options: WatcherOptions): TranscriptWatc
       timer = null;
     },
     status(): WatcherStatus {
-      return { running: timer !== null, files: tracked.size, bytesCopied, lastScanAt };
+      return { running: timer !== null, files: tracked.size, bytesCopied, lastScanAt, skips: [...skips] };
     },
   };
 }

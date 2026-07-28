@@ -23,6 +23,8 @@ export interface WatcherStatus {
   files: number;
   bytesCopied: number;
   lastScanAt: string | null;
+  /** M6: per-file failures recorded as typed skips (scan never throws). */
+  skips: Array<{ src: string; reason: string }>;
 }
 
 export interface TranscriptWatcher {
