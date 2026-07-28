@@ -8,6 +8,7 @@ import {
 import {
   composeProjects,
   createProjectsContract,
+  type ProjectStatus,
   type ProjectsContract,
 } from '../contract/index.js';
 
@@ -100,6 +101,14 @@ async function main(): Promise<void> {
           : {}),
       },
       required(args['client-op-id'], 'client-op-id') as ClientOpId,
+    );
+    return result.ok ? output(result.value) : fail(result.error);
+  }
+  if (verb === 'list') {
+    const result = await projects.listProjects(
+      typeof args.status === 'string'
+        ? { status: args.status as ProjectStatus }
+        : undefined,
     );
     return result.ok ? output(result.value) : fail(result.error);
   }
