@@ -16,7 +16,10 @@
     "zod": "^3.23.8",
     "ws": "^8.17.0",
     "@novakai/foundation": "file:../foundation",
-    "@novakai/agents": "file:../agents"
+    "@novakai/agents": "file:../agents",
+    "@novakai/projects": "file:../projects",
+    "@novakai/artifacts": "file:../artifacts",
+    "@novakai/spine": "file:../spine"
   },
   "devDependencies": {
     "@types/node": "^20.14.9",

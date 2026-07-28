@@ -6,7 +6,8 @@
 //   1 config          2 foundation store   3 messaging (authority from config)
 //   4 agents+providers 5 transcript        6 shell persistence
 //   7 session layer + providerSession registry + orphan sweep
-//   8 supervision (B1a: watchdog hook)     9 HTTP + nvk-ws v1
+//   8 artifacts       9 projects          10 spine
+//  11 supervision (B1a: watchdog hook)    12 HTTP + nvk-ws v1
 //
 // It replaces packages/shell/demo/bridge.ts. Everything the demo PROVED is
 // promoted; everything the demo HACKED (hardcoded tokens, person pools, code
@@ -38,6 +39,8 @@ import { createSupervisedTransport } from './supervision/transport.js';
 import { createSupervisionEngine, type SupervisionEngine, type SupervisionRecord } from './supervision/engine.js';
 import { startTransport, type RunningTransport } from './transport/server.js';
 import { buildMethods, restoreLiveSessions, type ServerRuntime, type Conversation } from './methods.js';
+import { composeB2aServerCapabilities } from './b2a/composition.js';
+import type { MessageExistenceQuery } from '../../spine/contract/index.js';
 
 export interface BootOptions {
   /** `.novakai/` root. */
@@ -108,7 +111,7 @@ export async function bootServer(options: BootOptions): Promise<BootResult> {
   const steps: BootStep[] = [];
   const note = (step: number, name: string, detail: string): void => {
     steps.push({ step, name, detail });
-    console.log(`[nvk-server] ${step}/9 ${name}: ${detail}`);
+    console.log(`[nvk-server] ${step}/12 ${name}: ${detail}`);
   };
   const cwd = options.cwd ?? process.cwd();
 
@@ -353,7 +356,110 @@ export async function bootServer(options: BootOptions): Promise<BootResult> {
     }
   }
 
-  // ── 8. supervision (B1b: the engine — gate, drift, lifecycle, usage) ────
+  const b2a = composeB2aServerCapabilities({
+    root: options.root,
+    principal: human.personId,
+    messaging: {
+      getDelivery: (input) => humanHolder.value.call((session) =>
+        (session as MessageExistenceQuery).getDelivery(input)),
+    },
+  });
+  const traceCapabilityBoot = async (
+    capability: 'artifacts' | 'projects' | 'spine',
+    target: { kind: 'artifact' | 'project' | 'spineStep'; id: string },
+    meta: Record<string, unknown>,
+  ): Promise<BootError | null> => {
+    let traced: Awaited<ReturnType<typeof recordSystemAction>>;
+    try {
+      traced = await appendSystemAction(persistence.handle, {
+        action: 'hook_log',
+        target,
+        clientOpId: `op_server_boot_${capability}_${randomUUID()}` as never,
+        meta: {
+          event: 'server.boot.capability',
+          capability,
+          ...meta,
+        },
+      });
+    } catch (cause) {
+      return {
+        code: 'StoreUnavailable',
+        message:
+          `${capability} boot trace threw: `
+          + `${cause instanceof Error ? cause.message : String(cause)}`,
+      };
+    }
+    return traced.ok
+      ? null
+      : {
+          code: 'StoreUnavailable',
+          message:
+            `${capability} boot trace failed (${traced.error.code}): `
+            + traced.error.message,
+        };
+  };
+  const failCapabilityBoot = async (
+    error: BootError,
+  ): Promise<BootResult> => {
+    transcripts?.stop();
+    await embedded.close();
+    return { ok: false, error };
+  };
+
+  // ── 8. artifacts: maintenance precedes its successful boot trace ─────────
+  const artifactSweep = await b2a.artifacts.boot.sweepOrphans();
+  if (!artifactSweep.ok) {
+    return failCapabilityBoot({
+      code: 'StoreUnavailable',
+      message:
+        `artifacts boot failed (${artifactSweep.error.code}): `
+        + artifactSweep.error.message,
+    });
+  }
+  const artifactTraceError = await traceCapabilityBoot(
+    'artifacts',
+    { kind: 'artifact', id: 'server_boot_artifacts' },
+    { sweptOrphans: artifactSweep.value.swept.length },
+  );
+  if (artifactTraceError) return failCapabilityBoot(artifactTraceError);
+  note(
+    8,
+    'artifacts',
+    `${artifactSweep.value.swept.length} orphan byte file(s) swept`,
+  );
+
+  // ── 9. projects: the ordinary and Spine-only doors share one host ────────
+  const projectsTraceError = await traceCapabilityBoot(
+    'projects',
+    { kind: 'project', id: 'server_boot_projects' },
+    {},
+  );
+  if (projectsTraceError) return failCapabilityBoot(projectsTraceError);
+  note(9, 'projects', 'operations and Spine attachment contract ready');
+
+  // ── 10. spine: discover accepted work; never continue it during boot ─────
+  const pendingWorkflows = await b2a.spine.boot.scanWorkflows();
+  if (!pendingWorkflows.ok) {
+    return failCapabilityBoot({
+      code: 'StoreUnavailable',
+      message:
+        `spine boot failed (${pendingWorkflows.error.code}): `
+        + pendingWorkflows.error.message,
+    });
+  }
+  const spineTraceError = await traceCapabilityBoot(
+    'spine',
+    { kind: 'spineStep', id: 'server_boot_spine' },
+    { resumableWorkflows: pendingWorkflows.value.items.length },
+  );
+  if (spineTraceError) return failCapabilityBoot(spineTraceError);
+  note(
+    10,
+    'spine',
+    `${pendingWorkflows.value.items.length} resumable workflow(s) discovered; auto-continue disabled`,
+  );
+
+  // ── 11. supervision (B1b: the engine — gate, drift, lifecycle, usage) ───
   const watchdog: WatchdogHook = createWatchdogHook(options.watchdogDir ?? cwd);
   const usageReader = createUsageReader({
     ...(options.providerHome ? { home: options.providerHome } : {}),
@@ -450,7 +556,7 @@ export async function bootServer(options: BootOptions): Promise<BootResult> {
       + `(${failure.code}): ${failure.message}`,
     ),
   });
-  note(8, 'supervision', `engine up — usage every ${config.supervision.usageIntervalSec}s, drift every ${config.supervision.driftIntervalSec}s; log at ${usageLog.filePath}; watchdog registry at ${watchdog.registryPath}`);
+  note(11, 'supervision', `engine up — usage every ${config.supervision.usageIntervalSec}s, drift every ${config.supervision.driftIntervalSec}s; log at ${usageLog.filePath}; watchdog registry at ${watchdog.registryPath}`);
 
   // ── the runtime the WS methods operate on ───────────────────────────────
   const runtime: ServerRuntime = {
@@ -464,6 +570,7 @@ export async function bootServer(options: BootOptions): Promise<BootResult> {
     sessions,
     supervision,
     watchdog,
+    b2a,
     persistence,
     conversations,
     configStore,
@@ -531,7 +638,7 @@ export async function bootServer(options: BootOptions): Promise<BootResult> {
   const restored = await restoreLiveSessions(runtime);
   if (restored > 0) note(7, 'sessions', `${restored} session(s) reattached to their conversations`);
 
-  // ── 9. HTTP + nvk-ws v1 ─────────────────────────────────────────────────
+  // ── 12. HTTP + nvk-ws v1 ────────────────────────────────────────────────
   const methods = buildMethods(runtime);
   const transport: RunningTransport = await startTransport({
     root: options.root,
@@ -541,7 +648,7 @@ export async function bootServer(options: BootOptions): Promise<BootResult> {
   });
   runtime.broadcast = (name, data) => transport.broadcast(name, data);
   agents.subscribeAgentEvents((event) => transport.broadcast('presence', event));
-  note(9, 'transport', `listening on ${transport.url} (nvk-ws v1, token-gated)`);
+  note(12, 'transport', `listening on ${transport.url} (nvk-ws v1, token-gated)`);
 
   // The supervision timers start only once the socket exists — otherwise the
   // first usage broadcast would fire into the no-op broadcaster above.

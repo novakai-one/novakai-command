@@ -26,6 +26,7 @@ import type { ServerConfig, ProviderName } from '../contract/config.js';
 import type { ConfigStore } from './config/store.js';
 import type { MessagingSessionHolder, SessionHolderFactory } from './session/holders.js';
 import type { WatchdogHook } from './supervision/watchdog.js';
+import type { B2aServerCapabilities } from './b2a/composition.js';
 
 type ShellPersistence = ReturnType<typeof composeShellPersistence>;
 
@@ -65,6 +66,7 @@ export interface ServerRuntime {
   /** B1b §8: the supervision engine owns lifecycle + usage. */
   supervision: SupervisionEngine;
   watchdog: WatchdogHook;
+  b2a: B2aServerCapabilities;
   persistence: ShellPersistence;
   conversations: Map<string, Conversation>;
   configStore: ConfigStore;
