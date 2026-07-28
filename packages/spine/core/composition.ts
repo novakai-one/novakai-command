@@ -1,24 +1,17 @@
 import path from 'node:path';
 import {
   composeHandle,
-  type ScopedStoreHandle,
 } from '@novakai/foundation/dist/contract/index.js';
 import type { ArtifactsOperations } from '@novakai/artifacts';
 import type { SpineProjectsContract } from '@novakai/projects';
 import {
   createSpineHost,
-  type MessageExistenceQuery,
   type SpineHost,
 } from './contract.js';
-
-/** @internal private composition state; never exported from the package door. */
-export interface SpineContext {
-  readonly handle: ScopedStoreHandle;
-  readonly messaging: MessageExistenceQuery;
-  readonly projects: Pick<SpineProjectsContract, 'attach'>;
-  readonly artifacts: Pick<ArtifactsOperations, 'getArtifactMeta'>;
-  readonly configuredFailpoint?: string;
-}
+import type {
+  MessageExistenceQuery,
+  SpineContext,
+} from './ports.js';
 
 export interface ComposeSpineOptions {
   root: string;

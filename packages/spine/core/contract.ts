@@ -6,22 +6,15 @@ import type {
   Result,
 } from '@novakai/foundation/dist/contract/types.js';
 import type {
-  DeliveryListResult,
-  Outcome,
-} from '@novakai/messaging/dist/public/index.js';
-import type {
   AddMessageToProjectInput,
   AttachArtifactToProjectInput,
   SpineWorkflow,
   SpineWorkflowId,
 } from '../contract/schemas.js';
 import type { SpineError } from '../contract/errors.js';
-import type { SpineContext } from './composition.js';
+import type { SpineContext } from './ports.js';
+export type { MessageExistenceQuery } from './ports.js';
 import * as workflows from './workflows.js';
-
-export interface MessageExistenceQuery {
-  getDelivery(input: unknown): Promise<Outcome<DeliveryListResult>>;
-}
 
 export interface SpineOperations {
   addMessageToProject(
