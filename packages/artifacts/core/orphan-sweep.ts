@@ -1,15 +1,16 @@
+import { createHash } from 'node:crypto';
 import {
   readdir,
   unlink,
 } from 'node:fs/promises';
 import path from 'node:path';
 import {
-  mintClientOpId,
   recordSystemAction,
 } from '@novakai/foundation/dist/contract/index.js';
 import { err } from '@novakai/foundation/dist/contract/errors.js';
 import type {
   ArtifactId,
+  ClientOpId,
 } from '@novakai/foundation/dist/contract/brands.js';
 import type { Result } from '@novakai/foundation/dist/contract/types.js';
 import type {
@@ -24,6 +25,20 @@ interface OrphanEntry {
   artifactId: ArtifactId;
   entryType: OrphanEntryType;
   name: string;
+}
+
+function sweepClientOpId(orphan: OrphanEntry): ClientOpId {
+  const hex = createHash('sha256')
+    .update(`${orphan.artifactId}\0${orphan.entryType}\0${orphan.name}`)
+    .digest('hex');
+  const uuid = [
+    hex.slice(0, 8),
+    hex.slice(8, 12),
+    hex.slice(12, 16),
+    hex.slice(16, 20),
+    hex.slice(20, 32),
+  ].join('-');
+  return `op_${uuid}` as ClientOpId;
 }
 
 function orphanEntry(name: string): OrphanEntry | null {
@@ -84,8 +99,11 @@ async function traceOrphan(
   const traced = await recordSystemAction(ctx.handle, {
     action: 'artifact.orphan.sweep',
     target: { kind: 'artifact', id: orphan.artifactId },
-    clientOpId: mintClientOpId(),
-    meta: { entryType: orphan.entryType },
+    clientOpId: sweepClientOpId(orphan),
+    meta: {
+      entryType: orphan.entryType,
+      status: 'accepted',
+    },
   });
   if (!traced.ok) return traced;
   const after = ctx.failpoint(
