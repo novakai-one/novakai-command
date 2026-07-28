@@ -4,6 +4,7 @@
 import React from 'react';
 import type { ConversationSummary, PresenceSnapshot } from '../../../contract/index.js';
 import { Button, ListRow, PresenceDot, Badge, EmptyState, Stack, Text } from '../../kit/index.js';
+import { dedupeById } from '../../listDedupe.js';
 
 const GROUPS = [
   { key: 'pinned', label: 'Pinned' },
@@ -30,7 +31,7 @@ export function ConversationList(props: {
   onSpawnReal?(): void;
 }) {
   const byGroup = new Map<GroupKey, ConversationSummary[]>();
-  for (const c of props.conversations) {
+  for (const c of dedupeById(props.conversations)) { // G5: never paint the same chat twice
     const g = groupOf(c);
     byGroup.set(g, [...(byGroup.get(g) ?? []), c]);
   }

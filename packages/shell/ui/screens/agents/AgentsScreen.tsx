@@ -9,6 +9,7 @@ import {
   Stack, TextInput,
 } from '../../kit/index.js';
 import { saveDefinition, saveModel, draftFromAgent, PROVIDER_OPTIONS, type AgentDraft } from './agentsController.js';
+import { dedupeById } from '../../listDedupe.js';
 import './agents.css';
 
 const EMPTY_DRAFT: AgentDraft = {
@@ -165,7 +166,7 @@ export function AgentsScreen(props: { services: ShellServices }) {
       <Stack gap={0} className="nv-agents-screen__list">
         <Panel head="Agents">
           <ScrollArea style={{ maxHeight: '100%' }}>
-            {agents.map((a) => (
+            {dedupeById(agents).map((a) => ( // G5: never paint the same agent twice
               <ListRow
                 key={a.id}
                 label={a.displayName}
