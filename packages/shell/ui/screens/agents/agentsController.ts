@@ -13,6 +13,28 @@ export interface AgentDraft {
   skills: string[]; // selected skill ids
 }
 
+/**
+ * L15: every storable provider is pickable — mock included. The draft shows the
+ * STORED provider verbatim; nothing is silently rewritten on display or save.
+ */
+export const PROVIDER_OPTIONS = [
+  { value: 'kimi', label: 'kimi' },
+  { value: 'claude', label: 'claude' },
+  { value: 'codex', label: 'codex' },
+  { value: 'mock', label: 'mock' },
+] as const;
+
+/** The edit draft for an existing def — stored values, verbatim (L15). */
+export function draftFromAgent(agent: AgentDefView): AgentDraft {
+  return {
+    displayName: agent.displayName,
+    provider: agent.provider,
+    model: agent.model,
+    instructions: agent.instructions,
+    skills: agent.skills,
+  };
+}
+
 type OpResult = { ok: true; value: AgentDefView } | { ok: false; error: { code: string; message: string } };
 
 const unavailable = (): OpResult => ({

@@ -90,3 +90,28 @@ describe('agents screen smoke render', () => {
     expect(html).toContain('TDD');     // skills multi-select from the registry
   });
 });
+
+describe('L15: provider display fidelity — never silently rewritten', () => {
+  it('draftFromAgent shows the STORED provider verbatim (mock stays mock)', async () => {
+    const { draftFromAgent } = await import('../ui/screens/agents/agentsController.js');
+    const mockAgent: AgentDefView = {
+      id: 'agent_m1', displayName: 'Mocky', provider: 'mock', model: 'mock-model',
+      instructions: '', hooks: [], skills: [], status: 'defined', version: 1,
+    };
+    expect(draftFromAgent(mockAgent).provider).toBe('mock'); // was rewritten to 'kimi' (the bug)
+  });
+
+  it('saveDefinition passes the draft provider through unchanged (no silent rewrite on save)', async () => {
+    const services = createMockServices();
+    const res = await saveDefinition(services, null, {
+      displayName: 'Mocky', provider: 'mock', model: 'mock-model', instructions: '', skills: [],
+    });
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.value.provider).toBe('mock');
+  });
+
+  it('the provider picker offers every storable provider, mock included', async () => {
+    const { PROVIDER_OPTIONS } = await import('../ui/screens/agents/agentsController.js');
+    expect(PROVIDER_OPTIONS.map((o) => o.value)).toEqual(['kimi', 'claude', 'codex', 'mock']);
+  });
+});

@@ -8,14 +8,8 @@ import {
   Badge, Button, EmptyState, Field, InlineError, ListRow, Panel, ScrollArea, Select,
   Stack, TextInput,
 } from '../../kit/index.js';
-import { saveDefinition, saveModel, type AgentDraft } from './agentsController.js';
+import { saveDefinition, saveModel, draftFromAgent, PROVIDER_OPTIONS, type AgentDraft } from './agentsController.js';
 import './agents.css';
-
-const PROVIDERS = [
-  { value: 'kimi', label: 'kimi' },
-  { value: 'claude', label: 'claude' },
-  { value: 'codex', label: 'codex' },
-] as const;
 
 const EMPTY_DRAFT: AgentDraft = {
   displayName: '', provider: 'kimi', model: '', instructions: '', skills: [],
@@ -31,15 +25,8 @@ export function AgentsView(props: {
 }) {
   const [draft, setDraft] = useState<AgentDraft>(EMPTY_DRAFT);
   useEffect(() => {
-    setDraft(props.agent
-      ? {
-        displayName: props.agent.displayName,
-        provider: props.agent.provider === 'mock' ? 'kimi' : props.agent.provider,
-        model: props.agent.model,
-        instructions: props.agent.instructions,
-        skills: props.agent.skills,
-      }
-      : EMPTY_DRAFT);
+    // L15: stored provider shown verbatim — mock stays mock, never rewritten.
+    setDraft(props.agent ? draftFromAgent(props.agent) : EMPTY_DRAFT);
   }, [props.agent]);
 
   const toggleSkill = (id: string) => {
@@ -65,7 +52,7 @@ export function AgentsView(props: {
           <Field label="Provider">
             <Select
               label="Provider"
-              options={PROVIDERS}
+              options={PROVIDER_OPTIONS}
               value={draft.provider}
               onChange={(v) => setDraft((d) => ({ ...d, provider: v as AgentDraft['provider'] }))}
             />
