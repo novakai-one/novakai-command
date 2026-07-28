@@ -1,7 +1,6 @@
 import { createHash } from 'node:crypto';
 import {
   readdir,
-  stat,
   unlink,
 } from 'node:fs/promises';
 import path from 'node:path';
@@ -21,6 +20,10 @@ import type {
 import type { ArtifactsError } from '../contract/errors.js';
 import type { ArtifactsContext } from './composition.js';
 import { listAllArtifacts } from './artifacts.js';
+import {
+  acquireArtifactPublication,
+  releaseArtifactPublication,
+} from './publication-lock.js';
 
 interface OrphanEntry {
   artifactId: ArtifactId;
@@ -172,45 +175,18 @@ async function sweepOrphan(
   ctx: ArtifactsContext,
   orphan: OrphanEntry,
 ): Promise<Result<null, ArtifactsError>> {
-  try {
-    await stat(path.join(
-      ctx.bytesRoot,
-      '.publication-locks',
-      `${orphan.artifactId}.lock`,
-    ));
-    return {
-      ok: false,
-      error: err(
-        'ArtifactPublicationBusy',
-        'artifact publication is owned by another operation',
-        {
-          artifactId: orphan.artifactId,
-          waitedMs: 0,
-          timeoutMs: ctx.publicationLockTimeoutMs,
-        },
-        true,
-      ),
-    };
-  } catch (cause) {
-    if ((cause as NodeJS.ErrnoException).code !== 'ENOENT') {
-      return {
-        ok: false,
-        error: err(
-          'ArtifactPublicationLockFailed',
-          `artifact publication lock acquire failed: ${String(cause)}`,
-          {
-            artifactId: orphan.artifactId,
-            phase: 'acquire' as const,
-            cause: String(cause),
-          },
-          true,
-        ),
-      };
-    }
-  }
+  const acquired = await acquireArtifactPublication(
+    ctx.bytesRoot,
+    orphan.artifactId,
+    ctx.publicationLockTimeoutMs,
+  );
+  if (!acquired.ok) return acquired;
   const traced = await traceOrphan(ctx, orphan);
-  if (!traced.ok) return traced;
-  return deleteOrphan(ctx, orphan);
+  const result = traced.ok
+    ? await deleteOrphan(ctx, orphan)
+    : traced;
+  const released = await releaseArtifactPublication(acquired.value);
+  return released.ok ? result : released;
 }
 
 export async function sweepOrphans(
