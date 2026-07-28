@@ -12,6 +12,7 @@ import { StoreEngine } from '../core/store-engine/engine.js';
 
 export interface ComposeOptions {
   root: string;                    // .novakai/
+  dataRoot?: string;               // optional canonical JSONL directory
   legacyRoot?: string;             // .novakai-command/ dual-read fallback (R3-21)
   capability: CapabilityId;
   allowedKinds: readonly ObjectKind[];
@@ -26,12 +27,20 @@ export interface ComposeOptions {
 const engineCache = new Map<string, StoreEngine>();
 
 export function composeEngine(options: ComposeOptions): StoreEngine {
-  const key = `${path.resolve(options.root)}::${options.lockTimeoutMs ?? 5000}`;
+  const dataRoot = options.dataRoot ?? options.root;
+  const legacyRoot = options.legacyRoot ?? defaultLegacyRoot(options.root);
+  const key = [
+    path.resolve(options.root),
+    path.resolve(dataRoot),
+    legacyRoot ? path.resolve(legacyRoot) : '',
+    String(options.lockTimeoutMs ?? 5000),
+  ].join('::');
   let engine = engineCache.get(key);
   if (!engine) {
     engine = new StoreEngine({
       root: options.root,
-      legacyRoot: options.legacyRoot ?? defaultLegacyRoot(options.root),
+      dataRoot,
+      legacyRoot,
       lockTimeoutMs: options.lockTimeoutMs,
     });
     engineCache.set(key, engine);

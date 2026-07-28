@@ -50,6 +50,7 @@ const UPGRADES: Record<string, UpgradeFn[]> = {}; // kind → [v1→v2, ...]
 
 export interface EngineOptions {
   root: string;                  // .novakai/
+  dataRoot?: string;             // JSONL directory; lock remains under root
   legacyRoot?: string;           // .novakai-command/ (dual-read fallback, R3-21)
   lockTimeoutMs?: number;        // default 5000 (§0)
   /** @internal test seam: fail the next trace append once. */
@@ -80,6 +81,7 @@ const nowIso = () => new Date().toISOString();
 
 export class StoreEngine {
   readonly root: string;
+  readonly dataRoot: string;
   readonly legacyRoot?: string;
   readonly lockTimeoutMs: number;
   private booted = false;
@@ -92,6 +94,7 @@ export class StoreEngine {
 
   constructor(options: EngineOptions) {
     this.root = options.root;
+    this.dataRoot = options.dataRoot ?? options.root;
     this.legacyRoot = options.legacyRoot;
     this.lockTimeoutMs = options.lockTimeoutMs ?? 5000;
     if (options.failNextTraceAppend) this.failNextTraceAppend = options.failNextTraceAppend;
@@ -99,7 +102,7 @@ export class StoreEngine {
   }
 
   // ── file helpers ──────────────────────────────────────────────────────
-  private storePath(kind: string, root = this.root): string {
+  private storePath(kind: string, root = this.dataRoot): string {
     return path.join(root, KIND_FILES[kind as Exclude<ObjectKind, 'token'>]);
   }
 
@@ -276,8 +279,12 @@ export class StoreEngine {
   // ── dual-read shim (R3-21) ────────────────────────────────────────────
   /** Read fallback: new root first; if the store file is absent there, legacy root. */
   private effectiveReadRoot(kind: string): string {
-    if (existsSync(this.storePath(kind)) || !this.legacyRoot) return this.root;
-    return existsSync(this.storePath(kind, this.legacyRoot)) ? this.legacyRoot : this.root;
+    if (existsSync(this.storePath(kind)) || !this.legacyRoot) {
+      return this.dataRoot;
+    }
+    return existsSync(this.storePath(kind, this.legacyRoot))
+      ? this.legacyRoot
+      : this.dataRoot;
   }
 
   /** First write to a store triggers lazy per-store migration (R3-21). */
