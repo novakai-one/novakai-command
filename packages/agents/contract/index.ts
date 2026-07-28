@@ -13,5 +13,12 @@ export {
 } from '../core/providers/kimi.js';
 export type { TerminalAdapter, TerminalRuntimeLike, SpawnedSession } from '../core/providers/adapter.js';
 export type { LiveLaneSender, LiveLaneBinding } from '../core/live-lane/liveLane.js';
+// B1 DEC-B1-6: the providerSession registry — agents owns the kind and is its
+// sole writer; the server drives it from the composition root.
+export {
+  createProviderSessionRegistry, osProcessProbe,
+  type ProviderSessionRegistry, type ProviderSessionRecord, type ProviderSessionStatus,
+  type RegisterSessionInput, type SweepResult, type ProcessProbe,
+} from '../core/sessions/registry.js';
 export type { RegisterSkillInput } from '../core/skills/skills.js';
 export type { DefineAgentInput } from '../core/registry/registry.js';

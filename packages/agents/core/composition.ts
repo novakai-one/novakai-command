@@ -84,7 +84,10 @@ export function composeAgents(options: ComposeAgentsOptions): AgentsContext {
     root: options.root,
     legacyRoot: options.legacyRoot,
     capability: 'agents' as CapabilityId,
-    allowedKinds: ['agent', 'skill'], // S2a: agents owns both stores (req 10 one-store)
+    // S2a: agents owns the agent + skill stores (req 10 one-store).
+    // B1 DEC-B1-6: it also owns providerSession — the resumable provider handle
+    // registry — and is its sole writer.
+    allowedKinds: ['agent', 'skill', 'providerSession'],
     principal: options.principal,
     lockTimeoutMs: options.lockTimeoutMs,
   });

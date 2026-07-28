@@ -23,6 +23,7 @@ export type ObjectKind =
   | 'settings'
   | 'conversationView' // S2 F1/DEC-S2-11: shell-owned pin/archive view state
   | 'config'          // B1 DEC-B1-3: server-owned typed config objects
+  | 'providerSession' // B1 DEC-B1-6: agents-owned resumable provider handles
   | 'quarantine'
   | 'token'
   | 'trace';
