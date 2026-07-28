@@ -55,6 +55,10 @@ test('recordSystemAction retry with the same clientOpId is idempotent', async ()
 
   assert.equal((await recordSystemAction(handle, input)).ok, true);
   assert.equal((await recordSystemAction(handle, input)).ok, true);
+  assert.equal((await recordSystemAction(handle, {
+    ...input,
+    meta: { event: 'different.semantic.action' },
+  })).ok, true);
 
   const engine = composeEngine({
     root,
@@ -63,7 +67,7 @@ test('recordSystemAction retry with the same clientOpId is idempotent', async ()
     principal: 'person_chris',
   });
   const page = await queryTraceBound(engine, { clientOpId });
-  assert.equal(page.items.length, 1);
+  assert.equal(page.items.length, 2, 'only an exact semantic retry is deduplicated');
 });
 
 test('boot reconcile never tombstones system.action traces (no object exists behind the ref)', async () => {

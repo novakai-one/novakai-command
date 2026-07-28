@@ -626,7 +626,8 @@ export class StoreEngine {
         && line.clientOpId === clientOpId
         && line.action === action
         && line.target.kind === target.kind
-        && line.target.id === target.id);
+        && line.target.id === target.id
+        && JSON.stringify(line.meta ?? {}) === JSON.stringify(meta ?? {}));
       if (prior) return { ok: true, value: null };
       const trace: TraceLineT = {
         kind: 'trace', id: `trace_${randomUUID()}`, schemaVersion: 1,
