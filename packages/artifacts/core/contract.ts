@@ -9,6 +9,7 @@ import type {
 } from '@novakai/foundation/dist/contract/types.js';
 import type {
   Artifact,
+  OrphanSweepResult,
   PutArtifactInput,
 } from '../contract/schemas.js';
 import type { ArtifactsError } from '../contract/errors.js';
@@ -27,6 +28,7 @@ export interface ArtifactsContract {
     artifactId: ArtifactId,
   ): Promise<Result<Uint8Array | Absent, ArtifactsError>>;
   listArtifacts(): Promise<Result<Page<Artifact>, ArtifactsError>>;
+  sweepOrphans(): Promise<Result<OrphanSweepResult, ArtifactsError>>;
 }
 
 export function createArtifactsContract(
@@ -40,5 +42,6 @@ export function createArtifactsContract(
     getArtifactBytes: (artifactId) =>
       artifacts.getArtifactBytes(ctx, artifactId),
     listArtifacts: () => artifacts.listArtifacts(ctx),
+    sweepOrphans: () => artifacts.sweepOrphans(ctx),
   };
 }

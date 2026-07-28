@@ -31,6 +31,17 @@ export const PutArtifactInput = z.object({
 }).strict();
 export type PutArtifactInput = z.infer<typeof PutArtifactInput>;
 
+export type OrphanEntryType = 'final' | 'temp';
+
+export interface SweptOrphan {
+  artifactId: ArtifactId;
+  entryType: OrphanEntryType;
+}
+
+export interface OrphanSweepResult {
+  swept: SweptOrphan[];
+}
+
 export type {
   ArtifactId,
   ClientOpId,

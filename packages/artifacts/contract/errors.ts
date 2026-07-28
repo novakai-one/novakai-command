@@ -45,9 +45,27 @@ export type ArtifactFailpointError = ContractError<
   }
 >;
 
+export type ArtifactOrphanScanFailedError = ContractError<
+  'ArtifactOrphanScanFailed',
+  {
+    cause: string;
+  }
+>;
+
+export type ArtifactOrphanDeleteFailedError = ContractError<
+  'ArtifactOrphanDeleteFailed',
+  {
+    artifactId: ArtifactId;
+    entryType: 'final' | 'temp';
+    cause: string;
+  }
+>;
+
 export type ArtifactsError =
   | StoreError
   | ArtifactByteEffectFailedError
   | ArtifactBytesReadFailedError
   | ArtifactFailpointError
+  | ArtifactOrphanScanFailedError
+  | ArtifactOrphanDeleteFailedError
   | StoredArtifactInvalidError;

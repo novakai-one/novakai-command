@@ -4,7 +4,9 @@ import {
   mkdir,
   open,
   readFile,
+  readdir,
   rename,
+  unlink,
   type FileHandle,
 } from 'node:fs/promises';
 import path from 'node:path';
@@ -14,6 +16,8 @@ import {
   getObjectWithReadFailure,
   isAbsent,
   listObjects,
+  mintClientOpId,
+  recordSystemAction,
 } from '@novakai/foundation/dist/contract/index.js';
 import {
   err,
@@ -33,6 +37,8 @@ import {
   Artifact,
   PutArtifactInput,
   type Artifact as ArtifactT,
+  type OrphanEntryType,
+  type OrphanSweepResult,
   type PutArtifactInput as PutArtifactInputT,
 } from '../contract/schemas.js';
 import type {
@@ -361,4 +367,89 @@ export async function getArtifactBytes(
       ),
     };
   }
+}
+
+function orphanEntry(
+  name: string,
+): { artifactId: ArtifactId; entryType: OrphanEntryType } | null {
+  const temp = /^\.(artifact_[^.]+)\.[^.]+\.tmp$/.exec(name);
+  if (temp) {
+    return {
+      artifactId: temp[1] as ArtifactId,
+      entryType: 'temp',
+    };
+  }
+  if (/^artifact_[A-Za-z0-9-]+$/.test(name)) {
+    return {
+      artifactId: name as ArtifactId,
+      entryType: 'final',
+    };
+  }
+  return null;
+}
+
+export async function sweepOrphans(
+  ctx: ArtifactsContext,
+): Promise<Result<OrphanSweepResult, ArtifactsError>> {
+  const listed = await listArtifacts(ctx);
+  if (!listed.ok) return listed;
+  const recordedIds = new Set(listed.value.items.map((item) => item.id));
+  let names: string[];
+  try {
+    names = (await readdir(ctx.bytesRoot, { withFileTypes: true }))
+      .filter((entry) => entry.isFile())
+      .map((entry) => entry.name)
+      .sort();
+  } catch (cause) {
+    if ((cause as NodeJS.ErrnoException).code === 'ENOENT') {
+      return { ok: true, value: { swept: [] } };
+    }
+    return {
+      ok: false,
+      error: err(
+        'ArtifactOrphanScanFailed',
+        `artifact orphan scan failed: ${String(cause)}`,
+        { cause: String(cause) },
+        true,
+      ),
+    };
+  }
+
+  const swept: OrphanSweepResult['swept'] = [];
+  for (const name of names) {
+    const orphan = orphanEntry(name);
+    if (!orphan) continue;
+    if (
+      orphan.entryType === 'final'
+      && recordedIds.has(orphan.artifactId)
+    ) {
+      continue;
+    }
+    const traced = await recordSystemAction(ctx.handle, {
+      action: 'artifact.orphan.sweep',
+      target: { kind: 'artifact', id: orphan.artifactId },
+      clientOpId: mintClientOpId(),
+      meta: { entryType: orphan.entryType },
+    });
+    if (!traced.ok) return traced;
+    try {
+      await unlink(path.join(ctx.bytesRoot, name));
+    } catch (cause) {
+      return {
+        ok: false,
+        error: err(
+          'ArtifactOrphanDeleteFailed',
+          `artifact orphan delete failed: ${String(cause)}`,
+          {
+            artifactId: orphan.artifactId,
+            entryType: orphan.entryType,
+            cause: String(cause),
+          },
+          true,
+        ),
+      };
+    }
+    swept.push(orphan);
+  }
+  return { ok: true, value: { swept } };
 }
