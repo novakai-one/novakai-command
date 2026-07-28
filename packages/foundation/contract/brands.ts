@@ -29,6 +29,7 @@ export const OBJECT_KINDS = [
   'providerSession',  // B1 DEC-B1-6: agents-owned resumable provider handles
   'project',          // B2a DEC-B2-1: projects-owned durable identity/lifecycle
   'projectItem',      // B2a DEC-B2-1: projects-owned reference membership
+  'artifact',         // B2a DEC-B2-2: artifacts-owned metadata; bytes stay outside JSONL
   'quarantine',
   'token',
   'trace',
@@ -38,7 +39,7 @@ export type ObjectKind = typeof OBJECT_KINDS[number];
 
 export type CapabilityId =
   | 'foundation' | 'shell' | 'agents' | 'messaging'
-  | 'terminal' | 'transcript' | 'projects' | 'spine'
+  | 'terminal' | 'transcript' | 'projects' | 'artifacts' | 'spine'
   | 'server'; // B1: the production composition root (owns kind 'config')
 
 // ── Mint helpers (identity conventions: foundation owns conventions, §8) ──
