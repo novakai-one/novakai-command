@@ -12,6 +12,23 @@ import { fileURLToPath } from 'node:url';
 
 const SCRIPT = path.resolve('../../scripts/b2a-second-host.ts');
 const TSX = fileURLToPath(import.meta.resolve('tsx/cli'));
+const COMPLETE_CLI_SURFACE = [
+  'token mint',
+  'project create',
+  'project list',
+  'artifact put',
+  'artifact get-meta',
+  'artifact list',
+  'artifact get-bytes',
+  'spine add-message',
+  'spine attach-artifact',
+  'spine status',
+  'spine workflows',
+  'spine continue',
+  'spine abandon',
+  'project items',
+  'project archive',
+];
 
 function readJsonl<T>(filePath: string): T[] {
   return readFileSync(filePath, 'utf8')
@@ -20,6 +37,19 @@ function readJsonl<T>(filePath: string): T[] {
     .filter(Boolean)
     .map((line) => JSON.parse(line) as T);
 }
+
+test('the second-host proof cannot import capability code directly', () => {
+  const source = readFileSync(SCRIPT, 'utf8');
+  const imports = [...source.matchAll(/\bfrom\s+['"]([^'"]+)['"]/g)]
+    .map((match) => match[1]!);
+  assert.deepEqual(
+    imports.filter((specifier) =>
+      /(?:^|\/)packages\/(?:foundation|messaging|projects|artifacts|spine)\//.test(
+        specifier,
+      )),
+    [],
+  );
+});
 
 test('the CLI-only second host proves the complete B2a lifecycle without Server or UI', () => {
   const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-second-host-'));
@@ -49,6 +79,7 @@ test('the CLI-only second host proves the complete B2a lifecycle without Server 
       projectRefs: Array<{ kind: string; id: string }>;
       serverStarted: boolean;
       uiUsed: boolean;
+      surfaceCoverage: string[];
     };
     assert.match(proof.projectId, /^proj_/);
     assert.match(proof.artifactId, /^artifact_/);
@@ -70,6 +101,7 @@ test('the CLI-only second host proves the complete B2a lifecycle without Server 
     );
     assert.equal(proof.serverStarted, false);
     assert.equal(proof.uiUsed, false);
+    assert.deepEqual(proof.surfaceCoverage, COMPLETE_CLI_SURFACE);
 
     const journal = readJsonl<{
       envelope: { createdBy: string };
