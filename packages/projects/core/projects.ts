@@ -1,10 +1,17 @@
 import { randomUUID } from 'node:crypto';
 import {
   createObject,
+  getObject,
+  isAbsent,
   listObjects,
+  updateObject,
 } from '@novakai/foundation/dist/contract/index.js';
 import { err, type StoreError } from '@novakai/foundation/dist/contract/errors.js';
-import type { ClientOpId } from '@novakai/foundation/dist/contract/brands.js';
+import type {
+  ClientOpId,
+  ObjectId,
+  ProjectId,
+} from '@novakai/foundation/dist/contract/brands.js';
 import type { Page, Result } from '@novakai/foundation/dist/contract/types.js';
 import {
   CreateProjectInput,
@@ -83,4 +90,38 @@ export async function listProjects(
       ...(listed.value.nextCursor ? { nextCursor: listed.value.nextCursor } : {}),
     },
   };
+}
+
+export async function archiveProject(
+  ctx: ProjectsContext,
+  projectId: ProjectId,
+  clientOpId: ClientOpId,
+): Promise<Result<ProjectT, StoreError>> {
+  const missingClientOpId = requireClientOpId(clientOpId);
+  if (missingClientOpId) return { ok: false, error: missingClientOpId };
+  const current = await getObject<ProjectT>(
+    ctx.handle,
+    'project',
+    projectId as unknown as ObjectId,
+  );
+  if (!current.ok || isAbsent(current.value)) {
+    return {
+      ok: false,
+      error: err(
+        'NotFound',
+        `no project with id "${projectId}"`,
+        { ref: { kind: 'project', id: projectId } },
+        false,
+      ),
+    };
+  }
+  const updated = await updateObject<ProjectT>(
+    ctx.handle,
+    projectId as unknown as ObjectId,
+    { status: 'archived' },
+    current.value.version,
+    clientOpId,
+  );
+  if (!updated.ok) return updated;
+  return { ok: true, value: Project.parse(updated.value.object) as ProjectT };
 }
