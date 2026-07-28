@@ -225,6 +225,34 @@ export async function getObject<T>(
   return ok(toStoredObject<T>(engine, rec));
 }
 
+/**
+ * Looks up the durable result of a prior mutation without re-evaluating the
+ * caller's current mutable preconditions. Capability contracts use this seam
+ * to honor Foundation idempotency before lifecycle gates.
+ */
+export async function getObjectByClientOpId<T>(
+  handle: ScopedStoreHandle,
+  kind: ObjectKind,
+  clientOpId: ClientOpId,
+): Promise<Result<StoredObject<T> | null, StoreError>> {
+  const engine = engineOf(handle);
+  const bootFailure = engine.bootError();
+  if (bootFailure) return fail(bootFailure);
+  if (!(kind in KIND_FILES)) {
+    return fail(err(
+      'KindUnknown',
+      `kind "${kind}" is not registered`,
+      { kind, registered: Object.keys(KIND_FILES) },
+      false,
+    ));
+  }
+  const prior = findPriorOp(engine, kind, clientOpId);
+  if (!prior || prior.kind !== kind) return ok(null);
+  const record = readAllRecords(engine, kind)
+    .find((candidate) => candidate.envelope.id === prior.id);
+  return ok(record ? toStoredObject<T>(engine, record) : null);
+}
+
 export async function listObjects<T>(
   handle: ScopedStoreHandle, kind: ObjectKind, filter?: ListFilter, page?: PageOptions,
 ): Promise<Result<Page<StoredObject<T>>, StoreError>> {

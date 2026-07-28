@@ -10,7 +10,7 @@ export * from './types.js';
 // contract/compose.js directly.
 export { composeHandle, type ComposeOptions } from './compose.js';
 export {
-  createObject, updateObject, getObject, listObjects, resolveRef,
+  createObject, updateObject, getObject, getObjectByClientOpId, listObjects, resolveRef,
   queryTrace, queryTraceBound, listQuarantine, listQuarantineBound,
   resolveQuarantine, recordSystemAction, defaultEngine, __resetDefaultEngine,
 } from './api.js';

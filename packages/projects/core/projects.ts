@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import {
   createObject,
   getObject,
+  getObjectByClientOpId,
   isAbsent,
   listObjects,
   updateObject,
@@ -171,6 +172,15 @@ export async function attach(
   if (missingClientOpId) return { ok: false, error: missingClientOpId };
   const parsed = AttachProjectItemInput.safeParse(input);
   if (!parsed.success) return { ok: false, error: invalidInput(parsed.error) };
+  const replay = await getObjectByClientOpId<ProjectItemT>(
+    ctx.handle,
+    'projectItem',
+    clientOpId,
+  );
+  if (!replay.ok) return replay;
+  if (replay.value) {
+    return { ok: true, value: ProjectItem.parse(replay.value.object) };
+  }
   const project = await findProject(ctx, projectId);
   if (!project.ok || isAbsent(project.value)) {
     return { ok: false, error: projectNotFound(projectId) };
