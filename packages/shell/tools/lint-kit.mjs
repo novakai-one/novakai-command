@@ -1,19 +1,17 @@
 #!/usr/bin/env node
 // tools/lint-kit.mjs — red gate 3 (B): screens compose KIT components, nothing
-// else. Incremental enforcement (S2a): applies to ui/screens/agents/** — the
-// S2a agent-def UI is the first screen under the gate; older screens migrate
-// as they're touched (recorded in shell NOTES.md).
+// else. F2 (S2 audit): coverage expanded to ALL of ui/screens/** + ui/inspector/**.
 //
 // Rule: no raw lowercase JSX intrinsic elements (button, input, select, div,
-// span, h1..h6, ...) in the covered screen files — everything comes from
-// ui/kit (or React fragments).
+// span, h1..h6, dl/dt/dd, blockquote, pre, ...) in the covered files —
+// everything comes from ui/kit (or React fragments).
 import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const shellRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const COVERED = ['ui/screens/agents'];
-const RAW_TAG = /<\s*(button|input|select|textarea|option|div|span|h[1-6]|p|label|ul|ol|li|section|header|footer|form|a|img|main|aside|nav|table|thead|tbody|tr|td|th)\b/;
+const COVERED = ['ui/screens', 'ui/inspector'];
+const RAW_TAG = /<\s*(button|input|select|textarea|option|div|span|h[1-6]|p|label|ul|ol|li|section|header|footer|form|a|img|main|aside|nav|table|thead|tbody|tr|td|th|dl|dt|dd|blockquote|pre)\b/;
 
 function* walk(p) {
   const st = statSync(p);
@@ -45,4 +43,4 @@ for (const rel of COVERED) {
 }
 
 if (failed) process.exit(1);
-console.log(`KIT GATE GREEN — ${checked} agents-screen file(s) compose kit components only.`);
+console.log(`KIT GATE GREEN — ${checked} screen/inspector file(s) compose kit components only.`);

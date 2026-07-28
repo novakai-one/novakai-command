@@ -11,6 +11,7 @@ import { ThreadView } from './ThreadView.js';
 import { Composer } from './Composer.js';
 import { CommandPalette } from './CommandPalette.js';
 import { FocusChip } from './FocusChip.js';
+import { Stack } from '../../kit/index.js';
 import { registerInspectorScreen } from '../../inspector/registry.js';
 import { MessageInspector } from '../../inspector/MessageInspector.js';
 import './messaging.css';
@@ -161,9 +162,9 @@ export function MessagingScreen(props: {
         selfId="me"
         onInspectMessage={(m) => props.onInspectMessage(m)}
       />
-      <div className="nv-composer-row">
+      <Stack horizontal className="nv-composer-row">
         <FocusChip focus={focus} />
-      </div>
+      </Stack>
       <Composer
         registry={props.registry}
         height={props.composerHeight}

@@ -3,7 +3,7 @@
 // UnknownCommand error drawn inline (never silent, never blank).
 import React, { useMemo, useState } from 'react';
 import type { DispatchResult, SlashCommand, SlashRegistry } from '../../../contract/index.js';
-import { ComposerInput } from '../../kit/index.js';
+import { ComposerInput, MenuRow, Stack, Text } from '../../kit/index.js';
 
 export function Composer(props: {
   registry: SlashRegistry;
@@ -52,25 +52,22 @@ export function Composer(props: {
   };
 
   return (
-    <div className="composer-wrap">
+    <Stack className="composer-wrap">
       {paletteOpen && suggestions.length > 0 && (
-        <div className="nv-palette" role="listbox" aria-label="Slash commands">
+        <Stack className="nv-palette" role="listbox" aria-label="Slash commands">
           {suggestions.map((c, i) => (
-            <button
+            <MenuRow
               key={`${c.source}:${c.name}`}
-              role="option"
-              aria-selected={i === sel}
-              data-selected={i === sel ? 'true' : 'false'}
               className="nv-palette__row"
-              onMouseEnter={() => setSel(i)}
-              onClick={() => { setValue(`/${c.name} `); setPaletteOpen(false); }}
-            >
-              <span className="nv-palette__cmd">/{c.name}</span>
-              <span className="nv-palette__desc">{c.description}</span>
-              <span className="nv-palette__src">{c.source === 'shell' ? 'shell' : 'provider'}</span>
-            </button>
+              label={<Text className="nv-palette__cmd">/{c.name}</Text>}
+              meta={<Text className="nv-palette__desc">{c.description}</Text>}
+              trailing={<Text className="nv-palette__src">{c.source === 'shell' ? 'shell' : 'provider'}</Text>}
+              selected={i === sel}
+              onHover={() => setSel(i)}
+              onPick={() => { setValue(`/${c.name} `); setPaletteOpen(false); }}
+            />
           ))}
-        </div>
+        </Stack>
       )}
       <ComposerInput
         value={value}
@@ -78,7 +75,7 @@ export function Composer(props: {
         onResize={props.onResize}
         onSubmit={submit}
         hint={inlineError
-          ? <span style={{ color: 'var(--danger)' }}>{inlineError}</span>
+          ? <Text style={{ color: 'var(--danger)' }}>{inlineError}</Text>
           : undefined}
         onChange={(v) => {
           setValue(v);
@@ -88,13 +85,10 @@ export function Composer(props: {
           else if (v.startsWith('/') && !paletteOpen && !v.includes(' ')) setPaletteOpen(true);
         }}
       />
-      {paletteOpen && (
-        <div hidden aria-hidden /> /* palette keyboard handled below */
-      )}
       <PaletteKeys active={paletteOpen} count={suggestions.length} sel={sel} setSel={setSel}
         onPick={() => { const c = suggestions[sel]; if (c) { setValue(`/${c.name} `); setPaletteOpen(false); } }}
         onClose={() => setPaletteOpen(false)} />
-    </div>
+    </Stack>
   );
 }
 

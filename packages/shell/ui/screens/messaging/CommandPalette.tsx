@@ -1,7 +1,8 @@
 // shell/ui/screens/messaging/CommandPalette.tsx — ⌘K over conversations (SHL-004).
+// Kit-composed ONLY (red gate 3 — tools/lint-kit.mjs enforces).
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { ConversationSummary } from '../../../contract/index.js';
-import { TextInput } from '../../kit/index.js';
+import { MenuRow, Stack, Text, TextInput } from '../../kit/index.js';
 
 export function CommandPalette(props: {
   open: boolean;
@@ -36,18 +37,22 @@ export function CommandPalette(props: {
 
   if (!props.open) return null;
   return (
-    <div className="nv-palette nv-palette--center" role="dialog" aria-label="Jump to a chat">
-      <div className="nv-palette__input">
+    <Stack className="nv-palette nv-palette--center" role="dialog" aria-label="Jump to a chat">
+      <Stack className="nv-palette__input">
         <TextInput ref={inputRef} value={q} onChange={(e) => setQ(e.target.value)} placeholder="Jump to a chat…" />
-      </div>
+      </Stack>
       {matches.map((c, i) => (
-        <button key={c.id} className="nv-palette__row" data-selected={i === sel ? 'true' : 'false'}
-          onMouseEnter={() => setSel(i)} onClick={() => { props.onSelect(c.id); props.onClose(); }}>
-          <span className="nv-palette__desc" style={{ color: 'var(--ink)' }}>{c.title}</span>
-          <span className="nv-palette__src">{c.kind}</span>
-        </button>
+        <MenuRow
+          key={c.id}
+          className="nv-palette__row"
+          label={<Text className="nv-palette__desc" style={{ color: 'var(--ink)' }}>{c.title}</Text>}
+          trailing={<Text className="nv-palette__src">{c.kind}</Text>}
+          selected={i === sel}
+          onHover={() => setSel(i)}
+          onPick={() => { props.onSelect(c.id); props.onClose(); }}
+        />
       ))}
-      {matches.length === 0 && <div className="nv-palette__row" style={{ cursor: 'default' }}>No matches.</div>}
-    </div>
+      {matches.length === 0 && <Text className="nv-palette__row" style={{ cursor: 'default', padding: '6px 10px' }}>No matches.</Text>}
+    </Stack>
   );
 }

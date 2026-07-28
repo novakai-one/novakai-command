@@ -1,8 +1,9 @@
 // shell/ui/screens/messaging/ConversationList.tsx — SHL-004.
 // Grouped Pinned / Agents / Rooms / Archive; + new chat always visible.
+// Kit-composed ONLY (red gate 3 — tools/lint-kit.mjs enforces).
 import React from 'react';
 import type { ConversationSummary, PresenceSnapshot } from '../../../contract/index.js';
-import { Button, ListRow, PresenceDot, Badge, EmptyState } from '../../kit/index.js';
+import { Button, ListRow, PresenceDot, Badge, EmptyState, Stack, Text } from '../../kit/index.js';
 
 const GROUPS = [
   { key: 'pinned', label: 'Pinned' },
@@ -34,8 +35,8 @@ export function ConversationList(props: {
     byGroup.set(g, [...(byGroup.get(g) ?? []), c]);
   }
   return (
-    <div className="nv-convo" role="navigation" aria-label="Conversations">
-      <div style={{ padding: '4px 10px' }}>
+    <Stack className="nv-convo" role="navigation" aria-label="Conversations">
+      <Stack style={{ padding: '4px 10px' }}>
         <Button primary style={{ width: '100%' }} onClick={props.onNew}>
           New chat&nbsp;&nbsp;⌘N
         </Button>
@@ -49,7 +50,7 @@ export function ConversationList(props: {
             🌙 Spawn real Kimi
           </Button>
         )}
-      </div>
+      </Stack>
       {props.conversations.length === 0 && (
         <EmptyState>No chats yet — start one above.</EmptyState>
       )}
@@ -57,8 +58,8 @@ export function ConversationList(props: {
         const items = byGroup.get(key);
         if (!items || items.length === 0) return null;
         return (
-          <div key={key}>
-            <div className="nv-convo__group">{label}</div>
+          <Stack key={key}>
+            <Text className="nv-convo__group">{label}</Text>
             {items.map((c) => {
               const p = c.agentId ? props.presenceOf(c.agentId) : null;
               return (
@@ -72,9 +73,9 @@ export function ConversationList(props: {
                 />
               );
             })}
-          </div>
+          </Stack>
         );
       })}
-    </div>
+    </Stack>
   );
 }

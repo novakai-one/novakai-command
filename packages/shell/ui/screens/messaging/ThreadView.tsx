@@ -1,9 +1,10 @@
 // shell/ui/screens/messaging/ThreadView.tsx — SHL-006/007.
 // Pending bubble + activity line drawn immediately (never blank — red gate 5);
 // typing bubble + presence dot; liveness motion ONLY when focused (M-19).
+// Kit-composed ONLY (red gate 3 — tools/lint-kit.mjs enforces).
 import React, { useEffect, useRef } from 'react';
 import type { ChatMessage, ConversationSummary, PresenceSnapshot } from '../../../contract/index.js';
-import { PresenceDot, ScrollArea, TypingBubble, EmptyState } from '../../kit/index.js';
+import { PresenceDot, ScrollArea, Stack, Text, TypingBubble, EmptyState } from '../../kit/index.js';
 
 export function ThreadView(props: {
   conversation: ConversationSummary | null;
@@ -21,9 +22,9 @@ export function ThreadView(props: {
 
   if (!props.conversation) {
     return (
-      <div className="nv-thread">
+      <Stack className="nv-thread">
         <EmptyState>Pick a chat on the left, or start a new one (⌘N).</EmptyState>
-      </div>
+      </Stack>
     );
   }
 
@@ -32,43 +33,43 @@ export function ThreadView(props: {
   const activity = props.presence?.activity;
 
   return (
-    <div className="nv-thread">
-      <header className="nv-thread__head">
+    <Stack className="nv-thread">
+      <Stack horizontal className="nv-thread__head">
         {props.presence && <PresenceDot state={props.presence.state} live={live} />}
-        <span className="nv-thread__title">{props.conversation.title}</span>
-        {activity && <span className="nv-thread__activity">{activity}</span>}
-      </header>
+        <Text className="nv-thread__title">{props.conversation.title}</Text>
+        {activity && <Text className="nv-thread__activity">{activity}</Text>}
+      </Stack>
       <ScrollArea ref={scrollRef} className="nv-thread__scroll">
-        <div className="nv-thread__col">
+        <Stack className="nv-thread__col">
           {props.messages.length === 0 && !agentTyping && (
             <EmptyState>No messages yet — say hello.</EmptyState>
           )}
           {props.messages.map((m) => (
-            <div key={m.id} className={`nv-msg${m.senderId === props.selfId ? ' nv-msg--mine' : ''}`}>
-              <div
+            <Stack key={m.id} className={`nv-msg${m.senderId === props.selfId ? ' nv-msg--mine' : ''}`}>
+              <Stack
                 className="nv-msg__bubble" data-pending={m.pending ? 'true' : 'false'}
                 role={props.onInspectMessage ? 'button' : undefined}
                 title={props.onInspectMessage ? 'Inspect message' : undefined}
                 onClick={props.onInspectMessage ? () => props.onInspectMessage!(m) : undefined}
-              >{m.text}</div>
+              >{m.text}</Stack>
               {m.failed
-                ? <div className="nv-msg__error">{m.failed}</div>
-                : <div className="nv-msg__meta">{m.pending ? 'Sending…' : new Date(m.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>}
-            </div>
+                ? <Text className="nv-msg__error">{m.failed}</Text>
+                : <Text className="nv-msg__meta">{m.pending ? 'Sending…' : new Date(m.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</Text>}
+            </Stack>
           ))}
           {props.renderSegments?.map((s, i) => (
             <React.Fragment key={i}>
-              {s.gapBefore && <div className="nv-gap" aria-label="some content was skipped">…</div>}
+              {s.gapBefore && <Stack className="nv-gap" aria-label="some content was skipped">…</Stack>}
               {s.text && (
-                <div className="nv-msg">
-                  <div className="nv-msg__bubble">{s.text}</div>
-                </div>
+                <Stack className="nv-msg">
+                  <Stack className="nv-msg__bubble">{s.text}</Stack>
+                </Stack>
               )}
             </React.Fragment>
           ))}
           {agentTyping && <TypingBubble live={live} />}
-        </div>
+        </Stack>
       </ScrollArea>
-    </div>
+    </Stack>
   );
 }

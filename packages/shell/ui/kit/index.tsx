@@ -6,6 +6,85 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import './tokens.css';
 import './kit.css';
 
+// ── Text + headings (kit v1.2, F2) — screens never write raw span/p/hN ──────
+export function Text(props: {
+  as?: 'span' | 'p';
+  className?: string;
+  children: React.ReactNode;
+} & Omit<React.HTMLAttributes<HTMLElement>, 'className' | 'children'>) {
+  const { as = 'span', className, children, ...rest } = props;
+  const Tag = as;
+  return <Tag className={`k-text${className ? ` ${className}` : ''}`} {...rest}>{children}</Tag>;
+}
+
+export function Heading(props: {
+  level: 1 | 2 | 3 | 4;
+  className?: string;
+  children: React.ReactNode;
+}) {
+  const Tag = `h${props.level}` as 'h1';
+  return <Tag className={`k-heading${props.className ? ` ${props.className}` : ''}`}>{props.children}</Tag>;
+}
+
+// ── Description list (kit v1.2, F2) — envelope/field views ──────────────────
+export function DescriptionList(props: {
+  items: ReadonlyArray<[term: React.ReactNode, description: React.ReactNode]>;
+  className?: string;
+}) {
+  return (
+    <dl className={`k-dl${props.className ? ` ${props.className}` : ''}`}>
+      {props.items.map(([term, desc], i) => (
+        <React.Fragment key={i}>
+          <dt>{term}</dt>
+          <dd>{desc}</dd>
+        </React.Fragment>
+      ))}
+    </dl>
+  );
+}
+
+export function Blockquote(props: { className?: string; children: React.ReactNode }) {
+  return <blockquote className={`k-blockquote${props.className ? ` ${props.className}` : ''}`}>{props.children}</blockquote>;
+}
+
+export function Pre(props: { className?: string; children: React.ReactNode }) {
+  return <pre className={`k-pre${props.className ? ` ${props.className}` : ''}`}>{props.children}</pre>;
+}
+
+// ── Slider (kit v1.2, F2) — range input ──────────────────────────────────────
+export function Slider(props: Omit<React.InputHTMLAttributes<HTMLInputElement>, 'type'>) {
+  return <input type="range" className="k-slider" {...props} />;
+}
+
+// ── Menu row (kit v1.2, F2) — palette/menu option rows ──────────────────────
+export function MenuRow(props: {
+  label: React.ReactNode;
+  meta?: React.ReactNode;
+  trailing?: React.ReactNode;
+  selected?: boolean;
+  onHover?(): void;
+  onPick?(): void;
+  className?: string;
+  style?: React.CSSProperties;
+}) {
+  return (
+    <button
+      type="button"
+      role="option"
+      aria-selected={props.selected ? 'true' : 'false'}
+      data-selected={props.selected ? 'true' : 'false'}
+      className={`k-menurow${props.className ? ` ${props.className}` : ''}`}
+      style={props.style}
+      onMouseEnter={props.onHover}
+      onClick={props.onPick}
+    >
+      <span className="k-menurow__label">{props.label}</span>
+      {props.meta != null && <span className="k-menurow__meta">{props.meta}</span>}
+      {props.trailing != null && <span className="k-menurow__trailing">{props.trailing}</span>}
+    </button>
+  );
+}
+
 // ── Buttons ─────────────────────────────────────────────────────────────────
 export function Button(props: React.ButtonHTMLAttributes<HTMLButtonElement> & { primary?: boolean }) {
   const { primary, className, ...rest } = props;
@@ -30,9 +109,10 @@ export function RadioGroup(props: {
   options: ReadonlyArray<{ value: string; label?: React.ReactNode }>;
   value: string;
   onChange(value: string): void;
+  className?: string; // v1.2: screen CSS hooks pass through
 }) {
   return (
-    <div className="k-seg" role="radiogroup" aria-label={props.label}>
+    <div className={`k-seg${props.className ? ` ${props.className}` : ''}`} role="radiogroup" aria-label={props.label}>
       {props.options.map((o) => (
         <button
           key={o.value}
@@ -74,11 +154,12 @@ export function Swatch(props: {
   selected?: boolean;
   label: string;
   onSelect?(): void;
+  className?: string; // v1.2: screen CSS hooks pass through
 }) {
   return (
     <button
       type="button"
-      className="k-swatch"
+      className={`k-swatch${props.className ? ` ${props.className}` : ''}`}
       style={{ background: props.color }}
       aria-label={props.label}
       aria-pressed={props.selected ? 'true' : 'false'}
@@ -131,19 +212,22 @@ export function Field(props: { label: string; hint?: string; children: React.Rea
 }
 
 // ── Layout primitive (kit v1.1) — screens never write raw containers ───────
+// v1.2 (F2): rest div attributes pass through (role, aria-*, onClick, title…).
 export function Stack(props: {
   horizontal?: boolean;
   gap?: number;
   className?: string;
   style?: React.CSSProperties;
   children: React.ReactNode;
-}) {
+} & Omit<React.HTMLAttributes<HTMLDivElement>, 'className' | 'style' | 'children'>) {
+  const { horizontal, gap, className, style, children, ...rest } = props;
   return (
     <div
-      className={`k-stack${props.horizontal ? ' k-stack--horizontal' : ''}${props.className ? ` ${props.className}` : ''}`}
-      style={{ ...(props.gap !== undefined ? { gap: props.gap } : {}), ...props.style }}
+      className={`k-stack${horizontal ? ' k-stack--horizontal' : ''}${className ? ` ${className}` : ''}`}
+      style={{ ...(gap !== undefined ? { gap } : {}), ...style }}
+      {...rest}
     >
-      {props.children}
+      {children}
     </div>
   );
 }

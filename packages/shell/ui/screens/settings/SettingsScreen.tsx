@@ -1,13 +1,28 @@
 // shell/ui/screens/settings/SettingsScreen.tsx — SHL-009 + §11 rulings.
 // Writes via setSetting ONLY; no model truth in shell (R3-22: model picker
 // writes a last-used UI default labelled derivedFrom 'agents.setModel').
+// Kit-composed ONLY (red gate 3 — tools/lint-kit.mjs enforces; F2: the Motion
+// control and every other picker use kit RadioGroup/Select/Swatch/Slider).
 import React, { useState } from 'react';
 import type { SettingsRecord, ShellServices } from '../../../contract/index.js';
 import { settingValue, DEFAULT_RENDER_SPEED, mintShellOpId } from '../../../contract/index.js';
-import { Button, ScrollArea } from '../../kit/index.js';
+import { Button, Heading, InlineError, RadioGroup, ScrollArea, Select, Slider, Stack, Swatch, Text } from '../../kit/index.js';
 import './settings.css';
 
 const ACCENTS = ['#d0a14b', '#7ea6c9', '#9b8ac4', '#c98a7e'] as const;
+
+/** One settings row: label (+ optional description) beside its control. */
+function SettingRow(props: { name: string; desc?: string; children: React.ReactNode }) {
+  return (
+    <Stack horizontal className="nv-setting">
+      <Stack className="nv-setting__label">
+        <Text className="nv-setting__name">{props.name}</Text>
+        {props.desc && <Text className="nv-setting__desc">{props.desc}</Text>}
+      </Stack>
+      {props.children}
+    </Stack>
+  );
+}
 
 export function SettingsScreen(props: {
   services: ShellServices;
@@ -35,110 +50,78 @@ export function SettingsScreen(props: {
 
   return (
     <ScrollArea style={{ flex: 1 }}>
-      <div className="nv-settings">
-        <h1>Settings</h1>
-        {error && <div className="nv-setting__error" role="alert">{error}</div>}
+      <Stack className="nv-settings">
+        <Heading level={1}>Settings</Heading>
+        {error && <InlineError>{error}</InlineError>}
 
-        <h2>Theme</h2>
-        <div className="nv-setting">
-          <div className="nv-setting__label">
-            <div className="nv-setting__name">Appearance</div>
-            <div className="nv-setting__desc">Dark and light are both designed — pick what your room needs.</div>
-          </div>
-          <div className="nv-seg" role="radiogroup" aria-label="Theme">
-            {(['dark', 'light'] as const).map((t) => (
-              <button key={t} role="radio" aria-checked={theme === t} data-on={theme === t ? 'true' : 'false'}
-                onClick={() => void apply('theme', t)}>{t}</button>
-            ))}
-          </div>
-        </div>
+        <Heading level={2}>Theme</Heading>
+        <SettingRow name="Appearance" desc="Dark and light are both designed — pick what your room needs.">
+          <RadioGroup
+            className="nv-seg" label="Theme" value={theme}
+            options={(['dark', 'light'] as const).map((t) => ({ value: t }))}
+            onChange={(t) => void apply('theme', t)}
+          />
+        </SettingRow>
 
-        <div className="nv-setting">
-          <div className="nv-setting__label">
-            <div className="nv-setting__name">Accent</div>
-            <div className="nv-setting__desc">The one attention signal. Sub-contrast choices are rejected, not warned.</div>
-          </div>
-          <div style={{ display: 'flex', gap: 8 }}>
+        <SettingRow name="Accent" desc="The one attention signal. Sub-contrast choices are rejected, not warned.">
+          <Stack horizontal style={{ gap: 8 }}>
             {ACCENTS.map((a) => (
-              <button key={a} className="nv-swatch" style={{ background: a }}
-                aria-label={`Accent ${a}`} aria-pressed={accent === a}
-                data-on={accent === a ? 'true' : 'false'}
-                onClick={() => void apply('accent', a)} />
+              <Swatch
+                key={a} className="nv-swatch" color={a} selected={accent === a}
+                label={`Accent ${a}`} onSelect={() => void apply('accent', a)}
+              />
             ))}
-          </div>
-        </div>
+          </Stack>
+        </SettingRow>
 
-        <h2>Conversations</h2>
-        <div className="nv-setting">
-          <div className="nv-setting__label">
-            <div className="nv-setting__name">Thread speed</div>
-            <div className="nv-setting__desc">How fast new text renders, in tokens per second. Your message, your speed.</div>
-          </div>
-          <input
-            type="range" min={10} max={2000} step={10} value={speed}
+        <Heading level={2}>Conversations</Heading>
+        <SettingRow name="Thread speed" desc="How fast new text renders, in tokens per second. Your message, your speed.">
+          <Slider
+            min={10} max={2000} step={10} value={speed}
             aria-label="Thread render speed"
             onChange={(e) => void apply('renderSpeed.default', Number(e.target.value))}
           />
-          <span className="nv-setting__desc" style={{ minWidth: 64, textAlign: 'right' }}>{speed}/s</span>
-        </div>
+          <Text className="nv-setting__desc" style={{ minWidth: 64, textAlign: 'right' }}>{speed}/s</Text>
+        </SettingRow>
 
-        <div className="nv-setting">
-          <div className="nv-setting__label">
-            <div className="nv-setting__name">Bubble style</div>
-          </div>
-          <div className="nv-seg" role="radiogroup" aria-label="Bubble style">
-            {(['bubbles', 'minimal'] as const).map((b) => (
-              <button key={b} role="radio" aria-checked={bubbleStyle === b} data-on={bubbleStyle === b ? 'true' : 'false'}
-                onClick={() => void apply('bubbleStyle', b)}>{b}</button>
-            ))}
-          </div>
-        </div>
+        <SettingRow name="Bubble style">
+          <RadioGroup
+            className="nv-seg" label="Bubble style" value={bubbleStyle}
+            options={(['bubbles', 'minimal'] as const).map((b) => ({ value: b }))}
+            onChange={(b) => void apply('bubbleStyle', b)}
+          />
+        </SettingRow>
 
-        <div className="nv-setting">
-          <div className="nv-setting__label">
-            <div className="nv-setting__name">Density</div>
-          </div>
-          <div className="nv-seg" role="radiogroup" aria-label="Density">
-            {(['comfortable', 'compact'] as const).map((d) => (
-              <button key={d} role="radio" aria-checked={density === d} data-on={density === d ? 'true' : 'false'}
-                onClick={() => void apply('density', d)}>{d}</button>
-            ))}
-          </div>
-        </div>
+        <SettingRow name="Density">
+          <RadioGroup
+            className="nv-seg" label="Density" value={density}
+            options={(['comfortable', 'compact'] as const).map((d) => ({ value: d }))}
+            onChange={(d) => void apply('density', d)}
+          />
+        </SettingRow>
 
-        <div className="nv-setting">
-          <div className="nv-setting__label">
-            <div className="nv-setting__name">Motion</div>
-            <div className="nv-setting__desc">Reduced collapses every animation to instant — on top of your OS setting.</div>
-          </div>
-          <div className="nv-seg" role="radiogroup" aria-label="Motion">
-            {(['full', 'reduced'] as const).map((m) => (
-              <button key={m} role="radio" aria-checked={motion === m} data-on={motion === m ? 'true' : 'false'}
-                onClick={() => void apply('motion', m)}>{m}</button>
-            ))}
-          </div>
-        </div>
+        <SettingRow name="Motion" desc="Reduced collapses every animation to instant — on top of your OS setting.">
+          <RadioGroup
+            className="nv-seg" label="Motion" value={motion}
+            options={(['full', 'reduced'] as const).map((m) => ({ value: m }))}
+            onChange={(m) => void apply('motion', m)}
+          />
+        </SettingRow>
 
-        <h2>Model</h2>
-        <div className="nv-setting">
-          <div className="nv-setting__label">
-            <div className="nv-setting__name">Last used model</div>
-            <div className="nv-setting__desc">A UI default only — model truth lives with the agents capability.</div>
-          </div>
-          <select
-            className="k-input" style={{ width: 180 }}
+        <Heading level={2}>Model</Heading>
+        <SettingRow name="Last used model" desc="A UI default only — model truth lives with the agents capability.">
+          <Select
+            label="Model"
+            options={props.models.map((m) => ({ value: m }))}
             value={model}
-            aria-label="Model"
-            onChange={(e) => void apply('lastUsedModel', e.target.value, { derivedFrom: 'agents.setModel' })}
-          >
-            {props.models.map((m) => <option key={m} value={m}>{m}</option>)}
-          </select>
-        </div>
+            onChange={(m) => void apply('lastUsedModel', m, { derivedFrom: 'agents.setModel' })}
+          />
+        </SettingRow>
 
-        <div style={{ marginTop: 24 }}>
+        <Stack style={{ marginTop: 24 }}>
           <Button onClick={() => void props.refresh()}>Reload settings</Button>
-        </div>
-      </div>
+        </Stack>
+      </Stack>
     </ScrollArea>
   );
 }

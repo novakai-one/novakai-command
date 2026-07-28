@@ -230,3 +230,26 @@ body {
 .k-field__label { color: var(--ink); font-size: var(--text-2, 13px); }
 .k-field__hint { color: var(--ink-3); font-size: var(--text-3); }
 .k-error { color: var(--danger); font-size: var(--text-3); }
+
+/* kit v1.2 (F2) — text/heading/description/blockquote/pre/slider/menurow */
+.k-text { color: inherit; }
+p.k-text { margin: 0; }
+.k-heading { margin: 0; font-weight: 600; color: var(--ink); }
+h1.k-heading { font-size: 18px; }
+h2.k-heading { font-size: 14px; margin-top: 18px; }
+h3.k-heading { font-size: 13px; }
+h4.k-heading { font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; opacity: 0.7; }
+.k-dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-size: 13px; }
+.k-dl dt { opacity: 0.6; }
+.k-dl dd { margin: 0; word-break: break-word; }
+.k-blockquote { margin: 0; padding: 8px 12px; border-left: 2px solid var(--hairline, rgba(128,128,128,0.4)); }
+.k-pre { margin: 0; padding: 8px; font-size: 12px; overflow: auto; background: rgba(128,128,128,0.08); border-radius: 6px; }
+.k-slider { accent-color: var(--accent); }
+.k-menurow {
+  display: flex; gap: 8px; align-items: baseline; width: 100%;
+  background: none; border: none; padding: 6px 10px; font: inherit; color: inherit;
+  text-align: left; cursor: pointer;
+}
+.k-menurow[data-selected="true"] { background: rgba(128,128,128,0.12); }
+.k-menurow__meta { opacity: 0.6; flex: 1; }
+.k-menurow__trailing { opacity: 0.5; font-size: 11px; }
