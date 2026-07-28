@@ -5,6 +5,7 @@ import {
   mkdirSync,
   readdirSync,
   rmSync,
+  utimesSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -13,6 +14,7 @@ import {
   __resetDefaultEngine,
   mintClientOpId,
   queryTrace,
+  type ArtifactId,
 } from '@novakai/foundation/dist/contract/index.js';
 import {
   composeArtifacts,
@@ -358,6 +360,100 @@ test('orphan sweep translates Foundation trace storage failures and preserves th
     assert.equal(swept.error.code, 'ArtifactOrphanTraceFailed');
     assert.deepEqual(readdirSync(bytesRoot), [artifactId]);
   } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test('orphan sweep reclaims stale final and temp publication leases', async () => {
+  const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-sweep-stale-'));
+  const root = path.join(workspace, '.novakai');
+  const priorFailpoint = process.env.NVK_FAILPOINT;
+  const priorRoot = process.env.NOVAKAI_ROOT;
+  try {
+    process.env.NVK_FAILPOINT = 'artifacts.put.before-record-append';
+    const finalOrphan = await composeArtifacts({
+      root,
+      principal: 'sys_reconciler',
+    }).operations.putArtifact({
+      bytes: Buffer.from('stale final orphan bytes', 'utf8'),
+      mimeType: 'text/plain',
+    }, mintClientOpId());
+    assert.equal(finalOrphan.ok, false);
+    if (finalOrphan.ok) return;
+    const finalId = (
+      finalOrphan.error.details as { artifactId: ArtifactId }
+    ).artifactId;
+
+    process.env.NVK_FAILPOINT = 'artifacts.put.after-temp-fsync';
+    const tempOrphan = await composeArtifacts({
+      root,
+      principal: 'sys_reconciler',
+    }).operations.putArtifact({
+      bytes: Buffer.from('stale temp orphan bytes', 'utf8'),
+      mimeType: 'text/plain',
+    }, mintClientOpId());
+    assert.equal(tempOrphan.ok, false);
+    if (tempOrphan.ok) return;
+    const tempId = (
+      tempOrphan.error.details as { artifactId: ArtifactId }
+    ).artifactId;
+    delete process.env.NVK_FAILPOINT;
+
+    const locksRoot = path.join(
+      root,
+      'artifacts',
+      '.publication-locks',
+    );
+    const finalLease = path.join(locksRoot, `${finalId}.lock`);
+    mkdirSync(finalLease, { recursive: true });
+    writeFileSync(
+      path.join(finalLease, 'owner.json'),
+      `${JSON.stringify({ pid: 999999, token: 'dead-owner' })}\n`,
+    );
+    const tempLease = path.join(locksRoot, `${tempId}.lock`);
+    mkdirSync(tempLease);
+    const staleAt = new Date(Date.now() - 60_000);
+    utimesSync(tempLease, staleAt, staleAt);
+
+    const swept = await composeArtifacts({
+      root,
+      principal: 'sys_reconciler',
+      lockTimeoutMs: 100,
+    }).boot.sweepOrphans();
+
+    assert.equal(swept.ok, true);
+    if (!swept.ok) return;
+    assert.deepEqual(
+      new Set(swept.value.swept.map((entry) => entry.entryType)),
+      new Set(['final', 'temp']),
+    );
+    assert.deepEqual(readdirSync(path.join(root, 'artifacts')), []);
+
+    process.env.NOVAKAI_ROOT = path.join(root, 'stores');
+    __resetDefaultEngine();
+    const traces = await queryTrace({});
+    const sweepTraces = traces.items.filter(
+      (trace) => trace.action === 'artifact.orphan.sweep',
+    );
+    assert.equal(sweepTraces.length, 2);
+    assert.equal(
+      sweepTraces.every((trace) =>
+        JSON.stringify(trace.meta) === JSON.stringify({
+          entryType: trace.meta?.entryType,
+          status: 'accepted',
+        })),
+      true,
+    );
+    assert.equal(
+      JSON.stringify(sweepTraces).includes('orphan bytes'),
+      false,
+    );
+  } finally {
+    if (priorFailpoint === undefined) delete process.env.NVK_FAILPOINT;
+    else process.env.NVK_FAILPOINT = priorFailpoint;
+    if (priorRoot === undefined) delete process.env.NOVAKAI_ROOT;
+    else process.env.NOVAKAI_ROOT = priorRoot;
+    __resetDefaultEngine();
     rmSync(workspace, { recursive: true, force: true });
   }
 });
