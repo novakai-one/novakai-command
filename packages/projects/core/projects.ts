@@ -26,6 +26,10 @@ import {
   type Project as ProjectT,
   type ProjectItem as ProjectItemT,
 } from '../contract/schemas.js';
+import type {
+  ProjectsError,
+  StoredRecordInvalidError,
+} from '../contract/errors.js';
 import type { ProjectsContext } from './composition.js';
 
 function invalidInput(error: { issues: Array<{ path: PropertyKey[]; message: string }> }): StoreError {
@@ -56,11 +60,32 @@ function requireClientOpId(clientOpId: ClientOpId): StoreError | null {
   );
 }
 
+function malformedProject(
+  object: unknown,
+  issues: Array<{ path: PropertyKey[]; message: string }>,
+): StoredRecordInvalidError {
+  const id = typeof object === 'object' && object !== null
+    ? String((object as { id?: unknown }).id ?? '(unknown)')
+    : '(unknown)';
+  return err(
+    'StoredRecordInvalid',
+    `stored Project "${id}" does not match the Projects schema`,
+    {
+      ref: { kind: 'project', id },
+      issues: issues.map((issue) => ({
+        field: issue.path.join('.') || '(root)',
+        reason: issue.message,
+      })),
+    },
+    false,
+  );
+}
+
 export async function createProject(
   ctx: ProjectsContext,
   input: CreateProjectInputT,
   clientOpId: ClientOpId,
-): Promise<Result<ProjectT, StoreError>> {
+): Promise<Result<ProjectT, ProjectsError>> {
   const missingClientOpId = requireClientOpId(clientOpId);
   if (missingClientOpId) return { ok: false, error: missingClientOpId };
   const parsed = CreateProjectInput.safeParse(input);
@@ -83,15 +108,23 @@ export async function createProject(
 export async function listProjects(
   ctx: ProjectsContext,
   filter?: ListProjectsFilterT,
-): Promise<Result<Page<ProjectT>, StoreError>> {
+): Promise<Result<Page<ProjectT>, ProjectsError>> {
   const parsed = ListProjectsFilter.safeParse(filter ?? {});
   if (!parsed.success) return { ok: false, error: invalidInput(parsed.error) };
   const listed = await listObjects<ProjectT>(ctx.handle, 'project', parsed.data);
   if (!listed.ok) return listed;
+  const items: ProjectT[] = [];
+  for (const { object } of listed.value.items) {
+    const project = Project.safeParse(object);
+    if (!project.success) {
+      return { ok: false, error: malformedProject(object, project.error.issues) };
+    }
+    items.push(project.data as ProjectT);
+  }
   return {
     ok: true,
     value: {
-      items: listed.value.items.map(({ object }) => Project.parse(object) as ProjectT),
+      items,
       ...(listed.value.nextCursor ? { nextCursor: listed.value.nextCursor } : {}),
     },
   };
@@ -121,7 +154,7 @@ export async function archiveProject(
   ctx: ProjectsContext,
   projectId: ProjectId,
   clientOpId: ClientOpId,
-): Promise<Result<ProjectT, StoreError>> {
+): Promise<Result<ProjectT, ProjectsError>> {
   const missingClientOpId = requireClientOpId(clientOpId);
   if (missingClientOpId) return { ok: false, error: missingClientOpId };
   const current = await findProject(ctx, projectId);
@@ -143,7 +176,7 @@ export async function archiveProject(
 export async function getProjectItems(
   ctx: ProjectsContext,
   projectId: ProjectId,
-): Promise<Result<Page<ProjectItemT>, StoreError>> {
+): Promise<Result<Page<ProjectItemT>, ProjectsError>> {
   const project = await findProject(ctx, projectId);
   if (!project.ok) return project;
   if (isAbsent(project.value)) {
@@ -169,7 +202,7 @@ export async function attach(
   projectId: ProjectId,
   input: AttachProjectItemInputT,
   clientOpId: ClientOpId,
-): Promise<Result<ProjectItemT, StoreError>> {
+): Promise<Result<ProjectItemT, ProjectsError>> {
   const missingClientOpId = requireClientOpId(clientOpId);
   if (missingClientOpId) return { ok: false, error: missingClientOpId };
   const parsed = AttachProjectItemInput.safeParse(input);
