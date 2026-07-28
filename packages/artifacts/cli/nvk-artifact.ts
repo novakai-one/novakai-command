@@ -59,6 +59,7 @@ function required(value: unknown, name: string): string {
 function authenticatedContract(
   root: string,
   bearer: string,
+  lockTimeoutMs?: number,
 ): ArtifactsContract {
   if (!bearer) {
     fail({
@@ -88,6 +89,7 @@ function authenticatedContract(
   return createArtifactsContract(composeArtifacts({
     root,
     principal: token.principal,
+    lockTimeoutMs,
   }));
 }
 
@@ -99,7 +101,10 @@ async function main(): Promise<void> {
   const bearer = typeof flags.token === 'string'
     ? flags.token
     : (process.env.NOVAKAI_TOKEN ?? '');
-  const artifacts = authenticatedContract(root, bearer);
+  const lockTimeoutMs = typeof flags['lock-timeout-ms'] === 'string'
+    ? Number(flags['lock-timeout-ms'])
+    : undefined;
+  const artifacts = authenticatedContract(root, bearer, lockTimeoutMs);
 
   if (verb === 'put') {
     const sourcePath = required(positional[0], 'put <path>');
