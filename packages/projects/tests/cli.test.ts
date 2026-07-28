@@ -13,6 +13,10 @@ import {
   mintClientOpId,
   mintToken,
 } from '@novakai/foundation/dist/contract/index.js';
+import {
+  composeProjects,
+  createProjectsContract,
+} from '../contract/index.js';
 
 const CLI = path.resolve('dist/cli/nvk-project.js');
 
@@ -25,6 +29,12 @@ function invoke(root: string, args: string[], token?: string) {
       NOVAKAI_TOKEN: token ?? '',
     },
   });
+}
+
+function success<T>(root: string, token: string, args: string[]): T {
+  const result = invoke(root, args, token);
+  assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
+  return JSON.parse(result.stdout) as T;
 }
 
 test('offline CLI requires a recognized bearer token', () => {
@@ -65,6 +75,45 @@ test('offline CLI create preserves the shared Foundation lock failure', () => {
     ], token.bearer);
     assert.equal(blocked.status, 1);
     assert.equal(JSON.parse(blocked.stderr).code, 'LockBusy');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('offline CLI create has parity with the in-process Projects contract', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'nvk-projects-cli-create-'));
+  try {
+    const token = mintToken(
+      root,
+      'person_cli',
+      ['project', 'projectItem'],
+      'person_local',
+    );
+    const created = success<{
+      id: string;
+      createdBy: string;
+      permissionLevel: string;
+      status: string;
+    }>(root, token.bearer, [
+      'create',
+      '--title', 'CLI Project',
+      '--permission-level', 'team',
+      '--client-op-id', mintClientOpId(),
+    ]);
+    assert.match(created.id, /^proj_/);
+    assert.equal(created.createdBy, 'person_cli');
+    assert.equal(created.permissionLevel, 'team');
+    assert.equal(created.status, 'active');
+
+    const projects = createProjectsContract(composeProjects({
+      root,
+      principal: 'person_cli',
+    }));
+    const listed = await projects.listProjects();
+    assert.equal(
+      listed.ok && listed.value.items.some(({ id }) => id === created.id),
+      true,
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
