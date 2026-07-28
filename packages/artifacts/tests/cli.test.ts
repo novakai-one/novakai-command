@@ -64,3 +64,40 @@ test('offline CLI put derives the artifact principal from bearer auth', () => {
     rmSync(workspace, { recursive: true, force: true });
   }
 });
+
+test('offline CLI get-meta matches put metadata', () => {
+  const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-artifact-cli-meta-'));
+  const root = path.join(workspace, '.novakai');
+  const source = path.join(workspace, 'meta.txt');
+  try {
+    writeFileSync(source, 'metadata parity');
+    const token = mintToken(
+      root,
+      'person_cli',
+      ['artifact'],
+      'sys_spine',
+    );
+    const put = invoke([
+      'put',
+      source,
+      '--root', root,
+      '--token', token.bearer,
+      '--mime-type', 'text/plain',
+      '--client-op-id', mintClientOpId(),
+    ]);
+    assert.equal(put.status, 0, put.stderr);
+    const artifact = JSON.parse(put.stdout) as { id: string };
+
+    const found = invoke([
+      'get-meta',
+      artifact.id,
+      '--root', root,
+      '--token', token.bearer,
+    ]);
+
+    assert.equal(found.status, 0, found.stderr);
+    assert.deepEqual(JSON.parse(found.stdout), JSON.parse(put.stdout));
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
