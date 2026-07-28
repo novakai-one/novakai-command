@@ -238,7 +238,11 @@ export async function bootServer(options: BootOptions): Promise<BootResult> {
 
   // ── 8. supervision (B1b: the engine — gate, drift, lifecycle, usage) ────
   const watchdog: WatchdogHook = createWatchdogHook(options.watchdogDir ?? cwd);
-  const usageReader = createUsageReader(options.providerHome ? { home: options.providerHome } : {});
+  const usageReader = createUsageReader({
+    ...(options.providerHome ? { home: options.providerHome } : {}),
+    discoveryIntervalMs:
+      Math.min(config.supervision.usageIntervalSec, config.supervision.driftIntervalSec) * 1000,
+  });
   const usageLog = createUsageLog(options.root);
   // The registry is the engine's session truth; this adapts its record shape to
   // the narrow slice supervision reads (it never writes through this seam).

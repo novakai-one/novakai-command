@@ -236,6 +236,12 @@ export function createSupervisionEngine(deps: SupervisionDeps): SupervisionEngin
 
   const running = async (): Promise<SupervisionRecord[]> =>
     (await deps.sessions.list()).filter((r) => r.status === 'running');
+  const usageRefOf = (record: SupervisionRecord) => ({
+    sessionId: record.sessionId,
+    provider: record.provider,
+    providerConversationId: record.providerConversationId,
+    cwd: record.cwd,
+  });
 
   // ── the skills gate ──────────────────────────────────────────────────────
 
@@ -291,11 +297,8 @@ export function createSupervisionEngine(deps: SupervisionDeps): SupervisionEngin
    * provider transcript's newest line. No provider turn is spent to learn
    * whether a session is alive — that is the whole point of SR-1.
    */
-  const freeActivityOf = (record: SupervisionRecord): string => {
-    const fromTranscript = deps.usage.read({
-      sessionId: record.sessionId, provider: record.provider,
-      providerConversationId: record.providerConversationId, cwd: record.cwd,
-    }).lastActivityAt;
+  const freeActivityOf = (record: SupervisionRecord, usage: SessionUsage): string => {
+    const fromTranscript = usage.lastActivityAt;
     if (!fromTranscript) return record.lastActivityAt;
     return Date.parse(fromTranscript) > Date.parse(record.lastActivityAt)
       ? fromTranscript : record.lastActivityAt;
@@ -306,9 +309,14 @@ export function createSupervisionEngine(deps: SupervisionDeps): SupervisionEngin
     const intervalMs = deps.policy.driftIntervalSec * 1000;
     const rows: DriftRow[] = [];
     let providerTurnsSpent = 0;
+    const records = await running();
+    const usageBySession = await deps.usage.readMany(records.map(usageRefOf));
 
-    for (const record of await running()) {
-      const activityAt = freeActivityOf(record);
+    for (const record of records) {
+      const usage = usageBySession.get(record.sessionId);
+      const activityAt = usage
+        ? freeActivityOf(record, usage)
+        : record.lastActivityAt;
       const state = driftStates.get(record.sessionId) ?? {
         lastSeenActivityAt: activityAt, staleIntervals: 0, consecutiveDrift: 0, drifting: false,
       };
@@ -435,10 +443,8 @@ export function createSupervisionEngine(deps: SupervisionDeps): SupervisionEngin
 
   const usageTable: SupervisionEngine['usageTable'] = async () => {
     const records = await deps.sessions.list();
-    const rows = records.map((record) => rowFor(record, deps.usage.read({
-      sessionId: record.sessionId, provider: record.provider,
-      providerConversationId: record.providerConversationId, cwd: record.cwd,
-    })));
+    const usageBySession = await deps.usage.readMany(records.map(usageRefOf));
+    const rows = records.map((record) => rowFor(record, usageBySession.get(record.sessionId)!));
     return {
       at: now(),
       rows,

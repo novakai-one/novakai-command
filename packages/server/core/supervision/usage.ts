@@ -29,7 +29,7 @@
 // The baseline is zero for a thread novakai created (nothing is lost), and the
 // raw total plus the subtracted baseline are BOTH reported so the adjustment is
 // visible rather than magic.
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { readdir, readFile, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import type { ProviderName } from '../../contract/config.js';
@@ -76,16 +76,19 @@ export interface SessionUsage {
 
 const ZERO = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 };
 
-/** Read a JSONL file into objects. A corrupt line is skipped, never fatal. */
-function readJsonl(file: string): Array<Record<string, unknown>> | null {
-  let text: string;
-  try { text = readFileSync(file, 'utf8'); } catch { return null; }
+/** Parse JSONL text into objects. A corrupt line is skipped, never fatal. */
+function parseJsonl(text: string): Array<Record<string, unknown>> {
   const out: Array<Record<string, unknown>> = [];
   for (const line of text.split('\n')) {
     if (!line.trim()) continue;
     try { out.push(JSON.parse(line) as Record<string, unknown>); } catch { /* half-written tail */ }
   }
   return out;
+}
+
+/** Async file edge; transcript parsing never blocks the server event loop. */
+async function readJsonl(file: string): Promise<Array<Record<string, unknown>> | null> {
+  try { return parseJsonl(await readFile(file, 'utf8')); } catch { return null; }
 }
 
 const isoOf = (value: unknown): string | null => {
@@ -107,9 +110,7 @@ const newer = (a: string | null, b: string | null): string | null => {
  * `payload.type === 'token_count'` carries `info.total_token_usage`, which is
  * CUMULATIVE — the last one is the authoritative aggregate. Do not sum.
  */
-export function parseCodexRollout(file: string): ParsedUsage | null {
-  const lines = readJsonl(file);
-  if (!lines) return null;
+function parseCodexLines(lines: Array<Record<string, unknown>>): ParsedUsage {
   let total: Record<string, number> | null = null;
   let lastActivityAt: string | null = null;
   for (const line of lines) {
@@ -131,15 +132,18 @@ export function parseCodexRollout(file: string): ParsedUsage | null {
   };
 }
 
+export async function parseCodexRollout(file: string): Promise<ParsedUsage | null> {
+  const lines = await readJsonl(file);
+  return lines ? parseCodexLines(lines) : null;
+}
+
 /**
  * claude transcript (`~/.claude/projects/<sanitized-cwd>/<sessionId>.jsonl`).
  * Per-message `message.usage` blocks. The SAME assistant message repeats across
  * lines in a real transcript, so records are deduped by message id — counting
  * them twice would double every claude bill.
  */
-export function parseClaudeTranscript(file: string): ParsedUsage | null {
-  const lines = readJsonl(file);
-  if (!lines) return null;
+function parseClaudeLines(lines: Array<Record<string, unknown>>): ParsedUsage {
   const byMessageId = new Map<string, Record<string, number>>();
   let lastActivityAt: string | null = null;
   for (const line of lines) {
@@ -157,15 +161,18 @@ export function parseClaudeTranscript(file: string): ParsedUsage | null {
   return { ...acc, lastActivityAt, cumulative: false };
 }
 
+export async function parseClaudeTranscript(file: string): Promise<ParsedUsage | null> {
+  const lines = await readJsonl(file);
+  return lines ? parseClaudeLines(lines) : null;
+}
+
 /**
  * kimi wire — under `~/.kimi-code/sessions/`, a `wd_<hash>` working-dir bucket
  * holds `session_<id>/agents/main/wire.jsonl`.
  * The source B1a found when it established that kimi's stream-json emits NO
  * usage line: `context.append_loop_event` / `step.end` carries per-step usage.
  */
-export function parseKimiWire(file: string): ParsedUsage | null {
-  const lines = readJsonl(file);
-  if (!lines) return null;
+function parseKimiLines(lines: Array<Record<string, unknown>>): ParsedUsage {
   const acc = { ...ZERO };
   let newestMs = 0;
   for (const line of lines) {
@@ -185,6 +192,11 @@ export function parseKimiWire(file: string): ParsedUsage | null {
   };
 }
 
+export async function parseKimiWire(file: string): Promise<ParsedUsage | null> {
+  const lines = await readJsonl(file);
+  return lines ? parseKimiLines(lines) : null;
+}
+
 // ── transcript discovery ───────────────────────────────────────────────────
 
 /** claude sanitizes a cwd into its projects dir name: /a/b → -a-b. */
@@ -192,68 +204,65 @@ export function sanitizeCwd(cwd: string): string {
   return cwd.replace(/[^a-zA-Z0-9]/g, '-');
 }
 
-/** Depth-limited recursive file listing. Never throws on an unreadable dir. */
-function walk(dir: string, depth: number): string[] {
+/** Depth-limited async file listing. Never throws on an unreadable dir. */
+async function walk(dir: string, depth: number): Promise<string[]> {
   if (depth < 0) return [];
-  let entries: string[];
-  try { entries = readdirSync(dir); } catch { return []; }
+  let entries;
+  try { entries = await readdir(dir, { withFileTypes: true }); } catch { return []; }
   const out: string[] = [];
-  for (const name of entries) {
-    const full = path.join(dir, name);
-    let st;
-    try { st = statSync(full); } catch { continue; }
-    if (st.isDirectory()) out.push(...walk(full, depth - 1));
-    else out.push(full);
+  for (const entry of entries) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) out.push(...await walk(full, depth - 1));
+    else if (entry.isFile()) out.push(full);
   }
   return out;
 }
 
 /**
- * Where a provider keeps the transcript for one conversation id. Returns null
- * when nothing matches — a missing transcript is reported as a gap, never
- * filled with zeros.
+ * One discovery pass across every provider root. Usage intervals share this
+ * manifest; no session is allowed to launch its own directory walk.
  */
-export function findTranscript(
+async function discoverTranscripts(home: string): Promise<string[]> {
+  const roots: Array<[string, number]> = [
+    [path.join(home, '.claude', 'projects'), 3],
+    [path.join(home, '.codex', 'sessions'), 5],
+    [path.join(home, '.kimi-code', 'sessions'), 6],
+  ];
+  return (await Promise.all(roots.map(([root, depth]) => walk(root, depth)))).flat();
+}
+
+/** Resolve one conversation from an already-discovered interval manifest. */
+function findInManifest(
   provider: ProviderName,
   conversationId: string,
   cwd: string,
   home: string,
+  files: string[],
 ): string | null {
   if (provider === 'claude') {
     const dir = path.join(home, '.claude', 'projects', sanitizeCwd(cwd));
     const exact = path.join(dir, `${conversationId}.jsonl`);
-    if (existsSync(exact)) return exact;
-    // The cwd may not be the one claude recorded; scan the projects tree.
-    return walk(path.join(home, '.claude', 'projects'), 2)
-      .find((f) => path.basename(f) === `${conversationId}.jsonl`) ?? null;
+    if (files.includes(exact)) return exact;
+    return files.find((f) => path.basename(f) === `${conversationId}.jsonl`) ?? null;
   }
   if (provider === 'codex') {
-    // rollout-<ts>-<thread-id>.jsonl, bucketed by YYYY/MM/DD.
-    return walk(path.join(home, '.codex', 'sessions'), 4)
-      .find((f) => path.basename(f).includes(conversationId)) ?? null;
+    return files.find((f) =>
+      f.includes(`${path.sep}.codex${path.sep}`)
+      && path.basename(f).includes(conversationId)) ?? null;
   }
   if (provider === 'kimi') {
-    const root = path.join(home, '.kimi-code', 'sessions');
-    let buckets: string[];
-    try { buckets = readdirSync(root); } catch { return null; }
-    for (const bucket of buckets) {
-      let sessionDirs: string[];
-      try { sessionDirs = readdirSync(path.join(root, bucket)); } catch { continue; }
-      for (const name of sessionDirs) {
-        if (!name.includes(conversationId)) continue;
-        const wire = path.join(root, bucket, name, 'agents', 'main', 'wire.jsonl');
-        if (existsSync(wire)) return wire;
-      }
-    }
-    return null;
+    return files.find((f) =>
+      f.includes(`${path.sep}.kimi-code${path.sep}`)
+      && path.basename(f) === 'wire.jsonl'
+      && f.includes(conversationId)) ?? null;
   }
   return null; // mock has no transcript, and never pretends to
 }
 
-const PARSERS: Record<string, (file: string) => ParsedUsage | null> = {
-  claude: parseClaudeTranscript,
-  codex: parseCodexRollout,
-  kimi: parseKimiWire,
+const PARSERS: Record<string, (lines: Array<Record<string, unknown>>) => ParsedUsage> = {
+  claude: parseClaudeLines,
+  codex: parseCodexLines,
+  kimi: parseKimiLines,
 };
 
 // ── the reader ─────────────────────────────────────────────────────────────
@@ -279,7 +288,9 @@ export interface UsageReader {
    * that is the failure this seam prefers.
    */
   trackSession(sessionId: string, options: { threadPreexisting: boolean }): void;
-  read(session: UsageSessionRef): SessionUsage;
+  read(session: UsageSessionRef): Promise<SessionUsage>;
+  /** Read a whole interval from one shared discovery manifest. */
+  readMany(sessions: UsageSessionRef[]): Promise<Map<string, SessionUsage>>;
   /** Forget a closed session's baseline. */
   forget(sessionId: string): void;
 }
@@ -288,6 +299,8 @@ export interface UsageReaderOptions {
   /** Overridable for tests; production reads the operator's real home. */
   home?: string;
   now?: () => string;
+  /** Manifest lifetime; defaults to the five-minute supervision cadence. */
+  discoveryIntervalMs?: number;
 }
 
 const unavailable = (note: string, source: string | null = null): SessionUsage => ({
@@ -299,48 +312,82 @@ const unavailable = (note: string, source: string | null = null): SessionUsage =
 export function createUsageReader(options: UsageReaderOptions = {}): UsageReader {
   const home = options.home ?? homedir();
   const now = options.now ?? (() => new Date().toISOString());
+  const discoveryIntervalMs = options.discoveryIntervalMs ?? 5 * 60 * 1000;
   /** sessionId → the cumulative figure we are NOT accountable for. */
   const baselines = new Map<string, UsageBaseline>();
   /** Sessions declared as ADOPTED. Everything else is a fresh thread. */
   const adopted = new Set<string>();
+  /** One parse result per logical session, invalidated by file or mtime. */
+  const parsedBySession = new Map<string, {
+    file: string;
+    mtimeMs: number;
+    parsed: ParsedUsage;
+  }>();
+  let manifest: { atMs: number; files: string[] } | null = null;
+  let discoveryInFlight: Promise<string[]> | null = null;
 
-  return {
-    trackSession(sessionId, trackOptions) {
-      if (trackOptions.threadPreexisting) {
-        adopted.add(sessionId);
-        baselines.delete(sessionId); // take it at the next read
-        return;
-      }
-      adopted.delete(sessionId);
-      baselines.set(sessionId, { ...ZERO, at: now() });
-    },
+  const nowMs = (): number => {
+    const parsed = Date.parse(now());
+    return Number.isNaN(parsed) ? Date.now() : parsed;
+  };
 
-    forget(sessionId) {
-      baselines.delete(sessionId);
-      adopted.delete(sessionId);
-    },
+  const intervalManifest = async (): Promise<string[]> => {
+    const atMs = nowMs();
+    if (manifest && atMs - manifest.atMs < discoveryIntervalMs) return manifest.files;
+    if (discoveryInFlight) return discoveryInFlight;
+    const pass = discoverTranscripts(home);
+    discoveryInFlight = pass;
+    try {
+      const files = await pass;
+      manifest = { atMs, files };
+      return files;
+    } finally {
+      if (discoveryInFlight === pass) discoveryInFlight = null;
+    }
+  };
 
-    read(session) {
-      const parser = PARSERS[session.provider];
-      if (!parser) {
-        return unavailable(`provider "${session.provider}" keeps no transcript to read`);
-      }
-      if (!session.providerConversationId) {
-        return unavailable(
-          'no provider conversation id yet — the handle is learned on the first reply',
-        );
-      }
-      const file = findTranscript(
-        session.provider, session.providerConversationId, session.cwd, home);
-      if (!file) {
-        return unavailable(
-          `no ${session.provider} transcript found for conversation "${session.providerConversationId}"`,
-        );
-      }
-      const parsed = parser(file);
-      if (!parsed) {
-        return unavailable(`${session.provider} transcript at ${file} could not be read`, file);
-      }
+  const parsedUsage = async (
+    sessionId: string,
+    provider: ProviderName,
+    file: string,
+  ): Promise<ParsedUsage | null> => {
+    let mtimeMs: number;
+    try { mtimeMs = (await stat(file)).mtimeMs; } catch { return null; }
+    const cached = parsedBySession.get(sessionId);
+    if (cached?.file === file && cached.mtimeMs === mtimeMs) return cached.parsed;
+    let text: string;
+    try { text = await readFile(file, 'utf8'); } catch { return null; }
+    const parser = PARSERS[provider];
+    if (!parser) return null;
+    const parsed = parser(parseJsonl(text));
+    parsedBySession.set(sessionId, { file, mtimeMs, parsed });
+    return parsed;
+  };
+
+  const readFromManifest = async (
+    session: UsageSessionRef,
+    files: string[],
+  ): Promise<SessionUsage> => {
+    const parser = PARSERS[session.provider];
+    if (!parser) {
+      return unavailable(`provider "${session.provider}" keeps no transcript to read`);
+    }
+    if (!session.providerConversationId) {
+      return unavailable(
+        'no provider conversation id yet — the handle is learned on the first reply',
+      );
+    }
+    const file = findInManifest(
+      session.provider, session.providerConversationId, session.cwd, home, files);
+    if (!file) {
+      return unavailable(
+        `no ${session.provider} transcript found for conversation "${session.providerConversationId}"`,
+      );
+    }
+    const parsed = await parsedUsage(session.sessionId, session.provider, file);
+    if (!parsed) {
+      return unavailable(`${session.provider} transcript at ${file} could not be read`, file);
+    }
 
       if (!parsed.cumulative) {
         return {
@@ -393,6 +440,38 @@ export function createUsageReader(options: UsageReaderOptions = {}): UsageReader
           ? `codex totals are cumulative; this thread was adopted, so the baseline ${baseline.inputTokens} in / ${baseline.outputTokens} out taken at ${baseline.at} is excluded`
           : 'codex totals are cumulative; this thread belongs to novakai, so the baseline is 0 and the full total is billed',
       };
+  };
+
+  return {
+    trackSession(sessionId, trackOptions) {
+      if (trackOptions.threadPreexisting) {
+        adopted.add(sessionId);
+        baselines.delete(sessionId); // take it at the next read
+        return;
+      }
+      adopted.delete(sessionId);
+      baselines.set(sessionId, { ...ZERO, at: now() });
+    },
+
+    forget(sessionId) {
+      baselines.delete(sessionId);
+      adopted.delete(sessionId);
+      parsedBySession.delete(sessionId);
+    },
+
+    async read(session) {
+      const needsManifest = Boolean(PARSERS[session.provider] && session.providerConversationId);
+      return readFromManifest(session, needsManifest ? await intervalManifest() : []);
+    },
+
+    async readMany(sessions) {
+      const needsManifest = sessions.some(
+        (session) => Boolean(PARSERS[session.provider] && session.providerConversationId),
+      );
+      const files = needsManifest ? await intervalManifest() : [];
+      const rows = await Promise.all(sessions.map(async (session) =>
+        [session.sessionId, await readFromManifest(session, files)] as const));
+      return new Map(rows);
     },
   };
 }

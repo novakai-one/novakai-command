@@ -6,7 +6,7 @@
 // disk on 2026-07-28 from the real CLIs, not a shape we wish they had.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createUsageReader, parseCodexRollout, parseClaudeTranscript, parseKimiWire } from '../core/supervision/usage.js';
@@ -20,7 +20,7 @@ const jsonl = (dir: string, name: string, lines: object[]): string => {
 
 // ── parsers ────────────────────────────────────────────────────────────────
 
-test('codex rollout: the LAST total_token_usage wins — token_count events are cumulative', () => {
+test('codex rollout: the LAST total_token_usage wins — token_count events are cumulative', async () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'codex-roll-'));
   // Verbatim shape from a real two-turn thread (rollout-…-019fa7b4….jsonl).
   const file = jsonl(dir, 'rollout-x.jsonl', [
@@ -47,7 +47,7 @@ test('codex rollout: the LAST total_token_usage wins — token_count events are 
     },
   ]);
 
-  const parsed = parseCodexRollout(file);
+  const parsed = await parseCodexRollout(file);
   assert.ok(parsed);
   assert.equal(parsed.cumulative, true, 'codex totals are a running session figure');
   assert.equal(parsed.inputTokens, 45338, 'summing the two events would bill 66650 — the bug this test exists for');
@@ -56,7 +56,7 @@ test('codex rollout: the LAST total_token_usage wins — token_count events are 
   assert.equal(parsed.lastActivityAt, '2026-07-28T07:55:12.000Z');
 });
 
-test('claude transcript: per-message usage summed, deduped by message id', () => {
+test('claude transcript: per-message usage summed, deduped by message id', async () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'claude-tr-'));
   const usage = {
     input_tokens: 2, output_tokens: 10,
@@ -70,7 +70,7 @@ test('claude transcript: per-message usage summed, deduped by message id', () =>
     { timestamp: '2026-07-28T07:52:00.000Z', message: { id: 'msg_2', usage: { input_tokens: 5, output_tokens: 7 } } },
   ]);
 
-  const parsed = parseClaudeTranscript(file);
+  const parsed = await parseClaudeTranscript(file);
   assert.ok(parsed);
   assert.equal(parsed.cumulative, false, 'claude reports per-message costs — nothing to subtract');
   assert.equal(parsed.inputTokens, 7, '2 + 5, not 2 + 2 + 5');
@@ -80,7 +80,7 @@ test('claude transcript: per-message usage summed, deduped by message id', () =>
   assert.equal(parsed.lastActivityAt, '2026-07-28T07:52:00.000Z');
 });
 
-test('kimi wire.jsonl: step.end usage records summed (the source B1a found)', () => {
+test('kimi wire.jsonl: step.end usage records summed (the source B1a found)', async () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'kimi-wire-'));
   const file = jsonl(dir, 'wire.jsonl', [
     {
@@ -96,7 +96,7 @@ test('kimi wire.jsonl: step.end usage records summed (the source B1a found)', ()
     { time: 1785225700000, type: 'something.else' },
   ]);
 
-  const parsed = parseKimiWire(file);
+  const parsed = await parseKimiWire(file);
   assert.ok(parsed);
   assert.equal(parsed.cumulative, false);
   assert.equal(parsed.inputTokens, 150);
@@ -107,19 +107,19 @@ test('kimi wire.jsonl: step.end usage records summed (the source B1a found)', ()
     'the NEWEST line, usage-bearing or not — this is the liveness signal');
 });
 
-test('an unreadable or missing transcript reports null — never zero', () => {
-  assert.equal(parseCodexRollout('/definitely/not/here.jsonl'), null);
-  assert.equal(parseClaudeTranscript('/definitely/not/here.jsonl'), null);
-  assert.equal(parseKimiWire('/definitely/not/here.jsonl'), null);
+test('an unreadable or missing transcript reports null — never zero', async () => {
+  assert.equal(await parseCodexRollout('/definitely/not/here.jsonl'), null);
+  assert.equal(await parseClaudeTranscript('/definitely/not/here.jsonl'), null);
+  assert.equal(await parseKimiWire('/definitely/not/here.jsonl'), null);
 });
 
-test('a corrupt line is skipped, not fatal — a half-written tail never blanks a table', () => {
+test('a corrupt line is skipped, not fatal — a half-written tail never blanks a table', async () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'claude-corrupt-'));
   const file = path.join(dir, 'sess.jsonl');
   writeFileSync(file,
     `${JSON.stringify({ timestamp: '2026-07-28T01:00:00.000Z', message: { id: 'm1', usage: { input_tokens: 9, output_tokens: 3 } } })}\n`
     + '{"message": {"id": "m2", "usa\n');
-  const parsed = parseClaudeTranscript(file);
+  const parsed = await parseClaudeTranscript(file);
   assert.ok(parsed);
   assert.equal(parsed.inputTokens, 9);
 });
@@ -132,7 +132,7 @@ function providerHome(): string {
   return home;
 }
 
-test('the reader finds a codex rollout by thread id and reports its cumulative total', () => {
+test('the reader finds a codex rollout by thread id and reports its cumulative total', async () => {
   const home = providerHome();
   jsonl(path.join(home, '.codex', 'sessions', '2026', '07', '28'),
     'rollout-2026-07-28T17-50-55-thread_abc.jsonl', [
@@ -140,14 +140,14 @@ test('the reader finds a codex rollout by thread id and reports its cumulative t
     ]);
   const reader = createUsageReader({ home });
 
-  const row = reader.read({
+  const row = await reader.read({
     sessionId: 'sess_1', provider: 'codex', providerConversationId: 'thread_abc', cwd: '/tmp',
   });
   assert.equal(row.basis, 'transcript');
   assert.equal(row.providerTotal?.inputTokens, 500);
 });
 
-test('a codex thread NOVAKAI created is billed in full — baseline zero, nothing lost', () => {
+test('a codex thread NOVAKAI created is billed in full — baseline zero, nothing lost', async () => {
   const home = providerHome();
   const dir = path.join(home, '.codex', 'sessions', '2026', '07', '28');
   jsonl(dir, 'rollout-a-thread_new.jsonl', [
@@ -157,7 +157,7 @@ test('a codex thread NOVAKAI created is billed in full — baseline zero, nothin
   // Registered at spawn with NO conversation id: the thread did not exist yet.
   reader.trackSession('sess_new', { threadPreexisting: false });
 
-  const row = reader.read({
+  const row = await reader.read({
     sessionId: 'sess_new', provider: 'codex', providerConversationId: 'thread_new', cwd: '/tmp',
   });
   assert.equal(row.inputTokens, 21312, 'a baseline taken at first read would have reported 0 here');
@@ -171,7 +171,7 @@ test('a codex thread NOVAKAI created is billed in full — baseline zero, nothin
 // 41,814 tokens. The undercount was SILENT — the safe default is therefore
 // "an undeclared session is a fresh thread, billed in full"; adoption is the
 // rare case and must be declared explicitly.
-test('an UNDECLARED codex session is billed in full — the silent-zero default is inverted', () => {
+test('an UNDECLARED codex session is billed in full — the silent-zero default is inverted', async () => {
   const home = providerHome();
   jsonl(path.join(home, '.codex', 'sessions', '2026', '07', '28'), 'rollout-a-thread_live.jsonl', [
     { payload: { type: 'token_count', info: { total_token_usage: { input_tokens: 41814, output_tokens: 18 } } } },
@@ -179,7 +179,7 @@ test('an UNDECLARED codex session is billed in full — the silent-zero default 
   const reader = createUsageReader({ home });
   // NOTE: no trackSession call at all — exactly what the live server did.
 
-  const row = reader.read({
+  const row = await reader.read({
     sessionId: 'sess_never_declared', provider: 'codex',
     providerConversationId: 'thread_live', cwd: '/tmp',
   });
@@ -189,7 +189,7 @@ test('an UNDECLARED codex session is billed in full — the silent-zero default 
   assert.equal(row.baseline?.inputTokens, 0);
 });
 
-test('a codex thread novakai ADOPTED is billed from the baseline at first read, labelled', () => {
+test('a codex thread novakai ADOPTED is billed from the baseline at first read, labelled', async () => {
   const home = providerHome();
   const dir = path.join(home, '.codex', 'sessions', '2026', '07', '28');
   const file = jsonl(dir, 'rollout-a-thread_old.jsonl', [
@@ -202,7 +202,7 @@ test('a codex thread novakai ADOPTED is billed from the baseline at first read, 
     providerConversationId: 'thread_old', cwd: '/tmp',
   };
 
-  const first = reader.read(session);
+  const first = await reader.read(session);
   assert.equal(first.inputTokens, 0, 'the pre-existing 21312 is not ours to bill');
   assert.equal(first.baseline?.inputTokens, 21312);
 
@@ -211,21 +211,21 @@ test('a codex thread novakai ADOPTED is billed from the baseline at first read, 
     payload: { type: 'token_count', info: { total_token_usage: { input_tokens: 45338, output_tokens: 16 } } },
   }) + '\n');
 
-  const second = reader.read(session);
+  const second = await reader.read(session);
   assert.equal(second.inputTokens, 45338 - 21312, 'the delta, not the running total');
   assert.equal(second.outputTokens, 16 - 9);
   assert.equal(second.providerTotal?.inputTokens, 45338, 'the raw total stays visible — nothing hidden');
   assert.match(second.note, /baseline/i, 'the adjustment is LABELLED, per the packet');
 });
 
-test('claude and kimi are never baseline-adjusted — their records are per-turn', () => {
+test('claude and kimi are never baseline-adjusted — their records are per-turn', async () => {
   const home = providerHome();
   jsonl(path.join(home, '.claude', 'projects', '-tmp-repo'), 'conv_1.jsonl', [
     { timestamp: '2026-07-28T01:00:00.000Z', message: { id: 'm1', usage: { input_tokens: 11, output_tokens: 4 } } },
   ]);
   const reader = createUsageReader({ home });
 
-  const row = reader.read({
+  const row = await reader.read({
     sessionId: 'sess_c', provider: 'claude', providerConversationId: 'conv_1', cwd: '/tmp/repo',
   });
   assert.equal(row.inputTokens, 11);
@@ -233,9 +233,9 @@ test('claude and kimi are never baseline-adjusted — their records are per-turn
   assert.equal(row.baseline, null);
 });
 
-test('a session with no provider conversation id yet reports unavailable, with the reason', () => {
+test('a session with no provider conversation id yet reports unavailable, with the reason', async () => {
   const reader = createUsageReader({ home: providerHome() });
-  const row = reader.read({
+  const row = await reader.read({
     sessionId: 'sess_fresh', provider: 'kimi', providerConversationId: null, cwd: '/tmp',
   });
   assert.equal(row.basis, 'unavailable');
@@ -243,9 +243,9 @@ test('a session with no provider conversation id yet reports unavailable, with t
   assert.match(row.note, /no provider conversation id/i);
 });
 
-test('a transcript that cannot be found reports unavailable and names what it looked for', () => {
+test('a transcript that cannot be found reports unavailable and names what it looked for', async () => {
   const reader = createUsageReader({ home: providerHome() });
-  const row = reader.read({
+  const row = await reader.read({
     sessionId: 'sess_x', provider: 'codex', providerConversationId: 'thread_ghost', cwd: '/tmp',
   });
   assert.equal(row.basis, 'unavailable');
@@ -253,7 +253,7 @@ test('a transcript that cannot be found reports unavailable and names what it lo
   assert.match(row.note, /thread_ghost/, 'the gap names the handle it could not resolve');
 });
 
-test('the kimi wire.jsonl layout is discovered under any working-dir bucket', () => {
+test('the kimi wire.jsonl layout is discovered under any working-dir bucket', async () => {
   const home = providerHome();
   jsonl(path.join(home, '.kimi-code', 'sessions', 'wd_9f2', 'session_abc123', 'agents', 'main'),
     'wire.jsonl', [
@@ -261,10 +261,70 @@ test('the kimi wire.jsonl layout is discovered under any working-dir bucket', ()
     ]);
   const reader = createUsageReader({ home });
 
-  const row = reader.read({
+  const row = await reader.read({
     sessionId: 'sess_k', provider: 'kimi', providerConversationId: 'abc123', cwd: '/tmp',
   });
   assert.equal(row.basis, 'transcript');
   assert.equal(row.inputTokens, 7);
   assert.equal(row.outputTokens, 2);
+});
+
+test('transcript discovery runs at most once per interval across different sessions', async () => {
+  const home = providerHome();
+  let clock = Date.parse('2026-07-28T10:00:00.000Z');
+  jsonl(path.join(home, '.codex', 'sessions', '2026', '07', '28'), 'rollout-a-thread_a.jsonl', [
+    { payload: { type: 'token_count', info: { total_token_usage: { input_tokens: 7, output_tokens: 2 } } } },
+  ]);
+  const reader = createUsageReader({ home, now: () => new Date(clock).toISOString() });
+
+  const a = await reader.read({
+    sessionId: 'sess_a', provider: 'codex', providerConversationId: 'thread_a', cwd: '/tmp',
+  });
+  assert.equal(a.basis, 'transcript');
+
+  jsonl(path.join(home, '.codex', 'sessions', '2026', '07', '28'), 'rollout-b-thread_b.jsonl', [
+    { payload: { type: 'token_count', info: { total_token_usage: { input_tokens: 9, output_tokens: 3 } } } },
+  ]);
+  const sameInterval = await reader.read({
+    sessionId: 'sess_b', provider: 'codex', providerConversationId: 'thread_b', cwd: '/tmp',
+  });
+  assert.equal(sameInterval.basis, 'unavailable',
+    'a second session reuses the interval manifest instead of walking again');
+
+  clock += 300_001;
+  const nextInterval = await reader.read({
+    sessionId: 'sess_b', provider: 'codex', providerConversationId: 'thread_b', cwd: '/tmp',
+  });
+  assert.equal(nextInterval.basis, 'transcript', 'the next interval refreshes discovery once');
+});
+
+test('an unchanged transcript mtime reuses the per-session parse cache', async () => {
+  const home = providerHome();
+  const file = jsonl(
+    path.join(home, '.codex', 'sessions', '2026', '07', '28'),
+    'rollout-a-thread_cached.jsonl',
+    [{ payload: { type: 'token_count', info: { total_token_usage: { input_tokens: 7, output_tokens: 2 } } } }],
+  );
+  const stableMtime = new Date('2026-07-28T10:00:00.000Z');
+  utimesSync(file, stableMtime, stableMtime);
+  const reader = createUsageReader({ home });
+  const session = {
+    sessionId: 'sess_cached', provider: 'codex' as const,
+    providerConversationId: 'thread_cached', cwd: '/tmp',
+  };
+  const first = await reader.read(session);
+  const originalMtime = statSync(file).mtime;
+
+  writeFileSync(file, JSON.stringify({
+    payload: { type: 'token_count', info: { total_token_usage: { input_tokens: 9, output_tokens: 3 } } },
+  }) + '\n');
+  utimesSync(file, originalMtime, originalMtime);
+  const cached = await reader.read(session);
+  assert.equal(cached.providerTotal?.inputTokens, first.providerTotal?.inputTokens,
+    'same file + mtime does not parse the transcript again');
+
+  const changed = new Date(originalMtime.getTime() + 2_000);
+  utimesSync(file, changed, changed);
+  const refreshed = await reader.read(session);
+  assert.equal(refreshed.providerTotal?.inputTokens, 9, 'a changed mtime invalidates the cache');
 });

@@ -97,6 +97,10 @@ function harness(options: {
           usageReads.push(session);
           return reader.read(session);
         },
+        readMany(sessions: UsageSessionRef[]) {
+          usageReads.push(...sessions);
+          return reader.readMany(sessions);
+        },
       };
     })(),
     async trace(input) {
