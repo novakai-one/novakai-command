@@ -189,13 +189,10 @@ const realSessions = new Map<string, { sessionId: string; personId: string }>();
  * context line covers req 9 there (recorded in shell NOTES.md). */
 const laneSessions = new Map<string, 'mock' | 'kimi'>();
 
+// G4: idempotent seeding — boot looks up existing defs by displayName +
+// provider and reuses them; only missing agents are defined (no ×N duplicates).
 async function defineDemoAgent(displayName: string, provider: 'mock' | 'kimi' = 'mock'): Promise<string> {
-  const res = await agents.defineAgent(
-    { displayName, provider, model: provider === 'kimi' ? 'kimi-cli' : 'mock-model', hooks: [], status: 'defined', permissionLevel: 'private' },
-    mintOpId(),
-  );
-  if (!res.ok) throw new Error(`defineAgent failed: ${res.error.message}`);
-  return res.value.id;
+  return ensureAgent(agents as unknown as EnsureAgentsContract, displayName, provider, () => mintOpId() as unknown as string);
 }
 
 const seedConvo = (id: string, address: string, title: string, kind: Convo['kind'], agentId?: string, pinned = false) => {
