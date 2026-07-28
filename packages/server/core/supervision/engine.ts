@@ -205,6 +205,7 @@ export function createSupervisionEngine(deps: SupervisionDeps): SupervisionEngin
   const driftFlags = new Set<string>();
   let usageTimer: ReturnType<typeof setInterval> | null = null;
   let driftTimer: ReturnType<typeof setInterval> | null = null;
+  let driftInFlight: Promise<DriftReport> | null = null;
 
   /**
    * Every supervision action lands here. A trace that cannot be written is
@@ -300,7 +301,7 @@ export function createSupervisionEngine(deps: SupervisionDeps): SupervisionEngin
       ? fromTranscript : record.lastActivityAt;
   };
 
-  const checkDrift: SupervisionEngine['checkDrift'] = async () => {
+  const runDriftCheck = async (): Promise<DriftReport> => {
     const at = now();
     const intervalMs = deps.policy.driftIntervalSec * 1000;
     const rows: DriftRow[] = [];
@@ -396,6 +397,19 @@ export function createSupervisionEngine(deps: SupervisionDeps): SupervisionEngin
     }
 
     return { at, rows, providerTurnsSpent };
+  };
+
+  const checkDrift: SupervisionEngine['checkDrift'] = () => {
+    if (driftInFlight) return driftInFlight;
+    const tick = runDriftCheck();
+    driftInFlight = tick;
+    const clear = (): void => {
+      if (driftInFlight === tick) driftInFlight = null;
+    };
+    // Observe both branches so clearing the guard never creates a second,
+    // ignored rejecting promise.
+    void tick.then(clear, clear);
+    return tick;
   };
 
   // ── the usage table ──────────────────────────────────────────────────────

@@ -13,7 +13,11 @@ import assert from 'node:assert/strict';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { createSupervisionEngine, type SupervisionDeps } from '../core/supervision/engine.js';
+import {
+  createSupervisionEngine,
+  type AskResult,
+  type SupervisionDeps,
+} from '../core/supervision/engine.js';
 import { createUsageReader, type UsageSessionRef } from '../core/supervision/usage.js';
 import type { ProviderSessionRecord } from '../../agents/contract/index.js';
 
@@ -38,6 +42,7 @@ function harness(options: {
   replies?: string[];
   now?: () => string;
   canResume?: boolean;
+  ask?: (sessionId: string, prompt: string) => Promise<AskResult>;
 } = {}) {
   const traces: TraceLine[] = [];
   const asked: Array<{ sessionId: string; prompt: string }> = [];
@@ -76,6 +81,7 @@ function harness(options: {
     transport: {
       async ask(sessionId, prompt) {
         asked.push({ sessionId, prompt });
+        if (options.ask) return options.ask(sessionId, prompt);
         const next = replies.shift();
         return next === undefined
           ? { ok: false as const, reason: 'no-reply' as const, text: '' }
@@ -235,6 +241,30 @@ test('a stale session that answers the ping is healthy again — no drift event'
 
   assert.equal(report.rows[0]!.action, 'pinged');
   assert.equal(actions(h.traces).includes('supervision.drift'), false, 'it answered — that is not drift');
+});
+
+test('an overlapping slow drift tick is coalesced — one ping and one counter transition', async () => {
+  let releasePing!: (answer: AskResult) => void;
+  const slowPing = new Promise<AskResult>((resolve) => { releasePing = resolve; });
+  const h = harness({ ask: async () => slowPing });
+  h.setRecords([record({ lastActivityAt: '2026-07-28T10:00:00.000Z' })]);
+
+  h.advance(301);
+  await h.engine.checkDrift(); // first quiet interval: no paid turn
+  h.advance(301);
+  const first = h.engine.checkDrift();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  const overlapping = h.engine.checkDrift();
+  assert.equal(h.asked.length, 1, 'a second interval callback cannot start a second paid ping');
+
+  releasePing({ ok: true, text: 'still working' });
+  const [a, b] = await Promise.all([first, overlapping]);
+  assert.equal(h.asked.length, 1, 'completion still contains one provider invocation');
+  assert.equal(actions(h.traces).filter((event) => event === 'supervision.ping').length, 1);
+  assert.deepEqual(b, a, 'the skipped caller observes the one authoritative tick result');
+  assert.equal(a.providerTurnsSpent, 1);
+  assert.equal(a.rows[0]!.action, 'pinged');
+  assert.equal(a.rows[0]!.staleIntervals, 0, 'the state counter advances exactly once');
 });
 
 test('no reply to the ping is a drift event + trace; three in a row escalates to Chris', async () => {
