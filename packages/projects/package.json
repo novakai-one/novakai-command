@@ -12,6 +12,9 @@
   },
   "license": "UNLICENSED",
   "private": true,
+  "bin": {
+    "nvk-project": "./dist/cli/nvk-project.js"
+  },
   "exports": {
     ".": {
       "types": "./dist/contract/index.d.ts",
