@@ -33,6 +33,7 @@ export function composeArtifacts(
   const context: ArtifactsContext = {
     handle: composeHandle({
       root,
+      dataRoot: path.join(root, 'stores'),
       legacyRoot: options.legacyRoot,
       capability: 'artifacts',
       allowedKinds: ['artifact'],

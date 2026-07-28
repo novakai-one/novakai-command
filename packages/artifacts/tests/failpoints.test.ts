@@ -153,7 +153,10 @@ test('NVK_FAILPOINT names deterministic before/after record-append failures', as
     );
     const byteFiles = readdirSync(path.join(after.root, 'artifacts'));
     assert.equal(byteFiles.length, 1);
-    assert.equal(existsSync(path.join(after.root, 'artifacts.jsonl')), true);
+    assert.equal(
+      existsSync(path.join(after.root, 'stores', 'artifacts.jsonl')),
+      true,
+    );
 
     const artifacts = composeArtifacts({
       root: after.root,

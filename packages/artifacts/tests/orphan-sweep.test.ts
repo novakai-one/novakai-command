@@ -76,7 +76,7 @@ test('boot orphan sweep removes final/temp orphans, preserves records, and trace
     if (!stillRecorded.ok || 'absent' in stillRecorded.value) return;
     assert.deepEqual(Buffer.from(stillRecorded.value), recordedBytes);
 
-    process.env.NOVAKAI_ROOT = root;
+    process.env.NOVAKAI_ROOT = path.join(root, 'stores');
     __resetDefaultEngine();
     const traces = await queryTrace({});
     const sweepTraces = traces.items.filter(
@@ -145,7 +145,7 @@ test('NVK_FAILPOINT names deterministic before/after orphan trace-append failure
       assert.equal(readdirSync(path.join(root, 'artifacts')).length, 1);
 
       delete process.env.NVK_FAILPOINT;
-      process.env.NOVAKAI_ROOT = root;
+      process.env.NOVAKAI_ROOT = path.join(root, 'stores');
       __resetDefaultEngine();
       const traces = await queryTrace({});
       assert.equal(
@@ -216,7 +216,7 @@ test('NVK_FAILPOINT names deterministic before/after orphan-delete failures', as
       );
 
       delete process.env.NVK_FAILPOINT;
-      process.env.NOVAKAI_ROOT = root;
+      process.env.NOVAKAI_ROOT = path.join(root, 'stores');
       __resetDefaultEngine();
       const traces = await queryTrace({});
       assert.equal(
