@@ -49,8 +49,14 @@ test('putArtifact durably stores exact bytes before metadata and returns metadat
       readFileSync(path.join(root, 'artifacts', result.value.id)),
       bytes,
     );
-    assert.equal(existsSync(path.join(root, 'stores', 'artifacts.jsonl')), false);
-    const recordText = readFileSync(path.join(root, 'artifacts.jsonl'), 'utf8');
+    assert.equal(existsSync(path.join(root, 'stores', 'artifacts.jsonl')), true);
+    assert.equal(existsSync(path.join(root, 'stores', 'traces.jsonl')), true);
+    assert.equal(existsSync(path.join(root, 'artifacts.jsonl')), false);
+    assert.equal(existsSync(path.join(root, 'traces.jsonl')), false);
+    const recordText = readFileSync(
+      path.join(root, 'stores', 'artifacts.jsonl'),
+      'utf8',
+    );
     assert.equal(recordText.includes(bytes.toString('utf8')), false);
   } finally {
     rmSync(workspace, { recursive: true, force: true });
