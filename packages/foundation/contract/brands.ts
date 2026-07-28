@@ -38,6 +38,16 @@ export const OBJECT_KINDS = [
 
 export type ObjectKind = typeof OBJECT_KINDS[number];
 
+// Durable refs may name records owned by capabilities whose persistence is
+// outside Foundation's store engine. Keep this registry distinct from
+// OBJECT_KINDS so reference validation never grants write scope.
+export const REFERENCE_KINDS = [
+  ...OBJECT_KINDS,
+  'message',
+] as const;
+
+export type ReferenceKind = typeof REFERENCE_KINDS[number];
+
 export type CapabilityId =
   | 'foundation' | 'shell' | 'agents' | 'messaging'
   | 'terminal' | 'transcript' | 'projects' | 'artifacts' | 'spine'
