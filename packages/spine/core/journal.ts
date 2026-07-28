@@ -47,6 +47,46 @@ interface StoredStep {
   incomplete: boolean;
 }
 
+function causeMessage(cause: unknown): string {
+  return cause instanceof Error ? cause.message : String(cause);
+}
+
+function journalReadFailure(
+  operation: 'list' | 'fold',
+  cause: unknown,
+): Result<never, SpineError> {
+  return {
+    ok: false,
+    error: {
+      code: 'SpineJournalReadFailed',
+      message: `Spine journal ${operation} failed: ${causeMessage(cause)}`,
+      details: {
+        operation,
+        cause: causeMessage(cause),
+      },
+      retryable: false,
+    },
+  };
+}
+
+function journalWriteFailure(
+  operation: 'append' | 'reconcile',
+  cause: unknown,
+): Result<never, SpineError> {
+  return {
+    ok: false,
+    error: {
+      code: 'SpineJournalWriteFailed',
+      message: `Spine journal ${operation} failed: ${causeMessage(cause)}`,
+      details: {
+        operation,
+        cause: causeMessage(cause),
+      },
+      retryable: false,
+    },
+  };
+}
+
 function stableId(prefix: 'spineStep' | 'spineWorkflow', value: string): string {
   return `${prefix}_${createHash('sha256').update(value).digest('hex').slice(0, 32)}`;
 }
@@ -93,11 +133,16 @@ export async function appendStep(
     createdBy: 'derived-by-foundation',
     ...input,
   });
-  const created = await createObject(
-    ctx.handle,
-    fact,
-    mutationClientOpId,
-  );
+  let created;
+  try {
+    created = await createObject(
+      ctx.handle,
+      fact,
+      mutationClientOpId,
+    );
+  } catch (cause) {
+    return journalWriteFailure('append', cause);
+  }
   if (!created.ok) return created;
   const parsed = SpineStepSchema.safeParse(created.value.object);
   if (!parsed.success) {
@@ -144,12 +189,17 @@ async function readStoredSteps(
   const facts: StoredStep[] = [];
   let cursor: string | undefined;
   do {
-    const page = await listObjects<unknown>(
-      ctx.handle,
-      'spineStep',
-      undefined,
-      { cursor, limit: PAGE_LIMIT },
-    );
+    let page;
+    try {
+      page = await listObjects<unknown>(
+        ctx.handle,
+        'spineStep',
+        undefined,
+        { cursor, limit: PAGE_LIMIT },
+      );
+    } catch (cause) {
+      return journalReadFailure('list', cause);
+    }
     if (!page.ok) return page;
     for (const stored of page.value.items) {
       const parsed = SpineStepSchema.safeParse(stored.object);
@@ -229,11 +279,16 @@ export async function reconcileIncompleteSteps(
         },
       };
     }
-    const reconciled = await createObject(
-      ctx.handle,
-      fact,
-      mutationClientOpId,
-    );
+    let reconciled;
+    try {
+      reconciled = await createObject(
+        ctx.handle,
+        fact,
+        mutationClientOpId,
+      );
+    } catch (cause) {
+      return journalWriteFailure('reconcile', cause);
+    }
     if (!reconciled.ok) return reconciled;
   }
   return { ok: true, value: null };
@@ -301,6 +356,16 @@ function foldWorkflow(facts: SpineStep[]): SpineWorkflow {
 }
 
 export async function getSpineWorkflows(
+  ctx: SpineContext,
+): Promise<Result<Page<SpineWorkflow>, SpineError>> {
+  try {
+    return await foldSpineWorkflows(ctx);
+  } catch (cause) {
+    return journalReadFailure('fold', cause);
+  }
+}
+
+async function foldSpineWorkflows(
   ctx: SpineContext,
 ): Promise<Result<Page<SpineWorkflow>, SpineError>> {
   const read = await readAllSteps(ctx);

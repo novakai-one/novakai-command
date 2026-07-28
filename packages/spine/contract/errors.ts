@@ -78,6 +78,22 @@ export type SpineJournalCorruptError = ContractError<
   }
 >;
 
+export type SpineJournalReadFailedError = ContractError<
+  'SpineJournalReadFailed',
+  {
+    operation: 'list' | 'fold';
+    cause: string;
+  }
+>;
+
+export type SpineJournalWriteFailedError = ContractError<
+  'SpineJournalWriteFailed',
+  {
+    operation: 'append' | 'reconcile';
+    cause: string;
+  }
+>;
+
 export type SpineError =
   | StoreError
   | StoredSpineStepInvalidError
@@ -88,4 +104,6 @@ export type SpineError =
   | SpineWorkflowNotFoundError
   | SpineWorkflowNotContinuableError
   | SpineWorkflowNotAbandonableError
-  | SpineJournalCorruptError;
+  | SpineJournalCorruptError
+  | SpineJournalReadFailedError
+  | SpineJournalWriteFailedError;
