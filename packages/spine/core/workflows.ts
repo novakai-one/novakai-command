@@ -231,6 +231,49 @@ export async function getSpineWorkflows(
     group.push(fact);
     grouped.set(fact.workflowId, group);
   }
+  for (const [workflowId, facts] of grouped) {
+    const accepted = facts.filter((fact) => fact.state === 'accepted');
+    if (accepted.length !== 1) {
+      return {
+        ok: false,
+        error: {
+          code: 'SpineJournalCorrupt',
+          message: `workflow "${workflowId}" has ${accepted.length} accepted facts`,
+          details: {
+            workflowId,
+            reason: accepted.length === 0
+              ? 'missing accepted fact'
+              : 'multiple accepted facts',
+            factIds: facts.map((fact) => fact.id),
+          },
+          retryable: false,
+        },
+      };
+    }
+    const authority = accepted[0]!;
+    const mismatched = facts.filter((fact) =>
+      fact.workflowType !== authority.workflowType
+      || fact.originalClientOpId !== authority.originalClientOpId
+      || fact.projectId !== authority.projectId
+      || fact.sourceRef.kind !== authority.sourceRef.kind
+      || fact.sourceRef.id !== authority.sourceRef.id
+      || fact.note !== authority.note);
+    if (mismatched.length > 0) {
+      return {
+        ok: false,
+        error: {
+          code: 'SpineJournalCorrupt',
+          message: `workflow "${workflowId}" carries inconsistent immutable inputs`,
+          details: {
+            workflowId,
+            reason: 'immutable workflow inputs differ across facts',
+            factIds: mismatched.map((fact) => fact.id),
+          },
+          retryable: false,
+        },
+      };
+    }
+  }
   const items = [...grouped.values()]
     .map(foldWorkflow)
     .sort((left, right) => left.acceptedAt.localeCompare(right.acceptedAt));

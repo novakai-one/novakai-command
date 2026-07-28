@@ -69,6 +69,15 @@ export type SpineWorkflowNotAbandonableError = ContractError<
   }
 >;
 
+export type SpineJournalCorruptError = ContractError<
+  'SpineJournalCorrupt',
+  {
+    workflowId: string;
+    reason: string;
+    factIds: string[];
+  }
+>;
+
 export type SpineError =
   | StoreError
   | StoredSpineStepInvalidError
@@ -78,4 +87,5 @@ export type SpineError =
   | SpineFailpointError
   | SpineWorkflowNotFoundError
   | SpineWorkflowNotContinuableError
-  | SpineWorkflowNotAbandonableError;
+  | SpineWorkflowNotAbandonableError
+  | SpineJournalCorruptError;
