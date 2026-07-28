@@ -32,9 +32,13 @@ test('message workflow accepts before effects and carries exact step identities'
       messaging: {
         async getDelivery(input) {
           const workflows = await host.operations.getSpineWorkflows();
-          assert.equal(workflows.ok, true);
           if (!workflows.ok) return assert.fail(workflows.error.message);
-          assert.equal(workflows.value.items[0]?.state, 'accepted');
+          assert.equal(workflows.value.items[0]?.state, 'running');
+          assert.equal(
+            typeof workflows.value.items[0]?.acceptedAt,
+            'string',
+          );
+          assert.equal(workflows.value.items[0]?.steps[0]?.state, 'running');
           observations.push(`message:${String((input as { messageId: string }).messageId)}`);
           return { kind: 'ok', value: { deliveries: [] } };
         },
@@ -42,7 +46,6 @@ test('message workflow accepts before effects and carries exact step identities'
       projects: {
         async attach(receivedProjectId, input, clientOpId) {
           const workflows = await host.operations.getSpineWorkflows();
-          assert.equal(workflows.ok, true);
           if (!workflows.ok) return assert.fail(workflows.error.message);
           assert.equal(workflows.value.items[0]?.steps[0]?.state, 'done');
           assert.equal(workflows.value.items[0]?.steps[1]?.state, 'running');
