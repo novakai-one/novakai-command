@@ -12,6 +12,12 @@
   },
   "license": "UNLICENSED",
   "private": true,
+  "exports": {
+    ".": {
+      "types": "./dist/contract/index.d.ts",
+      "import": "./dist/contract/index.js"
+    }
+  },
   "dependencies": {
     "@novakai/foundation": "file:../foundation",
     "zod": "^3.23.8"
