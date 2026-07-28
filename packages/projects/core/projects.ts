@@ -87,6 +87,18 @@ function malformedStoredRecord(
   );
 }
 
+function parseProjectItemRecord(
+  object: unknown,
+): Result<ProjectItemT, StoredRecordInvalidError> {
+  const item = ProjectItem.safeParse(object);
+  return item.success
+    ? { ok: true, value: item.data }
+    : {
+        ok: false,
+        error: malformedStoredRecord('projectItem', object, item.error.issues),
+      };
+}
+
 export async function createProject(
   ctx: ProjectsContext,
   input: CreateProjectInputT,
@@ -218,14 +230,9 @@ export async function getProjectItems(
   if (!listed.ok) return listed;
   const items: ProjectItemT[] = [];
   for (const { object } of listed.value.items) {
-    const item = ProjectItem.safeParse(object);
-    if (!item.success) {
-      return {
-        ok: false,
-        error: malformedStoredRecord('projectItem', object, item.error.issues),
-      };
-    }
-    items.push(item.data);
+    const item = parseProjectItemRecord(object);
+    if (!item.ok) return item;
+    items.push(item.value);
   }
   return {
     ok: true,
@@ -253,7 +260,7 @@ export async function attach(
   );
   if (!replay.ok) return replay;
   if (replay.value) {
-    return { ok: true, value: ProjectItem.parse(replay.value.object) };
+    return parseProjectItemRecord(replay.value.object);
   }
   const project = await findProject(ctx, projectId);
   if (!project.ok) return project;
