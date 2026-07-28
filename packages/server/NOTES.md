@@ -18,15 +18,14 @@
   `meta.event` naming them; `session.terminate` keeps its own action. Widening
   the enum to first-class supervision actions is a foundation SCHEMA AMENDMENT
   and is recorded here as a ratification candidate rather than smuggled in.
-- **§13 disposition 7 deliberately not taken literally.** It puts a transcript
-  read-query in B1b scope so supervision reads via the transcript capability.
-  The transcript watcher that populates `.novakai/transcripts/` is OFF by
-  default (B1a measured it starving the HTTP loop at real volume), so a usage
-  table built on its copies would report nothing on a normal boot. The
-  supervision engine therefore reads the PROVIDERS' own transcript files
-  read-only — the same files the standalone diagnostic already reads under
-  disposition 7's named exemption. When transcript ingestion lands properly
-  (S3), `usage.ts` is the one module that changes.
+- **Transcript custody copies are preferred, with provider-original fallback.**
+  Supervision discovers `.novakai/transcripts/` first and also discovers the
+  providers' original read-only transcript files. It selects the newest
+  candidate for the conversation. This makes B1b copy backfill work without
+  making accounting depend on the transcript watcher, which remains OFF by
+  default because B1a measured it starving the HTTP loop at real volume.
+  Provider formats and path rules stay in the agents provider capability;
+  the server consumes them through the agents contract.
 - **Undeclared sessions bill in full — the default is inverted on purpose.**
   A live run on 2026-07-28 reported `in=0 out=0` for a codex session that had
   really spent 41,814 tokens: nothing declared the freshly-spawned session to

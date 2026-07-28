@@ -44,6 +44,27 @@ export interface InFlightState {
   queue: InFlightTurn[];
 }
 
+/** Transcript-derived accounting persisted on the logical provider session. */
+export interface ProviderSessionTokenUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  source: string;
+  measuredAt: string;
+}
+
+/** Typed explanation for why a usage measurement could not be made. */
+export interface ProviderSessionUsageUnavailable {
+  code: 'UsageUnavailable';
+  reason: string;
+  checkedAt: string;
+}
+
+export type ProviderSessionUsageMeasurement =
+  | ({ kind: 'measured' } & ProviderSessionTokenUsage)
+  | { kind: 'unavailable'; reason: string; checkedAt: string };
+
 export interface ProviderSessionRecord {
   sessionId: string;
   agentId: string;
@@ -59,6 +80,10 @@ export interface ProviderSessionRecord {
   inFlight: InFlightState;
   /** Set by the boot sweep; cleared when the operator resends. */
   lastInterruption: { clientOpId: string; at: string; reason: 'ReplyInterrupted' } | null;
+  /** Backfilled by supervision from provider transcript evidence. */
+  tokenUsage: ProviderSessionTokenUsage | null;
+  /** Mutually exclusive with tokenUsage; absence is explicit, never a dash-only mystery. */
+  usageUnavailable: ProviderSessionUsageUnavailable | null;
 }
 
 export interface RegisterSessionInput {
@@ -113,6 +138,7 @@ export interface ProviderSessionRegistry {
   resumable(): Promise<ProviderSessionRecord[]>;
   recordResumeHandle(sessionId: string, providerConversationId: string): Promise<Result<ProviderSessionRecord, StoreError>>;
   recordModel(sessionId: string, model: string): Promise<Result<ProviderSessionRecord, StoreError>>;
+  recordUsage(sessionId: string, usage: ProviderSessionUsageMeasurement): Promise<Result<ProviderSessionRecord, StoreError>>;
   markSending(sessionId: string, input: { clientOpId: string; pid?: number | null; pidStartedAt?: string | null }): Promise<Result<ProviderSessionRecord, StoreError>>;
   markReplied(sessionId: string): Promise<Result<ProviderSessionRecord, StoreError>>;
   /** Close one refused/failed provider turn without disturbing later queued turns. */
@@ -168,6 +194,8 @@ function toRecord(object: Record<string, unknown>): ProviderSessionRecord {
     turns: raw.turns ?? 0, status: raw.status,
     inFlight: normalizeInFlight(raw.inFlight),
     lastInterruption: raw.lastInterruption ?? null,
+    tokenUsage: raw.tokenUsage ?? null,
+    usageUnavailable: raw.usageUnavailable ?? null,
   };
 }
 
@@ -233,6 +261,8 @@ export function createProviderSessionRegistry(
         status: 'running' as ProviderSessionStatus,
         inFlight: inFlightFrom([]),
         lastInterruption: null,
+        tokenUsage: null,
+        usageUnavailable: null,
       };
       const res = await createObject<Record<string, unknown>>(ctx.handle, record, mintOpId());
       return res.ok ? { ok: true, value: toRecord(res.value.object as Record<string, unknown>) } : { ok: false, error: res.error };
@@ -256,6 +286,54 @@ export function createProviderSessionRegistry(
 
     recordModel(sessionId, model) {
       return patch(sessionId, () => ({ model, lastActivityAt: now() }));
+    },
+
+    async recordUsage(sessionId, usage) {
+      const found = await readOne(sessionId);
+      if (!found) {
+        return {
+          ok: false,
+          error: {
+            code: 'NotFound', message: `no providerSession "${sessionId}"`,
+            details: { ref: { kind: 'providerSession', id: sessionId } }, retryable: false,
+          },
+        };
+      }
+      if (usage.kind === 'measured') {
+        const measured: ProviderSessionTokenUsage = {
+          inputTokens: usage.inputTokens,
+          outputTokens: usage.outputTokens,
+          cacheReadTokens: usage.cacheReadTokens,
+          cacheCreationTokens: usage.cacheCreationTokens,
+          source: usage.source,
+          measuredAt: usage.measuredAt,
+        };
+        if (
+          JSON.stringify(found.record.tokenUsage) === JSON.stringify(measured)
+          && found.record.usageUnavailable === null
+        ) {
+          return { ok: true, value: found.record };
+        }
+        return patch(sessionId, () => ({
+          tokenUsage: measured,
+          usageUnavailable: null,
+        }));
+      }
+
+      if (
+        found.record.tokenUsage === null
+        && found.record.usageUnavailable?.reason === usage.reason
+      ) {
+        return { ok: true, value: found.record };
+      }
+      return patch(sessionId, () => ({
+        tokenUsage: null,
+        usageUnavailable: {
+          code: 'UsageUnavailable',
+          reason: usage.reason,
+          checkedAt: usage.checkedAt,
+        },
+      }));
     },
 
     markSending(sessionId, input) {

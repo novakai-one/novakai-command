@@ -7,12 +7,9 @@
 // This file is that module: the watchdog's three parsers, ported, with the
 // fixture-backed corrections B1b measured.
 //
-// Everything here READS. It opens the providers' own transcript files, which is
-// what the standalone diagnostic already does (disposition 7's named
-// exemption). It deliberately does NOT depend on the transcript watcher's
-// copies under `.novakai/transcripts/`: B1a measured that copier starving the
-// HTTP loop at real volume and left it off, and a usage table that only works
-// when a disabled copier is on is a table that does not work.
+// Everything here READS. It prefers Novakai's raw custody copies under
+// `.novakai/transcripts/` and falls back to provider originals when a current
+// session has not been copied yet. Both are read-only evidence paths.
 //
 // ── THE CALIBRATION ────────────────────────────────────────────────────────
 // claude and kimi write PER-MESSAGE / PER-STEP usage records: summing them is
@@ -32,19 +29,18 @@
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
+import {
+  findProviderTranscriptCandidates,
+  parseProviderTranscriptLines,
+  providerHasTranscript,
+  providerTranscriptRoots,
+  sanitizeProviderCwd,
+  type ProviderTranscriptUsage,
+} from '../../../agents/contract/index.js';
 import type { ProviderName } from '../../contract/config.js';
 
 /** What a provider transcript actually said. */
-export interface ParsedUsage {
-  inputTokens: number;
-  outputTokens: number;
-  cacheReadTokens: number;
-  cacheCreationTokens: number;
-  /** ISO time of the newest record, or null when the file carries no times. */
-  lastActivityAt: string | null;
-  /** True when the numbers are a running session total, not a turn cost. */
-  cumulative: boolean;
-}
+export type ParsedUsage = ProviderTranscriptUsage;
 
 export interface UsageBaseline {
   inputTokens: number;
@@ -91,117 +87,26 @@ async function readJsonl(file: string): Promise<Array<Record<string, unknown>> |
   try { return parseJsonl(await readFile(file, 'utf8')); } catch { return null; }
 }
 
-const isoOf = (value: unknown): string | null => {
-  if (typeof value !== 'string') return null;
-  const ms = Date.parse(value);
-  return Number.isNaN(ms) ? null : new Date(ms).toISOString();
-};
-
-const newer = (a: string | null, b: string | null): string | null => {
-  if (!a) return b;
-  if (!b) return a;
-  return Date.parse(a) >= Date.parse(b) ? a : b;
-};
-
-// ── the three parsers (ported from scripts/agent-watchdog.mjs) ─────────────
-
-/**
- * codex rollout (`~/.codex/sessions/YYYY/MM/DD/rollout-<ts>-<thread>.jsonl`).
- * `payload.type === 'token_count'` carries `info.total_token_usage`, which is
- * CUMULATIVE — the last one is the authoritative aggregate. Do not sum.
- */
-function parseCodexLines(lines: Array<Record<string, unknown>>): ParsedUsage {
-  let total: Record<string, number> | null = null;
-  let lastActivityAt: string | null = null;
-  for (const line of lines) {
-    lastActivityAt = newer(lastActivityAt, isoOf(line.timestamp));
-    const payload = line.payload as { type?: string; info?: { total_token_usage?: Record<string, number> } } | undefined;
-    if (payload?.type === 'token_count' && payload.info?.total_token_usage) {
-      total = payload.info.total_token_usage;
-    }
-  }
-  if (!total) return { ...ZERO, lastActivityAt, cumulative: true };
-  return {
-    inputTokens: total.input_tokens ?? 0,
-    // codex bills reasoning tokens as output; the table must not drop them.
-    outputTokens: (total.output_tokens ?? 0) + (total.reasoning_output_tokens ?? 0),
-    cacheReadTokens: total.cached_input_tokens ?? 0,
-    cacheCreationTokens: 0, // codex reports no cache-creation counter
-    lastActivityAt,
-    cumulative: true,
-  };
-}
-
 export async function parseCodexRollout(file: string): Promise<ParsedUsage | null> {
   const lines = await readJsonl(file);
-  return lines ? parseCodexLines(lines) : null;
-}
-
-/**
- * claude transcript (`~/.claude/projects/<sanitized-cwd>/<sessionId>.jsonl`).
- * Per-message `message.usage` blocks. The SAME assistant message repeats across
- * lines in a real transcript, so records are deduped by message id — counting
- * them twice would double every claude bill.
- */
-function parseClaudeLines(lines: Array<Record<string, unknown>>): ParsedUsage {
-  const byMessageId = new Map<string, Record<string, number>>();
-  let lastActivityAt: string | null = null;
-  for (const line of lines) {
-    lastActivityAt = newer(lastActivityAt, isoOf(line.timestamp));
-    const message = line.message as { id?: string; usage?: Record<string, number> } | undefined;
-    if (message?.usage && message.id) byMessageId.set(message.id, message.usage);
-  }
-  const acc = { ...ZERO };
-  for (const usage of byMessageId.values()) {
-    acc.inputTokens += usage.input_tokens ?? 0;
-    acc.outputTokens += usage.output_tokens ?? 0;
-    acc.cacheReadTokens += usage.cache_read_input_tokens ?? 0;
-    acc.cacheCreationTokens += usage.cache_creation_input_tokens ?? 0;
-  }
-  return { ...acc, lastActivityAt, cumulative: false };
+  return lines ? parseProviderTranscriptLines('codex', lines) : null;
 }
 
 export async function parseClaudeTranscript(file: string): Promise<ParsedUsage | null> {
   const lines = await readJsonl(file);
-  return lines ? parseClaudeLines(lines) : null;
-}
-
-/**
- * kimi wire — under `~/.kimi-code/sessions/`, a `wd_<hash>` working-dir bucket
- * holds `session_<id>/agents/main/wire.jsonl`.
- * The source B1a found when it established that kimi's stream-json emits NO
- * usage line: `context.append_loop_event` / `step.end` carries per-step usage.
- */
-function parseKimiLines(lines: Array<Record<string, unknown>>): ParsedUsage {
-  const acc = { ...ZERO };
-  let newestMs = 0;
-  for (const line of lines) {
-    if (typeof line.time === 'number' && line.time > newestMs) newestMs = line.time;
-    if (line.type !== 'context.append_loop_event') continue;
-    const event = line.event as { type?: string; usage?: Record<string, number> } | undefined;
-    if (event?.type !== 'step.end' || !event.usage) continue;
-    acc.inputTokens += event.usage.inputOther ?? 0;
-    acc.outputTokens += event.usage.output ?? 0;
-    acc.cacheReadTokens += event.usage.inputCacheRead ?? 0;
-    acc.cacheCreationTokens += event.usage.inputCacheCreation ?? 0;
-  }
-  return {
-    ...acc,
-    lastActivityAt: newestMs ? new Date(newestMs).toISOString() : null,
-    cumulative: false,
-  };
+  return lines ? parseProviderTranscriptLines('claude', lines) : null;
 }
 
 export async function parseKimiWire(file: string): Promise<ParsedUsage | null> {
   const lines = await readJsonl(file);
-  return lines ? parseKimiLines(lines) : null;
+  return lines ? parseProviderTranscriptLines('kimi', lines) : null;
 }
 
 // ── transcript discovery ───────────────────────────────────────────────────
 
 /** claude sanitizes a cwd into its projects dir name: /a/b → -a-b. */
 export function sanitizeCwd(cwd: string): string {
-  return cwd.replace(/[^a-zA-Z0-9]/g, '-');
+  return sanitizeProviderCwd(cwd);
 }
 
 /** Depth-limited async file listing. Never throws on an unreadable dir. */
@@ -222,48 +127,10 @@ async function walk(dir: string, depth: number): Promise<string[]> {
  * One discovery pass across every provider root. Usage intervals share this
  * manifest; no session is allowed to launch its own directory walk.
  */
-async function discoverTranscripts(home: string): Promise<string[]> {
-  const roots: Array<[string, number]> = [
-    [path.join(home, '.claude', 'projects'), 3],
-    [path.join(home, '.codex', 'sessions'), 5],
-    [path.join(home, '.kimi-code', 'sessions'), 6],
-  ];
-  return (await Promise.all(roots.map(([root, depth]) => walk(root, depth)))).flat();
+async function discoverTranscripts(home: string, transcriptRoot?: string): Promise<string[]> {
+  const roots = providerTranscriptRoots(home, transcriptRoot);
+  return (await Promise.all(roots.map(({ root, depth }) => walk(root, depth)))).flat();
 }
-
-/** Resolve one conversation from an already-discovered interval manifest. */
-function findInManifest(
-  provider: ProviderName,
-  conversationId: string,
-  cwd: string,
-  home: string,
-  files: string[],
-): string | null {
-  if (provider === 'claude') {
-    const dir = path.join(home, '.claude', 'projects', sanitizeCwd(cwd));
-    const exact = path.join(dir, `${conversationId}.jsonl`);
-    if (files.includes(exact)) return exact;
-    return files.find((f) => path.basename(f) === `${conversationId}.jsonl`) ?? null;
-  }
-  if (provider === 'codex') {
-    return files.find((f) =>
-      f.includes(`${path.sep}.codex${path.sep}`)
-      && path.basename(f).includes(conversationId)) ?? null;
-  }
-  if (provider === 'kimi') {
-    return files.find((f) =>
-      f.includes(`${path.sep}.kimi-code${path.sep}`)
-      && path.basename(f) === 'wire.jsonl'
-      && f.includes(conversationId)) ?? null;
-  }
-  return null; // mock has no transcript, and never pretends to
-}
-
-const PARSERS: Record<string, (lines: Array<Record<string, unknown>>) => ParsedUsage> = {
-  claude: parseClaudeLines,
-  codex: parseCodexLines,
-  kimi: parseKimiLines,
-};
 
 // ── the reader ─────────────────────────────────────────────────────────────
 
@@ -298,6 +165,8 @@ export interface UsageReader {
 export interface UsageReaderOptions {
   /** Overridable for tests; production reads the operator's real home. */
   home?: string;
+  /** `.novakai/transcripts/` raw-custody root. */
+  transcriptRoot?: string;
   now?: () => string;
   /** Manifest lifetime; defaults to the five-minute supervision cadence. */
   discoveryIntervalMs?: number;
@@ -311,6 +180,7 @@ const unavailable = (note: string, source: string | null = null): SessionUsage =
 
 export function createUsageReader(options: UsageReaderOptions = {}): UsageReader {
   const home = options.home ?? homedir();
+  const transcriptRoot = options.transcriptRoot;
   const now = options.now ?? (() => new Date().toISOString());
   const discoveryIntervalMs = options.discoveryIntervalMs ?? 5 * 60 * 1000;
   /** sessionId → the cumulative figure we are NOT accountable for. */
@@ -335,7 +205,7 @@ export function createUsageReader(options: UsageReaderOptions = {}): UsageReader
     const atMs = nowMs();
     if (manifest && atMs - manifest.atMs < discoveryIntervalMs) return manifest.files;
     if (discoveryInFlight) return discoveryInFlight;
-    const pass = discoverTranscripts(home);
+    const pass = discoverTranscripts(home, transcriptRoot);
     discoveryInFlight = pass;
     try {
       const files = await pass;
@@ -357,19 +227,30 @@ export function createUsageReader(options: UsageReaderOptions = {}): UsageReader
     if (cached?.file === file && cached.mtimeMs === mtimeMs) return cached.parsed;
     let text: string;
     try { text = await readFile(file, 'utf8'); } catch { return null; }
-    const parser = PARSERS[provider];
-    if (!parser) return null;
-    const parsed = parser(parseJsonl(text));
+    const parsed = parseProviderTranscriptLines(provider, parseJsonl(text));
+    if (!parsed) return null;
     parsedBySession.set(sessionId, { file, mtimeMs, parsed });
     return parsed;
+  };
+
+  const newestCandidate = async (files: string[]): Promise<string | null> => {
+    const dated = await Promise.all(files.map(async (file) => {
+      try {
+        return { file, mtimeMs: (await stat(file)).mtimeMs };
+      } catch {
+        return null;
+      }
+    }));
+    return dated
+      .filter((candidate): candidate is { file: string; mtimeMs: number } => candidate !== null)
+      .sort((a, b) => b.mtimeMs - a.mtimeMs)[0]?.file ?? null;
   };
 
   const readFromManifest = async (
     session: UsageSessionRef,
     files: string[],
   ): Promise<SessionUsage> => {
-    const parser = PARSERS[session.provider];
-    if (!parser) {
+    if (!providerHasTranscript(session.provider)) {
       return unavailable(`provider "${session.provider}" keeps no transcript to read`);
     }
     if (!session.providerConversationId) {
@@ -377,8 +258,13 @@ export function createUsageReader(options: UsageReaderOptions = {}): UsageReader
         'no provider conversation id yet — the handle is learned on the first reply',
       );
     }
-    const file = findInManifest(
-      session.provider, session.providerConversationId, session.cwd, home, files);
+    const file = await newestCandidate(findProviderTranscriptCandidates(session.provider, {
+      conversationId: session.providerConversationId,
+      cwd: session.cwd,
+      home,
+      ...(transcriptRoot ? { transcriptRoot } : {}),
+      files,
+    }));
     if (!file) {
       return unavailable(
         `no ${session.provider} transcript found for conversation "${session.providerConversationId}"`,
@@ -401,7 +287,7 @@ export function createUsageReader(options: UsageReaderOptions = {}): UsageReader
           baseline: null,
           cumulativeAdjusted: false,
           source: file,
-          note: `${session.provider} records are per-turn — reported as measured`,
+          note: `${session.provider} transcript records are per-turn — reported as measured`,
         };
       }
 
@@ -460,13 +346,17 @@ export function createUsageReader(options: UsageReaderOptions = {}): UsageReader
     },
 
     async read(session) {
-      const needsManifest = Boolean(PARSERS[session.provider] && session.providerConversationId);
+      const needsManifest = Boolean(
+        providerHasTranscript(session.provider) && session.providerConversationId,
+      );
       return readFromManifest(session, needsManifest ? await intervalManifest() : []);
     },
 
     async readMany(sessions) {
       const needsManifest = sessions.some(
-        (session) => Boolean(PARSERS[session.provider] && session.providerConversationId),
+        (session) => Boolean(
+          providerHasTranscript(session.provider) && session.providerConversationId,
+        ),
       );
       const files = needsManifest ? await intervalManifest() : [];
       const rows = await Promise.all(sessions.map(async (session) =>

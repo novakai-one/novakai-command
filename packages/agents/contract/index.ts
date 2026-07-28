@@ -28,12 +28,23 @@ export type {
   TerminalAdapter, TerminalRuntimeLike, SpawnedSession,
   ProviderCliRuntime, ProviderTurnRecord, ProviderTurnUsage,
 } from '../core/providers/adapter.js';
+export {
+  findProviderTranscriptCandidates,
+  parseProviderTranscriptLines,
+  providerHasTranscript,
+  providerTranscriptRoots,
+  sanitizeProviderCwd,
+  type ProviderTranscriptLookup,
+  type ProviderTranscriptUsage,
+} from '../core/providers/transcript.js';
 export type { LiveLaneSender, LiveLaneBinding } from '../core/live-lane/liveLane.js';
 // B1 DEC-B1-6: the providerSession registry — agents owns the kind and is its
 // sole writer; the server drives it from the composition root.
 export {
   createProviderSessionRegistry, osProcessProbe,
   type ProviderSessionRegistry, type ProviderSessionRecord, type ProviderSessionStatus,
+  type ProviderSessionTokenUsage, type ProviderSessionUsageUnavailable,
+  type ProviderSessionUsageMeasurement,
   type RegisterSessionInput, type SweepResult, type ProcessProbe,
 } from '../core/sessions/registry.js';
 export type { RegisterSkillInput } from '../core/skills/skills.js';

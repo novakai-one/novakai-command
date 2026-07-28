@@ -324,18 +324,26 @@ export async function bootServer(options: BootOptions): Promise<BootResult> {
   const watchdog: WatchdogHook = createWatchdogHook(options.watchdogDir ?? cwd);
   const usageReader = createUsageReader({
     ...(options.providerHome ? { home: options.providerHome } : {}),
+    transcriptRoot: path.join(options.root, 'transcripts'),
     discoveryIntervalMs:
       Math.min(config.supervision.usageIntervalSec, config.supervision.driftIntervalSec) * 1000,
   });
   const usageLog = createUsageLog(options.root);
   // The registry is the engine's session truth; this adapts its record shape to
-  // the narrow slice supervision reads (it never writes through this seam).
+  // the narrow slice supervision reads plus its one owned backfill mutation.
   const supervisionSessions = {
     list: async (): Promise<SupervisionRecord[]> => (await sessions.list()) as SupervisionRecord[],
     get: async (id: string): Promise<SupervisionRecord | null> =>
       (await sessions.get(id)) as SupervisionRecord | null,
     close: async (id: string, status: 'closed' | 'exited') => {
       const res = await sessions.close(id, status);
+      return res.ok ? { ok: true } : { ok: false, error: res.error };
+    },
+    recordUsage: async (
+      id: string,
+      usage: Parameters<ProviderSessionRegistry['recordUsage']>[1],
+    ) => {
+      const res = await sessions.recordUsage(id, usage);
       return res.ok ? { ok: true } : { ok: false, error: res.error };
     },
   };

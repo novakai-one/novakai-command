@@ -38,6 +38,8 @@ function record(partial: Partial<ProviderSessionRecord> = {}): ProviderSessionRe
     turns: 0, status: 'running',
     inFlight: { clientOpId: null, status: 'none', pid: null, pidStartedAt: null, queue: [] },
     lastInterruption: null,
+    tokenUsage: null,
+    usageUnavailable: null,
     ...partial,
   };
 }
@@ -73,6 +75,33 @@ function harness(options: {
       close: async (id) => {
         records = records.map((r) => (r.sessionId === id ? { ...r, status: 'closed' as const } : r));
         return { ok: true, value: records.find((r) => r.sessionId === id)! };
+      },
+      recordUsage: async (id, usage) => {
+        records = records.map((current) => current.sessionId !== id
+          ? current
+          : usage.kind === 'measured'
+            ? {
+              ...current,
+              tokenUsage: {
+                inputTokens: usage.inputTokens,
+                outputTokens: usage.outputTokens,
+                cacheReadTokens: usage.cacheReadTokens,
+                cacheCreationTokens: usage.cacheCreationTokens,
+                source: usage.source,
+                measuredAt: usage.measuredAt,
+              },
+              usageUnavailable: null,
+            }
+            : {
+              ...current,
+              tokenUsage: null,
+              usageUnavailable: {
+                code: 'UsageUnavailable' as const,
+                reason: usage.reason,
+                checkedAt: usage.checkedAt,
+              },
+            });
+        return { ok: true };
       },
     },
     lifecycle: {
@@ -485,6 +514,7 @@ test('a failing trace write is surfaced, not swallowed', async () => {
       list: async () => [record()],
       get: async () => record(),
       close: async () => ({ ok: true, value: record() }),
+      recordUsage: async () => ({ ok: true }),
     },
     lifecycle: {
       closeSession: () => true,

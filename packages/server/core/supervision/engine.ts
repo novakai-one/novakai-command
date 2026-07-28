@@ -31,6 +31,18 @@ export interface SupervisionSessions {
   list(): Promise<SupervisionRecord[]>;
   get(sessionId: string): Promise<SupervisionRecord | null>;
   close(sessionId: string, status: 'closed' | 'exited'): Promise<{ ok: boolean; error?: unknown }>;
+  recordUsage(sessionId: string, usage:
+    | {
+      kind: 'measured';
+      inputTokens: number;
+      outputTokens: number;
+      cacheReadTokens: number;
+      cacheCreationTokens: number;
+      source: string;
+      measuredAt: string;
+    }
+    | { kind: 'unavailable'; reason: string; checkedAt: string }
+  ): Promise<{ ok: boolean; error?: unknown }>;
 }
 
 /** The registry record fields supervision reads. */
@@ -111,10 +123,17 @@ export interface SupervisionFailure {
   code:
     | 'EscalationFailed'
     | 'UsageAppendFailed'
+    | 'UsageBackfillFailed'
     | 'UsageBroadcastFailed'
     | 'UsageTickFailed'
     | 'DriftTickFailed';
-  operation: 'escalate' | 'appendUsage' | 'broadcastUsage' | 'emitUsage' | 'checkDrift';
+  operation:
+    | 'escalate'
+    | 'backfillUsage'
+    | 'appendUsage'
+    | 'broadcastUsage'
+    | 'emitUsage'
+    | 'checkDrift';
   message: string;
 }
 
@@ -136,6 +155,8 @@ export interface UsageRow {
   cumulativeAdjusted: boolean;
   /** The raw running total, when the provider reports one. */
   providerTotalInputTokens: number | null;
+  /** Exact transcript evidence used for this measurement. */
+  source: string | null;
   interrupted: string | null;
   /** Set by the drift checker so the table Chris reads flags a drifting agent. */
   drift: boolean;
@@ -471,6 +492,7 @@ export function createSupervisionEngine(deps: SupervisionDeps): SupervisionEngin
     cacheCreationTokens: usage.cacheCreationTokens,
     cumulativeAdjusted: usage.cumulativeAdjusted,
     providerTotalInputTokens: usage.providerTotal?.inputTokens ?? null,
+    source: usage.source,
     interrupted: record.lastInterruption?.clientOpId ?? null,
     drift: driftFlags.has(record.sessionId),
     note: usage.note,
@@ -492,6 +514,34 @@ export function createSupervisionEngine(deps: SupervisionDeps): SupervisionEngin
 
   const emitUsage: SupervisionEngine['emitUsage'] = async () => {
     const table = await usageTable();
+    for (const row of table.rows) {
+      const backfilled = row.inputTokens !== null
+        && row.outputTokens !== null
+        && row.cacheReadTokens !== null
+        && row.cacheCreationTokens !== null
+        && row.source
+        ? await deps.sessions.recordUsage(row.sessionId, {
+          kind: 'measured',
+          inputTokens: row.inputTokens,
+          outputTokens: row.outputTokens,
+          cacheReadTokens: row.cacheReadTokens,
+          cacheCreationTokens: row.cacheCreationTokens,
+          source: row.source,
+          measuredAt: row.lastActivityAt,
+        })
+        : await deps.sessions.recordUsage(row.sessionId, {
+          kind: 'unavailable',
+          reason: row.note,
+          checkedAt: table.at,
+        });
+      if (!backfilled.ok) {
+        reportFailure(
+          'UsageBackfillFailed',
+          'backfillUsage',
+          backfilled.error ?? `providerSession usage backfill failed for ${row.sessionId}`,
+        );
+      }
+    }
     try {
       await deps.appendUsage(table.rows);
     } catch (cause) {
