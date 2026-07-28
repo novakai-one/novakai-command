@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import {
   createObject,
-  getObject,
   getObjectByClientOpId,
+  getObjectWithReadFailure,
   isAbsent,
   listObjects,
   updateObject,
@@ -155,7 +155,7 @@ async function findProject(
   ctx: ProjectsContext,
   projectId: ProjectId,
 ): Promise<Result<StoredObject<ProjectT> | Absent, ProjectsError>> {
-  const found = await getObject<ProjectT>(
+  const found = await getObjectWithReadFailure<ProjectT>(
     ctx.handle,
     'project',
     projectId as unknown as ObjectId,

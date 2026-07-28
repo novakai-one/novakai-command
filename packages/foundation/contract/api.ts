@@ -214,17 +214,38 @@ export async function updateObject<T>(
 
 // ── Queries ─────────────────────────────────────────────────────────────────
 
+function readObject<T>(
+  engine: StoreEngine,
+  kind: ObjectKind,
+  id: ObjectId,
+): StoredObject<T> | Absent {
+  if (!(kind in KIND_FILES)) return ABSENT({ kind, id });
+  if (engine.quarantinedIds().has(id)) return ABSENT({ kind, id });
+  const rec = readAllRecords(engine, kind).find((r) => r.envelope.id === id);
+  return rec ? toStoredObject<T>(engine, rec) : ABSENT({ kind, id });
+}
+
 export async function getObject<T>(
   handle: ScopedStoreHandle, kind: ObjectKind, id: ObjectId,
+): Promise<Result<StoredObject<T> | Absent, never>> {
+  const engine = engineOf(handle);
+  return ok(readObject<T>(engine, kind, id));
+}
+
+/**
+ * Failure-aware object lookup for capability contracts whose read interface
+ * promises typed Foundation failures. Existing absence-only consumers retain
+ * getObject; opt-in consumers use this explicitly named seam.
+ */
+export async function getObjectWithReadFailure<T>(
+  handle: ScopedStoreHandle,
+  kind: ObjectKind,
+  id: ObjectId,
 ): Promise<Result<StoredObject<T> | Absent, StoreError>> {
   const engine = engineOf(handle);
   const bootFailure = engine.bootError();
   if (bootFailure) return fail(bootFailure);
-  if (!(kind in KIND_FILES)) return ok(ABSENT({ kind, id }));
-  if (engine.quarantinedIds().has(id)) return ok(ABSENT({ kind, id }));
-  const rec = readAllRecords(engine, kind).find((r) => r.envelope.id === id);
-  if (!rec) return ok(ABSENT({ kind, id }));
-  return ok(toStoredObject<T>(engine, rec));
+  return ok(readObject<T>(engine, kind, id));
 }
 
 /**
@@ -282,7 +303,7 @@ export async function listObjects<T>(
 
 export async function resolveRef<T>(
   handle: ScopedStoreHandle, ref: z.infer<typeof Ref>,
-): Promise<Result<StoredObject<T> | Absent, StoreError>> {
+): Promise<Result<StoredObject<T> | Absent, never>> {
   return getObject<T>(handle, ref.kind as ObjectKind, ref.id as ObjectId);
 }
 
