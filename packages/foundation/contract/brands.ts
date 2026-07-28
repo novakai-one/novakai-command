@@ -22,13 +22,15 @@ export type ObjectKind =
   | 'layout'
   | 'settings'
   | 'conversationView' // S2 F1/DEC-S2-11: shell-owned pin/archive view state
+  | 'config'          // B1 DEC-B1-3: server-owned typed config objects
   | 'quarantine'
   | 'token'
   | 'trace';
 
 export type CapabilityId =
   | 'foundation' | 'shell' | 'agents' | 'messaging'
-  | 'terminal' | 'transcript' | 'spine';
+  | 'terminal' | 'transcript' | 'spine'
+  | 'server'; // B1: the production composition root (owns kind 'config')
 
 // ── Mint helpers (identity conventions: foundation owns conventions, §8) ──
 import { randomUUID } from 'node:crypto';

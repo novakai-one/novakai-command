@@ -26,12 +26,13 @@ export const KIND_FILES: Readonly<Record<Exclude<ObjectKind, 'token'>, string>> 
   layout: 'layout.jsonl',
   settings: 'settings.jsonl',
   conversationView: 'conversationViews.jsonl', // S2 F1/DEC-S2-11 (shell-owned)
+  config: 'config.jsonl',                      // B1 DEC-B1-3 (server-owned)
   quarantine: 'quarantine.jsonl',
   trace: 'traces.jsonl',
 });
 
 // Kinds the engine treats as ordinary wrapped-record stores.
-const RECORD_KINDS: readonly string[] = ['agent', 'skill', 'layout', 'settings', 'conversationView', 'quarantine'];
+const RECORD_KINDS: readonly string[] = ['agent', 'skill', 'layout', 'settings', 'conversationView', 'config', 'quarantine'];
 
 // Lazy upgrade registry (DEC-F10): pure v_n → v_n+1 transforms per kind,
 // applied in memory on read; the stored line is NEVER rewritten.
