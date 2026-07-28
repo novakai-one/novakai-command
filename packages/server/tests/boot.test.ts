@@ -162,6 +162,66 @@ test('boot archives a legacy thread-less conversation and send refuses it with a
   }
 });
 
+test('migration trace failure aborts boot and the next boot recovers exactly one semantic trace', async () => {
+  const dir = root();
+  await mintChris(dir);
+  await seedLegacyConversationWithoutThread(dir);
+
+  const first = await bootServer({
+    root: dir,
+    port: 0,
+    cwd: dir,
+    transcripts: false,
+    watchdogDir: dir,
+    recordSystemAction: async () => ({
+      ok: false,
+      error: {
+        code: 'TraceWriteFailed',
+        message: 'injected migration trace failure',
+        details: { opId: 'sop_injected', cause: 'disk full' },
+        retryable: true,
+      },
+    }),
+  });
+  if (first.ok) {
+    await first.value.close();
+    assert.fail('a missing migration trace must fail boot loudly');
+  }
+  assert.deepEqual(first.error, {
+    code: 'MigrationTraceFailed',
+    message:
+      'legacy conversation migration trace failed for conv_legacy_empty_thread '
+      + '(TraceWriteFailed): injected migration trace failure',
+  });
+
+  const archived = await getConversationView(
+    composeShellPersistence({ root: dir, principal: 'person_chris' }).conversationViewDriver,
+    'conv_legacy_empty_thread',
+  );
+  assert.equal(archived?.archived, true, 'the mutation is recoverable after the trace failure');
+
+  const second = await boot(dir);
+  try {
+    const engine = composeEngine({
+      root: dir,
+      capability: 'server',
+      allowedKinds: ['conversationView'],
+      principal: 'sys_spine',
+    });
+    const traces = await queryTraceBound(engine, {});
+    const migration = traces.items.filter((item) =>
+      item.opKind === 'system.action'
+      && item.action === 'hook_log'
+      && item.target.kind === 'conversationView'
+      && item.target.id === 'conv_legacy_empty_thread'
+      && (item.meta as { event?: string } | undefined)?.event
+        === 'conversation.migrate.archive-unresolvable');
+    assert.equal(migration.length, 1, 'recovery appends one semantic trace, never zero or duplicates');
+  } finally {
+    await second.close();
+  }
+});
+
 test('a fresh unsent conversation survives restart and can send its first message', async () => {
   const dir = root();
   await mintChris(dir);
