@@ -4,6 +4,7 @@ import {
   readFile,
   rm,
   rmdir,
+  stat,
   writeFile,
 } from 'node:fs/promises';
 import path from 'node:path';
@@ -19,6 +20,80 @@ export interface ArtifactPublicationLease {
   readonly lockDir: string;
   readonly locksRoot: string;
   readonly token: string;
+}
+
+interface PublicationOwner {
+  pid: number;
+  token: string;
+}
+
+const ABANDONED_ACQUIRE_MS = 30_000;
+
+function isPidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (cause) {
+    return (cause as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
+async function readPublicationOwner(
+  lockDir: string,
+): Promise<PublicationOwner | null> {
+  try {
+    const parsed = JSON.parse(
+      await readFile(path.join(lockDir, 'owner.json'), 'utf8'),
+    ) as { pid?: unknown; token?: unknown };
+    return Number.isInteger(parsed.pid) && typeof parsed.token === 'string'
+      ? { pid: parsed.pid as number, token: parsed.token }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+async function reclaimAbandonedPublication(
+  lockDir: string,
+): Promise<boolean> {
+  const firstOwner = await readPublicationOwner(lockDir);
+  if (firstOwner) {
+    if (isPidAlive(firstOwner.pid)) return false;
+    const confirmed = await readPublicationOwner(lockDir);
+    if (
+      !confirmed
+      || confirmed.token !== firstOwner.token
+      || isPidAlive(confirmed.pid)
+    ) {
+      return false;
+    }
+    await rm(lockDir, { recursive: true, force: true });
+    return true;
+  }
+  let firstStat;
+  try {
+    firstStat = await stat(lockDir);
+  } catch (cause) {
+    if ((cause as NodeJS.ErrnoException).code === 'ENOENT') return true;
+    throw cause;
+  }
+  if (Date.now() - firstStat.mtimeMs < ABANDONED_ACQUIRE_MS) return false;
+  if (await readPublicationOwner(lockDir)) return false;
+  let confirmedStat;
+  try {
+    confirmedStat = await stat(lockDir);
+  } catch (cause) {
+    if ((cause as NodeJS.ErrnoException).code === 'ENOENT') return true;
+    throw cause;
+  }
+  if (
+    confirmedStat.ino !== firstStat.ino
+    || confirmedStat.mtimeMs !== firstStat.mtimeMs
+  ) {
+    return false;
+  }
+  await rm(lockDir, { recursive: true, force: true });
+  return true;
 }
 
 function publicationLockFailed(
@@ -109,6 +184,18 @@ export async function acquireArtifactPublication(
         return {
           ok: false,
           error: publicationLockFailed(artifactId, 'acquire', cause),
+        };
+      }
+      try {
+        if (await reclaimAbandonedPublication(lockDir)) continue;
+      } catch (reclaimCause) {
+        return {
+          ok: false,
+          error: publicationLockFailed(
+            artifactId,
+            'acquire',
+            reclaimCause,
+          ),
         };
       }
     }
