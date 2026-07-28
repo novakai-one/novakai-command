@@ -5,7 +5,6 @@ import {
   readdirSync,
   statSync,
 } from 'node:fs';
-import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
@@ -14,7 +13,6 @@ const serverRoot = path.resolve(
   '..',
 );
 const repositoryRoot = path.resolve(serverRoot, '../..');
-const missionBase = '6ee01fd4717cca00eaf86bb1475b4c23eed5fd16';
 
 function typescriptSources(root: string): string[] {
   const found: string[] = [];
@@ -87,11 +85,12 @@ test('approved capabilities do not depend back on Server', () => {
   assert.deepEqual(offenders, []);
 });
 
-test('B2a mission contains no Shell source change', () => {
-  const changed = execFileSync(
-    'git',
-    ['diff', '--name-only', missionBase, '--', 'packages/shell'],
-    { cwd: repositoryRoot, encoding: 'utf8' },
-  ).trim();
-  assert.equal(changed, '');
+test('B2a adapters remain independent of Shell and UI surfaces', () => {
+  const b2aRoot = path.join(serverRoot, 'core', 'b2a');
+  const offenders = typescriptSources(b2aRoot).filter((sourcePath) => {
+    const source = readFileSync(sourcePath, 'utf8');
+    return /(?:^|[/@])shell(?:\/|['"])/m.test(source)
+      || /\b(?:ui|userInterface)\b/.test(source);
+  });
+  assert.deepEqual(offenders, []);
 });

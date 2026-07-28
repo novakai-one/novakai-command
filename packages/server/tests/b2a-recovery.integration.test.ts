@@ -172,7 +172,15 @@ test('Server restart discovers accepted WS workflows for explicit continue or ab
     assert.equal(sent.kind, 'ok', sent.error?.message);
     assert.ok(sent.value);
 
-    const artifactBytes = Uint8Array.from([0, 255, 129, 65, 13, 10]);
+    const artifactSecret = 'B2A_SERVER_RAW_SECRET';
+    const artifactBytes = Uint8Array.from([
+      ...Buffer.from(artifactSecret, 'utf8'),
+      0,
+      255,
+      129,
+      13,
+      10,
+    ]);
     const posted = await fetch(`${first.url}/artifacts`, {
       method: 'POST',
       headers: {
@@ -319,7 +327,11 @@ test('Server restart discovers accepted WS workflows for explicit continue or ab
       .map((name) => readFileSync(path.join(root, 'stores', name), 'utf8'))
       .join('\n');
     assert.equal(jsonl.includes('"bytes"'), false);
-    assert.equal(jsonl.includes(artifactBytes.toString()), false);
+    assert.equal(jsonl.includes(artifactSecret), false);
+    assert.equal(
+      jsonl.includes(Buffer.from(artifactBytes).toString('base64')),
+      false,
+    );
   } finally {
     if (priorFailpoint === undefined) delete process.env.NVK_FAILPOINT;
     else process.env.NVK_FAILPOINT = priorFailpoint;
