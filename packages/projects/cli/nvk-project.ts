@@ -4,6 +4,7 @@
 import {
   authenticate,
   type ClientOpId,
+  type ProjectId,
 } from '@novakai/foundation/dist/contract/index.js';
 import {
   composeProjects,
@@ -109,6 +110,12 @@ async function main(): Promise<void> {
       typeof args.status === 'string'
         ? { status: args.status as ProjectStatus }
         : undefined,
+    );
+    return result.ok ? output(result.value) : fail(result.error);
+  }
+  if (verb === 'items') {
+    const result = await projects.getProjectItems(
+      required(args.project, 'project') as ProjectId,
     );
     return result.ok ? output(result.value) : fail(result.error);
   }
