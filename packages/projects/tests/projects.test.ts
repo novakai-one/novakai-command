@@ -364,3 +364,39 @@ test('listProjects returns a typed corruption error for a malformed durable Proj
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('getProjectItems returns a typed corruption error for its malformed durable Project', async () => {
+  const root = freshRoot();
+  try {
+    const handle = composeHandle({
+      root,
+      capability: 'projects',
+      allowedKinds: ['project', 'projectItem'],
+      principal: 'sys_spine',
+    });
+    const planted = await createObject(handle, {
+      kind: 'project',
+      id: 'proj_malformed_lookup',
+      schemaVersion: 1,
+      createdAt: new Date().toISOString(),
+      permissionLevel: 'team',
+      createdBy: 'overridden-by-foundation',
+      status: 'active',
+    }, mintClientOpId());
+    assert.equal(planted.ok, true);
+
+    const projects = createProjectsContract(composeProjects({
+      root,
+      principal: 'person_reader',
+    }));
+    const items = await projects.getProjectItems('proj_malformed_lookup' as never);
+    assert.equal(items.ok, false);
+    assert.equal(items.ok ? null : items.error.code, 'StoredRecordInvalid');
+    assert.deepEqual(
+      items.ok ? null : (items.error.details as { ref?: unknown }).ref,
+      { kind: 'project', id: 'proj_malformed_lookup' },
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
