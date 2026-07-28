@@ -222,3 +222,26 @@ test('offline CLI archives a Project through the shared contract', async () => {
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('offline CLI rejects direct attach because attachment belongs to Spine', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'nvk-projects-cli-attach-'));
+  try {
+    const token = mintToken(
+      root,
+      'person_cli',
+      ['project', 'projectItem'],
+      'person_local',
+    );
+    const bypass = invoke(root, [
+      'attach',
+      '--project', 'proj_bypass',
+      '--kind', 'trace',
+      '--id', 'trace_bypass',
+      '--client-op-id', mintClientOpId(),
+    ], token.bearer);
+    assert.equal(bypass.status, 1);
+    assert.equal(JSON.parse(bypass.stderr).code, 'Usage');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
