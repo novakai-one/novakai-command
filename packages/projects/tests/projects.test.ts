@@ -179,3 +179,63 @@ test('only the Spine-facing contract can attach items to an active Project', asy
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('Spine attach stores only a dangling registered ref and stamps trusted identity', async () => {
+  const root = freshRoot();
+  try {
+    const context = composeProjects({ root, principal: 'person_real' });
+    const projects = createProjectsContract(context);
+    const spine = createSpineProjectsContract(context);
+    const created = await projects.createProject({
+      title: 'Reference holder',
+      createdBy: 'person_spoofed',
+    } as never, mintClientOpId());
+    assert.equal(created.ok, true);
+    if (!created.ok) return;
+    assert.equal(created.value.createdBy, 'person_real');
+
+    const unregistered = await spine.attach(
+      created.value.id,
+      { itemRef: { kind: 'notRegistered', id: 'anything' } as never },
+      mintClientOpId(),
+    );
+    assert.equal(unregistered.ok, false);
+    assert.equal(unregistered.ok ? null : unregistered.error.code, 'InvalidEnvelope');
+
+    const attachOp = mintClientOpId();
+    const attached = await spine.attach(
+      created.value.id,
+      {
+        itemRef: {
+          kind: 'trace',
+          id: 'trace_intentionally_dangling',
+          copiedSourceContent: 'must not survive',
+        } as never,
+        note: 'Evidence link',
+      },
+      attachOp,
+    );
+    assert.equal(attached.ok, true);
+    if (!attached.ok) return;
+    assert.deepEqual(attached.value.itemRef, {
+      kind: 'trace',
+      id: 'trace_intentionally_dangling',
+    });
+    assert.equal(attached.value.createdBy, 'person_real');
+    assert.equal(attached.value.addedBy, 'person_real');
+    assert.equal(attached.value.addedVia, 'spine');
+
+    const items = await projects.getProjectItems(created.value.id);
+    assert.equal(items.ok && items.value.items.length, 1);
+    const engine = composeEngine({
+      root,
+      capability: 'projects',
+      allowedKinds: ['project', 'projectItem'],
+      principal: 'person_real',
+    });
+    const trace = await queryTraceBound(engine, { clientOpId: attachOp });
+    assert.equal(trace.items.length, 1);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
