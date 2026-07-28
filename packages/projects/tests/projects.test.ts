@@ -70,3 +70,44 @@ test('listProjects returns created Projects filtered by lifecycle status', async
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('archiveProject requires clientOpId and replays one traced lifecycle change', async () => {
+  const root = freshRoot();
+  try {
+    const projects = createProjectsContract(composeProjects({
+      root,
+      principal: 'person_chris',
+    }));
+    const created = await projects.createProject({ title: 'Archive me' }, mintClientOpId());
+    assert.equal(created.ok, true);
+    if (!created.ok) return;
+
+    const missingOp = await projects.archiveProject(created.value.id, undefined as never);
+    assert.equal(missingOp.ok, false);
+    assert.equal(missingOp.ok ? null : missingOp.error.code, 'InvalidEnvelope');
+
+    const clientOpId = mintClientOpId();
+    const first = await projects.archiveProject(created.value.id, clientOpId);
+    const retry = await projects.archiveProject(created.value.id, clientOpId);
+    assert.equal(first.ok && retry.ok, true);
+    if (!first.ok || !retry.ok) return;
+    assert.equal(first.value.status, 'archived');
+    assert.equal(retry.value.status, 'archived');
+
+    const archived = await projects.listProjects({ status: 'archived' });
+    assert.deepEqual(
+      archived.ok ? archived.value.items.map(({ id }) => id) : [],
+      [created.value.id],
+    );
+    const engine = composeEngine({
+      root,
+      capability: 'projects',
+      allowedKinds: ['project', 'projectItem'],
+      principal: 'person_chris',
+    });
+    const trace = await queryTraceBound(engine, { clientOpId });
+    assert.equal(trace.items.length, 1);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
