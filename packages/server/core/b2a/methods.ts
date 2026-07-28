@@ -1,11 +1,13 @@
 import { z } from 'zod';
-import type {
-  ArtifactId,
-  ClientOpId,
-  ProjectId,
+import {
+  isAbsent,
+  type ArtifactId,
+  type ClientOpId,
+  type ProjectId,
 } from '@novakai/foundation/dist/contract/index.js';
 import {
   Artifact,
+  type Artifact as ArtifactRecord,
 } from '../../../artifacts/contract/index.js';
 import {
   CreateProjectInput,
@@ -60,6 +62,31 @@ interface InvalidMethodInput {
       invalidFields: Array<{ field: string; reason: string }>;
     };
     retryable: false;
+  };
+}
+
+interface WsArtifactMetadata {
+  id: ArtifactRecord['id'];
+  kind: ArtifactRecord['kind'];
+  mimeType: string;
+  byteSize: number;
+  createdAt: string;
+  status?: string;
+}
+
+function projectArtifactMetadata(
+  artifact: ArtifactRecord,
+): WsArtifactMetadata {
+  const status = (
+    artifact as ArtifactRecord & { status?: string }
+  ).status;
+  return {
+    id: artifact.id,
+    kind: artifact.kind,
+    mimeType: artifact.mimeType,
+    byteSize: artifact.byteSize,
+    createdAt: artifact.createdAt,
+    ...(status === undefined ? {} : { status }),
   };
 }
 
@@ -151,12 +178,27 @@ export function buildB2aMethods(
     async getArtifactMeta(params: never) {
       const parsed = parseInput('getArtifactMeta', ArtifactMetaMethodInput, params);
       if (!parsed.ok) return parsed;
-      return artifacts.getArtifactMeta(parsed.value.artifactId as ArtifactId);
+      const result = await artifacts.getArtifactMeta(
+        parsed.value.artifactId as ArtifactId,
+      );
+      if (!result.ok || isAbsent(result.value)) return result;
+      return {
+        ok: true,
+        value: projectArtifactMetadata(result.value),
+      };
     },
     async listArtifacts(params: never) {
       const parsed = parseInput('listArtifacts', EmptyInput, params);
       if (!parsed.ok) return parsed;
-      return artifacts.listArtifacts();
+      const result = await artifacts.listArtifacts();
+      if (!result.ok) return result;
+      return {
+        ok: true,
+        value: {
+          ...result.value,
+          items: result.value.items.map(projectArtifactMetadata),
+        },
+      };
     },
     async getSpineWorkflows(params: never) {
       const parsed = parseInput('getSpineWorkflows', EmptyInput, params);

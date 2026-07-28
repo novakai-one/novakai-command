@@ -24,6 +24,24 @@ function harness(): {
   const calls: Array<{ method: string; args: unknown[] }> = [];
   const operation = (method: string) => async (...args: unknown[]) => {
     calls.push({ method, args });
+    if (method === 'getArtifactMeta') {
+      return {
+        ok: true,
+        value: {
+          id: 'artifact_ws',
+          kind: 'artifact',
+          schemaVersion: 1,
+          createdAt: '2026-07-29T00:00:00.000Z',
+          permissionLevel: 'private',
+          createdBy: 'person_operator',
+          mimeType: 'text/plain',
+          byteSize: 42,
+        },
+      };
+    }
+    if (method === 'listArtifacts') {
+      return { ok: true, value: { items: [] } };
+    }
     return { ok: true, value: { method } };
   };
   return {
@@ -124,7 +142,9 @@ test('B2a WS methods expose exactly eleven non-byte operations through public co
       value?: { method: string };
     };
     assert.equal(result.ok, true, method);
-    assert.equal(result.value?.method, delegated, method);
+    if (delegated !== 'getArtifactMeta' && delegated !== 'listArtifacts') {
+      assert.equal(result.value?.method, delegated, method);
+    }
   }
   assert.deepEqual(h.calls.map(({ method }) => method), valid.map((entry) => entry[2]));
 });
