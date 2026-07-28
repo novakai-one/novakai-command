@@ -267,10 +267,16 @@ export interface UsageSessionRef {
 
 export interface UsageReader {
   /**
-   * Declare a session BEFORE its usage is first read. `threadPreexisting`
-   * decides the codex baseline: false (novakai created the thread) bills the
-   * whole total; true (novakai adopted a running thread) bills only what
-   * happened after we started watching.
+   * Declare how a session came to exist. `threadPreexisting: true` (novakai
+   * ADOPTED a thread that was already running — a reattach after restart) bills
+   * only what happens from here on. `false` is the default for every session
+   * and needs no call.
+   *
+   * The default is deliberately the safe one. When "unknown session" meant
+   * "baseline at first read", a live codex session that had really spent 41,814
+   * tokens reported 0 — a silent undercount of real money. Over-attributing an
+   * adopted thread is at least VISIBLE (the note says what was included), so
+   * that is the failure this seam prefers.
    */
   trackSession(sessionId: string, options: { threadPreexisting: boolean }): void;
   read(session: UsageSessionRef): SessionUsage;
@@ -295,22 +301,23 @@ export function createUsageReader(options: UsageReaderOptions = {}): UsageReader
   const now = options.now ?? (() => new Date().toISOString());
   /** sessionId → the cumulative figure we are NOT accountable for. */
   const baselines = new Map<string, UsageBaseline>();
-  /** sessionIds declared as fresh threads: their baseline is zero, not first-read. */
-  const freshThreads = new Set<string>();
+  /** Sessions declared as ADOPTED. Everything else is a fresh thread. */
+  const adopted = new Set<string>();
 
   return {
     trackSession(sessionId, trackOptions) {
       if (trackOptions.threadPreexisting) {
-        freshThreads.delete(sessionId);
+        adopted.add(sessionId);
+        baselines.delete(sessionId); // take it at the next read
         return;
       }
-      freshThreads.add(sessionId);
+      adopted.delete(sessionId);
       baselines.set(sessionId, { ...ZERO, at: now() });
     },
 
     forget(sessionId) {
       baselines.delete(sessionId);
-      freshThreads.delete(sessionId);
+      adopted.delete(sessionId);
     },
 
     read(session) {
@@ -353,15 +360,21 @@ export function createUsageReader(options: UsageReaderOptions = {}): UsageReader
 
       // Cumulative provider (codex): establish the baseline once, then report
       // the delta. Both halves stay visible.
+      //
+      // An UNDECLARED session baselines at ZERO, not at first read. Anything
+      // else silently reports "this session cost nothing" for a session that
+      // spent real money — the live defect this default exists to prevent.
       let baseline = baselines.get(session.sessionId);
       if (!baseline) {
-        baseline = {
-          inputTokens: parsed.inputTokens,
-          outputTokens: parsed.outputTokens,
-          cacheReadTokens: parsed.cacheReadTokens,
-          cacheCreationTokens: parsed.cacheCreationTokens,
-          at: now(),
-        };
+        baseline = adopted.has(session.sessionId)
+          ? {
+            inputTokens: parsed.inputTokens,
+            outputTokens: parsed.outputTokens,
+            cacheReadTokens: parsed.cacheReadTokens,
+            cacheCreationTokens: parsed.cacheCreationTokens,
+            at: now(),
+          }
+          : { ...ZERO, at: now() };
         baselines.set(session.sessionId, baseline);
       }
       const sub = (total: number, base: number): number => Math.max(0, total - base);
@@ -376,9 +389,9 @@ export function createUsageReader(options: UsageReaderOptions = {}): UsageReader
         baseline,
         cumulativeAdjusted: true,
         source: file,
-        note: freshThreads.has(session.sessionId)
-          ? 'codex totals are cumulative; this thread was created by novakai, so the baseline is 0 and the full total is billed'
-          : `codex totals are cumulative; baseline ${baseline.inputTokens} in / ${baseline.outputTokens} out taken at ${baseline.at} is excluded`,
+        note: adopted.has(session.sessionId)
+          ? `codex totals are cumulative; this thread was adopted, so the baseline ${baseline.inputTokens} in / ${baseline.outputTokens} out taken at ${baseline.at} is excluded`
+          : 'codex totals are cumulative; this thread belongs to novakai, so the baseline is 0 and the full total is billed',
       };
     },
   };

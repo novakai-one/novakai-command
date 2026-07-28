@@ -60,6 +60,8 @@ export function createServerServices(
         if (frame.name === 'presence') onPresence(frame.data as AgentEvent);
         if (frame.name === 'message') msgListeners.forEach((l) => l(frame.data));
         if (frame.name === 'conversation') convListeners.forEach((l) => l(frame.data));
+        // B1b §8: the supervision usage table, every usageIntervalSec.
+        if (frame.name === 'usage') usageListeners.forEach((l) => l(frame.data));
         return;
       }
       const p = pending.get(frame.id);
@@ -70,6 +72,7 @@ export function createServerServices(
     };
 
     const convListeners = new Set<(c: unknown) => void>();
+    const usageListeners = new Set<(t: unknown) => void>();
     const call = <T>(method: string, params: unknown = {}): Promise<T> => {
       const id = ++seq;
       ws.send(JSON.stringify({ id, method, params, v: PROTOCOL_VERSION }));
@@ -90,9 +93,13 @@ export function createServerServices(
       subscribe(events) {
         const ml = (m: unknown) => events.onMessage?.(m as never);
         const cl = (c: unknown) => events.onConversation?.(c as never);
-        msgListeners.add(ml); convListeners.add(cl);
-        return () => { msgListeners.delete(ml); convListeners.delete(cl); };
+        const ul = (t: unknown) => events.onUsage?.(t as never);
+        msgListeners.add(ml); convListeners.add(cl); usageListeners.add(ul);
+        return () => {
+          msgListeners.delete(ml); convListeners.delete(cl); usageListeners.delete(ul);
+        };
       },
+      getUsageTable: () => call('getUsageTable'),
       getLayout: () => call('getLayout'),
       // M5/DEC-S2-12: clientOpId minted HERE (the interaction layer) and sent
       // with the mutation; the server threads it to foundation meta.

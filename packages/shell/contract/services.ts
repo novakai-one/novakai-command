@@ -5,6 +5,7 @@ import type { AgentEvent, LayoutRecord, PresenceSource, SettingsRecord } from '.
 import type { SetSettingError } from './settings.js';
 import type { PersistFailedError } from './errors.js';
 import type { ScreenContext } from './context.js';
+import type { UsageTableView } from './usage.js';
 
 /**
  * S2a: shell-side view of an agent definition v2 (plain data — the browser
@@ -79,6 +80,12 @@ export interface ChatMessage {
 export interface MessagingEvents {
   onMessage?(m: ChatMessage): void;
   onConversation?(c: ConversationSummary): void;
+  /**
+   * B1b §8: the supervision usage table, broadcast by the server every
+   * supervision.usageIntervalSec (DEC-B1-11). Hosts without supervision simply
+   * never call it.
+   */
+  onUsage?(table: UsageTableView): void;
 }
 
 export interface ShellServices {
@@ -129,4 +136,11 @@ export interface ShellServices {
   // the demo bridge reports the CLI is installed). Replies stream through the
   // agents live-lane into the thread.
   spawnRealKimiAgent?(title?: string): Promise<{ ok: true; conversation: ConversationSummary } | { ok: false; error: string }>;
+
+  /**
+   * B1b §8 supervision surface (DEC-B1-11): the current usage table, pulled
+   * once so the screen is never blank while it waits for the next broadcast.
+   * Absent on hosts with no supervision engine — the screen draws that.
+   */
+  getUsageTable?(): Promise<UsageTableView>;
 }

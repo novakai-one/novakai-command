@@ -375,6 +375,15 @@ export async function bootServer(options: BootOptions): Promise<BootResult> {
   };
   for (const provider of Object.values(providerRuntimes)) provider?.onTurn(recordTurn);
 
+  // A session that survived a restart ADOPTED its provider thread: the turns it
+  // made before this process started are not ours to bill again. Sessions this
+  // process spawns are declared implicitly (the reader bills them in full).
+  for (const record of await sessions.resumable()) {
+    if (record.providerConversationId) {
+      usageReader.trackSession(record.sessionId, { threadPreexisting: true });
+    }
+  }
+
   // 7b: rebind sessions that outlived the last process — to their provider
   // runtime AND to their conversation, so a send after a restart reaches the
   // CLI instead of quietly going nowhere (DEC-B1-6).

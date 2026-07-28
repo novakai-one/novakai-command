@@ -165,6 +165,30 @@ test('a codex thread NOVAKAI created is billed in full — baseline zero, nothin
   assert.equal(row.cumulativeAdjusted, true);
 });
 
+// LIVE DEFECT, caught by running the real CLIs on 2026-07-28: nothing declared
+// a freshly-spawned session to the reader, so it took its baseline at first
+// read and reported `in=0 out=0` for a codex session that had really just spent
+// 41,814 tokens. The undercount was SILENT — the safe default is therefore
+// "an undeclared session is a fresh thread, billed in full"; adoption is the
+// rare case and must be declared explicitly.
+test('an UNDECLARED codex session is billed in full — the silent-zero default is inverted', () => {
+  const home = providerHome();
+  jsonl(path.join(home, '.codex', 'sessions', '2026', '07', '28'), 'rollout-a-thread_live.jsonl', [
+    { payload: { type: 'token_count', info: { total_token_usage: { input_tokens: 41814, output_tokens: 18 } } } },
+  ]);
+  const reader = createUsageReader({ home });
+  // NOTE: no trackSession call at all — exactly what the live server did.
+
+  const row = reader.read({
+    sessionId: 'sess_never_declared', provider: 'codex',
+    providerConversationId: 'thread_live', cwd: '/tmp',
+  });
+
+  assert.equal(row.inputTokens, 41814, 'reporting 0 here is an invisible undercount of real money');
+  assert.equal(row.outputTokens, 18);
+  assert.equal(row.baseline?.inputTokens, 0);
+});
+
 test('a codex thread novakai ADOPTED is billed from the baseline at first read, labelled', () => {
   const home = providerHome();
   const dir = path.join(home, '.codex', 'sessions', '2026', '07', '28');

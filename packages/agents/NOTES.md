@@ -102,3 +102,38 @@ Ambiguities and judgment calls, one line each. Nothing here invents requirements
     — a mock must never answer under a CLI provider's name in production.
     `allowMock` defaults to true so the existing suites and the demo are
     unchanged; the server passes `config.dev.allowMock` (closes M10).
+19. **B1b codex adapter — `codex exec resume` EXISTS (OD-B1-1 CLOSED).**
+    Verified live against codex-cli 0.144.5 on 2026-07-28:
+    `codex exec resume [--json] <thread-id> "<prompt>"` resumes a thread, and
+    the thread id is the `thread_id` on the `--json` stream's
+    `thread.started` line (also the suffix of the rollout filename
+    `~/.codex/sessions/YYYY/MM/DD/rollout-<ts>-<thread-id>.jsonl`). §13
+    disposition 5's no-resume fallback (rolling summary injection capped by
+    `historyWindowTurns`) is therefore NOT needed for codex, and no history is
+    re-injected per turn. `--skip-git-repo-check` is passed only when the cwd
+    is not inside a git repo (detected, not assumed).
+20. **B1b codex usage is CUMULATIVE — the calibration that live measurement
+    corrected.** The `--json` stream's `turn.completed.usage` tracks the
+    rollout's `total_token_usage` (a running session total), NOT the per-turn
+    `last_token_usage`. Measured across two turns of one thread:
+    turn 1 stream 21312 / total 21312 / last 21312; turn 2 stream 45338 /
+    total 45338 / last 24026. The adapter therefore flags codex usage
+    `cumulative: true` and the supervision engine subtracts a per-session
+    baseline. Treating it as a turn cost overstates every turn after the
+    first, by a margin that grows with the conversation. `last_token_usage`
+    exists only in the rollout file, never in the stream.
+21. **B1b claude adapter — flags and shapes verified live** (Claude Code
+    2.1.219, 2026-07-28). `--verbose` is REQUIRED alongside
+    `-p --output-format stream-json`; the CLI refuses to stream without it.
+    The resume handle is the `session_id` present on every line (first seen on
+    `system`/`init`), replayed as `--resume <id>`. The `result` line REPEATS
+    the assistant text, so only `assistant` lines are emitted or every reply
+    would be double-posted; `tool_use` blocks are internals and are dropped.
+    Usage comes from the `result` line's per-turn totals (cumulative: false),
+    falling back to `assistant.message.usage` when a stream ends without one.
+22. **B1b mid-session model switch: still kimi-only (OD-C3 unchanged).**
+    Neither `codex exec --help` nor `claude --help` documents a mechanism to
+    change the model of an EXISTING conversation; both take a model only at
+    invocation. Their runtimes therefore declare no `setModel`, which is what
+    produces the typed `UnsupportedOperation` at the contract layer. Recorded
+    rather than approximated by "spawn a new session on another model".
