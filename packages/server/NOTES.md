@@ -47,3 +47,11 @@
   declares a native compact, `respawn` is the one place that changes.
 - The gate's skill paths come from the registered skills registry at BOOT; a
   skill registered later is not demanded until the next boot.
+
+## Follow-ups Build 2
+
+- Route `terminateSession` through supervision so engine cleanup is not bypassed.
+- Mark supervision-originated sends in the providerSession in-flight queue.
+- Reject skills-gate markers preceded by leading blank lines.
+- Make `resolveCliPath` validate the exact executable path later spawned instead of a divergent `PATH` lookup.
+- Give usage drift and offline states distinct icons.
