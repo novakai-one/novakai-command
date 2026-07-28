@@ -291,7 +291,7 @@ export async function bootServer(options: BootOptions): Promise<BootResult> {
     trace: (input) => appendSystemAction(persistence.handle, {
       action: input.action,
       target: input.target as never,
-      clientOpId: `op_${randomUUID()}` as never,
+      clientOpId: (input.clientOpId ?? `op_${randomUUID()}`) as never,
       ...(input.meta ? { meta: input.meta } : {}),
     }),
     broadcast: (name, data) => runtime.broadcast(name, data),

@@ -10,6 +10,7 @@ import assert from 'node:assert/strict';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { WebSocket } from 'ws';
 import { mintClientOpId, queryTraceBound } from '@novakai/foundation/dist/contract/index.js';
 import { composeEngine } from '@novakai/foundation/dist/contract/compose.js';
 import { bootServer, type NovakaiServer } from '../core/boot.js';
@@ -96,6 +97,29 @@ const supervisionEvents = (lines: Array<Record<string, unknown>>): string[] =>
     .map((line) => (line.meta as { event?: string } | undefined)?.event)
     .filter((event): event is string => typeof event === 'string');
 
+const connect = (server: NovakaiServer): Promise<WebSocket> => new Promise((resolve, reject) => {
+  const ws = new WebSocket(
+    `${server.url.replace('http', 'ws')}/ws?token=${encodeURIComponent(server.token)}`,
+  );
+  ws.once('open', () => resolve(ws));
+  ws.once('error', reject);
+});
+
+const rpc = (
+  ws: WebSocket,
+  id: number,
+  method: string,
+  params: unknown,
+): Promise<Record<string, unknown>> => new Promise((resolve) => {
+  ws.on('message', function handler(raw) {
+    const frame = JSON.parse(String(raw)) as Record<string, unknown>;
+    if (frame.type === 'event' || frame.id !== id) return;
+    ws.off('message', handler);
+    resolve(frame);
+  });
+  ws.send(JSON.stringify({ id, method, params, v: 1 }));
+});
+
 async function spawnCodexConversation(server: NovakaiServer): Promise<{ sessionId: string; conversationId: string }> {
   const methods = (server.runtime as unknown as { __methods?: never });
   void methods;
@@ -166,6 +190,83 @@ test('a supervised session passes the gate, then gets the work turn (§10 exit l
     assert.ok(events.includes('supervision.gate.pass'), 'the pass is on the trace journal');
     assert.ok(events.includes('supervision.work'), 'so is the work turn');
   } finally {
+    await server.close();
+  }
+});
+
+test('WS runSupervisedTask defines, spawns, gates, and sends work with one traced client operation', async () => {
+  const dir = root();
+  await mintChris(dir);
+  const codex = scriptedCodex(dir);
+  const server = await boot(dir, codex.cliPath);
+  const ws = await connect(server);
+  try {
+    codex.say('SKILLS-CONFIRMED: tdd');
+    const clientOpId = `op_${crypto.randomUUID()}`;
+    const frame = await rpc(ws, 41, 'runSupervisedTask', {
+      clientOpId,
+      agentDef: { displayName: 'WS Supervised', provider: 'codex', model: 'cli-default' },
+      taskBrief: 'Build the WS widget.',
+      providerOpts: { model: 'cli-default', cwd: dir },
+    });
+
+    assert.equal(frame.error, undefined);
+    const result = frame.result as { ok: boolean; sessionId: string; confirmed?: string[] };
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.confirmed, ['tdd']);
+    assert.equal(codex.invocations().length, 2, 'turn 1 gates; turn 2 receives the work');
+    assert.doesNotMatch(codex.invocations()[0]!.at(-1)!, /Build the WS widget/);
+    assert.match(codex.invocations()[1]!.at(-1)!, /Build the WS widget/);
+
+    const operationTraces = (await traces(dir)).filter((line) => line.clientOpId === clientOpId);
+    assert.deepEqual(supervisionEvents(operationTraces), [
+      'supervision.gate.pass', 'supervision.work',
+    ], 'the caller operation id links the gate and work traces');
+    assert.equal((await server.sessions.get(result.sessionId))?.status, 'running');
+  } finally {
+    ws.close();
+    await server.close();
+  }
+});
+
+test('WS runSupervisedTask terminates an invalid gate without sending the work turn', async () => {
+  const dir = root();
+  await mintChris(dir);
+  const codex = scriptedCodex(dir);
+  const server = await boot(dir, codex.cliPath);
+  const ws = await connect(server);
+  try {
+    const defined = await server.runtime.agents.defineAgent(
+      { displayName: 'Existing WS Agent', provider: 'codex', model: 'cli-default' },
+      `op_${crypto.randomUUID()}` as never,
+    );
+    assert.equal(defined.ok, true);
+    if (!defined.ok) return;
+    codex.say('ready without the required marker');
+    const clientOpId = `op_${crypto.randomUUID()}`;
+    const frame = await rpc(ws, 42, 'runSupervisedTask', {
+      clientOpId,
+      agentId: defined.value.id,
+      taskBrief: 'This work must never be sent.',
+      providerOpts: { cwd: dir },
+    });
+
+    assert.equal(frame.error, undefined);
+    const result = frame.result as { ok: boolean; sessionId: string; reason?: string };
+    assert.equal(result.ok, false);
+    assert.equal(result.reason, 'no-marker');
+    assert.equal(codex.invocations().length, 1, 'an invalid marker spends only the gate turn');
+    assert.doesNotMatch(codex.invocations()[0]!.at(-1)!, /This work must never be sent/);
+    assert.equal((await server.sessions.get(result.sessionId))?.status, 'closed');
+
+    const events = supervisionEvents(
+      (await traces(dir)).filter((line) => line.clientOpId === clientOpId),
+    );
+    assert.ok(events.includes('supervision.gate.fail'));
+    assert.ok(events.includes('supervision.drift'));
+    assert.ok(events.includes('session.terminate'));
+  } finally {
+    ws.close();
     await server.close();
   }
 });

@@ -81,6 +81,8 @@ export interface SupervisedTransport {
 export interface TraceInput {
   action: 'hook_log' | 'session.terminate';
   target: { kind: string; id: string };
+  /** Caller operation linking a supervised gate/work lifecycle. */
+  clientOpId?: string;
   meta?: Record<string, unknown>;
 }
 
@@ -164,14 +166,19 @@ export type LifecycleResult =
 
 export interface SupervisionEngine {
   /** DEC-B1-10: the two-turn gate, then the work turn. */
-  runSupervisedTask(input: { sessionId: string; agentId: string; brief: string }): Promise<GateOutcome>;
+  runSupervisedTask(input: {
+    sessionId: string;
+    agentId: string;
+    brief: string;
+    clientOpId?: string;
+  }): Promise<GateOutcome>;
   /** DEC-B1-12: one cheap-first check-in tick across every running session. */
   checkDrift(): Promise<DriftReport>;
   /** DEC-B1-11: the table, from real data. */
   usageTable(): Promise<UsageTable>;
   /** Emit the table: append + broadcast + trace. */
   emitUsage(): Promise<UsageTable>;
-  terminate(sessionId: string, reason: string): Promise<LifecycleResult>;
+  terminate(sessionId: string, reason: string, clientOpId?: string): Promise<LifecycleResult>;
   restart(sessionId: string): Promise<LifecycleResult>;
   compact(sessionId: string): Promise<LifecycleResult>;
   /** Start the two timers (usage + drift). */
@@ -205,11 +212,17 @@ export function createSupervisionEngine(deps: SupervisionDeps): SupervisionEngin
    * trace is exactly that) — but it never aborts the action it describes,
    * because a terminate that half-happened is worse than an untraced one.
    */
-  const traced = async (event: string, sessionId: string, meta: Record<string, unknown> = {}): Promise<void> => {
+  const traced = async (
+    event: string,
+    sessionId: string,
+    meta: Record<string, unknown> = {},
+    clientOpId?: string,
+  ): Promise<void> => {
     const res = await deps.trace({
       // 'session.terminate' is the one named action foundation already carries.
       action: event === 'session.terminate' ? 'session.terminate' : 'hook_log',
       target: { kind: 'session', id: sessionId },
+      ...(clientOpId ? { clientOpId } : {}),
       meta: { event, at: now(), ...meta },
     });
     if (!res.ok) {
@@ -236,18 +249,18 @@ export function createSupervisionEngine(deps: SupervisionDeps): SupervisionEngin
       // sent. The brief has not been built into a prompt at any point above.
       await traced('supervision.gate.fail', input.sessionId, {
         agentId: input.agentId, reason: verdict.reason, replyPreview: reply.slice(0, 200),
-      });
+      }, input.clientOpId);
       await traced('supervision.drift', input.sessionId, {
         agentId: input.agentId, cause: 'skills-gate', reason: verdict.reason,
-      });
+      }, input.clientOpId);
       driftFlags.add(input.sessionId);
-      await terminate(input.sessionId, `skills gate failed: ${verdict.reason}`);
+      await terminate(input.sessionId, `skills gate failed: ${verdict.reason}`, input.clientOpId);
       return { ok: false, sessionId: input.sessionId, reason: verdict.reason, reply };
     }
 
     await traced('supervision.gate.pass', input.sessionId, {
       agentId: input.agentId, confirmed: verdict.confirmed,
-    });
+    }, input.clientOpId);
 
     const work = await deps.transport.ask(
       input.sessionId,
@@ -258,7 +271,7 @@ export function createSupervisionEngine(deps: SupervisionDeps): SupervisionEngin
       agentId: input.agentId,
       taskComplete: declaresTaskComplete(workText),
       subagentSkillsStated: hasSubagentSkillsStatement(workText),
-    });
+    }, input.clientOpId);
     return {
       ok: true,
       sessionId: input.sessionId,
@@ -432,7 +445,11 @@ export function createSupervisionEngine(deps: SupervisionDeps): SupervisionEngin
 
   // ── lifecycle ────────────────────────────────────────────────────────────
 
-  async function terminate(sessionId: string, reason: string): Promise<LifecycleResult> {
+  async function terminate(
+    sessionId: string,
+    reason: string,
+    clientOpId?: string,
+  ): Promise<LifecycleResult> {
     const record = await deps.sessions.get(sessionId);
     if (!record) return notFound(sessionId);
     deps.lifecycle.closeSession(sessionId);
@@ -440,7 +457,7 @@ export function createSupervisionEngine(deps: SupervisionDeps): SupervisionEngin
     driftStates.delete(sessionId);
     driftFlags.delete(sessionId);
     deps.usage.forget(sessionId);
-    await traced('session.terminate', sessionId, { agentId: record.agentId, reason });
+    await traced('session.terminate', sessionId, { agentId: record.agentId, reason }, clientOpId);
     if (!closed.ok) {
       return { ok: false, error: { code: 'RegistryWriteFailed', message: `could not close "${sessionId}"` } };
     }

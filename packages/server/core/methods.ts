@@ -336,6 +336,123 @@ export function buildMethods(runtime: ServerRuntime): MethodTable {
       return { ok: true as const, conversation: summary, sessionId };
     },
 
+    /**
+     * Production entry point for DEC-B1-10. The caller supplies either an
+     * existing agent id or a definition to create, then this method owns the
+     * spawn → providerSession registration → two-turn gate/work lifecycle.
+     */
+    async runSupervisedTask(params: never) {
+      const p = (params ?? {}) as {
+        clientOpId?: string;
+        agentId?: string;
+        agentDef?: Parameters<AgentsContract['defineAgent']>[0];
+        taskBrief?: string;
+        providerOpts?: Parameters<AgentsContract['spawnAgent']>[1];
+      };
+      if (!p.clientOpId || !p.taskBrief?.trim() || Boolean(p.agentId) === Boolean(p.agentDef)) {
+        return {
+          ok: false as const,
+          error: {
+            code: 'InvalidSupervisedTask',
+            message: 'clientOpId, taskBrief, and exactly one of agentId/agentDef are required',
+          },
+        };
+      }
+
+      let agentId = p.agentId;
+      if (p.agentDef) {
+        const defined = await runtime.agents.defineAgent(p.agentDef, p.clientOpId as never) as
+          { ok: boolean; value?: { id: string }; error?: { code?: string; message?: string } };
+        if (!defined.ok || !defined.value) {
+          return {
+            ok: false as const,
+            error: {
+              code: defined.error?.code ?? 'DefineAgentFailed',
+              message: defined.error?.message ?? 'agent definition failed',
+            },
+          };
+        }
+        agentId = defined.value.id;
+      } else {
+        const found = await runtime.agents.getAgent(agentId! as never) as
+          { ok: boolean; value?: { absent?: boolean }; error?: { code?: string; message?: string } };
+        if (!found.ok || found.value?.absent) {
+          return {
+            ok: false as const,
+            error: {
+              code: found.error?.code ?? 'AgentNotFound',
+              message: found.error?.message ?? `no agent with id "${agentId}"`,
+            },
+          };
+        }
+      }
+
+      const spawned = await runtime.agents.spawnAgent(
+        agentId! as never,
+        p.providerOpts,
+        p.clientOpId as never,
+      ) as {
+        ok: boolean;
+        value?: { sessionId: string; model: string; provider: ProviderName };
+        error?: { code?: string; message?: string };
+      };
+      if (!spawned.ok || !spawned.value) {
+        return {
+          ok: false as const,
+          error: {
+            code: spawned.error?.code ?? 'SpawnFailed',
+            message: spawned.error?.message ?? 'agent spawn failed',
+          },
+        };
+      }
+
+      const sessionId = spawned.value.sessionId;
+      const cwd = p.providerOpts?.cwd ?? runtime.cwd;
+      const registered = await runtime.sessions.register({
+        sessionId,
+        agentId: agentId!,
+        provider: spawned.value.provider,
+        cwd,
+        model: spawned.value.model || 'cli-default',
+      });
+      if (!registered.ok) {
+        runtime.agents.closeSession(sessionId as never);
+        return {
+          ok: false as const,
+          error: { code: registered.error.code, message: registered.error.message },
+        };
+      }
+      runtime.watchdog.register({
+        sessionId,
+        provider: spawned.value.provider,
+        task: p.taskBrief,
+        transcriptPath: null,
+        cwd,
+      });
+
+      const outcome = await runtime.supervision.runSupervisedTask({
+        sessionId,
+        agentId: agentId!,
+        brief: p.taskBrief,
+        clientOpId: p.clientOpId,
+      });
+      if (!outcome.ok) {
+        runtime.watchdog.close(sessionId);
+        return outcome;
+      }
+      if (outcome.taskComplete) {
+        const ended = await runtime.supervision.terminate(
+          sessionId,
+          'supervised task complete',
+          p.clientOpId,
+        );
+        runtime.watchdog.close(sessionId);
+        if (!ended.ok) return { ok: false as const, sessionId, error: ended.error };
+        return { ...outcome, terminated: true as const };
+      }
+      return { ...outcome, terminated: false as const };
+    },
+
     async getCapabilities() {
       const config = runtime.configStore.current();
       // B1b: availability is MEASURED per provider (is the CLI on disk?), not
