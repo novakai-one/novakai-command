@@ -1,0 +1,42 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import {
+  composeHandle,
+  createObject,
+  mintClientOpId,
+  type CapabilityId,
+  type ObjectKind,
+} from '../contract/index.js';
+
+test('Foundation registers the Artifacts capability and its owned artifact kind', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'nvk-artifacts-registry-'));
+  try {
+    const capability: CapabilityId = 'artifacts';
+    const kind: ObjectKind = 'artifact';
+    const handle = composeHandle({
+      root,
+      capability,
+      allowedKinds: [kind],
+      principal: 'person_chris',
+    });
+
+    const artifact = await createObject(handle, {
+      kind,
+      id: 'artifact_registry',
+      schemaVersion: 1,
+      createdAt: new Date().toISOString(),
+      permissionLevel: 'team',
+      createdBy: 'caller_is_not_trusted',
+      mimeType: 'text/plain',
+      byteSize: 4,
+    }, mintClientOpId());
+
+    assert.equal(artifact.ok, true);
+    assert.equal(existsSync(path.join(root, 'artifacts.jsonl')), true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
