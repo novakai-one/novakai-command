@@ -17,6 +17,7 @@ import { openConfigStore } from '../core/config/store.js';
 import {
   ConfigObjectInput as ConfigObjectInputSchema, configKeyOf, type ConfigObjectInput,
 } from '../contract/config.js';
+import { inspectLegacyDemoPersons } from '../core/doctor.js';
 
 const flag = (name: string, fallback?: string): string | undefined => {
   const i = process.argv.indexOf(`--${name}`);
@@ -30,6 +31,11 @@ const root = flag('root') ?? process.env.NOVAKAI_ROOT ?? path.join(repoRoot, '.n
 const port = Number(flag('port') ?? process.env.NOVAKAI_PORT ?? 5180);
 const cwd = flag('cwd') ?? repoRoot;
 const staticDir = flag('static') ?? path.join(repoRoot, 'packages', 'shell', 'dist');
+
+if (process.argv[2] === 'doctor') {
+  console.log(JSON.stringify(inspectLegacyDemoPersons(root)));
+  process.exit(0);
+}
 
 function configInputFor(key: string, jsonValue: unknown): ConfigObjectInput {
   if (!jsonValue || typeof jsonValue !== 'object' || Array.isArray(jsonValue)) {
