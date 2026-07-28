@@ -174,7 +174,14 @@ export async function persistArtifactBytes(
   artifactId: ArtifactId,
   bytes: Uint8Array,
 ): Promise<Result<null, ArtifactsError>> {
-  await mkdir(bytesRoot, { recursive: true });
+  try {
+    await mkdir(bytesRoot, { recursive: true });
+  } catch (cause) {
+    return {
+      ok: false,
+      error: byteEffectFailed(artifactId, 'temp-write', cause),
+    };
+  }
   const tempPath = path.join(
     bytesRoot,
     `.${artifactId}.${randomUUID()}.tmp`,
