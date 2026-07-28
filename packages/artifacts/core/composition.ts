@@ -3,6 +3,10 @@ import {
   composeHandle,
   type ScopedStoreHandle,
 } from '@novakai/foundation/dist/contract/index.js';
+import {
+  createArtifactsHost,
+  type ArtifactsHost,
+} from './contract.js';
 
 export interface ArtifactsContext {
   readonly handle: ScopedStoreHandle;
@@ -19,9 +23,9 @@ export interface ComposeArtifactsOptions {
 
 export function composeArtifacts(
   options: ComposeArtifactsOptions,
-): ArtifactsContext {
+): ArtifactsHost {
   const root = path.resolve(options.root);
-  return {
+  const context: ArtifactsContext = {
     handle: composeHandle({
       root,
       legacyRoot: options.legacyRoot,
@@ -33,4 +37,5 @@ export function composeArtifacts(
     root,
     bytesRoot: path.join(root, 'artifacts'),
   };
+  return createArtifactsHost(context);
 }

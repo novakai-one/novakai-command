@@ -11,7 +11,6 @@ import path from 'node:path';
 import { mintClientOpId } from '@novakai/foundation/dist/contract/index.js';
 import {
   composeArtifacts,
-  createArtifactsContract,
 } from '../contract/index.js';
 
 async function runPutAt(point: string) {
@@ -20,10 +19,10 @@ async function runPutAt(point: string) {
   const prior = process.env.NVK_FAILPOINT;
   process.env.NVK_FAILPOINT = point;
   try {
-    const artifacts = createArtifactsContract(composeArtifacts({
+    const artifacts = composeArtifacts({
       root,
       principal: 'person_chris',
-    }));
+    }).operations;
     const clientOpId = mintClientOpId();
     const result = await artifacts.putArtifact({
       bytes: Buffer.from('failpoint payload', 'utf8'),
@@ -156,10 +155,10 @@ test('NVK_FAILPOINT names deterministic before/after record-append failures', as
     assert.equal(byteFiles.length, 1);
     assert.equal(existsSync(path.join(after.root, 'artifacts.jsonl')), true);
 
-    const artifacts = createArtifactsContract(composeArtifacts({
+    const artifacts = composeArtifacts({
       root: after.root,
       principal: 'person_chris',
-    }));
+    }).operations;
     const retried = await artifacts.putArtifact({
       bytes: Buffer.from('failpoint payload', 'utf8'),
       mimeType: 'text/plain',

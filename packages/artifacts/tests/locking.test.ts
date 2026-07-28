@@ -14,7 +14,6 @@ import path from 'node:path';
 import { mintClientOpId } from '@novakai/foundation/dist/contract/index.js';
 import {
   composeArtifacts,
-  createArtifactsContract,
 } from '../contract/index.js';
 
 test('artifact byte durability completes outside the held Foundation global lock', async () => {
@@ -27,11 +26,11 @@ test('artifact byte durability completes outside the held Foundation global lock
       path.join(lockDir, 'owner.json'),
       `${JSON.stringify({ pid: process.pid, token: 'live-test-holder' })}\n`,
     );
-    const artifacts = createArtifactsContract(composeArtifacts({
+    const artifacts = composeArtifacts({
       root,
       principal: 'person_chris',
       lockTimeoutMs: 50,
-    }));
+    }).operations;
     const bytes = Buffer.from('bytes finish before lock contention', 'utf8');
 
     const result = await artifacts.putArtifact({

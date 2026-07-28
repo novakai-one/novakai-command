@@ -17,7 +17,6 @@ import {
 } from '@novakai/foundation/dist/contract/index.js';
 import {
   composeArtifacts,
-  createArtifactsContract,
   type ArtifactId,
 } from '../contract/index.js';
 
@@ -25,10 +24,10 @@ test('putArtifact durably stores exact bytes before metadata and returns metadat
   const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-artifact-put-'));
   const root = path.join(workspace, '.novakai');
   try {
-    const artifacts = createArtifactsContract(composeArtifacts({
+    const artifacts = composeArtifacts({
       root,
       principal: 'person_chris',
-    }));
+    }).operations;
     const bytes = Buffer.from('artifact bytes stay out of jsonl', 'utf8');
 
     const result = await artifacts.putArtifact({
@@ -62,10 +61,10 @@ test('getArtifactMeta retrieves metadata through the public contract', async () 
   const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-artifact-meta-'));
   const root = path.join(workspace, '.novakai');
   try {
-    const artifacts = createArtifactsContract(composeArtifacts({
+    const artifacts = composeArtifacts({
       root,
       principal: 'person_chris',
-    }));
+    }).operations;
     const put = await artifacts.putArtifact({
       bytes: Buffer.from('metadata proof', 'utf8'),
       mimeType: 'text/markdown',
@@ -88,10 +87,10 @@ test('listArtifacts returns artifact metadata without byte payloads', async () =
   const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-artifact-list-'));
   const root = path.join(workspace, '.novakai');
   try {
-    const artifacts = createArtifactsContract(composeArtifacts({
+    const artifacts = composeArtifacts({
       root,
       principal: 'person_chris',
-    }));
+    }).operations;
     const first = await artifacts.putArtifact({
       bytes: Buffer.from('one', 'utf8'),
       mimeType: 'text/plain',
@@ -125,10 +124,11 @@ test('getArtifactBytes retrieves the exact durable byte payload', async () => {
   const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-artifact-bytes-'));
   const root = path.join(workspace, '.novakai');
   try {
-    const artifacts = createArtifactsContract(composeArtifacts({
+    const host = composeArtifacts({
       root,
       principal: 'person_chris',
-    }));
+    });
+    const artifacts = host.operations;
     const bytes = Buffer.from([0, 255, 17, 34, 51, 68]);
     const put = await artifacts.putArtifact({
       bytes,
@@ -137,7 +137,7 @@ test('getArtifactBytes retrieves the exact durable byte payload', async () => {
     assert.equal(put.ok, true);
     if (!put.ok) return;
 
-    const found = await artifacts.getArtifactBytes(put.value.id);
+    const found = await host.http.getArtifactBytes(put.value.id);
 
     assert.equal(found.ok, true);
     if (!found.ok || 'absent' in found.value) return;
@@ -151,10 +151,10 @@ test('putArtifact retry with the same clientOpId returns one durable artifact', 
   const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-artifact-retry-'));
   const root = path.join(workspace, '.novakai');
   try {
-    const artifacts = createArtifactsContract(composeArtifacts({
+    const artifacts = composeArtifacts({
       root,
       principal: 'person_chris',
-    }));
+    }).operations;
     const clientOpId = mintClientOpId();
     const input = {
       bytes: Buffer.from('retry once', 'utf8'),
@@ -182,10 +182,11 @@ test('getArtifactBytes reports typed missing bytes when metadata still exists', 
   const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-artifact-missing-'));
   const root = path.join(workspace, '.novakai');
   try {
-    const artifacts = createArtifactsContract(composeArtifacts({
+    const host = composeArtifacts({
       root,
       principal: 'person_chris',
-    }));
+    });
+    const artifacts = host.operations;
     const put = await artifacts.putArtifact({
       bytes: Buffer.from('will be externally removed', 'utf8'),
       mimeType: 'text/plain',
@@ -194,7 +195,7 @@ test('getArtifactBytes reports typed missing bytes when metadata still exists', 
     if (!put.ok) return;
     unlinkSync(path.join(root, 'artifacts', put.value.id));
 
-    const found = await artifacts.getArtifactBytes(put.value.id);
+    const found = await host.http.getArtifactBytes(put.value.id);
 
     assert.equal(found.ok, false);
     if (found.ok) return;
@@ -214,10 +215,10 @@ test('putArtifact returns a typed error when byte-directory creation fails', asy
   try {
     mkdirSync(root, { recursive: true });
     writeFileSync(path.join(root, 'artifacts'), 'blocks directory creation');
-    const artifacts = createArtifactsContract(composeArtifacts({
+    const artifacts = composeArtifacts({
       root,
       principal: 'person_chris',
-    }));
+    }).operations;
 
     const result = await artifacts.putArtifact({
       bytes: Buffer.from('must return, not throw', 'utf8'),
@@ -240,14 +241,15 @@ test('get and list queries return typed absence and empty-page outcomes', async 
   const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-artifact-absent-'));
   const root = path.join(workspace, '.novakai');
   try {
-    const artifacts = createArtifactsContract(composeArtifacts({
+    const host = composeArtifacts({
       root,
       principal: 'person_chris',
-    }));
+    });
+    const artifacts = host.operations;
     const artifactId = 'artifact_missing' as ArtifactId;
 
     const metadata = await artifacts.getArtifactMeta(artifactId);
-    const bytes = await artifacts.getArtifactBytes(artifactId);
+    const bytes = await host.http.getArtifactBytes(artifactId);
     const listed = await artifacts.listArtifacts();
 
     assert.deepEqual(metadata, {

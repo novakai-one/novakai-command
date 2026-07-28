@@ -14,7 +14,6 @@ import {
 } from '@novakai/foundation/dist/contract/index.js';
 import {
   composeArtifacts,
-  createArtifactsContract,
 } from '../contract/index.js';
 
 test('boot orphan sweep removes final/temp orphans, preserves records, and traces each deletion without bytes', async () => {
@@ -23,10 +22,11 @@ test('boot orphan sweep removes final/temp orphans, preserves records, and trace
   const priorFailpoint = process.env.NVK_FAILPOINT;
   const priorRoot = process.env.NOVAKAI_ROOT;
   try {
-    const artifacts = createArtifactsContract(composeArtifacts({
+    const host = composeArtifacts({
       root,
       principal: 'sys_reconciler',
-    }));
+    });
+    const artifacts = host.operations;
     const recordedBytes = Buffer.from('recorded bytes survive', 'utf8');
     const recorded = await artifacts.putArtifact({
       bytes: recordedBytes,
@@ -50,7 +50,7 @@ test('boot orphan sweep removes final/temp orphans, preserves records, and trace
     assert.equal(finalOrphan.ok, false);
     delete process.env.NVK_FAILPOINT;
 
-    const swept = await artifacts.sweepOrphans();
+    const swept = await host.boot.sweepOrphans();
 
     assert.equal(swept.ok, true);
     if (!swept.ok) return;
@@ -62,7 +62,7 @@ test('boot orphan sweep removes final/temp orphans, preserves records, and trace
       readdirSync(path.join(root, 'artifacts')),
       [recorded.value.id],
     );
-    const stillRecorded = await artifacts.getArtifactBytes(recorded.value.id);
+    const stillRecorded = await host.http.getArtifactBytes(recorded.value.id);
     assert.equal(stillRecorded.ok, true);
     if (!stillRecorded.ok || 'absent' in stillRecorded.value) return;
     assert.deepEqual(Buffer.from(stillRecorded.value), recordedBytes);
@@ -108,10 +108,11 @@ test('NVK_FAILPOINT names deterministic before/after orphan trace-append failure
     const priorFailpoint = process.env.NVK_FAILPOINT;
     const priorRoot = process.env.NOVAKAI_ROOT;
     try {
-      const artifacts = createArtifactsContract(composeArtifacts({
+      const host = composeArtifacts({
         root,
         principal: 'sys_reconciler',
-      }));
+      });
+      const artifacts = host.operations;
       process.env.NVK_FAILPOINT = 'artifacts.put.before-record-append';
       const orphaned = await artifacts.putArtifact({
         bytes: Buffer.from('trace failure orphan bytes', 'utf8'),
@@ -120,7 +121,7 @@ test('NVK_FAILPOINT names deterministic before/after orphan trace-append failure
       assert.equal(orphaned.ok, false);
 
       process.env.NVK_FAILPOINT = expectation.point;
-      const swept = await artifacts.sweepOrphans();
+      const swept = await host.boot.sweepOrphans();
 
       assert.equal(swept.ok, false);
       if (swept.ok) return;
@@ -172,10 +173,11 @@ test('NVK_FAILPOINT names deterministic before/after orphan-delete failures', as
     const priorFailpoint = process.env.NVK_FAILPOINT;
     const priorRoot = process.env.NOVAKAI_ROOT;
     try {
-      const artifacts = createArtifactsContract(composeArtifacts({
+      const host = composeArtifacts({
         root,
         principal: 'sys_reconciler',
-      }));
+      });
+      const artifacts = host.operations;
       process.env.NVK_FAILPOINT = 'artifacts.put.before-record-append';
       const orphaned = await artifacts.putArtifact({
         bytes: Buffer.from('delete failure orphan bytes', 'utf8'),
@@ -184,7 +186,7 @@ test('NVK_FAILPOINT names deterministic before/after orphan-delete failures', as
       assert.equal(orphaned.ok, false);
 
       process.env.NVK_FAILPOINT = expectation.point;
-      const swept = await artifacts.sweepOrphans();
+      const swept = await host.boot.sweepOrphans();
 
       assert.equal(swept.ok, false);
       if (swept.ok) return;

@@ -2,10 +2,11 @@ export * from './schemas.js';
 export * from './errors.js';
 export {
   composeArtifacts,
-  type ArtifactsContext,
   type ComposeArtifactsOptions,
 } from '../core/composition.js';
 export {
-  createArtifactsContract,
-  type ArtifactsContract,
+  type ArtifactBootMaintenance,
+  type ArtifactHttpReader,
+  type ArtifactsHost,
+  type ArtifactsOperations,
 } from '../core/contract.js';

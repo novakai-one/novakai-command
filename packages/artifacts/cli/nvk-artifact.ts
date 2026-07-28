@@ -8,8 +8,7 @@ import {
 } from '@novakai/foundation/dist/contract/index.js';
 import {
   composeArtifacts,
-  createArtifactsContract,
-  type ArtifactsContract,
+  type ArtifactsHost,
 } from '../contract/index.js';
 
 interface ParsedArgs {
@@ -56,11 +55,11 @@ function required(value: unknown, name: string): string {
   return value;
 }
 
-function authenticatedContract(
+function authenticatedHost(
   root: string,
   bearer: string,
   lockTimeoutMs?: number,
-): ArtifactsContract {
+): ArtifactsHost {
   if (!bearer) {
     fail({
       code: 'AuthFailed',
@@ -86,11 +85,11 @@ function authenticatedContract(
       retryable: false,
     });
   }
-  return createArtifactsContract(composeArtifacts({
+  return composeArtifacts({
     root,
     principal: token.principal,
     lockTimeoutMs,
-  }));
+  });
 }
 
 async function main(): Promise<void> {
@@ -104,7 +103,8 @@ async function main(): Promise<void> {
   const lockTimeoutMs = typeof flags['lock-timeout-ms'] === 'string'
     ? Number(flags['lock-timeout-ms'])
     : undefined;
-  const artifacts = authenticatedContract(root, bearer, lockTimeoutMs);
+  const host = authenticatedHost(root, bearer, lockTimeoutMs);
+  const artifacts = host.operations;
 
   if (verb === 'put') {
     const sourcePath = required(positional[0], 'put <path>');
@@ -141,7 +141,7 @@ async function main(): Promise<void> {
     return result.ok ? output(result.value) : fail(result.error);
   }
   if (verb === 'get-bytes') {
-    const result = await artifacts.getArtifactBytes(
+    const result = await host.http.getArtifactBytes(
       required(positional[0], 'get-bytes <artifactId>') as ArtifactId,
     );
     if (!result.ok) return fail(result.error);
