@@ -88,7 +88,17 @@ async function main(): Promise<void> {
   const projects = authenticateProjects(root, bearer, lockTimeoutMs);
   if (verb === 'create') {
     const result = await projects.createProject(
-      { title: required(args.title, 'title') },
+      {
+        title: required(args.title, 'title'),
+        ...(typeof args['permission-level'] === 'string'
+          ? {
+              permissionLevel: args['permission-level'] as
+                | 'private'
+                | 'team'
+                | 'external',
+            }
+          : {}),
+      },
       required(args['client-op-id'], 'client-op-id') as ClientOpId,
     );
     return result.ok ? output(result.value) : fail(result.error);
