@@ -12,6 +12,7 @@ import type {
 } from '@novakai/messaging/dist/public/index.js';
 import type {
   AddMessageToProjectInput,
+  AttachArtifactToProjectInput,
   SpineWorkflow,
 } from '../contract/schemas.js';
 import type { SpineError } from '../contract/errors.js';
@@ -27,6 +28,10 @@ export interface SpineOperations {
     input: AddMessageToProjectInput,
     clientOpId: ClientOpId,
   ): Promise<Result<SpineWorkflow, SpineError | MessagingError>>;
+  attachArtifactToProject(
+    input: AttachArtifactToProjectInput,
+    clientOpId: ClientOpId,
+  ): Promise<Result<SpineWorkflow, SpineError>>;
   getSpineWorkflows(): Promise<Result<Page<SpineWorkflow>, SpineError>>;
 }
 
@@ -45,6 +50,8 @@ export function createSpineHost(ctx: SpineContext): SpineHost {
     operations: {
       addMessageToProject: (input, clientOpId) =>
         workflows.addMessageToProject(ctx, input, clientOpId),
+      attachArtifactToProject: (input, clientOpId) =>
+        workflows.attachArtifactToProject(ctx, input, clientOpId),
       getSpineWorkflows,
     },
     boot: {

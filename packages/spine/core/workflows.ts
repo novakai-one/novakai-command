@@ -9,6 +9,7 @@ import {
 } from '@novakai/foundation/dist/contract/index.js';
 import type {
   AddMessageToProjectInput,
+  AttachArtifactToProjectInput,
   SpineSourceRef,
   SpineStep,
   SpineWorkflow,
@@ -44,7 +45,7 @@ async function appendStep(
   ctx: SpineContext,
   input: {
     workflowId: SpineWorkflowId;
-    workflowType: 'addMessageToProject';
+    workflowType: 'addMessageToProject' | 'attachArtifactToProject';
     originalClientOpId: ClientOpId;
     projectId: ProjectId;
     sourceRef: SpineSourceRef;
@@ -309,6 +310,124 @@ export async function addMessageToProject(
       retryable: attached.error.retryable,
     },
   };
+
+  const attachDone = await appendStep(ctx, {
+    ...common,
+    state: 'done',
+    step: 2,
+    eventIndex: 4,
+    effectOpId: stepEffectOpId(originalClientOpId, 2),
+  }, journalMutationOpId(originalClientOpId, 2, 'done'));
+  if (!attachDone.ok) return attachDone;
+
+  const workflows = await getSpineWorkflows(ctx);
+  if (!workflows.ok) return workflows;
+  const workflow = workflows.value.items.find(
+    (candidate) => candidate.workflowId === workflowId,
+  );
+  if (!workflow) {
+    throw new Error(`workflow ${workflowId} disappeared after durable append`);
+  }
+  return { ok: true, value: workflow };
+}
+
+export async function attachArtifactToProject(
+  ctx: SpineContext,
+  input: AttachArtifactToProjectInput,
+  originalClientOpId: ClientOpId,
+): Promise<Result<SpineWorkflow, SpineError>> {
+  const workflowId = stableId(
+    'spineWorkflow',
+    originalClientOpId,
+  ) as SpineWorkflowId;
+  const sourceRef: SpineSourceRef = {
+    kind: 'artifact',
+    id: input.artifactId,
+  };
+  const common = {
+    workflowId,
+    workflowType: 'attachArtifactToProject' as const,
+    originalClientOpId,
+    projectId: input.projectId,
+    sourceRef,
+    ...(input.note === undefined ? {} : { note: input.note }),
+  };
+
+  const accepted = await appendStep(ctx, {
+    ...common,
+    state: 'accepted',
+    step: 0,
+    eventIndex: 0,
+  }, originalClientOpId);
+  if (!accepted.ok) return accepted;
+
+  const runningQuery = await appendStep(ctx, {
+    ...common,
+    state: 'running',
+    step: 1,
+    eventIndex: 1,
+    effectOpId: stepEffectOpId(originalClientOpId, 1),
+  }, journalMutationOpId(originalClientOpId, 1, 'running'));
+  if (!runningQuery.ok) return runningQuery;
+
+  const artifact = await ctx.artifacts.getArtifactMeta(input.artifactId);
+  if (!artifact.ok) {
+    return {
+      ok: false,
+      error: {
+        code: 'SpineDependencyFailed',
+        message: `Artifacts getArtifactMeta failed: ${artifact.error.message}`,
+        details: {
+          dependency: 'artifacts',
+          operation: 'getArtifactMeta',
+          cause: artifact.error.code,
+        },
+        retryable: artifact.error.retryable,
+      },
+    };
+  }
+
+  const queryDone = await appendStep(ctx, {
+    ...common,
+    state: 'done',
+    step: 1,
+    eventIndex: 2,
+    effectOpId: stepEffectOpId(originalClientOpId, 1),
+  }, journalMutationOpId(originalClientOpId, 1, 'done'));
+  if (!queryDone.ok) return queryDone;
+
+  const runningAttach = await appendStep(ctx, {
+    ...common,
+    state: 'running',
+    step: 2,
+    eventIndex: 3,
+    effectOpId: stepEffectOpId(originalClientOpId, 2),
+  }, journalMutationOpId(originalClientOpId, 2, 'running'));
+  if (!runningAttach.ok) return runningAttach;
+
+  const attached = await ctx.projects.attach(
+    input.projectId,
+    {
+      itemRef: sourceRef,
+      ...(input.note === undefined ? {} : { note: input.note }),
+    },
+    stepEffectOpId(originalClientOpId, 2) as ClientOpId,
+  );
+  if (!attached.ok) {
+    return {
+      ok: false,
+      error: {
+        code: 'SpineDependencyFailed',
+        message: `Projects attach failed: ${attached.error.message}`,
+        details: {
+          dependency: 'projects',
+          operation: 'attach',
+          cause: attached.error.code,
+        },
+        retryable: attached.error.retryable,
+      },
+    };
+  }
 
   const attachDone = await appendStep(ctx, {
     ...common,
