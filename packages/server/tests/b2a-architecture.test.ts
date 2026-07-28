@@ -33,7 +33,7 @@ function typescriptSources(root: string): string[] {
   return found.sort();
 }
 
-test('B2a Server integration consumes capability contracts and delegates every domain write', () => {
+test('B2a Server integration consumes capability contracts', () => {
   const b2aRoot = path.join(serverRoot, 'core', 'b2a');
   const offenders: string[] = [];
   for (const sourcePath of typescriptSources(b2aRoot)) {
@@ -47,13 +47,23 @@ test('B2a Server integration consumes capability contracts and delegates every d
         offenders.push(`${path.relative(serverRoot, sourcePath)} -> ${specifier}`);
       }
     }
-    assert.doesNotMatch(
-      source,
-      /\b(?:createObject|updateObject|appendStep|openStoreDriver|writeFileSync?)\s*\(/,
-      `${path.relative(serverRoot, sourcePath)} must delegate domain writes`,
-    );
   }
   assert.deepEqual(offenders, []);
+});
+
+test('every Server persistence writer is explicitly classified', () => {
+  const writerCall =
+    /\b(?:appendFile|appendFileSync|copyFile|copyFileSync|createObject|createWriteStream|mintToken|recordSystemAction|rename|renameSync|rm|rmSync|truncate|truncateSync|unlink|unlinkSync|updateObject|writeFile|writeFileSync)\s*\(/g;
+  const writers: string[] = [];
+  for (const sourcePath of typescriptSources(serverRoot)) {
+    const source = readFileSync(sourcePath, 'utf8');
+    for (const match of source.matchAll(writerCall)) {
+      writers.push(
+        `${path.relative(serverRoot, sourcePath)} -> ${match[0].slice(0, -1)}`,
+      );
+    }
+  }
+  assert.deepEqual(writers, []);
 });
 
 test('B2a Server WS adapter cannot reach byte or Spine-only attachment doors', () => {
