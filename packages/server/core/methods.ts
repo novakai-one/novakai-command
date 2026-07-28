@@ -394,10 +394,18 @@ export function buildMethods(runtime: ServerRuntime): MethodTable {
       // §13 disposition 2: the SAME clientMessageId is reused on a manual
       // resend, so messaging idempotency prevents a double post.
       const clientMessageId = p.clientOpId ?? `cmsg_${randomUUID()}`;
+      if (c.sessionId) {
+        const marked = await runtime.sessions.markSending(c.sessionId, { clientOpId: clientMessageId });
+        if (!marked.ok) return { ok: false, error: marked.error };
+      }
       const res = await runtime.human.holder.call((s) => (s as { sendMessage(i: object): Promise<unknown> }).sendMessage({
         address, body: { text: p.text }, priority: 'normal', clientMessageId,
       })) as { kind: string; value?: { threadId: string; messageId: string }; error?: { name: string; message: string } };
       if (res.kind !== 'ok' || !res.value) {
+        if (c.sessionId) {
+          const closed = await runtime.sessions.markFailed(c.sessionId, clientMessageId);
+          if (!closed.ok) return { ok: false, error: closed.error };
+        }
         return { ok: false, error: `${res.error?.name}: ${res.error?.message}` };
       }
       const learnedThread = !c.threadId;
@@ -412,17 +420,22 @@ export function buildMethods(runtime: ServerRuntime): MethodTable {
       runtime.broadcast('message', message);
 
       if (c.sessionId) {
-        await runtime.sessions.markSending(c.sessionId, { clientOpId: clientMessageId });
         await runtime.sessions.clearInterruption(c.sessionId);
         const forwarded = await runtime.agents.sendToSession(
           c.sessionId as never, `${contextLine(runtime.focus)}\n${p.text}`,
         );
         if (!forwarded) {
+          const closed = await runtime.sessions.markFailed(c.sessionId, clientMessageId);
+          if (!closed.ok) return { ok: false, error: closed.error };
           runtime.broadcast('message', {
             id: `note_${randomUUID().slice(0, 8)}`, conversationId: p.conversationId,
             senderId: c.personId ?? 'system', text: '⚠️ session is no longer running',
             createdAt: now(),
           });
+          return {
+            ok: false,
+            error: { code: 'ProviderSendFailed', sessionId: c.sessionId, clientOpId: clientMessageId },
+          };
         }
       }
       return { ok: true, message };

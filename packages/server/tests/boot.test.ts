@@ -129,6 +129,60 @@ test('spawn → send → the provider reply lands in the thread, and the session
   await server.close();
 });
 
+test('M3a: send marks its provider turn generating before the messaging post begins', async () => {
+  const dir = root();
+  await mintChris(dir);
+  const server = await boot(dir, { cliPath: fakeKimi().cliPath });
+  const methods = (await import('../core/methods.js')).buildMethods(server.runtime);
+  const spawned = await methods.spawnAgentConversation!({ title: 'Kimi' } as never) as
+    { conversation: { id: string }; sessionId: string };
+  let observedClientOpId: string | null = null;
+  server.runtime.human.holder = {
+    personId: 'person_chris',
+    call: async (operation: (session: unknown) => Promise<unknown>) => operation({
+      async sendMessage() {
+        observedClientOpId = (await server.sessions.get(spawned.sessionId))!.inFlight.clientOpId;
+        return { kind: 'ok', value: { threadId: 'thread_ordering', messageId: 'message_ordering' } };
+      },
+    }),
+  } as never;
+
+  const sent = await methods.sendMessage!({
+    conversationId: spawned.conversation.id, text: 'ordering', clientOpId: 'op_ordering',
+  } as never) as { ok: boolean };
+
+  assert.equal(sent.ok, true);
+  assert.equal(observedClientOpId, 'op_ordering',
+    'a crash during the messaging post must still leave this exact provider turn recoverable');
+  await server.runtime.kimiRuntime.drain(spawned.sessionId);
+  await server.close();
+});
+
+test('M3c: provider send refusal closes only that turn and returns a typed failure', async () => {
+  const dir = root();
+  await mintChris(dir);
+  const server = await boot(dir, { cliPath: fakeKimi().cliPath });
+  try {
+    const methods = (await import('../core/methods.js')).buildMethods(server.runtime);
+    const spawned = await methods.spawnAgentConversation!({ title: 'Kimi' } as never) as
+      { conversation: { id: string }; sessionId: string };
+    server.runtime.agents.sendToSession = async () => false;
+
+    const sent = await methods.sendMessage!({
+      conversationId: spawned.conversation.id, text: 'cannot forward', clientOpId: 'op_refused',
+    } as never) as { ok: boolean; error?: { code?: string; clientOpId?: string } };
+
+    assert.equal(sent.ok, false);
+    assert.deepEqual(sent.error, {
+      code: 'ProviderSendFailed', sessionId: spawned.sessionId, clientOpId: 'op_refused',
+    });
+    const session = await server.sessions.get(spawned.sessionId);
+    assert.equal(session?.inFlight.status, 'none', 'a refused send cannot survive as ReplyInterrupted');
+  } finally {
+    await server.close();
+  }
+});
+
 test('terminateSession appends a session.terminate system action with session and agent refs', async () => {
   const dir = root();
   await mintChris(dir);

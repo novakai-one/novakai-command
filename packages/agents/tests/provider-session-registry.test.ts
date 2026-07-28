@@ -56,6 +56,29 @@ test('send marks inFlight generating; reply completion clears it and counts the 
   assert.notEqual(replied?.lastActivityAt, replied?.spawnedAt);
 });
 
+test('M3b: each reply clears only its matching queued turn, never a later turn', async () => {
+  const dir = root();
+  const registry = openRegistry(dir);
+  await registry.register({
+    sessionId: 'sess_queue', agentId: 'a', provider: 'kimi', cwd: '/repo', model: 'cli-default',
+  });
+
+  await registry.markSending('sess_queue', { clientOpId: 'op_turn_1' });
+  await registry.markSending('sess_queue', { clientOpId: 'op_turn_2' });
+  await registry.markReplied('sess_queue');
+
+  const afterFirstReply = await registry.get('sess_queue');
+  assert.equal(afterFirstReply?.inFlight.status, 'generating');
+  assert.equal(afterFirstReply?.inFlight.clientOpId, 'op_turn_2',
+    'turn one completion leaves turn two in flight');
+  assert.equal(afterFirstReply?.turns, 1);
+
+  await registry.markReplied('sess_queue');
+  const afterSecondReply = await registry.get('sess_queue');
+  assert.equal(afterSecondReply?.inFlight.status, 'none');
+  assert.equal(afterSecondReply?.turns, 2);
+});
+
 test('crash with a reply in flight → ReplyInterrupted on boot, surfaced once, NEVER auto-retried', async () => {
   const dir = root();
   const crashed = openRegistry(dir);

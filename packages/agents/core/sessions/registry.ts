@@ -28,6 +28,22 @@ import type { AgentsContext } from '../composition.js';
 
 export type ProviderSessionStatus = 'running' | 'closed' | 'exited';
 
+export interface InFlightTurn {
+  clientOpId: string;
+  pid: number | null;
+  pidStartedAt: string | null;
+}
+
+export interface InFlightState {
+  /** Compatibility summary of the oldest queued provider turn. */
+  clientOpId: string | null;
+  status: 'generating' | 'none';
+  pid: number | null;
+  pidStartedAt: string | null;
+  /** One durable flag per queued turn, in provider execution order. */
+  queue: InFlightTurn[];
+}
+
 export interface ProviderSessionRecord {
   sessionId: string;
   agentId: string;
@@ -40,7 +56,7 @@ export interface ProviderSessionRecord {
   lastActivityAt: string;
   turns: number;
   status: ProviderSessionStatus;
-  inFlight: { clientOpId: string | null; status: 'generating' | 'none'; pid: number | null; pidStartedAt: string | null };
+  inFlight: InFlightState;
   /** Set by the boot sweep; cleared when the operator resends. */
   lastInterruption: { clientOpId: string; at: string; reason: 'ReplyInterrupted' } | null;
 }
@@ -97,6 +113,8 @@ export interface ProviderSessionRegistry {
   recordModel(sessionId: string, model: string): Promise<Result<ProviderSessionRecord, StoreError>>;
   markSending(sessionId: string, input: { clientOpId: string; pid?: number | null; pidStartedAt?: string | null }): Promise<Result<ProviderSessionRecord, StoreError>>;
   markReplied(sessionId: string): Promise<Result<ProviderSessionRecord, StoreError>>;
+  /** Close one refused/failed provider turn without disturbing later queued turns. */
+  markFailed(sessionId: string, clientOpId: string): Promise<Result<ProviderSessionRecord, StoreError>>;
   /** The operator resent the interrupted message: clear the surfaced flag. */
   clearInterruption(sessionId: string): Promise<Result<ProviderSessionRecord, StoreError>>;
   close(sessionId: string, status: Exclude<ProviderSessionStatus, 'running'>): Promise<Result<ProviderSessionRecord, StoreError>>;
@@ -109,6 +127,35 @@ const mintOpId = (): ClientOpId => `op_${globalThis.crypto.randomUUID()}` as Cli
 
 type StoredShape = ProviderSessionRecord & { id: string; kind: 'providerSession' };
 
+const inFlightFrom = (queue: InFlightTurn[]): InFlightState => {
+  const head = queue[0];
+  return {
+    clientOpId: head?.clientOpId ?? null,
+    status: head ? 'generating' : 'none',
+    pid: head?.pid ?? null,
+    pidStartedAt: head?.pidStartedAt ?? null,
+    queue,
+  };
+};
+
+function normalizeInFlight(raw: Partial<InFlightState> | undefined): InFlightState {
+  if (Array.isArray(raw?.queue)) {
+    return inFlightFrom(raw.queue.map((turn) => ({
+      clientOpId: turn.clientOpId,
+      pid: turn.pid ?? null,
+      pidStartedAt: turn.pidStartedAt ?? null,
+    })));
+  }
+  if (raw?.status === 'generating' && raw.clientOpId) {
+    return inFlightFrom([{
+      clientOpId: raw.clientOpId,
+      pid: raw.pid ?? null,
+      pidStartedAt: raw.pidStartedAt ?? null,
+    }]);
+  }
+  return inFlightFrom([]);
+}
+
 function toRecord(object: Record<string, unknown>): ProviderSessionRecord {
   const raw = object as unknown as StoredShape;
   return {
@@ -117,7 +164,7 @@ function toRecord(object: Record<string, unknown>): ProviderSessionRecord {
     cwd: raw.cwd, model: raw.model,
     spawnedAt: raw.spawnedAt, lastActivityAt: raw.lastActivityAt,
     turns: raw.turns ?? 0, status: raw.status,
-    inFlight: raw.inFlight ?? { clientOpId: null, status: 'none', pid: null, pidStartedAt: null },
+    inFlight: normalizeInFlight(raw.inFlight),
     lastInterruption: raw.lastInterruption ?? null,
   };
 }
@@ -182,7 +229,7 @@ export function createProviderSessionRegistry(
         lastActivityAt: at,
         turns: 0,
         status: 'running' as ProviderSessionStatus,
-        inFlight: { clientOpId: null, status: 'none' as const, pid: null, pidStartedAt: null },
+        inFlight: inFlightFrom([]),
         lastInterruption: null,
       };
       const res = await createObject<Record<string, unknown>>(ctx.handle, record, mintOpId());
@@ -210,19 +257,26 @@ export function createProviderSessionRegistry(
     },
 
     markSending(sessionId, input) {
-      return patch(sessionId, () => ({
-        inFlight: {
-          clientOpId: input.clientOpId, status: 'generating',
+      return patch(sessionId, (record) => ({
+        inFlight: inFlightFrom([...record.inFlight.queue, {
+          clientOpId: input.clientOpId,
           pid: input.pid ?? null, pidStartedAt: input.pidStartedAt ?? null,
-        },
+        }]),
         lastActivityAt: now(),
       }));
     },
 
     markReplied(sessionId) {
       return patch(sessionId, (record) => ({
-        inFlight: { clientOpId: null, status: 'none', pid: null, pidStartedAt: null },
+        inFlight: inFlightFrom(record.inFlight.queue.slice(1)),
         turns: record.turns + 1,
+        lastActivityAt: now(),
+      }));
+    },
+
+    markFailed(sessionId, clientOpId) {
+      return patch(sessionId, (record) => ({
+        inFlight: inFlightFrom(record.inFlight.queue.filter((turn) => turn.clientOpId !== clientOpId)),
         lastActivityAt: now(),
       }));
     },
@@ -234,7 +288,7 @@ export function createProviderSessionRegistry(
     close(sessionId, status) {
       return patch(sessionId, () => ({
         status,
-        inFlight: { clientOpId: null, status: 'none', pid: null, pidStartedAt: null },
+        inFlight: inFlightFrom([]),
         lastActivityAt: now(),
       }));
     },
@@ -243,7 +297,7 @@ export function createProviderSessionRegistry(
       const result: SweepResult = { interrupted: [], killed: [] };
       for (const { record } of await readAll()) {
         if (record.inFlight.status !== 'generating') continue;
-        const { pid, pidStartedAt, clientOpId } = record.inFlight;
+        const { pid, pidStartedAt } = record.inFlight.queue[0]!;
         // §13 disposition 10: only kill a pid we can PROVE is still the child we
         // spawned — a recycled pid belongs to somebody else's process.
         if (pid !== null && probe.alive(pid) && pidStartedAt !== null && probe.startedAt(pid) === pidStartedAt) {
@@ -252,12 +306,16 @@ export function createProviderSessionRegistry(
         }
         const at = now();
         await patch(record.sessionId, () => ({
-          inFlight: { clientOpId: null, status: 'none', pid: null, pidStartedAt: null },
-          lastInterruption: clientOpId ? { clientOpId, at, reason: 'ReplyInterrupted' as const } : null,
+          inFlight: inFlightFrom([]),
+          lastInterruption: record.inFlight.queue[0]
+            ? { clientOpId: record.inFlight.queue[0].clientOpId, at, reason: 'ReplyInterrupted' as const }
+            : null,
           lastActivityAt: at,
         }));
-        if (clientOpId) {
-          result.interrupted.push({ sessionId: record.sessionId, clientOpId, reason: 'ReplyInterrupted' });
+        for (const turn of record.inFlight.queue) {
+          result.interrupted.push({
+            sessionId: record.sessionId, clientOpId: turn.clientOpId, reason: 'ReplyInterrupted',
+          });
         }
       }
       return result;
