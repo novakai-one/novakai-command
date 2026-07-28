@@ -425,6 +425,11 @@ export async function sweepOrphans(
     ) {
       continue;
     }
+    const beforeTrace = injectedFailpoint(
+      orphan.artifactId,
+      'artifacts.sweep.before-trace-append',
+    );
+    if (beforeTrace) return { ok: false, error: beforeTrace };
     const traced = await recordSystemAction(ctx.handle, {
       action: 'artifact.orphan.sweep',
       target: { kind: 'artifact', id: orphan.artifactId },
@@ -432,6 +437,11 @@ export async function sweepOrphans(
       meta: { entryType: orphan.entryType },
     });
     if (!traced.ok) return traced;
+    const afterTrace = injectedFailpoint(
+      orphan.artifactId,
+      'artifacts.sweep.after-trace-append',
+    );
+    if (afterTrace) return { ok: false, error: afterTrace };
     try {
       await unlink(path.join(ctx.bytesRoot, name));
     } catch (cause) {
