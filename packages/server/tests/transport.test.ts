@@ -9,6 +9,10 @@ import path from 'node:path';
 import { WebSocket } from 'ws';
 import { PROTOCOL_VERSION } from '../contract/protocol.js';
 import { startTransport, type RunningTransport } from '../core/transport/server.js';
+import {
+  ABSENT,
+  type ArtifactId,
+} from '@novakai/foundation/dist/contract/index.js';
 
 const root = () => mkdtempSync(path.join(tmpdir(), 'nvk-transport-'));
 
@@ -32,18 +36,22 @@ async function boot(options: { staticDir?: string } = {}): Promise<Harness> {
 async function bootWithArtifacts(): Promise<{
   transport: RunningTransport;
   calls: string[];
-  stored: { bytes: Uint8Array; mimeType: string; clientOpId: string } | null;
+  stored: {
+    bytes: Uint8Array<ArrayBuffer>;
+    mimeType: string;
+    clientOpId: string;
+  } | null;
 }> {
   const dir = root();
   const calls: string[] = [];
   let stored: {
-    bytes: Uint8Array;
+    bytes: Uint8Array<ArrayBuffer>;
     mimeType: string;
     clientOpId: string;
   } | null = null;
   const metadata = {
     kind: 'artifact' as const,
-    id: 'artifact_http',
+    id: 'artifact_http' as ArtifactId,
     schemaVersion: 1 as const,
     createdAt: '2026-07-29T00:00:00.000Z',
     permissionLevel: 'private' as const,
@@ -83,7 +91,7 @@ async function bootWithArtifacts(): Promise<{
                   mimeType: stored.mimeType,
                   byteSize: stored.bytes.byteLength,
                 }
-              : { kind: 'absent' as const },
+              : ABSENT({ kind: 'artifact', id: 'artifact_http' }),
           };
         },
         async listArtifacts() {
@@ -95,7 +103,8 @@ async function bootWithArtifacts(): Promise<{
           calls.push('getArtifactBytes');
           return {
             ok: true,
-            value: stored?.bytes ?? { kind: 'absent' as const },
+            value: stored?.bytes
+              ?? ABSENT({ kind: 'artifact', id: 'artifact_http' }),
           };
         },
       },

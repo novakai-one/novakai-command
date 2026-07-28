@@ -645,6 +645,7 @@ export async function bootServer(options: BootOptions): Promise<BootResult> {
     port: options.port,
     ...(options.staticDir ? { staticDir: options.staticDir } : {}),
     methods,
+    artifacts: b2a.artifacts,
   });
   runtime.broadcast = (name, data) => transport.broadcast(name, data);
   agents.subscribeAgentEvents((event) => transport.broadcast('presence', event));

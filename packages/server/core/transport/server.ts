@@ -18,6 +18,8 @@ import {
   BOOTSTRAP_PATH, PROTOCOL_VERSION, WS_PATH, WS_TOKEN_FILE,
   type BootstrapDocument, type EventFrame, type MethodTable, type RequestFrame, type ResponseFrame,
 } from '../../contract/protocol.js';
+import type { ArtifactsHost } from '../../../artifacts/contract/index.js';
+import { handleArtifactHttpRequest } from '../b2a/artifact-http.js';
 
 /** Red gate 4: not configurable. The server never listens off loopback. */
 const HOST = '127.0.0.1';
@@ -29,6 +31,8 @@ export interface StartTransportOptions {
   /** Directory holding the built shell bundle. Omitted = API only. */
   staticDir?: string;
   methods: MethodTable;
+  /** B2a: the sole network adapter allowed to carry Artifact bytes. */
+  artifacts?: Pick<ArtifactsHost, 'operations' | 'http'>;
   /** Called for every dispatched method (boot tracing / supervision). */
   onDispatch?(method: string): void;
 }
@@ -78,7 +82,22 @@ export async function startTransport(options: StartTransportOptions): Promise<Ru
     createReadStream(file).pipe(res);
   };
 
-  const http: Server = createServer((req: IncomingMessage, res: ServerResponse) => {
+  let http: Server;
+  const serveRequest = async (
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> => {
+    if (
+      options.artifacts
+      && await handleArtifactHttpRequest({
+        request: req,
+        response: res,
+        token,
+        artifacts: options.artifacts,
+      })
+    ) {
+      return;
+    }
     const url = new URL(req.url ?? '/', `http://${HOST}`);
     if (url.pathname === BOOTSTRAP_PATH) {
       const body: BootstrapDocument = {
@@ -102,6 +121,20 @@ export async function startTransport(options: StartTransportOptions): Promise<Ru
     const index = path.join(staticRoot, 'index.html');
     if (existsSync(index)) { serveFile(res, index); return; } // SPA route fallback
     res.writeHead(404).end('not found');
+  };
+  http = createServer((req: IncomingMessage, res: ServerResponse) => {
+    void serveRequest(req, res).catch((cause: unknown) => {
+      if (!res.headersSent) {
+        res.writeHead(500, {
+          'content-type': 'application/json; charset=utf-8',
+          'cache-control': 'no-store',
+        });
+      }
+      res.end(JSON.stringify({
+        code: 'ArtifactHttpFailure',
+        message: cause instanceof Error ? cause.message : String(cause),
+      }));
+    });
   });
 
   // Auth happens at the UPGRADE, so an unauthenticated caller never gets a
