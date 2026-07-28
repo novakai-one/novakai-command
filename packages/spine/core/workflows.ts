@@ -21,6 +21,11 @@ import type {
 import { SpineStep as SpineStepSchema } from '../contract/schemas.js';
 import type { SpineError } from '../contract/errors.js';
 import type { SpineContext } from './composition.js';
+import {
+  effectFailpointName,
+  hitFailpoint,
+  journalFailpointName,
+} from './failpoints.js';
 
 const PAGE_LIMIT = 100;
 
@@ -60,6 +65,12 @@ async function appendStep(
   },
   mutationClientOpId: ClientOpId,
 ): Promise<Result<SpineStep, SpineError>> {
+  const before = hitFailpoint(
+    ctx.configuredFailpoint,
+    journalFailpointName(input.state, input.step, 'before'),
+    input.workflowId,
+  );
+  if (before) return { ok: false, error: before };
   const fact = SpineStepSchema.parse({
     kind: 'spineStep',
     id: stableId('spineStep', mutationClientOpId),
@@ -96,6 +107,12 @@ async function appendStep(
       },
     };
   }
+  const after = hitFailpoint(
+    ctx.configuredFailpoint,
+    journalFailpointName(input.state, input.step, 'after'),
+    input.workflowId,
+  );
+  if (after) return { ok: false, error: after };
   return { ok: true, value: parsed.data };
 }
 
@@ -219,6 +236,19 @@ export async function getSpineWorkflows(
   return { ok: true, value: { items } };
 }
 
+export async function scanWorkflows(
+  ctx: SpineContext,
+): Promise<Result<Page<SpineWorkflow>, SpineError>> {
+  const workflows = await getSpineWorkflows(ctx);
+  if (!workflows.ok) return workflows;
+  return {
+    ok: true,
+    value: {
+      items: workflows.value.items.filter((workflow) => workflow.resumable),
+    },
+  };
+}
+
 async function existingWorkflow(
   ctx: SpineContext,
   expected: {
@@ -268,6 +298,263 @@ async function existingWorkflow(
   return { ok: true, value: existing };
 }
 
+async function workflowById(
+  ctx: SpineContext,
+  workflowId: SpineWorkflowId,
+): Promise<Result<SpineWorkflow, SpineError>> {
+  const workflows = await getSpineWorkflows(ctx);
+  if (!workflows.ok) return workflows;
+  const workflow = workflows.value.items.find(
+    (candidate) => candidate.workflowId === workflowId,
+  );
+  if (!workflow) {
+    return {
+      ok: false,
+      error: {
+        code: 'SpineWorkflowNotFound',
+        message: `Spine workflow "${workflowId}" does not exist`,
+        details: { workflowId },
+        retryable: false,
+      },
+    };
+  }
+  return { ok: true, value: workflow };
+}
+
+function workflowFactInput(
+  workflow: SpineWorkflow,
+  input: {
+    state: 'running' | 'done' | 'failed';
+    step: 1 | 2;
+    eventIndex: number;
+    failure?: SpineFailure;
+  },
+) {
+  return {
+    workflowId: workflow.workflowId,
+    workflowType: workflow.workflowType,
+    originalClientOpId: workflow.originalClientOpId,
+    projectId: workflow.projectId,
+    sourceRef: workflow.sourceRef,
+    ...(workflow.note === undefined ? {} : { note: workflow.note }),
+    ...input,
+    effectOpId: stepEffectOpId(workflow.originalClientOpId, input.step),
+  };
+}
+
+async function runStepOne(
+  ctx: SpineContext,
+  workflow: SpineWorkflow,
+): Promise<Result<null, SpineError>> {
+  const before = hitFailpoint(
+    ctx.configuredFailpoint,
+    effectFailpointName(1, 'before'),
+    workflow.workflowId,
+  );
+  if (before) return { ok: false, error: before };
+
+  let outcome: Result<null, SpineError>;
+  if (workflow.sourceRef.kind === 'message') {
+    const message = await ctx.messaging.getDelivery({
+      messageId: workflow.sourceRef.id,
+    });
+    if (message.kind === 'error') {
+      outcome = message.error.name === 'UnknownMessage'
+        ? {
+            ok: false,
+            error: {
+              code: 'SpineSourceMissing',
+              message: `Message "${workflow.sourceRef.id}" does not exist`,
+              details: { sourceRef: workflow.sourceRef },
+              retryable: false,
+            },
+          }
+        : {
+            ok: false,
+            error: {
+              code: 'SpineDependencyFailed',
+              message: `Messaging getDelivery failed: ${message.error.message}`,
+              details: {
+                dependency: 'messaging',
+                operation: 'getDelivery',
+                cause: message.error.name,
+              },
+              retryable: message.error.retryable,
+            },
+          };
+    } else {
+      outcome = { ok: true, value: null };
+    }
+  } else {
+    const artifact = await ctx.artifacts.getArtifactMeta(
+      workflow.sourceRef.id as never,
+    );
+    if (!artifact.ok) {
+      outcome = {
+        ok: false,
+        error: {
+          code: 'SpineDependencyFailed',
+          message: `Artifacts getArtifactMeta failed: ${artifact.error.message}`,
+          details: {
+            dependency: 'artifacts',
+            operation: 'getArtifactMeta',
+            cause: artifact.error.code,
+          },
+          retryable: artifact.error.retryable,
+        },
+      };
+    } else if (isAbsent(artifact.value)) {
+      outcome = {
+        ok: false,
+        error: {
+          code: 'SpineSourceMissing',
+          message: `Artifact "${workflow.sourceRef.id}" does not exist`,
+          details: { sourceRef: workflow.sourceRef },
+          retryable: false,
+        },
+      };
+    } else {
+      outcome = { ok: true, value: null };
+    }
+  }
+
+  const after = hitFailpoint(
+    ctx.configuredFailpoint,
+    effectFailpointName(1, 'after'),
+    workflow.workflowId,
+  );
+  return after ? { ok: false, error: after } : outcome;
+}
+
+async function runStepTwo(
+  ctx: SpineContext,
+  workflow: SpineWorkflow,
+): Promise<Result<null, SpineError>> {
+  const before = hitFailpoint(
+    ctx.configuredFailpoint,
+    effectFailpointName(2, 'before'),
+    workflow.workflowId,
+  );
+  if (before) return { ok: false, error: before };
+
+  const attached = await ctx.projects.attach(
+    workflow.projectId,
+    {
+      itemRef: workflow.sourceRef,
+      ...(workflow.note === undefined ? {} : { note: workflow.note }),
+    },
+    stepEffectOpId(workflow.originalClientOpId, 2) as ClientOpId,
+  );
+  const outcome: Result<null, SpineError> = attached.ok
+    ? { ok: true, value: null }
+    : {
+        ok: false,
+        error: {
+          code: 'SpineDependencyFailed',
+          message: `Projects attach failed: ${attached.error.message}`,
+          details: {
+            dependency: 'projects',
+            operation: 'attach',
+            cause: attached.error.code,
+          },
+          retryable: attached.error.retryable,
+        },
+      };
+
+  const after = hitFailpoint(
+    ctx.configuredFailpoint,
+    effectFailpointName(2, 'after'),
+    workflow.workflowId,
+  );
+  return after ? { ok: false, error: after } : outcome;
+}
+
+async function appendFailed(
+  ctx: SpineContext,
+  workflow: SpineWorkflow,
+  step: 1 | 2,
+  error: SpineError,
+): Promise<Result<never, SpineError>> {
+  const failure: SpineFailure = {
+    code: error.code,
+    message: error.message,
+    retryable: error.retryable,
+  };
+  const failed = await appendStep(
+    ctx,
+    workflowFactInput(workflow, {
+      state: 'failed',
+      step,
+      eventIndex: step === 1 ? 2 : 4,
+      failure,
+    }),
+    journalMutationOpId(workflow.originalClientOpId, step, 'failed'),
+  );
+  return failed.ok ? { ok: false, error } : failed;
+}
+
+async function resumeWorkflow(
+  ctx: SpineContext,
+  workflow: SpineWorkflow,
+): Promise<Result<SpineWorkflow, SpineError>> {
+  if (workflow.steps[0].state !== 'done') {
+    const running = await appendStep(
+      ctx,
+      workflowFactInput(workflow, {
+        state: 'running',
+        step: 1,
+        eventIndex: 1,
+      }),
+      journalMutationOpId(workflow.originalClientOpId, 1, 'running'),
+    );
+    if (!running.ok) return running;
+    const effect = await runStepOne(ctx, workflow);
+    if (!effect.ok) {
+      if (effect.error.code === 'SpineFailpoint') return effect;
+      return appendFailed(ctx, workflow, 1, effect.error);
+    }
+    const done = await appendStep(
+      ctx,
+      workflowFactInput(workflow, {
+        state: 'done',
+        step: 1,
+        eventIndex: 2,
+      }),
+      journalMutationOpId(workflow.originalClientOpId, 1, 'done'),
+    );
+    if (!done.ok) return done;
+  }
+
+  if (workflow.steps[1].state !== 'done') {
+    const running = await appendStep(
+      ctx,
+      workflowFactInput(workflow, {
+        state: 'running',
+        step: 2,
+        eventIndex: 3,
+      }),
+      journalMutationOpId(workflow.originalClientOpId, 2, 'running'),
+    );
+    if (!running.ok) return running;
+    const effect = await runStepTwo(ctx, workflow);
+    if (!effect.ok) {
+      if (effect.error.code === 'SpineFailpoint') return effect;
+      return appendFailed(ctx, workflow, 2, effect.error);
+    }
+    const done = await appendStep(
+      ctx,
+      workflowFactInput(workflow, {
+        state: 'done',
+        step: 2,
+        eventIndex: 4,
+      }),
+      journalMutationOpId(workflow.originalClientOpId, 2, 'done'),
+    );
+    if (!done.ok) return done;
+  }
+  return workflowById(ctx, workflow.workflowId);
+}
+
 export async function addMessageToProject(
   ctx: SpineContext,
   input: AddMessageToProjectInput,
@@ -300,124 +587,8 @@ export async function addMessageToProject(
     eventIndex: 0,
   }, originalClientOpId);
   if (!accepted.ok) return accepted;
-
-  const runningQuery = await appendStep(ctx, {
-    ...common,
-    state: 'running',
-    step: 1,
-    eventIndex: 1,
-    effectOpId: stepEffectOpId(originalClientOpId, 1),
-  }, journalMutationOpId(originalClientOpId, 1, 'running'));
-  if (!runningQuery.ok) return runningQuery;
-
-  const message = await ctx.messaging.getDelivery({
-    messageId: input.messageId,
-  });
-  if (message.kind === 'error') {
-    const failure = message.error.name === 'UnknownMessage'
-      ? {
-          code: 'SpineSourceMissing',
-          message: `Message "${input.messageId}" does not exist`,
-          retryable: false,
-        }
-      : {
-          code: 'SpineDependencyFailed',
-          message: `Messaging getDelivery failed: ${message.error.message}`,
-          retryable: message.error.retryable,
-        };
-    const failed = await appendStep(ctx, {
-      ...common,
-      state: 'failed',
-      step: 1,
-      eventIndex: 2,
-      effectOpId: stepEffectOpId(originalClientOpId, 1),
-      failure,
-    }, journalMutationOpId(originalClientOpId, 1, 'failed'));
-    if (!failed.ok) return failed;
-    if (message.error.name === 'UnknownMessage') {
-      return {
-        ok: false,
-        error: {
-          code: 'SpineSourceMissing',
-          message: failure.message,
-          details: { sourceRef },
-          retryable: false,
-        },
-      };
-    }
-    return {
-      ok: false,
-      error: {
-        code: 'SpineDependencyFailed',
-        message: `Messaging getDelivery failed: ${message.error.message}`,
-        details: {
-          dependency: 'messaging',
-          operation: 'getDelivery',
-          cause: message.error.name,
-        },
-        retryable: message.error.retryable,
-      },
-    };
-  }
-
-  const queryDone = await appendStep(ctx, {
-    ...common,
-    state: 'done',
-    step: 1,
-    eventIndex: 2,
-    effectOpId: stepEffectOpId(originalClientOpId, 1),
-  }, journalMutationOpId(originalClientOpId, 1, 'done'));
-  if (!queryDone.ok) return queryDone;
-
-  const runningAttach = await appendStep(ctx, {
-    ...common,
-    state: 'running',
-    step: 2,
-    eventIndex: 3,
-    effectOpId: stepEffectOpId(originalClientOpId, 2),
-  }, journalMutationOpId(originalClientOpId, 2, 'running'));
-  if (!runningAttach.ok) return runningAttach;
-
-  const attached = await ctx.projects.attach(
-    input.projectId,
-    {
-      itemRef: sourceRef,
-      ...(input.note === undefined ? {} : { note: input.note }),
-    },
-    stepEffectOpId(originalClientOpId, 2) as ClientOpId,
-  );
-  if (!attached.ok) return {
-    ok: false,
-    error: {
-      code: 'SpineDependencyFailed',
-      message: `Projects attach failed: ${attached.error.message}`,
-      details: {
-        dependency: 'projects',
-        operation: 'attach',
-        cause: attached.error.code,
-      },
-      retryable: attached.error.retryable,
-    },
-  };
-
-  const attachDone = await appendStep(ctx, {
-    ...common,
-    state: 'done',
-    step: 2,
-    eventIndex: 4,
-    effectOpId: stepEffectOpId(originalClientOpId, 2),
-  }, journalMutationOpId(originalClientOpId, 2, 'done'));
-  if (!attachDone.ok) return attachDone;
-
-  const workflows = await getSpineWorkflows(ctx);
-  if (!workflows.ok) return workflows;
-  const workflow = workflows.value.items.find(
-    (candidate) => candidate.workflowId === workflowId,
-  );
-  if (!workflow) {
-    throw new Error(`workflow ${workflowId} disappeared after durable append`);
-  }
-  return { ok: true, value: workflow };
+  const workflow = await workflowById(ctx, workflowId);
+  return workflow.ok ? resumeWorkflow(ctx, workflow.value) : workflow;
 }
 
 export async function attachArtifactToProject(
@@ -452,116 +623,55 @@ export async function attachArtifactToProject(
     eventIndex: 0,
   }, originalClientOpId);
   if (!accepted.ok) return accepted;
+  const workflow = await workflowById(ctx, workflowId);
+  return workflow.ok ? resumeWorkflow(ctx, workflow.value) : workflow;
+}
 
-  const runningQuery = await appendStep(ctx, {
-    ...common,
-    state: 'running',
-    step: 1,
-    eventIndex: 1,
-    effectOpId: stepEffectOpId(originalClientOpId, 1),
-  }, journalMutationOpId(originalClientOpId, 1, 'running'));
-  if (!runningQuery.ok) return runningQuery;
-
-  const artifact = await ctx.artifacts.getArtifactMeta(input.artifactId);
-  if (!artifact.ok) {
+export async function continueWorkflow(
+  ctx: SpineContext,
+  workflowId: SpineWorkflowId,
+  callerClientOpId: ClientOpId,
+): Promise<Result<SpineWorkflow, SpineError>> {
+  if (
+    typeof callerClientOpId !== 'string'
+    || callerClientOpId.length === 0
+  ) {
     return {
       ok: false,
       error: {
-        code: 'SpineDependencyFailed',
-        message: `Artifacts getArtifactMeta failed: ${artifact.error.message}`,
+        code: 'InvalidEnvelope',
+        message: 'continueWorkflow requires clientOpId',
         details: {
-          dependency: 'artifacts',
-          operation: 'getArtifactMeta',
-          cause: artifact.error.code,
+          missingFields: ['clientOpId'],
+          invalidFields: [],
         },
-        retryable: artifact.error.retryable,
-      },
-    };
-  }
-  if (isAbsent(artifact.value)) {
-    const failure = {
-      code: 'SpineSourceMissing',
-      message: `Artifact "${input.artifactId}" does not exist`,
-      retryable: false,
-    };
-    const failed = await appendStep(ctx, {
-      ...common,
-      state: 'failed',
-      step: 1,
-      eventIndex: 2,
-      effectOpId: stepEffectOpId(originalClientOpId, 1),
-      failure,
-    }, journalMutationOpId(originalClientOpId, 1, 'failed'));
-    if (!failed.ok) return failed;
-    return {
-      ok: false,
-      error: {
-        code: 'SpineSourceMissing',
-        message: failure.message,
-        details: { sourceRef },
         retryable: false,
       },
     };
   }
-
-  const queryDone = await appendStep(ctx, {
-    ...common,
-    state: 'done',
-    step: 1,
-    eventIndex: 2,
-    effectOpId: stepEffectOpId(originalClientOpId, 1),
-  }, journalMutationOpId(originalClientOpId, 1, 'done'));
-  if (!queryDone.ok) return queryDone;
-
-  const runningAttach = await appendStep(ctx, {
-    ...common,
-    state: 'running',
-    step: 2,
-    eventIndex: 3,
-    effectOpId: stepEffectOpId(originalClientOpId, 2),
-  }, journalMutationOpId(originalClientOpId, 2, 'running'));
-  if (!runningAttach.ok) return runningAttach;
-
-  const attached = await ctx.projects.attach(
-    input.projectId,
-    {
-      itemRef: sourceRef,
-      ...(input.note === undefined ? {} : { note: input.note }),
-    },
-    stepEffectOpId(originalClientOpId, 2) as ClientOpId,
-  );
-  if (!attached.ok) {
+  const found = await workflowById(ctx, workflowId);
+  if (!found.ok) return found;
+  if (
+    found.value.state === 'done'
+    || found.value.state === 'failed'
+    || found.value.state === 'abandoned'
+  ) {
     return {
       ok: false,
       error: {
-        code: 'SpineDependencyFailed',
-        message: `Projects attach failed: ${attached.error.message}`,
+        code: 'SpineWorkflowNotContinuable',
+        message: `workflow "${workflowId}" is ${found.value.state}`,
         details: {
-          dependency: 'projects',
-          operation: 'attach',
-          cause: attached.error.code,
+          workflowId,
+          state: found.value.state,
         },
-        retryable: attached.error.retryable,
+        retryable: false,
       },
     };
   }
-
-  const attachDone = await appendStep(ctx, {
-    ...common,
-    state: 'done',
-    step: 2,
-    eventIndex: 4,
-    effectOpId: stepEffectOpId(originalClientOpId, 2),
-  }, journalMutationOpId(originalClientOpId, 2, 'done'));
-  if (!attachDone.ok) return attachDone;
-
-  const workflows = await getSpineWorkflows(ctx);
-  if (!workflows.ok) return workflows;
-  const workflow = workflows.value.items.find(
-    (candidate) => candidate.workflowId === workflowId,
-  );
-  if (!workflow) {
-    throw new Error(`workflow ${workflowId} disappeared after durable append`);
-  }
-  return { ok: true, value: workflow };
+  // R3-10: the continuation command has its own caller id, while the
+  // dependency effects deliberately retain the original workflow ids for
+  // crash-safe replay. Journal mutations use deterministic state suffixes.
+  void callerClientOpId;
+  return resumeWorkflow(ctx, found.value);
 }

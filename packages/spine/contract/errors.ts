@@ -38,9 +38,35 @@ export type SpineIdempotencyConflictError = ContractError<
   }
 >;
 
+export type SpineFailpointError = ContractError<
+  'SpineFailpoint',
+  {
+    point: string;
+    workflowId: string;
+  }
+>;
+
+export type SpineWorkflowNotFoundError = ContractError<
+  'SpineWorkflowNotFound',
+  {
+    workflowId: string;
+  }
+>;
+
+export type SpineWorkflowNotContinuableError = ContractError<
+  'SpineWorkflowNotContinuable',
+  {
+    workflowId: string;
+    state: 'done' | 'failed' | 'abandoned';
+  }
+>;
+
 export type SpineError =
   | StoreError
   | StoredSpineStepInvalidError
   | SpineDependencyFailedError
   | SpineSourceMissingError
-  | SpineIdempotencyConflictError;
+  | SpineIdempotencyConflictError
+  | SpineFailpointError
+  | SpineWorkflowNotFoundError
+  | SpineWorkflowNotContinuableError;

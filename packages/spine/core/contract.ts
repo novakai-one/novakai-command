@@ -13,6 +13,7 @@ import type {
   AddMessageToProjectInput,
   AttachArtifactToProjectInput,
   SpineWorkflow,
+  SpineWorkflowId,
 } from '../contract/schemas.js';
 import type { SpineError } from '../contract/errors.js';
 import type { SpineContext } from './composition.js';
@@ -29,6 +30,10 @@ export interface SpineOperations {
   ): Promise<Result<SpineWorkflow, SpineError>>;
   attachArtifactToProject(
     input: AttachArtifactToProjectInput,
+    clientOpId: ClientOpId,
+  ): Promise<Result<SpineWorkflow, SpineError>>;
+  continueWorkflow(
+    workflowId: SpineWorkflowId,
     clientOpId: ClientOpId,
   ): Promise<Result<SpineWorkflow, SpineError>>;
   getSpineWorkflows(): Promise<Result<Page<SpineWorkflow>, SpineError>>;
@@ -51,10 +56,12 @@ export function createSpineHost(ctx: SpineContext): SpineHost {
         workflows.addMessageToProject(ctx, input, clientOpId),
       attachArtifactToProject: (input, clientOpId) =>
         workflows.attachArtifactToProject(ctx, input, clientOpId),
+      continueWorkflow: (workflowId, clientOpId) =>
+        workflows.continueWorkflow(ctx, workflowId, clientOpId),
       getSpineWorkflows,
     },
     boot: {
-      scanWorkflows: getSpineWorkflows,
+      scanWorkflows: () => workflows.scanWorkflows(ctx),
     },
   };
 }
