@@ -2,6 +2,7 @@
 import { readFile } from 'node:fs/promises';
 import {
   authenticate,
+  type ArtifactId,
   type ClientOpId,
 } from '@novakai/foundation/dist/contract/index.js';
 import {
@@ -123,10 +124,16 @@ async function main(): Promise<void> {
     }, required(flags['client-op-id'], '--client-op-id') as ClientOpId);
     return result.ok ? output(result.value) : fail(result.error);
   }
+  if (verb === 'get-meta') {
+    const result = await artifacts.getArtifactMeta(
+      required(positional[0], 'get-meta <artifactId>') as ArtifactId,
+    );
+    return result.ok ? output(result.value) : fail(result.error);
+  }
 
   fail({
     code: 'Usage',
-    message: 'verbs: put',
+    message: 'verbs: put | get-meta',
   }, 2);
 }
 
