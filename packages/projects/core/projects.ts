@@ -15,9 +15,11 @@ import type {
 import type { Page, Result } from '@novakai/foundation/dist/contract/types.js';
 import {
   CreateProjectInput,
+  AttachProjectItemInput,
   ListProjectsFilter,
   Project,
   ProjectItem,
+  type AttachProjectItemInput as AttachProjectItemInputT,
   type CreateProjectInput as CreateProjectInputT,
   type ListProjectsFilter as ListProjectsFilterT,
   type Project as ProjectT,
@@ -157,4 +159,50 @@ export async function getProjectItems(
       ...(listed.value.nextCursor ? { nextCursor: listed.value.nextCursor } : {}),
     },
   };
+}
+
+export async function attach(
+  ctx: ProjectsContext,
+  projectId: ProjectId,
+  input: AttachProjectItemInputT,
+  clientOpId: ClientOpId,
+): Promise<Result<ProjectItemT, StoreError>> {
+  const missingClientOpId = requireClientOpId(clientOpId);
+  if (missingClientOpId) return { ok: false, error: missingClientOpId };
+  const parsed = AttachProjectItemInput.safeParse(input);
+  if (!parsed.success) return { ok: false, error: invalidInput(parsed.error) };
+  const project = await findProject(ctx, projectId);
+  if (!project.ok || isAbsent(project.value)) {
+    return { ok: false, error: projectNotFound(projectId) };
+  }
+  if (project.value.object.status !== 'active') {
+    return {
+      ok: false,
+      error: err(
+        'InvalidEnvelope',
+        `project "${projectId}" is archived and cannot accept items`,
+        {
+          missingFields: [],
+          invalidFields: [{ field: 'status', reason: 'project must be active' }],
+        },
+        false,
+      ),
+    };
+  }
+  const record = ProjectItem.parse({
+    kind: 'projectItem',
+    id: `projectItem_${randomUUID()}`,
+    schemaVersion: 1,
+    createdAt: new Date().toISOString(),
+    permissionLevel: project.value.object.permissionLevel,
+    createdBy: 'overridden-by-foundation',
+    projectId,
+    itemRef: parsed.data.itemRef,
+    ...(parsed.data.note === undefined ? {} : { note: parsed.data.note }),
+    addedBy: ctx.principal,
+    addedVia: 'spine',
+  });
+  const created = await createObject<ProjectItemT>(ctx.handle, record, clientOpId);
+  if (!created.ok) return created;
+  return { ok: true, value: ProjectItem.parse(created.value.object) };
 }

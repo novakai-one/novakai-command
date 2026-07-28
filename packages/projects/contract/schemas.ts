@@ -47,6 +47,12 @@ export const ProjectItem = z.object({
 });
 export type ProjectItem = z.infer<typeof ProjectItem>;
 
+export const AttachProjectItemInput = z.object({
+  itemRef: Ref,
+  note: z.string().min(1).optional(),
+}).strict();
+export type AttachProjectItemInput = z.infer<typeof AttachProjectItemInput>;
+
 export type { ProjectId, ClientOpId } from '@novakai/foundation/dist/contract/brands.js';
 export type { Page, Result } from '@novakai/foundation/dist/contract/types.js';
 export type { StoreError } from '@novakai/foundation/dist/contract/errors.js';

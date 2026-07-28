@@ -6,5 +6,7 @@ export {
 } from '../core/composition.js';
 export {
   createProjectsContract,
+  createSpineProjectsContract,
   type ProjectsContract,
+  type SpineProjectsContract,
 } from '../core/contract.js';

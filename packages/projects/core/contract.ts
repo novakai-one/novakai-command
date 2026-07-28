@@ -5,6 +5,7 @@ import type {
 import type { Page, Result } from '@novakai/foundation/dist/contract/types.js';
 import type { StoreError } from '@novakai/foundation/dist/contract/errors.js';
 import type {
+  AttachProjectItemInput,
   CreateProjectInput,
   ListProjectsFilter,
   Project,
@@ -30,6 +31,14 @@ export interface ProjectsContract {
   ): Promise<Result<Page<ProjectItem>, StoreError>>;
 }
 
+export interface SpineProjectsContract extends ProjectsContract {
+  attach(
+    projectId: ProjectId,
+    input: AttachProjectItemInput,
+    clientOpId: ClientOpId,
+  ): Promise<Result<ProjectItem, StoreError>>;
+}
+
 export function createProjectsContract(ctx: ProjectsContext): ProjectsContract {
   return {
     createProject: (input, clientOpId) => projects.createProject(ctx, input, clientOpId),
@@ -37,5 +46,13 @@ export function createProjectsContract(ctx: ProjectsContext): ProjectsContract {
     archiveProject: (projectId, clientOpId) =>
       projects.archiveProject(ctx, projectId, clientOpId),
     getProjectItems: (projectId) => projects.getProjectItems(ctx, projectId),
+  };
+}
+
+export function createSpineProjectsContract(ctx: ProjectsContext): SpineProjectsContract {
+  return {
+    ...createProjectsContract(ctx),
+    attach: (projectId, input, clientOpId) =>
+      projects.attach(ctx, projectId, input, clientOpId),
   };
 }
