@@ -33,6 +33,8 @@ export interface StartTransportOptions {
   methods: MethodTable;
   /** B2a: the sole network adapter allowed to carry Artifact bytes. */
   artifacts?: Pick<ArtifactsHost, 'operations' | 'http'>;
+  /** Internal Artifact HTTP adapter override for bounded tests. */
+  artifactMaxUploadBytes?: number;
   /** Called for every dispatched method (boot tracing / supervision). */
   onDispatch?(method: string): void;
 }
@@ -94,6 +96,7 @@ export async function startTransport(options: StartTransportOptions): Promise<Ru
         response: res,
         token,
         artifacts: options.artifacts,
+        maxUploadBytes: options.artifactMaxUploadBytes,
       })
     ) {
       return;

@@ -60,7 +60,7 @@ async function bootWithArtifacts(maxUploadBytes?: number): Promise<{
     mimeType: 'application/octet-stream',
     byteSize: 0,
   };
-  const transportOptions = {
+  const transportOptions: Parameters<typeof startTransport>[0] = {
     root: dir,
     port: 0,
     methods: {},
