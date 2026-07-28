@@ -17,6 +17,20 @@ import { registerInspectorScreen } from '../../inspector/registry.js';
 import { MessageInspector } from '../../inspector/MessageInspector.js';
 import './messaging.css';
 
+const sendErrorText = (error: string | { code: string; message?: string }): string =>
+  typeof error === 'string' ? error : `${error.code}${error.message ? `: ${error.message}` : ''}`;
+
+/** The UI resend path: the original key is mandatory and is never re-minted. */
+export function resendFailedMessage(services: ShellServices, message: ChatMessage) {
+  if (!message.clientOpId) {
+    return Promise.resolve({
+      ok: false as const,
+      error: { code: 'MissingClientOpId', message: 'cannot safely resend without the original clientOpId' },
+    });
+  }
+  return services.sendMessage(message.conversationId, message.text, message.clientOpId);
+}
+
 export function MessagingScreen(props: {
   services: ShellServices;
   composerHeight: number;
@@ -98,6 +112,7 @@ export function MessagingScreen(props: {
 
   const send = async (text: string) => {
     if (!selected) return;
+    const clientOpId = mintShellOpId();
     const optimistic: ChatMessage = {
       id: `pending_${Date.now()}`,
       conversationId: selected.id,
@@ -105,14 +120,29 @@ export function MessagingScreen(props: {
       text,
       createdAt: new Date().toISOString(),
       pending: true,
+      clientOpId,
     };
     setMessages((cur) => [...cur, optimistic]); // pending drawn immediately (red gate 5)
-    const res = await services.sendMessage(selected.id, text);
+    const res = await services.sendMessage(selected.id, text, clientOpId);
     // G1: if the broadcast beat the RPC resolve, the real id is already in the
     // list — replacing the pending bubble would duplicate it. Dedup by id.
     setMessages((cur) => dedupeById(cur.map((m) => m.id === optimistic.id
-      ? (res.ok ? { ...res.message, pending: false } : { ...m, pending: false, failed: res.error })
+      ? (res.ok ? { ...res.message, pending: false } : {
+        ...m, pending: false, failed: sendErrorText(res.error),
+      })
       : m)));
+  };
+
+  const resend = async (message: ChatMessage) => {
+    setMessages((cur) => cur.map((item) => item.id === message.id
+      ? { ...item, pending: true, failed: undefined }
+      : item));
+    const res = await resendFailedMessage(services, message);
+    setMessages((cur) => dedupeById(cur.map((item) => item.id === message.id
+      ? (res.ok ? { ...res.message, pending: false } : {
+        ...item, pending: false, failed: sendErrorText(res.error),
+      })
+      : item)));
   };
 
   const onBuiltin = async (name: string, args: string) => {
@@ -166,6 +196,7 @@ export function MessagingScreen(props: {
         focused={true}
         selfId="me"
         onInspectMessage={(m) => props.onInspectMessage(m)}
+        onResendMessage={(m) => void resend(m)}
       />
       <Stack horizontal className="nv-composer-row">
         <FocusChip focus={focus} />

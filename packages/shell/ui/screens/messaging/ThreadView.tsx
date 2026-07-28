@@ -4,7 +4,7 @@
 // Kit-composed ONLY (red gate 3 — tools/lint-kit.mjs enforces).
 import React, { useEffect, useRef } from 'react';
 import type { ChatMessage, ConversationSummary, PresenceSnapshot } from '../../../contract/index.js';
-import { PresenceDot, ScrollArea, Stack, Text, TypingBubble, EmptyState } from '../../kit/index.js';
+import { Button, PresenceDot, ScrollArea, Stack, Text, TypingBubble, EmptyState } from '../../kit/index.js';
 
 export function ThreadView(props: {
   conversation: ConversationSummary | null;
@@ -14,6 +14,7 @@ export function ThreadView(props: {
   selfId: string;
   renderSegments?: { text: string; gapBefore: boolean }[];
   onInspectMessage?(m: ChatMessage): void;
+  onResendMessage?(m: ChatMessage): void;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -53,7 +54,16 @@ export function ThreadView(props: {
                 onClick={props.onInspectMessage ? () => props.onInspectMessage!(m) : undefined}
               >{m.text}</Stack>
               {m.failed
-                ? <Text className="nv-msg__error">{m.failed}</Text>
+                ? (
+                  <Stack horizontal className="nv-msg__failure">
+                    <Text className="nv-msg__error">{m.failed}</Text>
+                    {m.clientOpId && props.onResendMessage && (
+                      <Button className="nv-msg__resend" onClick={() => props.onResendMessage!(m)}>
+                        Resend
+                      </Button>
+                    )}
+                  </Stack>
+                )
                 : <Text className="nv-msg__meta">{m.pending ? 'Sending…' : new Date(m.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</Text>}
             </Stack>
           ))}

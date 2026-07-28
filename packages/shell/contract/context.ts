@@ -38,7 +38,7 @@ let seq = 0;
  * so what travels is what Chris saw when he hit send.
  */
 export function composeHumanMessage(
-  input: { conversationId: string; text: string; id?: string; createdAt?: string },
+  input: { conversationId: string; text: string; id?: string; createdAt?: string; clientOpId?: string },
   snapshot: ScreenContext = getFocus(),
 ): ChatMessage {
   return {
@@ -47,6 +47,7 @@ export function composeHumanMessage(
     senderId: 'me',
     text: input.text,
     createdAt: input.createdAt ?? new Date().toISOString(),
+    ...(input.clientOpId ? { clientOpId: input.clientOpId } : {}),
     context: snapshot,
   };
 }

@@ -48,6 +48,8 @@
 .nv-msg__meta { color: var(--ink-3); font-size: var(--text-3); margin-top: 3px; }
 .nv-msg__bubble[data-pending="true"] { opacity: 0.65; }
 .nv-msg__error { color: var(--danger); font-size: var(--text-3); margin-top: 3px; }
+.nv-msg__failure { align-items: center; gap: 8px; }
+.nv-msg__resend { min-height: 24px; padding: 2px 8px; font-size: var(--text-3); }
 
 /* gap marker: flush-oldest drew a "…" (R3-27) */
 .nv-gap {

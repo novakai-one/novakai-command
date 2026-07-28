@@ -23,7 +23,7 @@ export interface BootstrapDocument {
 
 /** Same-origin bootstrap. The token is never hardcoded anywhere in the app. */
 export async function fetchBootstrap(origin = ''): Promise<BootstrapDocument> {
-  const res = await fetch(`${origin}/bootstrap.json`, { cache: 'no-store' });
+  const res = await fetch(`${origin}/bootstrap.json`, { cache: 'no-store' } as RequestInit);
   if (!res.ok) throw new Error(`bootstrap failed: HTTP ${res.status}`);
   const doc = await res.json() as BootstrapDocument;
   if (doc.protocolVersion !== PROTOCOL_VERSION) {
@@ -82,7 +82,8 @@ export function createServerServices(
       pinConversation: (id, pinned, clientOpId) => call('pinConversation', { id, pinned, clientOpId }),
       archiveConversation: (id, archived, clientOpId) => call('archiveConversation', { id, archived, clientOpId }),
       getMessages: (conversationId) => call('getMessages', { conversationId }),
-      sendMessage: (conversationId, text) => call('sendMessage', { conversationId, text }),
+      sendMessage: (conversationId, text, clientOpId) =>
+        call('sendMessage', { conversationId, text, clientOpId }),
       publishFocus: (focus) => { void call('publishFocus', focus).catch(() => undefined); },
       // The one spawn path (§7): a real provider session on the configured CLI.
       spawnRealKimiAgent: (title) => call('spawnAgentConversation', { title, provider: 'kimi' }),

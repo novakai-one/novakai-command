@@ -70,7 +70,7 @@ describe('services seam (payload inspection end-to-end)', () => {
   it('mock services: a sent message carries the published focus snapshot', async () => {
     const services = createMockServices();
     services.publishFocus!({ app: 'messaging', ref: { kind: 'conversation', id: 'conv_kimi' } });
-    const res = await services.sendMessage('conv_kimi', 'hello');
+    const res = await services.sendMessage('conv_kimi', 'hello', 'op_context_snapshot');
     expect(res.ok).toBe(true);
     if (res.ok) {
       expect(res.message.context).toEqual({ app: 'messaging', ref: { kind: 'conversation', id: 'conv_kimi' } });
@@ -79,7 +79,7 @@ describe('services seam (payload inspection end-to-end)', () => {
 
   it('mock services: default focus (nothing focused) still satisfies the gate', async () => {
     const services = createMockServices();
-    const res = await services.sendMessage('conv_kimi', 'hello');
+    const res = await services.sendMessage('conv_kimi', 'hello', 'op_context_default');
     expect(res.ok).toBe(true);
     if (res.ok) expect(res.message.context).toEqual({ app: 'messaging', ref: 'none' });
   });

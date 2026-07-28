@@ -375,7 +375,9 @@ export function buildMethods(runtime: ServerRuntime): MethodTable {
       if (!threadId) return [];
       const res = await runtime.human.holder.call((s) =>
         (s as { getMessages(i: object): Promise<unknown> }).getMessages({ threadId, limit: 200 })) as
-        { kind: string; value?: { messages: Array<{ id: string; senderId: string; body: { text: string }; createdAt: string }> } };
+        { kind: string; value?: { messages: Array<{
+          id: string; senderId: string; body: { text: string }; createdAt: string; clientMessageId: string;
+        }> } };
       if (res.kind !== 'ok' || !res.value) return [];
       return res.value.messages.map((m) => ({
         id: m.id,
@@ -383,6 +385,7 @@ export function buildMethods(runtime: ServerRuntime): MethodTable {
         senderId: m.senderId === runtime.human.personId ? 'me' : m.senderId,
         text: m.body.text,
         createdAt: m.createdAt,
+        clientOpId: m.clientMessageId,
       }));
     },
 
@@ -415,7 +418,7 @@ export function buildMethods(runtime: ServerRuntime): MethodTable {
 
       const message = {
         id: res.value.messageId, conversationId: p.conversationId, senderId: 'me',
-        text: p.text, createdAt: now(), context: runtime.focus,
+        text: p.text, createdAt: now(), clientOpId: clientMessageId, context: runtime.focus,
       };
       runtime.broadcast('message', message);
 

@@ -69,6 +69,8 @@ export interface ChatMessage {
   createdAt: string;
   pending?: boolean;
   failed?: string;        // typed inline error message (never blank — red gate 5)
+  /** Stable idempotency key; resend reuses it instead of minting a new post. */
+  clientOpId?: string;
   /** S2b (SHL-008): send-time screen context snapshot — present on every
    * human-composed message (red gate 2; {app, ref:'none'} counts). */
   context?: ScreenContext;
@@ -91,7 +93,10 @@ export interface ShellServices {
 
   // messages
   getMessages(conversationId: string): Promise<ChatMessage[]>;
-  sendMessage(conversationId: string, text: string): Promise<{ ok: true; message: ChatMessage } | { ok: false; error: string }>;
+  sendMessage(conversationId: string, text: string, clientOpId: string): Promise<
+    { ok: true; message: ChatMessage }
+    | { ok: false; error: string | { code: string; message?: string; [key: string]: unknown } }
+  >;
   subscribe(events: MessagingEvents): () => void;
 
   // layout + settings (shell-owned kinds)

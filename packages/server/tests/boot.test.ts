@@ -14,6 +14,9 @@ import { composeEngine } from '@novakai/foundation/dist/contract/compose.js';
 import {
   composeAgents, createProviderSessionRegistry,
 } from '../../agents/contract/index.js';
+import {
+  createServerServices, fetchBootstrap,
+} from '../../shell/app/serverClient.js';
 import { fakeKimi } from './fakeKimi.js';
 
 const root = () => mkdtempSync(path.join(tmpdir(), 'nvk-boot-'));
@@ -360,6 +363,34 @@ test('M7: provider turn bookkeeping rejection is logged and never becomes unhand
       'the rejected turn callback is logged loudly');
   } finally {
     console.error = originalError;
+    await server.close();
+  }
+});
+
+test('M5: shell resend reuses clientOpId so messaging stores one human post', async () => {
+  const dir = root();
+  await mintChris(dir);
+  const server = await boot(dir, { cliPath: fakeKimi().cliPath });
+  try {
+    const services = await createServerServices(await fetchBootstrap(server.url), () => undefined);
+    const spawned = await services.spawnRealKimiAgent!('Kimi');
+    assert.equal(spawned.ok, true);
+    if (!spawned.ok) return;
+    const send = services.sendMessage as unknown as (
+      conversationId: string, text: string, clientOpId: string,
+    ) => ReturnType<typeof services.sendMessage>;
+
+    await send(spawned.conversation.id, 'post exactly once', 'op_m5_resend');
+    await send(spawned.conversation.id, 'post exactly once', 'op_m5_resend');
+    await server.runtime.kimiRuntime.drain(
+      (await server.sessions.list())[0]!.sessionId,
+    );
+
+    const messages = await services.getMessages(spawned.conversation.id);
+    assert.equal(messages.filter((message) =>
+      message.senderId === 'me' && message.text === 'post exactly once').length, 1,
+    'messaging deduplicates the resend instead of appending a second human post');
+  } finally {
     await server.close();
   }
 });
