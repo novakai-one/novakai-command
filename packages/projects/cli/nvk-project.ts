@@ -119,6 +119,13 @@ async function main(): Promise<void> {
     );
     return result.ok ? output(result.value) : fail(result.error);
   }
+  if (verb === 'archive') {
+    const result = await projects.archiveProject(
+      required(args.project, 'project') as ProjectId,
+      required(args['client-op-id'], 'client-op-id') as ClientOpId,
+    );
+    return result.ok ? output(result.value) : fail(result.error);
+  }
   output({ authenticated: true, verb });
 }
 
