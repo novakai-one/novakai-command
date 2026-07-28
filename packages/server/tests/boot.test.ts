@@ -11,6 +11,9 @@ import {
   mintClientOpId, queryTraceBound,
 } from '@novakai/foundation/dist/contract/index.js';
 import { composeEngine } from '@novakai/foundation/dist/contract/compose.js';
+import {
+  composeAgents, createProviderSessionRegistry,
+} from '../../agents/contract/index.js';
 import { fakeKimi } from './fakeKimi.js';
 
 const root = () => mkdtempSync(path.join(tmpdir(), 'nvk-boot-'));
@@ -291,6 +294,74 @@ test('a reply in flight when the server dies is surfaced as ReplyInterrupted, ne
     { rows: Array<{ interrupted: string | null }> };
   assert.notEqual(usage.rows[0]!.interrupted, null, 'the interruption is visible to the operator');
   await second.close();
+});
+
+test('M4: a ReplyInterrupted trace failure is logged with its typed error', async () => {
+  const dir = root();
+  await mintChris(dir);
+  const registry = createProviderSessionRegistry(
+    composeAgents({ root: dir, principal: 'person_chris', allowMock: false }),
+    { alive: () => false, startedAt: () => null },
+  );
+  await registry.register({
+    sessionId: 'sess_trace_failure', agentId: 'agent_trace_failure',
+    provider: 'kimi', cwd: dir, model: 'cli-default',
+  });
+  await registry.markSending('sess_trace_failure', { clientOpId: 'op_trace_failure' });
+  const errors: string[] = [];
+  const originalError = console.error;
+  console.error = (...args: unknown[]) => { errors.push(args.map(String).join(' ')); };
+  let server: NovakaiServer | null = null;
+  try {
+    const booted = await bootServer({
+      root: dir, port: 0, cwd: dir, transcripts: false, watchdogDir: dir,
+      processProbe: { alive: () => false, startedAt: () => null },
+      recordSystemAction: async () => ({
+        ok: false,
+        error: {
+          code: 'TraceWriteFailed', message: 'injected interruption trace failure',
+          details: { opId: 'srv_injected', cause: 'disk full' }, retryable: true,
+        },
+      }),
+    } as never);
+    assert.equal(booted.ok, true);
+    if (booted.ok) server = booted.value;
+    assert.ok(errors.some((line) =>
+      line.includes('TraceWriteFailed') && line.includes('injected interruption trace failure')),
+    'the typed trace failure is operator-visible');
+  } finally {
+    console.error = originalError;
+    await server?.close();
+  }
+});
+
+test('M7: provider turn bookkeeping rejection is logged and never becomes unhandled', async () => {
+  const dir = root();
+  await mintChris(dir);
+  const server = await boot(dir, { cliPath: fakeKimi().cliPath });
+  const errors: string[] = [];
+  const originalError = console.error;
+  console.error = (...args: unknown[]) => { errors.push(args.map(String).join(' ')); };
+  try {
+    const methods = (await import('../core/methods.js')).buildMethods(server.runtime);
+    const spawned = await methods.spawnAgentConversation!({ title: 'Kimi' } as never) as
+      { conversation: { id: string }; sessionId: string };
+    server.sessions.recordResumeHandle = async () => {
+      throw new Error('resume-handle write rejected (injected)');
+    };
+
+    await methods.sendMessage!({
+      conversationId: spawned.conversation.id, text: 'turn with failing bookkeeping',
+    } as never);
+    await server.runtime.kimiRuntime.drain(spawned.sessionId);
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.ok(errors.some((line) => line.includes('resume-handle write rejected (injected)')),
+      'the rejected turn callback is logged loudly');
+  } finally {
+    console.error = originalError;
+    await server.close();
+  }
 });
 
 test('booting twice never duplicates the agent definition (G4 lesson, promoted)', async () => {

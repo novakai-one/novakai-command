@@ -75,6 +75,8 @@ export interface SweepResult {
   interrupted: Array<{ sessionId: string; clientOpId: string; reason: 'ReplyInterrupted' }>;
   /** Orphaned child pids we positively identified as ours and reaped. */
   killed: number[];
+  /** Typed store failures encountered while closing interrupted turns. */
+  errors: StoreError[];
 }
 
 /**
@@ -294,7 +296,7 @@ export function createProviderSessionRegistry(
     },
 
     async sweepOrphans() {
-      const result: SweepResult = { interrupted: [], killed: [] };
+      const result: SweepResult = { interrupted: [], killed: [], errors: [] };
       for (const { record } of await readAll()) {
         if (record.inFlight.status !== 'generating') continue;
         const { pid, pidStartedAt } = record.inFlight.queue[0]!;
@@ -305,13 +307,20 @@ export function createProviderSessionRegistry(
           result.killed.push(pid);
         }
         const at = now();
-        await patch(record.sessionId, () => ({
+        const patched = await patch(record.sessionId, () => ({
           inFlight: inFlightFrom([]),
           lastInterruption: record.inFlight.queue[0]
             ? { clientOpId: record.inFlight.queue[0].clientOpId, at, reason: 'ReplyInterrupted' as const }
             : null,
           lastActivityAt: at,
         }));
+        if (!patched.ok) {
+          result.errors.push(patched.error);
+          // TraceIncomplete means the object mutation landed and only its
+          // mutation trace is incomplete; the interrupted turns are still
+          // real. Other failures leave the flags untouched for a later sweep.
+          if (patched.error.code !== 'TraceIncomplete') continue;
+        }
         for (const turn of record.inFlight.queue) {
           result.interrupted.push({
             sessionId: record.sessionId, clientOpId: turn.clientOpId, reason: 'ReplyInterrupted',

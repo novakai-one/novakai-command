@@ -136,6 +136,27 @@ test('the sweep only kills a pid whose START TIME matches the record (§13 dispo
   assert.deepEqual(swept2.killed, [888]);
 });
 
+test('M4: orphan sweep surfaces its registry patch failure as a typed error', async () => {
+  const dir = root();
+  const ctx = composeAgents({ root: dir, principal: 'person_chris', allowMock: false });
+  const registry = createProviderSessionRegistry(ctx, deadProbe);
+  await registry.register({
+    sessionId: 'sess_sweep_failure', agentId: 'a', provider: 'kimi', cwd: '/repo', model: 'cli-default',
+  });
+  await registry.markSending('sess_sweep_failure', { clientOpId: 'op_sweep_failure' });
+  (ctx.handle.__engine as { failNextTraceAppend?: { cause: string } }).failNextTraceAppend = {
+    cause: 'disk full during sweep (injected)',
+  };
+
+  const swept = await registry.sweepOrphans() as Awaited<ReturnType<typeof registry.sweepOrphans>> & {
+    errors: Array<{ code: string; message: string }>;
+  };
+
+  assert.equal(swept.errors.length, 1);
+  assert.equal(swept.errors[0]!.code, 'TraceIncomplete');
+  assert.match(swept.errors[0]!.message, /disk full during sweep/i);
+});
+
 test('closing a session records it as closed and it stops being resumable', async () => {
   const dir = root();
   const registry = openRegistry(dir);

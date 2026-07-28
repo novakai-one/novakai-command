@@ -47,6 +47,8 @@ export interface BootOptions {
   watchdogDir?: string;
   processProbe?: ProcessProbe;
   transcripts?: boolean;
+  /** @internal failure-injection seam for never-silent trace tests. */
+  recordSystemAction?: typeof recordSystemAction;
 }
 
 export interface BootStep {
@@ -186,14 +188,21 @@ export async function bootServer(options: BootOptions): Promise<BootResult> {
   }
   const sessions = createProviderSessionRegistry(agentsCtx, options.processProbe ?? osProcessProbe);
   const sweep = await sessions.sweepOrphans();
+  for (const error of sweep.errors) {
+    console.error(`[nvk-server] orphan sweep registry patch failed (${error.code}): ${error.message}`);
+  }
   note(7, 'sessions', `${holders.principals().length} holder(s); ${(await sessions.resumable()).length} resumable session(s); ${sweep.interrupted.length} interrupted, ${sweep.killed.length} orphan(s) reaped`);
+  const appendSystemAction = options.recordSystemAction ?? recordSystemAction;
   for (const interruption of sweep.interrupted) {
-    await recordSystemAction(persistence.handle, {
+    const traced = await appendSystemAction(persistence.handle, {
       action: 'hook_log',
       target: { kind: 'providerSession', id: interruption.sessionId },
       clientOpId: `op_${randomUUID()}` as never,
       meta: { event: 'ReplyInterrupted', clientOpId: interruption.clientOpId },
-    }).catch(() => undefined);
+    });
+    if (!traced.ok) {
+      console.error(`[nvk-server] ReplyInterrupted trace failed (${traced.error.code}): ${traced.error.message}`);
+    }
   }
 
   // ── 8. supervision (B1a: the watchdog hook) ─────────────────────────────
@@ -235,9 +244,28 @@ export async function bootServer(options: BootOptions): Promise<BootResult> {
   // reply, and a completed turn clears inFlight (DEC-B1-6/§13 disposition 2).
   kimiRuntime.onTurn((record) => {
     void (async () => {
-      if (record.cliSessionId) await sessions.recordResumeHandle(record.key, record.cliSessionId);
-      await sessions.markReplied(record.key);
-    })();
+      const failures: string[] = [];
+      if (record.cliSessionId) {
+        try {
+          const resumed = await sessions.recordResumeHandle(record.key, record.cliSessionId);
+          if (!resumed.ok) failures.push(`recordResumeHandle ${resumed.error.code}: ${resumed.error.message}`);
+        } catch (cause) {
+          failures.push(`recordResumeHandle: ${cause instanceof Error ? cause.message : String(cause)}`);
+        }
+      }
+      try {
+        const replied = await sessions.markReplied(record.key);
+        if (!replied.ok) failures.push(`markReplied ${replied.error.code}: ${replied.error.message}`);
+      } catch (cause) {
+        failures.push(`markReplied: ${cause instanceof Error ? cause.message : String(cause)}`);
+      }
+      if (failures.length > 0) throw new Error(failures.join('; '));
+    })().catch((cause) => {
+      console.error(
+        `[nvk-server] provider turn bookkeeping failed for ${record.key}: `
+        + `${cause instanceof Error ? cause.message : String(cause)}`,
+      );
+    });
   });
 
   // 7b: rebind sessions that outlived the last process — to their provider
