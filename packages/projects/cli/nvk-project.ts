@@ -126,7 +126,10 @@ async function main(): Promise<void> {
     );
     return result.ok ? output(result.value) : fail(result.error);
   }
-  output({ authenticated: true, verb });
+  fail({
+    code: 'Usage',
+    message: 'verbs: create | archive | list | items',
+  });
 }
 
 void main();
