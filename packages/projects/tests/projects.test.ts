@@ -1,6 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
@@ -280,6 +285,41 @@ test('attach replay returns its original result after the Project is archived', 
     });
     const trace = await queryTraceBound(engine, { clientOpId: attachOp });
     assert.equal(trace.items.length, 1);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('Project-dependent operations preserve a Foundation LockBusy read failure', async () => {
+  const root = freshRoot();
+  const lockDir = path.join(root, 'lock');
+  try {
+    mkdirSync(lockDir);
+    writeFileSync(
+      path.join(lockDir, 'owner.json'),
+      `${JSON.stringify({ pid: process.pid, token: 'projects-read-test' })}\n`,
+    );
+    const context = composeProjects({
+      root,
+      principal: 'sys_spine',
+      lockTimeoutMs: 50,
+    });
+    const projects = createProjectsContract(context);
+    const spine = createSpineProjectsContract(context);
+    const projectId = 'proj_unreadable' as never;
+    const results = [
+      await projects.archiveProject(projectId, mintClientOpId()),
+      await projects.getProjectItems(projectId),
+      await spine.attach(
+        projectId,
+        { itemRef: { kind: 'trace', id: 'trace_unreadable' } },
+        mintClientOpId(),
+      ),
+    ];
+    for (const result of results) {
+      assert.equal(result.ok, false);
+      assert.equal(result.ok ? null : result.error.code, 'LockBusy');
+    }
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
