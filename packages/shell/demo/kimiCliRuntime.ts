@@ -40,6 +40,10 @@ interface LogicalSession {
    * invocation; env is merged over process.env. */
   argv: string[];
   env: Record<string, string>;
+  /** OD-C3 RULED: the session's current model alias — applied as `-m` on every
+   * prompt-mode invocation; the CLI persists the switch in the session record
+   * (spike: spec/pass2-s2/OD-C3-spike.md). */
+  model: string | null;
 }
 
 export interface KimiCliRuntime extends TerminalRuntimeLike {
@@ -77,6 +81,7 @@ export function createKimiCliRuntime(options: { cwd: string; cliPath?: string })
   const runPrompt = (rec: LogicalSession, text: string): Promise<void> => new Promise((resolve) => {
     const args = [...rec.argv, '-p', text, '--output-format', 'stream-json'];
     if (rec.cliSessionId) args.push('-S', rec.cliSessionId);
+    if (rec.model) args.push('-m', rec.model); // OD-C3: sticky per CLI session
     const child = spawn(cliPath, args, { cwd: options.cwd, env: { ...process.env, ...rec.env } });
     rec.current = child;
     let buf = '';
@@ -126,8 +131,19 @@ export function createKimiCliRuntime(options: { cwd: string; cliPath?: string })
       sessions.set(agentId, {
         agentId, status: 'running', cliSessionId: null, queue: Promise.resolve(), current: null,
         argv: createOptions.argv ?? [], env: createOptions.env ?? {},
+        model: createOptions.model ?? null,
       });
       return { agentId, status: 'running' as const };
+    },
+
+    // OD-C3 RULED (spike 2026-07-28): the kimi CLI switches an EXISTING
+    // session's model via `-S <id> -m <alias>`; the choice persists in the
+    // CLI's own session record, so setting it here switches the session.
+    setModel(agentId, model) {
+      const rec = sessions.get(agentId);
+      if (!rec || rec.status !== 'running') return false;
+      rec.model = model;
+      return true;
     },
 
     write(agentId, data) {

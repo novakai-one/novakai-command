@@ -94,6 +94,47 @@ describe.skipIf(!hasCli)('kimiCliRuntime (REAL kimi CLI integration)', () => {
   }, 200_000);
 });
 
+describe('kimiCliRuntime — OD-C3 setSessionModel (spike RULED supported)', () => {
+  /** Fake CLI that echoes its argv so tests can see the -m flag. */
+  const argEchoCli = (): string => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'kimi-args-'));
+    const p = path.join(dir, 'kimi');
+    writeFileSync(p, [
+      '#!/bin/sh',
+      'printf \'%s\\n\' "{\\"role\\":\\"assistant\\",\\"content\\":\\"ARGS:$*\\"}"',
+      '',
+    ].join('\n'));
+    chmodSync(p, 0o755);
+    return p;
+  };
+
+  it('setModel applies -m on the NEXT invocation of the session', async () => {
+    const rt = createKimiCliRuntime({ cwd: process.cwd(), cliPath: argEchoCli() });
+    const chunks: string[] = [];
+    rt.onData((_id, d) => chunks.push(d));
+    await rt.create({ agentId: 'm1', cwd: process.cwd() });
+    expect(rt.setModel!('m1', 'kimi-code/kimi-for-coding')).toBe(true);
+    rt.write('m1', 'hello');
+    await vi.waitFor(() => expect(chunks.join('')).toContain('-m kimi-code/kimi-for-coding'), { timeout: 5000 });
+    rt.kill('m1');
+  });
+
+  it('the spawn model is forwarded to the first invocation', async () => {
+    const rt = createKimiCliRuntime({ cwd: process.cwd(), cliPath: argEchoCli() });
+    const chunks: string[] = [];
+    rt.onData((_id, d) => chunks.push(d));
+    await rt.create({ agentId: 'm2', cwd: process.cwd(), model: 'kimi-code/k3-256k' });
+    rt.write('m2', 'hello');
+    await vi.waitFor(() => expect(chunks.join('')).toContain('-m kimi-code/k3-256k'), { timeout: 5000 });
+    rt.kill('m2');
+  });
+
+  it('setModel on an unknown session returns false (never silent)', async () => {
+    const rt = createKimiCliRuntime({ cwd: process.cwd(), cliPath: argEchoCli() });
+    expect(rt.setModel!('nope', 'x')).toBe(false);
+  });
+});
+
 describe('kimiCliRuntime — S2a skills pass-through (§22 ruling 5)', () => {
   it('create argv is prepended to the CLI invocation (kimi native --skills-dir mechanism)', async () => {
     const dir = mkdtempSync(path.join(tmpdir(), 'kimi-args-'));

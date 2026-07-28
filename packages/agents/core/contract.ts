@@ -28,8 +28,15 @@ export interface AgentsContract {
     : Promise<Result<SpawnResponse, AgentsError>>;
   setModel(agentId: AgentId, model: string, clientOpId: ClientOpId)
     : Promise<Result<AgentDefinitionT, AgentsError>>;
+  /**
+   * OD-C3 RULED (spike 2026-07-28): mid-session model switch is SUPPORTED for
+   * providers whose runtime declares a model mechanism (kimi CLI — sticky via
+   * `-S <id> -m <alias>`); providers without one keep typed
+   * UnsupportedOperation. Session-level only — the def's model is untouched
+   * (DEC-C1: editing a def never mutates a running session, and vice versa).
+   */
   setSessionModel(sessionId: SessionId, model: string)
-    : Promise<Result<never, UnsupportedOperationError>>;
+    : Promise<Result<null, AgentsError>>;
   /** S2a: hooks engine v1 — subscriptions live on the agent object (R3-18). */
   attachHook(agentId: AgentId, event: HookEvent, action: HookAction, clientOpId: ClientOpId)
     : Promise<Result<AgentDefinitionT, AgentsError>>;
@@ -139,12 +146,21 @@ export function createAgentsContract(ctx: AgentsContext): AgentsContract {
 
     setModel: (id, model, clientOpId) => registry.setModel(ctx, id, model, clientOpId),
 
-    // OD-C3-pending (R3-15): model-switch is NOT in the ratified mini-contract.
-    async setSessionModel(_sessionId, _model) {
+    // OD-C3 RULED (spike: spec/pass2-s2/OD-C3-spike.md): route to the session's
+    // adapter when it exposes a real model mechanism; otherwise the honest
+    // typed UnsupportedOperation stands (mock, unverified TUI hosts).
+    async setSessionModel(sessionId, model) {
+      const meta = ctx.sessions.get(sessionId);
+      const adapter = meta
+        ? ctx.adapters[meta.provider]
+        : Object.values(ctx.adapters).find((a) => a.attach(sessionId));
+      if (adapter?.setSessionModel?.(sessionId, model)) {
+        return { ok: true, value: null };
+      }
       return {
         ok: false,
         error: unsupportedOperation('setSessionModel',
-          'mid-session model switch is not in the ratified terminal mini-contract', 'OD-C3'),
+          'this provider/runtime declares no mid-session model-switch mechanism', 'OD-C3'),
       };
     },
 

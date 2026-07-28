@@ -119,6 +119,7 @@ export function createTerminalAdapter(
         cwd: opts.cwd ?? defaults.cwd,
         provider,
         agentId: sessionId, // S3: unique per-session runtime key
+        ...(opts.model ? { model: opts.model } : {}), // OD-C3: at-spawn model reaches capable runtimes
         ...skillsSpawnConfig(provider, opts.skills ?? []),
       });
       const rec: SessionRecord = {
@@ -158,6 +159,18 @@ export function createTerminalAdapter(
       clearHeuristic(rec);
       return runtime.kill(rec.runtimeKey);
     },
+    // OD-C3 RULED: expose model-switch ONLY when the runtime declares the
+    // mechanism (kimi CLI). Other runtimes → no method → typed
+    // UnsupportedOperation at the contract layer.
+    ...(runtime.setModel
+      ? {
+        setSessionModel(sessionId: string, model: string): boolean {
+          const rec = sessions.get(sessionId);
+          if (!rec) return false;
+          return runtime.setModel!(rec.runtimeKey, model);
+        },
+      }
+      : {}),
   };
 }
 

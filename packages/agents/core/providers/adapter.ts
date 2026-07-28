@@ -15,8 +15,9 @@ export interface SpawnedSession {
 
 /**
  * The terminal mini-contract (R3-15): spawn / attach / send / events / close.
- * Model-switch is NOT here (OD-C3-pending, R3-15) — setSessionModel lives on
- * the agents contract and returns UnsupportedOperation until the spike lands.
+ * setSessionModel is OPTIONAL (OD-C3 RULED 2026-07-28): present only when the
+ * underlying runtime declares a verified model mechanism (kimi CLI — see
+ * spec/pass2-s2/OD-C3-spike.md); absent → typed UnsupportedOperation.
  */
 export interface TerminalAdapter {
   spawn(agentId: string, provider: ProviderName, opts: SpawnOpts): Promise<SpawnedSession>;
@@ -24,6 +25,8 @@ export interface TerminalAdapter {
   send(sessionId: string, input: string): boolean;
   subscribe(sessionId: string, handler: (e: PtyEvent) => void): Unsubscribe;
   close(sessionId: string): boolean;
+  /** OD-C3: switch the session's model for real. False = unknown session. */
+  setSessionModel?(sessionId: string, model: string): boolean;
 }
 
 /**
@@ -49,10 +52,24 @@ export interface TerminalRuntimeLike {
      */
     argv?: string[];
     env?: Record<string, string>;
+    /**
+     * OD-C3 RULED (spike 2026-07-28, spec/pass2-s2/OD-C3-spike.md): the model
+     * to start the session on. Runtimes with a model mechanism (kimi CLI:
+     * `-m <alias>`) honor it; others ignore it (the at-spawn override then
+     * lives only in the agents record — gap recorded, never hidden).
+     */
+    model?: string;
   }): Promise<{ agentId: string; status: 'running' | 'exited'; terminalPid?: number }>;
   write(agentId: string, data: string): boolean;
   kill(agentId: string): boolean;
   list(): Array<{ agentId: string; status: 'running' | 'exited' }>;
   onData(callback: (agentId: string, data: string) => void): void;
   onExit(callback: (agentId: string, exitCode: number | null) => void): void;
+  /**
+   * OD-C3 RULED: OPTIONAL mid-session model-switch channel. Present only on
+   * runtimes with a verified mechanism (kimi CLI: `-S <id> -m <alias>`, sticky
+   * per session — see the spike report). Absent = the provider cannot switch;
+   * the agents contract surfaces typed UnsupportedOperation.
+   */
+  setModel?(agentId: string, model: string): boolean;
 }
