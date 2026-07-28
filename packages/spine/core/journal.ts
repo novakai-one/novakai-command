@@ -72,6 +72,7 @@ function journalReadFailure(
 function journalWriteFailure(
   operation: 'append' | 'reconcile',
   cause: unknown,
+  retryable = false,
 ): Result<never, SpineError> {
   return {
     ok: false,
@@ -82,7 +83,7 @@ function journalWriteFailure(
         operation,
         cause: causeMessage(cause),
       },
-      retryable: false,
+      retryable,
     },
   };
 }
@@ -144,6 +145,13 @@ export async function appendStep(
     return journalWriteFailure('append', cause);
   }
   if (!created.ok) return created;
+  if (created.value.incomplete) {
+    return journalWriteFailure(
+      'append',
+      `mutation "${mutationClientOpId}" remains untraced`,
+      true,
+    );
+  }
   const parsed = SpineStepSchema.safeParse(created.value.object);
   if (!parsed.success) {
     return {
@@ -290,6 +298,13 @@ export async function reconcileIncompleteSteps(
       return journalWriteFailure('reconcile', cause);
     }
     if (!reconciled.ok) return reconciled;
+    if (reconciled.value.incomplete) {
+      return journalWriteFailure(
+        'reconcile',
+        `mutation "${mutationClientOpId}" remains untraced`,
+        true,
+      );
+    }
   }
   return { ok: true, value: null };
 }
