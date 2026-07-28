@@ -29,6 +29,87 @@ async function boot(options: { staticDir?: string } = {}): Promise<Harness> {
   return { transport, dispatched, dir };
 }
 
+async function bootWithArtifacts(): Promise<{
+  transport: RunningTransport;
+  calls: string[];
+  stored: { bytes: Uint8Array; mimeType: string; clientOpId: string } | null;
+}> {
+  const dir = root();
+  const calls: string[] = [];
+  let stored: {
+    bytes: Uint8Array;
+    mimeType: string;
+    clientOpId: string;
+  } | null = null;
+  const metadata = {
+    kind: 'artifact' as const,
+    id: 'artifact_http',
+    schemaVersion: 1 as const,
+    createdAt: '2026-07-29T00:00:00.000Z',
+    permissionLevel: 'private' as const,
+    createdBy: 'person_chris',
+    mimeType: 'application/octet-stream',
+    byteSize: 0,
+  };
+  const transport = await startTransport({
+    root: dir,
+    port: 0,
+    methods: {},
+    artifacts: {
+      operations: {
+        async putArtifact(input, clientOpId) {
+          calls.push('putArtifact');
+          stored = {
+            bytes: input.bytes,
+            mimeType: input.mimeType,
+            clientOpId,
+          };
+          return {
+            ok: true,
+            value: {
+              ...metadata,
+              mimeType: input.mimeType,
+              byteSize: input.bytes.byteLength,
+            },
+          };
+        },
+        async getArtifactMeta() {
+          calls.push('getArtifactMeta');
+          return {
+            ok: true,
+            value: stored
+              ? {
+                  ...metadata,
+                  mimeType: stored.mimeType,
+                  byteSize: stored.bytes.byteLength,
+                }
+              : { kind: 'absent' as const },
+          };
+        },
+        async listArtifacts() {
+          throw new Error('not used by HTTP');
+        },
+      },
+      http: {
+        async getArtifactBytes() {
+          calls.push('getArtifactBytes');
+          return {
+            ok: true,
+            value: stored?.bytes ?? { kind: 'absent' as const },
+          };
+        },
+      },
+    },
+  });
+  return {
+    transport,
+    calls,
+    get stored() {
+      return stored;
+    },
+  };
+}
+
 const connect = (url: string): Promise<WebSocket> => new Promise((resolve, reject) => {
   const ws = new WebSocket(url);
   ws.once('open', () => resolve(ws));
@@ -149,4 +230,81 @@ test('the server binds loopback only (red gate 4)', async () => {
   const h = await boot();
   assert.equal(h.transport.address, '127.0.0.1');
   await h.transport.close();
+});
+
+test('Artifact HTTP authenticates before access and preserves exact bytes with safe metadata headers', async (t) => {
+  const h = await bootWithArtifacts();
+  t.after(() => h.transport.close());
+  const bytes = Uint8Array.from([0, 255, 128, 64, 13, 10, 1]);
+
+  const missingAuth = await fetch(`${h.transport.url}/artifacts`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/x-novakai-test',
+      'x-novakai-client-op-id': 'op_http_put',
+    },
+    body: bytes,
+  });
+  assert.equal(missingAuth.status, 401);
+  const wrongAuth = await fetch(`${h.transport.url}/artifacts/artifact_http`, {
+    headers: { authorization: 'Bearer wrong' },
+  });
+  assert.equal(wrongAuth.status, 401);
+  assert.deepEqual(h.calls, [], 'auth is checked before any Artifact access');
+
+  const missingOpId = await fetch(`${h.transport.url}/artifacts`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${h.transport.token}` },
+    body: bytes,
+  });
+  assert.equal(missingOpId.status, 400);
+  assert.deepEqual(h.calls, [], 'invalid metadata is rejected before byte storage');
+
+  const posted = await fetch(`${h.transport.url}/artifacts`, {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${h.transport.token}`,
+      'content-type': 'application/x-novakai-test',
+      'x-novakai-client-op-id': 'op_http_put',
+    },
+    body: bytes,
+  });
+  assert.equal(posted.status, 201);
+  const created = await posted.json() as {
+    id: string;
+    byteSize: number;
+    bytes?: unknown;
+  };
+  assert.equal(created.id, 'artifact_http');
+  assert.equal(created.byteSize, bytes.byteLength);
+  assert.equal(created.bytes, undefined, 'POST JSON never echoes bytes');
+  assert.deepEqual(h.stored, {
+    bytes,
+    mimeType: 'application/x-novakai-test',
+    clientOpId: 'op_http_put',
+  });
+
+  h.calls.length = 0;
+  const downloaded = await fetch(
+    `${h.transport.url}/artifacts/artifact_http`,
+    { headers: { authorization: `Bearer ${h.transport.token}` } },
+  );
+  assert.equal(downloaded.status, 200);
+  assert.equal(
+    downloaded.headers.get('content-type'),
+    'application/x-novakai-test',
+  );
+  assert.equal(
+    downloaded.headers.get('content-length'),
+    String(bytes.byteLength),
+  );
+  assert.equal(
+    downloaded.headers.get('x-novakai-artifact-id'),
+    'artifact_http',
+  );
+  assert.deepEqual(
+    new Uint8Array(await downloaded.arrayBuffer()),
+    bytes,
+  );
+  assert.deepEqual(h.calls, ['getArtifactMeta', 'getArtifactBytes']);
 });
