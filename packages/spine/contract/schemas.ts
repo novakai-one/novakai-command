@@ -35,6 +35,12 @@ export const SpineStepState = z.enum([
 ]);
 export type SpineStepState = z.infer<typeof SpineStepState>;
 
+export const SpineCommandKind = z.enum([
+  'continue',
+  'abandon',
+]);
+export type SpineCommandKind = z.infer<typeof SpineCommandKind>;
+
 export const SpineSourceRef = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('message'),
@@ -73,6 +79,7 @@ export const SpineStep = z.object({
   effectOpId: z.string().min(1).optional(),
   failure: SpineFailure.optional(),
   commandClientOpId: z.string().min(1).optional(),
+  commandKind: SpineCommandKind.optional(),
 }).strict();
 export type SpineStep = z.infer<typeof SpineStep>;
 

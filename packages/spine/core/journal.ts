@@ -9,6 +9,7 @@ import {
 } from '@novakai/foundation/dist/contract/index.js';
 import type {
   SpineFailure,
+  SpineCommandKind,
   SpineSourceRef,
   SpineStep,
   SpineWorkflow,
@@ -38,6 +39,7 @@ interface AppendStepInput {
   effectOpId?: string;
   failure?: SpineFailure;
   commandClientOpId?: string;
+  commandKind?: SpineCommandKind;
 }
 
 interface StoredStep {
@@ -451,6 +453,7 @@ export function workflowFactInput(
     eventIndex: number;
     failure?: SpineFailure;
     commandClientOpId?: ClientOpId;
+    commandKind?: SpineCommandKind;
   },
 ): AppendStepInput {
   return {

@@ -7,6 +7,7 @@ import type {
   AddMessageToProjectInput,
   AttachArtifactToProjectInput,
   SpineSourceRef,
+  SpineCommandKind,
   SpineStep,
   SpineWorkflow,
   SpineWorkflowId,
@@ -177,6 +178,7 @@ function findPriorCommand(
 function commandConflict(
   clientOpId: ClientOpId,
   prior: SpineStep,
+  differingFields: string[],
 ): Result<never, SpineError> {
   return {
     ok: false,
@@ -186,11 +188,30 @@ function commandConflict(
       details: {
         clientOpId,
         workflowId: prior.workflowId,
-        differingFields: ['workflowId'],
+        differingFields,
       },
       retryable: false,
     },
   };
+}
+
+function priorCommandDifferences(
+  prior: SpineStep,
+  workflowId: SpineWorkflowId,
+  commandKind: SpineCommandKind,
+): string[] {
+  const differingFields: string[] = [];
+  if (prior.workflowId !== workflowId) {
+    differingFields.push('workflowId');
+  }
+  const durableCommandKind = prior.commandKind
+    ?? (prior.commandClientOpId
+      ? (prior.state === 'abandoned' ? 'abandon' : 'continue')
+      : undefined);
+  if (durableCommandKind !== commandKind) {
+    differingFields.push('commandKind');
+  }
+  return differingFields;
 }
 
 export async function continueWorkflow(
@@ -206,8 +227,17 @@ export async function continueWorkflow(
   if (!facts.ok) return facts;
   const priorCommand = findPriorCommand(facts.value, operationId.value);
   if (priorCommand) {
-    if (priorCommand.workflowId !== workflowId) {
-      return commandConflict(operationId.value, priorCommand);
+    const differingFields = priorCommandDifferences(
+      priorCommand,
+      workflowId,
+      'continue',
+    );
+    if (differingFields.length > 0) {
+      return commandConflict(
+        operationId.value,
+        priorCommand,
+        differingFields,
+      );
     }
     const priorWorkflow = await workflowById(ctx, workflowId);
     if (!priorWorkflow.ok) return priorWorkflow;
@@ -246,6 +276,7 @@ export async function continueWorkflow(
       step: nextStep,
       eventIndex: nextStep === 1 ? 1 : 3,
       commandClientOpId: operationId.value,
+      commandKind: 'continue',
     }),
     operationId.value,
   );
@@ -266,8 +297,17 @@ export async function abandonWorkflow(
   if (!facts.ok) return facts;
   const priorCommand = findPriorCommand(facts.value, operationId.value);
   if (priorCommand) {
-    if (priorCommand.workflowId !== workflowId) {
-      return commandConflict(operationId.value, priorCommand);
+    const differingFields = priorCommandDifferences(
+      priorCommand,
+      workflowId,
+      'abandon',
+    );
+    if (differingFields.length > 0) {
+      return commandConflict(
+        operationId.value,
+        priorCommand,
+        differingFields,
+      );
     }
     return workflowById(ctx, workflowId);
   }
@@ -302,6 +342,7 @@ export async function abandonWorkflow(
     step: found.value.nextStep ?? 0,
     eventIndex: 5,
     commandClientOpId: operationId.value,
+    commandKind: 'abandon',
   }, operationId.value);
   if (!abandoned.ok) return abandoned;
   return workflowById(ctx, workflowId);
