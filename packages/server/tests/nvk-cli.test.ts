@@ -88,6 +88,23 @@ test('nvk dispatches the exact project, artifact, and spine offline command grou
   }
 });
 
+test('nvk rejects inherited object names through the typed Usage path', () => {
+  const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-umbrella-inherited-'));
+  const root = path.join(workspace, '.novakai');
+  try {
+    const inherited = invoke(root, 'unused-token', ['constructor']);
+
+    assert.equal(inherited.status, 2);
+    assert.deepEqual(JSON.parse(inherited.stderr), {
+      code: 'Usage',
+      message: 'usage: nvk project|artifact|spine <verb> [options]',
+    });
+    assert.doesNotMatch(inherited.stderr, /TypeError|ERR_INVALID_ARG_TYPE|\n\s+at /);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
 test('nvk mutations retain contention on the global Foundation lock', () => {
   const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-umbrella-lock-'));
   const root = path.join(workspace, '.novakai');
