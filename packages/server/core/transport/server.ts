@@ -167,6 +167,23 @@ export async function startTransport(options: StartTransportOptions): Promise<Ru
       const reply = (payload: Omit<ResponseFrame, 'v'>): void =>
         ws.send(JSON.stringify({ ...payload, v: PROTOCOL_VERSION } satisfies ResponseFrame));
 
+      if (frame.v !== undefined && frame.v !== PROTOCOL_VERSION) {
+        reply({
+          id: frame.id,
+          error: {
+            code: 'UnsupportedProtocolVersion',
+            message:
+              `protocol version ${String(frame.v)} is not supported; `
+              + `expected ${PROTOCOL_VERSION}`,
+            details: {
+              received: frame.v,
+              supported: [PROTOCOL_VERSION],
+            },
+            retryable: false,
+          },
+        });
+        return;
+      }
       const handler = options.methods[frame.method];
       if (!handler) { reply({ id: frame.id, error: `unknown method ${frame.method}` }); return; }
       options.onDispatch?.(frame.method);

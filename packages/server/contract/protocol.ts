@@ -2,7 +2,9 @@
 //
 // The demo's WS JSON-RPC shape is PROMOTED, not redesigned: the shell's
 // bridgeClient already speaks it. v1 only adds the `v` field, which is additive
-// (A §19 additive-only versioning), so an old client still parses a new frame.
+// (A §19 additive-only versioning): an omitted request `v` is legacy v1, while
+// a present value other than 1 is rejected before method dispatch with a typed
+// UnsupportedProtocolVersion error. Old clients therefore remain compatible.
 //
 //   request   { id, method, params?, v: 1 }
 //   response  { id, result | error, v: 1 }
@@ -27,13 +29,24 @@ export interface RequestFrame {
   id: number;
   method: string;
   params?: unknown;
-  v?: typeof PROTOCOL_VERSION;
+  /** Omitted means legacy v1; any present unsupported value is rejected. */
+  v?: number;
+}
+
+export interface UnsupportedProtocolVersionError {
+  code: 'UnsupportedProtocolVersion';
+  message: string;
+  details: {
+    received: unknown;
+    supported: Array<typeof PROTOCOL_VERSION>;
+  };
+  retryable: false;
 }
 
 export interface ResponseFrame {
   id: number;
   result?: unknown;
-  error?: string;
+  error?: string | UnsupportedProtocolVersionError;
   v: typeof PROTOCOL_VERSION;
 }
 
