@@ -65,7 +65,8 @@ function requireClientOpId(clientOpId: ClientOpId): StoreError | null {
   );
 }
 
-function malformedProject(
+function malformedStoredRecord(
+  kind: 'project' | 'projectItem',
   object: unknown,
   issues: Array<{ path: PropertyKey[]; message: string }>,
 ): StoredRecordInvalidError {
@@ -74,9 +75,9 @@ function malformedProject(
     : '(unknown)';
   return err(
     'StoredRecordInvalid',
-    `stored Project "${id}" does not match the Projects schema`,
+    `stored ${kind} "${id}" does not match the Projects schema`,
     {
-      ref: { kind: 'project', id },
+      ref: { kind, id },
       issues: issues.map((issue) => ({
         field: issue.path.join('.') || '(root)',
         reason: issue.message,
@@ -122,7 +123,10 @@ export async function listProjects(
   for (const { object } of listed.value.items) {
     const project = Project.safeParse(object);
     if (!project.success) {
-      return { ok: false, error: malformedProject(object, project.error.issues) };
+      return {
+        ok: false,
+        error: malformedStoredRecord('project', object, project.error.issues),
+      };
     }
     items.push(project.data as ProjectT);
   }
@@ -149,7 +153,11 @@ async function findProject(
   if (!project.success) {
     return {
       ok: false,
-      error: malformedProject(found.value.object, project.error.issues),
+      error: malformedStoredRecord(
+        'project',
+        found.value.object,
+        project.error.issues,
+      ),
     };
   }
   return {
@@ -208,10 +216,21 @@ export async function getProjectItems(
     { projectId },
   );
   if (!listed.ok) return listed;
+  const items: ProjectItemT[] = [];
+  for (const { object } of listed.value.items) {
+    const item = ProjectItem.safeParse(object);
+    if (!item.success) {
+      return {
+        ok: false,
+        error: malformedStoredRecord('projectItem', object, item.error.issues),
+      };
+    }
+    items.push(item.data);
+  }
   return {
     ok: true,
     value: {
-      items: listed.value.items.map(({ object }) => ProjectItem.parse(object)),
+      items,
       ...(listed.value.nextCursor ? { nextCursor: listed.value.nextCursor } : {}),
     },
   };
