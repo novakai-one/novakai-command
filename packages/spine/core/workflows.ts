@@ -18,7 +18,11 @@ import type {
   SpineWorkflowId,
   SpineWorkflowState,
 } from '../contract/schemas.js';
-import { SpineStep as SpineStepSchema } from '../contract/schemas.js';
+import {
+  AddMessageToProjectInput as AddMessageToProjectInputSchema,
+  AttachArtifactToProjectInput as AttachArtifactToProjectInputSchema,
+  SpineStep as SpineStepSchema,
+} from '../contract/schemas.js';
 import type { SpineError } from '../contract/errors.js';
 import type { SpineContext } from './composition.js';
 import {
@@ -28,6 +32,49 @@ import {
 } from './failpoints.js';
 
 const PAGE_LIMIT = 100;
+
+function invalidWorkflowInput(
+  issues: ReadonlyArray<{
+    path: Array<string | number>;
+    message: string;
+  }>,
+): Result<never, SpineError> {
+  return {
+    ok: false,
+    error: {
+      code: 'InvalidEnvelope',
+      message: 'Spine workflow input is invalid',
+      details: {
+        missingFields: [],
+        invalidFields: issues.map((issue) => ({
+          field: issue.path.join('.') || '(root)',
+          reason: issue.message,
+        })),
+      },
+      retryable: false,
+    },
+  };
+}
+
+function requireClientOpId(
+  clientOpId: ClientOpId,
+): Result<ClientOpId, SpineError> {
+  if (typeof clientOpId === 'string' && clientOpId.length > 0) {
+    return { ok: true, value: clientOpId };
+  }
+  return {
+    ok: false,
+    error: {
+      code: 'InvalidEnvelope',
+      message: 'Spine workflow mutation requires clientOpId',
+      details: {
+        missingFields: ['clientOpId'],
+        invalidFields: [],
+      },
+      retryable: false,
+    },
+  };
+}
 
 function stableId(prefix: 'spineStep' | 'spineWorkflow', value: string): string {
   return `${prefix}_${createHash('sha256').update(value).digest('hex').slice(0, 32)}`;
@@ -605,21 +652,28 @@ export async function addMessageToProject(
   input: AddMessageToProjectInput,
   originalClientOpId: ClientOpId,
 ): Promise<Result<SpineWorkflow, SpineError>> {
+  const operationId = requireClientOpId(originalClientOpId);
+  if (!operationId.ok) return operationId;
+  const parsedInput = AddMessageToProjectInputSchema.safeParse(input);
+  if (!parsedInput.success) {
+    return invalidWorkflowInput(parsedInput.error.issues);
+  }
+  const validInput = parsedInput.data as AddMessageToProjectInput;
   const workflowId = stableId(
     'spineWorkflow',
-    originalClientOpId,
+    operationId.value,
   ) as SpineWorkflowId;
   const sourceRef: SpineSourceRef = {
     kind: 'message',
-    id: input.messageId,
+    id: validInput.messageId,
   };
   const common = {
     workflowId,
     workflowType: 'addMessageToProject' as const,
-    originalClientOpId,
-    projectId: input.projectId,
+    originalClientOpId: operationId.value,
+    projectId: validInput.projectId,
     sourceRef,
-    ...(input.note === undefined ? {} : { note: input.note }),
+    ...(validInput.note === undefined ? {} : { note: validInput.note }),
   };
   const prior = await existingWorkflow(ctx, common);
   if (!prior.ok) return prior;
@@ -630,7 +684,7 @@ export async function addMessageToProject(
     state: 'accepted',
     step: 0,
     eventIndex: 0,
-  }, originalClientOpId);
+  }, operationId.value);
   if (!accepted.ok) return accepted;
   const workflow = await workflowById(ctx, workflowId);
   return workflow.ok ? resumeWorkflow(ctx, workflow.value) : workflow;
@@ -641,21 +695,28 @@ export async function attachArtifactToProject(
   input: AttachArtifactToProjectInput,
   originalClientOpId: ClientOpId,
 ): Promise<Result<SpineWorkflow, SpineError>> {
+  const operationId = requireClientOpId(originalClientOpId);
+  if (!operationId.ok) return operationId;
+  const parsedInput = AttachArtifactToProjectInputSchema.safeParse(input);
+  if (!parsedInput.success) {
+    return invalidWorkflowInput(parsedInput.error.issues);
+  }
+  const validInput = parsedInput.data as AttachArtifactToProjectInput;
   const workflowId = stableId(
     'spineWorkflow',
-    originalClientOpId,
+    operationId.value,
   ) as SpineWorkflowId;
   const sourceRef: SpineSourceRef = {
     kind: 'artifact',
-    id: input.artifactId,
+    id: validInput.artifactId,
   };
   const common = {
     workflowId,
     workflowType: 'attachArtifactToProject' as const,
-    originalClientOpId,
-    projectId: input.projectId,
+    originalClientOpId: operationId.value,
+    projectId: validInput.projectId,
     sourceRef,
-    ...(input.note === undefined ? {} : { note: input.note }),
+    ...(validInput.note === undefined ? {} : { note: validInput.note }),
   };
   const prior = await existingWorkflow(ctx, common);
   if (!prior.ok) return prior;
@@ -666,7 +727,7 @@ export async function attachArtifactToProject(
     state: 'accepted',
     step: 0,
     eventIndex: 0,
-  }, originalClientOpId);
+  }, operationId.value);
   if (!accepted.ok) return accepted;
   const workflow = await workflowById(ctx, workflowId);
   return workflow.ok ? resumeWorkflow(ctx, workflow.value) : workflow;
