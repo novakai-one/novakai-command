@@ -267,6 +267,63 @@ test('the kimi wire.jsonl layout is discovered under any working-dir bucket', as
   assert.equal(row.basis, 'transcript');
   assert.equal(row.inputTokens, 7);
   assert.equal(row.outputTokens, 2);
+  assert.equal(row.usagePartial, true, 'a path-fragment match is counted but never presented as complete');
+});
+
+test('kimi usage aggregates the main and sub-agent wires from the same session', async () => {
+  const home = providerHome();
+  const sessionDir = path.join(
+    home,
+    '.kimi-code',
+    'sessions',
+    'wd_9f2',
+    'session_multi',
+    'agents',
+  );
+  jsonl(path.join(sessionDir, 'main'), 'wire.jsonl', [
+    {
+      time: 1785225000000,
+      type: 'context.append_loop_event',
+      event: {
+        type: 'step.end',
+        usage: {
+          inputOther: 7,
+          output: 2,
+          inputCacheRead: 100,
+          inputCacheCreation: 3,
+        },
+      },
+    },
+  ]);
+  jsonl(path.join(sessionDir, 'researcher'), 'wire.jsonl', [
+    {
+      time: 1785225600000,
+      type: 'context.append_loop_event',
+      event: {
+        type: 'step.end',
+        usage: {
+          inputOther: 11,
+          output: 5,
+          inputCacheRead: 200,
+          inputCacheCreation: 4,
+        },
+      },
+    },
+  ]);
+  const reader = createUsageReader({ home });
+
+  const row = await reader.read({
+    sessionId: 'sess_k_multi',
+    provider: 'kimi',
+    providerConversationId: 'session_multi',
+    cwd: '/tmp',
+  });
+
+  assert.equal(row.inputTokens, 18);
+  assert.equal(row.outputTokens, 7);
+  assert.equal(row.cacheReadTokens, 300);
+  assert.equal(row.cacheCreationTokens, 7);
+  assert.equal(row.usagePartial, false);
 });
 
 test('transcript discovery runs at most once per interval across different sessions', async () => {

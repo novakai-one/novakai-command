@@ -95,6 +95,7 @@ const summarize = (c: Conversation) => ({
 async function persistView(runtime: ServerRuntime, c: Conversation, clientOpId: string): Promise<void> {
   const res = await setConversationView(runtime.persistence.conversationViewDriver, c.id, {
     threadRef: c.threadId ? { kind: 'thread', id: c.threadId } : null,
+    address: c.address,
     pinned: c.pinned,
     archived: c.archived,
     lastActivityAt: c.lastActivityAt,

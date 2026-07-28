@@ -71,7 +71,12 @@ export interface BootStep {
 }
 
 export interface BootError {
-  code: 'ConfigUnavailable' | 'NoHumanPrincipal' | 'MessagingUnavailable' | 'StoreUnavailable';
+  code:
+    | 'ConfigUnavailable'
+    | 'NoHumanPrincipal'
+    | 'MessagingUnavailable'
+    | 'StoreUnavailable'
+    | 'MigrationTraceFailed';
   message: string;
 }
 
@@ -199,7 +204,9 @@ export async function bootServer(options: BootOptions): Promise<BootResult> {
   for (const view of conversationViews) {
     conversations.set(view.id, {
       id: view.id,
-      address: view.threadRef?.kind === 'thread' ? `thread:${view.threadRef.id}` : '',
+      address: view.threadRef?.kind === 'thread'
+        ? `thread:${view.threadRef.id}`
+        : (view.address ?? ''),
       title: view.titleOverride ?? view.id,
       kind: 'agent',
       pinned: view.pinned,
@@ -219,10 +226,11 @@ export async function bootServer(options: BootOptions): Promise<BootResult> {
   }
   const appendSystemAction = options.recordSystemAction ?? recordSystemAction;
 
-  // §9 migration: a persisted view is usable only when its thread still
-  // resolves through messaging and, for a direct thread, every participant is
-  // still a configured principal. Null/empty demo views have no address to
-  // validate at all. They are preserved, archived, and typed as unavailable.
+  // §9 migration: archive only views that are confidently demo-era legacy.
+  // threadRef:null is the valid state before a fresh conversation's first send,
+  // so its persisted address decides whether it remains usable. Older views
+  // with no address are ambiguous and stay untouched: a missed legacy view is
+  // recoverable; a wrongly archived fresh view is data loss.
   const listedThreads = await humanHolder.value.call((session) =>
     (session as { listThreadsForPerson(input: object): Promise<unknown> })
       .listThreadsForPerson({})) as {
@@ -250,10 +258,25 @@ export async function bootServer(options: BootOptions): Promise<BootResult> {
   let archivedLegacy = 0;
   for (const view of conversationViews) {
     const hasThreadRef = view.threadRef?.kind === 'thread';
-    const resolvable = hasThreadRef
-      ? (resolvableThreads?.has(view.threadRef!.id) ?? true)
-      : false;
-    if (resolvable) continue;
+    const address = view.address?.trim();
+    const personId = !hasThreadRef && address?.startsWith('person:')
+      ? address.slice('person:'.length)
+      : null;
+    const addressedThreadId = !hasThreadRef && address?.startsWith('thread:')
+      ? address.slice('thread:'.length)
+      : null;
+    const confidentlyUnresolvable = hasThreadRef
+      ? (resolvableThreads ? !resolvableThreads.has(view.threadRef!.id) : false)
+      : view.address === undefined
+        ? false
+        : personId !== null
+          ? !personId || !configuredPeople.has(personId)
+          : addressedThreadId !== null
+            ? !addressedThreadId || (resolvableThreads
+              ? !resolvableThreads.has(addressedThreadId)
+              : false)
+            : true;
+    if (!confidentlyUnresolvable) continue;
 
     const conversation = conversations.get(view.id)!;
     conversation.archived = true;
@@ -263,36 +286,46 @@ export async function bootServer(options: BootOptions): Promise<BootResult> {
       code: 'ConversationUnavailable',
       message: unavailableMessage,
     };
-    if (view.archived) continue;
-
-    const migrated = await setConversationView(
-      persistence.conversationViewDriver,
-      view.id,
-      { archived: true },
-      `op_${randomUUID()}`,
-    );
-    if (!migrated.ok) {
-      console.error(
-        `[nvk-server] legacy conversation migration failed for ${view.id}: `
-        + `${migrated.error.code} ${migrated.error.message}`,
+    const migrationClientOpId = `op_conversation_migrate_archive_${view.id}`;
+    if (!view.archived) {
+      const migrated = await setConversationView(
+        persistence.conversationViewDriver,
+        view.id,
+        { archived: true },
+        migrationClientOpId,
       );
-      continue;
+      if (!migrated.ok) {
+        console.error(
+          `[nvk-server] legacy conversation migration failed for ${view.id}: `
+          + `${migrated.error.code} ${migrated.error.message}`,
+        );
+        continue;
+      }
+      archivedLegacy += 1;
     }
-    archivedLegacy += 1;
+
     const traced = await appendSystemAction(persistence.handle, {
       action: 'hook_log',
       target: { kind: 'conversationView', id: view.id },
-      clientOpId: `op_${randomUUID()}` as never,
+      clientOpId: `${migrationClientOpId}_trace` as never,
       meta: {
         event: 'conversation.migrate.archive-unresolvable',
+        migrationClientOpId,
         previousThreadRef: view.threadRef,
       },
     });
     if (!traced.ok) {
-      console.error(
-        `[nvk-server] legacy conversation migration trace failed for ${view.id} `
-        + `(${traced.error.code}): ${traced.error.message}`,
-      );
+      transcripts?.stop();
+      await embedded.close();
+      return {
+        ok: false,
+        error: {
+          code: 'MigrationTraceFailed',
+          message:
+            `legacy conversation migration trace failed for ${view.id} `
+            + `(${traced.error.code}): ${traced.error.message}`,
+        },
+      };
     }
   }
   note(

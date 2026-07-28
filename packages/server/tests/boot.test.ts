@@ -63,6 +63,7 @@ async function seedLegacyConversationWithoutThread(dir: string): Promise<void> {
     'conv_legacy_empty_thread',
     {
       threadRef: null,
+      address: '',
       pinned: true,
       archived: false,
       titleOverride: 'Legacy empty thread',
@@ -158,6 +159,102 @@ test('boot archives a legacy thread-less conversation and send refuses it with a
     assert.deepEqual(migration.target, { kind: 'conversationView', id: 'conv_legacy_empty_thread' });
   } finally {
     await server.close();
+  }
+});
+
+test('migration trace failure aborts boot and the next boot recovers exactly one semantic trace', async () => {
+  const dir = root();
+  await mintChris(dir);
+  await seedLegacyConversationWithoutThread(dir);
+
+  const first = await bootServer({
+    root: dir,
+    port: 0,
+    cwd: dir,
+    transcripts: false,
+    watchdogDir: dir,
+    recordSystemAction: async () => ({
+      ok: false,
+      error: {
+        code: 'TraceWriteFailed',
+        message: 'injected migration trace failure',
+        details: { opId: 'sop_injected' as never, cause: 'disk full' },
+        retryable: true,
+      },
+    }),
+  });
+  if (first.ok) {
+    await first.value.close();
+    assert.fail('a missing migration trace must fail boot loudly');
+  }
+  assert.deepEqual(first.error, {
+    code: 'MigrationTraceFailed',
+    message:
+      'legacy conversation migration trace failed for conv_legacy_empty_thread '
+      + '(TraceWriteFailed): injected migration trace failure',
+  });
+
+  const archived = await getConversationView(
+    composeShellPersistence({ root: dir, principal: 'person_chris' }).conversationViewDriver,
+    'conv_legacy_empty_thread',
+  );
+  assert.equal(archived?.archived, true, 'the mutation is recoverable after the trace failure');
+
+  const second = await boot(dir);
+  try {
+    const engine = composeEngine({
+      root: dir,
+      capability: 'server',
+      allowedKinds: ['conversationView'],
+      principal: 'sys_spine',
+    });
+    const traces = await queryTraceBound(engine, {});
+    const migration = traces.items.filter((item) =>
+      item.opKind === 'system.action'
+      && item.action === 'hook_log'
+      && item.target.kind === 'conversationView'
+      && item.target.id === 'conv_legacy_empty_thread'
+      && (item.meta as { event?: string } | undefined)?.event
+        === 'conversation.migrate.archive-unresolvable');
+    assert.equal(migration.length, 1, 'recovery appends one semantic trace, never zero or duplicates');
+  } finally {
+    await second.close();
+  }
+});
+
+test('a fresh unsent conversation survives restart and can send its first message', async () => {
+  const dir = root();
+  await mintChris(dir);
+
+  const first = await boot(dir);
+  const firstMethods = (await import('../core/methods.js')).buildMethods(first.runtime);
+  const created = await firstMethods.createConversation!({
+    title: 'Fresh before restart',
+    kind: 'agent',
+    clientOpId: 'op_create_fresh_before_restart',
+  } as never) as { id: string; archived: boolean };
+  assert.equal(created.archived, false);
+  await first.close();
+
+  const second = await boot(dir);
+  try {
+    const secondMethods = (await import('../core/methods.js')).buildMethods(second.runtime);
+    const conversations = await secondMethods.listConversations!(undefined as never) as
+      Array<{ id: string; archived: boolean }>;
+    assert.equal(
+      conversations.find((conversation) => conversation.id === created.id)?.archived,
+      false,
+      'threadRef:null is the valid pre-first-send state, not proof of demo-era data',
+    );
+
+    const sent = await secondMethods.sendMessage!({
+      conversationId: created.id,
+      text: 'first send after restart',
+      clientOpId: 'op_first_send_after_restart',
+    } as never) as { ok: boolean; error?: unknown };
+    assert.equal(sent.ok, true, JSON.stringify(sent.error));
+  } finally {
+    await second.close();
   }
 });
 

@@ -37,6 +37,39 @@ test('recordSystemAction appends an opKind:"system.action" trace line carrying t
   assert.equal(line.createdBy, 'person_chris'); // principal-derived, never caller payload
 });
 
+test('recordSystemAction retry with the same clientOpId is idempotent', async () => {
+  const root = freshRoot();
+  const handle = composeHandle({
+    root,
+    capability: 'agents',
+    allowedKinds: ['agent', 'skill'],
+    principal: 'person_chris',
+  });
+  const clientOpId = mintClientOpId();
+  const input = {
+    action: 'hook_log' as const,
+    target: { kind: 'agent', id: 'agent_retry' },
+    clientOpId,
+    meta: { event: 'retryable.semantic.action' },
+  };
+
+  assert.equal((await recordSystemAction(handle, input)).ok, true);
+  assert.equal((await recordSystemAction(handle, input)).ok, true);
+  assert.equal((await recordSystemAction(handle, {
+    ...input,
+    meta: { event: 'different.semantic.action' },
+  })).ok, true);
+
+  const engine = composeEngine({
+    root,
+    capability: 'agents',
+    allowedKinds: ['agent', 'skill'],
+    principal: 'person_chris',
+  });
+  const page = await queryTraceBound(engine, { clientOpId });
+  assert.equal(page.items.length, 2, 'only an exact semantic retry is deduplicated');
+});
+
 test('boot reconcile never tombstones system.action traces (no object exists behind the ref)', async () => {
   const root = freshRoot();
   const handle = composeHandle({ root, capability: 'agents', allowedKinds: ['agent', 'skill'], principal: 'person_chris' });

@@ -23,6 +23,16 @@ export interface ProviderTranscriptLookup {
   files: string[];
 }
 
+export interface ProviderTranscriptSelection {
+  /**
+   * Alternative evidence groups. The reader chooses the newest group, then
+   * sums every file in it. Single-file providers expose one file per group.
+   */
+  fileGroups: string[][];
+  /** True when only a safe subset could be attributed to the requested session. */
+  usagePartial: boolean;
+}
+
 const ZERO = {
   inputTokens: 0,
   outputTokens: 0,
@@ -72,14 +82,14 @@ function ownedBy(file: string, provider: Exclude<ProviderName, 'mock'>, transcri
 }
 
 /**
- * Return every transcript candidate for a provider conversation. The consumer
- * chooses the newest readable candidate, so a stale custody copy cannot mask a
- * newer provider original while transcript watching is disabled.
+ * Return grouped transcript candidates for a provider conversation. Each
+ * group is one independently copied session tree; keeping copies separate
+ * prevents a custody copy and provider original from being double-counted.
  */
 export function findProviderTranscriptCandidates(
   provider: ProviderName,
   lookup: ProviderTranscriptLookup,
-): string[] {
+): ProviderTranscriptSelection {
   const { conversationId, cwd, home, transcriptRoot, files } = lookup;
   if (provider === 'claude') {
     const exact = path.join(
@@ -89,23 +99,54 @@ export function findProviderTranscriptCandidates(
       sanitizeProviderCwd(cwd),
       `${conversationId}.jsonl`,
     );
-    return files.filter((file) =>
-      file === exact
-      || (ownedBy(file, 'claude', transcriptRoot)
-        && path.basename(file) === `${conversationId}.jsonl`));
+    return {
+      fileGroups: files.filter((file) =>
+        file === exact
+        || (ownedBy(file, 'claude', transcriptRoot)
+          && path.basename(file) === `${conversationId}.jsonl`))
+        .map((file) => [file]),
+      usagePartial: false,
+    };
   }
   if (provider === 'codex') {
-    return files.filter((file) =>
-      ownedBy(file, 'codex', transcriptRoot)
-      && path.basename(file).includes(conversationId));
+    return {
+      fileGroups: files.filter((file) =>
+        ownedBy(file, 'codex', transcriptRoot)
+        && path.basename(file).includes(conversationId))
+        .map((file) => [file]),
+      usagePartial: false,
+    };
   }
   if (provider === 'kimi') {
-    return files.filter((file) =>
+    const wires = files.filter((file) =>
       ownedBy(file, 'kimi', transcriptRoot)
-      && file.endsWith(path.join('agents', 'main', 'wire.jsonl'))
+      && path.basename(file) === 'wire.jsonl'
+      && path.basename(path.dirname(path.dirname(file))) === 'agents');
+    const sessionDirOf = (file: string): string =>
+      path.dirname(path.dirname(path.dirname(file)));
+    const proven = wires.filter((file) =>
+      path.basename(sessionDirOf(file)) === conversationId);
+    if (proven.length > 0) {
+      const bySessionTree = new Map<string, string[]>();
+      for (const file of proven) {
+        const key = sessionDirOf(file);
+        bySessionTree.set(key, [...(bySessionTree.get(key) ?? []), file]);
+      }
+      return { fileGroups: [...bySessionTree.values()], usagePartial: false };
+    }
+
+    // Compatibility fallback for older handles that only matched a path
+    // fragment. A main wire is safe to report, but sub-agent attribution is
+    // not provable, so the result is explicitly partial.
+    const mainOnly = wires.filter((file) =>
+      path.basename(path.dirname(file)) === 'main'
       && file.includes(conversationId));
+    return {
+      fileGroups: mainOnly.map((file) => [file]),
+      usagePartial: mainOnly.length > 0,
+    };
   }
-  return [];
+  return { fileGroups: [], usagePartial: false };
 }
 
 function parseCodex(lines: Array<Record<string, unknown>>): ProviderTranscriptUsage {

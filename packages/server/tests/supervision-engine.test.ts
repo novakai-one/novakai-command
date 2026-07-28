@@ -89,6 +89,7 @@ function harness(options: {
                 cacheCreationTokens: usage.cacheCreationTokens,
                 source: usage.source,
                 measuredAt: usage.measuredAt,
+                ...(usage.usagePartial ? { usagePartial: true as const } : {}),
               },
               usageUnavailable: null,
             }
