@@ -6,6 +6,7 @@ import path from 'node:path';
 import {
   composeHandle,
   createObject,
+  listObjects,
   mintClientOpId,
   queryTraceBound,
   recordSystemAction,
@@ -39,6 +40,51 @@ test('Foundation registers the Artifacts capability and its owned artifact kind'
 
     assert.equal(artifact.ok, true);
     assert.equal(existsSync(path.join(root, 'artifacts.jsonl')), true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('Foundation dataRoot separates JSONL placement and engine caches', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'nvk-artifacts-data-root-'));
+  const firstDataRoot = path.join(root, 'first-data');
+  const secondDataRoot = path.join(root, 'second-data');
+  try {
+    const first = composeHandle({
+      root,
+      dataRoot: firstDataRoot,
+      capability: 'artifacts',
+      allowedKinds: ['artifact'],
+      principal: 'person_chris',
+    });
+    const created = await createObject(first, {
+      kind: 'artifact',
+      id: 'artifact_data_root',
+      schemaVersion: 1,
+      createdAt: new Date().toISOString(),
+      permissionLevel: 'team',
+      createdBy: 'caller_is_not_trusted',
+      mimeType: 'text/plain',
+      byteSize: 4,
+    }, mintClientOpId());
+    assert.equal(created.ok, true);
+
+    const second = composeHandle({
+      root,
+      dataRoot: secondDataRoot,
+      capability: 'artifacts',
+      allowedKinds: ['artifact'],
+      principal: 'person_chris',
+    });
+    const isolated = await listObjects(second, 'artifact');
+
+    assert.equal(isolated.ok, true);
+    if (!isolated.ok) return;
+    assert.deepEqual(isolated.value.items, []);
+    assert.equal(existsSync(path.join(firstDataRoot, 'artifacts.jsonl')), true);
+    assert.equal(existsSync(path.join(firstDataRoot, 'traces.jsonl')), true);
+    assert.equal(existsSync(path.join(root, 'artifacts.jsonl')), false);
+    assert.equal(existsSync(path.join(root, 'traces.jsonl')), false);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
