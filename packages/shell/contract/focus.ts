@@ -33,7 +33,9 @@ export function subscribeFocus(l: (f: FocusState) => void): () => void {
 // ── invokeAction: routed to the owning capability's registered handler ──────
 // S2b (§22 ruling 10): handlers are per (kind, actionId) — an unknown actionId
 // on a known kind AND an absent owner both yield typed ActionNotFound.
-type ActionHandler = (ref: Ref, actionId: string) => Promise<unknown>;
+// M9/DEC-S2-12: clientOpId is REQUIRED — minted at the interaction layer,
+// threaded to the owning capability's handler (R3-10 dedup downstream).
+type ActionHandler = (ref: Ref, actionId: string, clientOpId: string) => Promise<unknown>;
 const actionHandlers = new Map<string, ActionHandler>(); // key: `${kind}·${actionId}`
 
 export function registerActionHandler(kind: string, actionId: string, handler: ActionHandler): void {
@@ -55,8 +57,9 @@ const actionNotFound = (ref: Ref, actionId: string): ActionNotFoundError => ({
 export async function invokeAction(
   ref: Ref,
   actionId: string,
+  clientOpId: string, // M9: REQUIRED
 ): Promise<{ ok: true; value: unknown } | { ok: false; error: ActionNotFoundError }> {
   const handler = actionHandlers.get(`${ref.kind}·${actionId}`);
   if (!handler) return { ok: false, error: actionNotFound(ref, actionId) };
-  return { ok: true, value: await handler(ref, actionId) };
+  return { ok: true, value: await handler(ref, actionId, clientOpId) };
 }

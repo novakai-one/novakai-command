@@ -76,16 +76,16 @@ describe('message inspector screen', () => {
   });
 });
 
-describe('invokeAction (typed errors, ruling 10)', () => {
+describe('invokeAction (typed errors, ruling 10; M9: clientOpId REQUIRED)', () => {
   it('unknown actionId on a known kind → typed ActionNotFound', async () => {
     registerActionHandler('message', 'reply', async () => 'done');
-    const res = await invokeAction({ kind: 'message', id: 'msg_1' }, 'delete');
+    const res = await invokeAction({ kind: 'message', id: 'msg_1' }, 'delete', 'op_test-1');
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.error.code).toBe('ActionNotFound');
   });
 
   it('absent owner (no handler for the kind at all) → typed ActionNotFound', async () => {
-    const res = await invokeAction({ kind: 'ghost', id: 'g_1' }, 'reply');
+    const res = await invokeAction({ kind: 'ghost', id: 'g_1' }, 'reply', 'op_test-2');
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.error.code).toBe('ActionNotFound');
   });
@@ -96,8 +96,18 @@ describe('invokeAction (typed errors, ruling 10)', () => {
       calls.push({ ref, actionId });
       return { focused: true };
     });
-    const res = await invokeAction({ kind: 'message', id: 'msg_1' }, 'reply');
+    const res = await invokeAction({ kind: 'message', id: 'msg_1' }, 'reply', 'op_test-3');
     expect(res.ok).toBe(true);
     expect(calls).toEqual([{ ref: { kind: 'message', id: 'msg_1' }, actionId: 'reply' }]);
+  });
+
+  it('M9: the clientOpId threads through to the handler (UI-originated mutation, R3-10)', async () => {
+    const seen: string[] = [];
+    registerActionHandler('message', 'reply', async (_ref, _actionId, clientOpId) => {
+      seen.push(clientOpId);
+      return null;
+    });
+    await invokeAction({ kind: 'message', id: 'msg_1' }, 'reply', 'op_ui-minted-9');
+    expect(seen).toEqual(['op_ui-minted-9']);
   });
 });
