@@ -12,7 +12,7 @@ import {
 } from '@novakai/foundation/dist/contract/index.js';
 import type { ClientOpId, ObjectId } from '@novakai/foundation/dist/contract/brands.js';
 import type { Result, ScopedStoreHandle } from '@novakai/foundation/dist/contract/types.js';
-import type { StoreError } from '@novakai/foundation/dist/contract/errors.js';
+import { err, type StoreError } from '@novakai/foundation/dist/contract/errors.js';
 import {
   CLI_DEFAULT_MODEL, ConfigObjectInput, DEFAULT_HISTORY_WINDOW_TURNS,
   DEFAULT_SUPERVISION, PROVIDER_NAMES, configKeyOf,
@@ -163,11 +163,12 @@ export async function openConfigStore(
   const write = async (input: ConfigObjectInput, clientOpId: ClientOpId): Promise<Result<ServerConfig, StoreError>> => {
     const parsed = ConfigObjectInput.safeParse(input);
     if (!parsed.success) {
-      return fail({
-        code: 'InvalidEnvelope', name: 'InvalidEnvelope',
-        message: `config object rejected: ${parsed.error.issues.map((i) => `${i.path.join('.')} ${i.message}`).join('; ')}`,
-        details: {}, retryable: false,
-      } as unknown as StoreError);
+      return fail(err('InvalidEnvelope',
+        `config object rejected: ${parsed.error.issues.map((i) => `${i.path.join('.')} ${i.message}`).join('; ')}`,
+        {
+          missingFields: parsed.error.issues.filter((i) => i.code === 'invalid_type').map((i) => i.path.join('.')),
+          invalidFields: parsed.error.issues.map((i) => ({ field: i.path.join('.'), reason: i.message })),
+        }, false));
     }
     const object = parsed.data;
     const id = configKeyOf(object);
