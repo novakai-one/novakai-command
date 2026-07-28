@@ -16,9 +16,14 @@ import path from 'node:path';
 import {
   createSupervisionEngine,
   type AskResult,
+  type SupervisionFailure,
   type SupervisionDeps,
 } from '../core/supervision/engine.js';
-import { createUsageReader, type UsageSessionRef } from '../core/supervision/usage.js';
+import {
+  createUsageReader,
+  type UsageReader,
+  type UsageSessionRef,
+} from '../core/supervision/usage.js';
 import type { ProviderSessionRecord } from '../../agents/contract/index.js';
 
 // ── fakes ──────────────────────────────────────────────────────────────────
@@ -43,6 +48,10 @@ function harness(options: {
   now?: () => string;
   canResume?: boolean;
   ask?: (sessionId: string, prompt: string) => Promise<AskResult>;
+  escalate?: (text: string) => Promise<void>;
+  broadcast?: (name: string, data: unknown) => void | Promise<void>;
+  usage?: UsageReader;
+  policy?: Partial<SupervisionDeps['policy']>;
 } = {}) {
   const traces: TraceLine[] = [];
   const asked: Array<{ sessionId: string; prompt: string }> = [];
@@ -51,6 +60,7 @@ function harness(options: {
   const escalations: string[] = [];
   const broadcasts: Array<{ name: string; data: unknown }> = [];
   const appended: unknown[][] = [];
+  const failures: SupervisionFailure[] = [];
   const usageReads: UsageSessionRef[] = [];
   const replies = [...(options.replies ?? [])];
   let records = options.records ?? [record()];
@@ -88,7 +98,7 @@ function harness(options: {
           : { ok: true as const, text: next };
       },
     },
-    usage: (() => {
+    usage: options.usage ?? (() => {
       const reader = createUsageReader({ home: mkdtempSync(path.join(tmpdir(), 'nvk-usage-home-')) });
       return {
         trackSession: reader.trackSession,
@@ -107,17 +117,29 @@ function harness(options: {
       traces.push({ action: input.action, targetId: input.target.id, meta: input.meta ?? {} });
       return { ok: true };
     },
-    broadcast: (name, data) => broadcasts.push({ name, data }),
+    broadcast: (name, data) => {
+      broadcasts.push({ name, data });
+      return options.broadcast?.(name, data);
+    },
     async appendUsage(rows) { appended.push(rows); },
-    async escalate(text) { escalations.push(text); },
-    policy: { usageIntervalSec: 300, driftIntervalSec: 300, idleTimeoutSec: 900 },
+    async escalate(text) {
+      escalations.push(text);
+      await options.escalate?.(text);
+    },
+    policy: {
+      usageIntervalSec: 300,
+      driftIntervalSec: 300,
+      idleTimeoutSec: 900,
+      ...options.policy,
+    },
     skillPaths: ['/skills/tdd/SKILL.md'],
     now: options.now ?? (() => new Date(clock).toISOString()),
+    onFailure: (failure) => failures.push(failure),
   };
 
   return {
     engine: createSupervisionEngine(deps),
-    traces, asked, closed, spawned, escalations, broadcasts, appended, usageReads,
+    traces, asked, closed, spawned, escalations, broadcasts, appended, usageReads, failures,
     setRecords: (next: ProviderSessionRecord[]) => { records = next; },
     getRecords: () => records,
     advance: (seconds: number) => { clock += seconds * 1000; },
@@ -289,6 +311,27 @@ test('no reply to the ping is a drift event + trace; three in a row escalates to
   assert.ok(actions(h.traces).includes('supervision.escalate'));
 });
 
+test('a rejected escalation is contained and leaves drift eligible for retry', async () => {
+  const h = harness({
+    replies: [],
+    escalate: async () => { throw new Error('messaging offline'); },
+  });
+  h.setRecords([record({ lastActivityAt: '2026-07-28T10:00:00.000Z' })]);
+
+  for (let i = 0; i < 3; i++) {
+    h.advance(301);
+    await h.engine.checkDrift();
+  }
+  h.advance(301);
+  const report = await h.engine.checkDrift();
+
+  assert.equal(report.rows[0]!.action, 'drift',
+    'a failed delivery is not falsely reported as an escalation');
+  assert.equal(report.rows[0]!.consecutiveDrift, 3,
+    'the counter is retained so the next interval retries escalation');
+  assert.deepEqual(h.failures.map((failure) => failure.code), ['EscalationFailed']);
+});
+
 test('a closed session is not checked for drift and never costs a turn', async () => {
   const h = harness({ replies: ['unused'] });
   h.setRecords([record({ status: 'closed', lastActivityAt: '2026-07-28T09:00:00.000Z' })]);
@@ -383,6 +426,37 @@ test('the usage table is emitted, appended and broadcast — all three, every in
   assert.equal(h.appended.length, 1, 'appended to .novakai/supervision/usage.jsonl (server sole writer)');
   assert.equal(h.broadcasts.filter((b) => b.name === 'usage').length, 1, 'broadcast as the `usage` WS event');
   assert.ok(actions(h.traces).includes('supervision.usage'));
+});
+
+test('a throwing usage broadcast is contained instead of rejecting emitUsage', async () => {
+  const h = harness({
+    broadcast: async () => { throw new Error('socket fanout failed'); },
+  });
+
+  const table = await h.engine.emitUsage();
+
+  assert.equal(table.rows.length, 1);
+  assert.equal(h.appended.length, 1, 'the durable usage append still completed');
+  assert.deepEqual(h.failures.map((failure) => failure.code), ['UsageBroadcastFailed']);
+});
+
+test('the periodic void emitUsage path reports a typed failure without an unhandled rejection', async () => {
+  const h = harness({
+    policy: { usageIntervalSec: 0.01, driftIntervalSec: 3600 },
+    usage: {
+      trackSession: () => undefined,
+      forget: () => undefined,
+      read: async () => { throw new Error('usage reader failed'); },
+      readMany: async () => { throw new Error('usage reader failed'); },
+    },
+  });
+
+  h.engine.start();
+  await new Promise((resolve) => setTimeout(resolve, 35));
+  h.engine.stop();
+
+  assert.ok(h.failures.some((failure) =>
+    failure.code === 'UsageTickFailed' && failure.operation === 'emitUsage'));
 });
 
 test('a session with no readable transcript reports null counts and states the gap', async () => {

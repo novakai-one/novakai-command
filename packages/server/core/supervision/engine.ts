@@ -92,7 +92,7 @@ export interface SupervisionDeps {
   transport: SupervisedTransport;
   usage: UsageReader;
   trace(input: TraceInput): Promise<{ ok: boolean; error?: unknown }>;
-  broadcast(name: string, data: unknown): void;
+  broadcast(name: string, data: unknown): void | Promise<void>;
   /** Append rows to `.novakai/supervision/usage.jsonl` — server is sole writer. */
   appendUsage(rows: UsageRow[]): Promise<void>;
   /** Tell Chris, through messaging, that a session has drifted (DEC-B1-12). */
@@ -103,6 +103,19 @@ export interface SupervisionDeps {
   now?(): string;
   /** A trace that could not be written is reported here — never swallowed. */
   onTraceFailure?(reason: string): void;
+  /** Typed, loud reporting for contained runtime/timer failures. */
+  onFailure?(failure: SupervisionFailure): void;
+}
+
+export interface SupervisionFailure {
+  code:
+    | 'EscalationFailed'
+    | 'UsageAppendFailed'
+    | 'UsageBroadcastFailed'
+    | 'UsageTickFailed'
+    | 'DriftTickFailed';
+  operation: 'escalate' | 'appendUsage' | 'broadcastUsage' | 'emitUsage' | 'checkDrift';
+  message: string;
 }
 
 // ── outputs ────────────────────────────────────────────────────────────────
@@ -206,6 +219,19 @@ export function createSupervisionEngine(deps: SupervisionDeps): SupervisionEngin
   let usageTimer: ReturnType<typeof setInterval> | null = null;
   let driftTimer: ReturnType<typeof setInterval> | null = null;
   let driftInFlight: Promise<DriftReport> | null = null;
+  const reportFailure = (
+    code: SupervisionFailure['code'],
+    operation: SupervisionFailure['operation'],
+    cause: unknown,
+  ): SupervisionFailure => {
+    const failure: SupervisionFailure = {
+      code,
+      operation,
+      message: cause instanceof Error ? cause.message : String(cause),
+    };
+    deps.onFailure?.(failure);
+    return failure;
+  };
 
   /**
    * Every supervision action lands here. A trace that cannot be written is
@@ -386,16 +412,25 @@ export function createSupervisionEngine(deps: SupervisionDeps): SupervisionEngin
 
       let action: DriftAction = 'drift';
       if (state.consecutiveDrift >= 3) {
-        action = 'escalated';
-        await deps.escalate(
-          `Session ${record.sessionId} (agent ${record.agentId}, ${record.provider}) has not answered `
-          + `${state.consecutiveDrift} consecutive check-ins. Last activity ${activityAt}.`,
-        );
-        await traced('supervision.escalate', record.sessionId, {
-          agentId: record.agentId, consecutiveDrift: state.consecutiveDrift,
-        });
-        state.consecutiveDrift = 0; // escalated once; the counter restarts
-        driftStates.set(record.sessionId, state);
+        try {
+          await deps.escalate(
+            `Session ${record.sessionId} (agent ${record.agentId}, ${record.provider}) has not answered `
+            + `${state.consecutiveDrift} consecutive check-ins. Last activity ${activityAt}.`,
+          );
+          action = 'escalated';
+          await traced('supervision.escalate', record.sessionId, {
+            agentId: record.agentId, consecutiveDrift: state.consecutiveDrift,
+          });
+          state.consecutiveDrift = 0; // escalated once; the counter restarts
+          driftStates.set(record.sessionId, state);
+        } catch (cause) {
+          const failure = reportFailure('EscalationFailed', 'escalate', cause);
+          await traced('supervision.escalate.failed', record.sessionId, {
+            agentId: record.agentId,
+            consecutiveDrift: state.consecutiveDrift,
+            error: failure,
+          });
+        }
       }
       rows.push({
         sessionId: record.sessionId, agentId: record.agentId, live: false,
@@ -457,8 +492,16 @@ export function createSupervisionEngine(deps: SupervisionDeps): SupervisionEngin
 
   const emitUsage: SupervisionEngine['emitUsage'] = async () => {
     const table = await usageTable();
-    await deps.appendUsage(table.rows);
-    deps.broadcast('usage', table);
+    try {
+      await deps.appendUsage(table.rows);
+    } catch (cause) {
+      reportFailure('UsageAppendFailed', 'appendUsage', cause);
+    }
+    try {
+      await deps.broadcast('usage', table);
+    } catch (cause) {
+      reportFailure('UsageBroadcastFailed', 'broadcastUsage', cause);
+    }
     await traced('supervision.usage', 'all', { sessions: table.rows.length });
     return table;
   };
@@ -540,11 +583,19 @@ export function createSupervisionEngine(deps: SupervisionDeps): SupervisionEngin
     compact: (sessionId) => respawn(sessionId, false),
     start() {
       if (!usageTimer) {
-        usageTimer = setInterval(() => { void emitUsage(); }, deps.policy.usageIntervalSec * 1000);
+        usageTimer = setInterval(() => {
+          void emitUsage().catch((cause) => {
+            reportFailure('UsageTickFailed', 'emitUsage', cause);
+          });
+        }, deps.policy.usageIntervalSec * 1000);
         usageTimer.unref?.();
       }
       if (!driftTimer) {
-        driftTimer = setInterval(() => { void checkDrift(); }, deps.policy.driftIntervalSec * 1000);
+        driftTimer = setInterval(() => {
+          void checkDrift().catch((cause) => {
+            reportFailure('DriftTickFailed', 'checkDrift', cause);
+          });
+        }, deps.policy.driftIntervalSec * 1000);
         driftTimer.unref?.();
       }
     },

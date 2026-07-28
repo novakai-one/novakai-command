@@ -320,6 +320,10 @@ export async function bootServer(options: BootOptions): Promise<BootResult> {
     // visible state rather than a silently skipped gate.
     skillPaths: await registeredSkillPaths(agents),
     onTraceFailure: (reason) => console.error(`[nvk-server] ${reason}`),
+    onFailure: (failure) => console.error(
+      `[nvk-server] supervision ${failure.operation} failed `
+      + `(${failure.code}): ${failure.message}`,
+    ),
   });
   note(8, 'supervision', `engine up — usage every ${config.supervision.usageIntervalSec}s, drift every ${config.supervision.driftIntervalSec}s; log at ${usageLog.filePath}; watchdog registry at ${watchdog.registryPath}`);
 
