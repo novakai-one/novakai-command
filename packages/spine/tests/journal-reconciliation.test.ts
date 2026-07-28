@@ -2,9 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
+  writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -36,6 +38,7 @@ function injectNextTraceFailure(root: string): void {
     capability: 'spine',
     allowedKinds: ['spineStep'],
     principal: 'sys_spine',
+    lockTimeoutMs: 20,
     failNextTraceAppend: {
       cause: 'injected accepted trace interruption',
     },
@@ -82,6 +85,7 @@ function composeMessageWorkflow(
   return composeSpine({
     root,
     principal: 'sys_spine',
+    lockTimeoutMs: 20,
     messaging: { getDelivery },
     artifacts: {
       async getArtifactMeta() {
@@ -120,6 +124,7 @@ test('retrying a workflow reconciles an accepted fact whose trace was interrupte
     const spine = composeSpine({
       root,
       principal: 'sys_spine',
+      lockTimeoutMs: 20,
       messaging: {
         async getDelivery() {
           messageQueries += 1;
@@ -332,5 +337,58 @@ test('mutating retries reconcile adjacent transition and command facts', async (
     for (const workspace of workspaces) {
       rmSync(workspace, { recursive: true, force: true });
     }
+  }
+});
+
+test('a mutation never succeeds while terminal trace reconciliation is lock-blocked', async () => {
+  const workspace = mkdtempSync(
+    path.join(tmpdir(), 'nvk-spine-reconcile-lock-'),
+  );
+  const root = path.join(workspace, '.novakai');
+  try {
+    let inject = true;
+    const input = {
+      messageId: 'message_reconcile_lock' as never,
+      projectId: 'proj_reconcile_lock' as never,
+    };
+    const clientOpId = 'op_reconcile_lock' as never;
+    const interrupted = await composeMessageWorkflow(
+      root,
+      async () => {
+        if (inject) {
+          inject = false;
+          injectNextTraceFailure(root);
+        }
+        return {
+          kind: 'error',
+          error: new MessagingError('UnknownMessage', {
+            fields: { messageId: input.messageId },
+          }),
+        };
+      },
+    ).operations.addMessageToProject(input, clientOpId);
+    assert.equal(
+      interrupted.ok ? null : interrupted.error.code,
+      'TraceIncomplete',
+    );
+    assert.equal(readSpineTraces(root).length, 2);
+
+    mkdirSync(path.join(root, 'lock'));
+    writeFileSync(
+      path.join(root, 'lock', 'owner.json'),
+      `${JSON.stringify({ pid: process.pid, token: 'held-by-test' })}\n`,
+    );
+    const retry = await composeMessageWorkflow(root)
+      .operations.addMessageToProject(input, clientOpId);
+
+    assert.equal(retry.ok, false);
+    assert.equal(
+      retry.ok ? null : retry.error.code,
+      'SpineJournalWriteFailed',
+    );
+    assert.equal(retry.ok ? null : retry.error.retryable, true);
+    assert.equal(readSpineTraces(root).length, 2);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
   }
 });
