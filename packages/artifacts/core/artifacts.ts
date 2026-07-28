@@ -8,6 +8,8 @@ import {
 import path from 'node:path';
 import {
   createObject,
+  getObjectWithReadFailure,
+  isAbsent,
 } from '@novakai/foundation/dist/contract/index.js';
 import {
   err,
@@ -16,8 +18,10 @@ import {
 import type {
   ArtifactId,
   ClientOpId,
+  ObjectId,
 } from '@novakai/foundation/dist/contract/brands.js';
 import type {
+  Absent,
   Result,
 } from '@novakai/foundation/dist/contract/types.js';
 import {
@@ -162,6 +166,36 @@ export async function putArtifact(
   );
   if (!created.ok) return created;
   const stored = Artifact.safeParse(created.value.object);
+  return stored.success
+    ? { ok: true, value: stored.data as ArtifactT }
+    : {
+        ok: false,
+        error: storedArtifactInvalid(artifactId, stored.error),
+      };
+}
+
+export async function getArtifactMeta(
+  ctx: ArtifactsContext,
+  artifactId: ArtifactId,
+): Promise<Result<ArtifactT | Absent, ArtifactsError>> {
+  const found = await getObjectWithReadFailure<ArtifactT>(
+    ctx.handle,
+    'artifact',
+    artifactId as unknown as ObjectId,
+  );
+  if (!found.ok) return found;
+  if (isAbsent(found.value)) {
+    return {
+      ok: false,
+      error: err(
+        'NotFound',
+        `no artifact with id "${artifactId}"`,
+        { ref: { kind: 'artifact', id: artifactId } },
+        false,
+      ),
+    };
+  }
+  const stored = Artifact.safeParse(found.value.object);
   return stored.success
     ? { ok: true, value: stored.data as ArtifactT }
     : {
