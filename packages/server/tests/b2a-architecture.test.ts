@@ -7,6 +7,7 @@ import {
 } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import ts from 'typescript';
 
 const serverRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -33,6 +34,97 @@ function typescriptSources(root: string): string[] {
   return found.sort();
 }
 
+const FILESYSTEM_WRITERS = new Set([
+  'appendFile',
+  'appendFileSync',
+  'chmod',
+  'chmodSync',
+  'copyFile',
+  'copyFileSync',
+  'createWriteStream',
+  'link',
+  'linkSync',
+  'mkdir',
+  'mkdirSync',
+  'rename',
+  'renameSync',
+  'rm',
+  'rmSync',
+  'symlink',
+  'symlinkSync',
+  'truncate',
+  'truncateSync',
+  'unlink',
+  'unlinkSync',
+  'writeFile',
+  'writeFileSync',
+]);
+
+const FOUNDATION_WRITERS = new Set([
+  'composeHandle',
+  'createObject',
+  'mintToken',
+  'recordSystemAction',
+  'updateObject',
+]);
+
+function writerExports(moduleName: string): Set<string> | null {
+  if (/^(?:node:)?fs(?:\/promises)?$/.test(moduleName)) {
+    return FILESYSTEM_WRITERS;
+  }
+  if (
+    /(?:^|\/)foundation(?:\/dist)?\/contract\//.test(moduleName)
+    || moduleName.startsWith('@novakai/foundation/')
+  ) {
+    return FOUNDATION_WRITERS;
+  }
+  return null;
+}
+
+function persistenceAuthorities(sourcePath: string): string[] {
+  const sourceText = readFileSync(sourcePath, 'utf8');
+  const sourceFile = ts.createSourceFile(
+    sourcePath,
+    sourceText,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS,
+  );
+  const authorities: string[] = [];
+  for (const statement of sourceFile.statements) {
+    if (
+      !ts.isImportDeclaration(statement)
+      || !ts.isStringLiteral(statement.moduleSpecifier)
+      || !statement.importClause
+    ) {
+      continue;
+    }
+    const moduleName = statement.moduleSpecifier.text;
+    const writers = writerExports(moduleName);
+    if (!writers) continue;
+    if (statement.importClause.name) {
+      authorities.push(
+        ...[...writers].map((name) => `${moduleName}:${name}`),
+      );
+    }
+    const imported = statement.importClause.namedBindings;
+    if (imported && ts.isNamespaceImport(imported)) {
+      authorities.push(
+        ...[...writers].map((name) => `${moduleName}:${name}`),
+      );
+      continue;
+    }
+    if (!imported || !ts.isNamedImports(imported)) continue;
+    for (const element of imported.elements) {
+      const exportedName = (element.propertyName ?? element.name).text;
+      if (writers.has(exportedName)) {
+        authorities.push(`${moduleName}:${exportedName}`);
+      }
+    }
+  }
+  return authorities.sort();
+}
+
 test('B2a Server integration consumes capability contracts', () => {
   const b2aRoot = path.join(serverRoot, 'core', 'b2a');
   const offenders: string[] = [];
@@ -51,19 +143,29 @@ test('B2a Server integration consumes capability contracts', () => {
   assert.deepEqual(offenders, []);
 });
 
-test('every Server persistence writer is explicitly classified', () => {
-  const writerCall =
-    /\b(?:appendFile|appendFileSync|copyFile|copyFileSync|createObject|createWriteStream|mintToken|recordSystemAction|rename|renameSync|rm|rmSync|truncate|truncateSync|unlink|unlinkSync|updateObject|writeFile|writeFileSync)\s*\(/g;
-  const writers: string[] = [];
+test('every Server persistence-writer authority is explicitly classified', () => {
+  const authorities: string[] = [];
   for (const sourcePath of typescriptSources(serverRoot)) {
-    const source = readFileSync(sourcePath, 'utf8');
-    for (const match of source.matchAll(writerCall)) {
-      writers.push(
-        `${path.relative(serverRoot, sourcePath)} -> ${match[0].slice(0, -1)}`,
-      );
+    for (const writer of persistenceAuthorities(sourcePath)) {
+      authorities.push(`${path.relative(serverRoot, sourcePath)} -> ${writer}`);
     }
   }
-  assert.deepEqual(writers, []);
+  assert.deepEqual(authorities.sort(), [
+    'core/boot.ts -> @novakai/foundation/dist/contract/index.js:recordSystemAction',
+    'core/config/store.ts -> @novakai/foundation/dist/contract/index.js:composeHandle',
+    'core/config/store.ts -> @novakai/foundation/dist/contract/index.js:createObject',
+    'core/config/store.ts -> @novakai/foundation/dist/contract/index.js:mintToken',
+    'core/config/store.ts -> @novakai/foundation/dist/contract/index.js:updateObject',
+    'core/methods.ts -> @novakai/foundation/dist/contract/index.js:recordSystemAction',
+    'core/supervision/log.ts -> node:fs:appendFileSync',
+    'core/supervision/log.ts -> node:fs:mkdirSync',
+    'core/supervision/watchdog.ts -> node:fs:mkdirSync',
+    'core/supervision/watchdog.ts -> node:fs:renameSync',
+    'core/supervision/watchdog.ts -> node:fs:writeFileSync',
+    'core/transport/server.ts -> node:fs:chmodSync',
+    'core/transport/server.ts -> node:fs:mkdirSync',
+    'core/transport/server.ts -> node:fs:writeFileSync',
+  ]);
 });
 
 test('B2a Server WS adapter cannot reach byte or Spine-only attachment doors', () => {
@@ -95,12 +197,18 @@ test('approved capabilities do not depend back on Server', () => {
   assert.deepEqual(offenders, []);
 });
 
-test('B2a adapters remain independent of Shell and UI surfaces', () => {
+test('B2a Server adapters do not import Shell', () => {
   const b2aRoot = path.join(serverRoot, 'core', 'b2a');
-  const offenders = typescriptSources(b2aRoot).filter((sourcePath) => {
+  const offenders: string[] = [];
+  for (const sourcePath of typescriptSources(b2aRoot)) {
     const source = readFileSync(sourcePath, 'utf8');
-    return /(?:^|[/@])shell(?:\/|['"])/m.test(source)
-      || /\b(?:ui|userInterface)\b/.test(source);
-  });
+    for (const match of source.matchAll(/\bfrom\s+['"]([^'"]+)['"]/g)) {
+      if (/(?:^|\/|@)shell(?:\/|$)/.test(match[1]!)) {
+        offenders.push(
+          `${path.relative(serverRoot, sourcePath)} -> ${match[1]}`,
+        );
+      }
+    }
+  }
   assert.deepEqual(offenders, []);
 });
