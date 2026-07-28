@@ -30,7 +30,7 @@ export interface AgentsContext {
    * live lane get focus-change advisories as system context lines BETWEEN
    * turns. busyUntil tracks the streaming turn; queue holds mid-turn advisories.
    */
-  laneState: Map<string, { queue: string[]; busyUntil: number; timer: ReturnType<typeof setTimeout> | null }>;
+  laneState: Map<string, { pending: { line: string; at: string } | null; busyUntil: number; timer: ReturnType<typeof setTimeout> | null }>;
   /** Quiet window that ends a turn for advisory delivery (ruling 12's 5s; tests shrink it). */
   advisoryQuietMs: number;
   /** @internal test seam: override the hook action executor (timeout/failure tests). */

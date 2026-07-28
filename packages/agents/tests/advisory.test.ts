@@ -62,14 +62,48 @@ test('repeated output keeps the turn alive — advisory waits for real quiet', a
   assert.deepEqual(mock.__session(sessionId)!.sent, ['advisory-x']);
 });
 
-test('queued advisories flush in order', async () => {
+test('advisory queue coalesces latest-wins (ruled): only the LATEST pending advisory is delivered, queue capped at 1', async () => {
   const { agents, mock, sessionId } = await setup(100);
   agents.attachLiveLane({ sessionId, address: 'person:person_chris', sender: laneSender() });
   mock.__emit(sessionId, { type: 'output', sessionId, at: new Date().toISOString(), data: 'chunk' });
-  agents.pushContextAdvisory(sessionId, 'first');
-  agents.pushContextAdvisory(sessionId, 'second');
+  agents.pushContextAdvisory(sessionId, 'stale-first');
+  agents.pushContextAdvisory(sessionId, 'latest-second'); // replaces, never queues behind
   await sleep(200);
-  assert.deepEqual(mock.__session(sessionId)!.sent, ['first', 'second']);
+  assert.deepEqual(mock.__session(sessionId)!.sent, ['latest-second'], 'stale advisories are dropped, latest wins');
+});
+
+test('a queued advisory carries a timestamp', async () => {
+  const { ctx, agents, mock, sessionId } = await setup(100);
+  agents.attachLiveLane({ sessionId, address: 'person:person_chris', sender: laneSender() });
+  mock.__emit(sessionId, { type: 'output', sessionId, at: new Date().toISOString(), data: 'chunk' });
+  agents.pushContextAdvisory(sessionId, 'stamped');
+  const pending = ctx.laneState.get(sessionId)?.pending;
+  assert.ok(pending && typeof pending.at === 'string' && !Number.isNaN(Date.parse(pending.at)), 'pending advisory is timestamped');
+});
+
+test("M5: activity 'idle' ENDS the turn — it never extends it (queued advisory flushes immediately)", async () => {
+  const { agents, mock, sessionId } = await setup(5000); // long quiet window: only an idle event can end the turn
+  agents.attachLiveLane({ sessionId, address: 'person:person_chris', sender: laneSender() });
+  // real-adapter-style sequence: output chunks (turn starts), working activity, then idle
+  mock.__emit(sessionId, { type: 'output', sessionId, at: new Date().toISOString(), data: 'chunk-1' });
+  mock.__emit(sessionId, { type: 'activity', sessionId, at: new Date().toISOString(), activity: 'working' });
+  agents.pushContextAdvisory(sessionId, 'between-turns');
+  assert.deepEqual(mock.__session(sessionId)!.sent, [], 'mid-turn: held');
+  mock.__emit(sessionId, { type: 'activity', sessionId, at: new Date().toISOString(), activity: 'idle' });
+  assert.deepEqual(mock.__session(sessionId)!.sent, ['between-turns'], 'idle ended the turn — advisory delivered between turns');
+});
+
+test("activity events other than 'idle' still extend the turn", async () => {
+  const { agents, mock, sessionId } = await setup(150);
+  agents.attachLiveLane({ sessionId, address: 'person:person_chris', sender: laneSender() });
+  mock.__emit(sessionId, { type: 'activity', sessionId, at: new Date().toISOString(), activity: 'working' });
+  agents.pushContextAdvisory(sessionId, 'held');
+  await sleep(100);
+  mock.__emit(sessionId, { type: 'activity', sessionId, at: new Date().toISOString(), activity: 'watching the thread' });
+  await sleep(100);
+  assert.deepEqual(mock.__session(sessionId)!.sent, [], 'non-idle activity extended the turn');
+  await sleep(120);
+  assert.deepEqual(mock.__session(sessionId)!.sent, ['held']);
 });
 
 test('sessions WITHOUT a live lane are pull-only (ruling 1): advisory refused', async () => {
