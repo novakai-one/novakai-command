@@ -16,6 +16,7 @@ import {
 import {
   composeProjects,
   createProjectsContract,
+  createSpineProjectsContract,
 } from '../contract/index.js';
 
 const CLI = path.resolve('dist/cli/nvk-project.js');
@@ -145,6 +146,42 @@ test('offline CLI lists Projects through the shared contract', async () => {
       ['list', '--status', 'active'],
     );
     assert.deepEqual(listed.items.map(({ id }) => id), [created.value.id]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('offline CLI lists Project items through the shared contract', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'nvk-projects-cli-items-'));
+  try {
+    const token = mintToken(
+      root,
+      'sys_spine',
+      ['project', 'projectItem'],
+      'person_local',
+    );
+    const context = composeProjects({ root, principal: 'sys_spine' });
+    const projects = createProjectsContract(context);
+    const spine = createSpineProjectsContract(context);
+    const created = await projects.createProject(
+      { title: 'CLI item holder' },
+      mintClientOpId(),
+    );
+    assert.equal(created.ok, true);
+    if (!created.ok) return;
+    const attached = await spine.attach(
+      created.value.id,
+      { itemRef: { kind: 'trace', id: 'trace_cli_dangling' } },
+      mintClientOpId(),
+    );
+    assert.equal(attached.ok, true);
+
+    const items = success<{
+      items: Array<{ itemRef: { kind: string; id: string } }>;
+    }>(root, token.bearer, ['items', '--project', created.value.id]);
+    assert.deepEqual(items.items.map(({ itemRef }) => itemRef), [
+      { kind: 'trace', id: 'trace_cli_dangling' },
+    ]);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
