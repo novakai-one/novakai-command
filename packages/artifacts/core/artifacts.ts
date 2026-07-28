@@ -1,4 +1,5 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import {
   mkdir,
   open,
@@ -118,6 +119,18 @@ function injectedFailpoint(
   );
 }
 
+function artifactIdFor(clientOpId: ClientOpId): ArtifactId {
+  const hex = createHash('sha256').update(clientOpId).digest('hex');
+  const uuid = [
+    hex.slice(0, 8),
+    hex.slice(8, 12),
+    hex.slice(12, 16),
+    hex.slice(16, 20),
+    hex.slice(20, 32),
+  ].join('-');
+  return `artifact_${uuid}` as ArtifactId;
+}
+
 export async function putArtifact(
   ctx: ArtifactsContext,
   input: PutArtifactInputT,
@@ -130,33 +143,29 @@ export async function putArtifact(
   if (!parsed.success) {
     return { ok: false, error: invalidInput(parsed.error) };
   }
-  const replay = await getObjectByClientOpId<ArtifactT>(
-    ctx.handle,
-    'artifact',
-    clientOpId,
-  );
-  if (!replay.ok) return replay;
-  if (replay.value) {
-    const stored = Artifact.safeParse(replay.value.object);
-    const replayId = (
-      typeof replay.value.object.id === 'string'
-        ? replay.value.object.id
-        : 'artifact_unknown'
-    ) as ArtifactId;
-    return stored.success
-      ? { ok: true, value: stored.data as ArtifactT }
-      : {
-          ok: false,
-          error: storedArtifactInvalid(replayId, stored.error),
-        };
-  }
-
-  const artifactId = `artifact_${randomUUID()}` as ArtifactId;
+  const artifactId = artifactIdFor(clientOpId);
   const tempPath = path.join(
     ctx.bytesRoot,
     `.${artifactId}.${randomUUID()}.tmp`,
   );
   const finalPath = path.join(ctx.bytesRoot, artifactId);
+  if (existsSync(finalPath)) {
+    const replay = await getObjectByClientOpId<ArtifactT>(
+      ctx.handle,
+      'artifact',
+      clientOpId,
+    );
+    if (!replay.ok) return replay;
+    if (replay.value) {
+      const stored = Artifact.safeParse(replay.value.object);
+      return stored.success
+        ? { ok: true, value: stored.data as ArtifactT }
+        : {
+            ok: false,
+            error: storedArtifactInvalid(artifactId, stored.error),
+          };
+    }
+  }
   let file: FileHandle | undefined;
   let effect: ArtifactByteEffect = 'temp-write';
   try {
