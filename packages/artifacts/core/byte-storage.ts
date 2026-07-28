@@ -18,7 +18,7 @@ import type {
   ArtifactByteEffect,
   ArtifactsError,
 } from '../contract/errors.js';
-import { injectedFailpoint } from './failpoints.js';
+import type { ArtifactFailpoint } from './failpoints.js';
 
 function byteEffectFailed(
   artifactId: ArtifactId,
@@ -49,8 +49,9 @@ async function writeTemp(
   tempPath: string,
   artifactId: ArtifactId,
   bytes: Uint8Array,
+  failpoint: ArtifactFailpoint,
 ): Promise<Result<FileHandle, ArtifactsError>> {
-  const before = injectedFailpoint(
+  const before = failpoint(
     artifactId,
     'artifacts.put.before-temp-write',
   );
@@ -59,7 +60,7 @@ async function writeTemp(
   try {
     file = await open(tempPath, 'wx');
     await file.writeFile(bytes);
-    const after = injectedFailpoint(
+    const after = failpoint(
       artifactId,
       'artifacts.put.after-temp-write',
     );
@@ -83,8 +84,9 @@ async function writeTemp(
 async function fsyncTemp(
   file: FileHandle,
   artifactId: ArtifactId,
+  failpoint: ArtifactFailpoint,
 ): Promise<Result<null, ArtifactsError>> {
-  const before = injectedFailpoint(
+  const before = failpoint(
     artifactId,
     'artifacts.put.before-temp-fsync',
   );
@@ -99,7 +101,7 @@ async function fsyncTemp(
   }
   try {
     await file.sync();
-    const after = injectedFailpoint(
+    const after = failpoint(
       artifactId,
       'artifacts.put.after-temp-fsync',
     );
@@ -127,8 +129,9 @@ async function renameTemp(
   tempPath: string,
   finalPath: string,
   artifactId: ArtifactId,
+  failpoint: ArtifactFailpoint,
 ): Promise<Result<null, ArtifactsError>> {
-  const before = injectedFailpoint(
+  const before = failpoint(
     artifactId,
     'artifacts.put.before-rename',
   );
@@ -141,7 +144,7 @@ async function renameTemp(
       error: byteEffectFailed(artifactId, 'rename', cause),
     };
   }
-  const after = injectedFailpoint(
+  const after = failpoint(
     artifactId,
     'artifacts.put.after-rename',
   );
@@ -173,6 +176,7 @@ export async function persistArtifactBytes(
   bytesRoot: string,
   artifactId: ArtifactId,
   bytes: Uint8Array,
+  failpoint: ArtifactFailpoint,
 ): Promise<Result<null, ArtifactsError>> {
   try {
     await mkdir(bytesRoot, { recursive: true });
@@ -186,14 +190,15 @@ export async function persistArtifactBytes(
     bytesRoot,
     `.${artifactId}.${randomUUID()}.tmp`,
   );
-  const written = await writeTemp(tempPath, artifactId, bytes);
+  const written = await writeTemp(tempPath, artifactId, bytes, failpoint);
   if (!written.ok) return written;
-  const synced = await fsyncTemp(written.value, artifactId);
+  const synced = await fsyncTemp(written.value, artifactId, failpoint);
   if (!synced.ok) return synced;
   return renameTemp(
     tempPath,
     path.join(bytesRoot, artifactId),
     artifactId,
+    failpoint,
   );
 }
 

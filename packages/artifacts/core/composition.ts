@@ -7,11 +7,16 @@ import {
   createArtifactsHost,
   type ArtifactsHost,
 } from './contract.js';
+import {
+  composeArtifactFailpoint,
+  type ArtifactFailpoint,
+} from './failpoints.js';
 
 export interface ArtifactsContext {
   readonly handle: ScopedStoreHandle;
   readonly root: string;
   readonly bytesRoot: string;
+  readonly failpoint: ArtifactFailpoint;
 }
 
 export interface ComposeArtifactsOptions {
@@ -36,6 +41,7 @@ export function composeArtifacts(
     }),
     root,
     bytesRoot: path.join(root, 'artifacts'),
+    failpoint: composeArtifactFailpoint(process.env.NVK_FAILPOINT),
   };
   return createArtifactsHost(context);
 }

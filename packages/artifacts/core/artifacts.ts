@@ -36,7 +36,6 @@ import {
   persistArtifactBytes,
   readArtifactBytes,
 } from './byte-storage.js';
-import { injectedFailpoint } from './failpoints.js';
 
 function invalidInput(
   error: { issues: Array<{ path: PropertyKey[]; message: string }> },
@@ -138,7 +137,7 @@ async function appendArtifactRecord(
   clientOpId: ClientOpId,
 ): Promise<Result<ArtifactT, ArtifactsError>> {
   const artifactId = record.id;
-  const before = injectedFailpoint(
+  const before = ctx.failpoint(
     artifactId,
     'artifacts.put.before-record-append',
   );
@@ -149,7 +148,7 @@ async function appendArtifactRecord(
     clientOpId,
   );
   if (!created.ok) return created;
-  const after = injectedFailpoint(
+  const after = ctx.failpoint(
     artifactId,
     'artifacts.put.after-record-append',
   );
@@ -185,6 +184,7 @@ export async function putArtifact(
     ctx.bytesRoot,
     artifactId,
     parsed.data.bytes,
+    ctx.failpoint,
   );
   if (!persisted.ok) return persisted;
   return appendArtifactRecord(

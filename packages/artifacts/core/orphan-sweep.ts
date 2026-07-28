@@ -19,7 +19,6 @@ import type {
 import type { ArtifactsError } from '../contract/errors.js';
 import type { ArtifactsContext } from './composition.js';
 import { listArtifacts } from './artifacts.js';
-import { injectedFailpoint } from './failpoints.js';
 
 interface OrphanEntry {
   artifactId: ArtifactId;
@@ -77,7 +76,7 @@ async function traceOrphan(
   ctx: ArtifactsContext,
   orphan: OrphanEntry,
 ): Promise<Result<null, ArtifactsError>> {
-  const before = injectedFailpoint(
+  const before = ctx.failpoint(
     orphan.artifactId,
     'artifacts.sweep.before-trace-append',
   );
@@ -89,7 +88,7 @@ async function traceOrphan(
     meta: { entryType: orphan.entryType },
   });
   if (!traced.ok) return traced;
-  const after = injectedFailpoint(
+  const after = ctx.failpoint(
     orphan.artifactId,
     'artifacts.sweep.after-trace-append',
   );
@@ -99,16 +98,16 @@ async function traceOrphan(
 }
 
 async function deleteOrphan(
-  bytesRoot: string,
+  ctx: ArtifactsContext,
   orphan: OrphanEntry,
 ): Promise<Result<null, ArtifactsError>> {
-  const before = injectedFailpoint(
+  const before = ctx.failpoint(
     orphan.artifactId,
     'artifacts.sweep.before-delete',
   );
   if (before) return { ok: false, error: before };
   try {
-    await unlink(path.join(bytesRoot, orphan.name));
+    await unlink(path.join(ctx.bytesRoot, orphan.name));
   } catch (cause) {
     return {
       ok: false,
@@ -124,7 +123,7 @@ async function deleteOrphan(
       ),
     };
   }
-  const after = injectedFailpoint(
+  const after = ctx.failpoint(
     orphan.artifactId,
     'artifacts.sweep.after-delete',
   );
@@ -139,7 +138,7 @@ async function sweepOrphan(
 ): Promise<Result<null, ArtifactsError>> {
   const traced = await traceOrphan(ctx, orphan);
   if (!traced.ok) return traced;
-  return deleteOrphan(ctx.bytesRoot, orphan);
+  return deleteOrphan(ctx, orphan);
 }
 
 export async function sweepOrphans(

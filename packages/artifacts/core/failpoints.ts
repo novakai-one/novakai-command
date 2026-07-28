@@ -4,15 +4,21 @@ import type {
 } from '@novakai/foundation/dist/contract/brands.js';
 import type { ArtifactsError } from '../contract/errors.js';
 
-export function injectedFailpoint(
+export type ArtifactFailpoint = (
   artifactId: ArtifactId,
   point: string,
-): ArtifactsError | null {
-  if (process.env.NVK_FAILPOINT !== point) return null;
-  return err(
-    'ArtifactFailpoint',
-    `artifact failpoint injected at "${point}"`,
-    { artifactId, point },
-    true,
-  );
+) => ArtifactsError | null;
+
+export function composeArtifactFailpoint(
+  configuredPoint: string | undefined,
+): ArtifactFailpoint {
+  return (artifactId, point) => {
+    if (configuredPoint !== point) return null;
+    return err(
+      'ArtifactFailpoint',
+      `artifact failpoint injected at "${point}"`,
+      { artifactId, point },
+      true,
+    );
+  };
 }
