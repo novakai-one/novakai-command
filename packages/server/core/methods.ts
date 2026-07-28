@@ -38,6 +38,8 @@ export interface Conversation {
   /** The live provider session this conversation talks to, when spawned. */
   sessionId?: string;
   personId?: string;
+  /** Which provider that session runs on — decides advisory delivery. */
+  provider?: ProviderName;
 }
 
 /** Everything the methods operate on. Assembled once, by the composition root. */
@@ -150,6 +152,7 @@ export async function restoreLiveSessions(runtime: ServerRuntime): Promise<numbe
     if (!conversation) continue;
     conversation.sessionId = record.sessionId;
     conversation.personId = binding.personId;
+    conversation.provider = record.provider;
     conversation.agentId = record.agentId;
     conversation.address = `person:${binding.personId}`;
     attachLane(runtime, conversation, record.sessionId, binding.personId);
@@ -243,7 +246,13 @@ export function buildMethods(runtime: ServerRuntime): MethodTable {
     async publishFocus(params: never) {
       runtime.focus = params as ScreenContext;
       for (const conversation of runtime.conversations.values()) {
-        if (conversation.sessionId) {
+        // §22 ruling 1 + the demo's recorded limit: a between-turn advisory to a
+        // PRINT-MODE CLI session is a whole provider turn per focus change —
+        // real money, and the agent reads it as an empty message. Real provider
+        // sessions get their context from the send-time snapshot line instead
+        // (AGT-006, applied in sendMessage); only in-process sessions take the
+        // advisory.
+        if (conversation.sessionId && conversation.provider === 'mock') {
           runtime.agents.pushContextAdvisory(conversation.sessionId as never, contextLine(runtime.focus));
         }
       }
@@ -308,7 +317,7 @@ export function buildMethods(runtime: ServerRuntime): MethodTable {
         id: `conv_${randomUUID().slice(0, 8)}`,
         address: `person:${personId}`,
         title, kind: 'agent', pinned: false, archived: false,
-        lastActivityAt: now(), agentId, sessionId, personId,
+        lastActivityAt: now(), agentId, sessionId, personId, provider,
       };
       runtime.conversations.set(conversation.id, conversation);
       await persistView(runtime, conversation, runtime.mintOpId());

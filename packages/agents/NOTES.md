@@ -90,7 +90,12 @@ Ambiguities and judgment calls, one line each. Nothing here invents requirements
     NO usage/token line. Per DEC-B1-7 the gap is recorded rather than a
     format invented: the adapter reports real TURN records (`onTurn`) and no
     token counts; token accounting for kimi comes from transcript parsing in
-    the B1b watchdog (DEC-B1-11).
+    the B1b watchdog (DEC-B1-11). CONFIRMED SOURCE for B1b (observed
+    2026-07-28 in a real session): the CLI's own transcript
+    `~/.kimi-code/sessions/wd_*/session_<id>/agents/main/wire.jsonl` carries
+    `{"type":"usage.record","model":…,"usage":{"inputOther","output",
+    "inputCacheRead","inputCacheCreation"}}` lines — real per-turn counts, in
+    the transcript, not in stdout.
 18. **B1 provider gating.** `composeAgents` gained `providerRuntimes` (a
     runtime per provider) and `allowMock`. When `providerRuntimes` is given,
     an unbound provider fails TYPED at spawn instead of resolving to the mock

@@ -319,3 +319,27 @@ test('a conversation that was only ever SENT to still relinks to its provider af
   assert.equal(argv[argv.length - 1]![argv[argv.length - 1]!.indexOf('-S') + 1], 'session_boot_4');
   await second.close();
 });
+
+test('a focus change NEVER burns a provider turn on a real CLI session', async () => {
+  const dir = root();
+  await mintChris(dir);
+  const cli = fakeKimi({ sessionId: 'session_boot_5' });
+  const server = await boot(dir, { cliPath: cli.cliPath });
+  const methods = (await import('../core/methods.js')).buildMethods(server.runtime);
+
+  const spawned = await methods.spawnAgentConversation!({ title: 'Kimi' } as never) as
+    { conversation: { id: string }; sessionId: string };
+  const before = cli.invocations().length;
+
+  // Chris clicks around the app — several focus changes, no messages.
+  for (const ref of ['a', 'b', 'c']) {
+    await methods.publishFocus!({ app: 'messaging', ref: { kind: 'conversation', id: ref } } as never);
+  }
+  await server.runtime.kimiRuntime.drain(spawned.sessionId);
+
+  assert.equal(cli.invocations().length, before,
+    'a print-mode CLI session must not be prompted (and billed) for a focus change');
+  assert.deepEqual(await methods.getFocus!(undefined as never),
+    { app: 'messaging', ref: { kind: 'conversation', id: 'c' } }, 'focus is still tracked for pull');
+  await server.close();
+});
