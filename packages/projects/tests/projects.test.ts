@@ -44,6 +44,7 @@ test('createProject requires clientOpId and replays one traced result', async ()
 
     const engine = composeEngine({
       root,
+      dataRoot: path.join(root, 'stores'),
       capability: 'projects',
       allowedKinds: ['project', 'projectItem'],
       principal: 'person_chris',
@@ -108,6 +109,7 @@ test('archiveProject requires clientOpId and replays one traced lifecycle change
     );
     const engine = composeEngine({
       root,
+      dataRoot: path.join(root, 'stores'),
       capability: 'projects',
       allowedKinds: ['project', 'projectItem'],
       principal: 'person_chris',
@@ -232,6 +234,7 @@ test('Spine attach stores only a dangling registered ref and stamps trusted iden
     assert.equal(items.ok && items.value.items.length, 1);
     const engine = composeEngine({
       root,
+      dataRoot: path.join(root, 'stores'),
       capability: 'projects',
       allowedKinds: ['project', 'projectItem'],
       principal: 'person_real',
@@ -277,6 +280,7 @@ test('attach replay returns its original result after the Project is archived', 
     assert.equal(items.ok && items.value.items.length, 1);
     const engine = composeEngine({
       root,
+      dataRoot: path.join(root, 'stores'),
       capability: 'projects',
       allowedKinds: ['project', 'projectItem'],
       principal: 'sys_spine',
@@ -328,6 +332,7 @@ test('listProjects returns a typed corruption error for a malformed durable Proj
   try {
     const handle = composeHandle({
       root,
+      dataRoot: path.join(root, 'stores'),
       capability: 'projects',
       allowedKinds: ['project', 'projectItem'],
       principal: 'sys_spine',
@@ -366,6 +371,7 @@ test('getProjectItems returns a typed corruption error for its malformed durable
   try {
     const handle = composeHandle({
       root,
+      dataRoot: path.join(root, 'stores'),
       capability: 'projects',
       allowedKinds: ['project', 'projectItem'],
       principal: 'sys_spine',
@@ -413,6 +419,7 @@ test('getProjectItems returns a typed corruption error for a malformed durable P
 
     const handle = composeHandle({
       root,
+      dataRoot: path.join(root, 'stores'),
       capability: 'projects',
       allowedKinds: ['project', 'projectItem'],
       principal: 'sys_spine',
@@ -458,6 +465,7 @@ test('attach replay returns a typed corruption error for a malformed durable res
     const attachOp = mintClientOpId();
     const handle = composeHandle({
       root,
+      dataRoot: path.join(root, 'stores'),
       capability: 'projects',
       allowedKinds: ['project', 'projectItem'],
       principal: 'sys_spine',

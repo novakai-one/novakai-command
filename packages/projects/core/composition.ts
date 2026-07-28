@@ -1,3 +1,4 @@
+import path from 'node:path';
 import {
   composeHandle,
   type ScopedStoreHandle,
@@ -21,9 +22,11 @@ export interface ComposeProjectsOptions {
 }
 
 export function composeProjects(options: ComposeProjectsOptions): ProjectsHost {
+  const root = path.resolve(options.root);
   const context: ProjectsContext = {
     handle: composeHandle({
-      root: options.root,
+      root,
+      dataRoot: path.join(root, 'stores'),
       legacyRoot: options.legacyRoot,
       capability: 'projects',
       allowedKinds: ['project', 'projectItem'],
