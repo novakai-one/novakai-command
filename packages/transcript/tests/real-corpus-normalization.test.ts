@@ -288,6 +288,18 @@ test(
           lines.ok ? lines.value.length : -1,
           provider === 'claude' ? 0 : 4,
         );
+        if (provider === 'codex' && lines.ok) {
+          assert.equal(
+            new Set(lines.value.map((line) => line.turnId)).size,
+            4,
+          );
+          assert.ok(
+            lines.value.every(
+              (line) =>
+                /^codex:source_[a-f0-9]{64}:\d+$/u.test(line.turnId),
+            ),
+          );
+        }
       }
     } finally {
       rmSync(workspace, { recursive: true, force: true });
