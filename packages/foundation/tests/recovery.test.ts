@@ -2,7 +2,10 @@
 // dual-read shim (R3-21), lazy schema upgrade (FND-008/DEC-F10).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
@@ -18,6 +21,27 @@ const freshRoot = () => mkdtempSync(path.join(tmpdir(), 'nvk-fnd-'));
 const settingsPayload = (id: string) => ({
   kind: 'settings', id, schemaVersion: 1, createdAt: new Date().toISOString(),
   permissionLevel: 'private', createdBy: 'person_chris', key: id, value: 1,
+});
+
+const settingsRecordLine = (
+  id: string,
+  value: number,
+  padding = '',
+) => JSON.stringify({
+  envelope: {
+    kind: 'settings',
+    id,
+    schemaVersion: 1,
+    createdAt: '2026-07-29T00:00:00.000Z',
+    permissionLevel: 'private',
+    createdBy: 'person_fixture',
+  },
+  payload: { key: id, value, padding },
+  meta: {
+    opId: `srv_${id}`,
+    clientOpId: `op_${id}`,
+    version: 1,
+  },
 });
 
 /** Simulate a kill -9 between object append and trace append: write the object
@@ -423,35 +447,20 @@ test('quarantine index resets when the file shrinks', async () => {
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
-test('warm record index rejects an out-of-band torn-tail rewrite', async () => {
+test('warm record index rejects another writer torn-tail recovery and rewrite', async () => {
   const root = freshRoot();
   try {
-    const recordLine = (id: string, value: number) => JSON.stringify({
-      envelope: {
-        kind: 'settings',
-        id,
-        schemaVersion: 1,
-        createdAt: '2026-07-29T00:00:00.000Z',
-        permissionLevel: 'private',
-        createdBy: 'person_fixture',
-      },
-      payload: { key: id, value },
-      meta: {
-        opId: `srv_${id}`,
-        clientOpId: `op_${id}`,
-        version: 1,
-      },
-    });
     const storePath = path.join(root, 'settings.jsonl');
     mkdirSync(root, { recursive: true });
-    writeFileSync(
-      storePath,
-      `${[
-        recordLine('settings_a', 1),
-        recordLine('settings_b', 2),
-        recordLine('settings_c_torn', 3),
-      ].join('\n')}\n`,
-    );
+    const indexedRecords = [
+      settingsRecordLine('settings_a', 1),
+      settingsRecordLine('settings_b', 2),
+      settingsRecordLine('settings_c_deleted', 3),
+    ];
+    const indexedContents = `${indexedRecords.join('\n')}\n`;
+    writeFileSync(storePath, indexedContents);
+    const originalInode = statSync(storePath).ino;
+
     const handle = composeHandle({
       root,
       capability: 'foundation',
@@ -463,20 +472,36 @@ test('warm record index rejects an out-of-band torn-tail rewrite', async () => {
     if (!warm.ok) return;
     assert.deepEqual(
       warm.value.items.map((item) => item.object.id).sort(),
-      ['settings_a', 'settings_b', 'settings_c_torn'],
+      ['settings_a', 'settings_b', 'settings_c_deleted'],
     );
 
-    // Another writer's boot recovery drops the torn-tail record, then it
-    // appends two live records while preserving the file's inode.
+    const tornTail = '{"envelope":{"kind":"settings","id":"settings_partial';
+    appendFileSync(storePath, tornTail);
+    const warmWithTornTail = await listObjects(handle, 'settings');
+    assert.equal(warmWithTornTail.ok, true);
+    if (!warmWithTornTail.ok) return;
+    assert.deepEqual(
+      warmWithTornTail.value.items.map((item) => item.object.id).sort(),
+      ['settings_a', 'settings_b', 'settings_c_deleted'],
+    );
+
+    // A second engine boots over the same root and performs the shipped
+    // torn-line recovery before its process rewrites and appends the store.
+    const otherWriter = new StoreEngine({ root });
+    otherWriter.boot();
+    assert.equal(readFileSync(storePath, 'utf8'), indexedContents);
+    assert.equal(statSync(storePath).ino, originalInode);
+
     writeFileSync(
       storePath,
       `${[
-        recordLine('settings_a', 1),
-        recordLine('settings_b', 2),
-        recordLine('settings_d', 4),
-        recordLine('settings_e', 5),
+        settingsRecordLine('settings_a', 1),
+        settingsRecordLine('settings_b', 2),
       ].join('\n')}\n`,
     );
+    appendFileSync(storePath, `${settingsRecordLine('settings_d', 4)}\n`);
+    appendFileSync(storePath, `${settingsRecordLine('settings_e', 5)}\n`);
+    assert.equal(statSync(storePath).ino, originalInode);
 
     const refreshed = await listObjects(handle, 'settings');
     assert.equal(refreshed.ok, true);
@@ -485,6 +510,62 @@ test('warm record index rejects an out-of-band torn-tail rewrite', async () => {
       refreshed.value.items.map((item) => item.object.id).sort(),
       ['settings_a', 'settings_b', 'settings_d', 'settings_e'],
     );
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('warm record index validates the final window of a prefix over 8 KiB', async () => {
+  const root = freshRoot();
+  try {
+    const storePath = path.join(root, 'settings.jsonl');
+    const stableRecords = Array.from({ length: 20 }, (_, index) =>
+      settingsRecordLine(
+        `settings_prefix_${index}`,
+        index,
+        'x'.repeat(512),
+      )
+    );
+    const staleId = 'settings_large_prefix_deleted';
+    const initialContents = `${[
+      ...stableRecords,
+      settingsRecordLine(staleId, 20),
+    ].join('\n')}\n`;
+    assert.ok(Buffer.byteLength(initialContents) > 8192);
+    mkdirSync(root, { recursive: true });
+    writeFileSync(storePath, initialContents);
+    const originalInode = statSync(storePath).ino;
+
+    const handle = composeHandle({
+      root,
+      capability: 'foundation',
+      allowedKinds: ['settings'],
+      principal: 'person_fixture',
+    });
+    const warm = await listObjects(handle, 'settings');
+    assert.equal(warm.ok, true);
+    if (!warm.ok) return;
+    assert.equal(
+      warm.value.items.some((item) => item.object.id === staleId),
+      true,
+    );
+
+    writeFileSync(storePath, `${stableRecords.join('\n')}\n`);
+    appendFileSync(
+      storePath,
+      `${settingsRecordLine('settings_large_prefix_d', 21)}\n`,
+    );
+    appendFileSync(
+      storePath,
+      `${settingsRecordLine('settings_large_prefix_e', 22)}\n`,
+    );
+    assert.equal(statSync(storePath).ino, originalInode);
+
+    const refreshed = await listObjects(handle, 'settings');
+    assert.equal(refreshed.ok, true);
+    if (!refreshed.ok) return;
+    const refreshedIds = refreshed.value.items.map((item) => item.object.id);
+    assert.equal(refreshedIds.includes(staleId), false);
+    assert.equal(refreshedIds.includes('settings_large_prefix_d'), true);
+    assert.equal(refreshedIds.includes('settings_large_prefix_e'), true);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
