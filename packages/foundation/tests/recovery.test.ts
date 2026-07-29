@@ -53,6 +53,63 @@ function plantTombstone(root: string, refId: string): void {
   appendFileSync(path.join(root, 'quarantine.jsonl'), line + '\n');
 }
 
+function plantLifecycleTraceOrphan(
+  root: string,
+  action: 'quarantine' | 'resolveQuarantine',
+  id: string,
+  seq: number,
+): void {
+  const line = JSON.stringify({
+    kind: 'trace',
+    id: `trace_${action}_${id}`,
+    schemaVersion: 1,
+    createdAt: new Date().toISOString(),
+    permissionLevel: 'team',
+    createdBy: 'sys_reconciler',
+    seq,
+    opId: `srv_${action}_${id}`,
+    clientOpId: `op_${action}_${id}`,
+    action,
+    target: { kind: 'settings', id },
+  });
+  mkdirSync(root, { recursive: true });
+  appendFileSync(path.join(root, 'traces.jsonl'), `${line}\n`);
+}
+
+test('boot reconciliation catches lifecycle trace orphans outside transcript scope', async () => {
+  const root = freshRoot();
+  try {
+    plantLifecycleTraceOrphan(
+      root,
+      'quarantine',
+      'settings_quarantine_trace_orphan',
+      0,
+    );
+    plantLifecycleTraceOrphan(
+      root,
+      'resolveQuarantine',
+      'settings_resolve_trace_orphan',
+      1,
+    );
+
+    const engine = new StoreEngine({ root });
+    engine.boot();
+    const quarantine = await listQuarantineBound(engine);
+    assert.deepEqual(
+      quarantine.items
+        .filter((item) => item.reason === 'orphan_trace_no_object')
+        .map((item) => item.quarantinedRef.id)
+        .sort(),
+      [
+        'settings_quarantine_trace_orphan',
+        'settings_resolve_trace_orphan',
+      ],
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('crash recovery (S2 ruling): kill between object and trace append → object readable with incomplete:true, NEVER tombstoned', async () => {
   const root = freshRoot();
   try {
