@@ -1,0 +1,2 @@
+{"kind":
+{"kind":"event","envelope":{"seq":10,"session_id":"native-session-redacted","timestamp":"2026-07-29T04:05:06.000Z","type":"assistant_output","payload":{"agentId":"agent_valid_fixture","turnId":"turn_valid_after_quarantine","sessionId":"native-session-redacted","output":"synthetic valid line after quarantine crash"}}}

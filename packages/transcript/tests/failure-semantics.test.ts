@@ -271,3 +271,129 @@ test('NVK_FAILPOINT transcript.afterLineAppendBeforeCheckpoint deduplicates the 
     rmSync(workspace, { recursive: true, force: true });
   }
 });
+
+test('NVK_FAILPOINT transcript.afterQuarantineBeforeSkip reuses one tombstone then skips and continues on retry', async () => {
+  const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-fail-quarantine-'));
+  const root = path.join(workspace, '.novakai');
+  const destination = path.join(
+    root,
+    'transcripts',
+    'kimi',
+    'fixture-session',
+    'events.jsonl',
+  );
+  const priorFailpoint = process.env.NVK_FAILPOINT;
+  try {
+    mkdirSync(path.dirname(destination), { recursive: true });
+    copyFileSync(
+      path.join(fixtureRoot, 'kimi', 'quarantine-then-valid.jsonl'),
+      destination,
+    );
+    process.env.NVK_FAILPOINT =
+      'transcript.afterQuarantineBeforeSkip';
+    const crashing = composeTranscript({
+      root,
+      source: createRawTranscriptSource({ root }),
+    });
+    await assert.rejects(
+      crashing.ingest(),
+      /transcript\.afterQuarantineBeforeSkip/u,
+    );
+
+    const queryHandle = composeHandle({
+      root,
+      dataRoot: path.join(root, 'stores'),
+      capability: 'transcript',
+      allowedKinds: [
+        'transcriptLine',
+        'transcriptJournal',
+        'transcriptCheckpoint',
+      ],
+      principal: 'sys_ingester',
+    });
+    const afterCrashQuarantine = await listObjects(
+      queryHandle,
+      'quarantine',
+    );
+    const afterCrashJournal = await listObjects(
+      queryHandle,
+      'transcriptJournal',
+    );
+    const afterCrashCheckpoints = await listObjects(
+      queryHandle,
+      'transcriptCheckpoint',
+    );
+    assert.equal(
+      afterCrashQuarantine.ok
+        ? afterCrashQuarantine.value.items.length
+        : null,
+      1,
+    );
+    assert.equal(
+      afterCrashJournal.ok ? afterCrashJournal.value.items.length : null,
+      0,
+    );
+    assert.equal(
+      afterCrashCheckpoints.ok
+        ? afterCrashCheckpoints.value.items.length
+        : null,
+      0,
+    );
+
+    delete process.env.NVK_FAILPOINT;
+    const retrying = composeTranscript({
+      root,
+      source: createRawTranscriptSource({ root }),
+    });
+    const retry = await retrying.ingest();
+    assert.deepEqual(
+      retry.ok
+        ? {
+            added: retry.value.added,
+            skipped: retry.value.skipped.map(
+              (entry) => entry.skip.code,
+            ),
+          }
+        : null,
+      { added: 1, skipped: ['malformed_json'] },
+    );
+    const afterRetryQuarantine = await listObjects(
+      queryHandle,
+      'quarantine',
+    );
+    const afterRetryJournal = await listObjects(
+      queryHandle,
+      'transcriptJournal',
+      { outcome: 'skipped' },
+    );
+    const afterRetryCheckpoints = await listObjects(
+      queryHandle,
+      'transcriptCheckpoint',
+    );
+    assert.equal(
+      afterRetryQuarantine.ok
+        ? afterRetryQuarantine.value.items.length
+        : null,
+      1,
+    );
+    assert.equal(
+      afterRetryJournal.ok ? afterRetryJournal.value.items.length : null,
+      1,
+    );
+    assert.equal(
+      afterRetryCheckpoints.ok
+        ? afterRetryCheckpoints.value.items.length
+        : null,
+      1,
+    );
+    const lines = await retrying.linesByProvider('kimi');
+    assert.deepEqual(
+      lines.ok ? lines.value.map((line) => line.text) : null,
+      ['synthetic valid line after quarantine crash'],
+    );
+  } finally {
+    if (priorFailpoint === undefined) delete process.env.NVK_FAILPOINT;
+    else process.env.NVK_FAILPOINT = priorFailpoint;
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
