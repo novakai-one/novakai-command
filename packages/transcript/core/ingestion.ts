@@ -91,11 +91,19 @@ function invalidRecord(
   );
 }
 
-function sourceFailure(sourceId: string | undefined, cause: unknown): TranscriptError {
+function sourceFailure(
+  sourceId: string | undefined,
+  _cause: unknown,
+): TranscriptError {
   return err(
     'TranscriptSourceFailed',
-    `transcript source failed: ${String(cause)}`,
-    { ...(sourceId ? { sourceId } : {}), cause: String(cause) },
+    sourceId
+      ? `transcript source "${sourceId}" failed`
+      : 'transcript source discovery failed',
+    {
+      ...(sourceId ? { sourceId } : {}),
+      cause: 'provider source unavailable',
+    },
     true,
   );
 }

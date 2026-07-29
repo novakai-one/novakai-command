@@ -528,7 +528,7 @@ test('symlinked provider roots are rejected without reading outside transcript c
     );
     assert.match(
       ingested.ok ? '' : ingested.error.message,
-      /provider transcript root must not be a symlink/u,
+      /transcript source discovery failed/u,
     );
 
     const lines = await transcript.linesByProvider('kimi');

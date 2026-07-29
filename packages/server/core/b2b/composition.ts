@@ -10,6 +10,16 @@ import {
 
 const DEFAULT_POLL_MS = 1_000;
 
+function safeWorkerFailure(cause: unknown): string {
+  const raw = cause instanceof Error ? cause.message : String(cause);
+  const errorCode = raw.match(
+    /\b(?:EACCES|EEXIST|EINVAL|EIO|ENOENT|ENOTDIR|EPERM)\b/u,
+  )?.[0];
+  return errorCode
+    ? `transcript worker failed (${errorCode})`
+    : 'transcript worker failed';
+}
+
 export interface TranscriptTopologyStatus {
   running: boolean;
   watcherReady: boolean;
@@ -210,7 +220,7 @@ export function composeTranscriptServerHost(
         }
       });
       startedWorker.on('error', (cause) => {
-        latchTerminal(cause.message);
+        latchTerminal(safeWorkerFailure(cause));
         settlePending(unavailable('transcript ingestion worker failed'));
       });
       startedWorker.on('exit', (code) => {

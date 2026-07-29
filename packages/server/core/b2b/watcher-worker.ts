@@ -61,10 +61,20 @@ function schedule(delayMs: number): void {
   }, delayMs);
 }
 
+function safeFailureMessage(cause: unknown): string {
+  const raw = cause instanceof Error ? cause.message : String(cause);
+  const errorCode = raw.match(
+    /\b(?:EACCES|EEXIST|EINVAL|EIO|ENOENT|ENOTDIR|EPERM)\b/u,
+  )?.[0];
+  return errorCode
+    ? `transcript worker failed (${errorCode})`
+    : 'transcript worker failed';
+}
+
 function fail(cause: unknown): void {
   parentPort?.postMessage({
     type: 'failed',
-    message: cause instanceof Error ? cause.message : String(cause),
+    message: safeFailureMessage(cause),
   });
   parentPort?.close();
 }
@@ -90,7 +100,7 @@ async function runIngest(requestId?: string): Promise<void> {
   try {
     await activeIngest;
   } catch (cause) {
-    lastError = cause instanceof Error ? cause.message : String(cause);
+    lastError = safeFailureMessage(cause);
     outcome = {
       ok: false,
       error: {
