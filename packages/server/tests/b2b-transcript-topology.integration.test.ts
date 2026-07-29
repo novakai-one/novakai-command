@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   writeFileSync,
@@ -104,4 +105,74 @@ test('transcript.ingest=true starts copy custody and authoritative ingestion', a
     booted.value.runtime.transcript.topology.status().watcherReady,
     true,
   );
+});
+
+test('transcript.ingest=false starts neither watcher nor ingester even when the legacy dev flag is true', async (t) => {
+  const base = workspace();
+  const root = path.join(base, '.novakai');
+  const providerHome = path.join(base, 'provider-home');
+  const sourceDir = path.join(providerHome, '.kimi-code', 'events');
+  mkdirSync(sourceDir, { recursive: true });
+  writeFileSync(path.join(sourceDir, 'disabled.jsonl'), `${JSON.stringify({
+    kind: 'event',
+    envelope: {
+      seq: 1,
+      timestamp: '2026-07-29T01:02:03.000Z',
+      type: 'assistant_output',
+      payload: {
+        turnId: 'turn_disabled',
+        output: 'must remain outside custody',
+      },
+    },
+  })}\n`);
+  await configureServer(root, false);
+  const opened = await openConfigStore({
+    root,
+    principal: 'sys_spine',
+  });
+  assert.equal(opened.ok, true);
+  if (!opened.ok) return;
+  await opened.value.set({
+    configKind: 'dev',
+    allowMock: false,
+    watchTranscripts: true,
+  }, mintClientOpId());
+
+  const booted = await bootServer({
+    root,
+    port: 0,
+    cwd: base,
+    providerHome,
+    watchdogDir: base,
+    kimiCliPath: fakeKimi(),
+    supervisionTimers: false,
+  });
+  assert.equal(booted.ok, true);
+  if (!booted.ok) return;
+  t.after(() => booted.value.close());
+
+  await new Promise((resolve) => setTimeout(resolve, 350));
+  assert.deepEqual(
+    booted.value.runtime.transcript.topology.status(),
+    {
+      running: false,
+      watcherReady: false,
+      ingesting: false,
+      runs: 0,
+    },
+  );
+  assert.equal(
+    existsSync(path.join(
+      root,
+      'transcripts',
+      'kimi',
+      'events',
+      'disabled.jsonl',
+    )),
+    false,
+    'copy custody never started',
+  );
+  const lines = await booted.value.runtime.transcript.operations
+    .linesByProvider('kimi');
+  assert.deepEqual(lines.ok ? lines.value : null, []);
 });
