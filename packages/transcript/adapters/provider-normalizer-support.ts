@@ -73,6 +73,17 @@ export function contentText(value: unknown): string | undefined {
   return text.length > 0 ? text.join('\n') : undefined;
 }
 
+export function serializedText(value: unknown): string | undefined {
+  try {
+    const serialized = JSON.stringify(value);
+    return typeof serialized === 'string' && serialized.length > 0
+      ? serialized
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function diagnostic(
   code: TranscriptDiagnostic['code'],
   message: string,
@@ -92,6 +103,22 @@ export function unsupported(
     reason: {
       code: 'unsupported_shape',
       message: `${provider} row does not expose a supported transcript message shape`,
+    },
+  };
+}
+
+export function nonMessage(
+  offset: number,
+  nextOffset: number,
+  provider: ProviderName,
+): TranscriptSourceItem {
+  return {
+    kind: 'skip',
+    offset,
+    nextOffset,
+    reason: {
+      code: 'non_message',
+      message: `${provider} row is well-formed provider metadata`,
     },
   };
 }

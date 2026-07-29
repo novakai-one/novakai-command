@@ -3,6 +3,7 @@ import {
   SessionRef,
   type NormalizedTranscriptLine,
   type TranscriptDiagnostic,
+  type TranscriptRelationDelta,
   type TranscriptRelationState,
   type TranscriptSourceItem,
 } from '../contract/schemas.js';
@@ -11,7 +12,9 @@ import {
   identityValue,
   isRecord,
   messageText,
+  nonMessage,
   numericUsage,
+  serializedText,
   stringValue,
   unsupported,
   type ProviderAgentResolver,
@@ -99,39 +102,31 @@ export function normalizeKimi(
     ?? stringValue(envelope.session_id)
   );
   const currentRelations = relationState ?? { parents: {}, children: {} };
+  let relation: TranscriptRelationDelta | undefined;
   if (eventType === 'tool.call.started') {
     const toolName = stringValue(payload.name);
     const remainingChildren = expectedSpawnCount(payload);
-    if (!remainingChildren) {
-      return toolName === 'Agent' || toolName === 'AgentSwarm'
-        ? unsupported(offset, nextOffset, 'kimi')
-        : { kind: 'context', offset, nextOffset };
-    }
-    const toolCallId = stringValue(payload.toolCallId);
-    const nativeTurnId = identityValue(payload.turnId);
-    const turnId = nativeSessionId && nativeTurnId
-      ? turnIdentity(nativeSessionId, nativeTurnId)
-      : undefined;
-    if (!toolCallId || !turnId) {
-      return unsupported(offset, nextOffset, 'kimi');
-    }
-    const parentKey = relationKey('tool', toolCallId);
-    const nativeParentAgentId = stringValue(payload.agentId);
-    const parentAgentId = nativeParentAgentId
-      ? agentResolver?.('kimi', nativeParentAgentId)
-      : undefined;
-    return {
-      kind: 'context',
-      offset,
-      nextOffset,
-      relation: {
+    if (toolName === 'Agent' || toolName === 'AgentSwarm') {
+      const toolCallId = stringValue(payload.toolCallId);
+      const nativeTurnId = identityValue(payload.turnId);
+      const turnId = nativeSessionId && nativeTurnId
+        ? turnIdentity(nativeSessionId, nativeTurnId)
+        : undefined;
+      if (!remainingChildren || !toolCallId || !turnId) {
+        return unsupported(offset, nextOffset, 'kimi');
+      }
+      const nativeParentAgentId = stringValue(payload.agentId);
+      const parentAgentId = nativeParentAgentId
+        ? agentResolver?.('kimi', nativeParentAgentId)
+        : undefined;
+      relation = {
         type: 'parent',
-        parentKey,
+        parentKey: relationKey('tool', toolCallId),
         parentTurnId: turnId,
         remainingChildren,
         ...(parentAgentId ? { parentAgentId } : {}),
-      },
-    };
+      };
+    }
   }
   if (eventType === 'subagent.spawned') {
     const subagentId = stringValue(payload.subagentId);
@@ -157,18 +152,29 @@ export function normalizeKimi(
       },
     };
   }
-  const text = (
-    stringValue(payload.output)
-    ?? stringValue(payload.prompt)
-    ?? messageText(payload.message)
-  );
-  if (text === undefined) {
-    return unsupported(offset, nextOffset, 'kimi');
-  }
   const message = isRecord(payload.message) ? payload.message : undefined;
   const explicitRole = stringValue(message?.role);
-  const role = eventType === 'tool.result'
-    ? 'tool'
+  const messageParts = Array.isArray(message?.content)
+    ? message.content.filter(isRecord)
+    : [];
+  const messagePartTypes = new Set(
+    messageParts.map((part) => stringValue(part.type)),
+  );
+  const isAttachment = (
+    eventType === 'attachment'
+    || [...messagePartTypes].some(
+      (type) =>
+        type === 'attachment'
+        || type === 'document'
+        || type === 'image',
+    )
+  );
+  const role = eventType === 'tool.call.started'
+    ? 'tool_call'
+    : eventType === 'tool.result'
+      ? 'tool_result'
+      : isAttachment
+        ? 'attachment'
     : explicitRole === 'user'
     || explicitRole === 'assistant'
     || explicitRole === 'system'
@@ -177,6 +183,23 @@ export function normalizeKimi(
     : payload.prompt !== undefined
       ? 'user'
       : 'assistant';
+  const text = role === 'tool_call'
+    ? serializedText({
+        name: payload.name,
+        args: payload.args,
+      })
+    : role === 'tool_result'
+      ? stringValue(payload.output) ?? serializedText(payload.message)
+    : role === 'attachment'
+      ? serializedText(message?.content ?? payload)
+      : (
+          stringValue(payload.output)
+          ?? stringValue(payload.prompt)
+          ?? messageText(payload.message)
+        );
+  if (text === undefined) {
+    return nonMessage(offset, nextOffset, 'kimi');
+  }
   const resolvedSession = nativeSessionId && resolver
     ? SessionRef.safeParse(resolver('kimi', nativeSessionId))
     : undefined;
@@ -250,6 +273,7 @@ export function normalizeKimi(
     nextOffset,
     content,
     line,
+    ...(relation ? { relation } : {}),
     ...(diagnostics.length > 0 ? { diagnostics } : {}),
   };
 }

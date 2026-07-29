@@ -60,7 +60,7 @@ test('TRN-004 rejected raw rows request Foundation quarantine and later valid ro
         : null,
       {
         added: 1,
-        skipped: ['malformed_json', 'unsupported_shape'],
+        skipped: ['malformed_json', 'non_message'],
       },
     );
 
@@ -87,11 +87,6 @@ test('TRN-004 rejected raw rows request Foundation quarantine and later valid ro
           }))
         : null,
       [
-        {
-          createdBy: 'sys_ingester',
-          targetKind: 'transcriptLine',
-          reason: 'corrupt_record',
-        },
         {
           createdBy: 'sys_ingester',
           targetKind: 'transcriptLine',

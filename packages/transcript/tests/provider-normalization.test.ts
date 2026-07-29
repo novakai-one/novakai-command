@@ -101,7 +101,7 @@ test('Kimi assistant output omits unresolved provider identity', async () => {
   }
 });
 
-test('Kimi numeric tool.result identities are opaque and role is tool', async () => {
+test('Kimi tool traffic identities are opaque and roles are typed', async () => {
   const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-kimi-tool-result-'));
   const root = path.join(workspace, '.novakai');
   const destination = path.join(
@@ -127,12 +127,19 @@ test('Kimi numeric tool.result identities are opaque and role is tool', async ()
     const queried = await transcript.linesByProvider('kimi');
     assert.equal(queried.ok, true);
     const lines = queried.ok ? queried.value : [];
-    assert.equal(lines.length, 1);
-    assert.equal(lines[0]?.role, 'tool');
-    assert.match(lines[0]?.turnId ?? '', /^kimi:turn_[a-f0-9]{64}$/u);
-    assert.match(
-      lines[0]?.sourceAttribution.originalId ?? '',
-      /^event_[a-f0-9]{64}$/u,
+    assert.equal(lines.length, 2);
+    assert.deepEqual(
+      lines.map((line) => line.role),
+      ['tool_call', 'tool_result'],
+    );
+    assert.ok(
+      lines.every(
+        (line) =>
+          /^kimi:turn_[a-f0-9]{64}$/u.test(line.turnId)
+          && /^event_[a-f0-9]{64}$/u.test(
+            line.sourceAttribution.originalId ?? '',
+          ),
+      ),
     );
   } finally {
     rmSync(workspace, { recursive: true, force: true });
@@ -176,7 +183,7 @@ test('Kimi same-turn tool results remain distinct transcript lines', async () =>
     assert.equal(queried.value.length, 2);
     assert.deepEqual(
       queried.value.map((line) => line.role),
-      ['tool', 'tool'],
+      ['tool_result', 'tool_result'],
     );
     assert.equal(
       new Set(queried.value.map(
@@ -356,7 +363,7 @@ test('irrelevant Kimi tool calls keep relation persistence bounded at 100 and 20
               skipped: ingested.value.skipped.length,
             }
           : null,
-        { added: 0, skipped: 0 },
+        { added: rowCount, skipped: 0 },
       );
 
       const handle = composeHandle({
@@ -449,17 +456,18 @@ test('Kimi AgentSwarm persists one bounded relation per spawned child and then p
             skipped: ingested.value.skipped.length,
           }
         : null,
-      { added: 3, skipped: 0 },
+      { added: 4, skipped: 0 },
     );
     const lines = await transcript.linesByProvider('kimi');
     assert.equal(lines.ok, true);
     if (!lines.ok) return;
-    assert.equal(lines.value.length, 3);
+    assert.equal(lines.value.length, 4);
+    const childLines = lines.value.filter((line) => line.parentTurnId);
     const parentTurns = new Set(
-      lines.value.map((line) => line.parentTurnId),
+      childLines.map((line) => line.parentTurnId),
     );
     assert.equal(parentTurns.size, 1);
-    const parentTurnId = lines.value[0]?.parentTurnId ?? '';
+    const parentTurnId = childLines[0]?.parentTurnId ?? '';
     assert.match(parentTurnId, /^kimi:turn_[a-f0-9]{64}$/u);
     const tree = await transcript.subagentTree(parentTurnId);
     assert.equal(tree.ok ? tree.value.length : null, 3);
@@ -529,7 +537,7 @@ test('Kimi relation context survives checkpoint restart without rescanning metad
             diagnostics: relationPass.value.diagnostics.length,
           }
         : null,
-      { added: 0, skipped: 0, diagnostics: 0 },
+      { added: 1, skipped: 0, diagnostics: 2 },
     );
 
     appendFileSync(destination, `${rows[2]}\n`);
@@ -560,9 +568,10 @@ test('Kimi relation context survives checkpoint restart without rescanning metad
 
     const providerLines = await restarted.linesByProvider('kimi');
     assert.equal(providerLines.ok, true);
-    const parentTurnId = providerLines.ok
-      ? providerLines.value[0]?.parentTurnId
+    const childLine = providerLines.ok
+      ? providerLines.value.find((line) => line.parentTurnId)
       : undefined;
+    const parentTurnId = childLine?.parentTurnId;
     assert.match(parentTurnId ?? '', /^kimi:turn_[a-f0-9]{64}$/u);
     const tree = await restarted.subagentTree(parentTurnId ?? '');
     assert.deepEqual(
@@ -575,11 +584,9 @@ test('Kimi relation context survives checkpoint restart without rescanning metad
           }))
         : null,
       [{
-        role: 'tool',
+        role: 'tool_result',
         text: 'synthetic child tool result',
-        turnId: providerLines.ok
-          ? providerLines.value[0]?.turnId
-          : undefined,
+        turnId: childLine?.turnId,
         parentTurnId,
       }],
     );
@@ -644,7 +651,7 @@ test('Kimi relation fact retry is idempotent when a crash precedes its checkpoin
             skipped: retriedParent.value.skipped.length,
           }
         : null,
-      { added: 0, skipped: 0 },
+      { added: 1, skipped: 0 },
     );
 
     appendFileSync(destination, `${rows.slice(1).join('\n')}\n`);
@@ -661,7 +668,7 @@ test('Kimi relation fact retry is idempotent when a crash precedes its checkpoin
     const lines = await restarted.linesByProvider('kimi');
     assert.equal(lines.ok, true);
     const parentTurnId = lines.ok
-      ? lines.value[0]?.parentTurnId ?? ''
+      ? lines.value.find((line) => line.parentTurnId)?.parentTurnId ?? ''
       : '';
     const tree = await restarted.subagentTree(parentTurnId);
     assert.equal(tree.ok ? tree.value.length : null, 1);
@@ -741,7 +748,10 @@ test('Kimi native agent identities remain absent without a resolver', async () =
             parentAgentId: line.parentAgentId,
           }))
         : null,
-      [{ agentId: undefined, parentAgentId: undefined }],
+      [
+        { agentId: undefined, parentAgentId: undefined },
+        { agentId: undefined, parentAgentId: undefined },
+      ],
     );
 
     const storeRoot = path.join(root, 'stores');
@@ -804,7 +814,7 @@ test('Kimi persists only agent identities returned by the durable resolver', asy
             skipped: contextResult.value.skipped.length,
           }
         : null,
-      { added: 0, skipped: 0 },
+      { added: 1, skipped: 0 },
     );
 
     appendFileSync(destination, `${rows[2]}\n`);
@@ -825,7 +835,7 @@ test('Kimi persists only agent identities returned by the durable resolver', asy
     const providerLines = await transcript.linesByProvider('kimi');
     assert.equal(providerLines.ok, true);
     const parentTurnId = providerLines.ok
-      ? providerLines.value[0]?.parentTurnId
+      ? providerLines.value.find((line) => line.parentTurnId)?.parentTurnId
       : undefined;
     assert.match(parentTurnId ?? '', /^kimi:turn_[a-f0-9]{64}$/u);
     const tree = await transcript.subagentTree(parentTurnId ?? '');
@@ -1002,7 +1012,7 @@ test('well-formed provider tool traffic and attachments are durable while metada
       );
       mkdirSync(path.dirname(destination), { recursive: true });
       copyFileSync(
-        path.join(fixtureRoot, provider, 'real-shapes.jsonl'),
+        path.join(fixtureRoot, 'real-shapes', `${provider}.jsonl`),
         destination,
       );
     }

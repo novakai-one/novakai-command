@@ -540,29 +540,31 @@ export async function ingest(
             };
           }
           const item = parsedItem.data;
-          if (item.kind === 'context') {
-            if (item.relation) {
-              const persisted = await persistTranscriptRelation(
-                context,
-                source,
-                item,
-                item.relation,
-              );
-              if (!persisted.ok) return persisted;
-              context.failpoint.hit(
-                'transcript.afterRelationBeforeCheckpoint',
-              );
-            }
-          } else if (item.kind === 'skip') {
-            const quarantined = await quarantineRejectedItem(
+          if ('relation' in item && item.relation) {
+            const persisted = await persistTranscriptRelation(
               context,
               source,
               item,
+              item.relation,
             );
-            if (!quarantined.ok) return quarantined;
+            if (!persisted.ok) return persisted;
             context.failpoint.hit(
-              'transcript.afterQuarantineBeforeSkip',
+              'transcript.afterRelationBeforeCheckpoint',
             );
+          }
+          if (item.kind === 'context') {
+          } else if (item.kind === 'skip') {
+            if (item.reason.code !== 'non_message') {
+              const quarantined = await quarantineRejectedItem(
+                context,
+                source,
+                item,
+              );
+              if (!quarantined.ok) return quarantined;
+              context.failpoint.hit(
+                'transcript.afterQuarantineBeforeSkip',
+              );
+            }
             const skipped = await persistSkip(context, source, item);
             if (!skipped.ok) return skipped;
             result.skipped.push(skipped.value);

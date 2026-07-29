@@ -16,6 +16,7 @@ import {
   type TranscriptRelationJournalEntry as TranscriptRelationJournalEntryT,
   type TranscriptRelationState,
   type TranscriptSource as TranscriptSourceT,
+  type TranscriptSourceCandidate,
   type TranscriptSourceContext,
 } from '../contract/schemas.js';
 import type { TranscriptContext } from './composition.js';
@@ -115,7 +116,7 @@ export function applyTranscriptRelationDelta(
 export async function persistTranscriptRelation(
   context: TranscriptContext,
   source: TranscriptSourceT,
-  item: TranscriptSourceContext,
+  item: TranscriptSourceContext | TranscriptSourceCandidate,
   relation: TranscriptRelationDelta,
 ): Promise<Result<TranscriptRelationJournalEntryT, TranscriptError>> {
   const id = `transcriptJournal_${hash(

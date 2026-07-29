@@ -180,7 +180,7 @@ class RawTranscriptSource implements TranscriptSourceAdapter {
             currentRelations,
             this.options.resolveAgentId,
           );
-          if (item.kind === 'context' && item.relation) {
+          if ('relation' in item && item.relation) {
             currentRelations = applyTranscriptRelationDelta(
               currentRelations ?? { parents: {}, children: {} },
               item.relation,

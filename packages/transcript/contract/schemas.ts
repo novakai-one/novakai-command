@@ -15,6 +15,9 @@ export const TranscriptRole = z.enum([
   'assistant',
   'system',
   'tool',
+  'tool_call',
+  'tool_result',
+  'attachment',
 ]);
 export type TranscriptRole = z.infer<typeof TranscriptRole>;
 
@@ -87,6 +90,7 @@ export const TranscriptSkipReason = z.object({
   code: z.enum([
     'malformed_json',
     'unsupported_shape',
+    'non_message',
   ]),
   message: z.string().min(1),
 }).strict();
@@ -106,6 +110,7 @@ export const TranscriptSourceCandidate = SourcePosition.extend({
   content: z.string(),
   line: NormalizedTranscriptLine,
   diagnostics: z.array(TranscriptDiagnostic).optional(),
+  relation: TranscriptRelationDelta.optional(),
 }).superRefine((item, context) => {
   if (item.nextOffset <= item.offset) {
     context.addIssue({

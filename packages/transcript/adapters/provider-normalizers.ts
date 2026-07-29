@@ -10,7 +10,9 @@ import {
   contentText,
   diagnostic,
   isRecord,
+  nonMessage,
   numericUsage,
+  serializedText,
   stringValue,
   unsupported,
   type ProviderAgentResolver,
@@ -30,6 +32,14 @@ function normalizeClaude(
   resolver?: ProviderSessionResolver,
 ): TranscriptSourceItem {
   if (
+    isRecord(row)
+    && stringValue(row.type)
+    && !isRecord(row.message)
+    && !['user', 'assistant', 'system'].includes(String(row.type))
+  ) {
+    return nonMessage(offset, nextOffset, 'claude');
+  }
+  if (
     !isRecord(row)
     || !stringValue(row.type)
     || !stringValue(row.uuid)
@@ -47,7 +57,29 @@ function normalizeClaude(
   ) {
     return unsupported(offset, nextOffset, 'claude');
   }
-  const text = contentText(message.content);
+  const blocks = Array.isArray(message.content)
+    ? message.content.filter(isRecord)
+    : [];
+  const blockTypes = new Set(blocks.map((block) => stringValue(block.type)));
+  const role = blockTypes.has('tool_use')
+    ? 'tool_call'
+    : blockTypes.has('tool_result')
+      ? 'tool_result'
+      : [...blockTypes].some(
+          (type) =>
+            type === 'attachment'
+            || type === 'document'
+            || type === 'image',
+        )
+        ? 'attachment'
+        : roleValue;
+  const text = (
+    role === 'tool_call'
+    || role === 'tool_result'
+    || role === 'attachment'
+  )
+    ? serializedText(message.content)
+    : contentText(message.content);
   if (text === undefined) {
     return unsupported(offset, nextOffset, 'claude');
   }
@@ -79,7 +111,7 @@ function normalizeClaude(
       nativeId: uuid,
       turnId: uuid,
       turnIndex: offset,
-      role: roleValue,
+      role,
       text,
       ...(usage ? { tokenUsage: usage } : {}),
       ...(stringValue(row.parentUuid)
@@ -100,6 +132,14 @@ function normalizeCodex(
   nextOffset: number,
 ): TranscriptSourceItem {
   if (
+    isRecord(row)
+    && stringValue(row.type)
+    && row.type !== 'response_item'
+    && row.type !== 'event_msg'
+  ) {
+    return nonMessage(offset, nextOffset, 'codex');
+  }
+  if (
     !isRecord(row)
     || (row.type !== 'response_item' && row.type !== 'event_msg')
     || !isRecord(row.payload)
@@ -109,8 +149,28 @@ function normalizeCodex(
   const payload = row.payload;
   const responseRole = stringValue(payload.role);
   const eventType = stringValue(payload.type);
+  const contentParts = Array.isArray(payload.content)
+    ? payload.content.filter(isRecord)
+    : [];
+  const contentTypes = new Set(
+    contentParts.map((part) => stringValue(part.type)),
+  );
   const role = row.type === 'response_item'
-    ? responseRole
+    ? eventType === 'function_call'
+      || eventType === 'custom_tool_call'
+      || eventType === 'web_search_call'
+      ? 'tool_call'
+      : eventType === 'function_call_output'
+        || eventType === 'custom_tool_call_output'
+        ? 'tool_result'
+        : [...contentTypes].some(
+            (type) =>
+              type === 'input_image'
+              || type === 'input_file'
+              || type === 'attachment',
+          )
+          ? 'attachment'
+          : responseRole
     : eventType === 'user_message'
       ? 'user'
       : eventType === 'agent_message'
@@ -121,12 +181,27 @@ function normalizeCodex(
     && role !== 'assistant'
     && role !== 'system'
     && role !== 'tool'
+    && role !== 'tool_call'
+    && role !== 'tool_result'
+    && role !== 'attachment'
   ) {
     return unsupported(offset, nextOffset, 'codex');
   }
   const text = (
-    contentText(payload.content)
-    ?? stringValue(payload.message)
+    role === 'tool_call'
+      ? serializedText({
+          type: eventType,
+          name: payload.name,
+          arguments: payload.arguments,
+        })
+      : role === 'tool_result'
+        ? serializedText({
+            type: eventType,
+            output: payload.output,
+          })
+      : role === 'attachment'
+        ? serializedText(payload.content)
+        : contentText(payload.content) ?? stringValue(payload.message)
   );
   if (text === undefined) {
     return unsupported(offset, nextOffset, 'codex');
@@ -142,7 +217,13 @@ function normalizeCodex(
     ?? stringValue(payload.id)
   );
   if (!turnId) return unsupported(offset, nextOffset, 'codex');
-  const nativeId = stringValue(payload.id) ?? turnId;
+  const callId = stringValue(payload.call_id);
+  const nativeId = (
+    stringValue(payload.id)
+    ?? (callId && (role === 'tool_call' || role === 'tool_result')
+      ? `${role}:${callId}`
+      : turnId)
+  );
   const source = isRecord(payload.source) ? payload.source : undefined;
   const diagnostics: TranscriptDiagnostic[] = [];
   if (source?.subagent !== undefined) {
