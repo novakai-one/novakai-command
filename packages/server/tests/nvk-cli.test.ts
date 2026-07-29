@@ -30,7 +30,7 @@ function invoke(
   });
 }
 
-test('nvk dispatches the exact project, artifact, and spine offline command groups', () => {
+test('nvk dispatches the project, artifact, and spine offline command groups', () => {
   const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-umbrella-'));
   const root = path.join(workspace, '.novakai');
   const source = path.join(workspace, 'evidence.bin');
@@ -97,7 +97,7 @@ test('nvk rejects inherited object names through the typed Usage path', () => {
     assert.equal(inherited.status, 2);
     assert.deepEqual(JSON.parse(inherited.stderr), {
       code: 'Usage',
-      message: 'usage: nvk project|artifact|spine <verb> [options]',
+      message: 'usage: nvk project|artifact|spine|transcript <verb> [options]',
     });
     assert.doesNotMatch(inherited.stderr, /TypeError|ERR_INVALID_ARG_TYPE|\n\s+at /);
   } finally {
