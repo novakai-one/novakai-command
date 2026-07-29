@@ -957,6 +957,24 @@ test('Codex raw-copy adapter normalizes response items and events without inferr
       },
     );
 
+    const journalHandle = composeHandle({
+      root,
+      dataRoot: path.join(root, 'stores'),
+      capability: 'transcript',
+      allowedKinds: ['transcriptJournal'],
+      principal: 'sys_ingester',
+    });
+    const diagnostics = await listObjects(
+      journalHandle,
+      'transcriptJournal',
+      { outcome: 'diagnostic' },
+    );
+    assert.equal(
+      diagnostics.ok ? diagnostics.value.items.length : null,
+      1,
+      'the same unavailable attribution state is stored once per source',
+    );
+
     const queried = await transcript.linesByProvider('codex');
     assert.equal(queried.ok, true);
     assert.deepEqual(

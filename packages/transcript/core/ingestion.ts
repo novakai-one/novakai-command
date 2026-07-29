@@ -347,7 +347,7 @@ async function persistDiagnostic(
   diagnostic: TranscriptDiagnostic,
 ): Promise<Result<TranscriptDiagnosticJournalEntryT, TranscriptError>> {
   const id = `transcriptJournal_${hash(
-    `${source.provider}:${source.sourceId}:${item.offset}:diagnostic:${diagnostic.code}`,
+    `${source.provider}:${source.sourceId}:diagnostic:${diagnostic.code}`,
   )}`;
   const now = new Date().toISOString();
   const draft = TranscriptJournalEntry.parse({
@@ -403,6 +403,36 @@ async function persistDiagnostic(
       [{ path: ['outcome'], message: 'expected diagnostic entry' }],
     ),
   };
+}
+
+async function emittedDiagnosticCodes(
+  context: TranscriptContext,
+  source: TranscriptSourceT,
+): Promise<Result<Set<TranscriptDiagnostic['code']>, TranscriptError>> {
+  const emitted = new Set<TranscriptDiagnostic['code']>();
+  let cursor: string | undefined;
+  do {
+    const listed = await listObjects<TranscriptJournalEntryT>(
+      context.handle,
+      'transcriptJournal',
+      {
+        provider: source.provider,
+        sourceId: source.sourceId,
+        outcome: 'diagnostic',
+      },
+      { ...(cursor ? { cursor } : {}), limit: 1_000 },
+    );
+    if (!listed.ok) return listed;
+    for (const stored of listed.value.items) {
+      const parsed = parseJournal(stored.object);
+      if (!parsed.ok) return parsed;
+      if (parsed.value.outcome === 'diagnostic') {
+        emitted.add(parsed.value.diagnostic.code);
+      }
+    }
+    cursor = listed.value.nextCursor;
+  } while (cursor);
+  return { ok: true, value: emitted };
 }
 
 async function persistCandidate(
@@ -526,6 +556,8 @@ export async function ingest(
       const checkpoint = await readCheckpoint(context, source);
       if (!checkpoint.ok) return checkpoint;
       const fromOffset = checkpoint.value?.object.offset ?? 0;
+      const diagnosticCodes = await emittedDiagnosticCodes(context, source);
+      if (!diagnosticCodes.ok) return diagnosticCodes;
       const restoredRelations = await restoreTranscriptRelationState(
         context,
         source,
@@ -588,6 +620,7 @@ export async function ingest(
               'transcript.afterLineAppendBeforeCheckpoint',
             );
             for (const diagnostic of item.diagnostics ?? []) {
+              if (diagnosticCodes.value.has(diagnostic.code)) continue;
               const journaled = await persistDiagnostic(
                 context,
                 source,
@@ -595,6 +628,7 @@ export async function ingest(
                 diagnostic,
               );
               if (!journaled.ok) return journaled;
+              diagnosticCodes.value.add(diagnostic.code);
               result.diagnostics.push(journaled.value);
             }
           }
