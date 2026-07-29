@@ -259,7 +259,13 @@ function normalizeCodex(
   const turnId = providerTurnId ?? (
     sourceId ? `${sourceId}:${turnIndex}` : undefined
   );
-  if (!turnId) return unsupported(offset, nextOffset, 'codex');
+  const contextFreeLegacyMessage = (
+    row.type === 'event_msg'
+    && eventType === 'user_message'
+  );
+  if (!turnId && !contextFreeLegacyMessage) {
+    return unsupported(offset, nextOffset, 'codex');
+  }
   const nativeId = stringValue(payload.id);
   const source = isRecord(payload.source) ? payload.source : undefined;
   const diagnostics: TranscriptDiagnostic[] = [];
@@ -277,7 +283,7 @@ function normalizeCodex(
     content,
     line: {
       ...(nativeId ? { nativeId } : {}),
-      turnId,
+      ...(turnId ? { turnId } : {}),
       turnIndex,
       role,
       text,
