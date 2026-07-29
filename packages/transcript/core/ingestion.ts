@@ -90,8 +90,9 @@ function dedupKey(
   provider: ProviderNameT,
   item: TranscriptSourceCandidate,
 ): string {
-  if (item.line.nativeId) {
-    return `${provider}:native:${item.line.nativeId}`;
+  const nativeId = item.line.nativeId ?? item.line.turnId;
+  if (nativeId) {
+    return `${provider}:native:${nativeId}`;
   }
   const parentId =
     item.line.parentTurnId
@@ -298,6 +299,7 @@ async function persistCandidate(
   }
   const now = new Date().toISOString();
   const line: NormalizedTranscriptLine = item.line;
+  const nativeId = line.nativeId ?? line.turnId;
   const draft = TranscriptLine.parse({
     kind: 'transcriptLine',
     id,
@@ -307,7 +309,7 @@ async function persistCandidate(
     createdBy: 'overridden-by-foundation',
     sourceAttribution: {
       origin: `${source.provider}:${source.sourceId}`,
-      ...(line.nativeId ? { originalId: line.nativeId } : {}),
+      ...(nativeId ? { originalId: nativeId } : {}),
       ingestedAt: now,
     },
     provider: source.provider,
