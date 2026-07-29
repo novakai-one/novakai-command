@@ -1,3 +1,3 @@
-{"kind":
+{"rawLeakSentinel":"malformed-content-must-not-persist"
 {"kind":"event","envelope":{"seq":8,"session_id":"native-session-redacted","timestamp":"2026-07-29T03:04:05.000Z","type":"metadata_only","payload":{"sessionId":"native-session-redacted"}}}
 {"kind":"event","envelope":{"seq":9,"session_id":"native-session-redacted","timestamp":"2026-07-29T03:04:06.000Z","type":"assistant_output","payload":{"agentId":"agent_valid_fixture","turnId":"turn_valid_after_failures","sessionId":"native-session-redacted","output":"synthetic valid line after failures"}}}
