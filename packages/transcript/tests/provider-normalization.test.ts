@@ -987,3 +987,83 @@ test('Codex raw-copy adapter normalizes response items and events without inferr
     rmSync(workspace, { recursive: true, force: true });
   }
 });
+
+test('well-formed provider tool traffic and attachments are durable while metadata skips never enter quarantine', async () => {
+  const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-provider-real-shapes-'));
+  const root = path.join(workspace, '.novakai');
+  try {
+    for (const provider of ['claude', 'codex', 'kimi'] as const) {
+      const destination = path.join(
+        root,
+        'transcripts',
+        provider,
+        'fixture-source',
+        'events.jsonl',
+      );
+      mkdirSync(path.dirname(destination), { recursive: true });
+      copyFileSync(
+        path.join(fixtureRoot, provider, 'real-shapes.jsonl'),
+        destination,
+      );
+    }
+    const transcript = composeTranscript({
+      root,
+      source: createRawTranscriptSource({ root }),
+    });
+
+    const ingested = await transcript.ingest();
+    assert.deepEqual(
+      ingested.ok
+        ? {
+            added: ingested.value.added,
+            skipped: ingested.value.skipped.map(
+              (entry) => entry.skip.code,
+            ),
+          }
+        : null,
+      {
+        added: 9,
+        skipped: ['non_message', 'non_message', 'non_message'],
+      },
+    );
+
+    const lines = (
+      await Promise.all(
+        ['claude', 'codex', 'kimi'].map(
+          (provider) => transcript.linesByProvider(provider as never),
+        ),
+      )
+    ).flatMap((result) => result.ok ? result.value : []);
+    assert.deepEqual(
+      Object.fromEntries(
+        ['claude', 'codex', 'kimi'].map((provider) => [
+          provider,
+          lines
+            .filter((line) => line.provider === provider)
+            .map((line) => line.role),
+        ]),
+      ),
+      {
+        claude: ['tool_call', 'tool_result', 'attachment'],
+        codex: ['tool_call', 'tool_result', 'attachment'],
+        kimi: ['tool_call', 'tool_result', 'attachment'],
+      },
+    );
+    assert.ok(
+      lines.every((line) => line.text.length > 0),
+      'content rows retain serialized provider content',
+    );
+
+    const foundation = composeHandle({
+      root,
+      dataRoot: path.join(root, 'stores'),
+      capability: 'foundation',
+      allowedKinds: ['quarantine'],
+      principal: 'sys_reconciler',
+    });
+    const quarantine = await listObjects(foundation, 'quarantine');
+    assert.equal(quarantine.ok ? quarantine.value.items.length : null, 0);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});

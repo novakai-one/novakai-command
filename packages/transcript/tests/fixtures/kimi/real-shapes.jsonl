@@ -1,0 +1,4 @@
+{"kind":"event","envelope":{"seq":0,"type":"tool.call.started","payload":{"agentId":"kimi_agent_fixture","args":{"command":"printf fixture"},"name":"Bash","sessionId":"kimi_session_fixture","toolCallId":"kimi_tool_fixture","turnId":42,"type":"tool.call.started"}}}
+{"kind":"event","envelope":{"seq":1,"type":"tool.result","payload":{"agentId":"kimi_agent_fixture","output":"fixture output","sessionId":"kimi_session_fixture","toolCallId":"kimi_tool_fixture","turnId":42,"type":"tool.result"}}}
+{"kind":"event","envelope":{"seq":2,"type":"attachment","payload":{"agentId":"kimi_agent_fixture","message":{"role":"user","content":[{"type":"attachment","name":"fixture.txt","mediaType":"text/plain"}]},"sessionId":"kimi_session_fixture","turnId":42,"type":"attachment"}}}
+{"kind":"event","envelope":{"seq":3,"type":"mode.changed","payload":{"mode":"default","sessionId":"kimi_session_fixture","title":"fixture metadata","type":"mode.changed"}}}
