@@ -10,11 +10,18 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type {
   ClientOpId,
+  ObjectId,
 } from '../contract/brands.js';
+import {
+  composeHandle,
+  getObject,
+  isAbsent,
+} from '../contract/index.js';
 import { StoreEngine } from '../core/store-engine/engine.js';
 
 const ROW_COUNT = 5_000;
 const SAMPLE_COUNT = 5;
+const READS_PER_SAMPLE = 10;
 
 function seedStore(root: string): void {
   const createdAt = '2026-07-29T00:00:00.000Z';
@@ -57,6 +64,72 @@ function seedStore(root: string): void {
   writeFileSync(path.join(root, 'traces.jsonl'), `${traces.join('\n')}\n`);
 }
 
+function seedReadStore(root: string, tombstoneCount: number): void {
+  const createdAt = '2026-07-29T00:00:00.000Z';
+  const targetId = 'settings_read_target';
+  const targetOpId = 'srv_read_target';
+  mkdirSync(root, { recursive: true });
+  writeFileSync(path.join(root, 'settings.jsonl'), `${JSON.stringify({
+    envelope: {
+      kind: 'settings',
+      id: targetId,
+      schemaVersion: 1,
+      createdAt,
+      permissionLevel: 'private',
+      createdBy: 'person_fixture',
+    },
+    payload: { key: targetId, value: 'visible' },
+    meta: {
+      opId: targetOpId,
+      clientOpId: 'op_read_target',
+      version: 1,
+    },
+  })}\n`);
+  writeFileSync(path.join(root, 'traces.jsonl'), `${JSON.stringify({
+    kind: 'trace',
+    id: 'trace_read_target',
+    schemaVersion: 1,
+    createdAt,
+    permissionLevel: 'team',
+    createdBy: 'person_fixture',
+    seq: 0,
+    opId: targetOpId,
+    clientOpId: 'op_read_target',
+    action: 'create',
+    target: { kind: 'settings', id: targetId },
+  })}\n`);
+  if (tombstoneCount === 0) return;
+  const tombstones = Array.from({ length: tombstoneCount }, (_, index) =>
+    JSON.stringify({
+      envelope: {
+        kind: 'quarantine',
+        id: `quarantine_seed_${index}`,
+        schemaVersion: 1,
+        createdAt,
+        permissionLevel: 'private',
+        createdBy: 'sys_reconciler',
+      },
+      payload: {
+        quarantinedRef: {
+          kind: 'settings',
+          id: `settings_quarantined_${index}`,
+        },
+        reason: 'corrupt_record',
+        status: 'open',
+      },
+      meta: {
+        opId: `srv_quarantine_${index}`,
+        clientOpId: `op_quarantine_${index}`,
+        version: 1,
+      },
+    })
+  );
+  writeFileSync(
+    path.join(root, 'quarantine.jsonl'),
+    `${tombstones.join('\n')}\n`,
+  );
+}
+
 function median(values: number[]): number {
   const sorted = [...values].sort((left, right) => left - right);
   return sorted[Math.floor(sorted.length / 2)]!;
@@ -92,6 +165,31 @@ function appendSamples(root: string, prefix: string): number[] {
   });
 }
 
+async function readSamples(root: string): Promise<number[]> {
+  const handle = composeHandle({
+    root,
+    capability: 'foundation',
+    allowedKinds: ['settings'],
+    principal: 'person_fixture',
+  });
+  const targetId = 'settings_read_target' as ObjectId;
+  const warm = await getObject(handle, 'settings', targetId);
+  assert.equal(warm.ok, true);
+  assert.equal(isAbsent(warm.value), false);
+
+  const samples: number[] = [];
+  for (let sample = 0; sample < SAMPLE_COUNT; sample += 1) {
+    const startedAt = performance.now();
+    for (let read = 0; read < READS_PER_SAMPLE; read += 1) {
+      const result = await getObject(handle, 'settings', targetId);
+      assert.equal(result.ok, true);
+      assert.equal(isAbsent(result.value), false);
+    }
+    samples.push((performance.now() - startedAt) / READS_PER_SAMPLE);
+  }
+  return samples;
+}
+
 test('one append to a 5k-line store costs less than twice an empty-store append', (t) => {
   const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-flat-append-'));
   const populatedRoot = path.join(workspace, 'populated');
@@ -108,6 +206,30 @@ test('one append to a 5k-line store costs less than twice an empty-store append'
     assert.ok(
       populatedMs < emptyMs * 2,
       `5k append ${populatedMs.toFixed(2)}ms must be <2x empty `
+      + `${emptyMs.toFixed(2)}ms`,
+    );
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test('getObject with 5k tombstones costs less than four times an empty-tombstone read', async (t) => {
+  const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-tombstone-read-'));
+  const populatedRoot = path.join(workspace, 'populated');
+  const emptyRoot = path.join(workspace, 'empty');
+  try {
+    seedReadStore(populatedRoot, ROW_COUNT);
+    seedReadStore(emptyRoot, 0);
+    const populatedMs = median(await readSamples(populatedRoot));
+    const emptyMs = median(await readSamples(emptyRoot));
+    t.diagnostic(
+      `5k median ${populatedMs.toFixed(2)}ms; empty median `
+      + `${emptyMs.toFixed(2)}ms; ratio `
+      + `${(populatedMs / emptyMs).toFixed(2)}x`,
+    );
+    assert.ok(
+      populatedMs < emptyMs * 4,
+      `5k tombstone read ${populatedMs.toFixed(2)}ms must be <4x empty `
       + `${emptyMs.toFixed(2)}ms`,
     );
   } finally {
