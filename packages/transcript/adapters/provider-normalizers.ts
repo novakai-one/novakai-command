@@ -34,6 +34,13 @@ function normalizeClaude(
 ): TranscriptSourceItem {
   if (
     isRecord(row)
+    && row.type === 'system'
+    && !isRecord(row.message)
+  ) {
+    return nonMessage(offset, nextOffset, 'claude');
+  }
+  if (
+    isRecord(row)
     && stringValue(row.type)
     && !isRecord(row.message)
     && !['user', 'assistant', 'system'].includes(String(row.type))
@@ -61,6 +68,12 @@ function normalizeClaude(
   const blocks = Array.isArray(message.content)
     ? message.content.filter(isRecord)
     : [];
+  if (
+    blocks.length > 0
+    && blocks.every((block) => stringValue(block.type) === 'thinking')
+  ) {
+    return nonMessage(offset, nextOffset, 'claude');
+  }
   const blockTypes = new Set(blocks.map((block) => stringValue(block.type)));
   const role = blockTypes.has('tool_use')
     ? 'tool_call'
@@ -132,6 +145,7 @@ function normalizeCodex(
   offset: number,
   nextOffset: number,
   turnIndex: number,
+  sourceId?: string,
 ): TranscriptSourceItem {
   if (
     isRecord(row)
@@ -151,6 +165,13 @@ function normalizeCodex(
   const payload = row.payload;
   const responseRole = stringValue(payload.role);
   const eventType = stringValue(payload.type);
+  if (
+    eventType === 'token_count'
+    || eventType === 'reasoning'
+    || eventType === 'agent_reasoning'
+  ) {
+    return nonMessage(offset, nextOffset, 'codex');
+  }
   const contentParts = Array.isArray(payload.content)
     ? payload.content.filter(isRecord)
     : [];
@@ -213,10 +234,17 @@ function normalizeCodex(
   )
     ? payload.internal_chat_message_metadata_passthrough
     : undefined;
-  const turnId = (
+  const providerTurnId = (
     stringValue(payload.turn_id)
     ?? stringValue(metadata?.turn_id)
     ?? stringValue(payload.id)
+  );
+  const turnId = providerTurnId ?? (
+    row.type === 'event_msg'
+    && (eventType === 'user_message' || eventType === 'agent_message')
+    && sourceId
+      ? `${sourceId}:${turnIndex}`
+      : undefined
   );
   if (!turnId) return unsupported(offset, nextOffset, 'codex');
   const nativeId = stringValue(payload.id);
@@ -255,6 +283,7 @@ export function normalizeProviderLine(
   relationState?: TranscriptRelationState,
   agentResolver?: ProviderAgentResolver,
   turnIndex = 0,
+  sourceId?: string,
 ): TranscriptSourceItem {
   let row: unknown;
   try {
@@ -279,6 +308,7 @@ export function normalizeProviderLine(
       resolver,
       relationState,
       agentResolver,
+      turnIndex,
     );
   }
   if (provider === 'claude') {
@@ -291,5 +321,12 @@ export function normalizeProviderLine(
       resolver,
     );
   }
-  return normalizeCodex(row, content, offset, nextOffset, turnIndex);
+  return normalizeCodex(
+    row,
+    content,
+    offset,
+    nextOffset,
+    turnIndex,
+    sourceId,
+  );
 }

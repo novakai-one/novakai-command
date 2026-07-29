@@ -184,6 +184,7 @@ class RawTranscriptSource implements TranscriptSourceAdapter {
             currentRelations,
             this.options.resolveAgentId,
             nextTurnIndex,
+            source.sourceId,
           );
           if (
             item.kind === 'candidate'

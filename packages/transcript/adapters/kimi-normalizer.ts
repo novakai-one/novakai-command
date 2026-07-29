@@ -9,6 +9,7 @@ import {
 } from '../contract/schemas.js';
 import {
   diagnostic,
+  contentText,
   identityValue,
   isRecord,
   messageText,
@@ -80,8 +81,75 @@ export function normalizeKimi(
   resolver?: ProviderSessionResolver,
   relationState?: TranscriptRelationState,
   agentResolver?: ProviderAgentResolver,
+  turnIndex = 0,
 ): TranscriptSourceItem {
-  if (!isRecord(row) || row.kind !== 'event' || !isRecord(row.envelope)) {
+  if (!isRecord(row)) {
+    return unsupported(offset, nextOffset, 'kimi');
+  }
+  const keys = Object.keys(row).sort().join(',');
+  if (keys === 'event,time,type') {
+    return nonMessage(offset, nextOffset, 'kimi');
+  }
+  if (keys === 'message,time,type') {
+    if (!isRecord(row.message)) {
+      return unsupported(offset, nextOffset, 'kimi');
+    }
+    const message = row.message;
+    const roleValue = stringValue(message.role);
+    if (
+      roleValue !== 'user'
+      && roleValue !== 'assistant'
+      && roleValue !== 'system'
+      && roleValue !== 'tool'
+    ) {
+      return unsupported(offset, nextOffset, 'kimi');
+    }
+    const parts = Array.isArray(message.content)
+      ? message.content.filter(isRecord)
+      : [];
+    const attachment = parts.some(
+      (part) =>
+        part.type === 'attachment'
+        || part.type === 'document'
+        || part.type === 'image'
+        || part.type === 'image_url',
+    );
+    const text = attachment
+      ? serializedText(message.content)
+      : contentText(message.content) ?? serializedText(message.content);
+    if (text === undefined) {
+      return unsupported(offset, nextOffset, 'kimi');
+    }
+    return {
+      kind: 'candidate',
+      offset,
+      nextOffset,
+      content,
+      line: {
+        turnIndex,
+        role: attachment ? 'attachment' : roleValue,
+        text,
+      },
+    };
+  }
+  if (keys === 'input,origin,time,type') {
+    const text = serializedText(row.input);
+    if (text === undefined) {
+      return unsupported(offset, nextOffset, 'kimi');
+    }
+    return {
+      kind: 'candidate',
+      offset,
+      nextOffset,
+      content,
+      line: {
+        turnIndex,
+        role: 'user',
+        text,
+      },
+    };
+  }
+  if (row.kind !== 'event' || !isRecord(row.envelope)) {
     return unsupported(offset, nextOffset, 'kimi');
   }
   const envelope = row.envelope;
