@@ -41,6 +41,22 @@ export const TranscriptSource = z.object({
 }).strict();
 export type TranscriptSource = z.infer<typeof TranscriptSource>;
 
+const OpaqueRelationKey = z.string().regex(/^relation_[a-f0-9]{64}$/);
+
+export const TranscriptRelationState = z.object({
+  parents: z.record(OpaqueRelationKey, z.object({
+    nativeParentTurnId: z.string().min(1),
+    parentAgentId: z.string().min(1).optional(),
+  }).strict()),
+  children: z.record(OpaqueRelationKey, z.object({
+    parentKey: OpaqueRelationKey,
+    agentId: z.string().min(1).optional(),
+  }).strict()),
+}).strict();
+export type TranscriptRelationState = z.infer<
+  typeof TranscriptRelationState
+>;
+
 const SourcePosition = z.object({
   offset: z.number().int().nonnegative(),
   nextOffset: z.number().int().positive(),
@@ -96,9 +112,26 @@ export const TranscriptSourceSkip = SourcePosition.extend({
 });
 export type TranscriptSourceSkip = z.infer<typeof TranscriptSourceSkip>;
 
+export const TranscriptSourceContext = SourcePosition.extend({
+  kind: z.literal('context'),
+  relationState: TranscriptRelationState,
+}).superRefine((item, context) => {
+  if (item.nextOffset <= item.offset) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['nextOffset'],
+      message: 'nextOffset must be greater than offset',
+    });
+  }
+});
+export type TranscriptSourceContext = z.infer<
+  typeof TranscriptSourceContext
+>;
+
 export const TranscriptSourceItem = z.union([
   TranscriptSourceCandidate,
   TranscriptSourceSkip,
+  TranscriptSourceContext,
 ]);
 export type TranscriptSourceItem = z.infer<typeof TranscriptSourceItem>;
 
@@ -167,6 +200,7 @@ export const TranscriptCheckpoint = Envelope.extend({
   provider: ProviderName,
   sourceId: z.string().min(1),
   offset: z.number().int().nonnegative(),
+  relationState: TranscriptRelationState.optional(),
   updatedAt: z.string().datetime(),
 });
 export type TranscriptCheckpoint = z.infer<typeof TranscriptCheckpoint>;

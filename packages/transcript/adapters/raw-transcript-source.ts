@@ -4,6 +4,7 @@ import { lstat, readdir, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import {
   ProviderName,
+  type TranscriptRelationState,
   type TranscriptSource,
   type TranscriptSourceItem,
 } from '../contract/schemas.js';
@@ -137,6 +138,7 @@ class RawTranscriptSource implements TranscriptSourceAdapter {
   async *read(
     source: TranscriptSource,
     fromOffset: number,
+    relationState?: TranscriptRelationState,
   ): AsyncIterable<TranscriptSourceItem> {
     const key = `${source.provider}:${source.sourceId}`;
     const discovered = this.currentSource;
@@ -150,6 +152,7 @@ class RawTranscriptSource implements TranscriptSourceAdapter {
       }
       let buffered = Buffer.alloc(0);
       let cursor = fromOffset;
+      let currentRelations = relationState;
       for await (
         const chunk of createReadStream(
           discovered.file,
@@ -162,13 +165,18 @@ class RawTranscriptSource implements TranscriptSourceAdapter {
           let raw = buffered.subarray(0, newline);
           if (raw.at(-1) === 0x0d) raw = raw.subarray(0, -1);
           const nextOffset = cursor + newline + 1;
-          yield normalizeProviderLine(
+          const item = normalizeProviderLine(
             source.provider,
             raw.toString('utf8'),
             cursor,
             nextOffset,
             this.options.resolveSessionRef,
+            currentRelations,
           );
+          if (item.kind === 'context') {
+            currentRelations = item.relationState;
+          }
+          yield item;
           buffered = buffered.subarray(newline + 1);
           cursor = nextOffset;
           newline = buffered.indexOf(0x0a);

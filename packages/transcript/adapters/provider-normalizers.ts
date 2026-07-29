@@ -1,9 +1,11 @@
+import { createHash } from 'node:crypto';
 import {
   SessionRef,
   type NormalizedTranscriptLine,
   type ProviderName,
   type SessionRef as SessionRefT,
   type TranscriptDiagnostic,
+  type TranscriptRelationState,
   type TranscriptSourceItem,
 } from '../contract/schemas.js';
 
@@ -33,6 +35,17 @@ function identityValue(value: unknown): string | undefined {
   return Number.isSafeInteger(value) && Number(value) >= 0
     ? String(value)
     : undefined;
+}
+
+function relationKey(kind: string, nativeId: string): string {
+  const digest = createHash('sha256')
+    .update(`kimi:${kind}:${nativeId}`)
+    .digest('hex');
+  return `relation_${digest}`;
+}
+
+function emptyRelationState(): TranscriptRelationState {
+  return { parents: {}, children: {} };
 }
 
 function numericUsage(value: unknown): Record<string, number> | undefined {
@@ -93,6 +106,7 @@ function normalizeKimi(
   offset: number,
   nextOffset: number,
   resolver?: ProviderSessionResolver,
+  relationState?: TranscriptRelationState,
 ): TranscriptSourceItem {
   if (!isRecord(row) || row.kind !== 'event' || !isRecord(row.envelope)) {
     return unsupported(offset, nextOffset, 'kimi');
@@ -106,6 +120,53 @@ function normalizeKimi(
     return unsupported(offset, nextOffset, 'kimi');
   }
   const payload = envelope.payload;
+  const eventType = (
+    stringValue(envelope.type)
+    ?? stringValue(payload.type)
+  );
+  const currentRelations = relationState ?? emptyRelationState();
+  if (eventType === 'tool.call.started') {
+    const toolCallId = stringValue(payload.toolCallId);
+    const turnId = identityValue(payload.turnId);
+    if (!toolCallId || !turnId) {
+      return unsupported(offset, nextOffset, 'kimi');
+    }
+    const parentKey = relationKey('tool', toolCallId);
+    return {
+      kind: 'context',
+      offset,
+      nextOffset,
+      relationState: {
+        parents: {
+          ...currentRelations.parents,
+          [parentKey]: { nativeParentTurnId: turnId },
+        },
+        children: currentRelations.children,
+      },
+    };
+  }
+  if (eventType === 'subagent.spawned') {
+    const subagentId = stringValue(payload.subagentId);
+    const parentToolCallId = stringValue(payload.parentToolCallId);
+    if (!subagentId || !parentToolCallId) {
+      return unsupported(offset, nextOffset, 'kimi');
+    }
+    const childKey = relationKey('agent', subagentId);
+    return {
+      kind: 'context',
+      offset,
+      nextOffset,
+      relationState: {
+        parents: currentRelations.parents,
+        children: {
+          ...currentRelations.children,
+          [childKey]: {
+            parentKey: relationKey('tool', parentToolCallId),
+          },
+        },
+      },
+    };
+  }
   const text = (
     stringValue(payload.output)
     ?? stringValue(payload.prompt)
@@ -116,10 +177,6 @@ function normalizeKimi(
   }
   const message = isRecord(payload.message) ? payload.message : undefined;
   const explicitRole = stringValue(message?.role);
-  const eventType = (
-    stringValue(envelope.type)
-    ?? stringValue(payload.type)
-  );
   const role = eventType === 'tool.result'
     ? 'tool'
     : explicitRole === 'user'
@@ -152,6 +209,13 @@ function normalizeKimi(
     ));
   }
   const turnId = identityValue(payload.turnId);
+  const nativeAgentId = stringValue(payload.agentId);
+  const childRelation = nativeAgentId
+    ? currentRelations.children[relationKey('agent', nativeAgentId)]
+    : undefined;
+  const parentRelation = childRelation
+    ? currentRelations.parents[childRelation.parentKey]
+    : undefined;
   const usage = numericUsage(payload.usage);
   const line: NormalizedTranscriptLine = {
     ...(turnId ? { nativeId: turnId, turnId } : {}),
@@ -163,9 +227,11 @@ function normalizeKimi(
     ...(stringValue(payload.parentAgentId)
       ? { parentAgentId: stringValue(payload.parentAgentId) }
       : {}),
-    ...(stringValue(payload.parentToolCallId)
-      ? { parentTurnId: stringValue(payload.parentToolCallId) }
-      : {}),
+    ...(parentRelation
+      ? { parentTurnId: parentRelation.nativeParentTurnId }
+      : stringValue(payload.parentToolCallId)
+        ? { parentTurnId: stringValue(payload.parentToolCallId) }
+        : {}),
     ...(resolvedSession?.success
       ? { sessionRef: resolvedSession.data }
       : {}),
@@ -333,6 +399,7 @@ export function normalizeProviderLine(
   offset: number,
   nextOffset: number,
   resolver?: ProviderSessionResolver,
+  relationState?: TranscriptRelationState,
 ): TranscriptSourceItem {
   let row: unknown;
   try {
@@ -349,7 +416,14 @@ export function normalizeProviderLine(
     };
   }
   if (provider === 'kimi') {
-    return normalizeKimi(row, content, offset, nextOffset, resolver);
+    return normalizeKimi(
+      row,
+      content,
+      offset,
+      nextOffset,
+      resolver,
+      relationState,
+    );
   }
   if (provider === 'claude') {
     return normalizeClaude(row, content, offset, nextOffset, resolver);

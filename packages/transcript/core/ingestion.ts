@@ -30,6 +30,7 @@ import {
   type TranscriptDiagnosticJournalEntry as TranscriptDiagnosticJournalEntryT,
   type TranscriptJournalEntry as TranscriptJournalEntryT,
   type TranscriptLine as TranscriptLineT,
+  type TranscriptRelationState,
   type TranscriptSkipJournalEntry as TranscriptSkipJournalEntryT,
   type TranscriptSource as TranscriptSourceT,
   type TranscriptSourceCandidate,
@@ -191,6 +192,7 @@ async function advanceCheckpoint(
   context: TranscriptContext,
   source: TranscriptSourceT,
   nextOffset: number,
+  relationState?: TranscriptRelationState,
 ): Promise<Result<TranscriptCheckpointT, TranscriptError>> {
   for (;;) {
     const current = await readCheckpoint(context, source);
@@ -210,6 +212,7 @@ async function advanceCheckpoint(
         provider: source.provider,
         sourceId: source.sourceId,
         offset: nextOffset,
+        ...(relationState ? { relationState } : {}),
         updatedAt: now,
       });
       const created = await createObject<TranscriptCheckpointT>(
@@ -224,7 +227,11 @@ async function advanceCheckpoint(
     const updated = await updateObject<TranscriptCheckpointT>(
       context.handle,
       current.value.object.id as ObjectId,
-      { offset: nextOffset, updatedAt: now },
+      {
+        offset: nextOffset,
+        ...(relationState ? { relationState } : {}),
+        updatedAt: now,
+      },
       current.value.version,
       operationId(
         `checkpoint:update:${current.value.object.id}:${nextOffset}`,
@@ -504,8 +511,15 @@ export async function ingest(
       const checkpoint = await readCheckpoint(context, source);
       if (!checkpoint.ok) return checkpoint;
       const fromOffset = checkpoint.value?.object.offset ?? 0;
+      let relationState = checkpoint.value?.object.relationState;
       try {
-        for await (const rawItem of context.source.read(source, fromOffset)) {
+        for await (
+          const rawItem of context.source.read(
+            source,
+            fromOffset,
+            relationState,
+          )
+        ) {
           const parsedItem = TranscriptSourceItem.safeParse(rawItem);
           if (!parsedItem.success) {
             return {
@@ -517,7 +531,9 @@ export async function ingest(
             };
           }
           const item = parsedItem.data;
-          if (item.kind === 'skip') {
+          if (item.kind === 'context') {
+            relationState = item.relationState;
+          } else if (item.kind === 'skip') {
             const quarantined = await quarantineRejectedItem(
               context,
               source,
@@ -553,6 +569,7 @@ export async function ingest(
             context,
             source,
             item.nextOffset,
+            relationState,
           );
           if (!advanced.ok) return advanced;
           itemsSinceYield += 1;

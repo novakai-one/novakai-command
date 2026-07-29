@@ -1,4 +1,5 @@
 import type {
+  TranscriptRelationState,
   TranscriptSource,
   TranscriptSourceItem,
 } from './schemas.js';
@@ -17,5 +18,6 @@ export interface TranscriptSourceAdapter {
   read(
     source: TranscriptSource,
     fromOffset: number,
+    relationState?: TranscriptRelationState,
   ): AsyncIterable<TranscriptSourceItem>;
 }
