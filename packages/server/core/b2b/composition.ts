@@ -48,28 +48,32 @@ export function composeTranscriptServerHost(
   });
   const intervalMs = options.ingestIntervalMs ?? DEFAULT_POLL_MS;
   const watcherIntervalMs = options.watcherIntervalMs ?? DEFAULT_POLL_MS;
-  let running = false;
+  let phase: 'idle' | 'running' | 'stopping' | 'terminal' = 'idle';
   let watcherReady = false;
   let ingesting = false;
   let runs = 0;
   let lastResult: IngestResult | undefined;
-  let lastError: string | undefined;
+  let ingestError: string | undefined;
+  let terminalError: string | undefined;
   let timer: ReturnType<typeof setTimeout> | null = null;
   let worker: Worker | null = null;
+  let workerExit: Promise<number> | null = null;
   let activeIngest: Promise<void> | null = null;
-  let stopWorker: (() => void) | null = null;
+  let stopPromise: Promise<void> | null = null;
 
   const snapshot = (): TranscriptTopologyStatus => ({
-    running,
+    running: phase === 'running',
     watcherReady,
     ingesting,
     runs,
     ...(lastResult ? { lastResult } : {}),
-    ...(lastError ? { lastError } : {}),
+    ...(terminalError ?? ingestError
+      ? { lastError: terminalError ?? ingestError }
+      : {}),
   });
 
   const schedule = (delayMs: number): void => {
-    if (!running || timer) return;
+    if (phase !== 'running' || timer) return;
     timer = setTimeout(() => {
       timer = null;
       void runIngest();
@@ -77,22 +81,22 @@ export function composeTranscriptServerHost(
   };
 
   const runIngest = async (): Promise<void> => {
-    if (!running || ingesting) return;
+    if (phase !== 'running' || ingesting) return;
     ingesting = true;
     activeIngest = (async () => {
       const result = await operations.ingest();
       runs += 1;
       if (result.ok) {
         lastResult = result.value;
-        lastError = undefined;
+        ingestError = undefined;
       } else {
-        lastError = `${result.error.code}: ${result.error.message}`;
+        ingestError = `${result.error.code}: ${result.error.message}`;
       }
     })();
     try {
       await activeIngest;
     } catch (cause) {
-      lastError = cause instanceof Error ? cause.message : String(cause);
+      ingestError = cause instanceof Error ? cause.message : String(cause);
     } finally {
       activeIngest = null;
       ingesting = false;
@@ -100,13 +104,21 @@ export function composeTranscriptServerHost(
     }
   };
 
+  const latchTerminal = (message: string): void => {
+    if (!terminalError) terminalError = message;
+    phase = 'terminal';
+    watcherReady = false;
+    if (timer) clearTimeout(timer);
+    timer = null;
+  };
+
   const topology: TranscriptTopology = {
     start() {
-      if (running) return;
-      running = true;
+      if (phase !== 'idle' || terminalError) return;
+      phase = 'running';
       watcherReady = false;
-      lastError = undefined;
-      worker = new Worker(
+      ingestError = undefined;
+      const startedWorker = new Worker(
         new URL('./watcher-worker.js', import.meta.url),
         {
           workerData: {
@@ -118,45 +130,61 @@ export function composeTranscriptServerHost(
           },
         },
       );
-      worker.on('message', (message: unknown) => {
+      worker = startedWorker;
+      workerExit = new Promise<number>((resolve) => {
+        startedWorker.once('exit', resolve);
+      });
+      startedWorker.on('message', (message: unknown) => {
         if (typeof message !== 'object' || message === null) return;
         const type = (message as { type?: unknown }).type;
         if (type === 'ready') {
+          if (phase !== 'running') return;
           watcherReady = true;
           schedule(0);
         } else if (type === 'failed') {
-          lastError = String(
+          latchTerminal(String(
             (message as { message?: unknown }).message
             ?? 'transcript watcher failed',
-          );
-        } else if (type === 'stopped') {
-          stopWorker?.();
+          ));
         }
       });
-      worker.on('error', (cause) => {
-        lastError = cause.message;
-        stopWorker?.();
+      startedWorker.on('error', (cause) => {
+        latchTerminal(cause.message);
       });
-      worker.on('exit', () => {
-        stopWorker?.();
+      startedWorker.on('exit', (code) => {
+        if (phase === 'running') {
+          latchTerminal(
+            `transcript watcher exited unexpectedly with code ${code}`,
+          );
+        }
       });
       schedule(0);
     },
     async stop() {
-      running = false;
-      if (timer) clearTimeout(timer);
-      timer = null;
-      if (activeIngest) await activeIngest;
-      const currentWorker = worker;
-      worker = null;
-      if (!currentWorker) return;
-      await new Promise<void>((resolve) => {
-        stopWorker = resolve;
-        currentWorker.postMessage({ type: 'stop' });
-      });
-      stopWorker = null;
-      await currentWorker.terminate();
-      watcherReady = false;
+      if (stopPromise) return stopPromise;
+      stopPromise = (async () => {
+        const terminal = phase === 'terminal';
+        if (phase === 'idle') return;
+        if (!terminal) phase = 'stopping';
+        if (timer) clearTimeout(timer);
+        timer = null;
+        if (activeIngest) await activeIngest;
+        const currentWorker = worker;
+        const currentExit = workerExit;
+        if (currentWorker && !terminal) {
+          currentWorker.postMessage({ type: 'stop' });
+        }
+        if (currentExit) await currentExit;
+        worker = null;
+        workerExit = null;
+        watcherReady = false;
+        if (!terminal) phase = 'idle';
+      })();
+      try {
+        await stopPromise;
+      } finally {
+        stopPromise = null;
+      }
     },
     status: snapshot,
   };

@@ -27,6 +27,7 @@ parentPort?.on('message', (message: unknown) => {
   }
   void watcher.stop().finally(() => {
     parentPort?.postMessage({ type: 'stopped' });
+    parentPort?.close();
   });
 });
 
@@ -42,4 +43,5 @@ void watcher.start()
       type: 'failed',
       message: cause instanceof Error ? cause.message : String(cause),
     });
+    parentPort?.close();
   });

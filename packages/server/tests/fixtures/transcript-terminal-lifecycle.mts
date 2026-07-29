@@ -31,7 +31,13 @@ const host = composeTranscriptServerHost({
 host.topology.start();
 
 const deadline = Date.now() + 1_000;
-while (host.topology.status().running && Date.now() < deadline) {
+while (
+  (
+    host.topology.status().running
+    || host.topology.status().ingesting
+  )
+  && Date.now() < deadline
+) {
   await new Promise((resolve) => setTimeout(resolve, 10));
 }
 const terminal = host.topology.status();
