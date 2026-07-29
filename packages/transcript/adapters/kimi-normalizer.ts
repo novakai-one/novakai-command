@@ -57,6 +57,18 @@ function turnIdentity(
   return `turn_${digest}`;
 }
 
+function expectedSpawnCount(payload: Record<string, unknown>): number | undefined {
+  const toolName = stringValue(payload.name);
+  if (toolName === 'Agent') return 1;
+  if (toolName !== 'AgentSwarm' || !isRecord(payload.args)) {
+    return undefined;
+  }
+  const items = payload.args.items;
+  return Array.isArray(items) && items.length > 0
+    ? items.length
+    : undefined;
+}
+
 export function normalizeKimi(
   row: unknown,
   content: string,
@@ -89,8 +101,9 @@ export function normalizeKimi(
   const currentRelations = relationState ?? { parents: {}, children: {} };
   if (eventType === 'tool.call.started') {
     const toolName = stringValue(payload.name);
-    if (toolName !== 'Agent') {
-      return toolName === 'AgentSwarm'
+    const remainingChildren = expectedSpawnCount(payload);
+    if (!remainingChildren) {
+      return toolName === 'Agent' || toolName === 'AgentSwarm'
         ? unsupported(offset, nextOffset, 'kimi')
         : { kind: 'context', offset, nextOffset };
     }
@@ -115,7 +128,7 @@ export function normalizeKimi(
         type: 'parent',
         parentKey,
         parentTurnId: turnId,
-        remainingChildren: 1,
+        remainingChildren,
         ...(parentAgentId ? { parentAgentId } : {}),
       },
     };
