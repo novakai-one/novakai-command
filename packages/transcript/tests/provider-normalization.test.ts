@@ -18,6 +18,10 @@ import type {
   AgentId,
 } from '@novakai/foundation/dist/contract/brands.js';
 import {
+  composeHandle,
+  listObjects,
+} from '@novakai/foundation/dist/contract/index.js';
+import {
   composeTranscript,
   createRawTranscriptSource,
 } from '../contract/index.js';
@@ -249,6 +253,120 @@ test('Kimi equal numeric turns in different sessions have distinct tree identiti
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }
+});
+
+test('irrelevant Kimi tool calls keep relation persistence bounded at 100 and 200 rows', async () => {
+  const inspect = async (rowCount: number): Promise<{
+    checkpointBytes: number;
+    checkpointHasRelations: boolean;
+    relationJournalCount: number;
+  }> => {
+    const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-kimi-scale-'));
+    const root = path.join(workspace, '.novakai');
+    const destination = path.join(
+      root,
+      'transcripts',
+      'kimi',
+      'fixture-session',
+      'events.jsonl',
+    );
+    try {
+      mkdirSync(path.dirname(destination), { recursive: true });
+      const rows = Array.from({ length: rowCount }, (_, index) =>
+        JSON.stringify({
+          kind: 'event',
+          envelope: {
+            seq: index,
+            type: 'tool.call.started',
+            payload: {
+              agentId: 'scale-agent-redacted',
+              args: {},
+              description: 'synthetic irrelevant tool call',
+              display: {},
+              name: 'Bash',
+              sessionId: 'scale-session-redacted',
+              toolCallId: `scale-tool-${index}`,
+              turnId: index,
+              type: 'tool.call.started',
+            },
+          },
+        })
+      );
+      writeFileSync(destination, `${rows.join('\n')}\n`);
+      const transcript = composeTranscript({
+        root,
+        source: createRawTranscriptSource({ root }),
+      });
+      const ingested = await transcript.ingest();
+      assert.deepEqual(
+        ingested.ok
+          ? {
+              added: ingested.value.added,
+              skipped: ingested.value.skipped.length,
+            }
+          : null,
+        { added: 0, skipped: 0 },
+      );
+
+      const handle = composeHandle({
+        root,
+        dataRoot: path.join(root, 'stores'),
+        capability: 'transcript',
+        allowedKinds: ['transcriptCheckpoint', 'transcriptJournal'],
+        principal: 'sys_ingester',
+      });
+      const checkpoints = await listObjects<Record<string, unknown>>(
+        handle,
+        'transcriptCheckpoint',
+      );
+      const relations = await listObjects(
+        handle,
+        'transcriptJournal',
+        { outcome: 'relation' },
+      );
+      assert.equal(checkpoints.ok, true);
+      assert.equal(relations.ok, true);
+      const checkpoint = checkpoints.ok
+        ? checkpoints.value.items[0]?.object
+        : undefined;
+      return {
+        checkpointBytes: JSON.stringify(checkpoint).length,
+        checkpointHasRelations: (
+          checkpoint !== undefined
+          && 'relationState' in checkpoint
+        ),
+        relationJournalCount: relations.ok
+          ? relations.value.items.length
+          : -1,
+      };
+    } finally {
+      rmSync(workspace, { recursive: true, force: true });
+    }
+  };
+
+  const oneHundred = await inspect(100);
+  const twoHundred = await inspect(200);
+  assert.deepEqual(
+    {
+      oneHundredHasRelations: oneHundred.checkpointHasRelations,
+      twoHundredHasRelations: twoHundred.checkpointHasRelations,
+      oneHundredJournal: oneHundred.relationJournalCount,
+      twoHundredJournal: twoHundred.relationJournalCount,
+    },
+    {
+      oneHundredHasRelations: false,
+      twoHundredHasRelations: false,
+      oneHundredJournal: 0,
+      twoHundredJournal: 0,
+    },
+  );
+  assert.ok(oneHundred.checkpointBytes < 1_024);
+  assert.ok(twoHundred.checkpointBytes < 1_024);
+  assert.ok(
+    Math.abs(
+      twoHundred.checkpointBytes - oneHundred.checkpointBytes,
+    ) <= 64,
+  );
 });
 
 test('Kimi relation context survives checkpoint restart without rescanning metadata', async () => {
