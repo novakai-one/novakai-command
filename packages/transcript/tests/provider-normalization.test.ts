@@ -69,23 +69,22 @@ test('Kimi assistant output omits unresolved provider identity', async () => {
 
     const queried = await transcript.linesByProvider('kimi');
     assert.equal(queried.ok, true);
+    const lines = queried.ok ? queried.value : [];
+    assert.equal(lines.length, 1);
+    assert.match(lines[0]?.turnId ?? '', /^kimi:turn_[a-f0-9]{64}$/u);
     assert.deepEqual(
-      queried.ok
-        ? queried.value.map((line) => ({
-            role: line.role,
-            text: line.text,
-            turnId: line.turnId,
-            parentTurnId: line.parentTurnId,
-            agentId: line.agentId,
-            parentAgentId: line.parentAgentId,
-            sessionRef: line.sessionRef,
-            tokenUsage: line.tokenUsage,
-          }))
-        : null,
+      lines.map((line) => ({
+        role: line.role,
+        text: line.text,
+        parentTurnId: line.parentTurnId,
+        agentId: line.agentId,
+        parentAgentId: line.parentAgentId,
+        sessionRef: line.sessionRef,
+        tokenUsage: line.tokenUsage,
+      })),
       [{
         role: 'assistant',
         text: 'synthetic kimi response',
-        turnId: 'kimi:turn_child_fixture',
         parentTurnId: undefined,
         agentId: undefined,
         parentAgentId: undefined,
@@ -98,7 +97,7 @@ test('Kimi assistant output omits unresolved provider identity', async () => {
   }
 });
 
-test('Kimi numeric tool.result identity is canonical and role is tool', async () => {
+test('Kimi numeric tool.result identities are opaque and role is tool', async () => {
   const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-kimi-tool-result-'));
   const root = path.join(workspace, '.novakai');
   const destination = path.join(
@@ -123,19 +122,13 @@ test('Kimi numeric tool.result identity is canonical and role is tool', async ()
     assert.equal(ingested.ok, true);
     const queried = await transcript.linesByProvider('kimi');
     assert.equal(queried.ok, true);
-    assert.deepEqual(
-      queried.ok
-        ? queried.value.map((line) => ({
-            role: line.role,
-            turnId: line.turnId,
-            originalId: line.sourceAttribution.originalId,
-          }))
-        : null,
-      [{
-        role: 'tool',
-        turnId: 'kimi:411',
-        originalId: '411',
-      }],
+    const lines = queried.ok ? queried.value : [];
+    assert.equal(lines.length, 1);
+    assert.equal(lines[0]?.role, 'tool');
+    assert.match(lines[0]?.turnId ?? '', /^kimi:turn_[a-f0-9]{64}$/u);
+    assert.match(
+      lines[0]?.sourceAttribution.originalId ?? '',
+      /^event_[a-f0-9]{64}$/u,
     );
   } finally {
     rmSync(workspace, { recursive: true, force: true });
@@ -318,7 +311,13 @@ test('Kimi relation context survives checkpoint restart without rescanning metad
       { added: 1, skipped: 0 },
     );
 
-    const tree = await restarted.subagentTree('kimi:410');
+    const providerLines = await restarted.linesByProvider('kimi');
+    assert.equal(providerLines.ok, true);
+    const parentTurnId = providerLines.ok
+      ? providerLines.value[0]?.parentTurnId
+      : undefined;
+    assert.match(parentTurnId ?? '', /^kimi:turn_[a-f0-9]{64}$/u);
+    const tree = await restarted.subagentTree(parentTurnId ?? '');
     assert.deepEqual(
       tree.ok
         ? tree.value.map((line) => ({
@@ -331,8 +330,10 @@ test('Kimi relation context survives checkpoint restart without rescanning metad
       [{
         role: 'tool',
         text: 'synthetic child tool result',
-        turnId: 'kimi:411',
-        parentTurnId: 'kimi:410',
+        turnId: providerLines.ok
+          ? providerLines.value[0]?.turnId
+          : undefined,
+        parentTurnId,
       }],
     );
 
@@ -479,7 +480,13 @@ test('Kimi persists only agent identities returned by the durable resolver', asy
       ),
     );
 
-    const tree = await transcript.subagentTree('kimi:410');
+    const providerLines = await transcript.linesByProvider('kimi');
+    assert.equal(providerLines.ok, true);
+    const parentTurnId = providerLines.ok
+      ? providerLines.value[0]?.parentTurnId
+      : undefined;
+    assert.match(parentTurnId ?? '', /^kimi:turn_[a-f0-9]{64}$/u);
+    const tree = await transcript.subagentTree(parentTurnId ?? '');
     assert.deepEqual(
       tree.ok
         ? tree.value.map((line) => ({
@@ -491,7 +498,7 @@ test('Kimi persists only agent identities returned by the durable resolver', asy
       [{
         agentId: 'agent_durable_child',
         parentAgentId: 'agent_durable_parent',
-        parentTurnId: 'kimi:410',
+        parentTurnId,
       }],
     );
   } finally {

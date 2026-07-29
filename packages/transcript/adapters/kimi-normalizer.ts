@@ -42,6 +42,21 @@ function lineIdentity(
   return `event_${digest}`;
 }
 
+function turnIdentity(
+  nativeSessionId: string,
+  nativeTurnId: string,
+): string {
+  const digest = createHash('sha256')
+    .update(JSON.stringify([
+      'kimi',
+      'turn',
+      nativeSessionId,
+      nativeTurnId,
+    ]))
+    .digest('hex');
+  return `turn_${digest}`;
+}
+
 function emptyRelationState(): TranscriptRelationState {
   return { parents: {}, children: {} };
 }
@@ -71,10 +86,17 @@ export function normalizeKimi(
     stringValue(envelope.type)
     ?? stringValue(payload.type)
   );
+  const nativeSessionId = (
+    stringValue(payload.sessionId)
+    ?? stringValue(envelope.session_id)
+  );
   const currentRelations = relationState ?? emptyRelationState();
   if (eventType === 'tool.call.started') {
     const toolCallId = stringValue(payload.toolCallId);
-    const turnId = identityValue(payload.turnId);
+    const nativeTurnId = identityValue(payload.turnId);
+    const turnId = nativeSessionId && nativeTurnId
+      ? turnIdentity(nativeSessionId, nativeTurnId)
+      : undefined;
     if (!toolCallId || !turnId) {
       return unsupported(offset, nextOffset, 'kimi');
     }
@@ -143,10 +165,6 @@ export function normalizeKimi(
     : payload.prompt !== undefined
       ? 'user'
       : 'assistant';
-  const nativeSessionId = (
-    stringValue(payload.sessionId)
-    ?? stringValue(envelope.session_id)
-  );
   const resolvedSession = nativeSessionId && resolver
     ? SessionRef.safeParse(resolver('kimi', nativeSessionId))
     : undefined;
@@ -187,7 +205,10 @@ export function normalizeKimi(
       'provider agent identity has no verified durable agent resolver',
     ));
   }
-  const turnId = identityValue(payload.turnId);
+  const nativeTurnId = identityValue(payload.turnId);
+  const turnId = nativeSessionId && nativeTurnId
+    ? turnIdentity(nativeSessionId, nativeTurnId)
+    : undefined;
   const nativeId = nativeSessionId
     ? lineIdentity(
         nativeSessionId,
