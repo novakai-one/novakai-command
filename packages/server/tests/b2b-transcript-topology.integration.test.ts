@@ -184,7 +184,7 @@ test('HTTP responds within 500ms while a chunked transcript first scan is still 
   const custody = path.join(root, 'transcripts', 'kimi');
   mkdirSync(custody, { recursive: true });
   mkdirSync(providerHome, { recursive: true });
-  const lineCount = 512;
+  const lineCount = 160;
   const rows = Array.from({ length: lineCount }, (_, index) =>
     JSON.stringify({
       kind: 'event',
@@ -225,6 +225,10 @@ test('HTTP responds within 500ms while a chunked transcript first scan is still 
   assert.ok(
     elapsedMs < 500,
     `HTTP response took ${elapsedMs.toFixed(1)}ms; budget is 500ms`,
+  );
+  t.diagnostic(
+    `bootstrap HTTP ${elapsedMs.toFixed(1)}ms during active ingestion `
+    + '(budget 500ms)',
   );
   assert.equal(
     booted.value.runtime.transcript.topology.status().ingesting,

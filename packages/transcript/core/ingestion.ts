@@ -485,6 +485,7 @@ export async function ingest(
     diagnostics: [],
   };
   let rawSources: AsyncIterable<TranscriptSourceT>;
+  let itemsSinceYield = 0;
   try {
     rawSources = context.source.sources();
   } catch (cause) {
@@ -554,6 +555,11 @@ export async function ingest(
             item.nextOffset,
           );
           if (!advanced.ok) return advanced;
+          itemsSinceYield += 1;
+          if (itemsSinceYield >= context.yieldAfterItems) {
+            itemsSinceYield = 0;
+            await context.yieldToHost();
+          }
         }
       } catch (cause) {
         if (cause instanceof TranscriptFailpointCrash) throw cause;

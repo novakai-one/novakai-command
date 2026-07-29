@@ -25,6 +25,8 @@ export interface TranscriptContext {
   readonly handle: ScopedStoreHandle;
   readonly source: TranscriptSourceAdapter;
   readonly failpoint: TranscriptFailpoint;
+  readonly yieldAfterItems: number;
+  readonly yieldToHost: () => Promise<void>;
 }
 
 export function composeTranscript(
@@ -49,5 +51,11 @@ export function composeTranscript(
     // Ambient configuration is resolved once at the composition edge. The
     // Transcript core receives injected behavior and never reads process.env.
     failpoint: injectTranscriptFailpoint(process.env.NVK_FAILPOINT),
+    // A bounded first scan must release the host macrotask queue. Keeping this
+    // scheduler at the composition edge leaves ingestion policy testable
+    // without coupling its authoritative behavior to Server.
+    yieldAfterItems: 4,
+    yieldToHost: () =>
+      new Promise<void>((resolve) => setImmediate(resolve)),
   });
 }
