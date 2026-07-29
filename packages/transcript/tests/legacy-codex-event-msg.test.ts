@@ -20,8 +20,12 @@ const fixtureRoot = fileURLToPath(
   new URL('../../tests/fixtures/codex/', import.meta.url),
 );
 
-test('legacy Codex id-less user events classify and store as user lines', async () => {
-  const fixture = path.join(fixtureRoot, 'legacy-user-event.jsonl');
+async function assertLegacyEventStored(input: {
+  fixtureName: string;
+  role: 'user' | 'assistant';
+  text: string;
+}): Promise<void> {
+  const fixture = path.join(fixtureRoot, input.fixtureName);
   const content = readFileSync(fixture, 'utf8').trim();
   const classified = normalizeProviderLine(
     'codex',
@@ -38,19 +42,19 @@ test('legacy Codex id-less user events classify and store as user lines', async 
       turnId: classified.line.turnId,
     },
     {
-      role: 'user',
-      text: 'synthetic legacy Codex user message',
+      role: input.role,
+      text: input.text,
       turnId: undefined,
     },
   );
 
-  const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-codex-legacy-user-'));
+  const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-codex-legacy-event-'));
   const root = path.join(workspace, '.novakai');
   const destination = path.join(
     root,
     'transcripts',
     'codex',
-    'legacy-user-source',
+    'legacy-event-source',
     'rollout.jsonl',
   );
   try {
@@ -83,8 +87,8 @@ test('legacy Codex id-less user events classify and store as user lines', async 
         turnId: line.turnId,
       })),
       [{
-        role: 'user',
-        text: 'synthetic legacy Codex user message',
+        role: input.role,
+        text: input.text,
         turnId: `codex:${firstLines.value[0]!.sourceId}:0`,
       }],
     );
@@ -108,4 +112,12 @@ test('legacy Codex id-less user events classify and store as user lines', async 
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }
+}
+
+test('legacy Codex id-less user events classify and store as user lines', async () => {
+  await assertLegacyEventStored({
+    fixtureName: 'legacy-user-event.jsonl',
+    role: 'user',
+    text: 'synthetic legacy Codex user message',
+  });
 });
