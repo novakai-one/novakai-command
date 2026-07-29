@@ -261,7 +261,10 @@ function normalizeCodex(
   );
   const contextFreeLegacyMessage = (
     row.type === 'event_msg'
-    && eventType === 'user_message'
+    && (
+      eventType === 'user_message'
+      || eventType === 'agent_message'
+    )
   );
   if (!turnId && !contextFreeLegacyMessage) {
     return unsupported(offset, nextOffset, 'codex');
