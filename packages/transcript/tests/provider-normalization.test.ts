@@ -998,6 +998,66 @@ test('Codex raw-copy adapter normalizes response items and events without inferr
   }
 });
 
+test('Codex id-less rows in one turn remain distinct durable lines', async () => {
+  const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-codex-idless-'));
+  const root = path.join(workspace, '.novakai');
+  const destination = path.join(
+    root,
+    'transcripts',
+    'codex',
+    'fixture-rollout',
+    'rollout.jsonl',
+  );
+  try {
+    mkdirSync(path.dirname(destination), { recursive: true });
+    writeFileSync(
+      destination,
+      [
+        {
+          type: 'response_item',
+          payload: {
+            type: 'message',
+            role: 'assistant',
+            content: [{ type: 'output_text', text: 'first id-less row' }],
+            turn_id: 'shared_codex_turn',
+          },
+        },
+        {
+          type: 'response_item',
+          payload: {
+            type: 'message',
+            role: 'assistant',
+            content: [{ type: 'output_text', text: 'second id-less row' }],
+            turn_id: 'shared_codex_turn',
+          },
+        },
+      ].map((row) => JSON.stringify(row)).join('\n') + '\n',
+    );
+    const transcript = composeTranscript({
+      root,
+      source: createRawTranscriptSource({ root }),
+    });
+
+    const ingested = await transcript.ingest();
+    assert.deepEqual(
+      ingested.ok
+        ? {
+            added: ingested.value.added,
+            duplicates: ingested.value.duplicates,
+          }
+        : null,
+      { added: 2, duplicates: 0 },
+    );
+    const lines = await transcript.linesByProvider('codex');
+    assert.deepEqual(
+      lines.ok ? lines.value.map((line) => line.text) : null,
+      ['first id-less row', 'second id-less row'],
+    );
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
 test('well-formed provider tool traffic and attachments are durable while metadata skips never enter quarantine', async () => {
   const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-provider-real-shapes-'));
   const root = path.join(workspace, '.novakai');
