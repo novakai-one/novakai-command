@@ -25,6 +25,23 @@ function relationKey(kind: string, nativeId: string): string {
   return `relation_${digest}`;
 }
 
+function lineIdentity(
+  nativeSessionId: string,
+  sequence: number,
+  nativeToolCallId: string | undefined,
+): string {
+  const digest = createHash('sha256')
+    .update(JSON.stringify([
+      'kimi',
+      'event',
+      nativeSessionId,
+      sequence,
+      nativeToolCallId ?? null,
+    ]))
+    .digest('hex');
+  return `event_${digest}`;
+}
+
 function emptyRelationState(): TranscriptRelationState {
   return { parents: {}, children: {} };
 }
@@ -171,9 +188,17 @@ export function normalizeKimi(
     ));
   }
   const turnId = identityValue(payload.turnId);
+  const nativeId = nativeSessionId
+    ? lineIdentity(
+        nativeSessionId,
+        Number(envelope.seq),
+        stringValue(payload.toolCallId),
+      )
+    : undefined;
   const usage = numericUsage(payload.usage);
   const line: NormalizedTranscriptLine = {
-    ...(turnId ? { nativeId: turnId, turnId } : {}),
+    ...(nativeId ? { nativeId } : {}),
+    ...(turnId ? { turnId } : {}),
     turnIndex: Number(envelope.seq),
     role,
     text,
