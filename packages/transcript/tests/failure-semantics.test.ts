@@ -1,11 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  appendFileSync,
   copyFileSync,
   mkdirSync,
   mkdtempSync,
   rmSync,
   symlinkSync,
+  writeFileSync,
 } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
@@ -495,6 +497,89 @@ test('symlinked provider roots are rejected without reading outside transcript c
 
     const lines = await transcript.linesByProvider('kimi');
     assert.deepEqual(lines.ok ? lines.value : null, []);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test('unterminated EOF tails wait for newline completion without skip or quarantine', async () => {
+  const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-partial-tail-'));
+  const root = path.join(workspace, '.novakai');
+  const destination = path.join(
+    root,
+    'transcripts',
+    'kimi',
+    'fixture-session',
+    'events.jsonl',
+  );
+  const completedRow = JSON.stringify({
+    kind: 'event',
+    envelope: {
+      seq: 11,
+      timestamp: '2026-07-29T05:06:07.000Z',
+      type: 'assistant_output',
+      payload: {
+        agentId: 'agent_partial_fixture',
+        turnId: 'turn_partial_fixture',
+        output: 'synthetic completed partial row',
+      },
+    },
+  });
+  const splitAt = Math.floor(completedRow.length / 2);
+  try {
+    mkdirSync(path.dirname(destination), { recursive: true });
+    writeFileSync(destination, completedRow.slice(0, splitAt));
+    const transcript = composeTranscript({
+      root,
+      source: createRawTranscriptSource({ root }),
+    });
+
+    const partialPass = await transcript.ingest();
+    assert.deepEqual(
+      partialPass.ok
+        ? {
+            added: partialPass.value.added,
+            skipped: partialPass.value.skipped.length,
+          }
+        : null,
+      { added: 0, skipped: 0 },
+    );
+
+    appendFileSync(destination, `${completedRow.slice(splitAt)}\n`);
+    const completedPass = await transcript.ingest();
+    assert.deepEqual(
+      completedPass.ok
+        ? {
+            added: completedPass.value.added,
+            skipped: completedPass.value.skipped.length,
+          }
+        : null,
+      { added: 1, skipped: 0 },
+    );
+    const lines = await transcript.linesByProvider('kimi');
+    assert.deepEqual(
+      lines.ok ? lines.value.map((line) => line.text) : null,
+      ['synthetic completed partial row'],
+    );
+
+    const queryHandle = composeHandle({
+      root,
+      dataRoot: path.join(root, 'stores'),
+      capability: 'transcript',
+      allowedKinds: ['transcriptJournal', 'transcriptCheckpoint'],
+      principal: 'sys_ingester',
+    });
+    const skips = await listObjects(
+      queryHandle,
+      'transcriptJournal',
+      { outcome: 'skipped' },
+    );
+    const quarantine = await listObjects(queryHandle, 'quarantine');
+    assert.equal(skips.ok ? skips.value.items.length : null, 0);
+    assert.equal(
+      quarantine.ok ? quarantine.value.items.length : null,
+      0,
+    );
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }
