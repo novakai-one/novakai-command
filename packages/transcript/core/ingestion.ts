@@ -98,9 +98,11 @@ function dedupKey(
     item.line.parentTurnId
     ?? item.line.parentAgentId
     ?? '';
-  const fallback = hash(
-    `${item.content}${item.offset}${parentId}`,
-  );
+  const fallback = hash(JSON.stringify([
+    item.content,
+    item.offset,
+    parentId,
+  ]));
   return `${provider}:fallback:${fallback}`;
 }
 
