@@ -522,6 +522,9 @@ export async function ingest(
             item,
           );
           if (!quarantined.ok) return quarantined;
+          context.failpoint.hit(
+            'transcript.afterQuarantineBeforeSkip',
+          );
           const skipped = await persistSkip(context, source, item);
           if (!skipped.ok) return skipped;
           result.skipped.push(skipped.value);
