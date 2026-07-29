@@ -9,7 +9,7 @@ import type {
  * yield normalized candidates or typed skips from the requested byte offset.
  */
 export interface TranscriptSourceAdapter {
-  sources(): Promise<readonly TranscriptSource[]>;
+  sources(): AsyncIterable<TranscriptSource>;
   read(
     source: TranscriptSource,
     fromOffset: number,

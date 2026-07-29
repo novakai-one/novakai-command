@@ -484,13 +484,14 @@ export async function ingest(
     skipped: [],
     diagnostics: [],
   };
-  let rawSources: readonly TranscriptSourceT[];
+  let rawSources: AsyncIterable<TranscriptSourceT>;
   try {
-    rawSources = await context.source.sources();
+    rawSources = context.source.sources();
   } catch (cause) {
     return { ok: false, error: sourceFailure(undefined, cause) };
   }
-  for (const rawSource of rawSources) {
+  try {
+    for await (const rawSource of rawSources) {
     const parsedSource = TranscriptSource.safeParse(rawSource);
     if (!parsedSource.success) {
       return {
@@ -558,6 +559,10 @@ export async function ingest(
       if (cause instanceof TranscriptFailpointCrash) throw cause;
       return { ok: false, error: sourceFailure(source.sourceId, cause) };
     }
+    }
+  } catch (cause) {
+    if (cause instanceof TranscriptFailpointCrash) throw cause;
+    return { ok: false, error: sourceFailure(undefined, cause) };
   }
   return { ok: true, value: result };
 }

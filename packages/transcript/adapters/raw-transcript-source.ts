@@ -21,16 +21,18 @@ export interface RawTranscriptSourceOptions {
   resolveSessionRef?: ProviderSessionResolver;
 }
 
-async function filesBelow(dir: string, prefix = ''): Promise<string[]> {
+async function* filesBelow(
+  dir: string,
+  prefix = '',
+): AsyncIterable<string> {
   let entries;
   try {
     entries = await readdir(dir, { withFileTypes: true });
   } catch (cause) {
     const error = cause as NodeJS.ErrnoException;
-    if (error.code === 'ENOENT') return [];
+    if (error.code === 'ENOENT') return;
     throw cause;
   }
-  const files: string[] = [];
   for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
     const relative = prefix ? path.join(prefix, entry.name) : entry.name;
     const entryPath = path.join(dir, entry.name);
@@ -39,30 +41,29 @@ async function filesBelow(dir: string, prefix = ''): Promise<string[]> {
       throw new Error('provider transcript tree must not contain symlinks');
     }
     if (stat.isDirectory()) {
-      files.push(...await filesBelow(entryPath, relative));
+      yield* filesBelow(entryPath, relative);
     } else if (stat.isFile() && entry.name.endsWith('.jsonl')) {
-      files.push(relative);
+      yield relative;
     }
   }
-  return files;
 }
 
-async function providerFiles(
+async function* providerFiles(
   providerRoot: string,
   transcriptsRoot: string,
-): Promise<string[]> {
+): AsyncIterable<string> {
   let stat;
   try {
     stat = await lstat(providerRoot);
   } catch (cause) {
     const error = cause as NodeJS.ErrnoException;
-    if (error.code === 'ENOENT') return [];
+    if (error.code === 'ENOENT') return;
     throw cause;
   }
   if (stat.isSymbolicLink()) {
     throw new Error('provider transcript root must not be a symlink');
   }
-  if (!stat.isDirectory()) return [];
+  if (!stat.isDirectory()) return;
   const [realProviderRoot, realTranscriptsRoot] = await Promise.all([
     realpath(providerRoot),
     realpath(transcriptsRoot),
@@ -71,7 +72,7 @@ async function providerFiles(
   if (relative.startsWith('..') || path.isAbsolute(relative)) {
     throw new Error('provider transcript root escapes transcript custody');
   }
-  return filesBelow(providerRoot);
+  yield* filesBelow(providerRoot);
 }
 
 function opaqueSourceId(provider: string, relativePath: string): string {
@@ -90,8 +91,7 @@ class RawTranscriptSource implements TranscriptSourceAdapter {
     this.root = path.resolve(options.root);
   }
 
-  async sources(): Promise<readonly TranscriptSource[]> {
-    const sources: TranscriptSource[] = [];
+  async *sources(): AsyncIterable<TranscriptSource> {
     this.sourceFiles.clear();
     const transcriptsRoot = path.join(this.root, 'transcripts');
     let transcriptsStat;
@@ -99,17 +99,17 @@ class RawTranscriptSource implements TranscriptSourceAdapter {
       transcriptsStat = await lstat(transcriptsRoot);
     } catch (cause) {
       const error = cause as NodeJS.ErrnoException;
-      if (error.code === 'ENOENT') return [];
+      if (error.code === 'ENOENT') return;
       throw cause;
     }
     if (transcriptsStat.isSymbolicLink()) {
       throw new Error('transcript custody root must not be a symlink');
     }
-    if (!transcriptsStat.isDirectory()) return [];
+    if (!transcriptsStat.isDirectory()) return;
     for (const provider of ProviderName.options) {
       const providerRoot = path.join(transcriptsRoot, provider);
-      for (
-        const relativePath of await providerFiles(
+      for await (
+        const relativePath of providerFiles(
           providerRoot,
           transcriptsRoot,
         )
@@ -119,10 +119,9 @@ class RawTranscriptSource implements TranscriptSourceAdapter {
           `${provider}:${sourceId}`,
           path.resolve(providerRoot, relativePath),
         );
-        sources.push({ provider, sourceId });
+        yield { provider, sourceId };
       }
     }
-    return sources;
   }
 
   async *read(

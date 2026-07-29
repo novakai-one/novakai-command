@@ -23,14 +23,14 @@ class MemoryTranscriptSource implements TranscriptSourceAdapter {
     private readonly entries: ReadonlyMap<string, readonly TranscriptSourceItem[]>,
   ) {}
 
-  async sources(): Promise<readonly TranscriptSource[]> {
-    return [...this.entries.keys()].map((key) => {
+  async *sources(): AsyncIterable<TranscriptSource> {
+    for (const key of this.entries.keys()) {
       const separator = key.indexOf(':');
-      return {
+      yield {
         provider: key.slice(0, separator) as TranscriptSource['provider'],
         sourceId: key.slice(separator + 1),
       };
-    });
+    }
   }
 
   async *read(
