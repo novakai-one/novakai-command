@@ -14,6 +14,9 @@ import {
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import type {
+  AgentId,
+} from '@novakai/foundation/dist/contract/brands.js';
 import {
   composeTranscript,
   createRawTranscriptSource,
@@ -278,6 +281,72 @@ test('Kimi native agent identities remain absent without a resolver', async () =
       nativeIdentitySentinels.every(
         (sentinel) => !persisted.includes(sentinel),
       ),
+    );
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test('Kimi persists only agent identities returned by the durable resolver', async () => {
+  const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-kimi-agent-resolver-'));
+  const root = path.join(workspace, '.novakai');
+  const destination = path.join(
+    root,
+    'transcripts',
+    'kimi',
+    'fixture-session',
+    'events.jsonl',
+  );
+  const durableAgents = new Map<string, AgentId>([
+    [
+      'native-parent-agent-redacted',
+      'agent_durable_parent' as AgentId,
+    ],
+    [
+      'native-child-agent-redacted',
+      'agent_durable_child' as AgentId,
+    ],
+  ]);
+  try {
+    mkdirSync(path.dirname(destination), { recursive: true });
+    copyFileSync(
+      path.join(fixtureRoot, 'kimi', 'subagent-relation.jsonl'),
+      destination,
+    );
+    const transcript = composeTranscript({
+      root,
+      source: createRawTranscriptSource({
+        root,
+        resolveAgentId: (provider, nativeId) =>
+          provider === 'kimi'
+            ? durableAgents.get(nativeId)
+            : undefined,
+      }),
+    });
+    const ingested = await transcript.ingest();
+    assert.equal(ingested.ok, true);
+    assert.ok(
+      ingested.ok
+      && ingested.value.diagnostics.every(
+        (entry) =>
+          entry.diagnostic.code !== 'agent_attribution_unavailable',
+      ),
+    );
+
+    const tree = await transcript.subagentTree('kimi:410');
+    assert.deepEqual(
+      tree.ok
+        ? tree.value.map((line) => ({
+            agentId: line.agentId,
+            parentAgentId: line.parentAgentId,
+            parentTurnId: line.parentTurnId,
+          }))
+        : null,
+      [{
+        agentId: 'agent_durable_child',
+        parentAgentId: 'agent_durable_parent',
+        parentTurnId: 'kimi:410',
+      }],
     );
   } finally {
     rmSync(workspace, { recursive: true, force: true });
