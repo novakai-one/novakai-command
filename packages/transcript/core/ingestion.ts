@@ -740,6 +740,20 @@ export async function subagentTree(
       }]),
     };
   }
+  if (turnId.startsWith('codex:')) {
+    return {
+      ok: false,
+      error: err(
+        'TranscriptTreeUnsupported',
+        'Codex transcript rows expose no verified spawn relation',
+        {
+          provider: 'codex' as const,
+          reason: 'no verified spawn table is available in the provider format',
+        },
+        false,
+      ),
+    };
+  }
   const listed = await allLines(context);
   if (!listed.ok) return listed;
   const descendants: TranscriptLineT[] = [];

@@ -13,7 +13,13 @@ export type TranscriptRecordError = ContractError<
   { kind: string; id: string; issues: Array<{ field: string; reason: string }> }
 >;
 
+export type TranscriptTreeUnsupportedError = ContractError<
+  'TranscriptTreeUnsupported',
+  { provider: 'codex'; reason: string }
+>;
+
 export type TranscriptError =
   | StoreError
   | TranscriptSourceError
-  | TranscriptRecordError;
+  | TranscriptRecordError
+  | TranscriptTreeUnsupportedError;

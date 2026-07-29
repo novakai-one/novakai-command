@@ -114,7 +114,7 @@ function normalizeClaude(
       role,
       text,
       ...(usage ? { tokenUsage: usage } : {}),
-      ...(stringValue(row.parentUuid)
+      ...(row.isSidechain === true && stringValue(row.parentUuid)
         ? { parentTurnId: stringValue(row.parentUuid) }
         : {}),
       ...(resolvedSession?.success
