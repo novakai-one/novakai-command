@@ -22,6 +22,10 @@ const terminalLifecycleFixture = fileURLToPath(new URL(
   './fixtures/transcript-terminal-lifecycle.mts',
   import.meta.url,
 ));
+const activeIngestCrashFixture = fileURLToPath(new URL(
+  './fixtures/transcript-active-ingest-crash.mts',
+  import.meta.url,
+));
 
 async function configureServer(
   root: string,
@@ -95,6 +99,34 @@ test('terminal watcher failure is truthful and sticky, and concurrent topology s
     proof.status.lastError ?? '',
     /EEXIST|ENOTDIR|checkpoint|state/u,
   );
+});
+
+test('worker death during active ingest immediately clears the terminal ingesting status', () => {
+  const result = spawnSync(
+    process.execPath,
+    [tsxCli, activeIngestCrashFixture],
+    {
+      encoding: 'utf8',
+      timeout: 3_000,
+    },
+  );
+  assert.equal(
+    result.status,
+    0,
+    result.error
+      ? `${result.error.message}\n${result.stderr}`
+      : result.stderr,
+  );
+  const status = JSON.parse(result.stdout) as {
+    running: boolean;
+    watcherReady: boolean;
+    ingesting: boolean;
+    lastError?: string;
+  };
+  assert.equal(status.running, false);
+  assert.equal(status.watcherReady, false);
+  assert.equal(status.ingesting, false);
+  assert.match(status.lastError ?? '', /EEXIST|checkpoint|state/u);
 });
 
 test('transcript.ingest=true starts copy custody and authoritative ingestion', async (t) => {
