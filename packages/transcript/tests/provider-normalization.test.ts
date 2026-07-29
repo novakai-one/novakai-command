@@ -551,6 +551,101 @@ test('Kimi relation context survives checkpoint restart without rescanning metad
   }
 });
 
+test('Kimi relation fact retry is idempotent when a crash precedes its checkpoint', async () => {
+  const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-kimi-fact-crash-'));
+  const root = path.join(workspace, '.novakai');
+  const destination = path.join(
+    root,
+    'transcripts',
+    'kimi',
+    'fixture-session',
+    'events.jsonl',
+  );
+  const rows = readFileSync(
+    path.join(fixtureRoot, 'kimi', 'subagent-relation.jsonl'),
+    'utf8',
+  ).trimEnd().split('\n');
+  const priorFailpoint = process.env.NVK_FAILPOINT;
+  try {
+    mkdirSync(path.dirname(destination), { recursive: true });
+    writeFileSync(destination, `${rows[0]}\n`);
+    process.env.NVK_FAILPOINT =
+      'transcript.afterRelationBeforeCheckpoint';
+    const crashing = composeTranscript({
+      root,
+      source: createRawTranscriptSource({ root }),
+    });
+    await assert.rejects(
+      crashing.ingest(),
+      /transcript\.afterRelationBeforeCheckpoint/u,
+    );
+
+    delete process.env.NVK_FAILPOINT;
+    const restarted = composeTranscript({
+      root,
+      source: createRawTranscriptSource({ root }),
+    });
+    const retriedParent = await restarted.ingest();
+    assert.deepEqual(
+      retriedParent.ok
+        ? {
+            added: retriedParent.value.added,
+            skipped: retriedParent.value.skipped.length,
+          }
+        : null,
+      { added: 0, skipped: 0 },
+    );
+
+    appendFileSync(destination, `${rows.slice(1).join('\n')}\n`);
+    const completed = await restarted.ingest();
+    assert.deepEqual(
+      completed.ok
+        ? {
+            added: completed.value.added,
+            skipped: completed.value.skipped.length,
+          }
+        : null,
+      { added: 1, skipped: 0 },
+    );
+    const lines = await restarted.linesByProvider('kimi');
+    assert.equal(lines.ok, true);
+    const parentTurnId = lines.ok
+      ? lines.value[0]?.parentTurnId ?? ''
+      : '';
+    const tree = await restarted.subagentTree(parentTurnId);
+    assert.equal(tree.ok ? tree.value.length : null, 1);
+
+    const handle = composeHandle({
+      root,
+      dataRoot: path.join(root, 'stores'),
+      capability: 'transcript',
+      allowedKinds: ['transcriptJournal'],
+      principal: 'sys_ingester',
+    });
+    const relations = await listObjects(
+      handle,
+      'transcriptJournal',
+      { outcome: 'relation' },
+    );
+    assert.equal(relations.ok ? relations.value.items.length : null, 2);
+    const zeroPass = await restarted.ingest();
+    assert.deepEqual(
+      zeroPass.ok
+        ? {
+            added: zeroPass.value.added,
+            duplicates: zeroPass.value.duplicates,
+            skipped: zeroPass.value.skipped.length,
+          }
+        : null,
+      { added: 0, duplicates: 0, skipped: 0 },
+    );
+  } finally {
+    if (priorFailpoint === undefined) delete process.env.NVK_FAILPOINT;
+    else process.env.NVK_FAILPOINT = priorFailpoint;
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
 test('Kimi native agent identities remain absent without a resolver', async () => {
   const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-kimi-agent-trust-'));
   const root = path.join(workspace, '.novakai');
