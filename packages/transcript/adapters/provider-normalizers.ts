@@ -179,6 +179,14 @@ function normalizeCodex(
   ) {
     return nonMessage(offset, nextOffset, 'codex');
   }
+  if (
+    row.type === 'event_msg'
+    && eventType === 'agent_message'
+    && payload.message === ''
+    && ('phase' in payload || 'memory_citation' in payload)
+  ) {
+    return nonMessage(offset, nextOffset, 'codex');
+  }
   const contentParts = Array.isArray(payload.content)
     ? payload.content.filter(isRecord)
     : [];
