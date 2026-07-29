@@ -211,3 +211,97 @@ test('linesByProvider since compares parsed instants across offsets', async () =
     rmSync(workspace, { recursive: true, force: true });
   }
 });
+
+test('provider-scoped stored turn IDs keep equal native trees isolated', async () => {
+  const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-scoped-turn-id-'));
+  const root = path.join(workspace, '.novakai');
+  const source = new RegressionSource(new Map([
+    ['claude:tree', [{
+      kind: 'candidate',
+      offset: 0,
+      nextOffset: 10,
+      content: 'claude parent',
+      line: {
+        nativeId: 'claude-parent-line',
+        turnId: 'shared-native-turn',
+        turnIndex: 0,
+        role: 'assistant',
+        text: 'claude parent',
+      },
+    }, {
+      kind: 'candidate',
+      offset: 10,
+      nextOffset: 20,
+      content: 'claude child',
+      line: {
+        nativeId: 'claude-child-line',
+        turnId: 'claude-child-turn',
+        turnIndex: 1,
+        role: 'assistant',
+        text: 'claude child',
+        parentTurnId: 'shared-native-turn',
+      },
+    }]],
+    ['codex:tree', [{
+      kind: 'candidate',
+      offset: 0,
+      nextOffset: 10,
+      content: 'codex parent',
+      line: {
+        nativeId: 'codex-parent-line',
+        turnId: 'shared-native-turn',
+        turnIndex: 0,
+        role: 'assistant',
+        text: 'codex parent',
+      },
+    }, {
+      kind: 'candidate',
+      offset: 10,
+      nextOffset: 20,
+      content: 'codex child',
+      line: {
+        nativeId: 'codex-child-line',
+        turnId: 'codex-child-turn',
+        turnIndex: 1,
+        role: 'assistant',
+        text: 'codex child',
+        parentTurnId: 'shared-native-turn',
+      },
+    }]],
+  ]));
+
+  try {
+    const transcript = composeTranscript({ root, source });
+    const ingested = await transcript.ingest();
+    assert.equal(ingested.ok && ingested.value.added, 4);
+
+    const claude = await transcript.linesByProvider('claude');
+    const codex = await transcript.linesByProvider('codex');
+    assert.equal(claude.ok && codex.ok, true);
+    if (!claude.ok || !codex.ok) return;
+    const claudeParent = claude.value.find(
+      (line) => line.text === 'claude parent',
+    );
+    const codexParent = codex.value.find(
+      (line) => line.text === 'codex parent',
+    );
+    assert.ok(claudeParent);
+    assert.ok(codexParent);
+    assert.notEqual(claudeParent.turnId, codexParent.turnId);
+
+    const claudeTree = await transcript.subagentTree(claudeParent.turnId);
+    const codexTree = await transcript.subagentTree(codexParent.turnId);
+    assert.deepEqual(
+      claudeTree.ok ? claudeTree.value.map((line) => line.text) : null,
+      ['claude child'],
+    );
+    assert.deepEqual(
+      codexTree.ok ? codexTree.value.map((line) => line.text) : null,
+      ['codex child'],
+    );
+    const unscoped = await transcript.subagentTree('shared-native-turn');
+    assert.deepEqual(unscoped.ok ? unscoped.value : null, []);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
