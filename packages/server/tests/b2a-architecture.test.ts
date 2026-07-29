@@ -168,6 +168,27 @@ test('B2b Server integration consumes only Transcript contract and never Shell',
   assert.deepEqual(offenders, []);
 });
 
+test('B2b scheduled ingestion runs only in the background worker, never on the HTTP host', () => {
+  const composition = readFileSync(
+    path.join(serverRoot, 'core', 'b2b', 'composition.ts'),
+    'utf8',
+  );
+  const worker = readFileSync(
+    path.join(serverRoot, 'core', 'b2b', 'watcher-worker.ts'),
+    'utf8',
+  );
+  assert.doesNotMatch(
+    composition,
+    /\.ingest\s*\(/u,
+    'the HTTP host may expose queries but must not execute scheduled ingest',
+  );
+  assert.match(
+    worker,
+    /\.ingest\s*\(/u,
+    'the worker owns scheduled ingestion as well as copy custody',
+  );
+});
+
 test('every Server persistence-writer authority is explicitly classified', () => {
   const authorities: string[] = [];
   for (const sourcePath of typescriptSources(serverRoot)) {
