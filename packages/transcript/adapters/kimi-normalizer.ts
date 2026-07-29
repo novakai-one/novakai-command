@@ -238,8 +238,10 @@ export function normalizeKimi(
     ));
   }
   const nativeTurnId = identityValue(payload.turnId);
-  const turnId = nativeSessionId && nativeTurnId
-    ? turnIdentity(nativeSessionId, nativeTurnId)
+  const turnId = nativeTurnId
+    ? nativeSessionId
+      ? turnIdentity(nativeSessionId, nativeTurnId)
+      : nativeTurnId
     : undefined;
   const nativeId = nativeSessionId
     ? lineIdentity(

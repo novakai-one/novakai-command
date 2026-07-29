@@ -304,7 +304,7 @@ test('Kimi sessionless rows preserve the payload turn identity', async () => {
     assert.ok(
       lines.value.every(
         (line) =>
-          line.sourceAttribution.originalId === undefined
+          line.sourceAttribution.originalId === '900'
           && line.turnId === 'kimi:900',
       ),
     );

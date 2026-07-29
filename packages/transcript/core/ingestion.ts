@@ -124,7 +124,7 @@ function dedupKey(
       item.offset,
     ].join(':');
   }
-  if (item.line.turnId) {
+  if (item.line.turnId && source.provider !== 'kimi') {
     return `${source.provider}:native:${item.line.turnId}`;
   }
   const parentId =
