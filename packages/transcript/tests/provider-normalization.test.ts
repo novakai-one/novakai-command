@@ -7,6 +7,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
@@ -212,6 +213,68 @@ test('Kimi relation context survives checkpoint restart without rescanning metad
           }
         : null,
       { added: 0, duplicates: 0, skipped: 0 },
+    );
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test('Kimi native agent identities remain absent without a resolver', async () => {
+  const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-kimi-agent-trust-'));
+  const root = path.join(workspace, '.novakai');
+  const destination = path.join(
+    root,
+    'transcripts',
+    'kimi',
+    'fixture-session',
+    'events.jsonl',
+  );
+  const nativeIdentitySentinels = [
+    'native-parent-agent-redacted',
+    'native-child-agent-redacted',
+    'native-parent-tool-redacted',
+    'native-child-tool-redacted',
+  ];
+  try {
+    mkdirSync(path.dirname(destination), { recursive: true });
+    copyFileSync(
+      path.join(fixtureRoot, 'kimi', 'subagent-relation.jsonl'),
+      destination,
+    );
+    const transcript = composeTranscript({
+      root,
+      source: createRawTranscriptSource({ root }),
+    });
+    const ingested = await transcript.ingest();
+    assert.equal(ingested.ok, true);
+    assert.ok(
+      ingested.ok
+      && ingested.value.diagnostics.some(
+        (entry) =>
+          entry.diagnostic.code === 'agent_attribution_unavailable',
+      ),
+    );
+
+    const lines = await transcript.linesByProvider('kimi');
+    assert.deepEqual(
+      lines.ok
+        ? lines.value.map((line) => ({
+            agentId: line.agentId,
+            parentAgentId: line.parentAgentId,
+          }))
+        : null,
+      [{ agentId: undefined, parentAgentId: undefined }],
+    );
+
+    const storeRoot = path.join(root, 'stores');
+    const persisted = readdirSync(storeRoot)
+      .filter((name) => name.endsWith('.jsonl'))
+      .map((name) => readFileSync(path.join(storeRoot, name), 'utf8'))
+      .join('');
+    assert.ok(
+      nativeIdentitySentinels.every(
+        (sentinel) => !persisted.includes(sentinel),
+      ),
     );
   } finally {
     rmSync(workspace, { recursive: true, force: true });
