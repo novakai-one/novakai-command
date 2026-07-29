@@ -1,0 +1,1 @@
+{"type":"assistant","uuid":"claude_parent_fixture","parentUuid":null,"sessionId":"native-session-redacted","isSidechain":false,"message":{"id":"message_parent_fixture","role":"assistant","content":[{"type":"text","text":"synthetic claude parent"}],"usage":{"input_tokens":4,"output_tokens":5}}}

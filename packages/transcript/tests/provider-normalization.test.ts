@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   copyFileSync,
+  cpSync,
   mkdirSync,
   mkdtempSync,
   rmSync,
@@ -81,6 +82,65 @@ test('Kimi raw-copy adapter preserves exposed attribution and journals an unreso
         sessionRef: undefined,
         tokenUsage: { input: 2, output: 3 },
       }],
+    );
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test('TRN-002 Claude raw-copy subagent parentUuid is provider-scoped and queryable as a child turn', async () => {
+  const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-claude-adapter-'));
+  const root = path.join(workspace, '.novakai');
+  const destination = path.join(
+    root,
+    'transcripts',
+    'claude',
+    'fixture-session',
+  );
+  try {
+    mkdirSync(destination, { recursive: true });
+    cpSync(path.join(fixtureRoot, 'claude'), destination, {
+      recursive: true,
+    });
+    const transcript = composeTranscript({
+      root,
+      source: createRawTranscriptSource({ root }),
+    });
+
+    const ingested = await transcript.ingest();
+    assert.equal(ingested.ok, true);
+    assert.equal(ingested.ok ? ingested.value.added : null, 2);
+
+    const tree = await transcript.subagentTree(
+      'claude:claude_parent_fixture',
+    );
+    assert.equal(tree.ok, true);
+    assert.deepEqual(
+      tree.ok
+        ? tree.value.map((line) => ({
+            text: line.text,
+            turnId: line.turnId,
+            parentTurnId: line.parentTurnId,
+            agentId: line.agentId,
+            sessionRef: line.sessionRef,
+            tokenUsage: line.tokenUsage,
+          }))
+        : null,
+      [{
+        text: 'synthetic claude child',
+        turnId: 'claude:claude_child_fixture',
+        parentTurnId: 'claude:claude_parent_fixture',
+        agentId: undefined,
+        sessionRef: undefined,
+        tokenUsage: { input_tokens: 6, output_tokens: 7 },
+      }],
+    );
+    assert.ok(
+      ingested.ok
+      && ingested.value.diagnostics.some(
+        (entry) =>
+          entry.diagnostic.code === 'agent_attribution_unavailable',
+      ),
     );
   } finally {
     rmSync(workspace, { recursive: true, force: true });
