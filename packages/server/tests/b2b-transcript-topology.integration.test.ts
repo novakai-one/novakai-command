@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import {
   existsSync,
   mkdirSync,
@@ -8,6 +9,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { mintClientOpId } from '@novakai/foundation/dist/contract/index.js';
 import { openConfigStore } from '../contract/index.js';
 import { bootServer } from '../core/boot.js';
@@ -15,6 +17,11 @@ import { fakeKimi } from './fakeKimi.js';
 
 const workspace = () =>
   mkdtempSync(path.join(tmpdir(), 'nvk-b2b-topology-'));
+const tsxCli = fileURLToPath(import.meta.resolve('tsx/cli'));
+const terminalLifecycleFixture = fileURLToPath(new URL(
+  './fixtures/transcript-terminal-lifecycle.mts',
+  import.meta.url,
+));
 
 async function configureServer(
   root: string,
@@ -54,6 +61,41 @@ async function eventually(
   }
   assert.fail(`condition was not met within ${timeoutMs}ms`);
 }
+
+test('terminal watcher failure is truthful and sticky, and concurrent topology stops resolve within 500ms', () => {
+  const result = spawnSync(
+    process.execPath,
+    [tsxCli, terminalLifecycleFixture],
+    {
+      encoding: 'utf8',
+      timeout: 2_000,
+    },
+  );
+  assert.equal(
+    result.status,
+    0,
+    result.error
+      ? `${result.error.message}\n${result.stderr}`
+      : result.stderr,
+  );
+  const proof = JSON.parse(result.stdout) as {
+    stopMs: number;
+    status: {
+      running: boolean;
+      watcherReady: boolean;
+      ingesting: boolean;
+      lastError?: string;
+    };
+  };
+  assert.ok(proof.stopMs < 500);
+  assert.equal(proof.status.running, false);
+  assert.equal(proof.status.watcherReady, false);
+  assert.equal(proof.status.ingesting, false);
+  assert.match(
+    proof.status.lastError ?? '',
+    /EEXIST|ENOTDIR|checkpoint|state/u,
+  );
+});
 
 test('transcript.ingest=true starts copy custody and authoritative ingestion', async (t) => {
   const base = workspace();
