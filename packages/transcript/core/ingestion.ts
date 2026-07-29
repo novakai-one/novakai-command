@@ -101,24 +101,23 @@ function sourceFailure(sourceId: string | undefined, cause: unknown): Transcript
 }
 
 function dedupKey(
-  source: TranscriptSourceT,
+  provider: ProviderNameT,
   item: TranscriptSourceCandidate,
 ): string {
   const nativeId = item.line.nativeId ?? item.line.turnId;
   if (nativeId) {
-    return `${source.provider}:native:${nativeId}`;
+    return `${provider}:native:${nativeId}`;
   }
   const parentId =
     item.line.parentTurnId
     ?? item.line.parentAgentId
     ?? '';
   const fallback = hash(JSON.stringify([
-    source.sourceId,
     item.content,
     item.offset,
     parentId,
   ]));
-  return `${source.provider}:fallback:${fallback}`;
+  return `${provider}:fallback:${fallback}`;
 }
 
 function parseLine(
@@ -400,7 +399,7 @@ async function persistCandidate(
   source: TranscriptSourceT,
   item: TranscriptSourceCandidate,
 ): Promise<Result<'added' | 'duplicate', TranscriptError>> {
-  const key = dedupKey(source, item);
+  const key = dedupKey(source.provider, item);
   const id = `transcriptLine_${hash(key)}`;
   const existing = await getObjectWithReadFailure<TranscriptLineT>(
     context.handle,

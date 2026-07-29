@@ -255,7 +255,7 @@ test('Kimi equal numeric turns in different sessions have distinct tree identiti
   }
 });
 
-test('Kimi sessionless numeric turns use distinct source fallbacks without trusted native identity', async () => {
+test('Kimi sessionless numeric turns use canonical fallback without trusted native identity', async () => {
   const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-kimi-no-session-'));
   const root = path.join(workspace, '.novakai');
   const fixture = path.join(
@@ -288,16 +288,12 @@ test('Kimi sessionless numeric turns use distinct source fallbacks without trust
             duplicates: ingested.value.duplicates,
           }
         : null,
-      { added: 2, duplicates: 0 },
+      { added: 1, duplicates: 1 },
     );
     const lines = await transcript.linesByProvider('kimi');
     assert.equal(lines.ok, true);
     if (!lines.ok) return;
-    assert.equal(lines.value.length, 2);
-    assert.equal(
-      new Set(lines.value.map((line) => line.turnId)).size,
-      2,
-    );
+    assert.equal(lines.value.length, 1);
     assert.ok(
       lines.value.every(
         (line) =>
