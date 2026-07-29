@@ -20,11 +20,52 @@ import {
 import {
   composeTranscript,
   createRawTranscriptSource,
+  type TranscriptSource,
+  type TranscriptSourceAdapter,
+  type TranscriptSourceItem,
 } from '../contract/index.js';
 
 const fixtureRoot = fileURLToPath(
   new URL('../../tests/fixtures/', import.meta.url),
 );
+
+test('ingestion errors expose only the opaque source reference', async () => {
+  const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-source-error-'));
+  const root = path.join(workspace, '.novakai');
+  const sourceId = `source_${'a'.repeat(64)}`;
+  const secretPath = path.join(
+    workspace,
+    'SECRET_PROJECT_NAME',
+    'events.jsonl',
+  );
+  const source: TranscriptSourceAdapter = {
+    async *sources(): AsyncIterable<TranscriptSource> {
+      yield { provider: 'kimi', sourceId };
+    },
+    async *read(): AsyncIterable<TranscriptSourceItem> {
+      throw new Error(`EACCES: permission denied, open '${secretPath}'`);
+    },
+  };
+  try {
+    const result = await composeTranscript({ root, source }).ingest();
+    assert.deepEqual(
+      result.ok ? null : result.error,
+      {
+        code: 'TranscriptSourceFailed',
+        message: `transcript source "${sourceId}" failed`,
+        details: {
+          sourceId,
+          cause: 'provider source unavailable',
+        },
+        retryable: true,
+      },
+    );
+    assert.equal(JSON.stringify(result).includes(secretPath), false);
+    assert.equal(JSON.stringify(result).includes('SECRET_PROJECT_NAME'), false);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
 
 test('TRN-004 rejected raw rows request Foundation quarantine and later valid rows continue', async () => {
   const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-trn-004-'));
