@@ -79,6 +79,7 @@ export function composeTranscriptServerHost(
     if (!terminalError) terminalError = message;
     phase = 'terminal';
     watcherReady = false;
+    ingesting = false;
   };
 
   const topology: TranscriptTopology = {
