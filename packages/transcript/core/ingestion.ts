@@ -462,7 +462,8 @@ export async function linesByProvider(
       error: invalidInput('provider', parsedProvider.error.issues),
     };
   }
-  if (since !== undefined && Number.isNaN(Date.parse(since))) {
+  const sinceMs = since === undefined ? undefined : Date.parse(since);
+  if (sinceMs !== undefined && Number.isNaN(sinceMs)) {
     return {
       ok: false,
       error: invalidInput('since', [{
@@ -472,10 +473,12 @@ export async function linesByProvider(
     };
   }
   const listed = await allLines(context, { provider: parsedProvider.data });
-  if (!listed.ok || since === undefined) return listed;
+  if (!listed.ok || sinceMs === undefined) return listed;
   return {
     ok: true,
-    value: listed.value.filter((line) => line.createdAt >= since),
+    value: listed.value.filter(
+      (line) => Date.parse(line.createdAt) >= sinceMs,
+    ),
   };
 }
 
