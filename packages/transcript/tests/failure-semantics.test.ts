@@ -5,6 +5,7 @@ import {
   mkdirSync,
   mkdtempSync,
   rmSync,
+  symlinkSync,
 } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
@@ -461,6 +462,39 @@ test('provider path identity is persisted only as one deterministic opaque sourc
         : null,
       [persistedSourceIds[0]],
     );
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test('symlinked provider roots are rejected without reading outside transcript custody', async () => {
+  const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-source-symlink-'));
+  const root = path.join(workspace, '.novakai');
+  const outside = path.join(workspace, 'outside-custody');
+  const outsideFile = path.join(outside, 'external.jsonl');
+  try {
+    mkdirSync(outside, { recursive: true });
+    copyFileSync(path.join(fixtureRoot, 'kimi', 'event.jsonl'), outsideFile);
+    mkdirSync(path.join(root, 'transcripts'), { recursive: true });
+    symlinkSync(outside, path.join(root, 'transcripts', 'kimi'), 'dir');
+
+    const transcript = composeTranscript({
+      root,
+      source: createRawTranscriptSource({ root }),
+    });
+    const ingested = await transcript.ingest();
+    assert.equal(ingested.ok, false);
+    assert.equal(
+      ingested.ok ? null : ingested.error.code,
+      'TranscriptSourceFailed',
+    );
+    assert.match(
+      ingested.ok ? '' : ingested.error.message,
+      /provider transcript root must not be a symlink/u,
+    );
+
+    const lines = await transcript.linesByProvider('kimi');
+    assert.deepEqual(lines.ok ? lines.value : null, []);
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }
