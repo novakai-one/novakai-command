@@ -1,4 +1,7 @@
 import { createHash } from 'node:crypto';
+import type {
+  AgentId,
+} from '@novakai/foundation/dist/contract/brands.js';
 import {
   SessionRef,
   type NormalizedTranscriptLine,
@@ -13,6 +16,11 @@ export type ProviderSessionResolver = (
   provider: ProviderName,
   nativeSessionId: string,
 ) => SessionRefT | undefined;
+
+export type ProviderAgentResolver = (
+  provider: ProviderName,
+  nativeAgentId: string,
+) => AgentId | undefined;
 
 type JsonRecord = Record<string, unknown>;
 
@@ -107,6 +115,7 @@ function normalizeKimi(
   nextOffset: number,
   resolver?: ProviderSessionResolver,
   relationState?: TranscriptRelationState,
+  agentResolver?: ProviderAgentResolver,
 ): TranscriptSourceItem {
   if (!isRecord(row) || row.kind !== 'event' || !isRecord(row.envelope)) {
     return unsupported(offset, nextOffset, 'kimi');
@@ -132,6 +141,10 @@ function normalizeKimi(
       return unsupported(offset, nextOffset, 'kimi');
     }
     const parentKey = relationKey('tool', toolCallId);
+    const nativeParentAgentId = stringValue(payload.agentId);
+    const parentAgentId = nativeParentAgentId
+      ? agentResolver?.('kimi', nativeParentAgentId)
+      : undefined;
     return {
       kind: 'context',
       offset,
@@ -139,7 +152,10 @@ function normalizeKimi(
       relationState: {
         parents: {
           ...currentRelations.parents,
-          [parentKey]: { nativeParentTurnId: turnId },
+          [parentKey]: {
+            nativeParentTurnId: turnId,
+            ...(parentAgentId ? { parentAgentId } : {}),
+          },
         },
         children: currentRelations.children,
       },
@@ -152,6 +168,7 @@ function normalizeKimi(
       return unsupported(offset, nextOffset, 'kimi');
     }
     const childKey = relationKey('agent', subagentId);
+    const agentId = agentResolver?.('kimi', subagentId);
     return {
       kind: 'context',
       offset,
@@ -162,6 +179,7 @@ function normalizeKimi(
           ...currentRelations.children,
           [childKey]: {
             parentKey: relationKey('tool', parentToolCallId),
+            ...(agentId ? { agentId } : {}),
           },
         },
       },
@@ -194,9 +212,27 @@ function normalizeKimi(
   const resolvedSession = nativeSessionId && resolver
     ? SessionRef.safeParse(resolver('kimi', nativeSessionId))
     : undefined;
-  const diagnostics: TranscriptDiagnostic[] = [];
   const nativeAgentId = stringValue(payload.agentId);
   const nativeParentAgentId = stringValue(payload.parentAgentId);
+  const childRelation = nativeAgentId
+    ? currentRelations.children[relationKey('agent', nativeAgentId)]
+    : undefined;
+  const parentRelation = childRelation
+    ? currentRelations.parents[childRelation.parentKey]
+    : undefined;
+  const resolvedAgentId = (
+    childRelation?.agentId
+    ?? (nativeAgentId
+      ? agentResolver?.('kimi', nativeAgentId)
+      : undefined)
+  );
+  const resolvedParentAgentId = (
+    parentRelation?.parentAgentId
+    ?? (nativeParentAgentId
+      ? agentResolver?.('kimi', nativeParentAgentId)
+      : undefined)
+  );
+  const diagnostics: TranscriptDiagnostic[] = [];
   if (nativeSessionId && (!resolvedSession || !resolvedSession.success)) {
     diagnostics.push(diagnostic(
       'session_ref_unresolved',
@@ -204,8 +240,8 @@ function normalizeKimi(
     ));
   }
   if (
-    nativeAgentId
-    || nativeParentAgentId
+    (nativeAgentId && !resolvedAgentId)
+    || (nativeParentAgentId && !resolvedParentAgentId)
     || stringValue(payload.subagentId)
   ) {
     diagnostics.push(diagnostic(
@@ -214,12 +250,6 @@ function normalizeKimi(
     ));
   }
   const turnId = identityValue(payload.turnId);
-  const childRelation = nativeAgentId
-    ? currentRelations.children[relationKey('agent', nativeAgentId)]
-    : undefined;
-  const parentRelation = childRelation
-    ? currentRelations.parents[childRelation.parentKey]
-    : undefined;
   const usage = numericUsage(payload.usage);
   const line: NormalizedTranscriptLine = {
     ...(turnId ? { nativeId: turnId, turnId } : {}),
@@ -227,6 +257,10 @@ function normalizeKimi(
     role,
     text,
     ...(usage ? { tokenUsage: usage } : {}),
+    ...(resolvedAgentId ? { agentId: resolvedAgentId } : {}),
+    ...(resolvedParentAgentId
+      ? { parentAgentId: resolvedParentAgentId }
+      : {}),
     ...(parentRelation
       ? { parentTurnId: parentRelation.nativeParentTurnId }
       : {}),
@@ -398,6 +432,7 @@ export function normalizeProviderLine(
   nextOffset: number,
   resolver?: ProviderSessionResolver,
   relationState?: TranscriptRelationState,
+  agentResolver?: ProviderAgentResolver,
 ): TranscriptSourceItem {
   let row: unknown;
   try {
@@ -421,6 +456,7 @@ export function normalizeProviderLine(
       nextOffset,
       resolver,
       relationState,
+      agentResolver,
     );
   }
   if (provider === 'claude') {

@@ -11,15 +11,20 @@ import {
 import type { TranscriptSourceAdapter } from '../contract/source.js';
 import {
   normalizeProviderLine,
+  type ProviderAgentResolver,
   type ProviderSessionResolver,
 } from './provider-normalizers.js';
 
-export type { ProviderSessionResolver } from './provider-normalizers.js';
+export type {
+  ProviderAgentResolver,
+  ProviderSessionResolver,
+} from './provider-normalizers.js';
 
 export interface RawTranscriptSourceOptions {
   /** The .novakai root containing recursive provider JSONL copies. */
   root: string;
   resolveSessionRef?: ProviderSessionResolver;
+  resolveAgentId?: ProviderAgentResolver;
 }
 
 async function* filesBelow(
@@ -172,6 +177,7 @@ class RawTranscriptSource implements TranscriptSourceAdapter {
             nextOffset,
             this.options.resolveSessionRef,
             currentRelations,
+            this.options.resolveAgentId,
           );
           if (item.kind === 'context') {
             currentRelations = item.relationState;

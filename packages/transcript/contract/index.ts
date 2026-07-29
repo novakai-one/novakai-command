@@ -9,6 +9,7 @@ export * from './errors.js';
 export * from './source.js';
 export {
   createRawTranscriptSource,
+  type ProviderAgentResolver,
   type ProviderSessionResolver,
   type RawTranscriptSourceOptions,
 } from '../adapters/raw-transcript-source.js';
