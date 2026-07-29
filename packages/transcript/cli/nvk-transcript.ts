@@ -6,7 +6,9 @@ import {
   ProviderName,
   SessionRef,
   composeTranscript,
+  createProviderIdentityResolvers,
   createRawTranscriptSource,
+  loadProviderIdentityRecords,
 } from '../contract/index.js';
 
 interface ParsedArgs {
@@ -87,9 +89,16 @@ async function main(): Promise<void> {
       retryable: false,
     });
   }
+  const identities = createProviderIdentityResolvers(
+    await loadProviderIdentityRecords(root),
+  );
   const transcript = composeTranscript({
     root,
-    source: createRawTranscriptSource({ root }),
+    source: createRawTranscriptSource({
+      root,
+      resolveSessionRef: identities.resolveSessionRef,
+      resolveAgentId: identities.resolveAgentId,
+    }),
   });
 
   if (verb === 'lines-by-session') {

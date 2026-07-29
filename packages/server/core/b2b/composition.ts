@@ -1,6 +1,7 @@
 import { Worker } from 'node:worker_threads';
 import {
   composeTranscript,
+  createProviderIdentityResolvers,
   createRawTranscriptSource,
   type IngestResult,
   type TranscriptContract,
@@ -47,9 +48,14 @@ export interface ComposeTranscriptServerHostOptions {
 export function composeTranscriptServerHost(
   options: ComposeTranscriptServerHostOptions,
 ): TranscriptServerHost {
+  const identities = createProviderIdentityResolvers();
   const operations = composeTranscript({
     root: options.root,
-    source: createRawTranscriptSource({ root: options.root }),
+    source: createRawTranscriptSource({
+      root: options.root,
+      resolveSessionRef: identities.resolveSessionRef,
+      resolveAgentId: identities.resolveAgentId,
+    }),
   });
   const watcherIntervalMs = options.watcherIntervalMs ?? DEFAULT_POLL_MS;
   const ingestIntervalMs = options.ingestIntervalMs ?? DEFAULT_POLL_MS;

@@ -215,7 +215,7 @@ test('nvk transcript lines-by-session returns rows ingested by the real worker c
       ingestIntervalMs: 20,
     });
     host.topology.start();
-    await waitFor(() => host?.topology.status().runs === 1);
+    await waitFor(() => (host?.topology.status().runs ?? 0) >= 1);
     await host.topology.stop();
 
     const token = mintToken(

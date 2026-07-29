@@ -14,6 +14,12 @@ export {
   type RawTranscriptSourceOptions,
 } from '../adapters/raw-transcript-source.js';
 export {
+  createProviderIdentityResolvers,
+  loadProviderIdentityRecords,
+  type ProviderIdentityRecord,
+  type ProviderIdentityResolvers,
+} from '../adapters/provider-identity-resolvers.js';
+export {
   composeTranscript,
   type ComposeTranscriptOptions,
 } from '../core/composition.js';

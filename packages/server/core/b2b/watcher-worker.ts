@@ -1,9 +1,11 @@
 import { parentPort, workerData } from 'node:worker_threads';
 import {
   composeTranscript,
+  createProviderIdentityResolvers,
   createRawTranscriptSource,
   createTranscriptWatcher,
   defaultSources,
+  loadProviderIdentityRecords,
   type IngestResult,
 } from '../../../transcript/contract/index.js';
 
@@ -20,9 +22,14 @@ const watcher = createTranscriptWatcher({
   sources: defaultSources(input.providerHome),
   intervalMs: input.watcherIntervalMs,
 });
+const identities = createProviderIdentityResolvers();
 const transcript = composeTranscript({
   root: input.root,
-  source: createRawTranscriptSource({ root: input.root }),
+  source: createRawTranscriptSource({
+    root: input.root,
+    resolveSessionRef: identities.resolveSessionRef,
+    resolveAgentId: identities.resolveAgentId,
+  }),
 });
 let running = true;
 let watcherReady = false;
@@ -66,6 +73,7 @@ async function runIngest(): Promise<void> {
   ingesting = true;
   postStatus();
   activeIngest = (async () => {
+    identities.replace(await loadProviderIdentityRecords(input.root));
     const result = await transcript.ingest();
     runs += 1;
     if (result.ok) {
