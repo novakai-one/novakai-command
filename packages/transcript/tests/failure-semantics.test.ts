@@ -5,6 +5,7 @@ import {
   copyFileSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -436,6 +437,100 @@ test('NVK_FAILPOINT transcript.afterQuarantineBeforeSkip reuses one tombstone th
     rmSync(workspace, { recursive: true, force: true });
   }
 });
+
+for (const scenario of [
+  {
+    point: 'transcript.afterSkipJournalBeforeCheckpoint',
+    provider: 'claude',
+    row: JSON.stringify({
+      type: 'queue-operation',
+      operation: 'dequeue',
+    }),
+    afterCrash: { lines: 0, journal: 1, checkpoints: 0 },
+    afterRetry: { lines: 0, journal: 1, checkpoints: 1 },
+  },
+  {
+    point: 'transcript.afterDiagnosticJournalBeforeCheckpoint',
+    provider: 'kimi',
+    row: readFileSync(
+      path.join(fixtureRoot, 'kimi', 'event.jsonl'),
+      'utf8',
+    ).trimEnd(),
+    afterCrash: { lines: 1, journal: 1, checkpoints: 0 },
+    afterRetry: { lines: 1, journal: 2, checkpoints: 1 },
+  },
+  {
+    point: 'transcript.beforeCheckpointAppend',
+    provider: 'kimi',
+    row: readFileSync(
+      path.join(fixtureRoot, 'kimi', 'event.jsonl'),
+      'utf8',
+    ).trimEnd(),
+    afterCrash: { lines: 1, journal: 2, checkpoints: 0 },
+    afterRetry: { lines: 1, journal: 2, checkpoints: 1 },
+  },
+] as const) {
+  test(`NVK_FAILPOINT ${scenario.point} preserves effects and retries once`, async () => {
+    const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-fail-effect-'));
+    const root = path.join(workspace, '.novakai');
+    const destination = path.join(
+      root,
+      'transcripts',
+      scenario.provider,
+      'fixture-source',
+      'events.jsonl',
+    );
+    const priorFailpoint = process.env.NVK_FAILPOINT;
+    const counts = async () => {
+      const queryHandle = composeHandle({
+        root,
+        dataRoot: path.join(root, 'stores'),
+        capability: 'transcript',
+        allowedKinds: [
+          'transcriptLine',
+          'transcriptJournal',
+          'transcriptCheckpoint',
+        ],
+        principal: 'sys_ingester',
+      });
+      const [lines, journal, checkpoints] = await Promise.all([
+        listObjects(queryHandle, 'transcriptLine'),
+        listObjects(queryHandle, 'transcriptJournal'),
+        listObjects(queryHandle, 'transcriptCheckpoint'),
+      ]);
+      return {
+        lines: lines.ok ? lines.value.items.length : -1,
+        journal: journal.ok ? journal.value.items.length : -1,
+        checkpoints: checkpoints.ok
+          ? checkpoints.value.items.length
+          : -1,
+      };
+    };
+    try {
+      mkdirSync(path.dirname(destination), { recursive: true });
+      writeFileSync(destination, `${scenario.row}\n`);
+      process.env.NVK_FAILPOINT = scenario.point;
+      const crashing = composeTranscript({
+        root,
+        source: createRawTranscriptSource({ root }),
+      });
+      await assert.rejects(crashing.ingest(), new RegExp(scenario.point));
+      assert.deepEqual(await counts(), scenario.afterCrash);
+
+      delete process.env.NVK_FAILPOINT;
+      const retrying = composeTranscript({
+        root,
+        source: createRawTranscriptSource({ root }),
+      });
+      assert.equal((await retrying.ingest()).ok, true);
+      assert.deepEqual(await counts(), scenario.afterRetry);
+    } finally {
+      if (priorFailpoint === undefined) delete process.env.NVK_FAILPOINT;
+      else process.env.NVK_FAILPOINT = priorFailpoint;
+      rmSync(workspace, { recursive: true, force: true });
+    }
+  });
+}
 
 test('provider path identity is persisted only as one deterministic opaque source reference', async () => {
   const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-source-privacy-'));
