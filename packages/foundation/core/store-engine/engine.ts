@@ -5,7 +5,8 @@
 import { randomUUID } from 'node:crypto';
 import {
   appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync,
-  readdirSync, renameSync, copyFileSync, fsyncSync, writeFileSync,
+  readSync, readdirSync, renameSync, copyFileSync, fsyncSync, statSync,
+  writeFileSync,
 } from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
@@ -80,6 +81,30 @@ export interface MutationResult {
   incomplete: boolean;
 }
 
+interface FileStamp {
+  size: number;
+  mtimeMs: number;
+  ino: number;
+}
+
+interface RecordIndex {
+  filePath: string;
+  stamp: FileStamp | null;
+  indexedSize: number;
+  latest: Map<string, ReadRecord>;
+  byClientOpId: Map<string, ReadRecord>;
+}
+
+interface TraceIndex {
+  filePath: string;
+  stamp: FileStamp | null;
+  indexedSize: number;
+  traces: TraceLineT[];
+  byClientOpId: Map<string, TraceLineT>;
+  opIds: Set<string>;
+  nextSeq: number;
+}
+
 export type EngineResult<T> = { ok: true; value: T } | { ok: false; error: StoreError };
 
 const nowIso = () => new Date().toISOString();
@@ -96,6 +121,8 @@ export class StoreEngine {
   failNextTraceAppend?: { cause: string };
   /** @internal test seam: fail the next object append once. */
   failNextObjectAppend?: { cause: string };
+  private readonly recordIndexes = new Map<string, RecordIndex>();
+  private traceIndex?: TraceIndex;
 
   constructor(options: EngineOptions) {
     this.root = options.root;
@@ -148,6 +175,51 @@ export class StoreEngine {
     if (!existsSync(filePath)) return [];
     const text = readFileSync(filePath, 'utf8');
     return text.split('\n').filter((l) => l.length > 0);
+  }
+
+  private fileStamp(filePath: string): FileStamp | null {
+    if (!existsSync(filePath)) return null;
+    const stat = statSync(filePath);
+    return {
+      size: stat.size,
+      mtimeMs: stat.mtimeMs,
+      ino: Number(stat.ino),
+    };
+  }
+
+  private readBytes(filePath: string, from: number, length: number): Buffer {
+    if (length <= 0) return Buffer.alloc(0);
+    const buffer = Buffer.allocUnsafe(length);
+    const fd = openSync(filePath, 'r');
+    try {
+      let read = 0;
+      while (read < length) {
+        const count = readSync(fd, buffer, read, length - read, from + read);
+        if (count === 0) break;
+        read += count;
+      }
+      return read === length ? buffer : buffer.subarray(0, read);
+    } finally {
+      closeSync(fd);
+    }
+  }
+
+  private completeLines(
+    filePath: string,
+    from: number,
+    size: number,
+  ): { lines: string[]; indexedSize: number } {
+    const bytes = this.readBytes(filePath, from, size - from);
+    const lastNewline = bytes.lastIndexOf(0x0a);
+    if (lastNewline < 0) return { lines: [], indexedSize: from };
+    return {
+      lines: bytes
+        .subarray(0, lastNewline)
+        .toString('utf8')
+        .split('\n')
+        .filter((line) => line.length > 0),
+      indexedSize: from + lastNewline + 1,
+    };
   }
 
   // ── record parsing + lazy upgrade (DEC-F10) ──────────────────────────
@@ -249,18 +321,78 @@ export class StoreEngine {
 
   // ── traces ────────────────────────────────────────────────────────────
   readTraces(): TraceLineT[] {
-    const out: TraceLineT[] = [];
-    for (const line of this.readRawLines('trace')) {
+    const filePath = this.storePath('trace');
+    const stamp = this.fileStamp(filePath);
+    let index = this.traceIndex;
+    const canExtend = (
+      index
+      && stamp
+      && index.stamp
+      && index.filePath === filePath
+      && index.stamp.ino === stamp.ino
+      && stamp.size >= index.stamp.size
+      && (
+        stamp.size > index.stamp.size
+        || stamp.mtimeMs === index.stamp.mtimeMs
+      )
+    );
+    const unchanged = (
+      canExtend
+      && stamp!.size === index!.stamp!.size
+      && stamp!.mtimeMs === index!.stamp!.mtimeMs
+    );
+    if (unchanged) return index!.traces;
+    if (!canExtend) {
+      index = {
+        filePath,
+        stamp: null,
+        indexedSize: 0,
+        traces: [],
+        byClientOpId: new Map(),
+        opIds: new Set(),
+        nextSeq: 0,
+      };
+    }
+    if (!stamp) {
+      index!.stamp = null;
+      index!.indexedSize = 0;
+      this.traceIndex = index;
+      return index!.traces;
+    }
+    const complete = this.completeLines(
+      filePath,
+      index!.indexedSize,
+      stamp.size,
+    );
+    for (const line of complete.lines) {
       try {
         const parsed = TraceLine.safeParse(JSON.parse(line));
-        if (parsed.success) out.push(parsed.data);
+        if (!parsed.success) continue;
+        index!.traces.push(parsed.data);
+        index!.byClientOpId.set(parsed.data.clientOpId, parsed.data);
+        index!.opIds.add(parsed.data.opId);
+        index!.nextSeq = Math.max(index!.nextSeq, parsed.data.seq + 1);
       } catch { /* skipped + traced at boot */ }
     }
-    return out;
+    index!.stamp = stamp;
+    index!.indexedSize = complete.indexedSize;
+    this.traceIndex = index;
+    return index!.traces;
   }
 
   private nextSeq(traces: TraceLineT[]): number {
+    if (this.traceIndex?.traces === traces) return this.traceIndex.nextSeq;
     return traces.reduce((max, t) => Math.max(max, t.seq), -1) + 1;
+  }
+
+  findTraceByClientOpId(clientOpId: string): TraceLineT | undefined {
+    this.readTraces();
+    return this.traceIndex?.byClientOpId.get(clientOpId);
+  }
+
+  hasTraceOpId(opId: string): boolean {
+    this.readTraces();
+    return this.traceIndex?.opIds.has(opId) ?? false;
   }
 
   // ── quarantine ────────────────────────────────────────────────────────
@@ -306,19 +438,67 @@ export class StoreEngine {
   /** Override readLatest to honor the shim. */
   private readLatestFrom(root: string, kind: string): Map<string, ReadRecord> {
     const filePath = this.storePath(kind, root);
-    const latest = new Map<string, ReadRecord>();
-    if (!existsSync(filePath)) return latest;
-    const text = readFileSync(filePath, 'utf8');
-    for (const line of text.split('\n')) {
-      if (line.length === 0) continue;
-      const rec = this.parseRecordLine(line);
-      if (rec) latest.set(rec.envelope.id, rec);
+    const stamp = this.fileStamp(filePath);
+    let index = this.recordIndexes.get(filePath);
+    const canExtend = (
+      index
+      && stamp
+      && index.stamp
+      && index.stamp.ino === stamp.ino
+      && stamp.size >= index.stamp.size
+      && (
+        stamp.size > index.stamp.size
+        || stamp.mtimeMs === index.stamp.mtimeMs
+      )
+    );
+    const unchanged = (
+      canExtend
+      && stamp!.size === index!.stamp!.size
+      && stamp!.mtimeMs === index!.stamp!.mtimeMs
+    );
+    if (unchanged) return index!.latest;
+    if (!canExtend) {
+      index = {
+        filePath,
+        stamp: null,
+        indexedSize: 0,
+        latest: new Map(),
+        byClientOpId: new Map(),
+      };
     }
-    return latest;
+    const current = index!;
+    if (!stamp) {
+      current.stamp = null;
+      current.indexedSize = 0;
+      this.recordIndexes.set(filePath, current);
+      return current.latest;
+    }
+    const complete = this.completeLines(filePath, current.indexedSize, stamp.size);
+    for (const line of complete.lines) {
+      const rec = this.parseRecordLine(line);
+      if (!rec) continue;
+      current.latest.set(rec.envelope.id, rec);
+      current.byClientOpId.set(rec.clientOpId, rec);
+    }
+    current.stamp = stamp;
+    current.indexedSize = complete.indexedSize;
+    this.recordIndexes.set(filePath, current);
+    return current.latest;
   }
 
   readLatestEffective(kind: string): Map<string, ReadRecord> {
     return this.readLatestFrom(this.effectiveReadRoot(kind), kind);
+  }
+
+  findRecordByClientOpId(
+    kind: string,
+    clientOpId: string,
+  ): ReadRecord | undefined {
+    const root = this.effectiveReadRoot(kind);
+    this.readLatestFrom(root, kind);
+    return this.recordIndexes
+      .get(this.storePath(kind, root))
+      ?.byClientOpId.get(clientOpId);
   }
 
   // ── boot reconciliation (sys_reconciler) ─────────────────────────────
@@ -605,8 +785,10 @@ export class StoreEngine {
       outcome: 'created' | 'already_requested';
       tombstone: TombstoneT;
     }>(() => {
-      const prior = [...this.readLatestEffective('quarantine').values()]
-        .find((record) => record.clientOpId === opts.clientOpId);
+      const prior = this.findRecordByClientOpId(
+        'quarantine',
+        opts.clientOpId,
+      );
       if (prior) {
         const parsed = QuarantineTombstone.safeParse({
           ...prior.envelope,
@@ -617,7 +799,7 @@ export class StoreEngine {
           && parsed.data.quarantinedRef.kind === opts.target.kind
           && parsed.data.quarantinedRef.id === opts.target.id
         ) {
-          if (!this.readTraces().some((trace) => trace.opId === prior.opId)) {
+          if (!this.hasTraceOpId(prior.opId)) {
             try {
               const trace: TraceLineT = {
                 kind: 'trace',

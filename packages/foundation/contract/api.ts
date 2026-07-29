@@ -74,7 +74,7 @@ interface PriorOp {
 
 /** Dedup lookup (R3-10): clientOpId honored for the object's lifetime. */
 function findPriorOp(engine: StoreEngine, kind: string, clientOpId: ClientOpId): PriorOp | null {
-  const trace = engine.readTraces().find((t) => t.clientOpId === clientOpId);
+  const trace = engine.findTraceByClientOpId(clientOpId);
   if (trace && (trace.action === 'create' || trace.action === 'update')) {
     return {
       opId: trace.opId as ServerOpId, clientOpId, action: trace.action,
@@ -82,10 +82,9 @@ function findPriorOp(engine: StoreEngine, kind: string, clientOpId: ClientOpId):
     };
   }
   // object line exists but trace missing (incomplete) — retry reconciles
-  for (const line of readAllRecords(engine, kind)) {
-    if (line.clientOpId === clientOpId) {
-      return { opId: line.opId as ServerOpId, clientOpId, action: 'create', kind, id: line.envelope.id, traceComplete: false };
-    }
+  const line = engine.findRecordByClientOpId(kind, clientOpId);
+  if (line) {
+    return { opId: line.opId as ServerOpId, clientOpId, action: 'create', kind, id: line.envelope.id, traceComplete: false };
   }
   return null;
 }
@@ -96,12 +95,11 @@ function readAllRecords(engine: StoreEngine, kind: string) {
 }
 
 function toStoredObject<T>(engine: StoreEngine, rec: ReturnType<StoreEngine['readLatestEffective']> extends Map<string, infer R> ? R : never): StoredObject<T> {
-  const traced = new Set(engine.readTraces().map((t) => t.opId));
   const flat = { ...rec.payload, ...rec.envelope } as T & EnvelopeT;
   const stored: StoredObject<T> = {
     object: flat,
     version: rec.version,
-    incomplete: rec.opId !== '' && !traced.has(rec.opId),
+    incomplete: rec.opId !== '' && !engine.hasTraceOpId(rec.opId),
   };
   if (rec.unsupportedVersion) stored.unsupportedVersion = true;
   return stored;
@@ -143,10 +141,10 @@ export async function createObject<T>(
   const prior = findPriorOp(engine, kind, clientOpId);
   if (prior) {
     if (!prior.traceComplete) {
-      const rec = readAllRecords(engine, kind).find((r) => r.envelope.id === prior.id);
+      const rec = engine.readLatestEffective(kind).get(prior.id);
       if (rec) engine.completeTrace(kind, { ...rec.payload, ...rec.envelope } as EnvelopeT & Record<string, unknown>, prior.action, prior.opId, clientOpId);
     }
-    const rec = readAllRecords(engine, kind).find((r) => r.envelope.id === prior.id);
+    const rec = engine.readLatestEffective(kind).get(prior.id);
     if (rec) return ok(toStoredObject<T>(engine, rec));
   }
   if (engine.quarantinedIds().has(flat!.id)) {
@@ -180,7 +178,7 @@ export async function updateObject<T>(
   let rec: ReturnType<typeof readAllRecords>[number] | undefined;
   let kind = '';
   for (const k of all) {
-    const found = readAllRecords(engine, k).find((r) => r.envelope.id === id);
+    const found = engine.readLatestEffective(k).get(id);
     if (found) { rec = found; kind = k; break; }
   }
   if (!rec) {
@@ -198,7 +196,7 @@ export async function updateObject<T>(
     if (!prior.traceComplete) {
       engine.completeTrace(kind, { ...rec.payload, ...rec.envelope } as EnvelopeT & Record<string, unknown>, prior.action, prior.opId, clientOpId);
     }
-    const current = readAllRecords(engine, kind).find((r) => r.envelope.id === id);
+    const current = engine.readLatestEffective(kind).get(id);
     if (current) return ok(toStoredObject<T>(engine, current));
   }
   // merge: envelope identity fields are immutable; createdBy/createdAt preserved from creation
@@ -223,7 +221,7 @@ function readObject<T>(
 ): StoredObject<T> | Absent {
   if (!(kind in KIND_FILES)) return ABSENT({ kind, id });
   if (engine.quarantinedIds().has(id)) return ABSENT({ kind, id });
-  const rec = readAllRecords(engine, kind).find((r) => r.envelope.id === id);
+  const rec = engine.readLatestEffective(kind).get(id);
   return rec ? toStoredObject<T>(engine, rec) : ABSENT({ kind, id });
 }
 
@@ -273,8 +271,7 @@ export async function getObjectByClientOpId<T>(
   }
   const prior = findPriorOp(engine, kind, clientOpId);
   if (!prior || prior.kind !== kind) return ok(null);
-  const record = readAllRecords(engine, kind)
-    .find((candidate) => candidate.envelope.id === prior.id);
+  const record = engine.readLatestEffective(kind).get(prior.id);
   return ok(record ? toStoredObject<T>(engine, record) : null);
 }
 
@@ -405,7 +402,7 @@ export async function resolveQuarantine(
     // re-stamp the trace for the orphaned object if it still exists
     const ref = tombstone.quarantinedRef;
     if (ref.kind in KIND_FILES) {
-      const rec = readAllRecords(engine, ref.kind).find((r) => r.envelope.id === ref.id);
+      const rec = engine.readLatestEffective(ref.kind).get(ref.id);
       if (rec && rec.opId) {
         reconcile = {
           kind: ref.kind,
@@ -432,7 +429,7 @@ export async function resolveQuarantine(
 
 function countTombstoneLines(engine: StoreEngine, id: string): number {
   // version = number of appended lines for this tombstone id so far
-  const rec = [...engine.readLatestEffective('quarantine').values()].find((r) => r.envelope.id === id);
+  const rec = engine.readLatestEffective('quarantine').get(id);
   return rec?.version ?? 0;
 }
 

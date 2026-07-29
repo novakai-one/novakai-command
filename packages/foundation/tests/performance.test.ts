@@ -92,7 +92,7 @@ function appendSamples(root: string, prefix: string): number[] {
   });
 }
 
-test('one append to a 5k-line store costs less than twice an empty-store append', () => {
+test('one append to a 5k-line store costs less than twice an empty-store append', (t) => {
   const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-flat-append-'));
   const populatedRoot = path.join(workspace, 'populated');
   const emptyRoot = path.join(workspace, 'empty');
@@ -100,6 +100,11 @@ test('one append to a 5k-line store costs less than twice an empty-store append'
     seedStore(populatedRoot);
     const populatedMs = median(appendSamples(populatedRoot, 'populated'));
     const emptyMs = median(appendSamples(emptyRoot, 'empty'));
+    t.diagnostic(
+      `5k median ${populatedMs.toFixed(2)}ms; empty median `
+      + `${emptyMs.toFixed(2)}ms; ratio `
+      + `${(populatedMs / emptyMs).toFixed(2)}x`,
+    );
     assert.ok(
       populatedMs < emptyMs * 2,
       `5k append ${populatedMs.toFixed(2)}ms must be <2x empty `
