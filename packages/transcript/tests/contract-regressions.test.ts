@@ -3,9 +3,11 @@ import assert from 'node:assert/strict';
 import {
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
@@ -15,6 +17,17 @@ import {
   type TranscriptSourceAdapter,
   type TranscriptSourceItem,
 } from '../contract/index.js';
+
+test('checkpoint updates do not emit retired relation state fields', () => {
+  const ingestionModule = readFileSync(
+    fileURLToPath(new URL('../core/ingestion.js', import.meta.url)),
+    'utf8',
+  );
+  assert.doesNotMatch(
+    ingestionModule,
+    /relationState\s*:\s*undefined/u,
+  );
+});
 
 class RegressionSource implements TranscriptSourceAdapter {
   constructor(
