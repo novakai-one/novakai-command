@@ -5,7 +5,7 @@ import {
   type SessionRef as SessionRefT,
 } from '../../../transcript/contract/index.js';
 import type { MethodTable } from '../../contract/protocol.js';
-import type { TranscriptQueries } from './composition.js';
+import type { TranscriptServerOperations } from './composition.js';
 
 const LinesBySessionInput = z.object({
   sessionRef: SessionRef,
@@ -17,6 +17,7 @@ const LinesByProviderInput = z.object({
 const SubagentTreeInput = z.object({
   turnId: z.string().min(1),
 }).strict();
+const EmptyInput = z.object({}).strict();
 
 function parseInput<T>(
   method: string,
@@ -59,9 +60,19 @@ function parseInput<T>(
 
 /** Read-only WS translation over Transcript's public query interface. */
 export function buildTranscriptMethods(
-  transcript: TranscriptQueries,
+  transcript: TranscriptServerOperations,
 ): MethodTable {
   return {
+    async ingest(params: never) {
+      const parsed = parseInput('ingest', EmptyInput, params);
+      if (!parsed.ok) return parsed;
+      return transcript.ingest();
+    },
+    async status(params: never) {
+      const parsed = parseInput('status', EmptyInput, params);
+      if (!parsed.ok) return parsed;
+      return transcript.status();
+    },
     async linesBySession(params: never) {
       const parsed = parseInput(
         'linesBySession',

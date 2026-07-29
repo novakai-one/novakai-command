@@ -5,6 +5,7 @@ import {
   createRawTranscriptSource,
   type IngestResult,
   type TranscriptContract,
+  type TranscriptIngestionStatus,
 } from '../../../transcript/contract/index.js';
 
 const DEFAULT_POLL_MS = 1_000;
@@ -21,16 +22,21 @@ export interface TranscriptTopologyStatus {
 export interface TranscriptTopology {
   start(): void;
   stop(): Promise<void>;
+  trigger(): ReturnType<TranscriptContract['ingest']>;
   status(): TranscriptTopologyStatus;
 }
 
-export type TranscriptQueries = Pick<
+export type TranscriptServerOperations = Pick<
   TranscriptContract,
-  'linesBySession' | 'linesByProvider' | 'subagentTree'
+  | 'ingest'
+  | 'status'
+  | 'linesBySession'
+  | 'linesByProvider'
+  | 'subagentTree'
 >;
 
 export interface TranscriptServerHost {
-  readonly operations: TranscriptQueries;
+  readonly operations: TranscriptServerOperations;
   readonly topology: TranscriptTopology;
 }
 
@@ -69,6 +75,11 @@ export function composeTranscriptServerHost(
   let worker: Worker | null = null;
   let workerExit: Promise<number> | null = null;
   let stopPromise: Promise<void> | null = null;
+  let requestSequence = 0;
+  const pendingIngest = new Map<
+    string,
+    (result: Awaited<ReturnType<TranscriptContract['ingest']>>) => void
+  >();
 
   const snapshot = (): TranscriptTopologyStatus => ({
     running: phase === 'running',
@@ -87,6 +98,32 @@ export function composeTranscriptServerHost(
     watcherReady = false;
     ingesting = false;
   };
+
+  const unavailable = (
+    message: string,
+  ): Awaited<ReturnType<TranscriptContract['ingest']>> => ({
+    ok: false,
+    error: {
+      code: 'TranscriptSourceFailed',
+      message,
+      details: { cause: 'ingestion worker unavailable' },
+      retryable: true,
+    },
+  });
+
+  const settlePending = (
+    result: Awaited<ReturnType<TranscriptContract['ingest']>>,
+  ): void => {
+    for (const resolve of pendingIngest.values()) resolve(result);
+    pendingIngest.clear();
+  };
+
+  const publicStatus = (): TranscriptIngestionStatus => ({
+    running: ingesting,
+    idle: !ingesting,
+    lastError: terminalError ?? ingestError ?? null,
+    latched: phase === 'terminal',
+  });
 
   const topology: TranscriptTopology = {
     start() {
@@ -141,6 +178,30 @@ export function composeTranscriptServerHost(
           ingestError = typeof status.lastError === 'string'
             ? status.lastError
             : undefined;
+        } else if (type === 'ingest-result') {
+          const response = message as {
+            requestId?: unknown;
+            result?: unknown;
+          };
+          if (typeof response.requestId !== 'string') return;
+          const resolve = pendingIngest.get(response.requestId);
+          if (!resolve) return;
+          if (
+            typeof response.result !== 'object'
+            || response.result === null
+            || typeof (response.result as { ok?: unknown }).ok !== 'boolean'
+          ) {
+            latchTerminal('transcript worker sent an invalid ingest result');
+            settlePending(unavailable(
+              'transcript ingestion worker returned an invalid result',
+            ));
+            void startedWorker.terminate();
+            return;
+          }
+          pendingIngest.delete(response.requestId);
+          resolve(response.result as Awaited<
+            ReturnType<TranscriptContract['ingest']>
+          >);
         } else if (type === 'failed') {
           latchTerminal(String(
             (message as { message?: unknown }).message
@@ -150,6 +211,7 @@ export function composeTranscriptServerHost(
       });
       startedWorker.on('error', (cause) => {
         latchTerminal(cause.message);
+        settlePending(unavailable('transcript ingestion worker failed'));
       });
       startedWorker.on('exit', (code) => {
         if (phase === 'running') {
@@ -161,6 +223,22 @@ export function composeTranscriptServerHost(
             `transcript watcher failed while stopping with code ${code}`,
           );
         }
+        if (pendingIngest.size > 0) {
+          settlePending(unavailable(
+            'transcript ingestion worker exited before completing the trigger',
+          ));
+        }
+      });
+    },
+    async trigger() {
+      if (phase !== 'running' || !worker) {
+        return unavailable('transcript ingestion worker is not running');
+      }
+      requestSequence += 1;
+      const requestId = `ingest_${requestSequence}`;
+      return new Promise((resolve) => {
+        pendingIngest.set(requestId, resolve);
+        worker!.postMessage({ type: 'ingest', requestId });
       });
     },
     async stop() {
@@ -192,6 +270,8 @@ export function composeTranscriptServerHost(
 
   return {
     operations: {
+      ingest: () => topology.trigger(),
+      status: async () => ({ ok: true, value: publicStatus() }),
       linesBySession: operations.linesBySession,
       linesByProvider: operations.linesByProvider,
       subagentTree: operations.subagentTree,

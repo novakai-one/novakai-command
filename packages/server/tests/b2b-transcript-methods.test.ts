@@ -30,10 +30,10 @@ function harness(): {
         return {
           ok: true as const,
           value: {
-          added: 0,
-          duplicates: 0,
-          skipped: [],
-          diagnostics: [],
+            added: 0,
+            duplicates: 0,
+            skipped: [],
+            diagnostics: [],
           },
         };
       },
@@ -105,9 +105,11 @@ test('Transcript WS adapter rejects malformed query input before delegation', as
   const h = harness();
   const methods = buildTranscriptMethods(h.operations);
   for (const [method, params] of [
+    ['ingest', { unexpected: true }],
     ['linesBySession', { sessionRef: '' }],
     ['linesByProvider', { provider: 'mock' }],
     ['linesByProvider', { provider: 'kimi', since: 'yesterday' }],
+    ['status', { unexpected: true }],
     ['subagentTree', { turnId: '' }],
   ] as const) {
     const result = await methods[method]!(params as never) as {

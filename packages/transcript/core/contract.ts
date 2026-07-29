@@ -4,6 +4,7 @@ import type {
   IngestResult,
   ProviderName,
   SessionRef,
+  TranscriptIngestionStatus,
   TranscriptLine,
 } from '../contract/schemas.js';
 import type { TranscriptContext } from './composition.js';
@@ -16,6 +17,7 @@ import {
 
 export interface TranscriptContract {
   ingest(): Promise<Result<IngestResult, TranscriptError>>;
+  status(): Promise<Result<TranscriptIngestionStatus, never>>;
   linesBySession(
     sessionRef: SessionRef,
   ): Promise<Result<TranscriptLine[], TranscriptError>>;
@@ -31,8 +33,31 @@ export interface TranscriptContract {
 export function createTranscriptContract(
   context: TranscriptContext,
 ): TranscriptContract {
+  const status: TranscriptIngestionStatus = {
+    running: false,
+    idle: true,
+    lastError: null,
+    latched: false,
+  };
+  let activeIngestions = 0;
   return {
-    ingest: () => ingest(context),
+    async ingest() {
+      activeIngestions += 1;
+      status.running = true;
+      status.idle = false;
+      try {
+        const result = await ingest(context);
+        status.lastError = result.ok
+          ? null
+          : `${result.error.code}: ${result.error.message}`;
+        return result;
+      } finally {
+        activeIngestions -= 1;
+        status.running = activeIngestions > 0;
+        status.idle = activeIngestions === 0;
+      }
+    },
+    status: async () => ({ ok: true, value: { ...status } }),
     linesBySession: (sessionRef) => linesBySession(context, sessionRef),
     linesByProvider: (provider, since) =>
       linesByProvider(context, provider, since),

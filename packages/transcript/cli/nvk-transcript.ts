@@ -101,6 +101,14 @@ async function main(): Promise<void> {
     }),
   });
 
+  if (verb === 'ingest') {
+    const result = await transcript.ingest();
+    return result.ok ? output(result.value) : fail(result.error);
+  }
+  if (verb === 'status') {
+    const result = await transcript.status();
+    return result.ok ? output(result.value) : fail(result.error);
+  }
   if (verb === 'lines-by-session') {
     const parsed = SessionRef.safeParse(required(flags.session, 'session'));
     if (!parsed.success) {
@@ -137,7 +145,8 @@ async function main(): Promise<void> {
   fail({
     code: 'Usage',
     message:
-      'verbs: lines-by-session | lines-by-provider | subagent-tree',
+      'verbs: ingest | status | lines-by-session | lines-by-provider '
+      + '| subagent-tree',
   }, 2);
 }
 

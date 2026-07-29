@@ -40,6 +40,7 @@ let lastError: string | undefined;
 let timer: ReturnType<typeof setTimeout> | null = null;
 let activeIngest: Promise<void> | null = null;
 let stopping: Promise<void> | null = null;
+let triggerRequests: string[] = [];
 
 function postStatus(): void {
   parentPort?.postMessage({
@@ -68,13 +69,16 @@ function fail(cause: unknown): void {
   parentPort?.close();
 }
 
-async function runIngest(): Promise<void> {
+async function runIngest(requestId?: string): Promise<void> {
+  if (requestId) triggerRequests.push(requestId);
   if (!running || ingesting) return;
   ingesting = true;
   postStatus();
+  let outcome: Awaited<ReturnType<typeof transcript.ingest>> | undefined;
   activeIngest = (async () => {
     identities.replace(await loadProviderIdentityRecords(input.root));
     const result = await transcript.ingest();
+    outcome = result;
     runs += 1;
     if (result.ok) {
       lastResult = result.value;
@@ -87,22 +91,43 @@ async function runIngest(): Promise<void> {
     await activeIngest;
   } catch (cause) {
     lastError = cause instanceof Error ? cause.message : String(cause);
+    outcome = {
+      ok: false,
+      error: {
+        code: 'TranscriptSourceFailed',
+        message: 'transcript ingestion failed',
+        details: { cause: 'ingestion worker failure' },
+        retryable: true,
+      },
+    };
   } finally {
     activeIngest = null;
     ingesting = false;
+    const completedRequests = triggerRequests;
+    triggerRequests = [];
+    if (outcome) {
+      for (const completedRequest of completedRequests) {
+        parentPort?.postMessage({
+          type: 'ingest-result',
+          requestId: completedRequest,
+          result: outcome,
+        });
+      }
+    }
     postStatus();
     schedule(input.ingestIntervalMs);
   }
 }
 
 parentPort?.on('message', (message: unknown) => {
-  if (
-    typeof message !== 'object'
-    || message === null
-    || (message as { type?: unknown }).type !== 'stop'
-  ) {
+  if (typeof message !== 'object' || message === null) return;
+  const type = (message as { type?: unknown }).type;
+  if (type === 'ingest') {
+    const requestId = (message as { requestId?: unknown }).requestId;
+    if (typeof requestId === 'string') void runIngest(requestId);
     return;
   }
+  if (type !== 'stop') return;
   if (stopping) return;
   stopping = (async () => {
     running = false;

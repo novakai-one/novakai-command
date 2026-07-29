@@ -179,6 +179,26 @@ test('transcript.ingest=true starts copy custody and authoritative ingestion', a
     booted.value.runtime.transcript.topology.status().watcherReady,
     true,
   );
+  const publicStatus = await booted.value.runtime.transcript.operations
+    .status();
+  assert.deepEqual(
+    publicStatus.ok
+      ? {
+          running: typeof publicStatus.value.running,
+          idle: typeof publicStatus.value.idle,
+          lastError: publicStatus.value.lastError,
+          latched: publicStatus.value.latched,
+        }
+      : null,
+    {
+      running: 'boolean',
+      idle: 'boolean',
+      lastError: null,
+      latched: false,
+    },
+  );
+  const triggered = await booted.value.runtime.transcript.operations.ingest();
+  assert.equal(triggered.ok, true);
 });
 
 test('transcript.ingest=false starts neither watcher nor ingester even when the legacy dev flag is true', async (t) => {

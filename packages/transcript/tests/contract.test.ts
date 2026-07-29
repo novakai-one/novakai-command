@@ -102,7 +102,13 @@ test('Transcript authority deduplicates native/fallback identities and stamps va
     });
     assert.deepEqual(
       Object.keys(transcript).sort(),
-      ['ingest', 'linesByProvider', 'linesBySession', 'subagentTree'],
+      [
+        'ingest',
+        'linesByProvider',
+        'linesBySession',
+        'status',
+        'subagentTree',
+      ],
     );
     const ingested = await transcript.ingest();
     assert.equal(ingested.ok, true);

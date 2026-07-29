@@ -46,6 +46,23 @@ assert.equal(terminal.watcherReady, false);
 assert.equal(terminal.ingesting, false);
 assert.match(terminal.lastError ?? '', /EEXIST|ENOTDIR|checkpoint|state/u);
 const stickyError = terminal.lastError;
+const publicStatus = await host.operations.status();
+assert.deepEqual(
+  publicStatus.ok
+    ? {
+        running: publicStatus.value.running,
+        idle: publicStatus.value.idle,
+        lastError: publicStatus.value.lastError,
+        latched: publicStatus.value.latched,
+      }
+    : null,
+  {
+    running: false,
+    idle: true,
+    lastError: stickyError,
+    latched: true,
+  },
+);
 await new Promise((resolve) => setTimeout(resolve, 50));
 assert.equal(host.topology.status().lastError, stickyError);
 

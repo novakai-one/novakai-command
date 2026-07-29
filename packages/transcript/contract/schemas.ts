@@ -245,3 +245,10 @@ export interface IngestResult {
   skipped: TranscriptSkipJournalEntry[];
   diagnostics: TranscriptDiagnosticJournalEntry[];
 }
+
+export interface TranscriptIngestionStatus {
+  running: boolean;
+  idle: boolean;
+  lastError: string | null;
+  latched: boolean;
+}
