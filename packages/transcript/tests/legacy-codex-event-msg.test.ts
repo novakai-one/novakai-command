@@ -121,3 +121,11 @@ test('legacy Codex id-less user events classify and store as user lines', async 
     text: 'synthetic legacy Codex user message',
   });
 });
+
+test('legacy Codex id-less agent events classify and store as assistant lines', async () => {
+  await assertLegacyEventStored({
+    fixtureName: 'legacy-agent-event.jsonl',
+    role: 'assistant',
+    text: 'synthetic legacy Codex agent message',
+  });
+});
