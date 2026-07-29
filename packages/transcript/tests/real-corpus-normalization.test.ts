@@ -20,6 +20,7 @@ import {
   composeTranscript,
   createRawTranscriptSource,
   type ProviderName,
+  type TranscriptRole,
 } from '../contract/index.js';
 
 const SAMPLE_PER_SHAPE = 2;
@@ -46,8 +47,26 @@ const measuredShapes = {
 type MeasuredProvider = keyof typeof measuredShapes;
 type MeasuredShape = typeof measuredShapes[MeasuredProvider][number];
 
+interface DerivedMeasuredSample {
+  counts: Record<string, number>;
+  expectedRoles: Record<string, TranscriptRole[]>;
+  shapeRoots: Record<string, string>;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function groupBySource<T extends { sourceId: string }>(
+  lines: T[],
+): Map<string, T[]> {
+  const grouped = new Map<string, T[]>();
+  for (const line of lines) {
+    const sourceLines = grouped.get(line.sourceId) ?? [];
+    sourceLines.push(line);
+    grouped.set(line.sourceId, sourceLines);
+  }
+  return grouped;
 }
 
 function classifyClaude(row: Record<string, unknown>): MeasuredShape | undefined {
@@ -110,6 +129,46 @@ function classify(
   return classifyKimi(row);
 }
 
+function expectedRole(
+  provider: MeasuredProvider,
+  shape: MeasuredShape,
+  row: Record<string, unknown>,
+): TranscriptRole | undefined {
+  if (provider === 'codex') {
+    if (shape === 'idless_user_message') return 'user';
+    if (shape === 'idless_agent_message') return 'assistant';
+    return undefined;
+  }
+  if (provider !== 'kimi') return undefined;
+  if (shape === 'input_journal') return 'user';
+  if (shape !== 'message_journal' || !isRecord(row.message)) {
+    return undefined;
+  }
+  const message = row.message;
+  const parts = Array.isArray(message.content)
+    ? message.content.filter(isRecord)
+    : [];
+  if (
+    parts.some(
+      (part) =>
+        part.type === 'attachment'
+        || part.type === 'document'
+        || part.type === 'image'
+        || part.type === 'image_url',
+    )
+  ) {
+    return 'attachment';
+  }
+  return (
+    message.role === 'user'
+    || message.role === 'assistant'
+    || message.role === 'system'
+    || message.role === 'tool'
+  )
+    ? message.role
+    : undefined;
+}
+
 function jsonlFilesBelow(root: string): string[] {
   return readdirSync(root, { withFileTypes: true })
     .sort((left, right) => left.name.localeCompare(right.name))
@@ -126,16 +185,11 @@ async function deriveMeasuredSample(
   corpusRoot: string,
   sampleRoot: string,
   samplePerShape = SAMPLE_PER_SHAPE,
-): Promise<Record<string, number>> {
+): Promise<DerivedMeasuredSample> {
   const counts: Record<string, number> = {};
+  const expectedRoles: Record<string, TranscriptRole[]> = {};
+  const shapeRoots: Record<string, string> = {};
   for (const provider of Object.keys(measuredShapes) as MeasuredProvider[]) {
-    const destination = path.join(
-      sampleRoot,
-      'transcripts',
-      provider,
-      'measured-sample.jsonl',
-    );
-    mkdirSync(path.dirname(destination), { recursive: true });
     for (
       const source of jsonlFilesBelow(
         path.join(corpusRoot, 'transcripts', provider),
@@ -158,8 +212,38 @@ async function deriveMeasuredSample(
         const key = `${provider}:${shape}`;
         const count = counts[key] ?? 0;
         if (count >= samplePerShape) continue;
-        appendFileSync(destination, `${content}\n`);
+        const combinedDestination = path.join(
+          sampleRoot,
+          'transcripts',
+          provider,
+          `${shape}.jsonl`,
+        );
+        const shapeRoot = (
+          shapeRoots[key]
+          ?? path.join(
+            path.dirname(sampleRoot),
+            'shape-samples',
+            provider,
+            shape,
+            '.novakai',
+          )
+        );
+        shapeRoots[key] = shapeRoot;
+        const isolatedDestination = path.join(
+          shapeRoot,
+          'transcripts',
+          provider,
+          'sample.jsonl',
+        );
+        mkdirSync(path.dirname(combinedDestination), { recursive: true });
+        mkdirSync(path.dirname(isolatedDestination), { recursive: true });
+        appendFileSync(combinedDestination, `${content}\n`);
+        appendFileSync(isolatedDestination, `${content}\n`);
         counts[key] = count + 1;
+        const role = expectedRole(provider, shape, row);
+        if (role) {
+          (expectedRoles[key] ??= []).push(role);
+        }
       }
       if (
         measuredShapes[provider].every(
@@ -170,7 +254,7 @@ async function deriveMeasuredSample(
       }
     }
   }
-  return counts;
+  return { counts, expectedRoles, shapeRoots };
 }
 
 async function deriveEmptyAgentMetadataSample(
@@ -230,7 +314,7 @@ test(
     const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-real-corpus-'));
     const root = path.join(workspace, '.novakai');
     try {
-      const sampleCounts = await deriveMeasuredSample(corpusRoot, root);
+      const sample = await deriveMeasuredSample(corpusRoot, root);
       const expectedCounts = Object.fromEntries(
         Object.entries(measuredShapes).flatMap(([provider, shapes]) =>
           shapes.map((shape) => [
@@ -239,7 +323,7 @@ test(
           ]),
         ),
       );
-      assert.deepEqual(sampleCounts, expectedCounts);
+      assert.deepEqual(sample.counts, expectedCounts);
 
       const transcript = composeTranscript({
         root,
@@ -290,14 +374,28 @@ test(
         );
         if (provider === 'codex' && lines.ok) {
           assert.equal(
+            new Set(lines.value.map((line) => line.sourceId)).size,
+            2,
+          );
+          assert.equal(
             new Set(lines.value.map((line) => line.turnId)).size,
             4,
           );
           assert.ok(
             lines.value.every(
               (line) =>
-                /^codex:source_[a-f0-9]{64}:\d+$/u.test(line.turnId),
+                line.turnId
+                === `codex:${line.sourceId}:${line.turnIndex}`,
             ),
+          );
+        }
+        if (provider === 'kimi' && lines.ok) {
+          const indexesBySource = groupBySource(lines.value);
+          assert.deepEqual(
+            [...indexesBySource.values()].map(
+              (sourceLines) => sourceLines.map((line) => line.turnIndex),
+            ),
+            [[0, 1], [0, 1]],
           );
         }
       }
@@ -376,36 +474,80 @@ test(
     const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-real-measure-'));
     const root = path.join(workspace, '.novakai');
     try {
-      const counts = await deriveMeasuredSample(corpusRoot, root, 500);
+      const sample = await deriveMeasuredSample(corpusRoot, root, 500);
       assert.equal(
-        Object.values(counts).reduce((total, count) => total + count, 0),
+        Object.values(sample.counts).reduce(
+          (total, count) => total + count,
+          0,
+        ),
         5_000,
       );
-      assert.equal(Object.keys(counts).length, 10);
+      assert.equal(Object.keys(sample.counts).length, 10);
 
-      const source = createRawTranscriptSource({ root });
-      const outcomes = {
-        candidate: 0,
-        context: 0,
-        skips: {} as Record<string, number>,
-      };
-      for await (const discovered of source.sources()) {
-        for await (const item of source.read(discovered, 0)) {
-          if (item.kind === 'candidate') {
-            outcomes.candidate += 1;
-          } else if (item.kind === 'context') {
-            outcomes.context += 1;
-          } else {
-            outcomes.skips[item.reason.code] =
-              (outcomes.skips[item.reason.code] ?? 0) + 1;
+      for (const [key, count] of Object.entries(sample.counts)) {
+        const [provider, shape] = key.split(':') as [
+          MeasuredProvider,
+          MeasuredShape,
+        ];
+        const source = createRawTranscriptSource({
+          root: sample.shapeRoots[key]!,
+        });
+        const discoveredSources = [];
+        const items = [];
+        for await (const discovered of source.sources()) {
+          discoveredSources.push(discovered);
+          for await (const item of source.read(discovered, 0)) {
+            items.push(item);
           }
         }
+        assert.equal(discoveredSources.length, 1, key);
+        assert.equal(items.length, count, key);
+
+        const candidateShape = (
+          shape === 'idless_user_message'
+          || shape === 'idless_agent_message'
+          || shape === 'message_journal'
+          || shape === 'input_journal'
+        );
+        if (!candidateShape) {
+          assert.deepEqual(
+            items.map((item) =>
+              item.kind === 'skip' ? item.reason.code : item.kind
+            ),
+            Array.from({ length: count }, () => 'non_message'),
+            key,
+          );
+          continue;
+        }
+        assert.ok(
+          items.every((item) => item.kind === 'candidate'),
+          key,
+        );
+        const candidates = items.filter(
+          (item) => item.kind === 'candidate',
+        );
+        assert.deepEqual(
+          candidates.map((item) => item.line.role),
+          sample.expectedRoles[key],
+          `${key} roles retain source order`,
+        );
+        assert.deepEqual(
+          candidates.map((item) => item.line.turnIndex),
+          Array.from({ length: count }, (_, index) => index),
+          `${key} indexes retain source order`,
+        );
+        if (provider === 'codex') {
+          const sourceId = discoveredSources[0]!.sourceId;
+          assert.deepEqual(
+            candidates.map((item) => item.line.turnId),
+            Array.from(
+              { length: count },
+              (_, index) => `${sourceId}:${index}`,
+            ),
+            `${key} turns are scoped to the discovered source`,
+          );
+        }
       }
-      assert.deepEqual(outcomes, {
-        candidate: 2_000,
-        context: 0,
-        skips: { non_message: 3_000 },
-      });
     } finally {
       rmSync(workspace, { recursive: true, force: true });
     }

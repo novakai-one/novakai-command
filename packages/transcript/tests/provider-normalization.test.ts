@@ -30,6 +30,18 @@ const fixtureRoot = fileURLToPath(
   new URL('../../tests/fixtures/', import.meta.url),
 );
 
+function groupBySource<T extends { sourceId: string }>(
+  lines: T[],
+): Map<string, T[]> {
+  const grouped = new Map<string, T[]>();
+  for (const line of lines) {
+    const sourceLines = grouped.get(line.sourceId) ?? [];
+    sourceLines.push(line);
+    grouped.set(line.sourceId, sourceLines);
+  }
+  return grouped;
+}
+
 test('Kimi assistant output omits unresolved provider identity', async () => {
   const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-kimi-adapter-'));
   const root = path.join(workspace, '.novakai');
@@ -308,6 +320,132 @@ test('Kimi sessionless rows preserve the payload turn identity', async () => {
           && line.turnId === 'kimi:900',
       ),
     );
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test('Kimi journal turn indexes advance across checkpoint resume without replacing native envelope sequence', async () => {
+  const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-kimi-journal-index-'));
+  const root = path.join(workspace, '.novakai');
+  const journal = path.join(
+    root,
+    'transcripts',
+    'kimi',
+    'journal-source',
+    'events.jsonl',
+  );
+  const native = path.join(
+    root,
+    'transcripts',
+    'kimi',
+    'native-source',
+    'events.jsonl',
+  );
+  const journalRows = [
+    {
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text: 'journal first' }],
+      },
+      time: '2026-07-29T01:00:00.000Z',
+      type: 'context.append_message',
+    },
+    {
+      input: [{ type: 'text', text: 'journal second' }],
+      origin: { kind: 'terminal' },
+      time: '2026-07-29T01:00:01.000Z',
+      type: 'turn.prompt',
+    },
+    {
+      message: {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'journal third' }],
+      },
+      time: '2026-07-29T01:00:02.000Z',
+      type: 'context.append_message',
+    },
+    {
+      input: [{ type: 'text', text: 'journal fourth' }],
+      origin: { kind: 'steer' },
+      time: '2026-07-29T01:00:03.000Z',
+      type: 'turn.steer',
+    },
+  ];
+  const nativeSequence = 47;
+  try {
+    mkdirSync(path.dirname(journal), { recursive: true });
+    mkdirSync(path.dirname(native), { recursive: true });
+    writeFileSync(
+      journal,
+      `${
+        journalRows.slice(0, 2).map((row) => JSON.stringify(row)).join('\n')
+      }\n`,
+    );
+    writeFileSync(
+      native,
+      `${JSON.stringify({
+        kind: 'event',
+        envelope: {
+          seq: nativeSequence,
+          type: 'assistant.message',
+          payload: {
+            message: {
+              role: 'assistant',
+              content: 'native sequence',
+            },
+            sessionId: 'native-sequence-session',
+            turnId: 'native-sequence-turn',
+          },
+        },
+      })}\n`,
+    );
+    const transcript = composeTranscript({
+      root,
+      source: createRawTranscriptSource({ root }),
+    });
+
+    const first = await transcript.ingest();
+    assert.equal(first.ok ? first.value.added : null, 3);
+    let lines = await transcript.linesByProvider('kimi');
+    assert.equal(lines.ok, true);
+    if (!lines.ok) return;
+    const initialBySource = groupBySource(lines.value);
+    const initialJournal = [...initialBySource.values()].find(
+      (sourceLines) => sourceLines.length === 2,
+    );
+    const initialNative = [...initialBySource.values()].find(
+      (sourceLines) => sourceLines.length === 1,
+    );
+    assert.deepEqual(
+      initialJournal?.map((line) => line.turnIndex),
+      [0, 1],
+    );
+    assert.equal(initialNative?.[0]?.turnIndex, nativeSequence);
+
+    appendFileSync(
+      journal,
+      `${
+        journalRows.slice(2).map((row) => JSON.stringify(row)).join('\n')
+      }\n`,
+    );
+    const resumed = await transcript.ingest();
+    assert.equal(resumed.ok ? resumed.value.added : null, 2);
+    lines = await transcript.linesByProvider('kimi');
+    assert.equal(lines.ok, true);
+    if (!lines.ok) return;
+    const resumedBySource = groupBySource(lines.value);
+    const resumedJournal = [...resumedBySource.values()].find(
+      (sourceLines) => sourceLines.length === 4,
+    );
+    const resumedNative = [...resumedBySource.values()].find(
+      (sourceLines) => sourceLines.length === 1,
+    );
+    assert.deepEqual(
+      resumedJournal?.map((line) => line.turnIndex),
+      [0, 1, 2, 3],
+    );
+    assert.equal(resumedNative?.[0]?.turnIndex, nativeSequence);
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }
