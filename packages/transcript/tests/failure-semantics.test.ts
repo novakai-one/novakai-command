@@ -1,0 +1,108 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {
+  copyFileSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+} from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import {
+  composeHandle,
+  listObjects,
+  type QuarantineTombstone,
+} from '@novakai/foundation/dist/contract/index.js';
+import {
+  composeTranscript,
+  createRawTranscriptSource,
+} from '../contract/index.js';
+
+const fixtureRoot = fileURLToPath(
+  new URL('../../tests/fixtures/', import.meta.url),
+);
+
+test('TRN-004 rejected raw rows request Foundation quarantine and later valid rows continue', async () => {
+  const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-trn-004-'));
+  const root = path.join(workspace, '.novakai');
+  const destination = path.join(
+    root,
+    'transcripts',
+    'kimi',
+    'fixture-session',
+    'events.jsonl',
+  );
+  try {
+    mkdirSync(path.dirname(destination), { recursive: true });
+    copyFileSync(
+      path.join(fixtureRoot, 'kimi', 'failures-then-valid.jsonl'),
+      destination,
+    );
+    const transcript = composeTranscript({
+      root,
+      source: createRawTranscriptSource({ root }),
+    });
+
+    const ingested = await transcript.ingest();
+    assert.equal(ingested.ok, true);
+    assert.deepEqual(
+      ingested.ok
+        ? {
+            added: ingested.value.added,
+            skipped: ingested.value.skipped.map(
+              (entry) => entry.skip.code,
+            ),
+          }
+        : null,
+      {
+        added: 1,
+        skipped: ['malformed_json', 'unsupported_shape'],
+      },
+    );
+
+    const queryHandle = composeHandle({
+      root,
+      dataRoot: path.join(root, 'stores'),
+      capability: 'transcript',
+      allowedKinds: ['transcriptLine'],
+      principal: 'sys_ingester',
+    });
+    const quarantined = await listObjects<QuarantineTombstone>(
+      queryHandle,
+      'quarantine',
+      undefined,
+      { limit: 10 },
+    );
+    assert.equal(quarantined.ok, true);
+    assert.deepEqual(
+      quarantined.ok
+        ? quarantined.value.items.map(({ object }) => ({
+            createdBy: object.createdBy,
+            targetKind: object.quarantinedRef.kind,
+            reason: object.reason,
+          }))
+        : null,
+      [
+        {
+          createdBy: 'sys_ingester',
+          targetKind: 'transcriptLine',
+          reason: 'corrupt_record',
+        },
+        {
+          createdBy: 'sys_ingester',
+          targetKind: 'transcriptLine',
+          reason: 'corrupt_record',
+        },
+      ],
+    );
+
+    const lines = await transcript.linesByProvider('kimi');
+    assert.deepEqual(
+      lines.ok ? lines.value.map((line) => line.text) : null,
+      ['synthetic valid line after failures'],
+    );
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
