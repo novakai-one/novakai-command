@@ -56,6 +56,19 @@ function messageText(value: unknown): string | undefined {
   return undefined;
 }
 
+function contentText(value: unknown): string | undefined {
+  if (typeof value === 'string') return value;
+  if (!Array.isArray(value)) return undefined;
+  const text = value.flatMap((part) => {
+    if (typeof part === 'string') return [part];
+    if (isRecord(part) && typeof part.text === 'string') {
+      return [part.text];
+    }
+    return [];
+  });
+  return text.length > 0 ? text.join('\n') : undefined;
+}
+
 function diagnostic(
   code: TranscriptDiagnostic['code'],
   message: string,
@@ -167,6 +180,78 @@ function normalizeKimi(
   };
 }
 
+function normalizeClaude(
+  row: unknown,
+  content: string,
+  offset: number,
+  nextOffset: number,
+  resolver?: ProviderSessionResolver,
+): TranscriptSourceItem {
+  if (
+    !isRecord(row)
+    || !stringValue(row.type)
+    || !stringValue(row.uuid)
+    || !isRecord(row.message)
+  ) {
+    return unsupported(offset, nextOffset, 'claude');
+  }
+  const message = row.message;
+  const roleValue = stringValue(message.role);
+  if (
+    roleValue !== 'user'
+    && roleValue !== 'assistant'
+    && roleValue !== 'system'
+    && roleValue !== 'tool'
+  ) {
+    return unsupported(offset, nextOffset, 'claude');
+  }
+  const text = contentText(message.content);
+  if (text === undefined) {
+    return unsupported(offset, nextOffset, 'claude');
+  }
+  const nativeSessionId = stringValue(row.sessionId);
+  const resolvedSession = nativeSessionId && resolver
+    ? SessionRef.safeParse(resolver('claude', nativeSessionId))
+    : undefined;
+  const diagnostics: TranscriptDiagnostic[] = [];
+  if (nativeSessionId && (!resolvedSession || !resolvedSession.success)) {
+    diagnostics.push(diagnostic(
+      'session_ref_unresolved',
+      'provider-native session has no verified providerSession resolver',
+    ));
+  }
+  if (row.isSidechain === true) {
+    diagnostics.push(diagnostic(
+      'agent_attribution_unavailable',
+      'provider sidechain identity is not a verified durable agent id',
+    ));
+  }
+  const uuid = stringValue(row.uuid)!;
+  return {
+    kind: 'candidate',
+    offset,
+    nextOffset,
+    content,
+    line: {
+      nativeId: uuid,
+      turnId: uuid,
+      turnIndex: offset,
+      role: roleValue,
+      text,
+      ...(numericUsage(message.usage)
+        ? { tokenUsage: numericUsage(message.usage) }
+        : {}),
+      ...(stringValue(row.parentUuid)
+        ? { parentTurnId: stringValue(row.parentUuid) }
+        : {}),
+      ...(resolvedSession?.success
+        ? { sessionRef: resolvedSession.data }
+        : {}),
+    },
+    ...(diagnostics.length > 0 ? { diagnostics } : {}),
+  };
+}
+
 function normalizeLine(
   provider: ProviderNameT,
   content: string,
@@ -190,6 +275,9 @@ function normalizeLine(
   }
   if (provider === 'kimi') {
     return normalizeKimi(row, content, offset, nextOffset, resolver);
+  }
+  if (provider === 'claude') {
+    return normalizeClaude(row, content, offset, nextOffset, resolver);
   }
   return unsupported(offset, nextOffset, provider);
 }
