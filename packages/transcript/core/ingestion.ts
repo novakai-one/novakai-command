@@ -249,13 +249,10 @@ async function advanceCheckpoint(
       if (created.error.code === 'CasConflict') continue;
       return created;
     }
-    const patch: Partial<TranscriptCheckpointT> & {
-      relationState?: undefined;
-    } = {
+    const patch: Partial<TranscriptCheckpointT> = {
       offset: nextOffset,
       nextTurnIndex,
       lastTurnId,
-      relationState: undefined,
       updatedAt: now,
     };
     const updated = await updateObject<TranscriptCheckpointT>(
