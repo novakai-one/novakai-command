@@ -662,6 +662,9 @@ export async function ingest(
                 item.relation,
               );
               if (!persisted.ok) return persisted;
+              context.failpoint.hit(
+                'transcript.afterRelationBeforeCheckpoint',
+              );
             }
           } else if (item.kind === 'skip') {
             const quarantined = await quarantineRejectedItem(

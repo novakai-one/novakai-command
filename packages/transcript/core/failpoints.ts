@@ -1,6 +1,7 @@
 export type TranscriptFailpointName =
   | 'transcript.beforeLineAppend'
   | 'transcript.afterLineAppendBeforeCheckpoint'
+  | 'transcript.afterRelationBeforeCheckpoint'
   | 'transcript.afterQuarantineBeforeSkip';
 
 export interface TranscriptFailpoint {
