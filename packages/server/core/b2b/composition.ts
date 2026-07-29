@@ -23,8 +23,13 @@ export interface TranscriptTopology {
   status(): TranscriptTopologyStatus;
 }
 
+export type TranscriptQueries = Pick<
+  TranscriptContract,
+  'linesBySession' | 'linesByProvider' | 'subagentTree'
+>;
+
 export interface TranscriptServerHost {
-  readonly operations: TranscriptContract;
+  readonly operations: TranscriptQueries;
   readonly topology: TranscriptTopology;
 }
 
@@ -46,8 +51,8 @@ export function composeTranscriptServerHost(
     root: options.root,
     source: createRawTranscriptSource({ root: options.root }),
   });
-  const intervalMs = options.ingestIntervalMs ?? DEFAULT_POLL_MS;
   const watcherIntervalMs = options.watcherIntervalMs ?? DEFAULT_POLL_MS;
+  const ingestIntervalMs = options.ingestIntervalMs ?? DEFAULT_POLL_MS;
   let phase: 'idle' | 'running' | 'stopping' | 'terminal' = 'idle';
   let watcherReady = false;
   let ingesting = false;
@@ -55,10 +60,8 @@ export function composeTranscriptServerHost(
   let lastResult: IngestResult | undefined;
   let ingestError: string | undefined;
   let terminalError: string | undefined;
-  let timer: ReturnType<typeof setTimeout> | null = null;
   let worker: Worker | null = null;
   let workerExit: Promise<number> | null = null;
-  let activeIngest: Promise<void> | null = null;
   let stopPromise: Promise<void> | null = null;
 
   const snapshot = (): TranscriptTopologyStatus => ({
@@ -72,44 +75,10 @@ export function composeTranscriptServerHost(
       : {}),
   });
 
-  const schedule = (delayMs: number): void => {
-    if (phase !== 'running' || timer) return;
-    timer = setTimeout(() => {
-      timer = null;
-      void runIngest();
-    }, delayMs);
-  };
-
-  const runIngest = async (): Promise<void> => {
-    if (phase !== 'running' || ingesting) return;
-    ingesting = true;
-    activeIngest = (async () => {
-      const result = await operations.ingest();
-      runs += 1;
-      if (result.ok) {
-        lastResult = result.value;
-        ingestError = undefined;
-      } else {
-        ingestError = `${result.error.code}: ${result.error.message}`;
-      }
-    })();
-    try {
-      await activeIngest;
-    } catch (cause) {
-      ingestError = cause instanceof Error ? cause.message : String(cause);
-    } finally {
-      activeIngest = null;
-      ingesting = false;
-      schedule(intervalMs);
-    }
-  };
-
   const latchTerminal = (message: string): void => {
     if (!terminalError) terminalError = message;
     phase = 'terminal';
     watcherReady = false;
-    if (timer) clearTimeout(timer);
-    timer = null;
   };
 
   const topology: TranscriptTopology = {
@@ -126,7 +95,8 @@ export function composeTranscriptServerHost(
             ...(options.providerHome
               ? { providerHome: options.providerHome }
               : {}),
-            intervalMs: watcherIntervalMs,
+            watcherIntervalMs,
+            ingestIntervalMs,
           },
         },
       );
@@ -137,10 +107,33 @@ export function composeTranscriptServerHost(
       startedWorker.on('message', (message: unknown) => {
         if (typeof message !== 'object' || message === null) return;
         const type = (message as { type?: unknown }).type;
-        if (type === 'ready') {
+        if (type === 'status') {
           if (phase !== 'running') return;
-          watcherReady = true;
-          schedule(0);
+          const status = message as {
+            watcherReady?: unknown;
+            ingesting?: unknown;
+            runs?: unknown;
+            lastResult?: unknown;
+            lastError?: unknown;
+          };
+          if (
+            typeof status.watcherReady !== 'boolean'
+            || typeof status.ingesting !== 'boolean'
+            || typeof status.runs !== 'number'
+          ) {
+            latchTerminal('transcript worker sent an invalid status');
+            void startedWorker.terminate();
+            return;
+          }
+          watcherReady = status.watcherReady;
+          ingesting = status.ingesting;
+          runs = status.runs;
+          if (status.lastResult !== undefined) {
+            lastResult = status.lastResult as IngestResult;
+          }
+          ingestError = typeof status.lastError === 'string'
+            ? status.lastError
+            : undefined;
         } else if (type === 'failed') {
           latchTerminal(String(
             (message as { message?: unknown }).message
@@ -156,9 +149,12 @@ export function composeTranscriptServerHost(
           latchTerminal(
             `transcript watcher exited unexpectedly with code ${code}`,
           );
+        } else if (phase === 'stopping' && code !== 0) {
+          latchTerminal(
+            `transcript watcher failed while stopping with code ${code}`,
+          );
         }
       });
-      schedule(0);
     },
     async stop() {
       if (stopPromise) return stopPromise;
@@ -166,9 +162,6 @@ export function composeTranscriptServerHost(
         const terminal = phase === 'terminal';
         if (phase === 'idle') return;
         if (!terminal) phase = 'stopping';
-        if (timer) clearTimeout(timer);
-        timer = null;
-        if (activeIngest) await activeIngest;
         const currentWorker = worker;
         const currentExit = workerExit;
         if (currentWorker && !terminal) {
@@ -178,7 +171,8 @@ export function composeTranscriptServerHost(
         worker = null;
         workerExit = null;
         watcherReady = false;
-        if (!terminal) phase = 'idle';
+        ingesting = false;
+        if (!terminal && !terminalError) phase = 'idle';
       })();
       try {
         await stopPromise;
@@ -189,5 +183,12 @@ export function composeTranscriptServerHost(
     status: snapshot,
   };
 
-  return { operations, topology };
+  return {
+    operations: {
+      linesBySession: operations.linesBySession,
+      linesByProvider: operations.linesByProvider,
+      subagentTree: operations.subagentTree,
+    },
+    topology,
+  };
 }

@@ -3,9 +3,9 @@ import {
   ProviderName,
   SessionRef,
   type SessionRef as SessionRefT,
-  type TranscriptContract,
 } from '../../../transcript/contract/index.js';
 import type { MethodTable } from '../../contract/protocol.js';
+import type { TranscriptQueries } from './composition.js';
 
 const LinesBySessionInput = z.object({
   sessionRef: SessionRef,
@@ -59,7 +59,7 @@ function parseInput<T>(
 
 /** Read-only WS translation over Transcript's public query interface. */
 export function buildTranscriptMethods(
-  transcript: TranscriptContract,
+  transcript: TranscriptQueries,
 ): MethodTable {
   return {
     async linesBySession(params: never) {
