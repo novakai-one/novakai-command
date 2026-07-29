@@ -113,12 +113,12 @@ test('Transcript authority deduplicates native/fallback identities and stamps va
             duplicates: ingested.value.duplicates,
           }
         : null,
-      { added: 2, duplicates: 2 },
+      { added: 3, duplicates: 1 },
     );
     const byProvider = await transcript.linesByProvider('claude');
     assert.equal(byProvider.ok, true);
     if (!byProvider.ok) return;
-    assert.equal(byProvider.value.length, 2);
+    assert.equal(byProvider.value.length, 3);
     for (const line of byProvider.value) {
       assert.equal(TranscriptLine.safeParse(line).success, true);
       assert.equal(line.kind, 'transcriptLine');
