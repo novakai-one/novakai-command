@@ -530,6 +530,9 @@ export async function ingest(
           const persisted = await persistCandidate(context, source, item);
           if (!persisted.ok) return persisted;
           result[persisted.value === 'added' ? 'added' : 'duplicates'] += 1;
+          context.failpoint.hit(
+            'transcript.afterLineAppendBeforeCheckpoint',
+          );
           for (const diagnostic of item.diagnostics ?? []) {
             const journaled = await persistDiagnostic(
               context,

@@ -1,5 +1,6 @@
 export type TranscriptFailpointName =
-  | 'transcript.beforeLineAppend';
+  | 'transcript.beforeLineAppend'
+  | 'transcript.afterLineAppendBeforeCheckpoint';
 
 export interface TranscriptFailpoint {
   hit(point: TranscriptFailpointName): void;
