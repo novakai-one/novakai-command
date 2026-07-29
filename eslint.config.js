@@ -4,9 +4,9 @@ import sonarjs from 'eslint-plugin-sonarjs';
 // All rules are 'warn': the ratchet gate (tools/gates/standards.mjs)
 // owns pass/fail by comparing total counts to lint-baseline.json.
 export default [
-  { ignores: ['**/dist/**', '**/node_modules/**'] },
+  { ignores: ['**/dist/**', '**/node_modules/**', '**/*.test.ts', '**/*.test.tsx'] },
   {
-    files: ['src/**/*.{ts,tsx}'],
+    files: ['src/**/*.{ts,tsx}', 'packages/**/*.{ts,tsx}'],
     languageOptions: { parser: tseslint.parser },
     plugins: { sonarjs },
     rules: {

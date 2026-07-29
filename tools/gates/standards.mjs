@@ -11,12 +11,13 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const BASELINE_PATH = path.join(ROOT, 'lint-baseline.json');
+const PACKAGES_BASELINE_PATH = path.join(ROOT, 'lint-baseline-packages.json');
 const CODE_EXTENSIONS = new Set(['.ts', '.tsx', '.js']);
 
 function runEslint() {
   let stdout;
   try {
-    stdout = execFileSync('npx', ['eslint', 'src', '--format', 'json'], { cwd: ROOT, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+    stdout = execFileSync('npx', ['eslint', 'src', 'packages', '--format', 'json'], { cwd: ROOT, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
   } catch (error) {
     if (!error.stdout) throw error;
     stdout = error.stdout;
@@ -69,29 +70,46 @@ function reportWorstFiles(eslintResults) {
 
 function main() {
   const updateMode = process.argv.includes('--update');
+  // Two independent ratchets: legacy src (eslint + structural) and the
+  // packages/ world (eslint only — src's max-2-files/.css structural rules
+  // are UI conventions that do not apply to package layout). New/changed
+  // code must never push either count up; counts may only ratchet down.
   const eslintResults = runEslint();
-  const eslintCount = eslintResults.reduce((sum, result) => sum + result.messages.length, 0);
-  const structural = structuralViolations();
-  const total = eslintCount + structural.length;
-  console.log(`eslint: ${eslintCount}  structural: ${structural.length}  total: ${total}`);
-
-  if (!existsSync(BASELINE_PATH) || updateMode) {
-    writeFileSync(BASELINE_PATH, JSON.stringify({ count: total }) + '\n');
-    console.log(`baseline written: ${total}`);
-    return;
+  const byTarget = { src: 0, packages: 0 };
+  for (const result of eslintResults) {
+    const rel = path.relative(ROOT, result.filePath);
+    const target = rel.startsWith('packages/') ? 'packages' : 'src';
+    byTarget[target] += result.messages.length;
   }
-  const baseline = JSON.parse(readFileSync(BASELINE_PATH, 'utf8')).count;
-  if (total > baseline) {
-    console.error(`FAIL: ${total} violations > baseline ${baseline} (+${total - baseline}). Worst files:`);
+  const structural = structuralViolations();
+  const totals = { src: byTarget.src + structural.length, packages: byTarget.packages };
+  console.log(`src: eslint ${byTarget.src} + structural ${structural.length} = ${totals.src}  |  packages: eslint ${totals.packages}`);
+
+  let failed = false;
+  for (const target of ['src', 'packages']) {
+    const baselinePath = target === 'src' ? BASELINE_PATH : PACKAGES_BASELINE_PATH;
+    const total = totals[target];
+    if (!existsSync(baselinePath) || updateMode) {
+      writeFileSync(baselinePath, JSON.stringify({ count: total }) + '\n');
+      console.log(`${target}: baseline written: ${total}`);
+      continue;
+    }
+    const baseline = JSON.parse(readFileSync(baselinePath, 'utf8')).count;
+    if (total > baseline) {
+      console.error(`FAIL ${target}: ${total} violations > baseline ${baseline} (+${total - baseline})`);
+      failed = true;
+    } else if (total < baseline) {
+      console.log(`PASS ${target}: ${total} < baseline ${baseline} — run \`npm run lint -- --update\` to ratchet down`);
+    } else {
+      console.log(`PASS ${target}: at baseline ${baseline}`);
+    }
+  }
+  if (failed) {
+    console.error('Worst files:');
     reportWorstFiles(eslintResults);
     for (const problem of structural) console.error(`  structural: ${problem}`);
     process.exit(1);
   }
-  if (total < baseline) {
-    console.log(`PASS: ${total} < baseline ${baseline} — run \`npm run lint -- --update\` to ratchet down`);
-    return;
-  }
-  console.log(`PASS: at baseline ${baseline}`);
 }
 
 main();
