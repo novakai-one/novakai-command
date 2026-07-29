@@ -217,13 +217,7 @@ function normalizeCodex(
     ?? stringValue(payload.id)
   );
   if (!turnId) return unsupported(offset, nextOffset, 'codex');
-  const callId = stringValue(payload.call_id);
-  const nativeId = (
-    stringValue(payload.id)
-    ?? (callId && (role === 'tool_call' || role === 'tool_result')
-      ? `${role}:${callId}`
-      : turnId)
-  );
+  const nativeId = stringValue(payload.id);
   const source = isRecord(payload.source) ? payload.source : undefined;
   const diagnostics: TranscriptDiagnostic[] = [];
   if (source?.subagent !== undefined) {
@@ -239,7 +233,7 @@ function normalizeCodex(
     nextOffset,
     content,
     line: {
-      nativeId,
+      ...(nativeId ? { nativeId } : {}),
       turnId,
       turnIndex: offset,
       role,
