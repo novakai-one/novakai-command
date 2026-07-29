@@ -74,10 +74,8 @@ const fallbackCandidate = {
   },
 };
 
-test('Transcript contract owns native/fallback dedup, envelopes, skips, checkpoints, and restart', async () => {
-  const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-transcript-contract-'));
-  const root = path.join(workspace, '.novakai');
-  const entries = new Map<string, readonly TranscriptSourceItem[]>([
+function contractEntries(): Map<string, readonly TranscriptSourceItem[]> {
+  return new Map([
     ['claude:native-a', [nativeCandidate]],
     ['claude:native-b', [{ ...nativeCandidate, offset: 90, nextOffset: 170 }]],
     ['claude:fallback-a', [fallbackCandidate]],
@@ -92,28 +90,32 @@ test('Transcript contract owns native/fallback dedup, envelopes, skips, checkpoi
       },
     }]],
   ]);
+}
 
+test('Transcript authority deduplicates native/fallback identities and stamps valid records', async () => {
+  const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-transcript-records-'));
+  const root = path.join(workspace, '.novakai');
   try {
-    const firstSource = new MemoryTranscriptSource(entries);
-    const firstHost = composeTranscript({ root, source: firstSource });
+    const transcript = composeTranscript({
+      root,
+      source: new MemoryTranscriptSource(contractEntries()),
+    });
     assert.deepEqual(
-      Object.keys(firstHost).sort(),
+      Object.keys(transcript).sort(),
       ['ingest', 'linesByProvider', 'linesBySession', 'subagentTree'],
     );
-
-    const first = await firstHost.ingest();
-    assert.equal(first.ok, true);
-    if (!first.ok) return;
-    assert.equal(first.value.added, 2);
-    assert.equal(first.value.duplicates, 2);
-    assert.equal(first.value.skipped.length, 1);
-    assert.equal(first.value.skipped[0]?.skip.code, 'unsupported_shape');
-    assert.equal(
-      TranscriptJournalEntry.safeParse(first.value.skipped[0]).success,
-      true,
+    const ingested = await transcript.ingest();
+    assert.equal(ingested.ok, true);
+    assert.deepEqual(
+      ingested.ok
+        ? {
+            added: ingested.value.added,
+            duplicates: ingested.value.duplicates,
+          }
+        : null,
+      { added: 2, duplicates: 2 },
     );
-
-    const byProvider = await firstHost.linesByProvider('claude');
+    const byProvider = await transcript.linesByProvider('claude');
     assert.equal(byProvider.ok, true);
     if (!byProvider.ok) return;
     assert.equal(byProvider.value.length, 2);
@@ -133,29 +135,56 @@ test('Transcript contract owns native/fallback dedup, envelopes, skips, checkpoi
       ingestedAt: native?.createdAt,
     });
     assert.deepEqual(native?.tokenUsage, { input: 2, output: 3 });
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
 
-    const bySession = await firstHost.linesBySession(
-      'providerSession_claude_1' as SessionRef,
+test('typed source skips return runtime-valid Transcript journal entries', async () => {
+  const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-transcript-skip-'));
+  const root = path.join(workspace, '.novakai');
+  const entries = new Map<string, readonly TranscriptSourceItem[]>([
+    ['codex:unsupported', contractEntries().get('codex:unsupported') ?? []],
+  ]);
+  try {
+    const transcript = composeTranscript({
+      root,
+      source: new MemoryTranscriptSource(entries),
+    });
+    const ingested = await transcript.ingest();
+    assert.equal(ingested.ok, true);
+    if (!ingested.ok) return;
+    assert.equal(ingested.value.added, 0);
+    assert.equal(ingested.value.duplicates, 0);
+    assert.equal(ingested.value.skipped.length, 1);
+    assert.equal(
+      ingested.value.skipped[0]?.skip.code,
+      'unsupported_shape',
     );
-    assert.deepEqual(
-      bySession.ok ? bySession.value.map((line) => line.text) : null,
-      ['native'],
+    assert.equal(
+      TranscriptJournalEntry.safeParse(ingested.value.skipped[0]).success,
+      true,
     );
-    const sinceFuture = await firstHost.linesByProvider(
-      'claude',
-      '2999-01-01T00:00:00.000Z',
-    );
-    assert.deepEqual(sinceFuture.ok ? sinceFuture.value : null, []);
-    const subagentTree = await firstHost.subagentTree('parent-turn');
-    assert.deepEqual(
-      subagentTree.ok ? subagentTree.value.map((line) => line.text) : null,
-      ['fallback'],
-    );
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test('durable incremental checkpoints make restart re-ingestion a zero-add result', async () => {
+  const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-transcript-restart-'));
+  const root = path.join(workspace, '.novakai');
+  const entries = contractEntries();
+  try {
+    const first = composeTranscript({
+      root,
+      source: new MemoryTranscriptSource(entries),
+    });
+    const initial = await first.ingest();
+    assert.equal(initial.ok, true);
 
     const restartSource = new MemoryTranscriptSource(entries);
     const restarted = composeTranscript({ root, source: restartSource });
     const replay = await restarted.ingest();
-    assert.equal(replay.ok, true);
     assert.deepEqual(
       replay.ok
         ? {
@@ -178,6 +207,41 @@ test('Transcript contract owns native/fallback dedup, envelopes, skips, checkpoi
     );
     const afterRestart = await restarted.linesByProvider('claude');
     assert.equal(afterRestart.ok && afterRestart.value.length, 2);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test('read-only Transcript queries filter by session, provider instant, and scoped tree', async () => {
+  const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-transcript-queries-'));
+  const root = path.join(workspace, '.novakai');
+  try {
+    const transcript = composeTranscript({
+      root,
+      source: new MemoryTranscriptSource(contractEntries()),
+    });
+    const ingested = await transcript.ingest();
+    assert.equal(ingested.ok, true);
+
+    const bySession = await transcript.linesBySession(
+      'providerSession_claude_1' as SessionRef,
+    );
+    assert.deepEqual(
+      bySession.ok ? bySession.value.map((line) => line.text) : null,
+      ['native'],
+    );
+    const sinceFuture = await transcript.linesByProvider(
+      'claude',
+      '2999-01-01T00:00:00.000Z',
+    );
+    assert.deepEqual(sinceFuture.ok ? sinceFuture.value : null, []);
+    const subagentTree = await transcript.subagentTree(
+      'claude:parent-turn',
+    );
+    assert.deepEqual(
+      subagentTree.ok ? subagentTree.value.map((line) => line.text) : null,
+      ['fallback'],
+    );
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }
