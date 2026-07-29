@@ -9,6 +9,7 @@ import {
 } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
+import { performance } from 'node:perf_hooks';
 import path from 'node:path';
 import {
   composeTranscript,
@@ -60,6 +61,102 @@ class RegressionSource implements TranscriptSourceAdapter {
     }
   }
 }
+
+class IdleScaleSource implements TranscriptSourceAdapter {
+  constructor(
+    private readonly sourceCount: number,
+    private readonly journalEntriesPerSource: number,
+  ) {}
+
+  async *sources(): AsyncIterable<TranscriptSource> {
+    for (let sourceIndex = 0; sourceIndex < this.sourceCount; sourceIndex += 1) {
+      yield {
+        provider: 'kimi',
+        sourceId: `idle-source-${sourceIndex}`,
+      };
+    }
+  }
+
+  async *read(
+    _source: TranscriptSource,
+    fromOffset: number,
+  ): AsyncIterable<TranscriptSourceItem> {
+    for (
+      let itemIndex = 0;
+      itemIndex < this.journalEntriesPerSource;
+      itemIndex += 1
+    ) {
+      const nextOffset = itemIndex + 1;
+      if (nextOffset <= fromOffset) continue;
+      yield {
+        kind: 'skip',
+        offset: itemIndex,
+        nextOffset,
+        reason: {
+          code: 'non_message',
+          message: 'synthetic metadata-only benchmark row',
+        },
+      };
+    }
+  }
+}
+
+async function measureIdlePass(
+  sourceCount: number,
+  journalEntryCount: number,
+): Promise<number> {
+  const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-idle-scale-'));
+  const root = path.join(workspace, '.novakai');
+  const source = new IdleScaleSource(
+    sourceCount,
+    journalEntryCount / sourceCount,
+  );
+  try {
+    const transcript = composeTranscript({ root, source });
+    const seeded = await transcript.ingest();
+    assert.equal(seeded.ok, true);
+    assert.equal(
+      seeded.ok ? seeded.value.skipped.length : null,
+      journalEntryCount,
+    );
+
+    const samples: number[] = [];
+    for (let sample = 0; sample < 2; sample += 1) {
+      const startedAt = performance.now();
+      const idle = await transcript.ingest();
+      samples.push(performance.now() - startedAt);
+      assert.deepEqual(
+        idle.ok
+          ? {
+              added: idle.value.added,
+              duplicates: idle.value.duplicates,
+              skipped: idle.value.skipped.length,
+              diagnostics: idle.value.diagnostics.length,
+            }
+          : null,
+        { added: 0, duplicates: 0, skipped: 0, diagnostics: 0 },
+      );
+    }
+    return Math.min(...samples);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+}
+
+test('no-op ingestion scales with sources plus journal entries, not their product', async (t) => {
+  const smallMs = await measureIdlePass(25, 250);
+  const largeMs = await measureIdlePass(200, 2_000);
+  const ratio = largeMs / smallMs;
+  t.diagnostic(JSON.stringify({
+    small: { sources: 25, journalEntries: 250, elapsedMs: smallMs },
+    large: { sources: 200, journalEntries: 2_000, elapsedMs: largeMs },
+    ratio,
+  }));
+  assert.ok(
+    ratio < 16,
+    `expected approximately pass-linear idle ingestion; measured ${ratio.toFixed(2)}x`,
+  );
+});
 
 test('turnId-only provider-native identity deduplicates and attributes the line', async () => {
   const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-turn-id-dedup-'));
