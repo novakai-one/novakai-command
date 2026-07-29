@@ -254,7 +254,11 @@ export class StoreEngine {
       if (envelope.schemaVersion > CURRENT_SCHEMA_VERSION) {
         unsupported = true; // §8 rule 3: surface the record flagged, never crash
       } else {
-        const applied = this.applyUpgrades(envelope.kind, envelope.schemaVersion, { ...upgradedEnvelope, ...upgradedPayload });
+        const applied = this.applyUpgrades(
+          envelope.kind,
+          envelope.schemaVersion,
+          { ...upgradedPayload, ...upgradedEnvelope },
+        );
         if (applied) {
           upgradedEnvelope = applied.envelope;
           upgradedPayload = applied.payload;
@@ -405,11 +409,16 @@ export class StoreEngine {
   // ── quarantine ────────────────────────────────────────────────────────
   readTombstones(): TombstoneT[] {
     return [...this.readTombstoneIndex().latest.values()]
+      .map((tombstone) => QuarantineTombstone.parse(tombstone))
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   }
 
-  quarantinedIds(): ReadonlySet<string> {
-    return this.readTombstoneIndex().openRefs;
+  quarantinedIds(): Set<string> {
+    return new Set(this.readTombstoneIndex().openRefs);
+  }
+
+  isQuarantined(refId: string): boolean {
+    return this.readTombstoneIndex().openRefs.has(refId);
   }
 
   private readTombstoneIndex(): TombstoneIndex {
@@ -431,11 +440,11 @@ export class StoreEngine {
     index.latest.delete(rec.envelope.id);
 
     const parsed = QuarantineTombstone.safeParse({
-      ...rec.envelope,
       ...rec.payload,
+      ...rec.envelope,
     });
     if (!parsed.success) return;
-    index.latest.set(parsed.data.id, parsed.data);
+    index.latest.set(rec.envelope.id, parsed.data);
     if (parsed.data.status === 'open') {
       this.adjustOpenRef(index, parsed.data.quarantinedRef.id, 1);
     }

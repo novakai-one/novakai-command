@@ -147,7 +147,7 @@ export async function createObject<T>(
     const rec = engine.readLatestEffective(kind).get(prior.id);
     if (rec) return ok(toStoredObject<T>(engine, rec));
   }
-  if (engine.quarantinedIds().has(flat!.id)) {
+  if (engine.isQuarantined(flat!.id)) {
     const tombstone = engine.readTombstones().find((t) => t.quarantinedRef.id === flat!.id && t.status === 'open');
     return fail(err('Quarantined', `object "${flat!.id}" is quarantined until resolveQuarantine`,
       { ref: { kind, id: flat!.id }, tombstoneId: tombstone?.id ?? '' }, false));
@@ -186,7 +186,7 @@ export async function updateObject<T>(
   }
   const scoped = scopeCheck(handle, kind);
   if (scoped) return fail(scoped);
-  if (engine.quarantinedIds().has(id)) {
+  if (engine.isQuarantined(id)) {
     const tombstone = engine.readTombstones().find((t) => t.quarantinedRef.id === id && t.status === 'open');
     return fail(err('Quarantined', `object "${id}" is quarantined until resolveQuarantine`,
       { ref: { kind, id }, tombstoneId: tombstone?.id ?? '' }, false));
@@ -220,7 +220,7 @@ function readObject<T>(
   id: ObjectId,
 ): StoredObject<T> | Absent {
   if (!(kind in KIND_FILES)) return ABSENT({ kind, id });
-  if (engine.quarantinedIds().has(id)) return ABSENT({ kind, id });
+  if (engine.isQuarantined(id)) return ABSENT({ kind, id });
   const rec = engine.readLatestEffective(kind).get(id);
   return rec ? toStoredObject<T>(engine, rec) : ABSENT({ kind, id });
 }
