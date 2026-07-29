@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { lstat, readdir } from 'node:fs/promises';
 import path from 'node:path';
@@ -41,24 +42,17 @@ async function filesBelow(dir: string, prefix = ''): Promise<string[]> {
   return files;
 }
 
-function sourcePath(root: string, source: TranscriptSource): string {
-  const providerRoot = path.resolve(root, 'transcripts', source.provider);
-  if (
-    path.isAbsolute(source.sourceId)
-    || source.sourceId.split(/[\\/]/u).includes('..')
-  ) {
-    throw new Error('transcript source id escapes its provider root');
-  }
-  const resolved = path.resolve(providerRoot, source.sourceId);
-  const relative = path.relative(providerRoot, resolved);
-  if (relative.startsWith('..') || path.isAbsolute(relative)) {
-    throw new Error('transcript source id escapes its provider root');
-  }
-  return resolved;
+function opaqueSourceId(provider: string, relativePath: string): string {
+  const portablePath = relativePath.split(path.sep).join('/');
+  const digest = createHash('sha256')
+    .update(`${provider}:${portablePath}`)
+    .digest('hex');
+  return `source_${digest}`;
 }
 
 class RawTranscriptSource implements TranscriptSourceAdapter {
   private readonly root: string;
+  private readonly sourceFiles = new Map<string, string>();
 
   constructor(private readonly options: RawTranscriptSourceOptions) {
     this.root = path.resolve(options.root);
@@ -66,9 +60,15 @@ class RawTranscriptSource implements TranscriptSourceAdapter {
 
   async sources(): Promise<readonly TranscriptSource[]> {
     const sources: TranscriptSource[] = [];
+    this.sourceFiles.clear();
     for (const provider of ProviderName.options) {
       const providerRoot = path.join(this.root, 'transcripts', provider);
-      for (const sourceId of await filesBelow(providerRoot)) {
+      for (const relativePath of await filesBelow(providerRoot)) {
+        const sourceId = opaqueSourceId(provider, relativePath);
+        this.sourceFiles.set(
+          `${provider}:${sourceId}`,
+          path.resolve(providerRoot, relativePath),
+        );
         sources.push({ provider, sourceId });
       }
     }
@@ -79,7 +79,10 @@ class RawTranscriptSource implements TranscriptSourceAdapter {
     source: TranscriptSource,
     fromOffset: number,
   ): AsyncIterable<TranscriptSourceItem> {
-    const file = sourcePath(this.root, source);
+    const file = this.sourceFiles.get(
+      `${source.provider}:${source.sourceId}`,
+    );
+    if (!file) throw new Error('transcript source is not discovered');
     const stat = await lstat(file);
     if (!stat.isFile() || stat.isSymbolicLink()) {
       throw new Error('transcript source is not a regular file');
