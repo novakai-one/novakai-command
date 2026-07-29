@@ -255,6 +255,61 @@ test('Kimi equal numeric turns in different sessions have distinct tree identiti
   }
 });
 
+test('Kimi sessionless numeric turns use distinct source fallbacks without trusted native identity', async () => {
+  const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-kimi-no-session-'));
+  const root = path.join(workspace, '.novakai');
+  const fixture = path.join(
+    fixtureRoot,
+    'kimi',
+    'sessionless-tool-result.jsonl',
+  );
+  try {
+    for (const sourceName of ['source-alpha', 'source-beta']) {
+      const destination = path.join(
+        root,
+        'transcripts',
+        'kimi',
+        sourceName,
+        'events.jsonl',
+      );
+      mkdirSync(path.dirname(destination), { recursive: true });
+      copyFileSync(fixture, destination);
+    }
+    const transcript = composeTranscript({
+      root,
+      source: createRawTranscriptSource({ root }),
+    });
+
+    const ingested = await transcript.ingest();
+    assert.deepEqual(
+      ingested.ok
+        ? {
+            added: ingested.value.added,
+            duplicates: ingested.value.duplicates,
+          }
+        : null,
+      { added: 2, duplicates: 0 },
+    );
+    const lines = await transcript.linesByProvider('kimi');
+    assert.equal(lines.ok, true);
+    if (!lines.ok) return;
+    assert.equal(lines.value.length, 2);
+    assert.equal(
+      new Set(lines.value.map((line) => line.turnId)).size,
+      2,
+    );
+    assert.ok(
+      lines.value.every(
+        (line) =>
+          line.sourceAttribution.originalId === undefined
+          && /^kimi:transcriptLine_[a-f0-9]{64}$/u.test(line.turnId),
+      ),
+    );
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
 test('irrelevant Kimi tool calls keep relation persistence bounded at 100 and 200 rows', async () => {
   const inspect = async (rowCount: number): Promise<{
     checkpointBytes: number;
