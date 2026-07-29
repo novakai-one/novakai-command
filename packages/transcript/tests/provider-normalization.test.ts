@@ -88,6 +88,50 @@ test('Kimi raw-copy adapter preserves exposed attribution and journals an unreso
   }
 });
 
+test('Kimi numeric tool.result identity is canonical and role is tool', async () => {
+  const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-kimi-tool-result-'));
+  const root = path.join(workspace, '.novakai');
+  const destination = path.join(
+    root,
+    'transcripts',
+    'kimi',
+    'fixture-session',
+    'events.jsonl',
+  );
+  try {
+    mkdirSync(path.dirname(destination), { recursive: true });
+    copyFileSync(
+      path.join(fixtureRoot, 'kimi', 'subagent-relation.jsonl'),
+      destination,
+    );
+    const transcript = composeTranscript({
+      root,
+      source: createRawTranscriptSource({ root }),
+    });
+
+    const ingested = await transcript.ingest();
+    assert.equal(ingested.ok, true);
+    const queried = await transcript.linesByProvider('kimi');
+    assert.equal(queried.ok, true);
+    assert.deepEqual(
+      queried.ok
+        ? queried.value.map((line) => ({
+            role: line.role,
+            turnId: line.turnId,
+            originalId: line.sourceAttribution.originalId,
+          }))
+        : null,
+      [{
+        role: 'tool',
+        turnId: 'kimi:411',
+        originalId: '411',
+      }],
+    );
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
 test('TRN-002 Claude raw-copy subagent parentUuid is provider-scoped and queryable as a child turn', async () => {
   const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-claude-adapter-'));
   const root = path.join(workspace, '.novakai');
