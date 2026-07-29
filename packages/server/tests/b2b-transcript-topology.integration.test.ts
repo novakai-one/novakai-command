@@ -176,3 +176,67 @@ test('transcript.ingest=false starts neither watcher nor ingester even when the 
     .linesByProvider('kimi');
   assert.deepEqual(lines.ok ? lines.value : null, []);
 });
+
+test('HTTP responds within 500ms while a chunked transcript first scan is still ingesting', async (t) => {
+  const base = workspace();
+  const root = path.join(base, '.novakai');
+  const providerHome = path.join(base, 'empty-provider-home');
+  const custody = path.join(root, 'transcripts', 'kimi');
+  mkdirSync(custody, { recursive: true });
+  mkdirSync(providerHome, { recursive: true });
+  const lineCount = 512;
+  const rows = Array.from({ length: lineCount }, (_, index) =>
+    JSON.stringify({
+      kind: 'event',
+      envelope: {
+        seq: index,
+        timestamp: '2026-07-29T01:02:03.000Z',
+        type: 'assistant_output',
+        payload: {
+          agentId: 'agent_responsiveness',
+          turnId: `turn_responsiveness_${index}`,
+          output: `synthetic responsiveness line ${index}`,
+        },
+      },
+    }))
+    .join('\n');
+  writeFileSync(path.join(custody, 'big-first-scan.jsonl'), `${rows}\n`);
+  await configureServer(root, true);
+
+  const booted = await bootServer({
+    root,
+    port: 0,
+    cwd: base,
+    providerHome,
+    watchdogDir: base,
+    kimiCliPath: fakeKimi(),
+    supervisionTimers: false,
+  });
+  assert.equal(booted.ok, true);
+  if (!booted.ok) return;
+  t.after(() => booted.value.close());
+
+  await eventually(async () =>
+    booted.value.runtime.transcript.topology.status().ingesting);
+  const startedAt = performance.now();
+  const response = await fetch(`${booted.value.url}/bootstrap.json`);
+  const elapsedMs = performance.now() - startedAt;
+  assert.equal(response.status, 200);
+  assert.ok(
+    elapsedMs < 500,
+    `HTTP response took ${elapsedMs.toFixed(1)}ms; budget is 500ms`,
+  );
+  assert.equal(
+    booted.value.runtime.transcript.topology.status().ingesting,
+    true,
+    'synchronization proves the request completed before ingestion did',
+  );
+
+  await eventually(async () => {
+    const status = booted.value.runtime.transcript.topology.status();
+    return status.runs >= 1 && !status.ingesting;
+  }, 10_000);
+  const lines = await booted.value.runtime.transcript.operations
+    .linesByProvider('kimi');
+  assert.equal(lines.ok ? lines.value.length : null, lineCount);
+});
