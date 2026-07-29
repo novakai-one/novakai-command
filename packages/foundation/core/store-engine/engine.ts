@@ -568,7 +568,6 @@ export class StoreEngine {
     const traces = this.readTraces();
     const knownIds = new Map<string, string>(); // id → kind
     for (const kind of RECORD_KINDS) {
-      if (kind === 'quarantine') continue;
       for (const rec of this.readLatestEffective(kind).values()) {
         knownIds.set(rec.envelope.id, kind);
       }
@@ -594,10 +593,13 @@ export class StoreEngine {
     };
     // trace w/o object
     for (const t of traces) {
+      if (t.action === 'truncate') continue;
       if (
-        t.action === 'truncate'
-        || t.action === 'quarantine'
-        || t.action === 'resolveQuarantine'
+        t.target.kind === 'transcriptLine'
+        && (
+          t.action === 'quarantine'
+          || t.action === 'resolveQuarantine'
+        )
       ) continue;
       // S2a: system.action lines (hook_log/context.inject/hook_error) are
       // event records, not mutation evidence — never orphan-tombstoned.
