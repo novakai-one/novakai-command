@@ -45,6 +45,8 @@ function configInputFor(key: string, jsonValue: unknown): ConfigObjectInput {
   let input: Record<string, unknown>;
   if (key === 'dev' || key === 'cfg_dev') {
     input = { ...value, configKind: 'dev' };
+  } else if (key === 'transcript' || key === 'cfg_transcript') {
+    input = { ...value, configKind: 'transcript' };
   } else if (key === 'supervision' || key === 'cfg_supervision') {
     input = { ...value, configKind: 'supervision' };
   } else if (key.startsWith('provider.') || key.startsWith('cfg_provider_')) {

@@ -75,6 +75,7 @@ function resolve(objects: StoredConfig[], root: string): ServerConfig {
     providers: defaultProviders(),
     supervision: { ...DEFAULT_SUPERVISION },
     dev: { allowMock: false, watchTranscripts: false },
+    transcript: { ingest: false },
   };
   const tokens = new Map(loadTokens(root).map((t) => [t.id, t]));
   for (const obj of objects) {
@@ -117,6 +118,9 @@ function resolve(objects: StoredConfig[], root: string): ServerConfig {
         break;
       case 'dev':
         config.dev = { allowMock: obj.allowMock, watchTranscripts: obj.watchTranscripts ?? false };
+        break;
+      case 'transcript':
+        config.transcript = { ingest: obj.ingest };
         break;
     }
   }
@@ -207,6 +211,11 @@ export async function openConfigStore(
     if (!sup.ok) return fail(sup.error);
     const dev = await write({ configKind: 'dev', allowMock: false }, mintOpId());
     if (!dev.ok) return fail(dev.error);
+    const transcript = await write(
+      { configKind: 'transcript', ingest: false },
+      mintOpId(),
+    );
+    if (!transcript.ok) return fail(transcript.error);
   }
 
   return ok({

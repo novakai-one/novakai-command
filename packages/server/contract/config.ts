@@ -54,19 +54,21 @@ export const DevConfigInput = z.object({
   /** Gates the mock provider adapter out of production (closes M10). */
   allowMock: z.boolean(),
   /**
-   * Start the S2 transcript watchers at boot. OFF by default in B1a: the S2
-   * watcher scans and copies SYNCHRONOUSLY, and at real provider-transcript
-   * volume (measured 2.5 GB on 2026-07-28) that starves the HTTP loop — every
-   * page and asset took 5–12 s to serve. Boot step 5 still runs and still
-   * traces; it reports "disabled" until the watcher moves off the main loop
-   * (B1b/S3, where transcript ingestion actually lands).
+   * Legacy B1 input retained for config-file readability only.
+   * TranscriptConfigInput is the sole boot authority from B2b onward.
    */
   watchTranscripts: z.boolean().optional(),
 });
 
+export const TranscriptConfigInput = z.object({
+  configKind: z.literal('transcript'),
+  /** Starts copy custody plus authoritative ingestion. Off for fresh installs. */
+  ingest: z.boolean(),
+});
+
 export const ConfigObjectInput = z.discriminatedUnion('configKind', [
   PrincipalConfigInput, AgentPersonBindingInput, ProviderConfigInput,
-  SupervisionConfigInput, DevConfigInput,
+  SupervisionConfigInput, DevConfigInput, TranscriptConfigInput,
 ]);
 export type ConfigObjectInput = z.input<typeof ConfigObjectInput>;
 export type ConfigObject = z.output<typeof ConfigObjectInput>;
@@ -111,6 +113,7 @@ export interface ServerConfig {
   providers: Record<ProviderName, ProviderSettings>;
   supervision: SupervisionPolicy;
   dev: { allowMock: boolean; watchTranscripts: boolean };
+  transcript: { ingest: boolean };
 }
 
 /** Defaults materialized on first boot. Principals are deliberately absent. */
@@ -131,5 +134,6 @@ export function configKeyOf(input: ConfigObject): string {
     case 'provider': return `cfg_provider_${input.provider}`;
     case 'supervision': return 'cfg_supervision';
     case 'dev': return 'cfg_dev';
+    case 'transcript': return 'cfg_transcript';
   }
 }
