@@ -91,7 +91,6 @@ async function boot(root: string): Promise<NovakaiServer> {
     root,
     port: 0,
     cwd: root,
-    transcripts: false,
     watchdogDir: root,
     supervisionTimers: false,
   });

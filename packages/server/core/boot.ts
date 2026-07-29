@@ -26,7 +26,6 @@ import {
 import { composeShellPersistence } from '../../shell/contract/persistence.node.js';
 import { listConversationViews, setConversationView } from '../../shell/contract/conversationView.js';
 import type { ScreenContext } from '../../shell/contract/context.js';
-import { createTranscriptWatcher, defaultSources } from '../../transcript/contract/index.js';
 import { recordSystemAction } from '@novakai/foundation/dist/contract/index.js';
 import { openConfigStore, type ConfigStore } from './config/store.js';
 import type { ServerConfig } from '../contract/config.js';
@@ -40,6 +39,7 @@ import { createSupervisionEngine, type SupervisionEngine, type SupervisionRecord
 import { startTransport, type RunningTransport } from './transport/server.js';
 import { buildMethods, restoreLiveSessions, type ServerRuntime, type Conversation } from './methods.js';
 import { composeB2aServerCapabilities } from './b2a/composition.js';
+import { composeTranscriptServerHost } from './b2b/composition.js';
 import type { MessageExistenceQuery } from '../../spine/contract/index.js';
 
 export interface BootOptions {
@@ -62,7 +62,6 @@ export interface BootOptions {
   /** Directory holding `.watchdog-sessions.json`. Defaults to cwd. */
   watchdogDir?: string;
   processProbe?: ProcessProbe;
-  transcripts?: boolean;
   /** @internal failure-injection seam for never-silent trace tests. */
   recordSystemAction?: typeof recordSystemAction;
 }
@@ -185,20 +184,26 @@ export async function bootServer(options: BootOptions): Promise<BootResult> {
     `mock=${config.dev.allowMock ? 'dev' : 'disabled'}`,
   ].join(', '));
 
-  // ── 5. transcript watchers ───────────────────────────────────────────────
-  // Config decides (see DevConfigInput.watchTranscripts): the S2 watcher scans
-  // synchronously, so at real transcript volume it would starve this process's
-  // HTTP loop. The step still runs and still traces either way.
-  let transcripts: { stop(): void } | null = null;
-  const watchTranscripts = options.transcripts ?? config.dev.watchTranscripts;
-  if (watchTranscripts) {
-    const sources = defaultSources();
-    const watcher = createTranscriptWatcher({ root: options.root, sources });
-    watcher.start();
-    transcripts = watcher;
-    note(5, 'transcript', `watching ${sources.length} provider dir(s)`);
+  // ── 5. transcript topology ───────────────────────────────────────────────
+  // The dedicated config gate controls BOTH copy custody and ingestion.
+  // Startup is deferred until transport listens; the sealed synchronous
+  // watcher runs in a worker so provider volume cannot block HTTP.
+  const transcript = composeTranscriptServerHost({
+    root: options.root,
+    ...(options.providerHome ? { providerHome: options.providerHome } : {}),
+  });
+  if (config.transcript.ingest) {
+    note(
+      5,
+      'transcript',
+      'copy custody + ingestion enabled (starts after transport)',
+    );
   } else {
-    note(5, 'transcript', 'watchers disabled (config dev.watchTranscripts) — synchronous S2 scan would starve the HTTP loop; ingestion lands in B1b/S3');
+    note(
+      5,
+      'transcript',
+      'copy custody + ingestion disabled (config transcript.ingest=false)',
+    );
   }
 
   // ── 6. shell persistence (composed at step 2; hydrate the view cache) ────
@@ -318,7 +323,7 @@ export async function bootServer(options: BootOptions): Promise<BootResult> {
       },
     });
     if (!traced.ok) {
-      transcripts?.stop();
+      await transcript.topology.stop();
       await embedded.close();
       return {
         ok: false,
@@ -401,7 +406,7 @@ export async function bootServer(options: BootOptions): Promise<BootResult> {
   const failCapabilityBoot = async (
     error: BootError,
   ): Promise<BootResult> => {
-    transcripts?.stop();
+    await transcript.topology.stop();
     await embedded.close();
     return { ok: false, error };
   };
@@ -571,6 +576,7 @@ export async function bootServer(options: BootOptions): Promise<BootResult> {
     supervision,
     watchdog,
     b2a,
+    transcript,
     persistence,
     conversations,
     configStore,
@@ -650,6 +656,7 @@ export async function bootServer(options: BootOptions): Promise<BootResult> {
   runtime.broadcast = (name, data) => transport.broadcast(name, data);
   agents.subscribeAgentEvents((event) => transport.broadcast('presence', event));
   note(12, 'transport', `listening on ${transport.url} (nvk-ws v1, token-gated)`);
+  if (config.transcript.ingest) transcript.topology.start();
 
   // The supervision timers start only once the socket exists — otherwise the
   // first usage broadcast would fire into the no-op broadcaster above.
@@ -676,7 +683,7 @@ export async function bootServer(options: BootOptions): Promise<BootResult> {
       async close() {
         supervision.stop();
         configWatcher.close();
-        transcripts?.stop();
+        await transcript.topology.stop();
         await transport.close();
         await embedded.close();
       },

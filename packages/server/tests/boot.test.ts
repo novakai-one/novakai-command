@@ -57,7 +57,7 @@ async function boot(
   options: { cliPath?: string; providerHome?: string } = {},
 ): Promise<NovakaiServer> {
   const res = await bootServer({
-    root: dir, port: 0, cwd: dir, transcripts: false, watchdogDir: dir,
+    root: dir, port: 0, cwd: dir, watchdogDir: dir,
     ...(options.cliPath ? { kimiCliPath: options.cliPath } : {}),
     ...(options.providerHome ? { providerHome: options.providerHome } : {}),
   });
@@ -156,7 +156,7 @@ async function seedAcceptedArtifactWorkflow(
 
 test('boot refuses to start without a human principal, and names the runbook', async () => {
   const dir = root();
-  const res = await bootServer({ root: dir, port: 0, cwd: dir, transcripts: false, watchdogDir: dir });
+  const res = await bootServer({ root: dir, port: 0, cwd: dir, watchdogDir: dir });
   if (res.ok) { await res.value.close(); assert.fail('boot must refuse without a human principal'); }
   assert.equal(res.error.code, 'NoHumanPrincipal');
   assert.match(res.error.message, /nvk-token.*mint/s, 'the operator is told exactly what to run');
@@ -251,7 +251,6 @@ test('a B2a boot trace failure aborts boot with typed storage failure', async ()
     root: dir,
     port: 0,
     cwd: dir,
-    transcripts: false,
     watchdogDir: dir,
     recordSystemAction: async (_handle, input) =>
       (input.meta as { capability?: string } | undefined)?.capability
@@ -354,7 +353,6 @@ test('migration trace failure aborts boot and the next boot recovers exactly one
     root: dir,
     port: 0,
     cwd: dir,
-    transcripts: false,
     watchdogDir: dir,
     recordSystemAction: async () => ({
       ok: false,
@@ -769,7 +767,7 @@ test('M4: a ReplyInterrupted trace failure is logged with its typed error', asyn
   let server: NovakaiServer | null = null;
   try {
     const booted = await bootServer({
-      root: dir, port: 0, cwd: dir, transcripts: false, watchdogDir: dir,
+      root: dir, port: 0, cwd: dir, watchdogDir: dir,
       processProbe: { alive: () => false, startedAt: () => null },
       recordSystemAction: async (_handle: unknown, input: {
         target: { kind: string };

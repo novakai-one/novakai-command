@@ -74,7 +74,7 @@ process.stdout.write(JSON.stringify({ type: 'turn.completed', usage: { input_tok
 
 async function boot(dir: string, cliPath: string): Promise<NovakaiServer> {
   const res = await bootServer({
-    root: dir, port: 0, cwd: dir, transcripts: false, watchdogDir: dir,
+    root: dir, port: 0, cwd: dir, watchdogDir: dir,
     codexCliPath: cliPath,
     providerHome: mkdtempSync(path.join(tmpdir(), 'nvk-provider-home-')),
     supervisionTimers: false, // driven explicitly here, not by wall clock

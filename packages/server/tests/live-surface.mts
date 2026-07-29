@@ -42,7 +42,7 @@ await opened.value.set(
 
 const bootOnce = async (timers: boolean) => {
   const res = await bootServer({
-    root: novakaiRoot, port, cwd: repoRoot, transcripts: false, watchdogDir: novakaiRoot,
+    root: novakaiRoot, port, cwd: repoRoot, watchdogDir: novakaiRoot,
     staticDir: path.join(repoRoot, 'packages/shell/dist'),
     supervisionTimers: timers,
   });

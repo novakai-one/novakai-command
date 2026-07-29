@@ -43,7 +43,7 @@ for (const provider of ['codex', 'claude'] as const) {
 }
 
 const booted = await bootServer({
-  root: novakaiRoot, port, cwd: repoRoot, transcripts: false, watchdogDir: novakaiRoot,
+  root: novakaiRoot, port, cwd: repoRoot, watchdogDir: novakaiRoot,
   staticDir: path.join(repoRoot, 'packages/shell/dist'),
   supervisionTimers: true,
 });

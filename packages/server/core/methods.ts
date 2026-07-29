@@ -28,6 +28,7 @@ import type { MessagingSessionHolder, SessionHolderFactory } from './session/hol
 import type { WatchdogHook } from './supervision/watchdog.js';
 import type { B2aServerCapabilities } from './b2a/composition.js';
 import { buildB2aMethods } from './b2a/methods.js';
+import type { TranscriptServerHost } from './b2b/composition.js';
 
 type ShellPersistence = ReturnType<typeof composeShellPersistence>;
 
@@ -68,6 +69,7 @@ export interface ServerRuntime {
   supervision: SupervisionEngine;
   watchdog: WatchdogHook;
   b2a: B2aServerCapabilities;
+  transcript: TranscriptServerHost;
   persistence: ShellPersistence;
   conversations: Map<string, Conversation>;
   configStore: ConfigStore;
