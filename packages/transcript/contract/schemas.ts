@@ -235,6 +235,8 @@ export const TranscriptCheckpoint = Envelope.extend({
   provider: ProviderName,
   sourceId: z.string().min(1),
   offset: z.number().int().nonnegative(),
+  nextTurnIndex: z.number().int().nonnegative().default(0),
+  lastTurnId: z.string().min(1).optional(),
   updatedAt: z.string().datetime(),
 });
 export type TranscriptCheckpoint = z.infer<typeof TranscriptCheckpoint>;

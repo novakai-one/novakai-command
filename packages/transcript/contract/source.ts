@@ -4,6 +4,11 @@ import type {
   TranscriptSourceItem,
 } from './schemas.js';
 
+export interface TranscriptReadCursor {
+  nextTurnIndex: number;
+  lastTurnId?: string;
+}
+
 /**
  * Internal variation seam published for composition. The Transcript core owns
  * checkpoint selection and advancement; adapters only enumerate sources and
@@ -19,5 +24,6 @@ export interface TranscriptSourceAdapter {
     source: TranscriptSource,
     fromOffset: number,
     relationState?: TranscriptRelationState,
+    cursor?: TranscriptReadCursor,
   ): AsyncIterable<TranscriptSourceItem>;
 }

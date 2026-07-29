@@ -8,6 +8,7 @@ import {
   type TranscriptSource,
   type TranscriptSourceItem,
 } from '../contract/schemas.js';
+import type { TranscriptReadCursor } from '../contract/source.js';
 import type { TranscriptSourceAdapter } from '../contract/source.js';
 import { applyTranscriptRelationDelta } from '../core/relations.js';
 import {
@@ -145,6 +146,7 @@ class RawTranscriptSource implements TranscriptSourceAdapter {
     source: TranscriptSource,
     fromOffset: number,
     relationState?: TranscriptRelationState,
+    readCursor?: TranscriptReadCursor,
   ): AsyncIterable<TranscriptSourceItem> {
     const key = `${source.provider}:${source.sourceId}`;
     const discovered = this.currentSource;
@@ -159,6 +161,8 @@ class RawTranscriptSource implements TranscriptSourceAdapter {
       let buffered = Buffer.alloc(0);
       let cursor = fromOffset;
       let currentRelations = relationState;
+      let nextTurnIndex = readCursor?.nextTurnIndex ?? 0;
+      let lastTurnId = readCursor?.lastTurnId;
       for await (
         const chunk of createReadStream(
           discovered.file,
@@ -179,7 +183,22 @@ class RawTranscriptSource implements TranscriptSourceAdapter {
             this.options.resolveSessionRef,
             currentRelations,
             this.options.resolveAgentId,
+            nextTurnIndex,
           );
+          if (
+            item.kind === 'candidate'
+            && source.provider !== 'kimi'
+          ) {
+            const sameTurn = (
+              item.line.turnId !== undefined
+              && item.line.turnId === lastTurnId
+            );
+            item.line.turnIndex = sameTurn
+              ? Math.max(0, nextTurnIndex - 1)
+              : nextTurnIndex;
+            if (!sameTurn) nextTurnIndex += 1;
+            lastTurnId = item.line.turnId;
+          }
           if ('relation' in item && item.relation) {
             currentRelations = applyTranscriptRelationDelta(
               currentRelations ?? { parents: {}, children: {} },

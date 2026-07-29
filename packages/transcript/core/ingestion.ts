@@ -215,6 +215,8 @@ async function advanceCheckpoint(
   context: TranscriptContext,
   source: TranscriptSourceT,
   nextOffset: number,
+  nextTurnIndex: number,
+  lastTurnId: string | undefined,
 ): Promise<Result<TranscriptCheckpointT, TranscriptError>> {
   for (;;) {
     const current = await readCheckpoint(context, source);
@@ -234,6 +236,8 @@ async function advanceCheckpoint(
         provider: source.provider,
         sourceId: source.sourceId,
         offset: nextOffset,
+        nextTurnIndex,
+        ...(lastTurnId ? { lastTurnId } : {}),
         updatedAt: now,
       });
       const created = await createObject<TranscriptCheckpointT>(
@@ -249,6 +253,8 @@ async function advanceCheckpoint(
       relationState?: undefined;
     } = {
       offset: nextOffset,
+      nextTurnIndex,
+      lastTurnId,
       relationState: undefined,
       updatedAt: now,
     };
@@ -258,7 +264,8 @@ async function advanceCheckpoint(
       patch,
       current.value.version,
       operationId(
-        `checkpoint:update:${current.value.object.id}:${nextOffset}`,
+        `checkpoint:update:${current.value.object.id}:${nextOffset}:`
+        + `${nextTurnIndex}`,
       ),
     );
     if (updated.ok) return parseCheckpoint(updated.value.object);
@@ -565,6 +572,9 @@ export async function ingest(
       const checkpoint = await readCheckpoint(context, source);
       if (!checkpoint.ok) return checkpoint;
       const fromOffset = checkpoint.value?.object.offset ?? 0;
+      let nextTurnIndex =
+        checkpoint.value?.object.nextTurnIndex ?? 0;
+      let lastTurnId = checkpoint.value?.object.lastTurnId;
       const diagnosticCodes = await emittedDiagnosticCodes(context, source);
       if (!diagnosticCodes.ok) return diagnosticCodes;
       const restoredRelations = await restoreTranscriptRelationState(
@@ -579,6 +589,10 @@ export async function ingest(
             source,
             fromOffset,
             relationState,
+            {
+              nextTurnIndex,
+              ...(lastTurnId ? { lastTurnId } : {}),
+            },
           )
         ) {
           const parsedItem = TranscriptSourceItem.safeParse(rawItem);
@@ -641,10 +655,19 @@ export async function ingest(
               result.diagnostics.push(journaled.value);
             }
           }
+          if (item.kind === 'candidate' && source.provider !== 'kimi') {
+            nextTurnIndex = Math.max(
+              nextTurnIndex,
+              item.line.turnIndex + 1,
+            );
+            lastTurnId = item.line.turnId;
+          }
           const advanced = await advanceCheckpoint(
             context,
             source,
             item.nextOffset,
+            nextTurnIndex,
+            lastTurnId,
           );
           if (!advanced.ok) return advanced;
           itemsSinceYield += 1;

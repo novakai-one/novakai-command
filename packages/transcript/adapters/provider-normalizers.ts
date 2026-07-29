@@ -29,6 +29,7 @@ function normalizeClaude(
   content: string,
   offset: number,
   nextOffset: number,
+  turnIndex: number,
   resolver?: ProviderSessionResolver,
 ): TranscriptSourceItem {
   if (
@@ -110,7 +111,7 @@ function normalizeClaude(
     line: {
       nativeId: uuid,
       turnId: uuid,
-      turnIndex: offset,
+      turnIndex,
       role,
       text,
       ...(usage ? { tokenUsage: usage } : {}),
@@ -130,6 +131,7 @@ function normalizeCodex(
   content: string,
   offset: number,
   nextOffset: number,
+  turnIndex: number,
 ): TranscriptSourceItem {
   if (
     isRecord(row)
@@ -235,7 +237,7 @@ function normalizeCodex(
     line: {
       ...(nativeId ? { nativeId } : {}),
       turnId,
-      turnIndex: offset,
+      turnIndex,
       role,
       text,
       ...(usage ? { tokenUsage: usage } : {}),
@@ -252,6 +254,7 @@ export function normalizeProviderLine(
   resolver?: ProviderSessionResolver,
   relationState?: TranscriptRelationState,
   agentResolver?: ProviderAgentResolver,
+  turnIndex = 0,
 ): TranscriptSourceItem {
   let row: unknown;
   try {
@@ -279,7 +282,14 @@ export function normalizeProviderLine(
     );
   }
   if (provider === 'claude') {
-    return normalizeClaude(row, content, offset, nextOffset, resolver);
+    return normalizeClaude(
+      row,
+      content,
+      offset,
+      nextOffset,
+      turnIndex,
+      resolver,
+    );
   }
-  return normalizeCodex(row, content, offset, nextOffset);
+  return normalizeCodex(row, content, offset, nextOffset, turnIndex);
 }

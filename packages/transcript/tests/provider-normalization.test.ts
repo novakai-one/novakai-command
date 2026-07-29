@@ -1085,6 +1085,33 @@ test('Codex id-less rows in one turn remain distinct durable lines', async () =>
       lines.ok ? lines.value.map((line) => line.text) : null,
       ['first id-less row', 'second id-less row'],
     );
+    assert.deepEqual(
+      lines.ok ? lines.value.map((line) => line.turnIndex) : null,
+      [0, 0],
+      'multiple rows in one provider turn share its real index',
+    );
+
+    appendFileSync(
+      destination,
+      `${JSON.stringify({
+        type: 'event_msg',
+        payload: {
+          type: 'agent_message',
+          message: 'resumed different turn',
+          turn_id: 'next_codex_turn',
+        },
+      })}\n`,
+    );
+    const resumed = await transcript.ingest();
+    assert.equal(resumed.ok ? resumed.value.added : null, 1);
+    const afterResume = await transcript.linesByProvider('codex');
+    assert.deepEqual(
+      afterResume.ok
+        ? afterResume.value.map((line) => line.turnIndex)
+        : null,
+      [0, 0, 1],
+      'checkpointed indexing continues on appended turns',
+    );
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }
