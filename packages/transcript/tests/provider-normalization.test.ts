@@ -1,11 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  appendFileSync,
   copyFileSync,
   cpSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
+  writeFileSync,
 } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
@@ -126,6 +129,89 @@ test('Kimi numeric tool.result identity is canonical and role is tool', async ()
         turnId: 'kimi:411',
         originalId: '411',
       }],
+    );
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test('Kimi relation context survives checkpoint restart without rescanning metadata', async () => {
+  const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-kimi-relation-'));
+  const root = path.join(workspace, '.novakai');
+  const destination = path.join(
+    root,
+    'transcripts',
+    'kimi',
+    'fixture-session',
+    'events.jsonl',
+  );
+  const rows = readFileSync(
+    path.join(fixtureRoot, 'kimi', 'subagent-relation.jsonl'),
+    'utf8',
+  ).trimEnd().split('\n');
+  try {
+    mkdirSync(path.dirname(destination), { recursive: true });
+    writeFileSync(destination, `${rows.slice(0, 2).join('\n')}\n`);
+    const first = composeTranscript({
+      root,
+      source: createRawTranscriptSource({ root }),
+    });
+    const relationPass = await first.ingest();
+    assert.deepEqual(
+      relationPass.ok
+        ? {
+            added: relationPass.value.added,
+            skipped: relationPass.value.skipped.length,
+            diagnostics: relationPass.value.diagnostics.length,
+          }
+        : null,
+      { added: 0, skipped: 0, diagnostics: 0 },
+    );
+
+    appendFileSync(destination, `${rows[2]}\n`);
+    const restarted = composeTranscript({
+      root,
+      source: createRawTranscriptSource({ root }),
+    });
+    const childPass = await restarted.ingest();
+    assert.deepEqual(
+      childPass.ok
+        ? {
+            added: childPass.value.added,
+            skipped: childPass.value.skipped.length,
+          }
+        : null,
+      { added: 1, skipped: 0 },
+    );
+
+    const tree = await restarted.subagentTree('kimi:410');
+    assert.deepEqual(
+      tree.ok
+        ? tree.value.map((line) => ({
+            role: line.role,
+            text: line.text,
+            turnId: line.turnId,
+            parentTurnId: line.parentTurnId,
+          }))
+        : null,
+      [{
+        role: 'tool',
+        text: 'synthetic child tool result',
+        turnId: 'kimi:411',
+        parentTurnId: 'kimi:410',
+      }],
+    );
+
+    const zeroPass = await restarted.ingest();
+    assert.deepEqual(
+      zeroPass.ok
+        ? {
+            added: zeroPass.value.added,
+            duplicates: zeroPass.value.duplicates,
+            skipped: zeroPass.value.skipped.length,
+          }
+        : null,
+      { added: 0, duplicates: 0, skipped: 0 },
     );
   } finally {
     rmSync(workspace, { recursive: true, force: true });
