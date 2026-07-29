@@ -252,6 +252,83 @@ function normalizeClaude(
   };
 }
 
+function normalizeCodex(
+  row: unknown,
+  content: string,
+  offset: number,
+  nextOffset: number,
+): TranscriptSourceItem {
+  if (
+    !isRecord(row)
+    || (row.type !== 'response_item' && row.type !== 'event_msg')
+    || !isRecord(row.payload)
+  ) {
+    return unsupported(offset, nextOffset, 'codex');
+  }
+  const payload = row.payload;
+  const responseRole = stringValue(payload.role);
+  const eventType = stringValue(payload.type);
+  const role = row.type === 'response_item'
+    ? responseRole
+    : eventType === 'user_message'
+      ? 'user'
+      : eventType === 'agent_message'
+        ? 'assistant'
+        : undefined;
+  if (
+    role !== 'user'
+    && role !== 'assistant'
+    && role !== 'system'
+    && role !== 'tool'
+  ) {
+    return unsupported(offset, nextOffset, 'codex');
+  }
+  const text = (
+    contentText(payload.content)
+    ?? stringValue(payload.message)
+  );
+  if (text === undefined) {
+    return unsupported(offset, nextOffset, 'codex');
+  }
+  const metadata = isRecord(
+    payload.internal_chat_message_metadata_passthrough,
+  )
+    ? payload.internal_chat_message_metadata_passthrough
+    : undefined;
+  const turnId = (
+    stringValue(payload.turn_id)
+    ?? stringValue(metadata?.turn_id)
+    ?? stringValue(payload.id)
+  );
+  if (!turnId) return unsupported(offset, nextOffset, 'codex');
+  const nativeId = stringValue(payload.id) ?? turnId;
+  const source = isRecord(payload.source) ? payload.source : undefined;
+  const diagnostics: TranscriptDiagnostic[] = [];
+  if (source?.subagent !== undefined) {
+    diagnostics.push(diagnostic(
+      'agent_attribution_unavailable',
+      'provider subagent metadata is not a verified durable agent id',
+    ));
+  }
+  return {
+    kind: 'candidate',
+    offset,
+    nextOffset,
+    content,
+    line: {
+      nativeId,
+      turnId,
+      turnIndex: offset,
+      role,
+      text,
+      ...(numericUsage(payload.usage)
+        ? { tokenUsage: numericUsage(payload.usage) }
+        : {}),
+    },
+    ...(diagnostics.length > 0 ? { diagnostics } : {}),
+  };
+}
+
 function normalizeLine(
   provider: ProviderNameT,
   content: string,
@@ -279,7 +356,7 @@ function normalizeLine(
   if (provider === 'claude') {
     return normalizeClaude(row, content, offset, nextOffset, resolver);
   }
-  return unsupported(offset, nextOffset, provider);
+  return normalizeCodex(row, content, offset, nextOffset);
 }
 
 async function filesBelow(dir: string, prefix = ''): Promise<string[]> {
