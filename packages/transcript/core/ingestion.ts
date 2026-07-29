@@ -127,6 +127,7 @@ function dedupKey(
     item.content,
     item.offset,
     parentId,
+    source.sourceId,
   ]));
   return `${source.provider}:fallback:${fallback}`;
 }

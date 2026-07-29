@@ -295,12 +295,12 @@ test('Kimi sessionless numeric turns use canonical fallback without trusted nati
             duplicates: ingested.value.duplicates,
           }
         : null,
-      { added: 1, duplicates: 1 },
+      { added: 2, duplicates: 0 },
     );
     const lines = await transcript.linesByProvider('kimi');
     assert.equal(lines.ok, true);
     if (!lines.ok) return;
-    assert.equal(lines.value.length, 1);
+    assert.equal(lines.value.length, 2);
     assert.ok(
       lines.value.every(
         (line) =>

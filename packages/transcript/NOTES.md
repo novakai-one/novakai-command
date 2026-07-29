@@ -31,3 +31,8 @@ amend the Foundation-owned `SourceAttribution` schema before Transcript can
 persist that durable author reference. B2b preserves only explicitly exposed
 `agentId`/`parentAgentId`; provider-native session, sidechain, thread, and
 subagent strings are never promoted to durable Novakai identity.
+
+The B2b audit disposal amends the R3-14 fallback identity to
+`hash(content + offset + parent-id + sourceId)`. The opaque `sourceId` keeps
+identical position/content tuples from different custody files distinct while
+preserving deterministic replay identity within one source.

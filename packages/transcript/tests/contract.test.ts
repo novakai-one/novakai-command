@@ -206,7 +206,7 @@ test('durable incremental checkpoints make restart re-ingestion a zero-add resul
       ],
     );
     const afterRestart = await restarted.linesByProvider('claude');
-    assert.equal(afterRestart.ok && afterRestart.value.length, 2);
+    assert.equal(afterRestart.ok && afterRestart.value.length, 3);
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }
@@ -240,7 +240,7 @@ test('read-only Transcript queries filter by session, provider instant, and scop
     );
     assert.deepEqual(
       subagentTree.ok ? subagentTree.value.map((line) => line.text) : null,
-      ['fallback'],
+      ['fallback', 'fallback'],
     );
   } finally {
     rmSync(workspace, { recursive: true, force: true });
