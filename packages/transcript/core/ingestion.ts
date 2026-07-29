@@ -36,6 +36,7 @@ import {
   type TranscriptSourceSkip,
 } from '../contract/schemas.js';
 import type { TranscriptContext } from './composition.js';
+import { TranscriptFailpointCrash } from './failpoints.js';
 
 const hash = (value: string): string =>
   createHash('sha256').update(value).digest('hex');
@@ -525,6 +526,7 @@ export async function ingest(
           if (!skipped.ok) return skipped;
           result.skipped.push(skipped.value);
         } else {
+          context.failpoint.hit('transcript.beforeLineAppend');
           const persisted = await persistCandidate(context, source, item);
           if (!persisted.ok) return persisted;
           result[persisted.value === 'added' ? 'added' : 'duplicates'] += 1;
@@ -547,6 +549,7 @@ export async function ingest(
         if (!advanced.ok) return advanced;
       }
     } catch (cause) {
+      if (cause instanceof TranscriptFailpointCrash) throw cause;
       return { ok: false, error: sourceFailure(source.sourceId, cause) };
     }
   }

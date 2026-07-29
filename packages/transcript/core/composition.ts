@@ -8,6 +8,10 @@ import {
   createTranscriptContract,
   type TranscriptContract,
 } from './contract.js';
+import {
+  injectTranscriptFailpoint,
+  type TranscriptFailpoint,
+} from './failpoints.js';
 
 export interface ComposeTranscriptOptions {
   root: string;
@@ -20,6 +24,7 @@ export interface ComposeTranscriptOptions {
 export interface TranscriptContext {
   readonly handle: ScopedStoreHandle;
   readonly source: TranscriptSourceAdapter;
+  readonly failpoint: TranscriptFailpoint;
 }
 
 export function composeTranscript(
@@ -41,5 +46,8 @@ export function composeTranscript(
       lockTimeoutMs: options.lockTimeoutMs,
     }),
     source: options.source,
+    // Ambient configuration is resolved once at the composition edge. The
+    // Transcript core receives injected behavior and never reads process.env.
+    failpoint: injectTranscriptFailpoint(process.env.NVK_FAILPOINT),
   });
 }
