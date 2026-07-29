@@ -953,7 +953,6 @@ test('Codex raw-copy adapter normalizes response items and events without inferr
         added: 2,
         diagnostics: [
           'agent_attribution_unavailable',
-          'agent_attribution_unavailable',
         ],
       },
     );
