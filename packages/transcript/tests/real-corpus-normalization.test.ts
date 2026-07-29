@@ -173,6 +173,53 @@ async function deriveMeasuredSample(
   return counts;
 }
 
+async function deriveEmptyAgentMetadataSample(
+  corpusRoot: string,
+  sampleRoot: string,
+): Promise<number> {
+  const destination = path.join(
+    sampleRoot,
+    'transcripts',
+    'codex',
+    'empty-agent-metadata.jsonl',
+  );
+  mkdirSync(path.dirname(destination), { recursive: true });
+  let count = 0;
+  for (
+    const source of jsonlFilesBelow(
+      path.join(corpusRoot, 'transcripts', 'codex'),
+    )
+  ) {
+    const lines = createInterface({
+      input: createReadStream(source),
+      crlfDelay: Infinity,
+    });
+    for await (const content of lines) {
+      let row: unknown;
+      try {
+        row = JSON.parse(content);
+      } catch {
+        continue;
+      }
+      if (!isRecord(row) || row.type !== 'event_msg') continue;
+      const payload = isRecord(row.payload) ? row.payload : undefined;
+      if (
+        payload?.type !== 'agent_message'
+        || payload.message !== ''
+        || (
+          !Object.hasOwn(payload, 'phase')
+          && !Object.hasOwn(payload, 'memory_citation')
+        )
+      ) {
+        continue;
+      }
+      appendFileSync(destination, `${content}\n`);
+      count += 1;
+    }
+  }
+  return count;
+}
+
 test(
   'real custody residual shapes normalize without false quarantine',
   { skip: process.env.NVK_TRANSCRIPT_CORPUS_ROOT === undefined },
@@ -242,6 +289,61 @@ test(
           provider === 'claude' ? 0 : 4,
         );
       }
+    } finally {
+      rmSync(workspace, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  'empty Codex agent telemetry is metadata rather than corrupt input',
+  { skip: process.env.NVK_TRANSCRIPT_CORPUS_ROOT === undefined },
+  async () => {
+    const corpusRoot = path.resolve(
+      process.env.NVK_TRANSCRIPT_CORPUS_ROOT!,
+    );
+    const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-empty-agent-'));
+    const root = path.join(workspace, '.novakai');
+    try {
+      const sampleCount = await deriveEmptyAgentMetadataSample(
+        corpusRoot,
+        root,
+      );
+      assert.equal(sampleCount, 2);
+      const transcript = composeTranscript({
+        root,
+        source: createRawTranscriptSource({ root }),
+      });
+      const ingested = await transcript.ingest();
+      assert.deepEqual(
+        ingested.ok
+          ? {
+              added: ingested.value.added,
+              skipped: ingested.value.skipped.map(
+                (entry) => entry.skip.code,
+              ),
+            }
+          : null,
+        { added: 0, skipped: ['non_message', 'non_message'] },
+      );
+
+      const foundation = composeHandle({
+        root,
+        dataRoot: path.join(root, 'stores'),
+        capability: 'transcript',
+        allowedKinds: ['quarantine'],
+        principal: 'sys_ingester',
+      });
+      const quarantined = await listObjects<QuarantineTombstone>(
+        foundation,
+        'quarantine',
+        undefined,
+        { limit: 10 },
+      );
+      assert.equal(
+        quarantined.ok ? quarantined.value.items.length : -1,
+        0,
+      );
     } finally {
       rmSync(workspace, { recursive: true, force: true });
     }
