@@ -305,3 +305,77 @@ test('provider-scoped stored turn IDs keep equal native trees isolated', async (
     rmSync(workspace, { recursive: true, force: true });
   }
 });
+
+test('ingestion begins reading the first source before discovery completes', async () => {
+  const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-stream-sources-'));
+  const root = path.join(workspace, '.novakai');
+  let releaseDiscovery!: () => void;
+  let markFirstRead!: () => void;
+  const discoveryGate = new Promise<void>((resolve) => {
+    releaseDiscovery = resolve;
+  });
+  const firstRead = new Promise<void>((resolve) => {
+    markFirstRead = resolve;
+  });
+  const firstSource = {
+    provider: 'kimi' as const,
+    sourceId: `source_${'1'.repeat(64)}`,
+  };
+  const secondSource = {
+    provider: 'kimi' as const,
+    sourceId: `source_${'2'.repeat(64)}`,
+  };
+  const source = {
+    async *sources(): AsyncIterable<TranscriptSource> {
+      yield firstSource;
+      await discoveryGate;
+      yield secondSource;
+    },
+    async *read(
+      candidate: TranscriptSource,
+    ): AsyncIterable<TranscriptSourceItem> {
+      if (candidate.sourceId === firstSource.sourceId) markFirstRead();
+      yield {
+        kind: 'candidate',
+        offset: 0,
+        nextOffset: 20,
+        content: `content:${candidate.sourceId}`,
+        line: {
+          nativeId: candidate.sourceId,
+          turnId: candidate.sourceId,
+          turnIndex: 0,
+          role: 'assistant',
+          text: `line:${candidate.sourceId}`,
+        },
+      };
+    },
+  } as unknown as TranscriptSourceAdapter;
+
+  try {
+    const transcript = composeTranscript({ root, source });
+    const ingesting = transcript.ingest();
+    const beganBeforeDiscoveryCompleted = await Promise.race([
+      firstRead.then(() => true),
+      ingesting.then(() => false),
+      new Promise<false>((resolve) => {
+        setTimeout(() => resolve(false), 100);
+      }),
+    ]);
+    assert.equal(beganBeforeDiscoveryCompleted, true);
+
+    releaseDiscovery();
+    const result = await ingesting;
+    assert.deepEqual(
+      result.ok
+        ? {
+            added: result.value.added,
+            duplicates: result.value.duplicates,
+          }
+        : null,
+      { added: 2, duplicates: 0 },
+    );
+  } finally {
+    releaseDiscovery();
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
