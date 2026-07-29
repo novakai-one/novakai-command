@@ -39,6 +39,11 @@ const hash = (value: string): string =>
 const operationId = (value: string): ClientOpId =>
   `op_${hash(value)}` as ClientOpId;
 
+const scopedTurnId = (
+  provider: ProviderNameT,
+  turnId: string,
+): string => `${provider}:${turnId}`;
+
 function invalidInput(
   label: string,
   issues: Array<{ path: PropertyKey[]; message: string }>,
@@ -318,14 +323,19 @@ async function persistCandidate(
     sourceId: source.sourceId,
     sourceOffset: item.offset,
     dedupKey: key,
-    turnId: line.turnId ?? line.nativeId ?? id,
+    turnId: scopedTurnId(
+      source.provider,
+      line.turnId ?? line.nativeId ?? id,
+    ),
     turnIndex: line.turnIndex,
     role: line.role,
     text: line.text,
     ...(line.tokenUsage ? { tokenUsage: line.tokenUsage } : {}),
     ...(line.agentId ? { agentId: line.agentId } : {}),
     ...(line.parentAgentId ? { parentAgentId: line.parentAgentId } : {}),
-    ...(line.parentTurnId ? { parentTurnId: line.parentTurnId } : {}),
+    ...(line.parentTurnId
+      ? { parentTurnId: scopedTurnId(source.provider, line.parentTurnId) }
+      : {}),
     ...(line.sessionRef ? { sessionRef: line.sessionRef } : {}),
   });
   const created = await createObject<TranscriptLineT>(
