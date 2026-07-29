@@ -146,3 +146,84 @@ test('TRN-002 Claude raw-copy subagent parentUuid is provider-scoped and queryab
     rmSync(workspace, { recursive: true, force: true });
   }
 });
+
+test('Codex raw-copy adapter normalizes response items and events without inferring thread ids as attribution', async () => {
+  const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-codex-adapter-'));
+  const root = path.join(workspace, '.novakai');
+  const destination = path.join(
+    root,
+    'transcripts',
+    'codex',
+    'fixture-rollout',
+    'rollout.jsonl',
+  );
+  try {
+    mkdirSync(path.dirname(destination), { recursive: true });
+    copyFileSync(
+      path.join(fixtureRoot, 'codex', 'rollout.jsonl'),
+      destination,
+    );
+    const transcript = composeTranscript({
+      root,
+      source: createRawTranscriptSource({ root }),
+    });
+
+    const ingested = await transcript.ingest();
+    assert.equal(ingested.ok, true);
+    assert.deepEqual(
+      ingested.ok
+        ? {
+            added: ingested.value.added,
+            diagnostics: ingested.value.diagnostics.map(
+              (entry) => entry.diagnostic.code,
+            ),
+          }
+        : null,
+      {
+        added: 2,
+        diagnostics: [
+          'agent_attribution_unavailable',
+          'agent_attribution_unavailable',
+        ],
+      },
+    );
+
+    const queried = await transcript.linesByProvider('codex');
+    assert.equal(queried.ok, true);
+    assert.deepEqual(
+      queried.ok
+        ? queried.value.map((line) => ({
+            role: line.role,
+            text: line.text,
+            turnId: line.turnId,
+            agentId: line.agentId,
+            parentAgentId: line.parentAgentId,
+            parentTurnId: line.parentTurnId,
+            sessionRef: line.sessionRef,
+          }))
+        : null,
+      [
+        {
+          role: 'assistant',
+          text: 'synthetic codex response',
+          turnId: 'codex:codex_turn_fixture',
+          agentId: undefined,
+          parentAgentId: undefined,
+          parentTurnId: undefined,
+          sessionRef: undefined,
+        },
+        {
+          role: 'assistant',
+          text: 'synthetic codex event',
+          turnId: 'codex:codex_event_turn_fixture',
+          agentId: undefined,
+          parentAgentId: undefined,
+          parentTurnId: undefined,
+          sessionRef: undefined,
+        },
+      ],
+    );
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
