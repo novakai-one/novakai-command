@@ -14,5 +14,5 @@
     "skipLibCheck": true,
     "types": ["node"]
   },
-  "include": ["contract/**/*.ts", "core/**/*.ts", "tests/**/*.ts"]
+  "include": ["contract/**/*.ts", "core/**/*.ts", "cli/**/*.ts", "tests/**/*.ts"]
 }
