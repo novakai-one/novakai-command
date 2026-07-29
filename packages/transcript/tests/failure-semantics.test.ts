@@ -397,3 +397,71 @@ test('NVK_FAILPOINT transcript.afterQuarantineBeforeSkip reuses one tombstone th
     rmSync(workspace, { recursive: true, force: true });
   }
 });
+
+test('provider path identity is persisted only as one deterministic opaque source reference', async () => {
+  const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-source-privacy-'));
+  const root = path.join(workspace, '.novakai');
+  const pathSentinel = 'provider_path_identity_must_not_persist';
+  const destination = path.join(
+    root,
+    'transcripts',
+    'kimi',
+    pathSentinel,
+    'nested-session',
+    'events.jsonl',
+  );
+  try {
+    mkdirSync(path.dirname(destination), { recursive: true });
+    copyFileSync(
+      path.join(fixtureRoot, 'kimi', 'failures-then-valid.jsonl'),
+      destination,
+    );
+    const transcript = composeTranscript({
+      root,
+      source: createRawTranscriptSource({ root }),
+    });
+    const ingested = await transcript.ingest();
+    assert.equal(ingested.ok, true);
+    if (!ingested.ok) return;
+    const lines = await transcript.linesByProvider('kimi');
+    assert.equal(lines.ok, true);
+    if (!lines.ok) return;
+
+    const persistedSourceIds = [
+      ...ingested.value.skipped.map((entry) => entry.sourceId),
+      ...ingested.value.diagnostics.map((entry) => entry.sourceId),
+      ...lines.value.map((line) => line.sourceId),
+    ];
+    assert.ok(persistedSourceIds.length > 0);
+    assert.equal(new Set(persistedSourceIds).size, 1);
+    assert.match(persistedSourceIds[0]!, /^source_[a-f0-9]{64}$/u);
+    assert.ok(
+      persistedSourceIds.every((sourceId) => !sourceId.includes(pathSentinel)),
+    );
+    assert.ok(
+      lines.value.every(
+        (line) => !line.sourceAttribution.origin.includes(pathSentinel),
+      ),
+    );
+
+    const queryHandle = composeHandle({
+      root,
+      dataRoot: path.join(root, 'stores'),
+      capability: 'transcript',
+      allowedKinds: ['transcriptCheckpoint'],
+      principal: 'sys_ingester',
+    });
+    const checkpoints = await listObjects<{
+      sourceId: string;
+    }>(queryHandle, 'transcriptCheckpoint');
+    assert.equal(checkpoints.ok, true);
+    assert.deepEqual(
+      checkpoints.ok
+        ? checkpoints.value.items.map((item) => item.object.sourceId)
+        : null,
+      [persistedSourceIds[0]],
+    );
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
