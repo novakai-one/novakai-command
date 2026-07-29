@@ -142,6 +142,68 @@ test('Kimi numeric tool.result identity is canonical and role is tool', async ()
   }
 });
 
+test('Kimi same-turn tool results remain distinct transcript lines', async () => {
+  const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-kimi-line-identity-'));
+  const root = path.join(workspace, '.novakai');
+  const destination = path.join(
+    root,
+    'transcripts',
+    'kimi',
+    'fixture-session',
+    'events.jsonl',
+  );
+  try {
+    mkdirSync(path.dirname(destination), { recursive: true });
+    copyFileSync(
+      path.join(fixtureRoot, 'kimi', 'tool-result-identity.jsonl'),
+      destination,
+    );
+    const transcript = composeTranscript({
+      root,
+      source: createRawTranscriptSource({ root }),
+    });
+
+    const ingested = await transcript.ingest();
+    assert.deepEqual(
+      ingested.ok
+        ? {
+            added: ingested.value.added,
+            duplicates: ingested.value.duplicates,
+          }
+        : null,
+      { added: 2, duplicates: 0 },
+    );
+    const queried = await transcript.linesByProvider('kimi');
+    assert.equal(queried.ok, true);
+    if (!queried.ok) return;
+    assert.equal(queried.value.length, 2);
+    assert.deepEqual(
+      queried.value.map((line) => line.role),
+      ['tool', 'tool'],
+    );
+    assert.equal(
+      new Set(queried.value.map(
+        (line) => line.sourceAttribution.originalId,
+      )).size,
+      2,
+    );
+    assert.ok(
+      queried.value.every(
+        (line) =>
+          /^event_[a-f0-9]{64}$/u.test(
+            line.sourceAttribution.originalId ?? '',
+          ),
+      ),
+    );
+    assert.equal(
+      new Set(queried.value.map((line) => line.turnId)).size,
+      1,
+    );
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
 test('Kimi relation context survives checkpoint restart without rescanning metadata', async () => {
   const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-kimi-relation-'));
   const root = path.join(workspace, '.novakai');
