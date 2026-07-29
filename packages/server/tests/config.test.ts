@@ -31,8 +31,8 @@ test('first boot with no config.jsonl materializes defaults with ZERO principals
   assert.deepEqual(cfg.principals, [], 'first boot must have EMPTY principals');
   assert.deepEqual(cfg.bindings, []);
   assert.equal(cfg.dev.allowMock, false, 'mock provider is off unless the operator turns it on');
-  assert.equal(cfg.dev.watchTranscripts, false,
-    'transcript watchers are off until they stop starving the HTTP loop (B1b/S3)');
+  assert.equal(cfg.transcript.ingest, false,
+    'fresh instances never ingest until the operator enables transcript.ingest');
   assert.equal(cfg.supervision.usageIntervalSec, 300);
   assert.equal(cfg.supervision.driftIntervalSec, 300);
   assert.ok(cfg.providers.kimi, 'provider settings materialize for kimi');
@@ -124,6 +124,41 @@ test('agent-person bindings and provider settings round-trip through the config 
   assert.deepEqual(cfg.bindings, [{ agentId: 'agent_a', personId: 'person_a' }]);
   assert.equal(cfg.providers.kimi.cliPath, '/tmp/kimi');
   assert.equal(cfg.dev.allowMock, true);
+});
+
+test('transcript.ingest is a dedicated config authority and round-trips independently of dev config', async () => {
+  const dir = root();
+  const opened = await openConfigStore({ root: dir, principal: 'sys_spine' });
+  assert.equal(opened.ok, true);
+  if (!opened.ok) return;
+  const store = opened.value;
+
+  const enabled = await store.set(
+    { configKind: 'transcript', ingest: true },
+    mintClientOpId(),
+  );
+  assert.equal(enabled.ok, true);
+  assert.equal(store.current().transcript.ingest, true);
+
+  await store.set(
+    { configKind: 'dev', allowMock: true, watchTranscripts: false },
+    mintClientOpId(),
+  );
+  assert.equal(
+    store.current().transcript.ingest,
+    true,
+    'legacy dev input cannot override the dedicated transcript authority',
+  );
+
+  const reopened = await openConfigStore({
+    root: dir,
+    principal: 'sys_spine',
+  });
+  assert.equal(reopened.ok, true);
+  assert.equal(
+    reopened.ok ? reopened.value.current().transcript.ingest : null,
+    true,
+  );
 });
 
 test('config-set writes through the server config engine and a live store reloads without restart', async () => {
