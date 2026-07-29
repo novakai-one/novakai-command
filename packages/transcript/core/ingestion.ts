@@ -30,14 +30,21 @@ import {
   type TranscriptDiagnosticJournalEntry as TranscriptDiagnosticJournalEntryT,
   type TranscriptJournalEntry as TranscriptJournalEntryT,
   type TranscriptLine as TranscriptLineT,
+  type TranscriptRelationDelta,
+  type TranscriptRelationJournalEntry as TranscriptRelationJournalEntryT,
   type TranscriptRelationState,
   type TranscriptSkipJournalEntry as TranscriptSkipJournalEntryT,
   type TranscriptSource as TranscriptSourceT,
   type TranscriptSourceCandidate,
+  type TranscriptSourceContext,
   type TranscriptSourceSkip,
 } from '../contract/schemas.js';
 import type { TranscriptContext } from './composition.js';
 import { TranscriptFailpointCrash } from './failpoints.js';
+import {
+  applyTranscriptRelationDelta,
+  emptyTranscriptRelationState,
+} from './relations.js';
 
 const hash = (value: string): string =>
   createHash('sha256').update(value).digest('hex');
@@ -192,7 +199,6 @@ async function advanceCheckpoint(
   context: TranscriptContext,
   source: TranscriptSourceT,
   nextOffset: number,
-  relationState?: TranscriptRelationState,
 ): Promise<Result<TranscriptCheckpointT, TranscriptError>> {
   for (;;) {
     const current = await readCheckpoint(context, source);
@@ -212,7 +218,6 @@ async function advanceCheckpoint(
         provider: source.provider,
         sourceId: source.sourceId,
         offset: nextOffset,
-        ...(relationState ? { relationState } : {}),
         updatedAt: now,
       });
       const created = await createObject<TranscriptCheckpointT>(
@@ -224,14 +229,17 @@ async function advanceCheckpoint(
       if (created.error.code === 'CasConflict') continue;
       return created;
     }
+    const patch: Partial<TranscriptCheckpointT> & {
+      relationState?: undefined;
+    } = {
+      offset: nextOffset,
+      relationState: undefined,
+      updatedAt: now,
+    };
     const updated = await updateObject<TranscriptCheckpointT>(
       context.handle,
       current.value.object.id as ObjectId,
-      {
-        offset: nextOffset,
-        ...(relationState ? { relationState } : {}),
-        updatedAt: now,
-      },
+      patch,
       current.value.version,
       operationId(
         `checkpoint:update:${current.value.object.id}:${nextOffset}`,
@@ -241,6 +249,118 @@ async function advanceCheckpoint(
     if (updated.error.code === 'CasConflict') continue;
     return updated;
   }
+}
+
+async function persistRelation(
+  context: TranscriptContext,
+  source: TranscriptSourceT,
+  item: TranscriptSourceContext,
+  relation: TranscriptRelationDelta,
+): Promise<Result<TranscriptRelationJournalEntryT, TranscriptError>> {
+  const id = `transcriptJournal_${hash(
+    `${source.provider}:${source.sourceId}:${item.offset}:relation`,
+  )}`;
+  const now = new Date().toISOString();
+  const draft = TranscriptJournalEntry.parse({
+    kind: 'transcriptJournal',
+    id,
+    schemaVersion: 1,
+    createdAt: now,
+    permissionLevel: 'private',
+    createdBy: 'overridden-by-foundation',
+    provider: source.provider,
+    sourceId: source.sourceId,
+    offset: item.offset,
+    nextOffset: item.nextOffset,
+    outcome: 'relation',
+    relation,
+  });
+  const created = await createObject<TranscriptJournalEntryT>(
+    context.handle,
+    draft,
+    operationId(`journal:${id}`),
+  );
+  if (created.ok) {
+    const parsed = parseJournal(created.value.object);
+    if (parsed.ok && parsed.value.outcome === 'relation') {
+      return { ok: true, value: parsed.value };
+    }
+    return {
+      ok: false,
+      error: invalidRecord(
+        'transcriptJournal',
+        id,
+        [{ path: ['outcome'], message: 'expected relation entry' }],
+      ),
+    };
+  }
+  if (created.error.code !== 'CasConflict') return created;
+  const found = await getObjectWithReadFailure<TranscriptJournalEntryT>(
+    context.handle,
+    'transcriptJournal',
+    id as ObjectId,
+  );
+  if (!found.ok) return found;
+  if (isAbsent(found.value)) return created;
+  const parsed = parseJournal(found.value.object);
+  if (parsed.ok && parsed.value.outcome === 'relation') {
+    return { ok: true, value: parsed.value };
+  }
+  return {
+    ok: false,
+    error: invalidRecord(
+      'transcriptJournal',
+      id,
+      [{ path: ['outcome'], message: 'expected relation entry' }],
+    ),
+  };
+}
+
+async function readRelationState(
+  context: TranscriptContext,
+  source: TranscriptSourceT,
+): Promise<Result<TranscriptRelationState, TranscriptError>> {
+  const relations: TranscriptRelationJournalEntryT[] = [];
+  let cursor: string | undefined;
+  do {
+    const listed = await listObjects<TranscriptJournalEntryT>(
+      context.handle,
+      'transcriptJournal',
+      {
+        provider: source.provider,
+        sourceId: source.sourceId,
+        outcome: 'relation',
+      },
+      { ...(cursor ? { cursor } : {}), limit: 1_000 },
+    );
+    if (!listed.ok) return listed;
+    for (const stored of listed.value.items) {
+      const parsed = parseJournal(stored.object);
+      if (!parsed.ok) return parsed;
+      if (parsed.value.outcome !== 'relation') {
+        return {
+          ok: false,
+          error: invalidRecord(
+            'transcriptJournal',
+            parsed.value.id,
+            [{ path: ['outcome'], message: 'expected relation entry' }],
+          ),
+        };
+      }
+      relations.push(parsed.value);
+    }
+    cursor = listed.value.nextCursor;
+  } while (cursor);
+
+  relations.sort((left, right) => left.offset - right.offset);
+  return {
+    ok: true,
+    value: relations.reduce(
+      (state, entry) =>
+        applyTranscriptRelationDelta(state, entry.relation),
+      emptyTranscriptRelationState(),
+    ),
+  };
 }
 
 async function persistSkip(
@@ -511,7 +631,9 @@ export async function ingest(
       const checkpoint = await readCheckpoint(context, source);
       if (!checkpoint.ok) return checkpoint;
       const fromOffset = checkpoint.value?.object.offset ?? 0;
-      let relationState = checkpoint.value?.object.relationState;
+      const restoredRelations = await readRelationState(context, source);
+      if (!restoredRelations.ok) return restoredRelations;
+      const relationState = restoredRelations.value;
       try {
         for await (
           const rawItem of context.source.read(
@@ -532,7 +654,15 @@ export async function ingest(
           }
           const item = parsedItem.data;
           if (item.kind === 'context') {
-            relationState = item.relationState;
+            if (item.relation) {
+              const persisted = await persistRelation(
+                context,
+                source,
+                item,
+                item.relation,
+              );
+              if (!persisted.ok) return persisted;
+            }
           } else if (item.kind === 'skip') {
             const quarantined = await quarantineRejectedItem(
               context,
@@ -569,7 +699,6 @@ export async function ingest(
             context,
             source,
             item.nextOffset,
-            relationState,
           );
           if (!advanced.ok) return advanced;
           itemsSinceYield += 1;

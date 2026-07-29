@@ -43,14 +43,35 @@ export type TranscriptSource = z.infer<typeof TranscriptSource>;
 
 const OpaqueRelationKey = z.string().regex(/^relation_[a-f0-9]{64}$/);
 
+export const TranscriptRelationDelta = z.discriminatedUnion('type', [
+  z.object({
+    type: z.literal('parent'),
+    parentKey: OpaqueRelationKey,
+    parentTurnId: z.string().min(1),
+    remainingChildren: z.number().int().positive(),
+    parentAgentId: z.string().min(1).optional(),
+  }).strict(),
+  z.object({
+    type: z.literal('child'),
+    childKey: OpaqueRelationKey,
+    parentKey: OpaqueRelationKey,
+    agentId: z.string().min(1).optional(),
+  }).strict(),
+]);
+export type TranscriptRelationDelta = z.infer<
+  typeof TranscriptRelationDelta
+>;
+
 export const TranscriptRelationState = z.object({
   parents: z.record(OpaqueRelationKey, z.object({
-    nativeParentTurnId: z.string().min(1),
+    parentTurnId: z.string().min(1),
+    remainingChildren: z.number().int().positive(),
     parentAgentId: z.string().min(1).optional(),
   }).strict()),
   children: z.record(OpaqueRelationKey, z.object({
-    parentKey: OpaqueRelationKey,
+    parentTurnId: z.string().min(1),
     agentId: z.string().min(1).optional(),
+    parentAgentId: z.string().min(1).optional(),
   }).strict()),
 }).strict();
 export type TranscriptRelationState = z.infer<
@@ -114,7 +135,7 @@ export type TranscriptSourceSkip = z.infer<typeof TranscriptSourceSkip>;
 
 export const TranscriptSourceContext = SourcePosition.extend({
   kind: z.literal('context'),
-  relationState: TranscriptRelationState,
+  relation: TranscriptRelationDelta.optional(),
 }).superRefine((item, context) => {
   if (item.nextOffset <= item.offset) {
     context.addIssue({
@@ -184,9 +205,18 @@ export type TranscriptDiagnosticJournalEntry = z.infer<
   typeof TranscriptDiagnosticJournalEntry
 >;
 
+export const TranscriptRelationJournalEntry = TranscriptJournalBase.extend({
+  outcome: z.literal('relation'),
+  relation: TranscriptRelationDelta,
+});
+export type TranscriptRelationJournalEntry = z.infer<
+  typeof TranscriptRelationJournalEntry
+>;
+
 export const TranscriptJournalEntry = z.discriminatedUnion('outcome', [
   TranscriptSkipJournalEntry,
   TranscriptDiagnosticJournalEntry,
+  TranscriptRelationJournalEntry,
 ]);
 export type TranscriptJournalEntry = z.infer<
   typeof TranscriptJournalEntry
@@ -200,7 +230,6 @@ export const TranscriptCheckpoint = Envelope.extend({
   provider: ProviderName,
   sourceId: z.string().min(1),
   offset: z.number().int().nonnegative(),
-  relationState: TranscriptRelationState.optional(),
   updatedAt: z.string().datetime(),
 });
 export type TranscriptCheckpoint = z.infer<typeof TranscriptCheckpoint>;

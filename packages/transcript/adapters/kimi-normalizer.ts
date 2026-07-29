@@ -57,10 +57,6 @@ function turnIdentity(
   return `turn_${digest}`;
 }
 
-function emptyRelationState(): TranscriptRelationState {
-  return { parents: {}, children: {} };
-}
-
 export function normalizeKimi(
   row: unknown,
   content: string,
@@ -90,8 +86,14 @@ export function normalizeKimi(
     stringValue(payload.sessionId)
     ?? stringValue(envelope.session_id)
   );
-  const currentRelations = relationState ?? emptyRelationState();
+  const currentRelations = relationState ?? { parents: {}, children: {} };
   if (eventType === 'tool.call.started') {
+    const toolName = stringValue(payload.name);
+    if (toolName !== 'Agent') {
+      return toolName === 'AgentSwarm'
+        ? unsupported(offset, nextOffset, 'kimi')
+        : { kind: 'context', offset, nextOffset };
+    }
     const toolCallId = stringValue(payload.toolCallId);
     const nativeTurnId = identityValue(payload.turnId);
     const turnId = nativeSessionId && nativeTurnId
@@ -109,15 +111,12 @@ export function normalizeKimi(
       kind: 'context',
       offset,
       nextOffset,
-      relationState: {
-        parents: {
-          ...currentRelations.parents,
-          [parentKey]: {
-            nativeParentTurnId: turnId,
-            ...(parentAgentId ? { parentAgentId } : {}),
-          },
-        },
-        children: currentRelations.children,
+      relation: {
+        type: 'parent',
+        parentKey,
+        parentTurnId: turnId,
+        remainingChildren: 1,
+        ...(parentAgentId ? { parentAgentId } : {}),
       },
     };
   }
@@ -128,20 +127,20 @@ export function normalizeKimi(
       return unsupported(offset, nextOffset, 'kimi');
     }
     const childKey = relationKey('agent', subagentId);
+    const parentKey = relationKey('tool', parentToolCallId);
+    if (!currentRelations.parents[parentKey]) {
+      return { kind: 'context', offset, nextOffset };
+    }
     const agentId = agentResolver?.('kimi', subagentId);
     return {
       kind: 'context',
       offset,
       nextOffset,
-      relationState: {
-        parents: currentRelations.parents,
-        children: {
-          ...currentRelations.children,
-          [childKey]: {
-            parentKey: relationKey('tool', parentToolCallId),
-            ...(agentId ? { agentId } : {}),
-          },
-        },
+      relation: {
+        type: 'child',
+        childKey,
+        parentKey,
+        ...(agentId ? { agentId } : {}),
       },
     };
   }
@@ -173,9 +172,6 @@ export function normalizeKimi(
   const childRelation = nativeAgentId
     ? currentRelations.children[relationKey('agent', nativeAgentId)]
     : undefined;
-  const parentRelation = childRelation
-    ? currentRelations.parents[childRelation.parentKey]
-    : undefined;
   const resolvedAgentId = (
     childRelation?.agentId
     ?? (nativeAgentId
@@ -183,7 +179,7 @@ export function normalizeKimi(
       : undefined)
   );
   const resolvedParentAgentId = (
-    parentRelation?.parentAgentId
+    childRelation?.parentAgentId
     ?? (nativeParentAgentId
       ? agentResolver?.('kimi', nativeParentAgentId)
       : undefined)
@@ -228,8 +224,8 @@ export function normalizeKimi(
     ...(resolvedParentAgentId
       ? { parentAgentId: resolvedParentAgentId }
       : {}),
-    ...(parentRelation
-      ? { parentTurnId: parentRelation.nativeParentTurnId }
+    ...(childRelation
+      ? { parentTurnId: childRelation.parentTurnId }
       : {}),
     ...(resolvedSession?.success
       ? { sessionRef: resolvedSession.data }

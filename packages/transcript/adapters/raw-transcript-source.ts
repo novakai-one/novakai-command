@@ -9,6 +9,7 @@ import {
   type TranscriptSourceItem,
 } from '../contract/schemas.js';
 import type { TranscriptSourceAdapter } from '../contract/source.js';
+import { applyTranscriptRelationDelta } from '../core/relations.js';
 import {
   normalizeProviderLine,
   type ProviderAgentResolver,
@@ -179,8 +180,11 @@ class RawTranscriptSource implements TranscriptSourceAdapter {
             currentRelations,
             this.options.resolveAgentId,
           );
-          if (item.kind === 'context') {
-            currentRelations = item.relationState;
+          if (item.kind === 'context' && item.relation) {
+            currentRelations = applyTranscriptRelationDelta(
+              currentRelations ?? { parents: {}, children: {} },
+              item.relation,
+            );
           }
           yield item;
           buffered = buffered.subarray(newline + 1);
