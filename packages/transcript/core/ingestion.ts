@@ -633,6 +633,9 @@ export async function ingest(
             }
             const skipped = await persistSkip(context, source, item);
             if (!skipped.ok) return skipped;
+            context.failpoint.hit(
+              'transcript.afterSkipJournalBeforeCheckpoint',
+            );
             result.skipped.push(skipped.value);
           } else {
             context.failpoint.hit('transcript.beforeLineAppend');
@@ -651,6 +654,9 @@ export async function ingest(
                 diagnostic,
               );
               if (!journaled.ok) return journaled;
+              context.failpoint.hit(
+                'transcript.afterDiagnosticJournalBeforeCheckpoint',
+              );
               diagnosticCodes.value.add(diagnostic.code);
               result.diagnostics.push(journaled.value);
             }
@@ -662,6 +668,7 @@ export async function ingest(
             );
             lastTurnId = item.line.turnId;
           }
+          context.failpoint.hit('transcript.beforeCheckpointAppend');
           const advanced = await advanceCheckpoint(
             context,
             source,

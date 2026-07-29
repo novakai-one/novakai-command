@@ -2,7 +2,10 @@ export type TranscriptFailpointName =
   | 'transcript.beforeLineAppend'
   | 'transcript.afterLineAppendBeforeCheckpoint'
   | 'transcript.afterRelationBeforeCheckpoint'
-  | 'transcript.afterQuarantineBeforeSkip';
+  | 'transcript.afterQuarantineBeforeSkip'
+  | 'transcript.afterSkipJournalBeforeCheckpoint'
+  | 'transcript.afterDiagnosticJournalBeforeCheckpoint'
+  | 'transcript.beforeCheckpointAppend';
 
 export interface TranscriptFailpoint {
   hit(point: TranscriptFailpointName): void;
