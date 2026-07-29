@@ -4,7 +4,6 @@ import {
   err,
   getObjectWithReadFailure,
   isAbsent,
-  listObjects,
   type ClientOpId,
   type ObjectId,
   type Result,
@@ -157,39 +156,14 @@ export async function persistTranscriptRelation(
   return parseRelationJournal(found.value.object);
 }
 
-export async function restoreTranscriptRelationState(
-  context: TranscriptContext,
-  source: TranscriptSourceT,
-): Promise<Result<TranscriptRelationState, TranscriptError>> {
-  const relations: TranscriptRelationJournalEntryT[] = [];
-  let cursor: string | undefined;
-  do {
-    const listed = await listObjects<TranscriptRelationJournalEntryT>(
-      context.handle,
-      'transcriptJournal',
-      {
-        provider: source.provider,
-        sourceId: source.sourceId,
-        outcome: 'relation',
-      },
-      { ...(cursor ? { cursor } : {}), limit: 1_000 },
-    );
-    if (!listed.ok) return listed;
-    for (const stored of listed.value.items) {
-      const parsed = parseRelationJournal(stored.object);
-      if (!parsed.ok) return parsed;
-      relations.push(parsed.value);
-    }
-    cursor = listed.value.nextCursor;
-  } while (cursor);
-
-  relations.sort((left, right) => left.offset - right.offset);
-  return {
-    ok: true,
-    value: relations.reduce(
+export function restoreTranscriptRelationState(
+  relations: readonly TranscriptRelationJournalEntryT[],
+): TranscriptRelationState {
+  return [...relations]
+    .sort((left, right) => left.offset - right.offset)
+    .reduce(
       (state, entry) =>
         applyTranscriptRelationDelta(state, entry.relation),
       emptyTranscriptRelationState(),
-    ),
-  };
+    );
 }

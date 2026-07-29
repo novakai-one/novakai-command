@@ -30,6 +30,7 @@ import {
   type TranscriptDiagnosticJournalEntry as TranscriptDiagnosticJournalEntryT,
   type TranscriptJournalEntry as TranscriptJournalEntryT,
   type TranscriptLine as TranscriptLineT,
+  type TranscriptRelationJournalEntry as TranscriptRelationJournalEntryT,
   type TranscriptSkipJournalEntry as TranscriptSkipJournalEntryT,
   type TranscriptSource as TranscriptSourceT,
   type TranscriptSourceCandidate,
@@ -418,34 +419,53 @@ async function persistDiagnostic(
   };
 }
 
-async function emittedDiagnosticCodes(
+interface TranscriptJournalIndex {
+  readonly diagnosticCodes: Map<
+    string,
+    Set<TranscriptDiagnostic['code']>
+  >;
+  readonly relations: Map<
+    string,
+    TranscriptRelationJournalEntryT[]
+  >;
+}
+
+const sourceJournalKey = (source: TranscriptSourceT): string =>
+  JSON.stringify([source.provider, source.sourceId]);
+
+async function loadTranscriptJournalIndex(
   context: TranscriptContext,
-  source: TranscriptSourceT,
-): Promise<Result<Set<TranscriptDiagnostic['code']>, TranscriptError>> {
-  const emitted = new Set<TranscriptDiagnostic['code']>();
+): Promise<Result<TranscriptJournalIndex, TranscriptError>> {
+  const index: TranscriptJournalIndex = {
+    diagnosticCodes: new Map(),
+    relations: new Map(),
+  };
   let cursor: string | undefined;
   do {
     const listed = await listObjects<TranscriptJournalEntryT>(
       context.handle,
       'transcriptJournal',
-      {
-        provider: source.provider,
-        sourceId: source.sourceId,
-        outcome: 'diagnostic',
-      },
+      undefined,
       { ...(cursor ? { cursor } : {}), limit: 1_000 },
     );
     if (!listed.ok) return listed;
     for (const stored of listed.value.items) {
       const parsed = parseJournal(stored.object);
       if (!parsed.ok) return parsed;
+      const key = sourceJournalKey(parsed.value);
       if (parsed.value.outcome === 'diagnostic') {
+        const emitted = index.diagnosticCodes.get(key) ?? new Set();
         emitted.add(parsed.value.diagnostic.code);
+        index.diagnosticCodes.set(key, emitted);
+      } else if (parsed.value.outcome === 'relation') {
+        const relations = index.relations.get(key) ?? [];
+        relations.push(parsed.value);
+        index.relations.set(key, relations);
       }
     }
     cursor = listed.value.nextCursor;
   } while (cursor);
-  return { ok: true, value: emitted };
+  return { ok: true, value: index };
 }
 
 async function persistCandidate(
@@ -550,6 +570,7 @@ export async function ingest(
     diagnostics: [],
   };
   let rawSources: AsyncIterable<TranscriptSourceT>;
+  let journalIndex: TranscriptJournalIndex | undefined;
   let itemsSinceYield = 0;
   try {
     rawSources = context.source.sources();
@@ -572,14 +593,20 @@ export async function ingest(
       let nextTurnIndex =
         checkpoint.value?.object.nextTurnIndex ?? 0;
       let lastTurnId = checkpoint.value?.object.lastTurnId;
-      const diagnosticCodes = await emittedDiagnosticCodes(context, source);
-      if (!diagnosticCodes.ok) return diagnosticCodes;
-      const restoredRelations = await restoreTranscriptRelationState(
-        context,
-        source,
-      );
-      if (!restoredRelations.ok) return restoredRelations;
-      const relationState = restoredRelations.value;
+      if (!journalIndex) {
+        const loaded = await loadTranscriptJournalIndex(context);
+        if (!loaded.ok) return loaded;
+        journalIndex = loaded.value;
+      }
+      const journalKey = sourceJournalKey(source);
+      const diagnosticCodes =
+        journalIndex.diagnosticCodes.get(journalKey) ?? new Set();
+      journalIndex.diagnosticCodes.set(journalKey, diagnosticCodes);
+      const relationEntries =
+        journalIndex.relations.get(journalKey) ?? [];
+      journalIndex.relations.set(journalKey, relationEntries);
+      const relationState =
+        restoreTranscriptRelationState(relationEntries);
       try {
         for await (
           const rawItem of context.source.read(
@@ -611,6 +638,7 @@ export async function ingest(
               item.relation,
             );
             if (!persisted.ok) return persisted;
+            relationEntries.push(persisted.value);
             context.failpoint.hit(
               'transcript.afterRelationBeforeCheckpoint',
             );
@@ -643,7 +671,7 @@ export async function ingest(
               'transcript.afterLineAppendBeforeCheckpoint',
             );
             for (const diagnostic of item.diagnostics ?? []) {
-              if (diagnosticCodes.value.has(diagnostic.code)) continue;
+              if (diagnosticCodes.has(diagnostic.code)) continue;
               const journaled = await persistDiagnostic(
                 context,
                 source,
@@ -654,7 +682,7 @@ export async function ingest(
               context.failpoint.hit(
                 'transcript.afterDiagnosticJournalBeforeCheckpoint',
               );
-              diagnosticCodes.value.add(diagnostic.code);
+              diagnosticCodes.add(diagnostic.code);
               result.diagnostics.push(journaled.value);
             }
           }
