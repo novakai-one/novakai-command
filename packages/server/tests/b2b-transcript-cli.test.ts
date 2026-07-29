@@ -108,6 +108,31 @@ test('nvk transcript provides CLI parity for all three read-only queries', async
       'person_local',
     );
 
+    const ingest = invoke(root, token.bearer, [
+      'transcript',
+      'ingest',
+    ]);
+    assert.equal(ingest.status, 0, ingest.stderr);
+    assert.deepEqual(
+      JSON.parse(ingest.stdout),
+      { added: 0, duplicates: 0, skipped: [], diagnostics: [] },
+    );
+
+    const status = invoke(root, token.bearer, [
+      'transcript',
+      'status',
+    ]);
+    assert.equal(status.status, 0, status.stderr);
+    assert.deepEqual(
+      JSON.parse(status.stdout),
+      {
+        running: false,
+        idle: true,
+        lastError: null,
+        latched: false,
+      },
+    );
+
     const bySession = invoke(root, token.bearer, [
       'transcript',
       'lines-by-session',

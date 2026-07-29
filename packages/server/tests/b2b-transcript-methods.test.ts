@@ -6,8 +6,10 @@ import type {
 import { buildTranscriptMethods } from '../core/b2b/methods.js';
 
 const EXACT_METHODS = [
+  'ingest',
   'linesByProvider',
   'linesBySession',
+  'status',
   'subagentTree',
 ];
 
@@ -23,15 +25,30 @@ function harness(): {
   return {
     calls,
     operations: {
-      ingest: async () => ({
-        ok: true,
-        value: {
+      ingest: async () => {
+        calls.push({ method: 'ingest', args: [] });
+        return {
+          ok: true as const,
+          value: {
           added: 0,
           duplicates: 0,
           skipped: [],
           diagnostics: [],
-        },
-      }),
+          },
+        };
+      },
+      status: async () => {
+        calls.push({ method: 'status', args: [] });
+        return {
+          ok: true as const,
+          value: {
+            running: false,
+            idle: true,
+            lastError: null,
+            latched: false,
+          },
+        };
+      },
       linesBySession: query('linesBySession'),
       linesByProvider: query('linesByProvider'),
       subagentTree: query('subagentTree'),
@@ -39,19 +56,20 @@ function harness(): {
   };
 }
 
-test('Transcript WS adapter exposes exactly the three read-only contract queries', async () => {
+test('Transcript WS adapter exposes query, status, and ingest contract parity', async () => {
   const h = harness();
   const methods = buildTranscriptMethods(h.operations);
   assert.deepEqual(Object.keys(methods).sort(), EXACT_METHODS);
-  assert.equal('ingest' in methods, false);
   assert.equal('search' in methods, false);
 
   for (const [method, params] of [
+    ['ingest', {}],
     ['linesBySession', { sessionRef: 'providerSession_ws' }],
     ['linesByProvider', {
       provider: 'claude',
       since: '2026-07-29T00:00:00.000Z',
     }],
+    ['status', {}],
     ['subagentTree', { turnId: 'claude:turn_parent' }],
   ] as const) {
     const result = await methods[method]!(params as never) as {
@@ -61,12 +79,20 @@ test('Transcript WS adapter exposes exactly the three read-only contract queries
   }
   assert.deepEqual(h.calls, [
     {
+      method: 'ingest',
+      args: [],
+    },
+    {
       method: 'linesBySession',
       args: ['providerSession_ws'],
     },
     {
       method: 'linesByProvider',
       args: ['claude', '2026-07-29T00:00:00.000Z'],
+    },
+    {
+      method: 'status',
+      args: [],
     },
     {
       method: 'subagentTree',
