@@ -156,6 +156,7 @@ test('Kimi relation context survives checkpoint restart without rescanning metad
     path.join(fixtureRoot, 'kimi', 'subagent-relation.jsonl'),
     'utf8',
   ).trimEnd().split('\n');
+  const priorFailpoint = process.env.NVK_FAILPOINT;
   try {
     mkdirSync(path.dirname(destination), { recursive: true });
     writeFileSync(destination, `${rows.slice(0, 2).join('\n')}\n`);
@@ -176,6 +177,16 @@ test('Kimi relation context survives checkpoint restart without rescanning metad
     );
 
     appendFileSync(destination, `${rows[2]}\n`);
+    process.env.NVK_FAILPOINT = 'transcript.beforeLineAppend';
+    const crashing = composeTranscript({
+      root,
+      source: createRawTranscriptSource({ root }),
+    });
+    await assert.rejects(
+      crashing.ingest(),
+      /transcript\.beforeLineAppend/u,
+    );
+    delete process.env.NVK_FAILPOINT;
     const restarted = composeTranscript({
       root,
       source: createRawTranscriptSource({ root }),
@@ -221,6 +232,8 @@ test('Kimi relation context survives checkpoint restart without rescanning metad
       { added: 0, duplicates: 0, skipped: 0 },
     );
   } finally {
+    if (priorFailpoint === undefined) delete process.env.NVK_FAILPOINT;
+    else process.env.NVK_FAILPOINT = priorFailpoint;
     rmSync(workspace, { recursive: true, force: true });
   }
 });
@@ -307,13 +320,14 @@ test('Kimi persists only agent identities returned by the durable resolver', asy
       'agent_durable_child' as AgentId,
     ],
   ]);
+  const rows = readFileSync(
+    path.join(fixtureRoot, 'kimi', 'subagent-relation.jsonl'),
+    'utf8',
+  ).trimEnd().split('\n');
   try {
     mkdirSync(path.dirname(destination), { recursive: true });
-    copyFileSync(
-      path.join(fixtureRoot, 'kimi', 'subagent-relation.jsonl'),
-      destination,
-    );
-    const transcript = composeTranscript({
+    writeFileSync(destination, `${rows.slice(0, 2).join('\n')}\n`);
+    const relationPass = composeTranscript({
       root,
       source: createRawTranscriptSource({
         root,
@@ -322,6 +336,22 @@ test('Kimi persists only agent identities returned by the durable resolver', asy
             ? durableAgents.get(nativeId)
             : undefined,
       }),
+    });
+    const contextResult = await relationPass.ingest();
+    assert.deepEqual(
+      contextResult.ok
+        ? {
+            added: contextResult.value.added,
+            skipped: contextResult.value.skipped.length,
+          }
+        : null,
+      { added: 0, skipped: 0 },
+    );
+
+    appendFileSync(destination, `${rows[2]}\n`);
+    const transcript = composeTranscript({
+      root,
+      source: createRawTranscriptSource({ root }),
     });
     const ingested = await transcript.ingest();
     assert.equal(ingested.ok, true);
