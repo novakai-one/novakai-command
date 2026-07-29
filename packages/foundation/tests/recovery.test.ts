@@ -423,6 +423,71 @@ test('quarantine index resets when the file shrinks', async () => {
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test('warm record index rejects an out-of-band torn-tail rewrite', async () => {
+  const root = freshRoot();
+  try {
+    const recordLine = (id: string, value: number) => JSON.stringify({
+      envelope: {
+        kind: 'settings',
+        id,
+        schemaVersion: 1,
+        createdAt: '2026-07-29T00:00:00.000Z',
+        permissionLevel: 'private',
+        createdBy: 'person_fixture',
+      },
+      payload: { key: id, value },
+      meta: {
+        opId: `srv_${id}`,
+        clientOpId: `op_${id}`,
+        version: 1,
+      },
+    });
+    const storePath = path.join(root, 'settings.jsonl');
+    mkdirSync(root, { recursive: true });
+    writeFileSync(
+      storePath,
+      `${[
+        recordLine('settings_a', 1),
+        recordLine('settings_b', 2),
+        recordLine('settings_c_torn', 3),
+      ].join('\n')}\n`,
+    );
+    const handle = composeHandle({
+      root,
+      capability: 'foundation',
+      allowedKinds: ['settings'],
+      principal: 'person_fixture',
+    });
+    const warm = await listObjects(handle, 'settings');
+    assert.equal(warm.ok, true);
+    if (!warm.ok) return;
+    assert.deepEqual(
+      warm.value.items.map((item) => item.object.id).sort(),
+      ['settings_a', 'settings_b', 'settings_c_torn'],
+    );
+
+    // Another writer's boot recovery drops the torn-tail record, then it
+    // appends two live records while preserving the file's inode.
+    writeFileSync(
+      storePath,
+      `${[
+        recordLine('settings_a', 1),
+        recordLine('settings_b', 2),
+        recordLine('settings_d', 4),
+        recordLine('settings_e', 5),
+      ].join('\n')}\n`,
+    );
+
+    const refreshed = await listObjects(handle, 'settings');
+    assert.equal(refreshed.ok, true);
+    if (!refreshed.ok) return;
+    assert.deepEqual(
+      refreshed.value.items.map((item) => item.object.id).sort(),
+      ['settings_a', 'settings_b', 'settings_d', 'settings_e'],
+    );
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test('R3-3: torn final line → truncate-on-open + traced truncate event', async () => {
   const root = freshRoot();
   try {
