@@ -199,6 +199,8 @@ class RawTranscriptSource implements TranscriptSourceAdapter {
               : nextTurnIndex;
             if (!sameTurn) nextTurnIndex += 1;
             lastTurnId = item.line.turnId;
+          } else if (item.kind === 'candidate') {
+            nextTurnIndex += 1;
           }
           if ('relation' in item && item.relation) {
             currentRelations = applyTranscriptRelationDelta(

@@ -664,6 +664,8 @@ export async function ingest(
               item.line.turnIndex + 1,
             );
             lastTurnId = item.line.turnId;
+          } else if (item.kind === 'candidate') {
+            nextTurnIndex += 1;
           }
           context.failpoint.hit('transcript.beforeCheckpointAppend');
           const advanced = await advanceCheckpoint(
