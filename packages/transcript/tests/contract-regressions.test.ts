@@ -1,13 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  mkdirSync,
   mkdtempSync,
   rmSync,
+  writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
   composeTranscript,
+  createRawTranscriptSource,
   type TranscriptSource,
   type TranscriptSourceAdapter,
   type TranscriptSourceItem,
@@ -376,6 +379,61 @@ test('ingestion begins reading the first source before discovery completes', asy
     );
   } finally {
     releaseDiscovery();
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test('raw source handles expire when discovery advances or completes', async () => {
+  const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-source-expiry-'));
+  const root = path.join(workspace, '.novakai');
+  const providerRoot = path.join(root, 'transcripts', 'kimi');
+  const row = `${JSON.stringify({
+    kind: 'event',
+    envelope: {
+      seq: 1,
+      timestamp: '2026-07-29T06:07:08.000Z',
+      type: 'assistant_output',
+      payload: {
+        agentId: 'agent_source_expiry',
+        turnId: 'turn_source_expiry',
+        output: 'synthetic source expiry',
+      },
+    },
+  })}\n`;
+  const consume = async (
+    source: TranscriptSourceAdapter,
+    candidate: TranscriptSource,
+  ): Promise<void> => {
+    for await (const _item of source.read(candidate, 0)) {
+      // Consumption is the public observation; item content is irrelevant.
+    }
+  };
+
+  try {
+    mkdirSync(path.join(providerRoot, 'a'), { recursive: true });
+    mkdirSync(path.join(providerRoot, 'b'), { recursive: true });
+    writeFileSync(path.join(providerRoot, 'a', 'events.jsonl'), row);
+    writeFileSync(path.join(providerRoot, 'b', 'events.jsonl'), row);
+    const source = createRawTranscriptSource({ root });
+    const discovery = source.sources()[Symbol.asyncIterator]();
+
+    const first = await discovery.next();
+    assert.equal(first.done, false);
+    const second = await discovery.next();
+    assert.equal(second.done, false);
+    if (first.done || second.done) return;
+
+    await assert.rejects(
+      consume(source, first.value),
+      /transcript source is not discovered/u,
+    );
+    const completed = await discovery.next();
+    assert.equal(completed.done, true);
+    await assert.rejects(
+      consume(source, second.value),
+      /transcript source is not discovered/u,
+    );
+  } finally {
     rmSync(workspace, { recursive: true, force: true });
   }
 });
