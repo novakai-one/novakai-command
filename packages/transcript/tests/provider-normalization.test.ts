@@ -15,7 +15,7 @@ import {
 } from '../contract/index.js';
 
 const fixtureRoot = fileURLToPath(
-  new URL('./fixtures/', import.meta.url),
+  new URL('../../tests/fixtures/', import.meta.url),
 );
 
 test('Kimi raw-copy adapter preserves exposed attribution and journals an unresolved session handle', async () => {

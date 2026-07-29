@@ -55,10 +55,20 @@ export const TranscriptSkipReason = z.object({
 }).strict();
 export type TranscriptSkipReason = z.infer<typeof TranscriptSkipReason>;
 
+export const TranscriptDiagnostic = z.object({
+  code: z.enum([
+    'session_ref_unresolved',
+    'agent_attribution_unavailable',
+  ]),
+  message: z.string().min(1),
+}).strict();
+export type TranscriptDiagnostic = z.infer<typeof TranscriptDiagnostic>;
+
 export const TranscriptSourceCandidate = SourcePosition.extend({
   kind: z.literal('candidate'),
   content: z.string(),
   line: NormalizedTranscriptLine,
+  diagnostics: z.array(TranscriptDiagnostic).optional(),
 }).superRefine((item, context) => {
   if (item.nextOffset <= item.offset) {
     context.addIssue({
@@ -114,7 +124,7 @@ export const TranscriptLine = Envelope.extend({
 });
 export type TranscriptLine = z.infer<typeof TranscriptLine>;
 
-export const TranscriptJournalEntry = Envelope.extend({
+const TranscriptJournalBase = Envelope.extend({
   kind: z.literal('transcriptJournal'),
   id: z.string().regex(/^transcriptJournal_[a-f0-9]{64}$/),
   schemaVersion: z.literal(1),
@@ -123,9 +133,28 @@ export const TranscriptJournalEntry = Envelope.extend({
   sourceId: z.string().min(1),
   offset: z.number().int().nonnegative(),
   nextOffset: z.number().int().positive(),
+});
+
+export const TranscriptSkipJournalEntry = TranscriptJournalBase.extend({
   outcome: z.literal('skipped'),
   skip: TranscriptSkipReason,
 });
+export type TranscriptSkipJournalEntry = z.infer<
+  typeof TranscriptSkipJournalEntry
+>;
+
+export const TranscriptDiagnosticJournalEntry = TranscriptJournalBase.extend({
+  outcome: z.literal('diagnostic'),
+  diagnostic: TranscriptDiagnostic,
+});
+export type TranscriptDiagnosticJournalEntry = z.infer<
+  typeof TranscriptDiagnosticJournalEntry
+>;
+
+export const TranscriptJournalEntry = z.discriminatedUnion('outcome', [
+  TranscriptSkipJournalEntry,
+  TranscriptDiagnosticJournalEntry,
+]);
 export type TranscriptJournalEntry = z.infer<
   typeof TranscriptJournalEntry
 >;
@@ -145,5 +174,6 @@ export type TranscriptCheckpoint = z.infer<typeof TranscriptCheckpoint>;
 export interface IngestResult {
   added: number;
   duplicates: number;
-  skipped: TranscriptJournalEntry[];
+  skipped: TranscriptSkipJournalEntry[];
+  diagnostics: TranscriptDiagnosticJournalEntry[];
 }

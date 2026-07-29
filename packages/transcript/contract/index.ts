@@ -8,6 +8,11 @@ export * from './schemas.js';
 export * from './errors.js';
 export * from './source.js';
 export {
+  createRawTranscriptSource,
+  type ProviderSessionResolver,
+  type RawTranscriptSourceOptions,
+} from '../adapters/raw-transcript-source.js';
+export {
   composeTranscript,
   type ComposeTranscriptOptions,
 } from '../core/composition.js';

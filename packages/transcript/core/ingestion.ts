@@ -25,8 +25,11 @@ import {
   type ProviderName as ProviderNameT,
   type SessionRef as SessionRefT,
   type TranscriptCheckpoint as TranscriptCheckpointT,
+  type TranscriptDiagnostic,
+  type TranscriptDiagnosticJournalEntry as TranscriptDiagnosticJournalEntryT,
   type TranscriptJournalEntry as TranscriptJournalEntryT,
   type TranscriptLine as TranscriptLineT,
+  type TranscriptSkipJournalEntry as TranscriptSkipJournalEntryT,
   type TranscriptSource as TranscriptSourceT,
   type TranscriptSourceCandidate,
   type TranscriptSourceSkip,
@@ -235,7 +238,7 @@ async function persistSkip(
   context: TranscriptContext,
   source: TranscriptSourceT,
   item: TranscriptSourceSkip,
-): Promise<Result<TranscriptJournalEntryT, TranscriptError>> {
+): Promise<Result<TranscriptSkipJournalEntryT, TranscriptError>> {
   const id = `transcriptJournal_${hash(
     `${source.provider}:${source.sourceId}:${item.offset}`,
   )}`;
@@ -259,7 +262,20 @@ async function persistSkip(
     draft,
     operationId(`journal:${id}`),
   );
-  if (created.ok) return parseJournal(created.value.object);
+  if (created.ok) {
+    const parsed = parseJournal(created.value.object);
+    if (parsed.ok && parsed.value.outcome === 'skipped') {
+      return { ok: true, value: parsed.value };
+    }
+    return {
+      ok: false,
+      error: invalidRecord(
+        'transcriptJournal',
+        id,
+        [{ path: ['outcome'], message: 'expected skipped entry' }],
+      ),
+    };
+  }
   if (created.error.code !== 'CasConflict') return created;
   const found = await getObjectWithReadFailure<TranscriptJournalEntryT>(
     context.handle,
@@ -267,9 +283,84 @@ async function persistSkip(
     id as ObjectId,
   );
   if (!found.ok) return found;
-  return isAbsent(found.value)
-    ? created
-    : parseJournal(found.value.object);
+  if (isAbsent(found.value)) return created;
+  const parsed = parseJournal(found.value.object);
+  if (parsed.ok && parsed.value.outcome === 'skipped') {
+    return { ok: true, value: parsed.value };
+  }
+  return {
+    ok: false,
+    error: invalidRecord(
+      'transcriptJournal',
+      id,
+      [{ path: ['outcome'], message: 'expected skipped entry' }],
+    ),
+  };
+}
+
+async function persistDiagnostic(
+  context: TranscriptContext,
+  source: TranscriptSourceT,
+  item: TranscriptSourceCandidate,
+  diagnostic: TranscriptDiagnostic,
+): Promise<Result<TranscriptDiagnosticJournalEntryT, TranscriptError>> {
+  const id = `transcriptJournal_${hash(
+    `${source.provider}:${source.sourceId}:${item.offset}:diagnostic:${diagnostic.code}`,
+  )}`;
+  const now = new Date().toISOString();
+  const draft = TranscriptJournalEntry.parse({
+    kind: 'transcriptJournal',
+    id,
+    schemaVersion: 1,
+    createdAt: now,
+    permissionLevel: 'private',
+    createdBy: 'overridden-by-foundation',
+    provider: source.provider,
+    sourceId: source.sourceId,
+    offset: item.offset,
+    nextOffset: item.nextOffset,
+    outcome: 'diagnostic',
+    diagnostic,
+  });
+  const created = await createObject<TranscriptJournalEntryT>(
+    context.handle,
+    draft,
+    operationId(`journal:${id}`),
+  );
+  if (created.ok) {
+    const parsed = parseJournal(created.value.object);
+    if (parsed.ok && parsed.value.outcome === 'diagnostic') {
+      return { ok: true, value: parsed.value };
+    }
+    return {
+      ok: false,
+      error: invalidRecord(
+        'transcriptJournal',
+        id,
+        [{ path: ['outcome'], message: 'expected diagnostic entry' }],
+      ),
+    };
+  }
+  if (created.error.code !== 'CasConflict') return created;
+  const found = await getObjectWithReadFailure<TranscriptJournalEntryT>(
+    context.handle,
+    'transcriptJournal',
+    id as ObjectId,
+  );
+  if (!found.ok) return found;
+  if (isAbsent(found.value)) return created;
+  const parsed = parseJournal(found.value.object);
+  if (parsed.ok && parsed.value.outcome === 'diagnostic') {
+    return { ok: true, value: parsed.value };
+  }
+  return {
+    ok: false,
+    error: invalidRecord(
+      'transcriptJournal',
+      id,
+      [{ path: ['outcome'], message: 'expected diagnostic entry' }],
+    ),
+  };
 }
 
 async function persistCandidate(
@@ -367,7 +458,12 @@ async function persistCandidate(
 export async function ingest(
   context: TranscriptContext,
 ): Promise<Result<IngestResult, TranscriptError>> {
-  const result: IngestResult = { added: 0, duplicates: 0, skipped: [] };
+  const result: IngestResult = {
+    added: 0,
+    duplicates: 0,
+    skipped: [],
+    diagnostics: [],
+  };
   let rawSources: readonly TranscriptSourceT[];
   try {
     rawSources = await context.source.sources();
@@ -407,6 +503,16 @@ export async function ingest(
           const persisted = await persistCandidate(context, source, item);
           if (!persisted.ok) return persisted;
           result[persisted.value === 'added' ? 'added' : 'duplicates'] += 1;
+          for (const diagnostic of item.diagnostics ?? []) {
+            const journaled = await persistDiagnostic(
+              context,
+              source,
+              item,
+              diagnostic,
+            );
+            if (!journaled.ok) return journaled;
+            result.diagnostics.push(journaled.value);
+          }
         }
         const advanced = await advanceCheckpoint(
           context,
