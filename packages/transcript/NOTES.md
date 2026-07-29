@@ -2,7 +2,9 @@
 
 Copy-only watchers for provider session dirs (TRN-001). Raw copies under
 `.novakai/transcripts/` are evidence blobs EXEMPT from the envelope law
-(§22 ruling 6). Ingestion/dedup/`transcriptLine` = S3, not built here.
+(§22 ruling 6). B2b adds Transcript-owned normalization, deduplication,
+checkpoints, journal entries, and read-only queries behind the separate
+source-adapter seam; watcher custody remains unchanged.
 
 ## OD-S2-7 spike (verified 2026-07-28 on Chris's machine)
 - kimi:   `~/.kimi-code` — `server/events/session_*.jsonl`; recursive scan covers future layouts
@@ -21,3 +23,11 @@ Defaults = existing dirs only (`defaultSources()`); list is configurable via `Wa
   typescript + @types/node only; zero runtime deps). Replace with a real
   install if the package gains its own dependencies.
 - TRN-005 (`.novakai/` gitignored) already satisfied — root .gitignore line 15.
+
+## Pass-2 schema amendment
+
+`sourceAttribution.authorRef` remains deliberately absent in B2b. Pass 2 must
+amend the Foundation-owned `SourceAttribution` schema before Transcript can
+persist that durable author reference. B2b preserves only explicitly exposed
+`agentId`/`parentAgentId`; provider-native session, sidechain, thread, and
+subagent strings are never promoted to durable Novakai identity.
