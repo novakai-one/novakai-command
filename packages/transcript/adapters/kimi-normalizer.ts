@@ -149,7 +149,10 @@ export function normalizeKimi(
       },
     };
   }
-  if (row.kind !== 'event' || !isRecord(row.envelope)) {
+  if (row.kind !== 'event') {
+    return nonMessage(offset, nextOffset, 'kimi');
+  }
+  if (!isRecord(row.envelope)) {
     return unsupported(offset, nextOffset, 'kimi');
   }
   const envelope = row.envelope;

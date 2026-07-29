@@ -125,6 +125,7 @@ function jsonlFilesBelow(root: string): string[] {
 async function deriveMeasuredSample(
   corpusRoot: string,
   sampleRoot: string,
+  samplePerShape = SAMPLE_PER_SHAPE,
 ): Promise<Record<string, number>> {
   const counts: Record<string, number> = {};
   for (const provider of Object.keys(measuredShapes) as MeasuredProvider[]) {
@@ -156,13 +157,13 @@ async function deriveMeasuredSample(
         if (!shape) continue;
         const key = `${provider}:${shape}`;
         const count = counts[key] ?? 0;
-        if (count >= SAMPLE_PER_SHAPE) continue;
+        if (count >= samplePerShape) continue;
         appendFileSync(destination, `${content}\n`);
         counts[key] = count + 1;
       }
       if (
         measuredShapes[provider].every(
-          (shape) => counts[`${provider}:${shape}`] === SAMPLE_PER_SHAPE,
+          (shape) => counts[`${provider}:${shape}`] === samplePerShape,
         )
       ) {
         break;
@@ -241,6 +242,56 @@ test(
           provider === 'claude' ? 0 : 4,
         );
       }
+    } finally {
+      rmSync(workspace, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  'approximately 5000 real custody rows exercise every measured residual shape',
+  {
+    skip:
+      process.env.NVK_TRANSCRIPT_CORPUS_ROOT === undefined
+      || process.env.NVK_TRANSCRIPT_MEASURE_REAL_CORPUS !== '1',
+  },
+  async () => {
+    const corpusRoot = path.resolve(
+      process.env.NVK_TRANSCRIPT_CORPUS_ROOT!,
+    );
+    const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-real-measure-'));
+    const root = path.join(workspace, '.novakai');
+    try {
+      const counts = await deriveMeasuredSample(corpusRoot, root, 500);
+      assert.equal(
+        Object.values(counts).reduce((total, count) => total + count, 0),
+        5_000,
+      );
+      assert.equal(Object.keys(counts).length, 10);
+
+      const source = createRawTranscriptSource({ root });
+      const outcomes = {
+        candidate: 0,
+        context: 0,
+        skips: {} as Record<string, number>,
+      };
+      for await (const discovered of source.sources()) {
+        for await (const item of source.read(discovered, 0)) {
+          if (item.kind === 'candidate') {
+            outcomes.candidate += 1;
+          } else if (item.kind === 'context') {
+            outcomes.context += 1;
+          } else {
+            outcomes.skips[item.reason.code] =
+              (outcomes.skips[item.reason.code] ?? 0) + 1;
+          }
+        }
+      }
+      assert.deepEqual(outcomes, {
+        candidate: 2_000,
+        context: 0,
+        skips: { non_message: 3_000 },
+      });
     } finally {
       rmSync(workspace, { recursive: true, force: true });
     }

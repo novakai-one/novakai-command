@@ -70,7 +70,11 @@ function normalizeClaude(
     : [];
   if (
     blocks.length > 0
-    && blocks.every((block) => stringValue(block.type) === 'thinking')
+    && blocks.every(
+      (block) =>
+        stringValue(block.type) === 'thinking'
+        || stringValue(block.type) === 'fallback',
+    )
   ) {
     return nonMessage(offset, nextOffset, 'claude');
   }
@@ -147,6 +151,9 @@ function normalizeCodex(
   turnIndex: number,
   sourceId?: string,
 ): TranscriptSourceItem {
+  if (isRecord(row) && !stringValue(row.type)) {
+    return nonMessage(offset, nextOffset, 'codex');
+  }
   if (
     isRecord(row)
     && stringValue(row.type)
@@ -193,7 +200,9 @@ function normalizeCodex(
               || type === 'attachment',
           )
           ? 'attachment'
-          : responseRole
+          : responseRole === 'developer'
+            ? 'system'
+            : responseRole
     : eventType === 'user_message'
       ? 'user'
       : eventType === 'agent_message'
@@ -208,7 +217,7 @@ function normalizeCodex(
     && role !== 'tool_result'
     && role !== 'attachment'
   ) {
-    return unsupported(offset, nextOffset, 'codex');
+    return nonMessage(offset, nextOffset, 'codex');
   }
   const text = (
     role === 'tool_call'
@@ -240,11 +249,7 @@ function normalizeCodex(
     ?? stringValue(payload.id)
   );
   const turnId = providerTurnId ?? (
-    row.type === 'event_msg'
-    && (eventType === 'user_message' || eventType === 'agent_message')
-    && sourceId
-      ? `${sourceId}:${turnIndex}`
-      : undefined
+    sourceId ? `${sourceId}:${turnIndex}` : undefined
   );
   if (!turnId) return unsupported(offset, nextOffset, 'codex');
   const nativeId = stringValue(payload.id);
