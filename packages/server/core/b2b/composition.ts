@@ -6,7 +6,7 @@ import {
   type TranscriptContract,
 } from '../../../transcript/contract/index.js';
 
-const DEFAULT_POLL_MS = 250;
+const DEFAULT_POLL_MS = 1_000;
 
 export interface TranscriptTopologyStatus {
   running: boolean;

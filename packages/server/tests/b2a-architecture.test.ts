@@ -143,6 +143,31 @@ test('B2a Server integration consumes capability contracts', () => {
   assert.deepEqual(offenders, []);
 });
 
+test('B2b Server integration consumes only Transcript contract and never Shell', () => {
+  const b2bRoot = path.join(serverRoot, 'core', 'b2b');
+  const offenders: string[] = [];
+  for (const sourcePath of typescriptSources(b2bRoot)) {
+    const source = readFileSync(sourcePath, 'utf8');
+    for (const match of source.matchAll(/\bfrom\s+['"]([^'"]+)['"]/g)) {
+      const specifier = match[1]!;
+      if (
+        specifier.includes('/transcript/')
+        && !/(?:^|\/)contract(?:\/|$)/.test(specifier)
+      ) {
+        offenders.push(
+          `${path.relative(serverRoot, sourcePath)} -> ${specifier}`,
+        );
+      }
+      if (/(?:^|\/|@)shell(?:\/|$)/.test(specifier)) {
+        offenders.push(
+          `${path.relative(serverRoot, sourcePath)} -> ${specifier}`,
+        );
+      }
+    }
+  }
+  assert.deepEqual(offenders, []);
+});
+
 test('every Server persistence-writer authority is explicitly classified', () => {
   const authorities: string[] = [];
   for (const sourcePath of typescriptSources(serverRoot)) {
@@ -181,7 +206,9 @@ test('B2a Server WS adapter cannot reach byte or Spine-only attachment doors', (
 
 test('approved capabilities do not depend back on Server', () => {
   const offenders: string[] = [];
-  for (const packageName of ['projects', 'artifacts', 'spine']) {
+  for (
+    const packageName of ['projects', 'artifacts', 'spine', 'transcript']
+  ) {
     const packageRoot = path.join(repositoryRoot, 'packages', packageName);
     for (const sourcePath of typescriptSources(packageRoot)) {
       const source = readFileSync(sourcePath, 'utf8');
