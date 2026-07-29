@@ -340,3 +340,51 @@ test('HTTP responds within 500ms while a chunked transcript first scan is still 
     return status.runs >= 1 && !status.ingesting;
   }, 30_000);
 });
+
+test('chunked transcript first scan durably ingests all 8,000 rows', async (t) => {
+  const base = workspace();
+  const root = path.join(base, '.novakai');
+  const providerHome = path.join(base, 'empty-provider-home');
+  const custody = path.join(root, 'transcripts', 'kimi');
+  mkdirSync(custody, { recursive: true });
+  mkdirSync(providerHome, { recursive: true });
+  const lineCount = 8_000;
+  const rows = Array.from({ length: lineCount }, (_, index) =>
+    JSON.stringify({
+      kind: 'event',
+      envelope: {
+        seq: index,
+        timestamp: '2026-07-29T01:02:03.000Z',
+        type: 'assistant_output',
+        payload: {
+          agentId: 'agent_endstate',
+          turnId: `turn_endstate_${index}`,
+          output: `synthetic end-state line ${index}`,
+        },
+      },
+    }))
+    .join('\n');
+  writeFileSync(path.join(custody, 'end-state-scan.jsonl'), `${rows}\n`);
+  await configureServer(root, true);
+
+  const booted = await bootServer({
+    root,
+    port: 0,
+    cwd: base,
+    providerHome,
+    watchdogDir: base,
+    kimiCliPath: fakeKimi().cliPath,
+    supervisionTimers: false,
+  });
+  assert.equal(booted.ok, true);
+  if (!booted.ok) return;
+  t.after(() => booted.value.close());
+
+  const lines = await booted.value.runtime.transcript.operations
+    .linesByProvider('kimi');
+  assert.equal(
+    lines.ok ? lines.value.length : null,
+    lineCount,
+    'durable ingestion end-state must contain every source row',
+  );
+});
