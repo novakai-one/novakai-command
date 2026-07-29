@@ -299,8 +299,8 @@ test('provider-scoped stored turn IDs keep equal native trees isolated', async (
       ['claude child'],
     );
     assert.deepEqual(
-      codexTree.ok ? codexTree.value.map((line) => line.text) : null,
-      ['codex child'],
+      codexTree.ok ? 'supported' : codexTree.error.code,
+      'TranscriptTreeUnsupported',
     );
     const unscoped = await transcript.subagentTree('shared-native-turn');
     assert.deepEqual(unscoped.ok ? unscoped.value : null, []);

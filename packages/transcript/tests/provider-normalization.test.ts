@@ -879,7 +879,7 @@ test('TRN-002 Claude raw-copy subagent parentUuid is provider-scoped and queryab
 
     const ingested = await transcript.ingest();
     assert.equal(ingested.ok, true);
-    assert.equal(ingested.ok ? ingested.value.added : null, 2);
+    assert.equal(ingested.ok ? ingested.value.added : null, 3);
 
     const tree = await transcript.subagentTree(
       'claude:claude_parent_fixture',
