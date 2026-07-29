@@ -195,21 +195,25 @@ function normalizeKimi(
     ? SessionRef.safeParse(resolver('kimi', nativeSessionId))
     : undefined;
   const diagnostics: TranscriptDiagnostic[] = [];
+  const nativeAgentId = stringValue(payload.agentId);
+  const nativeParentAgentId = stringValue(payload.parentAgentId);
   if (nativeSessionId && (!resolvedSession || !resolvedSession.success)) {
     diagnostics.push(diagnostic(
       'session_ref_unresolved',
       'provider-native session has no verified providerSession resolver',
     ));
   }
-  const agentId = stringValue(payload.agentId);
-  if (!agentId && stringValue(payload.subagentId)) {
+  if (
+    nativeAgentId
+    || nativeParentAgentId
+    || stringValue(payload.subagentId)
+  ) {
     diagnostics.push(diagnostic(
       'agent_attribution_unavailable',
-      'provider subagent identity is not a verified durable agent id',
+      'provider agent identity has no verified durable agent resolver',
     ));
   }
   const turnId = identityValue(payload.turnId);
-  const nativeAgentId = stringValue(payload.agentId);
   const childRelation = nativeAgentId
     ? currentRelations.children[relationKey('agent', nativeAgentId)]
     : undefined;
@@ -223,15 +227,9 @@ function normalizeKimi(
     role,
     text,
     ...(usage ? { tokenUsage: usage } : {}),
-    ...(agentId ? { agentId } : {}),
-    ...(stringValue(payload.parentAgentId)
-      ? { parentAgentId: stringValue(payload.parentAgentId) }
-      : {}),
     ...(parentRelation
       ? { parentTurnId: parentRelation.nativeParentTurnId }
-      : stringValue(payload.parentToolCallId)
-        ? { parentTurnId: stringValue(payload.parentToolCallId) }
-        : {}),
+      : {}),
     ...(resolvedSession?.success
       ? { sessionRef: resolvedSession.data }
       : {}),
