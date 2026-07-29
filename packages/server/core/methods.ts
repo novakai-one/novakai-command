@@ -29,6 +29,7 @@ import type { WatchdogHook } from './supervision/watchdog.js';
 import type { B2aServerCapabilities } from './b2a/composition.js';
 import { buildB2aMethods } from './b2a/methods.js';
 import type { TranscriptServerHost } from './b2b/composition.js';
+import { buildTranscriptMethods } from './b2b/methods.js';
 
 type ShellPersistence = ReturnType<typeof composeShellPersistence>;
 
@@ -262,6 +263,7 @@ export function buildMethods(runtime: ServerRuntime): MethodTable {
 
   return {
     ...buildB2aMethods(runtime.b2a),
+    ...buildTranscriptMethods(runtime.transcript.operations),
 
     // ── S2b context bus (SHL-008): the server is the focus AUTHORITY ────────
     async publishFocus(params: never) {
