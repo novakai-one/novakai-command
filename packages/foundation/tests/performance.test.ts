@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  appendFileSync,
   mkdirSync,
   mkdtempSync,
   rmSync,
@@ -22,6 +23,7 @@ import { StoreEngine } from '../core/store-engine/engine.js';
 const ROW_COUNT = 5_000;
 const SAMPLE_COUNT = 5;
 const READS_PER_SAMPLE = 10;
+const READ_CREATED_AT = '2026-07-29T00:00:00.000Z';
 
 function seedStore(root: string): void {
   const createdAt = '2026-07-29T00:00:00.000Z';
@@ -65,7 +67,6 @@ function seedStore(root: string): void {
 }
 
 function seedReadStore(root: string, tombstoneCount: number): void {
-  const createdAt = '2026-07-29T00:00:00.000Z';
   const targetId = 'settings_read_target';
   const targetOpId = 'srv_read_target';
   mkdirSync(root, { recursive: true });
@@ -74,7 +75,7 @@ function seedReadStore(root: string, tombstoneCount: number): void {
       kind: 'settings',
       id: targetId,
       schemaVersion: 1,
-      createdAt,
+      createdAt: READ_CREATED_AT,
       permissionLevel: 'private',
       createdBy: 'person_fixture',
     },
@@ -89,7 +90,7 @@ function seedReadStore(root: string, tombstoneCount: number): void {
     kind: 'trace',
     id: 'trace_read_target',
     schemaVersion: 1,
-    createdAt,
+    createdAt: READ_CREATED_AT,
     permissionLevel: 'team',
     createdBy: 'person_fixture',
     seq: 0,
@@ -100,34 +101,52 @@ function seedReadStore(root: string, tombstoneCount: number): void {
   })}\n`);
   if (tombstoneCount === 0) return;
   const tombstones = Array.from({ length: tombstoneCount }, (_, index) =>
-    JSON.stringify({
-      envelope: {
-        kind: 'quarantine',
-        id: `quarantine_seed_${index}`,
-        schemaVersion: 1,
-        createdAt,
-        permissionLevel: 'private',
-        createdBy: 'sys_reconciler',
-      },
-      payload: {
-        quarantinedRef: {
-          kind: 'settings',
-          id: `settings_quarantined_${index}`,
-        },
-        reason: 'corrupt_record',
-        status: 'open',
-      },
-      meta: {
-        opId: `srv_quarantine_${index}`,
-        clientOpId: `op_quarantine_${index}`,
-        version: 1,
-      },
-    })
+    tombstoneLine(
+      `quarantine_seed_${index}`,
+      `settings_quarantined_${index}`,
+      'open',
+      1,
+    )
   );
   writeFileSync(
     path.join(root, 'quarantine.jsonl'),
     `${tombstones.join('\n')}\n`,
   );
+}
+
+function tombstoneLine(
+  id: string,
+  refId: string,
+  status: 'open' | 'dismissed',
+  version: number,
+): string {
+  return JSON.stringify({
+    envelope: {
+      kind: 'quarantine',
+      id,
+      schemaVersion: 1,
+      createdAt: READ_CREATED_AT,
+      permissionLevel: 'private',
+      createdBy: 'sys_reconciler',
+    },
+    payload: {
+      quarantinedRef: { kind: 'settings', id: refId },
+      reason: 'corrupt_record',
+      status,
+      ...(status === 'dismissed'
+        ? {
+          resolution: 'dismiss',
+          resolvedAt: '2026-07-29T00:01:00.000Z',
+          resolvedBy: 'person_fixture',
+        }
+        : {}),
+    },
+    meta: {
+      opId: `srv_${id}_${version}`,
+      clientOpId: `op_${id}_${version}`,
+      version,
+    },
+  });
 }
 
 function median(values: number[]): number {
@@ -231,6 +250,38 @@ test('getObject with 5k tombstones costs less than four times an empty-tombstone
       populatedMs < emptyMs * 4,
       `5k tombstone read ${populatedMs.toFixed(2)}ms must be <4x empty `
       + `${emptyMs.toFixed(2)}ms`,
+    );
+
+    const handle = composeHandle({
+      root: populatedRoot,
+      capability: 'foundation',
+      allowedKinds: ['settings'],
+      principal: 'person_fixture',
+    });
+    const targetId = 'settings_read_target' as ObjectId;
+    const tombstoneId = 'quarantine_out_of_band';
+    appendFileSync(
+      path.join(populatedRoot, 'quarantine.jsonl'),
+      `${tombstoneLine(tombstoneId, targetId, 'open', 1)}\n`,
+    );
+    const hidden = await getObject(handle, 'settings', targetId);
+    assert.equal(hidden.ok, true);
+    assert.equal(
+      isAbsent(hidden.value),
+      true,
+      'an out-of-band open tombstone must become visible to the warm index',
+    );
+
+    appendFileSync(
+      path.join(populatedRoot, 'quarantine.jsonl'),
+      `${tombstoneLine(tombstoneId, targetId, 'dismissed', 2)}\n`,
+    );
+    const visible = await getObject(handle, 'settings', targetId);
+    assert.equal(visible.ok, true);
+    assert.equal(
+      isAbsent(visible.value),
+      false,
+      'an out-of-band lifecycle update must reopen the object',
     );
   } finally {
     rmSync(workspace, { recursive: true, force: true });

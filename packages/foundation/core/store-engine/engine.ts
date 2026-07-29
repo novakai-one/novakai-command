@@ -93,6 +93,13 @@ interface RecordIndex {
   indexedSize: number;
   latest: Map<string, ReadRecord>;
   byClientOpId: Map<string, ReadRecord>;
+  tombstones?: TombstoneIndex;
+}
+
+interface TombstoneIndex {
+  latest: Map<string, TombstoneT>;
+  openRefCounts: Map<string, number>;
+  openRefs: Set<string>;
 }
 
 interface TraceIndex {
@@ -397,20 +404,56 @@ export class StoreEngine {
 
   // ── quarantine ────────────────────────────────────────────────────────
   readTombstones(): TombstoneT[] {
-    const latest = new Map<string, TombstoneT>();
-    for (const rec of this.readLatest('quarantine').values()) {
-      const parsed = QuarantineTombstone.safeParse({ ...rec.envelope, ...rec.payload });
-      if (parsed.success) latest.set(parsed.data.id, parsed.data);
-    }
-    return [...latest.values()].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    return [...this.readTombstoneIndex().latest.values()]
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   }
 
-  quarantinedIds(): Set<string> {
-    const open = new Set<string>();
-    for (const t of this.readTombstones()) {
-      if (t.status === 'open') open.add(t.quarantinedRef.id);
+  quarantinedIds(): ReadonlySet<string> {
+    return this.readTombstoneIndex().openRefs;
+  }
+
+  private readTombstoneIndex(): TombstoneIndex {
+    const root = this.effectiveReadRoot('quarantine');
+    this.readLatestFrom(root, 'quarantine');
+    return this.recordIndexes
+      .get(this.storePath('quarantine', root))!
+      .tombstones!;
+  }
+
+  private indexTombstone(
+    index: TombstoneIndex,
+    rec: ReadRecord,
+  ): void {
+    const prior = index.latest.get(rec.envelope.id);
+    if (prior?.status === 'open') {
+      this.adjustOpenRef(index, prior.quarantinedRef.id, -1);
     }
-    return open;
+    index.latest.delete(rec.envelope.id);
+
+    const parsed = QuarantineTombstone.safeParse({
+      ...rec.envelope,
+      ...rec.payload,
+    });
+    if (!parsed.success) return;
+    index.latest.set(parsed.data.id, parsed.data);
+    if (parsed.data.status === 'open') {
+      this.adjustOpenRef(index, parsed.data.quarantinedRef.id, 1);
+    }
+  }
+
+  private adjustOpenRef(
+    index: TombstoneIndex,
+    refId: string,
+    delta: 1 | -1,
+  ): void {
+    const count = (index.openRefCounts.get(refId) ?? 0) + delta;
+    if (count <= 0) {
+      index.openRefCounts.delete(refId);
+      index.openRefs.delete(refId);
+      return;
+    }
+    index.openRefCounts.set(refId, count);
+    index.openRefs.add(refId);
   }
 
   // ── dual-read shim (R3-21) ────────────────────────────────────────────
@@ -464,6 +507,15 @@ export class StoreEngine {
         indexedSize: 0,
         latest: new Map(),
         byClientOpId: new Map(),
+        ...(kind === 'quarantine'
+          ? {
+            tombstones: {
+              latest: new Map(),
+              openRefCounts: new Map(),
+              openRefs: new Set(),
+            },
+          }
+          : {}),
       };
     }
     const current = index!;
@@ -479,6 +531,9 @@ export class StoreEngine {
       if (!rec) continue;
       current.latest.set(rec.envelope.id, rec);
       current.byClientOpId.set(rec.clientOpId, rec);
+      if (current.tombstones) {
+        this.indexTombstone(current.tombstones, rec);
+      }
     }
     current.stamp = stamp;
     current.indexedSize = complete.indexedSize;
