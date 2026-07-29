@@ -2,7 +2,7 @@
 // per-object CAS version counter, lazy schema upgrade on read (DEC-F10),
 // dual-read shim to the legacy root (R3-21). One global mutation lock guards
 // the object-append + trace-append pair (R3-2); fsync after each append (§0).
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import {
   appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync,
   readSync, readdirSync, renameSync, copyFileSync, fsyncSync, statSync,
@@ -87,10 +87,14 @@ interface FileStamp {
   ino: number;
 }
 
-interface RecordIndex {
+interface IndexedFile {
   filePath: string;
   stamp: FileStamp | null;
   indexedSize: number;
+  prefixFingerprint: string | null;
+}
+
+interface RecordIndex extends IndexedFile {
   latest: Map<string, ReadRecord>;
   byClientOpId: Map<string, ReadRecord>;
   tombstones?: TombstoneIndex;
@@ -102,10 +106,7 @@ interface TombstoneIndex {
   openRefs: Set<string>;
 }
 
-interface TraceIndex {
-  filePath: string;
-  stamp: FileStamp | null;
-  indexedSize: number;
+interface TraceIndex extends IndexedFile {
   traces: TraceLineT[];
   byClientOpId: Map<string, TraceLineT>;
   opIds: Set<string>;
@@ -229,6 +230,55 @@ export class StoreEngine {
     };
   }
 
+  /**
+   * A bounded fingerprint of the indexed prefix's boundaries. The first
+   * window catches replaced files; the final window catches truncate/rewrite
+   * recovery that preserves the inode and then grows the file again.
+   */
+  private indexedPrefixFingerprint(
+    filePath: string,
+    indexedSize: number,
+  ): string {
+    const windowSize = 4096;
+    const hash = createHash('sha256').update(String(indexedSize));
+    if (indexedSize <= windowSize * 2) {
+      hash.update(this.readBytes(filePath, 0, indexedSize));
+    } else {
+      hash.update(this.readBytes(filePath, 0, windowSize));
+      hash.update(this.readBytes(
+        filePath,
+        indexedSize - windowSize,
+        windowSize,
+      ));
+    }
+    return hash.digest('hex');
+  }
+
+  private canExtendIndex(
+    filePath: string,
+    stamp: FileStamp | null,
+    index: IndexedFile | undefined,
+  ): boolean {
+    if (
+      !index
+      || !stamp
+      || !index.stamp
+      || index.filePath !== filePath
+      || index.stamp.ino !== stamp.ino
+      || stamp.size < index.stamp.size
+    ) {
+      return false;
+    }
+    if (stamp.size === index.stamp.size) {
+      return stamp.mtimeMs === index.stamp.mtimeMs;
+    }
+    return (
+      index.prefixFingerprint !== null
+      && this.indexedPrefixFingerprint(filePath, index.indexedSize)
+        === index.prefixFingerprint
+    );
+  }
+
   // ── record parsing + lazy upgrade (DEC-F10) ──────────────────────────
   /** Parse one line into a normalized record. v0 flat records upgrade in memory. */
   private parseRecordLine(line: string): ReadRecord | null {
@@ -335,18 +385,7 @@ export class StoreEngine {
     const filePath = this.storePath('trace');
     const stamp = this.fileStamp(filePath);
     let index = this.traceIndex;
-    const canExtend = (
-      index
-      && stamp
-      && index.stamp
-      && index.filePath === filePath
-      && index.stamp.ino === stamp.ino
-      && stamp.size >= index.stamp.size
-      && (
-        stamp.size > index.stamp.size
-        || stamp.mtimeMs === index.stamp.mtimeMs
-      )
-    );
+    const canExtend = this.canExtendIndex(filePath, stamp, index);
     const unchanged = (
       canExtend
       && stamp!.size === index!.stamp!.size
@@ -358,6 +397,7 @@ export class StoreEngine {
         filePath,
         stamp: null,
         indexedSize: 0,
+        prefixFingerprint: null,
         traces: [],
         byClientOpId: new Map(),
         opIds: new Set(),
@@ -367,6 +407,7 @@ export class StoreEngine {
     if (!stamp) {
       index!.stamp = null;
       index!.indexedSize = 0;
+      index!.prefixFingerprint = null;
       this.traceIndex = index;
       return index!.traces;
     }
@@ -387,6 +428,10 @@ export class StoreEngine {
     }
     index!.stamp = stamp;
     index!.indexedSize = complete.indexedSize;
+    index!.prefixFingerprint = this.indexedPrefixFingerprint(
+      filePath,
+      index!.indexedSize,
+    );
     this.traceIndex = index;
     return index!.traces;
   }
@@ -492,17 +537,7 @@ export class StoreEngine {
     const filePath = this.storePath(kind, root);
     const stamp = this.fileStamp(filePath);
     let index = this.recordIndexes.get(filePath);
-    const canExtend = (
-      index
-      && stamp
-      && index.stamp
-      && index.stamp.ino === stamp.ino
-      && stamp.size >= index.stamp.size
-      && (
-        stamp.size > index.stamp.size
-        || stamp.mtimeMs === index.stamp.mtimeMs
-      )
-    );
+    const canExtend = this.canExtendIndex(filePath, stamp, index);
     const unchanged = (
       canExtend
       && stamp!.size === index!.stamp!.size
@@ -514,6 +549,7 @@ export class StoreEngine {
         filePath,
         stamp: null,
         indexedSize: 0,
+        prefixFingerprint: null,
         latest: new Map(),
         byClientOpId: new Map(),
         ...(kind === 'quarantine'
@@ -531,6 +567,7 @@ export class StoreEngine {
     if (!stamp) {
       current.stamp = null;
       current.indexedSize = 0;
+      current.prefixFingerprint = null;
       this.recordIndexes.set(filePath, current);
       return current.latest;
     }
@@ -546,6 +583,10 @@ export class StoreEngine {
     }
     current.stamp = stamp;
     current.indexedSize = complete.indexedSize;
+    current.prefixFingerprint = this.indexedPrefixFingerprint(
+      filePath,
+      current.indexedSize,
+    );
     this.recordIndexes.set(filePath, current);
     return current.latest;
   }
