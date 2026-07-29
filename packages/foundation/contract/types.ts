@@ -23,6 +23,11 @@ export interface ListFilter { [field: string]: unknown }
 export interface TraceFilter { opId?: ServerOpId; clientOpId?: ClientOpId; target?: Ref; since?: string }
 export interface Page<T> { items: T[]; nextCursor?: string }
 
+export interface QuarantineRequestOutcome {
+  outcome: 'created' | 'already_requested';
+  tombstone: QuarantineTombstone;
+}
+
 // Scoped store handle (R3-6). Engine binding is internal — consumers see only
 // capability + allowedKinds. Construct via composeHandle() in contract/compose.
 export interface ScopedStoreHandle {

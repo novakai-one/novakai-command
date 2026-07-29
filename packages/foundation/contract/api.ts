@@ -1,5 +1,6 @@
 // §3 Foundation contract functions. Free functions; the engine rides on the
 // scoped handle (composed by composeHandle). Absence is typed data, never a throw.
+import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import type { ClientOpId, ObjectId, ObjectKind, ServerOpId } from './brands.js';
 import { Envelope, QuarantineTombstone, Ref } from './schemas.js';
@@ -7,7 +8,8 @@ import type { Envelope as EnvelopeT, QuarantineTombstone as TombstoneT, TraceLin
 import { err, type StoreError } from './errors.js';
 import {
   ABSENT, fail, ok, type Absent, type ListFilter, type Page, type PageOptions,
-  type Result, type ScopedStoreHandle, type StoredObject, type TraceFilter,
+  type QuarantineRequestOutcome, type Result, type ScopedStoreHandle,
+  type StoredObject, type TraceFilter,
 } from './types.js';
 import { CURRENT_SCHEMA_VERSION, KIND_FILES, StoreEngine } from '../core/store-engine/engine.js';
 
@@ -327,6 +329,49 @@ export async function queryTrace(filter: TraceFilter, page?: PageOptions): Promi
 }
 
 // ── Quarantine (R3-4/R3-11) ─────────────────────────────────────────────────
+
+/**
+ * Requests a corrupt-record tombstone without granting the caller ordinary
+ * quarantine write scope. The target kind must already be in the caller's
+ * scoped handle; Foundation constructs and persists the authoritative record.
+ */
+export async function requestQuarantine(
+  handle: ScopedStoreHandle,
+  input: {
+    target: z.infer<typeof Ref>;
+    clientOpId: ClientOpId;
+  },
+): Promise<Result<QuarantineRequestOutcome, StoreError>> {
+  const engine = engineOf(handle);
+  const bootFailure = engine.bootError();
+  if (bootFailure) return fail(bootFailure);
+  const parsedTarget = Ref.safeParse(input.target);
+  if (!parsedTarget.success) {
+    return fail(err(
+      'InvalidEnvelope',
+      'quarantine target rejected',
+      {
+        missingFields: [],
+        invalidFields: parsedTarget.error.issues.map((issue) => ({
+          field: issue.path.join('.') || '(root)',
+          reason: issue.message,
+        })),
+      },
+      false,
+    ));
+  }
+  const scoped = scopeCheck(handle, parsedTarget.data.kind);
+  if (scoped) return fail(scoped);
+  const digest = createHash('sha256')
+    .update(`quarantine-request:${input.clientOpId}`)
+    .digest('hex');
+  return engine.requestQuarantine({
+    tombstoneId: `quarantine_${digest}`,
+    target: parsedTarget.data,
+    actor: principalOf(handle),
+    clientOpId: input.clientOpId,
+  });
+}
 
 /** Bound variant. */
 export async function listQuarantineBound(engine: StoreEngine, page?: PageOptions): Promise<Page<TombstoneT>> {

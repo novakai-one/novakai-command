@@ -414,7 +414,11 @@ export class StoreEngine {
     };
     // trace w/o object
     for (const t of traces) {
-      if (t.action === 'truncate') continue;
+      if (
+        t.action === 'truncate'
+        || t.action === 'quarantine'
+        || t.action === 'resolveQuarantine'
+      ) continue;
       // S2a: system.action lines (hook_log/context.inject/hook_error) are
       // event records, not mutation evidence — never orphan-tombstoned.
       if (t.opKind === 'system.action') continue;
@@ -580,6 +584,161 @@ export class StoreEngine {
       };
       this.appendLineFsync(this.storePath('trace'), JSON.stringify(trace));
       return { ok: true, value: null };
+    });
+  }
+
+  /**
+   * Public-contract quarantine request implementation. The caller supplies
+   * only a scoped target and stable operation identity; Foundation owns the
+   * tombstone envelope, lock, append, and lifecycle trace.
+   */
+  requestQuarantine(opts: {
+    tombstoneId: string;
+    target: z.infer<typeof Ref>;
+    actor: string;
+    clientOpId: ClientOpId;
+  }): EngineResult<{
+    outcome: 'created' | 'already_requested';
+    tombstone: TombstoneT;
+  }> {
+    return this.withLock<{
+      outcome: 'created' | 'already_requested';
+      tombstone: TombstoneT;
+    }>(() => {
+      const prior = [...this.readLatestEffective('quarantine').values()]
+        .find((record) => record.clientOpId === opts.clientOpId);
+      if (prior) {
+        const parsed = QuarantineTombstone.safeParse({
+          ...prior.envelope,
+          ...prior.payload,
+        });
+        if (
+          parsed.success
+          && parsed.data.quarantinedRef.kind === opts.target.kind
+          && parsed.data.quarantinedRef.id === opts.target.id
+        ) {
+          if (!this.readTraces().some((trace) => trace.opId === prior.opId)) {
+            try {
+              const trace: TraceLineT = {
+                kind: 'trace',
+                id: `trace_${randomUUID()}`,
+                schemaVersion: 1,
+                createdAt: nowIso(),
+                permissionLevel: 'team',
+                createdBy: opts.actor,
+                seq: this.nextSeq(this.readTraces()),
+                opId: prior.opId as ServerOpId,
+                clientOpId: opts.clientOpId,
+                action: 'quarantine',
+                target: opts.target,
+              };
+              this.appendLineFsync(
+                this.storePath('trace'),
+                JSON.stringify(trace),
+              );
+            } catch (cause) {
+              return {
+                ok: false,
+                error: err(
+                  'TraceWriteFailed',
+                  `quarantine trace append failed: ${String(cause)}`,
+                  {
+                    opId: prior.opId as ServerOpId,
+                    cause: String(cause),
+                  },
+                  true,
+                ),
+              };
+            }
+          }
+          return {
+            ok: true,
+            value: {
+              outcome: 'already_requested',
+              tombstone: parsed.data,
+            },
+          };
+        }
+        return {
+          ok: false,
+          error: err(
+            'CasConflict',
+            `client operation "${opts.clientOpId}" already targets another quarantine request`,
+            {
+              id: opts.tombstoneId as ObjectId,
+              expectedVersion: 0,
+              actualVersion: prior.version,
+            },
+            false,
+          ),
+        };
+      }
+
+      const tombstone = QuarantineTombstone.parse({
+        kind: 'quarantine',
+        id: opts.tombstoneId,
+        schemaVersion: 1,
+        createdAt: nowIso(),
+        permissionLevel: 'private',
+        createdBy: opts.actor,
+        quarantinedRef: opts.target,
+        reason: 'corrupt_record',
+        status: 'open',
+      });
+      const opId = mintServerOpId();
+      try {
+        this.appendLineFsync(
+          this.storePath('quarantine'),
+          JSON.stringify(this.wrapRecord(
+            tombstone as EnvelopeT & Record<string, unknown>,
+            { opId, clientOpId: opts.clientOpId, version: 1 },
+          )),
+        );
+      } catch (cause) {
+        return {
+          ok: false,
+          error: err(
+            'ObjectWriteFailed',
+            `quarantine append failed: ${String(cause)}`,
+            { opId, cause: String(cause) },
+            true,
+          ),
+        };
+      }
+      try {
+        const trace: TraceLineT = {
+          kind: 'trace',
+          id: `trace_${randomUUID()}`,
+          schemaVersion: 1,
+          createdAt: nowIso(),
+          permissionLevel: 'team',
+          createdBy: opts.actor,
+          seq: this.nextSeq(this.readTraces()),
+          opId,
+          clientOpId: opts.clientOpId,
+          action: 'quarantine',
+          target: opts.target,
+        };
+        this.appendLineFsync(this.storePath('trace'), JSON.stringify(trace));
+      } catch (cause) {
+        return {
+          ok: false,
+          error: err(
+            'TraceIncomplete',
+            `quarantine appended but trace append failed: ${String(cause)}`,
+            {
+              opId,
+              clientOpId: opts.clientOpId,
+              objectId: tombstone.id as ObjectId,
+            },
+            true,
+          ),
+        };
+      }
+      return {
+        ok: true,
+        value: { outcome: 'created', tombstone },
+      };
     });
   }
 
