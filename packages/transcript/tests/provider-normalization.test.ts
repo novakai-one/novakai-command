@@ -369,6 +369,84 @@ test('irrelevant Kimi tool calls keep relation persistence bounded at 100 and 20
   );
 });
 
+test('Kimi AgentSwarm persists one bounded relation per spawned child and then prunes its parent', async () => {
+  const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-kimi-swarm-'));
+  const root = path.join(workspace, '.novakai');
+  const destination = path.join(
+    root,
+    'transcripts',
+    'kimi',
+    'fixture-session',
+    'events.jsonl',
+  );
+  try {
+    mkdirSync(path.dirname(destination), { recursive: true });
+    copyFileSync(
+      path.join(fixtureRoot, 'kimi', 'subagent-swarm.jsonl'),
+      destination,
+    );
+    const transcript = composeTranscript({
+      root,
+      source: createRawTranscriptSource({ root }),
+    });
+
+    const ingested = await transcript.ingest();
+    assert.deepEqual(
+      ingested.ok
+        ? {
+            added: ingested.value.added,
+            skipped: ingested.value.skipped.length,
+          }
+        : null,
+      { added: 3, skipped: 0 },
+    );
+    const lines = await transcript.linesByProvider('kimi');
+    assert.equal(lines.ok, true);
+    if (!lines.ok) return;
+    assert.equal(lines.value.length, 3);
+    const parentTurns = new Set(
+      lines.value.map((line) => line.parentTurnId),
+    );
+    assert.equal(parentTurns.size, 1);
+    const parentTurnId = lines.value[0]?.parentTurnId ?? '';
+    assert.match(parentTurnId, /^kimi:turn_[a-f0-9]{64}$/u);
+    const tree = await transcript.subagentTree(parentTurnId);
+    assert.equal(tree.ok ? tree.value.length : null, 3);
+
+    const handle = composeHandle({
+      root,
+      dataRoot: path.join(root, 'stores'),
+      capability: 'transcript',
+      allowedKinds: ['transcriptCheckpoint', 'transcriptJournal'],
+      principal: 'sys_ingester',
+    });
+    const relations = await listObjects(
+      handle,
+      'transcriptJournal',
+      { outcome: 'relation' },
+    );
+    const skips = await listObjects(
+      handle,
+      'transcriptJournal',
+      { outcome: 'skipped' },
+    );
+    assert.equal(relations.ok ? relations.value.items.length : null, 4);
+    assert.equal(skips.ok ? skips.value.items.length : null, 0);
+    const checkpoints = await listObjects<Record<string, unknown>>(
+      handle,
+      'transcriptCheckpoint',
+    );
+    assert.ok(
+      checkpoints.ok
+      && checkpoints.value.items.every(
+        (item) => !('relationState' in item.object),
+      ),
+    );
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
 test('Kimi relation context survives checkpoint restart without rescanning metadata', async () => {
   const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-kimi-relation-'));
   const root = path.join(workspace, '.novakai');
