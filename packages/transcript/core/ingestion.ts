@@ -492,73 +492,73 @@ export async function ingest(
   }
   try {
     for await (const rawSource of rawSources) {
-    const parsedSource = TranscriptSource.safeParse(rawSource);
-    if (!parsedSource.success) {
-      return {
-        ok: false,
-        error: invalidInput('transcript source', parsedSource.error.issues),
-      };
-    }
-    const source = parsedSource.data;
-    const checkpoint = await readCheckpoint(context, source);
-    if (!checkpoint.ok) return checkpoint;
-    const fromOffset = checkpoint.value?.object.offset ?? 0;
-    try {
-      for await (const rawItem of context.source.read(source, fromOffset)) {
-        const parsedItem = TranscriptSourceItem.safeParse(rawItem);
-        if (!parsedItem.success) {
-          return {
-            ok: false,
-            error: invalidInput(
-              `transcript source item from ${source.sourceId}`,
-              parsedItem.error.issues,
-            ),
-          };
-        }
-        const item = parsedItem.data;
-        if (item.kind === 'skip') {
-          const quarantined = await quarantineRejectedItem(
-            context,
-            source,
-            item,
-          );
-          if (!quarantined.ok) return quarantined;
-          context.failpoint.hit(
-            'transcript.afterQuarantineBeforeSkip',
-          );
-          const skipped = await persistSkip(context, source, item);
-          if (!skipped.ok) return skipped;
-          result.skipped.push(skipped.value);
-        } else {
-          context.failpoint.hit('transcript.beforeLineAppend');
-          const persisted = await persistCandidate(context, source, item);
-          if (!persisted.ok) return persisted;
-          result[persisted.value === 'added' ? 'added' : 'duplicates'] += 1;
-          context.failpoint.hit(
-            'transcript.afterLineAppendBeforeCheckpoint',
-          );
-          for (const diagnostic of item.diagnostics ?? []) {
-            const journaled = await persistDiagnostic(
+      const parsedSource = TranscriptSource.safeParse(rawSource);
+      if (!parsedSource.success) {
+        return {
+          ok: false,
+          error: invalidInput('transcript source', parsedSource.error.issues),
+        };
+      }
+      const source = parsedSource.data;
+      const checkpoint = await readCheckpoint(context, source);
+      if (!checkpoint.ok) return checkpoint;
+      const fromOffset = checkpoint.value?.object.offset ?? 0;
+      try {
+        for await (const rawItem of context.source.read(source, fromOffset)) {
+          const parsedItem = TranscriptSourceItem.safeParse(rawItem);
+          if (!parsedItem.success) {
+            return {
+              ok: false,
+              error: invalidInput(
+                `transcript source item from ${source.sourceId}`,
+                parsedItem.error.issues,
+              ),
+            };
+          }
+          const item = parsedItem.data;
+          if (item.kind === 'skip') {
+            const quarantined = await quarantineRejectedItem(
               context,
               source,
               item,
-              diagnostic,
             );
-            if (!journaled.ok) return journaled;
-            result.diagnostics.push(journaled.value);
+            if (!quarantined.ok) return quarantined;
+            context.failpoint.hit(
+              'transcript.afterQuarantineBeforeSkip',
+            );
+            const skipped = await persistSkip(context, source, item);
+            if (!skipped.ok) return skipped;
+            result.skipped.push(skipped.value);
+          } else {
+            context.failpoint.hit('transcript.beforeLineAppend');
+            const persisted = await persistCandidate(context, source, item);
+            if (!persisted.ok) return persisted;
+            result[persisted.value === 'added' ? 'added' : 'duplicates'] += 1;
+            context.failpoint.hit(
+              'transcript.afterLineAppendBeforeCheckpoint',
+            );
+            for (const diagnostic of item.diagnostics ?? []) {
+              const journaled = await persistDiagnostic(
+                context,
+                source,
+                item,
+                diagnostic,
+              );
+              if (!journaled.ok) return journaled;
+              result.diagnostics.push(journaled.value);
+            }
           }
+          const advanced = await advanceCheckpoint(
+            context,
+            source,
+            item.nextOffset,
+          );
+          if (!advanced.ok) return advanced;
         }
-        const advanced = await advanceCheckpoint(
-          context,
-          source,
-          item.nextOffset,
-        );
-        if (!advanced.ok) return advanced;
+      } catch (cause) {
+        if (cause instanceof TranscriptFailpointCrash) throw cause;
+        return { ok: false, error: sourceFailure(source.sourceId, cause) };
       }
-    } catch (cause) {
-      if (cause instanceof TranscriptFailpointCrash) throw cause;
-      return { ok: false, error: sourceFailure(source.sourceId, cause) };
-    }
     }
   } catch (cause) {
     if (cause instanceof TranscriptFailpointCrash) throw cause;
