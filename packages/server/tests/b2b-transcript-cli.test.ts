@@ -2,11 +2,17 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import {
+  mkdirSync,
   mkdtempSync,
   rmSync,
+  writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import {
+  composeAgents,
+  createProviderSessionRegistry,
+} from '../../agents/contract/index.js';
 import {
   mintToken,
 } from '@novakai/foundation/dist/contract/index.js';
@@ -17,6 +23,9 @@ import {
   type TranscriptSourceAdapter,
   type TranscriptSourceItem,
 } from '../../transcript/contract/index.js';
+import {
+  composeTranscriptServerHost,
+} from '../core/b2b/composition.js';
 
 const CLI = path.resolve('../../scripts/nvk.mjs');
 
@@ -69,6 +78,19 @@ function invoke(root: string, token: string, args: string[]) {
   });
 }
 
+async function waitFor(
+  predicate: () => boolean,
+  timeoutMs = 5_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() >= deadline) {
+      throw new Error('timed out waiting for transcript ingestion');
+    }
+    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+  }
+}
+
 test('nvk transcript provides CLI parity for all three read-only queries', async () => {
   const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-transcript-cli-'));
   const root = path.join(workspace, '.novakai');
@@ -119,6 +141,113 @@ test('nvk transcript provides CLI parity for all three read-only queries', async
       ['CLI child'],
     );
   } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test('nvk transcript lines-by-session returns rows ingested by the real worker composition', async () => {
+  const workspace = mkdtempSync(
+    path.join(tmpdir(), 'nvk-transcript-cli-real-source-'),
+  );
+  const root = path.join(workspace, '.novakai');
+  const providerHome = path.join(workspace, 'provider-home');
+  const destination = path.join(
+    root,
+    'transcripts',
+    'kimi',
+    'fixture-session',
+    'events.jsonl',
+  );
+  const agentsContext = composeAgents({
+    root,
+    principal: 'person_cli',
+    allowMock: false,
+  });
+  const sessions = createProviderSessionRegistry(agentsContext);
+  let host: ReturnType<typeof composeTranscriptServerHost> | undefined;
+  try {
+    mkdirSync(path.dirname(destination), { recursive: true });
+    mkdirSync(providerHome, { recursive: true });
+    writeFileSync(
+      destination,
+      `${JSON.stringify({
+        kind: 'event',
+        envelope: {
+          seq: 1,
+          type: 'assistant_output',
+          payload: {
+            agentId: 'agent_cli_child',
+            parentAgentId: 'agent_cli_parent',
+            output: 'real composition CLI row',
+            sessionId: 'native_cli_session',
+            turnId: 1,
+          },
+        },
+      })}\n`,
+    );
+    assert.equal(
+      (await sessions.register({
+        sessionId: 'providerSession_cli',
+        agentId: 'agent_cli_child',
+        provider: 'kimi',
+        providerConversationId: 'native_cli_session',
+        cwd: workspace,
+        model: 'fixture',
+      })).ok,
+      true,
+    );
+    assert.equal(
+      (await sessions.register({
+        sessionId: 'providerSession_cli_parent',
+        agentId: 'agent_cli_parent',
+        provider: 'kimi',
+        providerConversationId: 'native_cli_parent',
+        cwd: workspace,
+        model: 'fixture',
+      })).ok,
+      true,
+    );
+
+    host = composeTranscriptServerHost({
+      root,
+      providerHome,
+      watcherIntervalMs: 20,
+      ingestIntervalMs: 20,
+    });
+    host.topology.start();
+    await waitFor(() => host?.topology.status().runs === 1);
+    await host.topology.stop();
+
+    const token = mintToken(
+      root,
+      'person_cli',
+      ['transcriptLine'],
+      'person_local',
+    );
+    const result = invoke(root, token.bearer, [
+      'transcript',
+      'lines-by-session',
+      '--session', 'providerSession_cli',
+    ]);
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(
+      (JSON.parse(result.stdout) as Array<{
+        text: string;
+        agentId?: string;
+        parentAgentId?: string;
+      }>).map((line) => ({
+        text: line.text,
+        agentId: line.agentId,
+        parentAgentId: line.parentAgentId,
+      })),
+      [{
+        text: 'real composition CLI row',
+        agentId: 'agent_cli_child',
+        parentAgentId: 'agent_cli_parent',
+      }],
+    );
+  } finally {
+    await host?.topology.stop();
     rmSync(workspace, { recursive: true, force: true });
   }
 });
