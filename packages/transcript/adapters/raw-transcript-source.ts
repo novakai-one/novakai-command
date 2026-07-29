@@ -157,15 +157,6 @@ class RawTranscriptSource implements TranscriptSourceAdapter {
         newline = buffered.indexOf(0x0a);
       }
     }
-    if (buffered.length > 0) {
-      yield normalizeProviderLine(
-        source.provider,
-        buffered.toString('utf8'),
-        cursor,
-        cursor + buffered.length,
-        this.options.resolveSessionRef,
-      );
-    }
   }
 }
 
