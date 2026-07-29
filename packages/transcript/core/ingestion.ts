@@ -5,6 +5,7 @@ import {
   getObjectWithReadFailure,
   isAbsent,
   listObjects,
+  requestQuarantine,
   updateObject,
   type ClientOpId,
   type ObjectId,
@@ -298,6 +299,24 @@ async function persistSkip(
   };
 }
 
+async function quarantineRejectedItem(
+  context: TranscriptContext,
+  source: TranscriptSourceT,
+  item: TranscriptSourceSkip,
+): Promise<Result<null, TranscriptError>> {
+  const identity = `${source.provider}:${source.sourceId}:${item.offset}`;
+  const requested = await requestQuarantine(context.handle, {
+    target: {
+      kind: 'transcriptLine',
+      id: `transcriptLine_${hash(`quarantine-target:${identity}`)}`,
+    },
+    clientOpId: operationId(`quarantine:${identity}`),
+  });
+  return requested.ok
+    ? { ok: true, value: null }
+    : requested;
+}
+
 async function persistDiagnostic(
   context: TranscriptContext,
   source: TranscriptSourceT,
@@ -496,6 +515,12 @@ export async function ingest(
         }
         const item = parsedItem.data;
         if (item.kind === 'skip') {
+          const quarantined = await quarantineRejectedItem(
+            context,
+            source,
+            item,
+          );
+          if (!quarantined.ok) return quarantined;
           const skipped = await persistSkip(context, source, item);
           if (!skipped.ok) return skipped;
           result.skipped.push(skipped.value);
