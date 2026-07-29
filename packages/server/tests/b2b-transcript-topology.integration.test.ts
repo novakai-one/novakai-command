@@ -341,14 +341,18 @@ test('HTTP responds within 500ms while a chunked transcript first scan is still 
   }, 30_000);
 });
 
-test('chunked transcript first scan durably ingests all 8,000 rows', async (t) => {
+test('chunked transcript first scan durably ingests all 5,000 rows', async (t) => {
   const base = workspace();
   const root = path.join(base, '.novakai');
   const providerHome = path.join(base, 'empty-provider-home');
   const custody = path.join(root, 'transcripts', 'kimi');
   mkdirSync(custody, { recursive: true });
   mkdirSync(providerHome, { recursive: true });
-  const lineCount = 8_000;
+  // Scale rationale: ingestion is fsync-bound at ~51 rows/s (measured), so
+  // 5,000 rows is the bottom of the brief's 5,000–10,000 band and the top of
+  // what keeps the full server suite under ~2 minutes (~100s ingest + ~18s
+  // baseline). 8,000+ rows measurably blows the budget.
+  const lineCount = 5_000;
   const rows = Array.from({ length: lineCount }, (_, index) =>
     JSON.stringify({
       kind: 'event',
@@ -380,6 +384,15 @@ test('chunked transcript first scan durably ingests all 8,000 rows', async (t) =
   if (!booted.ok) return;
   t.after(() => booted.value.close());
 
+  const ingestStartedAt = performance.now();
+  await eventually(async () => {
+    const status = booted.value.runtime.transcript.topology.status();
+    return status.runs >= 1 && !status.ingesting;
+  }, 150_000);
+  t.diagnostic(
+    `first scan ingested ${lineCount} rows in `
+    + `${((performance.now() - ingestStartedAt) / 1_000).toFixed(1)}s`,
+  );
   const lines = await booted.value.runtime.transcript.operations
     .linesByProvider('kimi');
   assert.equal(
