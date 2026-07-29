@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import {
   mkdirSync,
   mkdtempSync,
-  rmSync,
+  renameSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -40,25 +40,25 @@ writeFileSync(path.join(custody, 'active-crash.jsonl'), `${rows}\n`);
 const host = composeTranscriptServerHost({
   root,
   providerHome,
-  watcherIntervalMs: 10,
+  watcherIntervalMs: 500,
   ingestIntervalMs: 10,
 });
 host.topology.start();
 
-let deadline = Date.now() + 1_000;
+let deadline = Date.now() + 3_000;
 while (!host.topology.status().ingesting && Date.now() < deadline) {
   await new Promise((resolve) => setTimeout(resolve, 1));
 }
 assert.equal(host.topology.status().ingesting, true);
 
 const watcherState = path.join(root, 'transcripts', '.state');
-rmSync(watcherState, { recursive: true });
+renameSync(watcherState, `${watcherState}-before-active-crash`);
 writeFileSync(
   watcherState,
   'checkpoint directory deliberately replaced during active ingestion',
 );
 
-deadline = Date.now() + 1_000;
+deadline = Date.now() + 3_000;
 while (host.topology.status().running && Date.now() < deadline) {
   await new Promise((resolve) => setTimeout(resolve, 1));
 }

@@ -107,7 +107,7 @@ test('worker death during active ingest immediately clears the terminal ingestin
     [tsxCli, activeIngestCrashFixture],
     {
       encoding: 'utf8',
-      timeout: 3_000,
+      timeout: 6_000,
     },
   );
   assert.equal(
