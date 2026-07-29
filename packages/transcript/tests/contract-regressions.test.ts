@@ -155,3 +155,59 @@ test('fallback dedup uses collision-safe canonical tuple encoding', async () => 
     rmSync(workspace, { recursive: true, force: true });
   }
 });
+
+function withOffset(instantMs: number, offsetHours: number): string {
+  const shifted = new Date(
+    instantMs + offsetHours * 60 * 60 * 1_000,
+  ).toISOString().replace('Z', '');
+  const sign = offsetHours >= 0 ? '+' : '-';
+  return `${shifted}${sign}${String(Math.abs(offsetHours)).padStart(2, '0')}:00`;
+}
+
+test('linesByProvider since compares parsed instants across offsets', async () => {
+  const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-since-instant-'));
+  const root = path.join(workspace, '.novakai');
+  const source = new RegressionSource(new Map([
+    ['kimi:one', [{
+      kind: 'candidate',
+      offset: 0,
+      nextOffset: 10,
+      content: 'one',
+      line: {
+        nativeId: 'since-line',
+        turnIndex: 0,
+        role: 'assistant',
+        text: 'instant comparison',
+      },
+    }]],
+  ]));
+
+  try {
+    const transcript = composeTranscript({ root, source });
+    const ingested = await transcript.ingest();
+    assert.equal(ingested.ok, true);
+    const all = await transcript.linesByProvider('kimi');
+    assert.equal(all.ok, true);
+    if (!all.ok || !all.value[0]) return;
+    const createdMs = Date.parse(all.value[0].createdAt);
+
+    const equivalentOffset = withOffset(createdMs, 14);
+    const equivalent = await transcript.linesByProvider(
+      'kimi',
+      equivalentOffset,
+    );
+    assert.deepEqual(
+      equivalent.ok ? equivalent.value.map((line) => line.text) : null,
+      ['instant comparison'],
+    );
+
+    const actuallyAfterButLexicallyEarlier = withOffset(createdMs + 1, -12);
+    const after = await transcript.linesByProvider(
+      'kimi',
+      actuallyAfterButLexicallyEarlier,
+    );
+    assert.deepEqual(after.ok ? after.value : null, []);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
