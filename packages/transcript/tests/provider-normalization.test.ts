@@ -912,6 +912,14 @@ test('TRN-002 Claude raw-copy subagent parentUuid is provider-scoped and queryab
           entry.diagnostic.code === 'agent_attribution_unavailable',
       ),
     );
+    const claudeLines = await transcript.linesByProvider('claude');
+    const linear = claudeLines.ok
+      ? claudeLines.value.find(
+          (line) => line.text === 'synthetic claude linear continuation',
+        )
+      : undefined;
+    assert.equal(linear?.turnIndex, 1);
+    assert.ok((linear?.sourceOffset ?? 0) > 1);
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }
@@ -1009,6 +1017,13 @@ test('Codex raw-copy adapter normalizes response items and events without inferr
           sessionRef: undefined,
         },
       ],
+    );
+    assert.deepEqual(
+      queried.ok ? queried.value.map((line) => line.turnIndex) : null,
+      [0, 1],
+    );
+    assert.ok(
+      queried.ok && (queried.value[1]?.sourceOffset ?? 0) > 1,
     );
   } finally {
     rmSync(workspace, { recursive: true, force: true });
