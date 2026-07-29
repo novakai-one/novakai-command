@@ -2,6 +2,7 @@ import { z } from 'zod';
 import {
   ProviderName,
   SessionRef,
+  type SessionRef as SessionRefT,
   type TranscriptContract,
 } from '../../../transcript/contract/index.js';
 import type { MethodTable } from '../../contract/protocol.js';
@@ -68,7 +69,9 @@ export function buildTranscriptMethods(
         params,
       );
       if (!parsed.ok) return parsed;
-      return transcript.linesBySession(parsed.value.sessionRef);
+      return transcript.linesBySession(
+        parsed.value.sessionRef as SessionRefT,
+      );
     },
     async linesByProvider(params: never) {
       const parsed = parseInput(

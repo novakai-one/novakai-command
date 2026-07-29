@@ -83,7 +83,7 @@ test('transcript.ingest=true starts copy custody and authoritative ingestion', a
     cwd: base,
     providerHome,
     watchdogDir: base,
-    kimiCliPath: fakeKimi(),
+    kimiCliPath: fakeKimi().cliPath,
     supervisionTimers: false,
   });
   assert.equal(booted.ok, true);
@@ -144,7 +144,7 @@ test('transcript.ingest=false starts neither watcher nor ingester even when the 
     cwd: base,
     providerHome,
     watchdogDir: base,
-    kimiCliPath: fakeKimi(),
+    kimiCliPath: fakeKimi().cliPath,
     supervisionTimers: false,
   });
   assert.equal(booted.ok, true);
@@ -209,7 +209,7 @@ test('HTTP responds within 500ms while a chunked transcript first scan is still 
     cwd: base,
     providerHome,
     watchdogDir: base,
-    kimiCliPath: fakeKimi(),
+    kimiCliPath: fakeKimi().cliPath,
     supervisionTimers: false,
   });
   assert.equal(booted.ok, true);
