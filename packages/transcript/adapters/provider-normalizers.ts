@@ -28,6 +28,13 @@ function stringValue(value: unknown): string | undefined {
     : undefined;
 }
 
+function identityValue(value: unknown): string | undefined {
+  if (typeof value === 'string' && value.length > 0) return value;
+  return Number.isSafeInteger(value) && Number(value) >= 0
+    ? String(value)
+    : undefined;
+}
+
 function numericUsage(value: unknown): Record<string, number> | undefined {
   if (!isRecord(value)) return undefined;
   const entries = Object.entries(value).filter(
@@ -109,7 +116,13 @@ function normalizeKimi(
   }
   const message = isRecord(payload.message) ? payload.message : undefined;
   const explicitRole = stringValue(message?.role);
-  const role = explicitRole === 'user'
+  const eventType = (
+    stringValue(envelope.type)
+    ?? stringValue(payload.type)
+  );
+  const role = eventType === 'tool.result'
+    ? 'tool'
+    : explicitRole === 'user'
     || explicitRole === 'assistant'
     || explicitRole === 'system'
     || explicitRole === 'tool'
@@ -138,7 +151,7 @@ function normalizeKimi(
       'provider subagent identity is not a verified durable agent id',
     ));
   }
-  const turnId = stringValue(payload.turnId);
+  const turnId = identityValue(payload.turnId);
   const usage = numericUsage(payload.usage);
   const line: NormalizedTranscriptLine = {
     ...(turnId ? { nativeId: turnId, turnId } : {}),
