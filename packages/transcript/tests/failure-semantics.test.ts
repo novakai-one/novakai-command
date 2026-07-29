@@ -183,3 +183,91 @@ test('NVK_FAILPOINT transcript.beforeLineAppend leaves no line or checkpoint and
     rmSync(workspace, { recursive: true, force: true });
   }
 });
+
+test('NVK_FAILPOINT transcript.afterLineAppendBeforeCheckpoint deduplicates the durable line and advances on retry', async () => {
+  const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-fail-after-line-'));
+  const root = path.join(workspace, '.novakai');
+  const destination = path.join(
+    root,
+    'transcripts',
+    'kimi',
+    'fixture-session',
+    'event.jsonl',
+  );
+  const priorFailpoint = process.env.NVK_FAILPOINT;
+  try {
+    mkdirSync(path.dirname(destination), { recursive: true });
+    copyFileSync(path.join(fixtureRoot, 'kimi', 'event.jsonl'), destination);
+    process.env.NVK_FAILPOINT =
+      'transcript.afterLineAppendBeforeCheckpoint';
+    const crashing = composeTranscript({
+      root,
+      source: createRawTranscriptSource({ root }),
+    });
+    await assert.rejects(
+      crashing.ingest(),
+      /transcript\.afterLineAppendBeforeCheckpoint/u,
+    );
+
+    const queryHandle = composeHandle({
+      root,
+      dataRoot: path.join(root, 'stores'),
+      capability: 'transcript',
+      allowedKinds: ['transcriptLine', 'transcriptCheckpoint'],
+      principal: 'sys_ingester',
+    });
+    const afterCrashLines = await listObjects(
+      queryHandle,
+      'transcriptLine',
+    );
+    const afterCrashCheckpoints = await listObjects(
+      queryHandle,
+      'transcriptCheckpoint',
+    );
+    assert.equal(
+      afterCrashLines.ok ? afterCrashLines.value.items.length : null,
+      1,
+    );
+    assert.equal(
+      afterCrashCheckpoints.ok
+        ? afterCrashCheckpoints.value.items.length
+        : null,
+      0,
+    );
+
+    delete process.env.NVK_FAILPOINT;
+    const retrying = composeTranscript({
+      root,
+      source: createRawTranscriptSource({ root }),
+    });
+    const retry = await retrying.ingest();
+    assert.deepEqual(
+      retry.ok
+        ? {
+            added: retry.value.added,
+            duplicates: retry.value.duplicates,
+          }
+        : null,
+      { added: 0, duplicates: 1 },
+    );
+    const afterRetryLines = await retrying.linesByProvider('kimi');
+    const afterRetryCheckpoints = await listObjects(
+      queryHandle,
+      'transcriptCheckpoint',
+    );
+    assert.equal(
+      afterRetryLines.ok ? afterRetryLines.value.length : null,
+      1,
+    );
+    assert.equal(
+      afterRetryCheckpoints.ok
+        ? afterRetryCheckpoints.value.items.length
+        : null,
+      1,
+    );
+  } finally {
+    if (priorFailpoint === undefined) delete process.env.NVK_FAILPOINT;
+    else process.env.NVK_FAILPOINT = priorFailpoint;
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
