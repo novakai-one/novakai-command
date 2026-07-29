@@ -85,14 +85,17 @@ function opaqueSourceId(provider: string, relativePath: string): string {
 
 class RawTranscriptSource implements TranscriptSourceAdapter {
   private readonly root: string;
-  private readonly sourceFiles = new Map<string, string>();
+  private currentSource?: {
+    key: string;
+    file: string;
+  };
 
   constructor(private readonly options: RawTranscriptSourceOptions) {
     this.root = path.resolve(options.root);
   }
 
   async *sources(): AsyncIterable<TranscriptSource> {
-    this.sourceFiles.clear();
+    this.currentSource = undefined;
     const transcriptsRoot = path.join(this.root, 'transcripts');
     let transcriptsStat;
     try {
@@ -115,11 +118,18 @@ class RawTranscriptSource implements TranscriptSourceAdapter {
         )
       ) {
         const sourceId = opaqueSourceId(provider, relativePath);
-        this.sourceFiles.set(
-          `${provider}:${sourceId}`,
-          path.resolve(providerRoot, relativePath),
-        );
-        yield { provider, sourceId };
+        const discovered = {
+          key: `${provider}:${sourceId}`,
+          file: path.resolve(providerRoot, relativePath),
+        };
+        this.currentSource = discovered;
+        try {
+          yield { provider, sourceId };
+        } finally {
+          if (this.currentSource === discovered) {
+            this.currentSource = undefined;
+          }
+        }
       }
     }
   }
@@ -128,33 +138,45 @@ class RawTranscriptSource implements TranscriptSourceAdapter {
     source: TranscriptSource,
     fromOffset: number,
   ): AsyncIterable<TranscriptSourceItem> {
-    const file = this.sourceFiles.get(
-      `${source.provider}:${source.sourceId}`,
-    );
-    if (!file) throw new Error('transcript source is not discovered');
-    const stat = await lstat(file);
-    if (!stat.isFile() || stat.isSymbolicLink()) {
-      throw new Error('transcript source is not a regular file');
+    const key = `${source.provider}:${source.sourceId}`;
+    const discovered = this.currentSource;
+    if (!discovered || discovered.key !== key) {
+      throw new Error('transcript source is not discovered');
     }
-    let buffered = Buffer.alloc(0);
-    let cursor = fromOffset;
-    for await (const chunk of createReadStream(file, { start: fromOffset })) {
-      buffered = Buffer.concat([buffered, chunk as Buffer]);
-      let newline = buffered.indexOf(0x0a);
-      while (newline >= 0) {
-        let raw = buffered.subarray(0, newline);
-        if (raw.at(-1) === 0x0d) raw = raw.subarray(0, -1);
-        const nextOffset = cursor + newline + 1;
-        yield normalizeProviderLine(
-          source.provider,
-          raw.toString('utf8'),
-          cursor,
-          nextOffset,
-          this.options.resolveSessionRef,
-        );
-        buffered = buffered.subarray(newline + 1);
-        cursor = nextOffset;
-        newline = buffered.indexOf(0x0a);
+    try {
+      const stat = await lstat(discovered.file);
+      if (!stat.isFile() || stat.isSymbolicLink()) {
+        throw new Error('transcript source is not a regular file');
+      }
+      let buffered = Buffer.alloc(0);
+      let cursor = fromOffset;
+      for await (
+        const chunk of createReadStream(
+          discovered.file,
+          { start: fromOffset },
+        )
+      ) {
+        buffered = Buffer.concat([buffered, chunk as Buffer]);
+        let newline = buffered.indexOf(0x0a);
+        while (newline >= 0) {
+          let raw = buffered.subarray(0, newline);
+          if (raw.at(-1) === 0x0d) raw = raw.subarray(0, -1);
+          const nextOffset = cursor + newline + 1;
+          yield normalizeProviderLine(
+            source.provider,
+            raw.toString('utf8'),
+            cursor,
+            nextOffset,
+            this.options.resolveSessionRef,
+          );
+          buffered = buffered.subarray(newline + 1);
+          cursor = nextOffset;
+          newline = buffered.indexOf(0x0a);
+        }
+      }
+    } finally {
+      if (this.currentSource === discovered) {
+        this.currentSource = undefined;
       }
     }
   }

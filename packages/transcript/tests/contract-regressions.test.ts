@@ -412,8 +412,10 @@ test('raw source handles expire when discovery advances or completes', async () 
   try {
     mkdirSync(path.join(providerRoot, 'a'), { recursive: true });
     mkdirSync(path.join(providerRoot, 'b'), { recursive: true });
+    mkdirSync(path.join(providerRoot, 'c'), { recursive: true });
     writeFileSync(path.join(providerRoot, 'a', 'events.jsonl'), row);
     writeFileSync(path.join(providerRoot, 'b', 'events.jsonl'), row);
+    writeFileSync(path.join(providerRoot, 'c', 'events.jsonl'), row);
     const source = createRawTranscriptSource({ root });
     const discovery = source.sources()[Symbol.asyncIterator]();
 
@@ -427,10 +429,20 @@ test('raw source handles expire when discovery advances or completes', async () 
       consume(source, first.value),
       /transcript source is not discovered/u,
     );
+
+    await consume(source, second.value);
+    await assert.rejects(
+      consume(source, second.value),
+      /transcript source is not discovered/u,
+    );
+    const third = await discovery.next();
+    assert.equal(third.done, false);
+    if (third.done) return;
+
     const completed = await discovery.next();
     assert.equal(completed.done, true);
     await assert.rejects(
-      consume(source, second.value),
+      consume(source, third.value),
       /transcript source is not discovered/u,
     );
   } finally {
