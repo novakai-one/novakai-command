@@ -23,7 +23,7 @@ export type LaunchAuthorityRegistry = Readonly<Record<string, LaunchAuthority>>;
 
 /** What the PTY host asks when a session names an authority. */
 export interface LaunchAuthoritySource {
-  lookup(ref: string): LaunchAuthority | undefined;
+  lookup(authorityRef: string): LaunchAuthority | undefined;
 }
 
 /**
@@ -39,8 +39,8 @@ export interface LaunchAuthoritySource {
  * process this Runtime owns, and a Runtime restart ends its PTYs (DEC-B3V4-23).
  */
 export interface LaunchAuthorityRegistrar extends LaunchAuthoritySource {
-  register(ref: string, authority: LaunchAuthority): void;
-  forget(ref: string): void;
+  register(authorityRef: string, authority: LaunchAuthority): void;
+  forget(authorityRef: string): void;
 }
 
 export function createLaunchAuthorities(
@@ -50,9 +50,9 @@ export function createLaunchAuthorities(
     Object.entries(defaultLaunchAuthorities(environment)),
   );
   return {
-    lookup: (ref) => registered.get(ref),
-    register: (ref, authority) => { registered.set(ref, authority); },
-    forget: (ref) => { registered.delete(ref); },
+    lookup: (authorityRef) => registered.get(authorityRef),
+    register: (authorityRef, authority) => { registered.set(authorityRef, authority); },
+    forget: (authorityRef) => { registered.delete(authorityRef); },
   };
 }
 
@@ -165,7 +165,7 @@ function asSource(
   const candidate = authorities as Partial<LaunchAuthoritySource>;
   if (typeof candidate.lookup === 'function') return candidate as LaunchAuthoritySource;
   const table = authorities as LaunchAuthorityRegistry;
-  return { lookup: (ref) => table[ref] };
+  return { lookup: (authorityRef) => table[authorityRef] };
 }
 
 function mergedEnvironment(
