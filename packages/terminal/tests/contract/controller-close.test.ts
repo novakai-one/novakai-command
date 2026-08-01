@@ -127,6 +127,118 @@ test('a detaching lease holder releases the lease without ending the session', a
   }
 });
 
+/**
+ * NVK-KIMI-025 repair 1 (SEVERE, found by Fable's behavioural probe): close the
+ * window, reopen it, type — and the Runtime answered `VersionConflict: the input
+ * stream moved on before this write`, forever.
+ *
+ * The cause is a contract hole, not a UI slip. `expectedNextInputSequence` is an
+ * optimistic-concurrency claim about the input stream, and the input stream's
+ * position is RUNTIME-PRIVATE state. A controller that has just arrived cannot
+ * know it and must not guess — so the session view has to say it out loud.
+ */
+test('a window that closes and comes back can still type', async () => {
+  const rig = createRig();
+  try {
+    const session = unwrap(await openPlainShell(rig), 'open');
+    const first = unwrap(await rig.terminal.attachController(humanContext(), {
+      terminalSessionId: session.id, controllerKind: 'novakai-shell', columns: 80, rows: 24,
+    }), 'attach 1');
+    const firstLease = unwrap(await rig.terminal.acquireInputLease(humanContext(), {
+      terminalSessionId: session.id, attachmentId: first.id,
+      mode: 'acquire-if-free', ttlMs: 30_000,
+    }), 'acquire 1');
+    for (const [index, text] of ['echo one\r', 'echo two\r'].entries()) {
+      unwrap(await rig.terminal.writeInput(humanContext(), {
+        terminalSessionId: session.id, attachmentId: first.id,
+        inputLeaseId: firstLease.id, leaseGeneration: firstLease.generation,
+        expectedNextInputSequence: index + 1, kindOfInput: 'text', utf8Text: text,
+      }), `write ${text}`);
+    }
+
+    // The window closes. The session keeps running — and keeps its stream position.
+    unwrap(await rig.terminal.detachController(humanContext(), {
+      terminalSessionId: session.id, attachmentId: first.id,
+    }), 'close the window');
+
+    // A NEW window opens on the same session, exactly as reopening the page does.
+    const reopened = unwrap(await rig.terminal.attachController(humanContext(), {
+      terminalSessionId: session.id, controllerKind: 'novakai-shell', columns: 80, rows: 24,
+    }), 'reattach');
+    const secondLease = unwrap(await rig.terminal.acquireInputLease(humanContext(), {
+      terminalSessionId: session.id, attachmentId: reopened.id,
+      mode: 'acquire-if-free', ttlMs: 30_000,
+    }), 'acquire 2');
+
+    // It asks the Runtime where the stream is instead of assuming it starts over.
+    const view = unwrap(
+      await rig.terminal.getTerminalSession(humanPrincipal(), session.id), 'inspect',
+    );
+    assert.equal(view.nextInputSequence, 3,
+      'the view does not tell a reattaching controller where the input stream is');
+
+    const typed = await rig.terminal.writeInput(humanContext(), {
+      terminalSessionId: session.id, attachmentId: reopened.id,
+      inputLeaseId: secondLease.id, leaseGeneration: secondLease.generation,
+      expectedNextInputSequence: view.nextInputSequence, kindOfInput: 'text',
+      utf8Text: 'echo after reopening\r',
+    });
+    assert.equal(typed.ok, true, 'a reattached window could not type');
+    if (!typed.ok) return;
+    assert.equal(typed.value.inputSequence, 3);
+    assert.equal(typed.value.outcome, 'submitted-confirmed');
+  } finally {
+    await rig.dispose();
+  }
+});
+
+/**
+ * The other half of the same repair: a controller that guesses "the stream must
+ * start at 1 because I just arrived" is still refused, and the refusal now says
+ * what the truth is — so a client can recover instead of retrying forever.
+ */
+test('a reattached window that guesses the stream position is refused, and told the truth', async () => {
+  const rig = createRig();
+  try {
+    const session = unwrap(await openPlainShell(rig), 'open');
+    const first = unwrap(await rig.terminal.attachController(humanContext(), {
+      terminalSessionId: session.id, controllerKind: 'novakai-shell', columns: 80, rows: 24,
+    }), 'attach 1');
+    const lease = unwrap(await rig.terminal.acquireInputLease(humanContext(), {
+      terminalSessionId: session.id, attachmentId: first.id,
+      mode: 'acquire-if-free', ttlMs: 30_000,
+    }), 'acquire 1');
+    unwrap(await rig.terminal.writeInput(humanContext(), {
+      terminalSessionId: session.id, attachmentId: first.id,
+      inputLeaseId: lease.id, leaseGeneration: lease.generation,
+      expectedNextInputSequence: 1, kindOfInput: 'text', utf8Text: 'echo one\r',
+    }), 'write');
+    unwrap(await rig.terminal.detachController(humanContext(), {
+      terminalSessionId: session.id, attachmentId: first.id,
+    }), 'close the window');
+
+    const reopened = unwrap(await rig.terminal.attachController(humanContext(), {
+      terminalSessionId: session.id, controllerKind: 'novakai-shell', columns: 80, rows: 24,
+    }), 'reattach');
+    const secondLease = unwrap(await rig.terminal.acquireInputLease(humanContext(), {
+      terminalSessionId: session.id, attachmentId: reopened.id,
+      mode: 'acquire-if-free', ttlMs: 30_000,
+    }), 'acquire 2');
+
+    const guessed = await rig.terminal.writeInput(humanContext(), {
+      terminalSessionId: session.id, attachmentId: reopened.id,
+      inputLeaseId: secondLease.id, leaseGeneration: secondLease.generation,
+      expectedNextInputSequence: 1, kindOfInput: 'text', utf8Text: 'echo guessed\r',
+    });
+    const refusal = expectError(guessed, 'guessed sequence');
+    assert.equal(refusal.code, 'VersionConflict');
+    assert.equal(refusal.details['actual'], 2,
+      'the refusal did not say where the input stream actually is');
+  } finally {
+    await rig.dispose();
+  }
+});
+
 test('a mock managed session survives every controller close case too', async () => {
   const rig = createRig();
   try {

@@ -11,7 +11,7 @@ import type {
   TerminateTerminalInput,
 } from '../contract/api.js';
 import type { ControllerAttachment, TerminalSession } from '../contract/records.js';
-import { LiveSession } from './live.js';
+import { FIRST_INPUT_SEQUENCE, LiveSession } from './live.js';
 import { settleAndFindActive } from './leases.js';
 import type { Persisted } from './store.js';
 import {
@@ -192,6 +192,9 @@ export async function viewOfSession(
       earliestSequence: live?.replay.earliestSequence() ?? session.earliestReplaySequence,
       latestSequence: live?.replay.latestSequence() ?? session.outputSequence,
     },
+    // The same number `writeInput` will check the next write against, so a
+    // controller can arrive mid-stream and type (NVK-KIMI-025 repair 1).
+    nextInputSequence: live?.nextInputSequence ?? FIRST_INPUT_SEQUENCE,
   });
 }
 

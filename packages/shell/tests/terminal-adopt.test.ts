@@ -21,6 +21,7 @@ function view(overrides: Partial<TerminalTabView> = {}): TerminalTabView {
     attachedControllerCount: 0,
     holdsInputLease: false,
     replay: { earliestSequence: 0, latestSequence: 0 },
+    nextInputSequence: 1,
     ...overrides,
   };
 }

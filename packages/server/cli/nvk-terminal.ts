@@ -16,7 +16,7 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  b3err, b3fail, type B3ClientOpId, type B3Result, type TerminalSessionId,
+  b3err, b3fail, b3ok, type B3ClientOpId, type B3Result, type TerminalSessionId,
 } from '@novakai/foundation/contract';
 import type {
   ControllerAttachment, TerminalInputAttempt, TerminalInputLease,
@@ -230,6 +230,23 @@ const viewportRows = (argFlags: Flags): number =>
   Number(argFlags.value('rows') ?? process.stdout.rows ?? 24);
 
 /**
+ * The sequence this write claims. `--sequence` is an explicit claim and is
+ * obeyed as given; without one, the Runtime is asked where its input stream is,
+ * because a fresh CLI process has no way to know (NVK-KIMI-025 repair 1).
+ */
+async function claimedSequence(
+  client: RuntimeClient, argFlags: Flags, terminalSessionId: TerminalSessionId,
+): Promise<B3Result<number>> {
+  const given = argFlags.value('sequence');
+  if (given !== undefined) return b3ok(Number(given));
+  const view = await client.call<TerminalSessionView>('b3.terminal.inspect', {
+    terminalSessionId,
+  }, operationId());
+  if (!view.ok) return view;
+  return b3ok(view.value.nextInputSequence);
+}
+
+/**
  * Typing means holding the lease, so acquiring it is part of the act: a script
  * can never accidentally interleave with whoever is already typing.
  */
@@ -245,13 +262,18 @@ async function sendInput(
     ttlMs: 60_000,
   }, operationId());
   if (!lease.ok) return lease;
+  // Where the input stream actually is. Asked AFTER the lease is held, so
+  // nobody can move it between the question and the write. An explicit
+  // --sequence still wins: a caller pinning it is making a claim on purpose.
+  const claimed = await claimedSequence(client, argFlags, target.terminalSessionId);
+  if (!claimed.ok) return claimed;
   const controlC = argFlags.value('control-c') !== undefined;
   const written = await client.call<TerminalInputAttempt>('b3.terminal.write', {
     terminalSessionId: target.terminalSessionId,
     attachmentId: target.attachmentId,
     inputLeaseId: lease.value.id,
     leaseGeneration: lease.value.generation,
-    expectedNextInputSequence: Number(argFlags.value('sequence') ?? '1'),
+    expectedNextInputSequence: claimed.value,
     kindOfInput: controlC ? 'raw-control-c' : 'text',
     ...(controlC ? {} : { utf8Text: target.text }),
   }, operationId());

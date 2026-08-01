@@ -10,7 +10,7 @@ import '@xterm/xterm/css/xterm.css';
 import { TerminalChrome, toneFor } from './TerminalChrome.js';
 import {
   chooseAdoptable, describeTerminal, SHELL_INSTANCE_ID,
-  type TerminalOutcome, type TerminalTabView,
+  type TerminalAttachment, type TerminalOutcome, type TerminalTabView,
 } from '../../../contract/terminalServices.js';
 import type { TerminalConnection } from '../../../app/terminalClient.js';
 
@@ -19,11 +19,7 @@ export interface TerminalScreenProps {
   readonly workingDirectory: string;
 }
 
-interface Attached {
-  readonly attachmentId: string;
-  readonly leaseId: string;
-  readonly leaseGeneration: number;
-}
+type Attached = TerminalAttachment;
 
 /**
  * Reuse the session this tab left running, or start one. Reuse is the normal
@@ -87,6 +83,7 @@ export function TerminalScreen(props: TerminalScreenProps): React.JSX.Element {
     if (!listed.succeeded) return;
     const found = listed.value.find((item) => item.terminalSessionId === sessionId);
     if (found) setView(found);
+    return found;
   }, [services]);
 
   // Open (or adopt) a session, attach, replay what was missed, then follow live.
@@ -122,6 +119,10 @@ export function TerminalScreen(props: TerminalScreenProps): React.JSX.Element {
       }
       attachment.current = joined.value;
       attachedTo.current = sessionId;
+      // This window has typed nothing; the session may have been typed into for
+      // an hour. The Runtime's position is adopted, never assumed to be 1 —
+      // assuming it is what made a reopened window read-only (NVK-KIMI-025).
+      inputSequence.current = joined.value.nextInputSequence;
       if (joined.value.leaseId === '') setWatchingOnly(true);
 
       // Whatever happened while nobody was watching is shown before live output.
@@ -142,10 +143,13 @@ export function TerminalScreen(props: TerminalScreenProps): React.JSX.Element {
         if (!held || held.leaseId === '') return;
         const sequence = inputSequence.current;
         inputSequence.current += 1;
-        void services.write(sessionId, held, data, sequence).then((written) => {
+        void services.write(sessionId, held, data, sequence).then(async (written) => {
           if (written.succeeded) return;
-          inputSequence.current = sequence;
           setProblem(`${written.code}: ${written.message}`);
+          // A refused write leaves this window's idea of the stream wrong, and
+          // repeating the same wrong number refuses forever. Ask again.
+          const truth = await refresh(sessionId);
+          inputSequence.current = truth?.nextInputSequence ?? sequence;
         });
       });
 

@@ -3,7 +3,7 @@
 // Same origin, same frame, same token as everything else the shell speaks. The
 // page is a controller: it can attach, type and leave. It cannot stop anything.
 import {
-  SHELL_INSTANCE_ID,
+  SHELL_INSTANCE_ID, toTabView,
   type TerminalAttachment, type TerminalFrame, type TerminalOutcome,
   type TerminalServices, type TerminalTabView,
 } from '../contract/terminalServices.js';
@@ -118,28 +118,17 @@ export async function connectTerminalServices(
     });
   }
 
-  function tabViewOf(stored: unknown): TerminalTabView {
-    const view = stored as {
-      session: {
-        id: string; status: TerminalTabView['status']; workingDirectory: string;
-        owner: { kind: string; shellInstanceId?: string; agentRunId?: string };
-      };
-      attachments: { state: string }[];
-      activeInputLease?: unknown;
-      replay: { earliestSequence: number; latestSequence: number };
-    };
-    return {
-      terminalSessionId: view.session.id,
-      status: view.session.status,
-      owner: {
-        kind: view.session.owner.kind === 'agent-run' ? 'agent-run' : 'plain-shell',
-        label: view.session.owner.agentRunId ?? view.session.owner.shellInstanceId ?? 'shell',
-      },
-      workingDirectory: view.session.workingDirectory,
-      attachedControllerCount: view.attachments.filter((item) => item.state === 'attached').length,
-      holdsInputLease: view.activeInputLease !== undefined,
-      replay: view.replay,
-    };
+  const tabViewOf = toTabView;
+
+  /**
+   * Where the Runtime says the input stream is, right now. Asked AFTER the
+   * lease is held: from that instant nobody else can move the stream, so the
+   * answer is still true when this window types (NVK-KIMI-025 repair 1).
+   */
+  async function streamPosition(terminalSessionId: string): Promise<number> {
+    const inspected = await call<unknown>('b3.terminal.inspect', { terminalSessionId });
+    if (!inspected.succeeded) return 1;
+    return tabViewOf(inspected.value).nextInputSequence;
   }
 
   return {
@@ -186,7 +175,10 @@ export async function connectTerminalServices(
         // attach: this window watches, and says so.
         return {
           succeeded: true,
-          value: { attachmentId: attached.value.id, leaseId: '', leaseGeneration: 0 },
+          value: {
+            attachmentId: attached.value.id, leaseId: '', leaseGeneration: 0,
+            nextInputSequence: 1,
+          },
         };
       }
       return {
@@ -195,6 +187,7 @@ export async function connectTerminalServices(
           attachmentId: attached.value.id,
           leaseId: lease.value.id,
           leaseGeneration: lease.value.generation,
+          nextInputSequence: await streamPosition(terminalSessionId),
         },
       };
     },

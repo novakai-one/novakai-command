@@ -29,6 +29,7 @@ const view = (overrides: Partial<TerminalTabView> = {}): TerminalTabView => ({
   attachedControllerCount: 1,
   holdsInputLease: true,
   replay: { earliestSequence: 0, latestSequence: 12 },
+  nextInputSequence: 1,
   ...overrides,
 });
 

@@ -142,6 +142,15 @@ export interface TerminalSessionView {
   readonly attachments: readonly ControllerAttachment[];
   readonly activeInputLease?: TerminalInputLease;
   readonly replay: { readonly earliestSequence: number; readonly latestSequence: number };
+  /**
+   * The sequence the next write must claim (`expectedNextInputSequence`).
+   *
+   * The input stream's position is Runtime-private state, so a controller that
+   * has just attached cannot know it — and a controller that assumes the stream
+   * restarts with it is refused forever (NVK-KIMI-025 repair 1). The view states
+   * it instead: reattaching is asking, never guessing.
+   */
+  readonly nextInputSequence: number;
 }
 
 export interface ListTerminalSessionsFilter {

@@ -108,6 +108,43 @@ test('a scripted write needs no window and leaves none behind', async () => {
   }
 });
 
+/**
+ * NVK-KIMI-025 repair 1, the CLI half of the same defect. `--sequence` defaulted
+ * to 1, so the SECOND scripted write into a session was refused with
+ * `VersionConflict: the input stream moved on before this write` — the exact
+ * failure Fable hit in the browser after reopening a window.
+ *
+ * A controller that has just arrived cannot know where the stream is, so it asks
+ * rather than assuming it starts over.
+ */
+test('a second scripted write into the same session is not refused as a conflict', async () => {
+  const { root, host, session } = await rigWithSession('nvk-cli-write-twice-');
+  try {
+    const first = await runCli(root, host.port, [
+      'write', '--session', session.id, '--text', 'echo one\r',
+    ]);
+    assert.equal(first.json?.ok, true, `the first write failed: ${first.stderr.trim()}`);
+
+    const second = await runCli(root, host.port, [
+      'write', '--session', session.id, '--text', 'echo two\r',
+    ]);
+    assert.equal(second.json?.ok, true,
+      `the second write was refused: ${JSON.stringify(second.json?.error)}`);
+    assert.equal((second.json?.value as { inputSequence: number } | undefined)?.inputSequence, 2);
+
+    // ...and an explicitly WRONG --sequence is still refused: the guard is not
+    // being weakened, it is being told the truth.
+    const stale = await runCli(root, host.port, [
+      'write', '--session', session.id, '--text', 'echo stale\r', '--sequence', '1',
+    ]);
+    assert.equal(stale.json?.ok, false, 'a stale sequence was accepted');
+    assert.equal(stale.json?.error?.code, 'VersionConflict');
+  } finally {
+    await host.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('nvk-terminal attach holds the window open, then lets go when interrupted', async () => {
   const { root, host, session } = await rigWithSession('nvk-cli-attach-');
   const follower = spawn(

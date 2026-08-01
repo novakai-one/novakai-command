@@ -23,12 +23,20 @@ export interface TerminalTabView {
   readonly attachedControllerCount: number;
   readonly holdsInputLease: boolean;
   readonly replay: { readonly earliestSequence: number; readonly latestSequence: number };
+  /**
+   * Where the Runtime's input stream is. A tab that just opened has typed
+   * nothing, but the session may have been typed into for an hour — so this is
+   * asked for, never assumed (NVK-KIMI-025 repair 1).
+   */
+  readonly nextInputSequence: number;
 }
 
 export interface TerminalAttachment {
   readonly attachmentId: string;
   readonly leaseId: string;
   readonly leaseGeneration: number;
+  /** The sequence this window's FIRST write must claim. */
+  readonly nextInputSequence: number;
 }
 
 export interface TerminalFrame {
@@ -94,6 +102,40 @@ export function chooseAdoptable(
   return [...mine].sort(
     (left, right) => left.terminalSessionId.localeCompare(right.terminalSessionId),
   )[0] ?? null;
+}
+
+/**
+ * The Runtime's `TerminalSessionView`, reduced to what a window may know.
+ *
+ * This is the seam where the capability's record becomes plain page data, so it
+ * lives here — beside the rules that read it — rather than inside the socket
+ * client. That is also what makes it provable against a REAL Runtime view
+ * instead of a hand-written fixture (NVK-KIMI-025 repair 3).
+ */
+export function toTabView(reported: unknown): TerminalTabView {
+  const view = reported as {
+    session: {
+      id: string; status: TerminalTabView['status']; workingDirectory: string;
+      owner: { kind: string; shellInstanceId?: string; agentRunId?: string };
+    };
+    attachments: { state: string }[];
+    activeInputLease?: unknown;
+    replay: { earliestSequence: number; latestSequence: number };
+    nextInputSequence: number;
+  };
+  return {
+    terminalSessionId: view.session.id,
+    status: view.session.status,
+    owner: {
+      kind: view.session.owner.kind === 'agent-run' ? 'agent-run' : 'plain-shell',
+      label: view.session.owner.agentRunId ?? view.session.owner.shellInstanceId ?? 'shell',
+    },
+    workingDirectory: view.session.workingDirectory,
+    attachedControllerCount: view.attachments.filter((item) => item.state === 'attached').length,
+    holdsInputLease: view.activeInputLease !== undefined,
+    replay: view.replay,
+    nextInputSequence: view.nextInputSequence,
+  };
 }
 
 /** The one sentence the tab shows. Three facts, never collapsed into one. */

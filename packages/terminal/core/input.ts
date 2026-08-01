@@ -16,6 +16,7 @@ import {
   nextGeneration, settleAndFindActive, ttlIssues,
 } from './leases.js';
 import { applyAuthoritativeViewport } from './controllers.js';
+import { FIRST_INPUT_SEQUENCE } from './live.js';
 import type { Persisted } from './store.js';
 import { OPERATION, requireLiveSession, type TerminalCore } from './context.js';
 
@@ -233,7 +234,7 @@ async function guardWrite(
     ));
   }
   const live = core.live.lookup(input.terminalSessionId);
-  const expected = live?.nextInputSequence ?? 1;
+  const expected = live?.nextInputSequence ?? FIRST_INPUT_SEQUENCE;
   if (input.expectedNextInputSequence !== expected) {
     return b3fail(b3err('VersionConflict',
       'the input stream moved on before this write',

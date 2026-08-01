@@ -14,10 +14,17 @@ import { ReplayBuffer, toBytesFrame } from './replay.js';
 
 type FrameListener = (frame: TerminalOutputFrame) => void;
 
+/**
+ * Where every input stream starts. Named once, because three places have to
+ * agree on it: the live counter, the write guard, and the view that tells a
+ * newly attached controller where the stream is.
+ */
+export const FIRST_INPUT_SEQUENCE = 1;
+
 export class LiveSession {
   readonly replay: ReplayBuffer;
   /** Next input sequence a writer must claim. Starts at 1. */
-  nextInputSequence = 1;
+  nextInputSequence: number = FIRST_INPUT_SEQUENCE;
   activeTurn: ActiveProviderTurn | null = null;
   exit: PtyExit | null = null;
   appliedViewport: { columns: number; rows: number };
