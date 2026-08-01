@@ -29,6 +29,12 @@ export interface FakeTerminal extends TerminalPort {
   output: string;
   /** What the scripted agent replies to the gate's turn 1. */
   reply: ScriptedReply;
+  /**
+   * The tokens the scripted agent will name — set by the rig from the SAME
+   * pinned skills the role was defined with, so the reply is independent
+   * evidence rather than the prompt read back.
+   */
+  pinnedTokens: readonly string[];
   failOpen: ReturnType<typeof b3err> | null;
   interruptOutcome: 'barrier-committed' | 'target-turn-not-active' | 'raced-with-completion';
   failTerminate: ReturnType<typeof b3err> | null;
@@ -36,19 +42,18 @@ export interface FakeTerminal extends TerminalPort {
 
 const MARKER = 'SKILLS-CONFIRMED:';
 
-/** The tokens the gate PINNED, read back out of the prompt it just sent. */
-function pinnedTokens(prompt: string): string[] {
-  const line = prompt.split(/\r?\n/).find((item) => item.trim().startsWith(MARKER));
-  if (line === undefined) return [];
-  try {
-    return JSON.parse(line.slice(line.indexOf(MARKER) + MARKER.length).trim()) as string[];
-  } catch {
-    return [];
-  }
-}
-
-function scriptedConfirmation(prompt: string, reply: ScriptedReply): string | null {
-  const tokens = pinnedTokens(prompt);
+/**
+ * What the scripted agent believes its pinned skills are.
+ *
+ * It is TOLD, never derived from the prompt. A fake that read the answer out of
+ * the question could not tell a working gate from one that accepts its own
+ * words back, which is exactly the defect this fake used to hide
+ * (NVK-KIMI-028 finding 4): every gate test passed while a silent, echoing
+ * session confirmed itself in production.
+ */
+function scriptedConfirmation(
+  tokens: readonly string[], reply: ScriptedReply,
+): string | null {
   if (reply === 'silent') return null;
   if (reply === 'malformed') return `${MARKER} not json at all`;
   if (reply === 'empty') return `${MARKER} []`;
@@ -60,7 +65,7 @@ function scriptedConfirmation(prompt: string, reply: ScriptedReply): string | nu
     return `${MARKER} ${JSON.stringify([...tokens, tokens[0] ?? 'x'])}`;
   }
   if (reply === 'out-of-order') return `${MARKER} ${JSON.stringify([...tokens].reverse())}`;
-  return `${MARKER} ${JSON.stringify(tokens)}`;
+  return `${MARKER} ${JSON.stringify([...tokens])}`;
 }
 
 export function createFakeTerminal(): FakeTerminal {
@@ -73,6 +78,7 @@ export function createFakeTerminal(): FakeTerminal {
     terminated: [],
     output: '',
     reply: 'valid',
+    pinnedTokens: [],
     failOpen: null,
     interruptOutcome: 'barrier-committed',
     failTerminate: null,
@@ -104,10 +110,15 @@ export function createFakeTerminal(): FakeTerminal {
 
     async submitRuntimeInput(_context, input) {
       port.submitted.push(input);
-      // A scripted agent answers turn 1 — with what the prompt asked for, or
-      // with one of the ways an agent gets it wrong.
-      if (input.text.includes(MARKER)) {
-        const answer = scriptedConfirmation(input.text, port.reply);
+      // A real PTY shows what was typed at it, and §13.5's "retry observes
+      // transcript before sending again" reads exactly that. A fake whose
+      // output never contained the prompt would let a re-prompting retry pass.
+      port.output = `${port.output}${input.text}\n`;
+      // A scripted agent answers turn 1 — correctly, or with one of the ways an
+      // agent gets it wrong. Turn 1 is the one that HOLDS the work; turn 2
+      // releases it and is never answered.
+      if (input.effectKey.endsWith('skills-gate-prompt-sent')) {
+        const answer = scriptedConfirmation(port.pinnedTokens, port.reply);
         if (answer !== null) port.output = `${port.output}\nthinking...\n${answer}\n`;
       }
       return b3ok({ confirmed: true });

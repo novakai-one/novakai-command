@@ -36,6 +36,12 @@ export interface B3RuntimeOptions {
   readonly authorities?: LaunchAuthorityRegistrar;
   /** Live output pushed to attached controllers. */
   readonly publish?: (kind: string, payload: Readonly<Record<string, unknown>>) => void;
+  /**
+   * How long a governed launch waits for its skills confirmation. An operator
+   * tunable — a slow provider on a cold machine needs longer than the default,
+   * and a suite proving the gate's refusals needs far less than two minutes.
+   */
+  readonly gateTimeoutMs?: number;
 }
 
 export interface B3Runtime {
@@ -148,6 +154,7 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
     credentials,
     fence: runtime.fence,
     ...(options.publish === undefined ? {} : { publish: options.publish }),
+    ...(options.gateTimeoutMs === undefined ? {} : { gateTimeoutMs: options.gateTimeoutMs }),
   });
 
   return {

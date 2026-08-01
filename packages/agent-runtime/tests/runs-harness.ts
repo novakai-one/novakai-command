@@ -108,6 +108,11 @@ export function createRunsRig(options: RunsRigOptions = {}): RunsRig {
   const root = options.root ?? mkdtempSync(path.join(tmpdir(), 'nvk-b3b-runs-'));
   const agents = options.agents ?? createFakeAgents(options);
   const terminal = options.terminal ?? createFakeTerminal();
+  // The scripted agent is told what its role pins, from the same source the
+  // role is built from — so its reply is evidence, not the prompt read back.
+  terminal.pinnedTokens = (options.skills ?? [{ id: 'tdd', version: 1, digest: 'digest-tdd' }])
+    .map((skill) => `${skill.id}@v${String(skill.version)}#${skill.digest}`)
+    .sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
   const providers = options.providers ?? createFakeProviders();
   const fence = createFakeFence();
   const events: RunsRig['events'] = [];

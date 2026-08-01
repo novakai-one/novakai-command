@@ -23,11 +23,19 @@ class FakePtyHandle implements FakePty {
   private readonly dataListeners: ((chunk: Buffer) => void)[] = [];
   private readonly exitListeners: ((exit: PtyExit) => void)[] = [];
 
-  constructor(readonly processRef: string, readonly spec: PtyLaunchSpec) {}
+  constructor(
+    readonly processRef: string,
+    readonly spec: PtyLaunchSpec,
+    private readonly echoInput = false,
+  ) {}
 
   write(data: string): void {
     if (!this.alive) return;
     this.written.push(data);
+    // A real PTY in canonical mode echoes what is typed at it, which is why an
+    // echoing fake is the faithful one: it is the shape in which a prompt can
+    // arrive back as if the agent had said it.
+    if (this.echoInput) this.emit(data.replace(/\r/g, '\n'));
   }
 
   resize(columns: number, rows: number): void {
@@ -75,7 +83,12 @@ export interface FakePtyHost extends PtyHost {
   forget(processRef: string): void;
 }
 
-export function createFakePtyHost(): FakePtyHost {
+export interface FakePtyHostOptions {
+  /** Echo written bytes back as output, the way a real PTY does. */
+  readonly echoInput?: boolean;
+}
+
+export function createFakePtyHost(options: FakePtyHostOptions = {}): FakePtyHost {
   const started: FakePtyHandle[] = [];
   const forgotten = new Set<string>();
   let failure: string | null = null;
@@ -104,7 +117,9 @@ export function createFakePtyHost(): FakePtyHost {
         });
       }
       counter += 1;
-      const handle = new FakePtyHandle(`fake-pty:${counter}`, spec);
+      const handle = new FakePtyHandle(
+        `fake-pty:${counter}`, spec, options.echoInput ?? false,
+      );
       started.push(handle);
       return b3ok(handle);
     },

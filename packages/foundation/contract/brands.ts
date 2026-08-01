@@ -86,8 +86,29 @@ export type CapabilityId =
   | 'supervision'; // B3d: watchers, deadlines, notifications
 
 // ── Mint helpers (identity conventions: foundation owns conventions, §8) ──
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 
 export const mintClientOpId = (): ClientOpId => `op_${randomUUID()}` as ClientOpId;
+
+/**
+ * The idempotency key for ONE saga effect (§3.2: "every external saga effect
+ * derives its idempotency key from the receipt plus stage name").
+ *
+ * A random key per attempt makes a retry a second effect, and one key shared by
+ * two different effects makes the second a silently swallowed replay of the
+ * first — the two failure modes that cost B3b its seal. Deriving the key from
+ * the effect's own name makes a retry a retry and keeps two effects distinct,
+ * with no state to carry between attempts.
+ *
+ * The UUID shape is honoured, with version nibble 5: this IS a name-derived
+ * UUID, and claiming version 4 would assert entropy that is deliberately absent.
+ */
+export const deriveClientOpId = (effectKey: string): ClientOpId => {
+  const digest = createHash('sha256').update(`nvk-effect:${effectKey}`, 'utf8').digest('hex');
+  const version = `5${digest.slice(13, 16)}`;
+  // RFC 4122 variant: the high bits of the 17th hex digit must be 10xx.
+  const variant = `${'89ab'[parseInt(digest[16]!, 16) & 0b11]!}${digest.slice(17, 20)}`;
+  return `op_${digest.slice(0, 8)}-${digest.slice(8, 12)}-${version}-${variant}-${digest.slice(20, 32)}` as ClientOpId;
+};
 export const mintServerOpId = (): ServerOpId => `srv_${randomUUID()}` as ServerOpId;
 export const mintObjectId = (kind: string): ObjectId => `${kind}_${randomUUID()}` as ObjectId;

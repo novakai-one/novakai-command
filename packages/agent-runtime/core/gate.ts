@@ -14,6 +14,7 @@
 //
 // Enforcement lives here, in the Runtime's spawn operation, and not in a
 // provider hook — a hook is something a role can forget to install.
+import { createHash } from 'node:crypto';
 import {
   b3err, b3fail, b3ok,
   type B3Result, type CommandContext,
@@ -54,19 +55,63 @@ export function canonicalTokens(plan: LaunchPlanFacts): readonly string[] {
     .sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
 }
 
-export function confirmationPrompt(plan: LaunchPlanFacts, brief: string): string {
+/**
+ * Turn 1.
+ *
+ * It never spells the answer. A PTY echoes what is typed at it, so a prompt
+ * that contained a valid `SKILLS-CONFIRMED:` line would be a confirmation the
+ * gate typed to itself — the agent could stay silent and still pass. The tokens
+ * are listed, the shape is described, and the one line that would satisfy the
+ * gate is the one line only the agent can produce.
+ */
+export function confirmationPrompt(
+  plan: LaunchPlanFacts, brief: string, turnRef: string,
+): string {
   const tokens = canonicalTokens(plan);
   return [
     'You are a governed Novakai agent. Your task follows, but do NOT begin it yet.',
     '',
     `TASK CONTEXT: ${brief}`,
     '',
-    'Required skills, already resolved for you:',
-    ...tokens.map((token) => `  - ${token}`),
+    `Required skills, already resolved for you (${String(tokens.length)}, in this order):`,
+    ...tokens.map((token, index) => `  ${String(index + 1)}. ${token}`),
     '',
-    'Reply with EXACTLY ONE line and no other content:',
-    `SKILLS-CONFIRMED: ${JSON.stringify(tokens)}`,
+    `Reply with EXACTLY ONE line and no other content: start it with ${marker(plan)}`,
+    'then one space, then a JSON array of the tokens above, quoted, in the order',
+    'listed. Nothing before the marker on that line, and nothing after the array.',
+    '',
+    promptFingerprint(turnRef),
   ].join('\n');
+}
+
+/**
+ * The one string in turn 1 that only the Runtime could have written, and short
+ * enough that no terminal width wraps it.
+ *
+ * A retry looks for THIS rather than for a confirmation, because "has this
+ * session been asked" and "has this session answered" are different questions,
+ * and on a session that echoes they look identical.
+ */
+export function promptFingerprint(turnRef: string): string {
+  return `(novakai turn ${turnRef})`;
+}
+
+/** A short, stable name for one gate turn, derived from its own effect key. */
+export function turnRefFor(effectKey: string): string {
+  return createHash('sha256').update(effectKey, 'utf8').digest('hex').slice(0, 12);
+}
+
+/**
+ * What a human would read off the screen: ANSI dressing removed, so a match is
+ * about what was SAID and not about how the provider painted it.
+ */
+export function plainText(output: string): string {
+  return output.replace(/\u001B\[[0-9;?]*[A-Za-z]/g, '');
+}
+
+function marker(plan: LaunchPlanFacts): string {
+  return plan.skillsConfirmationGate.mode === 'required-two-turn'
+    ? plan.skillsConfirmationGate.confirmationMarker : 'SKILLS-CONFIRMED:';
 }
 
 export async function runSkillsGate(
@@ -140,7 +185,8 @@ async function sendConfirmationTurn(
   // submitting turn 1 and journalling it leaves a prompt the journal has no
   // record of; re-prompting would ask the same agent the same question twice.
   // Whatever it has already said is the evidence that it was asked.
-  const spoken = await alreadyPrompted(core, input, terminalSessionId);
+  const effectKey = effectKeyFor(input.operation.id, 'skills-gate-prompt-sent');
+  const spoken = await alreadyPrompted(core, input, terminalSessionId, turnRefFor(effectKey));
   if (!spoken.ok) return spoken;
   if (spoken.value) {
     return advance(core, input.operation, {
@@ -151,9 +197,10 @@ async function sendConfirmationTurn(
   const submitted = await core.terminal.submitRuntimeInput(context, {
     terminalSessionId,
     text: core.providers.submitTurn(
-      input.plan.provider, confirmationPrompt(input.plan, input.brief),
+      input.plan.provider,
+      confirmationPrompt(input.plan, input.brief, turnRefFor(effectKey)),
     ),
-    effectKey: effectKeyFor(input.operation.id, 'skills-gate-prompt-sent'),
+    effectKey,
   });
   if (!submitted.ok) return submitted;
   return advance(core, input.operation, {
@@ -162,34 +209,45 @@ async function sendConfirmationTurn(
 }
 
 /**
- * Whether this session has already been asked. The evidence is the session's
- * own output carrying the marker — which is what a re-entering attempt can see
- * and a lost in-memory record cannot.
+ * Whether this session has already been asked. The evidence is the prompt's own
+ * fingerprint coming back off the session — the one string only the Runtime
+ * could have put there. It used to look for a CONFIRMATION instead, which
+ * answers a different question: "has it answered" is not "has it been asked",
+ * and a session that echoes is a session where the two look identical.
  */
 async function alreadyPrompted(
-  core: RunsCore, input: GateInput, terminalSessionId: string,
+  core: RunsCore, input: GateInput, terminalSessionId: string, turnRef: string,
 ): Promise<B3Result<boolean>> {
   const output = await core.terminal.readOutputSoFar(
     { id: 'sys_agent_runtime', kind: 'system', verifiedScopes: [] },
     terminalSessionId as never,
   );
   if (!output.ok) return output;
-  const marker = input.plan.skillsConfirmationGate.mode === 'required-two-turn'
-    ? input.plan.skillsConfirmationGate.confirmationMarker : 'SKILLS-CONFIRMED:';
-  return b3ok(core.providers.findConfirmationLine(
-    input.plan.provider, output.value, marker,
-  ) !== null);
+  return b3ok(plainText(output.value).includes(promptFingerprint(turnRef)));
 }
 
-/** Read what the provider actually said, until it says it or time runs out. */
+/**
+ * Read what the provider actually SAID, until it says it or time runs out.
+ *
+ * "Said" is load-bearing. A PTY echoes, so the session's output contains the
+ * Runtime's own turn 1 as well as the agent's reply, and a matcher handed the
+ * raw stream cannot tell whose words it is judging. Everything the Runtime
+ * typed is removed before anything is judged — so the only line that can pass
+ * this gate is a line the Runtime did not write.
+ */
 async function awaitConfirmation(
   core: RunsCore, input: GateInput,
 ): Promise<B3Result<string>> {
   const terminalSessionId = input.agentRun.terminalSessionId!;
-  const marker = input.plan.skillsConfirmationGate.mode === 'required-two-turn'
-    ? input.plan.skillsConfirmationGate.confirmationMarker : 'SKILLS-CONFIRMED:';
+  const mark = marker(input.plan);
   const deadline = core.clock() + core.gateTimeoutMs;
   const expected = canonicalTokens(input.plan);
+  const ours = new Set(
+    confirmationPrompt(
+      input.plan, input.brief,
+      turnRefFor(effectKeyFor(input.operation.id, 'skills-gate-prompt-sent')),
+    ).split('\n').map((line) => line.trim()).filter((line) => line !== ''),
+  );
 
   for (;;) {
     const output = await core.terminal.readOutputSoFar(
@@ -197,14 +255,22 @@ async function awaitConfirmation(
     );
     if (!output.ok) return output;
     const line = core.providers.findConfirmationLine(
-      input.plan.provider, output.value, marker,
+      input.plan.provider, withoutOurOwnWords(plainText(output.value), ours), mark,
     );
-    if (line !== null) return judge(line, marker, expected, input.agentRun.id);
+    if (line !== null) return judge(line, mark, expected, input.agentRun.id);
     if (core.clock() >= deadline) {
       return b3fail(skillsFailed(input.agentRun.id, 'no confirmation arrived before the gate timed out', []));
     }
     await new Promise((settle) => { setTimeout(settle, 100); });
   }
+}
+
+/** Drop every line the Runtime itself typed at this session. */
+function withoutOurOwnWords(output: string, ours: ReadonlySet<string>): string {
+  return output
+    .split(/\r?\n/)
+    .filter((line) => !ours.has(line.trim()))
+    .join('\n');
 }
 
 /**

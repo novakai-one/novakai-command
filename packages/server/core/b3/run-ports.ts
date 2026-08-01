@@ -13,7 +13,7 @@ import { createHmac } from 'node:crypto';
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import {
-  b3err, b3fail, b3ok, mintClientOpId, mintTraceCorrelationId,
+  b3err, b3fail, b3ok, deriveClientOpId, mintClientOpId, mintTraceCorrelationId,
   type AgentId, type AgentRunId, type B3Result, type CommandContext,
   type ProviderSessionId, type SystemCommandContext,
 } from '@novakai/foundation/contract';
@@ -164,21 +164,28 @@ export function terminalPort(
     },
 
     async submitRuntimeInput(context, input) {
-      const attached = await terminal.attachController(context, {
+      // §3.2: one saga effect, one idempotency key, derived from the effect's
+      // own name. The command's key belongs to the command — two turns of the
+      // same gate sharing it makes the second turn a swallowed replay of the
+      // first, which is how the work turn used to disappear.
+      const step = (name: string): CommandContext => ({
+        ...context, clientOpId: deriveClientOpId(`${input.effectKey}:${name}`),
+      });
+      const attached = await terminal.attachController(step('attach'), {
         terminalSessionId: input.terminalSessionId,
         controllerKind: 'operations',
         columns: RUNTIME_VIEWPORT.columns,
         rows: RUNTIME_VIEWPORT.rows,
       });
       if (!attached.ok) return attached;
-      const submitted = await typeAsRuntime(terminal, context, {
+      const submitted = await typeAsRuntime(terminal, step, {
         terminalSessionId: input.terminalSessionId,
         attachmentId: attached.value.id,
         text: input.text,
       });
       // Released whatever happened: a Runtime that kept the keyboard would lock
       // Chris out of a session it is not using.
-      await terminal.detachController(context, {
+      await terminal.detachController(step('detach'), {
         terminalSessionId: input.terminalSessionId,
         attachmentId: attached.value.id,
       });
@@ -244,30 +251,40 @@ const RUNTIME_VIEWPORT = { columns: 120, rows: 40 } as const;
 /** Acquire, write, release. The lease is held for one turn and no longer. */
 async function typeAsRuntime(
   terminal: TerminalContract,
-  context: CommandContext,
+  step: (name: string) => CommandContext,
   input: {
     readonly terminalSessionId: Parameters<TerminalContract['writeInput']>[1]['terminalSessionId'];
     readonly attachmentId: Parameters<TerminalContract['writeInput']>[1]['attachmentId'];
     readonly text: string;
   },
 ): Promise<B3Result<{ readonly confirmed: boolean }>> {
-  const lease = await terminal.acquireInputLease(context, {
+  const lease = await terminal.acquireInputLease(step('lease'), {
     terminalSessionId: input.terminalSessionId,
     attachmentId: input.attachmentId,
     mode: 'acquire-if-free',
     ttlMs: 60_000,
   });
   if (!lease.ok) return lease;
-  const written = await terminal.writeInput(context, {
+  // Where the input stream actually is, asked AFTER the lease is held so nobody
+  // can move it between the question and the write (NVK-KIMI-025 repair 1, the
+  // same class of bug as the B3a reattach). A hardcoded claim here is never
+  // right: a live session's first sequence is 1, and every turn after the
+  // provider's own startup banner is higher still — which is why EVERY governed
+  // launch died at this line with `expected 0, actual 1`.
+  const view = await terminal.getTerminalSession(
+    systemContext().principal, input.terminalSessionId,
+  );
+  if (!view.ok) return view;
+  const written = await terminal.writeInput(step('write'), {
     terminalSessionId: input.terminalSessionId,
     attachmentId: input.attachmentId,
     inputLeaseId: lease.value.id,
     leaseGeneration: lease.value.generation,
-    expectedNextInputSequence: 0,
+    expectedNextInputSequence: view.value.nextInputSequence,
     kindOfInput: 'message-delivery',
     utf8Text: input.text,
   });
-  await terminal.releaseInputLease(context, {
+  await terminal.releaseInputLease(step('release'), {
     terminalSessionId: input.terminalSessionId,
     attachmentId: input.attachmentId,
     leaseId: lease.value.id,
