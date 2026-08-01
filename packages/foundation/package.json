@@ -6,6 +6,16 @@
   "engines": {
     "node": ">=20"
   },
+  "//exports": "B3V4-P2 §18.2: `@novakai/foundation/contract` is the public surface. The `./dist/*` wildcard keeps pre-B3 deep imports resolving; new code must not use it.",
+  "exports": {
+    ".": "./dist/contract/index.js",
+    "./contract": {
+      "types": "./dist/contract/index.d.ts",
+      "default": "./dist/contract/index.js"
+    },
+    "./dist/*": "./dist/*",
+    "./package.json": "./package.json"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "npm run build && node --test \"dist/tests/**/*.test.js\""

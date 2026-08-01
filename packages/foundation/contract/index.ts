@@ -4,6 +4,14 @@ export * from './brands.js';
 export * from './errors.js';
 export * from './schemas.js';
 export * from './types.js';
+// B3 (B3V4-P2 §§4, 11): the shared identifier/context/error kernel every Build
+// 3 capability speaks, and the one durable command-receipt writer (§3.3).
+export * from './b3.js';
+export {
+  composeReceiptStore, canonicalJson, canonicalRequestHash, commandReceiptId,
+  type CommandDescriptor, type CommandReceiptRecord, type CommandReceiptState,
+  type ComposeReceiptsOptions, type ReceiptStore, type StoredOperationOutcome,
+} from './receipts.js';
 // M11: composeHandle ONLY — composeEngine (the raw, scope-free engine factory)
 // is foundation-internal. Consumers bind a SCOPED handle (R3-6); the contract
 // layer enforces scope on every write. Tests/CLIs inside foundation may import

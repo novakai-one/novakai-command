@@ -7,9 +7,9 @@ import { Envelope, QuarantineTombstone, Ref } from './schemas.js';
 import type { Envelope as EnvelopeT, QuarantineTombstone as TombstoneT, TraceLine as TraceLineT } from './schemas.js';
 import { err, type StoreError } from './errors.js';
 import {
-  ABSENT, fail, ok, type Absent, type ListFilter, type Page, type PageOptions,
-  type QuarantineRequestOutcome, type Result, type ScopedStoreHandle,
-  type StoredObject, type TraceFilter,
+  ABSENT, fail, ok, type Absent, type FoundationMutationProvenance, type ListFilter,
+  type Page, type PageOptions, type QuarantineRequestOutcome, type Result,
+  type ScopedStoreHandle, type StoredObject, type TraceFilter,
 } from './types.js';
 import { CURRENT_SCHEMA_VERSION, KIND_FILES, StoreEngine } from '../core/store-engine/engine.js';
 
@@ -94,15 +94,58 @@ function readAllRecords(engine: StoreEngine, kind: string) {
   return [...engine.readLatestEffective(kind).values()];
 }
 
+/**
+ * B3a §4.3: report what Foundation actually knows about the last mutation.
+ * A wrapped record always carries its operation IDs, so the incomplete branch
+ * can never discard them; only a true legacy flat record has none.
+ */
+function provenanceOf(
+  engine: StoreEngine, opId: string, clientOpId: string,
+): FoundationMutationProvenance {
+  if (opId === '') return { state: 'legacy-no-trace' };
+  const trace = engine.findTraceByOpId(opId);
+  if (!trace) {
+    return {
+      state: 'object-appended-trace-missing',
+      serverOpId: opId as ServerOpId,
+      clientOpId: clientOpId as ClientOpId,
+    };
+  }
+  return {
+    state: 'trace-complete',
+    serverOpId: opId as ServerOpId,
+    clientOpId: clientOpId as ClientOpId,
+    traceId: trace.id,
+    committedAt: trace.createdAt,
+  };
+}
+
 function toStoredObject<T>(engine: StoreEngine, rec: ReturnType<StoreEngine['readLatestEffective']> extends Map<string, infer R> ? R : never): StoredObject<T> {
   const flat = { ...rec.payload, ...rec.envelope } as T & EnvelopeT;
+  const lastMutation = provenanceOf(engine, rec.opId, rec.clientOpId);
   const stored: StoredObject<T> = {
     object: flat,
     version: rec.version,
-    incomplete: rec.opId !== '' && !engine.hasTraceOpId(rec.opId),
+    incomplete: lastMutation.state === 'object-appended-trace-missing',
+    lastMutation,
   };
   if (rec.unsupportedVersion) stored.unsupportedVersion = true;
   return stored;
+}
+
+/** The public view of a mutation Foundation just committed. */
+function mutationView<T>(
+  engine: StoreEngine,
+  result: { object: Record<string, unknown> & EnvelopeT; version: number; opId: ServerOpId },
+  clientOpId: ClientOpId,
+): StoredObject<T> {
+  const lastMutation = provenanceOf(engine, result.opId, clientOpId);
+  return {
+    object: result.object as T & EnvelopeT,
+    version: result.version,
+    incomplete: lastMutation.state === 'object-appended-trace-missing',
+    lastMutation,
+  };
 }
 
 const DEFAULT_PAGE_LIMIT = 100;
@@ -158,7 +201,7 @@ export async function createObject<T>(
   // same id loses with CasConflict instead of double-appending.
   const res = engine.appendMutation(kind, stamped, 'create', clientOpId, 1, undefined, { mustBeAbsent: true });
   if (!res.ok) return fail(res.error);
-  return ok({ object: res.value.object as T & EnvelopeT, version: res.value.version, incomplete: res.value.incomplete });
+  return ok(mutationView<T>(engine, res.value, clientOpId));
 }
 
 export async function updateObject<T>(
@@ -209,7 +252,7 @@ export async function updateObject<T>(
   // the authoritative locked read.
   const res = engine.appendMutation(kind, merged as EnvelopeT & Record<string, unknown>, 'update', clientOpId, rec.version + 1, undefined, { expectedVersion });
   if (!res.ok) return fail(res.error);
-  return ok({ object: res.value.object as T & EnvelopeT, version: res.value.version, incomplete: res.value.incomplete });
+  return ok(mutationView<T>(engine, res.value, clientOpId));
 }
 
 // ── Queries ─────────────────────────────────────────────────────────────────

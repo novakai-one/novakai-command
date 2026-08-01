@@ -36,16 +36,25 @@ export const KIND_FILES: Readonly<Record<Exclude<ObjectKind, 'token'>, string>> 
   transcriptLine: 'transcriptLines.jsonl',     // B2b DEC-B2-4: transcript authority
   transcriptJournal: 'transcriptJournal.jsonl',
   transcriptCheckpoint: 'transcriptCheckpoints.jsonl',
+  runtimeEpoch: 'runtimeEpochs.jsonl',                 // B3a DEC-B3V4-27
+  commandReceipt: 'commandReceipts.jsonl',             // B3a DEC-B3V4-30
+  terminalSession: 'terminalSessions.jsonl',           // B3a DEC-B3V4-01
+  controllerAttachment: 'controllerAttachments.jsonl', // B3a DEC-B3V4-08
+  terminalInputLease: 'terminalInputLeases.jsonl',     // B3a DEC-B3V4-29
+  terminalInputAttempt: 'terminalInputAttempts.jsonl', // B3a DEC-B3V4-29
   quarantine: 'quarantine.jsonl',
   trace: 'traces.jsonl',
 });
 
-// Kinds the engine treats as ordinary wrapped-record stores.
-const RECORD_KINDS: readonly string[] = [
+// Kinds the engine treats as ordinary wrapped-record stores. `trace` is
+// deliberately absent: it keeps its engine-private journal line (AMD-001 A-01).
+export const RECORD_KINDS: readonly string[] = [
   'agent', 'skill', 'layout', 'settings', 'conversationView', 'config',
   'providerSession', 'project', 'projectItem', 'quarantine',
   'artifact', 'spineStep', 'transcriptLine', 'transcriptJournal',
   'transcriptCheckpoint',
+  'runtimeEpoch', 'commandReceipt', 'terminalSession',
+  'controllerAttachment', 'terminalInputLease', 'terminalInputAttempt',
 ];
 
 // Lazy upgrade registry (DEC-F10): pure v_n → v_n+1 transforms per kind,
@@ -109,6 +118,8 @@ interface TombstoneIndex {
 interface TraceIndex extends IndexedFile {
   traces: TraceLineT[];
   byClientOpId: Map<string, TraceLineT>;
+  /** B3a §4.3: the mutation trace LINE, so a reader can report a real TraceId. */
+  byOpId: Map<string, TraceLineT>;
   opIds: Set<string>;
   nextSeq: number;
 }
@@ -400,6 +411,7 @@ export class StoreEngine {
         prefixFingerprint: null,
         traces: [],
         byClientOpId: new Map(),
+        byOpId: new Map(),
         opIds: new Set(),
         nextSeq: 0,
       };
@@ -422,6 +434,9 @@ export class StoreEngine {
         if (!parsed.success) continue;
         index!.traces.push(parsed.data);
         index!.byClientOpId.set(parsed.data.clientOpId, parsed.data);
+        // Every appended trace line mints its own opId (or replays the exact
+        // opId of the object mutation it completes), so this is 1:1.
+        index!.byOpId.set(parsed.data.opId, parsed.data);
         index!.opIds.add(parsed.data.opId);
         index!.nextSeq = Math.max(index!.nextSeq, parsed.data.seq + 1);
       } catch { /* skipped + traced at boot */ }
@@ -449,6 +464,12 @@ export class StoreEngine {
   hasTraceOpId(opId: string): boolean {
     this.readTraces();
     return this.traceIndex?.opIds.has(opId) ?? false;
+  }
+
+  /** B3a §4.3: the trace line an opId committed, so its real id/time are reportable. */
+  findTraceByOpId(opId: string): TraceLineT | undefined {
+    this.readTraces();
+    return this.traceIndex?.byOpId.get(opId);
   }
 
   // ── quarantine ────────────────────────────────────────────────────────

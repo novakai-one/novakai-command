@@ -13,7 +13,14 @@ export type ConversationId = Brand<string, 'conversationId'>;
 export type ClientOpId = Brand<string, 'clientOpId'>; // "op_<uuidv4>" — REQUIRED on all mutating ops (R3-10)
 export type ServerOpId = Brand<string, 'serverOpId'>; // "srv_<uuidv4>"
 
-export type SystemPrincipal = 'sys_ingester' | 'sys_reconciler' | 'sys_spine';
+// B3a (B3V4-P2 §4.4): each capability that mutates on its own behalf — rather
+// than on behalf of a human — gets a named system principal, so `createdBy`
+// stays trusted and attributable instead of collapsing into one "system".
+export type SystemPrincipal =
+  | 'sys_ingester' | 'sys_reconciler' | 'sys_spine'
+  | 'sys_foundation' | 'sys_agents' | 'sys_agent_runtime'
+  | 'sys_terminal' | 'sys_messaging' | 'sys_transcript'
+  | 'sys_supervision' | 'sys_shell';
 export type Principal = AgentId | PersonId | SystemPrincipal;
 
 // Runtime schemas and TypeScript consumers share this one authoritative
@@ -34,6 +41,14 @@ export const OBJECT_KINDS = [
   'transcriptLine',       // B2b DEC-B2-4: transcript-owned normalized line
   'transcriptJournal',    // B2b DEC-B2-4: transcript-owned ingestion journal
   'transcriptCheckpoint', // B2b DEC-B2-4: transcript-owned incremental cursor
+  // B3a (B3V4-P2 §18.1, AMD-001 A-01): additive registration only — Build 3
+  // records ride Foundation's existing engine, envelope, lock, CAS and trace.
+  'runtimeEpoch',         // DEC-B3V4-27: runtime-host-owned split-brain fence
+  'commandReceipt',       // DEC-B3V4-30: foundation-owned idempotency receipt
+  'terminalSession',      // DEC-B3V4-01: terminal-owned PTY session
+  'controllerAttachment', // DEC-B3V4-08: terminal-owned controller attachment
+  'terminalInputLease',   // DEC-B3V4-29: terminal-owned single-writer lease
+  'terminalInputAttempt', // DEC-B3V4-29: terminal-owned ordered input outcome
   'quarantine',
   'token',
   'trace',
@@ -54,7 +69,9 @@ export type ReferenceKind = typeof REFERENCE_KINDS[number];
 export type CapabilityId =
   | 'foundation' | 'shell' | 'agents' | 'messaging'
   | 'terminal' | 'transcript' | 'projects' | 'artifacts' | 'spine'
-  | 'server'; // B1: the production composition root (owns kind 'config')
+  | 'server' // B1: the production composition root (owns kind 'config')
+  | 'agent-runtime' // B3a DEC-B3V4-22: sole writer of Run/runtime truth
+  | 'supervision'; // B3d: watchers, deadlines, notifications
 
 // ── Mint helpers (identity conventions: foundation owns conventions, §8) ──
 import { randomUUID } from 'node:crypto';
