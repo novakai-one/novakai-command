@@ -280,6 +280,9 @@ async function typeAsRuntime(
     leaseGeneration: lease.value.generation,
     expectedNextInputSequence: view.value.nextInputSequence,
     kindOfInput: 'message-delivery',
+    // Exactly what the caller gave. The key that SENDS a turn is the provider
+    // adapter's business (`submitTurn`), because it is the only layer that
+    // knows what this CLI's composer treats as Enter.
     utf8Text: input.text,
   });
   await terminal.releaseInputLease(step('release'), {

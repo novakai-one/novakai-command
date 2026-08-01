@@ -34,7 +34,9 @@ interface TreeNode extends RunView {
 interface TreeView {
   rootAgentId: string;
   nodes: readonly TreeNode[];
-  edges: readonly { parentAgentId: string; childAgentId: string }[];
+  edges: readonly {
+    parentAgentId: string; childAgentId: string; createdFromRunId: string;
+  }[];
   generatedAt: string;
 }
 
@@ -151,6 +153,33 @@ test('the tree view carries the edges, depth and supervision §12.7 publishes', 
     assert.equal(byName.get('T-Grandchild')?.depth, 2);
     assert.equal(byName.get('T-Child')?.currentSupervision?.kind, 'agent',
       'a spawned child is supervised by the Agent that spawned it');
+  } finally {
+    await rig.close();
+  }
+});
+
+test('a family edge records the Run that actually created it', async () => {
+  const rig = await createRig();
+  try {
+    const childRole = await rig.role('edge-child');
+    const parentRole = await rig.role('edge-parent', [childRole]);
+    const parent = value<RunView>(await rig.chris.call('b3.agent.spawn', {
+      roleProfileId: parentRole, displayName: 'E-Parent', workingDirectory: tmpdir(),
+    }, mintClientOpId()), 'spawn parent');
+    const asParent = await rig.asRun();
+    const child = value<RunView>(await asParent.call('b3.agent.spawn', {
+      roleProfileId: childRole, displayName: 'E-Child', workingDirectory: tmpdir(),
+    }, mintClientOpId()), 'spawn child');
+
+    const view = value<TreeView>(await rig.chris.call('b3.agent.getTree', {
+      rootAgentId: parent.agent.agentId, direction: 'descendants', maxDepth: 4,
+    }, mintClientOpId()), 'getTree');
+    const edge = view.edges.find((item) => item.childAgentId === child.agent.agentId);
+    assert.notEqual(edge, undefined, 'the child has no family edge');
+    // codex F9: this stored a freshly minted, unrelated AgentRunId — a durable
+    // provenance field whose value referred to nothing that ever existed.
+    assert.equal(edge?.createdFromRunId, parent.run.id,
+      'the edge must name the Run that spawned the child');
   } finally {
     await rig.close();
   }

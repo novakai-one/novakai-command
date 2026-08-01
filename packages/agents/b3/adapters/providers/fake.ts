@@ -151,7 +151,11 @@ export function createFakeProviderAdapter(
       return b3ok({ kind: 'unsupported', reason: report.modelChange.evidence });
     },
 
-    submitTurn: (text) => `${text}\n`,
+    // A carriage return, exactly like the three real adapters: that is what the
+    // Enter key sends down a PTY. The fake used to send a newline, which every
+    // `cat`-shaped stand-in accepts and no TUI treats as "send" — so a suite
+    // built on it could not tell a submitted turn from an unsubmitted one.
+    submitTurn: (text) => `${text}\r`,
 
     findConfirmationLine(observation: ProviderReplyObservation, marker: string) {
       return findMarkerLine(observation.text, marker);

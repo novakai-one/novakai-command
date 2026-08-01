@@ -165,3 +165,38 @@ test('a failed governed launch never strands its Run in provisioning', async () 
     await rig.close();
   }
 });
+
+test('every turn the Runtime types ends with the key that SENDS it', async () => {
+  const rig = await createRig();
+  try {
+    const role = unwrap(await rig.chris.call<{ id: string }>(
+      'b3.agent.createRole', governedRole('governed-submit'), opId(),
+    ), 'createRole');
+
+    const spawning = rig.chris.call('b3.agent.spawn', {
+      roleProfileId: role.id,
+      displayName: 'Submit Check',
+      workingDirectory: tmpdir(),
+      task: { kind: 'supervised', brief: 'Say the word BANANA once, then stop.' },
+    }, opId());
+    await replyAsProvider(
+      rig.ptyHost, `SKILLS-CONFIRMED: ${JSON.stringify(governedTokens())}`,
+    );
+    const spawned = await spawning;
+    assert.equal(spawned.ok, true, spawned.ok ? '' : spawned.error.message);
+
+    // A real provider is a TUI: text typed without Enter sits in its composer
+    // for ever. Against `claude` 2.1.219 the gate prompt landed, echoed, and
+    // was never sent — so no confirmation could ever arrive and every governed
+    // launch failed after the full gate timeout (hold-out B3).
+    const enter = String.fromCharCode(13);
+    const written = rig.ptyHost.latest().written;
+    assert.equal(written.length >= 2, true, 'the gate typed fewer than two turns');
+    for (const turn of written) {
+      assert.equal(turn.endsWith(enter), true,
+        `a turn the Runtime typed was never sent: ${JSON.stringify(turn.slice(-40))}`);
+    }
+  } finally {
+    await rig.close();
+  }
+});

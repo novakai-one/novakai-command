@@ -9,7 +9,7 @@
 // every effect underneath is keyed by this command's `clientOpId`, so a retry
 // adopts what already happened instead of doing it twice.
 import {
-  b3fail, b3ok, mintAgentRunId,
+  b3fail, b3ok,
   type AgentId, type AgentRunId, type B3Result, type CommandContext,
   type ProviderSessionId, type RuntimeEpochId,
 } from '@novakai/foundation/contract';
@@ -129,8 +129,16 @@ async function governedIdentity(
     roleProfileId: build.input.roleProfileId,
     displayName: build.input.displayName,
     rootHumanPrincipalId: build.authority.rootHumanPrincipalId,
+    // The AUTHENTICATED parent Run, not a fresh id. `createdFromRunId` is
+    // durable provenance — "which shift of the parent made this child" — and a
+    // minted one referred to nothing that ever existed (NVK-KIMI-028 finding 9).
     ...(build.authority.parentAgentId === undefined
-      ? {} : { parentAgentId: build.authority.parentAgentId, creatingRunId: mintAgentRunId() }),
+      ? {}
+      : {
+        parentAgentId: build.authority.parentAgentId,
+        ...(context.principal.agentRunId === undefined
+          ? {} : { creatingRunId: context.principal.agentRunId }),
+      }),
   });
   if (!created.ok) return created;
   const agentId = created.value.agent.id;
