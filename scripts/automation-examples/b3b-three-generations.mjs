@@ -188,6 +188,34 @@ try {
   check('three generations, three DIFFERENT providers',
     new Set(providers).size === 3, providers.join(' → '));
 
+  // ── Proof that these are real processes, not three PASS lines ─────────────
+  //
+  // A harness that only reads its own records would pass just as happily
+  // against a provider layer that launched nothing. So each generation's PTY
+  // is read back and has to have produced BYTES — and in `--live` those bytes
+  // came out of the actual claude/codex/kimi binary on this machine.
+  for (const [label, run] of [
+    ['Manager', manager.value], ['Builder', builder.value], ['Auditor', auditor.value],
+  ]) {
+    const terminalSessionId = run.run.terminalSessionId;
+    if (terminalSessionId === undefined) {
+      check(`${label} has a terminal`, false, 'no terminal session was recorded');
+      continue;
+    }
+    const frames = await chris.call('b3.terminal.read', { terminalSessionId });
+    const bytes = frames.ok
+      ? frames.value.filter((frame) => frame.kind === 'bytes')
+      : [];
+    const text = bytes
+      .map((frame) => Buffer.from(frame.base64, 'base64').toString('utf8'))
+      .join('');
+    check(`${label}'s ${run.provider.provider} PTY produced real output`,
+      text.length > 0,
+      text.length === 0
+        ? 'the terminal produced nothing — nothing was launched'
+        : `${String(text.length)} bytes: ${JSON.stringify(text.slice(0, 60))}`);
+  }
+
   const tree = await chris.call('b3.agent.getTree', {
     rootAgentId: manager.value.agent.agentId, maxDepth: 8,
   });
