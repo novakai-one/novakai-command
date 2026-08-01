@@ -2,12 +2,19 @@
 //
 // Same origin, same frame, same token as everything else the shell speaks. The
 // page is a controller: it can attach, type and leave. It cannot stop anything.
-import type {
-  TerminalAttachment, TerminalFrame, TerminalOutcome, TerminalServices, TerminalTabView,
+import {
+  SHELL_INSTANCE_ID,
+  type TerminalAttachment, type TerminalFrame, type TerminalOutcome,
+  type TerminalServices, type TerminalTabView,
 } from '../contract/terminalServices.js';
 import { fetchBootstrap, type BootstrapDocument } from './serverClient.js';
 
 const PROTOCOL_VERSION = 1;
+/** `op_<uuidv4>` — Foundation's existing ClientOpId shape, carried forward (§4.1). */
+function mintClientOpId(): string {
+  return `op_${crypto.randomUUID()}`;
+}
+
 /** The nvk-ws v1 socket-frame version key. Named because it is one letter. */
 const VERSION_FIELD = 'v';
 
@@ -48,6 +55,8 @@ export async function connectTerminalServices(
   const socket = new WebSocket(`${document_.wsUrl}?token=${encodeURIComponent(document_.token)}`);
   const pending = new Map<number, Pending>();
   const outputListeners: ((sessionId: string, frame: TerminalFrame) => void)[] = [];
+  /** The open operation this connection owns, per working directory. */
+  const openIds = new Map<string, string>();
   let nextId = 1;
 
   await new Promise<void>((resolve, reject) => {
@@ -86,7 +95,15 @@ export async function connectTerminalServices(
     waiting.resolve(frame.result);
   };
 
-  function call<Value>(method: string, payload: unknown): Promise<TerminalOutcome<Value>> {
+  /**
+   * §3.2: the CALLER mints the operation id. Minting it server-side would make
+   * every request a brand-new command, which is what put the whole durable
+   * receipt layer out of reach. `clientOpId` is passed in when a retry must
+   * resume the same operation rather than start another one.
+   */
+  function call<Value>(
+    method: string, payload: unknown, clientOpId: string = mintClientOpId(),
+  ): Promise<TerminalOutcome<Value>> {
     const id = nextId;
     nextId += 1;
     return new Promise<TerminalOutcome<Value>>((resolve) => {
@@ -96,7 +113,7 @@ export async function connectTerminalServices(
       });
       socket.send(JSON.stringify({
         id, method, [VERSION_FIELD]: PROTOCOL_VERSION,
-        params: { contractVersion: 1, payload },
+        params: { contractVersion: 1, clientOpId, payload },
       }));
     });
   }
@@ -136,12 +153,17 @@ export async function connectTerminalServices(
     },
 
     async openTerminal(workingDirectory, columns, rows) {
+      // One id per directory for the life of this connection: a tab that
+      // remounts asks the same question and gets the same shell back, instead
+      // of leaving a second one running behind it.
+      const opening = openIds.get(workingDirectory) ?? mintClientOpId();
+      openIds.set(workingDirectory, opening);
       const opened = await call<{ id: string }>('b3.terminal.open', {
-        owner: { kind: 'plain-shell', shellInstanceId: 'novakai-shell' },
+        owner: { kind: 'plain-shell', shellInstanceId: SHELL_INSTANCE_ID },
         launchAuthorityRef: 'plain-shell',
         launchFingerprint: `plain-shell:${workingDirectory}`,
         workingDirectory, columns, rows,
-      });
+      }, opening);
       if (!opened.succeeded) return opened;
       const inspected = await call<unknown>('b3.terminal.inspect', {
         terminalSessionId: opened.value.id,

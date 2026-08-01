@@ -2,7 +2,10 @@
 //
 // `--json` field names and enum meanings are a compatibility contract; the
 // human text above them is free to improve.
-import { b3fail, type B3ContractError, type B3Result } from '@novakai/foundation/contract';
+import {
+  b3fail, b3ok, isValidId, mintClientOpId, validationFailed,
+  type B3ClientOpId, type B3ContractError, type B3Result,
+} from '@novakai/foundation/contract';
 
 /**
  * §17.2. The JSON field names here — including the two-letter `ok` — ARE the
@@ -60,6 +63,31 @@ export interface Flags {
   readonly json: boolean;
   value(name: string): string | undefined;
   readonly positional: readonly string[];
+}
+
+/** §17.2's flag name. Spelled once, so both CLIs cannot disagree about it. */
+export const CLIENT_OP_ID_FLAG = 'client-op-id';
+
+/**
+ * §17.2: `--client-op-id <ClientOpId>`, generated if omitted. ONE id per
+ * invocation, whatever it does — the receipt id is derived per operation, so a
+ * command that attaches, types and detaches resumes all three on a retry rather
+ * than doing any of them twice (§4.5, DEC-B3V4-30).
+ *
+ * A malformed id is refused rather than quietly replaced with a fresh one: a
+ * caller that thinks it is being idempotent and silently is not is worse off
+ * than one that is told.
+ */
+export function clientOpIdFrom(flags: Flags): B3Result<B3ClientOpId> {
+  const given = flags.value(CLIENT_OP_ID_FLAG);
+  if (given === undefined) return b3ok(mintClientOpId());
+  if (!isValidId(given, 'op', 'uuidv4')) {
+    return b3fail(validationFailed([{
+      path: CLIENT_OP_ID_FLAG,
+      message: 'must be op_<uuidv4>; omit the flag and one is generated',
+    }]));
+  }
+  return b3ok(given as B3ClientOpId);
 }
 
 export function parseFlags(argv: readonly string[]): Flags {

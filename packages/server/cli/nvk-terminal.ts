@@ -4,6 +4,10 @@
 //   nvk-terminal list [--state live|final|all]
 //   nvk-terminal inspect <terminalSessionId>
 //   nvk-terminal open [--cwd <path>] [--authority plain-shell|mock-managed]
+//
+// Every command also takes --json and, for mutations, --client-op-id <op_uuid>
+// (§17.2): re-running the same command with the same id resumes the same
+// operation instead of doing it twice.
 //   nvk-terminal attach <terminalSessionId>
 //   nvk-terminal detach <controllerAttachmentId> --session <terminalSessionId>
 //
@@ -11,13 +15,17 @@
 // (§17.2) — "no controller attached" is never the same sentence as "stopped".
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { b3err, b3fail, type B3Result, type TerminalSessionId } from '@novakai/foundation/contract';
+import {
+  b3err, b3fail, type B3ClientOpId, type B3Result, type TerminalSessionId,
+} from '@novakai/foundation/contract';
 import type {
   ControllerAttachment, TerminalInputAttempt, TerminalInputLease,
   TerminalOutputFrame, TerminalSession, TerminalSessionView,
 } from '../../terminal/contract/index.js';
 import { connectRuntime, type RuntimeClient } from '../core/b3/client.js';
-import { emit, EXIT, fail, parseFlags, report, type Flags } from '../core/b3/cli-shared.js';
+import {
+  clientOpIdFrom, emit, EXIT, fail, parseFlags, report, type Flags,
+} from '../core/b3/cli-shared.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '..', '..', '..');
@@ -26,6 +34,16 @@ const [, , command = 'list', ...rest] = process.argv;
 const flags = parseFlags(rest);
 const root = flags.value('root') ?? process.env['NOVAKAI_ROOT'] ?? path.join(repoRoot, '.novakai');
 const port = Number(flags.value('port') ?? process.env['NOVAKAI_RUNTIME_PORT'] ?? 5190);
+
+/**
+ * §17.2: ONE caller-minted operation id per invocation. Every mutation this
+ * command makes carries it, so re-running the exact command resumes the exact
+ * operations instead of doing them again (§4.5, DEC-B3V4-30).
+ */
+const mintedOperationId = clientOpIdFrom(flags);
+/** Safe to read after runCommand's guard has refused a malformed one. */
+const operationId = (): B3ClientOpId =>
+  (mintedOperationId.ok ? mintedOperationId.value : ('' as B3ClientOpId));
 
 const unreachable = (cause: unknown): ReturnType<typeof b3err> => b3err('RuntimeUnavailable',
   `no Novakai Runtime is reachable on port ${port}: ${cause instanceof Error ? cause.message : String(cause)}`,
@@ -92,15 +110,19 @@ const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
   async open(argFlags) {
     const workingDirectory = argFlags.value('cwd') ?? process.cwd();
     const authority = argFlags.value('authority') ?? 'plain-shell';
+    // Stable on purpose: the process that runs this command exits immediately
+    // and the session outlives it, so a pid here would make every retry a
+    // DIFFERENT request and put idempotency permanently out of reach (§4.5).
+    const shellInstanceId = argFlags.value('shell-instance') ?? 'cli';
     emit('terminal open', argFlags, await withClient<TerminalSession>(
       (client) => client.call('b3.terminal.open', {
-        owner: { kind: 'plain-shell', shellInstanceId: `cli-${process.pid}` },
+        owner: { kind: 'plain-shell', shellInstanceId },
         launchAuthorityRef: authority,
         launchFingerprint: `${authority}:${workingDirectory}`,
         workingDirectory,
         columns: viewportColumns(argFlags),
         rows: viewportRows(argFlags),
-      }),
+      }, operationId()),
     ), (session) => `${session.id}\n  ${originOf(session)}; currently 0 controller(s) attached; `
       + 'the terminal is running in the Novakai Runtime.');
   },
@@ -124,7 +146,7 @@ const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
       controllerKind: 'external-terminal',
       columns: viewportColumns(argFlags),
       rows: viewportRows(argFlags),
-    });
+    }, operationId());
     if (!attached.ok) {
       client.close();
       return emit('terminal attach', argFlags, attached, () => '');
@@ -149,7 +171,9 @@ const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
       return usage('terminal detach', argFlags, 'controllerAttachmentId --session <id>');
     }
     emit('terminal detach', argFlags, await withClient<ControllerAttachment>(
-      (client) => client.call('b3.terminal.detach', { terminalSessionId, attachmentId }),
+      (client) => client.call(
+        'b3.terminal.detach', { terminalSessionId, attachmentId }, operationId(),
+      ),
     ), (attachment) => `detached ${attachment.id}. The terminal is still running.`);
   },
 
@@ -173,7 +197,7 @@ const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
         const attached = await client.call<ControllerAttachment>('b3.terminal.attach', {
           terminalSessionId, controllerKind: 'script',
           columns: viewportColumns(argFlags), rows: viewportRows(argFlags),
-        });
+        }, operationId());
         if (!attached.ok) return attached;
         const written = await sendInput(client, argFlags, {
           terminalSessionId, attachmentId: attached.value.id, text,
@@ -182,7 +206,7 @@ const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
         // locked out by a script that has already finished.
         await client.call('b3.terminal.detach', {
           terminalSessionId, attachmentId: attached.value.id,
-        });
+        }, operationId());
         return written;
       },
     ), (attempt) => `input #${attempt.inputSequence} ${attempt.outcome}`);
@@ -219,7 +243,7 @@ async function sendInput(
     attachmentId: target.attachmentId,
     mode: 'acquire-if-free',
     ttlMs: 60_000,
-  });
+  }, operationId());
   if (!lease.ok) return lease;
   const controlC = argFlags.value('control-c') !== undefined;
   const written = await client.call<TerminalInputAttempt>('b3.terminal.write', {
@@ -230,14 +254,14 @@ async function sendInput(
     expectedNextInputSequence: Number(argFlags.value('sequence') ?? '1'),
     kindOfInput: controlC ? 'raw-control-c' : 'text',
     ...(controlC ? {} : { utf8Text: target.text }),
-  });
+  }, operationId());
   // A finished script has stopped typing, so it stops holding the keyboard.
   await client.call('b3.terminal.releaseLease', {
     terminalSessionId: target.terminalSessionId,
     attachmentId: target.attachmentId,
     leaseId: lease.value.id,
     generation: lease.value.generation,
-  });
+  }, operationId());
   return written;
 }
 
@@ -250,7 +274,7 @@ async function followUntilInterrupted(
   client: RuntimeClient, terminalSessionId: TerminalSessionId, attachmentId: string,
 ): Promise<never> {
   const leave = async (): Promise<never> => {
-    await client.call('b3.terminal.detach', { terminalSessionId, attachmentId });
+    await client.call('b3.terminal.detach', { terminalSessionId, attachmentId }, operationId());
     client.close();
     process.exit(EXIT.success);
   };
@@ -261,6 +285,11 @@ async function followUntilInterrupted(
 }
 
 async function runCommand(name: string, argFlags: Flags): Promise<never> {
+  // §17.2: a malformed --client-op-id is a usage error, refused before anything
+  // runs — a caller that believes it is retrying safely must not be told a lie.
+  if (!mintedOperationId.ok) {
+    return fail(`terminal ${name}`, argFlags, mintedOperationId.error);
+  }
   const handler = COMMANDS[name];
   if (!handler) {
     return usage('terminal', argFlags, 'list|inspect|open|attach|detach|write|read');

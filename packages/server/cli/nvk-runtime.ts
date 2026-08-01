@@ -12,11 +12,11 @@
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { b3err, b3fail, type B3Result } from '@novakai/foundation/contract';
+import { b3err, b3fail, type B3ClientOpId, type B3Result } from '@novakai/foundation/contract';
 import type { RuntimeStatus, RuntimeDoctorReport, RuntimeStopOutcome } from '../../agent-runtime/contract/index.js';
 import { startRuntimeHost } from '../core/b3/host.js';
 import { connectRuntime, type RuntimeClient } from '../core/b3/client.js';
-import { emit, parseFlags, type Flags } from '../core/b3/cli-shared.js';
+import { clientOpIdFrom, emit, fail, parseFlags, type Flags } from '../core/b3/cli-shared.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '..', '..', '..');
@@ -25,6 +25,11 @@ const [, , command = 'status', ...rest] = process.argv;
 const flags = parseFlags(rest);
 const root = flags.value('root') ?? process.env['NOVAKAI_ROOT'] ?? path.join(repoRoot, '.novakai');
 const port = Number(flags.value('port') ?? process.env['NOVAKAI_RUNTIME_PORT'] ?? 5190);
+
+/** §17.2: one caller-minted operation id per invocation, generated if omitted. */
+const mintedOperationId = clientOpIdFrom(flags);
+const operationId = (): B3ClientOpId =>
+  (mintedOperationId.ok ? mintedOperationId.value : ('' as B3ClientOpId));
 
 const unreachable = (cause: unknown): B3Result<never> => b3fail(
   b3err('RuntimeUnavailable',
@@ -129,7 +134,7 @@ const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
 
   async ensure(argFlags) {
     let status = await withClient<RuntimeStatus>((client) =>
-      client.call<RuntimeStatus>('b3.runtime.ensure', {}));
+      client.call<RuntimeStatus>('b3.runtime.ensure', {}, operationId()));
     if (!status.ok && argFlags.value('start') !== undefined) {
       startDetached();
       status = await waitForRuntime();
@@ -162,13 +167,16 @@ const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
       if (!status.ok) return status;
       return client.call<RuntimeStopOutcome>('b3.runtime.stop', {
         expectedEpochId: status.value.activeEpochId, liveRuns,
-      });
+      }, operationId());
     });
     emit('runtime stop', argFlags, outcome, describeStop);
   },
 };
 
 async function runCommand(name: string, argFlags: Flags): Promise<never> {
+  if (!mintedOperationId.ok) {
+    return fail(`runtime ${name}`, argFlags, mintedOperationId.error);
+  }
   const handler = COMMANDS[name];
   if (!handler) {
     emit('runtime', argFlags, b3fail(
