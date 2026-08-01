@@ -24,6 +24,42 @@ export interface FakeProviderOptions {
   /** What `discoverSession` reports; defaults to echoing the expected id. */
   readonly substituteSessionId?: string;
   readonly discoveryFails?: string;
+  /**
+   * Behave like a provider that READ its pinned skills and confirmed them, so a
+   * governed launch can be proven end to end without spending real tokens.
+   *
+   * The tokens come from the LAUNCH PLAN this adapter is building — the same
+   * place a real model's skill files come from — and never from the prompt.
+   * A fake that parsed the prompt could not tell a working gate from one that
+   * accepts its own words back, which is the defect that hid for a whole slice
+   * (NVK-KIMI-028 finding 4).
+   *
+   * It also prints the Run credential the Runtime handed it, because that is
+   * what a real agent does with it: uses it. An outside harness reads it off
+   * the terminal and can then act AS that Run, which is how a second host
+   * proves three generations without touching Runtime internals.
+   */
+  readonly confirmSkillsFromPlan?: boolean;
+}
+
+/** `id@v<version>#<digest>`, sorted — §6.3's exact set, canonical order. */
+function planTokens(plan: ResolvedLaunchPlan): readonly string[] {
+  return plan.skills
+    .map((skill) => `${skill.id}@v${String(skill.version)}#${skill.digest}`)
+    .sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
+}
+
+/**
+ * Wait for a line to arrive (turn 1), then say what this plan pinned, then
+ * behave like any other session. The reply is composed from the PLAN; the
+ * arriving line is only the cue that someone asked.
+ */
+function scriptedSession(provider: ProviderKind, plan: ResolvedLaunchPlan): string {
+  const tokens = JSON.stringify(planTokens(plan)).replace(/'/gu, "'\\''");
+  return `printf '%s ready\n' ${provider}; `
+    + 'printf "NVK-RUN-CREDENTIAL: $NVK_AGENT_RUN_ID $NVK_AGENT_RUN_TOKEN\n"; '
+    + 'IFS= read -r _asked; '
+    + `printf 'SKILLS-CONFIRMED: %s\n' '${tokens}'; cat`;
 }
 
 export function createFakeProviderAdapter(
@@ -56,7 +92,9 @@ export function createFakeProviderAdapter(
     ): Promise<B3Result<PrivateProviderLaunch>> {
       return b3ok({
         executable: `/usr/bin/env`,
-        argv: ['sh', '-c', `printf '%s ready\\n' ${provider}; cat`],
+        argv: ['sh', '-c', options.confirmSkillsFromPlan === true
+          ? scriptedSession(provider, plan)
+          : `printf '%s ready\\n' ${provider}; cat`],
         environment: { ...input.runtimeEnvironment },
         workingDirectory: input.workingDirectory,
         launchFingerprint: `${provider}:${plan.modelId}:${plan.effort}:${input.workingDirectory}`,
@@ -84,7 +122,9 @@ export function createFakeProviderAdapter(
       const resuming = input.mode === 'resume' || input.mode === 'compact';
       return b3ok({
         executable: '/usr/bin/env',
-        argv: ['sh', '-c', `printf '%s %s\\n' ${provider} ${input.mode}; cat`],
+        argv: ['sh', '-c', options.confirmSkillsFromPlan === true
+          ? scriptedSession(provider, input.launchPlan)
+          : `printf '%s %s\\n' ${provider} ${input.mode}; cat`],
         environment: { ...input.runtimeEnvironment },
         workingDirectory: input.workingDirectory,
         launchFingerprint: `${provider}:${input.mode}:${input.workingDirectory}`,
@@ -134,11 +174,16 @@ export function findMarkerLine(text: string, marker: string): string | null {
 }
 
 export function createFakeProviderAdapters(
-  options: Partial<Record<ProviderKind, FakeProviderOptions>> = {},
+  options: Partial<Record<ProviderKind, FakeProviderOptions>> & {
+    /** Applied to every provider, for the cases that are about all three. */
+    readonly all?: FakeProviderOptions;
+  } = {},
 ): ProviderAdapterRegistry {
   const built = {} as Record<ProviderKind, InteractiveProviderAdapter>;
   for (const provider of PROVIDER_KINDS) {
-    built[provider] = createFakeProviderAdapter(provider, options[provider] ?? {});
+    built[provider] = createFakeProviderAdapter(
+      provider, { ...options.all, ...options[provider] },
+    );
   }
   return built;
 }

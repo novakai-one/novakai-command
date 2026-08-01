@@ -18,7 +18,7 @@ import {
 import { createFakeProviderAdapters } from '../../agents/b3/contract/index.js';
 import { startRuntimeHost, type RunningRuntimeHost } from '../core/b3/host.js';
 import { connectRuntime, type RuntimeClient } from '../core/b3/client.js';
-import { chatRole } from './governed-role.js';
+import { chatRole, governedRole, governedTokens } from './governed-role.js';
 
 interface RunView {
   agent: { agentId: string; displayName: string };
@@ -212,6 +212,38 @@ test('a stranded operation has a public repair door', async () => {
       operationId: 'runOperation_2222222222222222222222222222222222222222222222222222',
     }, mintClientOpId());
     assert.equal(unknown.ok, false, 'repairing an operation that does not exist answered ok');
+  } finally {
+    await rig.close();
+  }
+});
+
+test('an outside caller can read the skills a Run is pinned to', async () => {
+  const rig = await createRig();
+  try {
+    // §6.3's confirmation is the provider's own reply, read off the transcript
+    // — the spec defines no method for submitting one, and inventing one would
+    // let a caller confirm on an agent's behalf. What an external harness
+    // genuinely lacked is the READ: no published way to see a Run's pinned
+    // skills, so nobody outside could tell what a correct confirmation is.
+    const role = await rig.chris.call<{ id: string }>(
+      'b3.agent.createRole', governedRole('plan-read'), mintClientOpId(),
+    );
+    assert.equal(role.ok, true, role.ok ? '' : role.error.message);
+    if (!role.ok) return;
+    const run = await rig.spawn(rig.chris, role.value.id, 'Pinned');
+
+    const plan = await rig.chris.call<{
+      id: string;
+      skills: readonly { id: string; version: number; digest: string }[];
+      skillsConfirmationGate: { mode: string };
+    }>('b3.agent.getLaunchPlan', { agentRunId: run.run.id }, mintClientOpId());
+    assert.equal(plan.ok, true, plan.ok ? '' : `getLaunchPlan: ${plan.error.message}`);
+    if (!plan.ok) return;
+    assert.deepEqual(
+      plan.value.skills.map((skill) => `${skill.id}@v${String(skill.version)}#${skill.digest}`).sort(),
+      governedTokens(),
+      'the published plan must name exactly the skills the gate will demand');
+    assert.equal(plan.value.skillsConfirmationGate.mode, 'required-two-turn');
   } finally {
     await rig.close();
   }

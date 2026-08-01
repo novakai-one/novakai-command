@@ -271,6 +271,13 @@ const WIRE_STEPS: readonly WireStep[] = [
     method: 'b3.agent.subscribeEvents',
     payload: () => ({ limit: 50 }),
   },
+  {
+    // What the gate WOULD have demanded, for a consumer that did not author
+    // the role. This life's roles are chat roles, so the plan's gate is off —
+    // the point is that the plan is readable at all (§12.1).
+    method: 'b3.agent.getLaunchPlan',
+    payload: (state) => ({ agentRunId: state.managerRunId }),
+  },
 ];
 
 interface Rig {

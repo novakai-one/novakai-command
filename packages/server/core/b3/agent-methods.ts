@@ -212,6 +212,19 @@ export function buildB3AgentMethods(options: B3AgentMethodOptions): MethodTable 
     'b3.agent.applyControl': method(readApplyRunControlInput,
       (payload, context) => runs.applyRunControl(context, payload)),
 
+    // §6.3 defines the skills confirmation as the PROVIDER's own turn-1 reply,
+    // read off the transcript; the spec publishes no method for submitting one,
+    // and inventing one would let a caller confirm on an agent's behalf. What
+    // an outside harness genuinely lacked is the READ §12.1 already publishes —
+    // no way to see the skills a Run is pinned to, and therefore no way to know
+    // what a correct confirmation even looks like.
+    'b3.agent.getLaunchPlan': method(readAgentRunIdInput,
+      async (payload, _context, principal) => {
+        const planId = await runs.getRunLaunchPlanId(principal, payload.agentRunId);
+        if (!planId.ok) return planId;
+        return agents.getLaunchPlan(principal, planId.value);
+      }),
+
     // §16.2's `subscribeEvents`, on a request/response frame: a bounded page
     // from the caller's cursor, while the host pushes what follows as ordinary
     // v1 event frames. Both halves carry the SAME cursors, so a consumer that
