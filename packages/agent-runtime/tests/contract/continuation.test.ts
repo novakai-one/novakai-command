@@ -304,3 +304,68 @@ test('RED GATE 8: a continuation is never recorded as a family edge', async () =
       'a continuation must be a NEW Run');
   });
 });
+
+/**
+ * A continuation that fails leaves the Run it was replacing FENCED — not live,
+ * not final, its provider still running and billing — and until now in no
+ * recovery list at all. The re-probe found it reading as in-flight for ever
+ * (NVK-KIMI-030 N-2): "not a dead end, it just never resolves on its own".
+ *
+ * `continuation-pending` is a promise that a replacement is coming. When the
+ * replacement dies, the promise is false, and the Run has to say so somewhere an
+ * operator looks.
+ */
+test('a failed continuation does not strand the Run it was replacing', async () => {
+  await withRig(async (rig) => {
+    const agent = await oneAgent(rig);
+
+    // The gate on the REPLACEMENT fails — the ordinary way a continuation dies.
+    rig.terminal.reply = 'malformed';
+    const failed = await rig.runtime.continueAgent(rig.human(), {
+      agentId: agent.agentId,
+      expectedOldRunId: agent.runId,
+      mode: 'fresh',
+      configurationMode: 'inherit-plan',
+    });
+    assert.equal(failed.ok, false, 'a malformed confirmation passed the gate');
+
+    const old = await rig.runtime.getAgentRun(rig.principal(), agent.runId);
+    assert.equal(old.ok, true);
+    if (!old.ok) return;
+    assert.notEqual(old.value.run.lifecycle, 'continuation-pending',
+      'the Run is still waiting for a replacement that already failed');
+
+    // And it is visible where an operator goes to find work that needs a hand.
+    const census = await rig.runtime.census();
+    assert.equal(census.ok, true);
+    if (!census.ok) return;
+    assert.equal(census.value.recoveryRequiredRefs.includes(agent.runId), true,
+      `the stranded Run is in no recovery list: ${JSON.stringify(census.value)}`);
+  }, { gateTimeoutMs: 600 });
+});
+
+test('a Run a failed continuation stranded can still be continued and stopped', async () => {
+  await withRig(async (rig) => {
+    const agent = await oneAgent(rig);
+    rig.terminal.reply = 'malformed';
+    await rig.runtime.continueAgent(rig.human(), {
+      agentId: agent.agentId,
+      expectedOldRunId: agent.runId,
+      mode: 'fresh',
+      configurationMode: 'inherit-plan',
+    });
+
+    // Recovery is a statement about needing attention, never a wall. The
+    // re-probe checked both of these by hand; they are the reason N-2 is a
+    // MEDIUM rather than a SEVERE, so they are held here.
+    rig.terminal.reply = 'valid';
+    const retried = await rig.runtime.continueAgent(rig.human(), {
+      agentId: agent.agentId,
+      expectedOldRunId: agent.runId,
+      mode: 'fresh',
+      configurationMode: 'inherit-plan',
+    });
+    assert.equal(retried.ok, true,
+      `a stranded Run could not be continued: ${retried.ok ? '' : retried.error.message}`);
+  }, { gateTimeoutMs: 600 });
+});

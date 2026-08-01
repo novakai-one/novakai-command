@@ -79,8 +79,43 @@ export async function continueAgent(
   });
   if (!performed.ok) {
     await compensate(core, journal.value.operation, epoch.value, performed.error.message);
+    const released = await releaseFencedRun(core, oldRun.value.id, performed.error.message);
+    if (!released.ok) return released;
   }
   return performed;
+}
+
+/**
+ * The Run a failed continuation was replacing.
+ *
+ * §13.6 fences it FIRST, so it stops accepting new work while the replacement is
+ * provisioned. When the replacement dies, that fence is a promise about a
+ * successor that does not exist: the Run is neither live nor final, its provider
+ * is still running, and until now it appeared in no recovery list at all — it
+ * read as in-flight for ever (NVK-KIMI-030 N-2).
+ *
+ * It is not stopped here. Stopping it would kill a working provider on the
+ * strength of a failure that happened somewhere else, and §20's rule for an
+ * unconfirmed old endpoint is "human/script decides". So it is recorded as
+ * needing recovery, with the reason, and stays continuable and stoppable.
+ */
+async function releaseFencedRun(
+  core: RunsCore, oldRunId: AgentRun['id'], reason: string,
+): Promise<B3Result<null>> {
+  const current = await requireRun(core, oldRunId);
+  if (!current.ok) return current;
+  if (current.value.lifecycle !== 'continuation-pending') return b3ok(null);
+  const patched = await patchRun(core, current.value, {
+    lifecycle: 'recovery-required',
+    activity: 'unknown',
+    uncertainty: [{
+      code: 'cleanup-incomplete',
+      summary: `the continuation that fenced this Run failed (${reason}); its provider `
+        + 'was left running and no replacement took over',
+      evidenceRefs: [current.value.terminalSessionId ?? 'no terminal was recorded'],
+    }],
+  });
+  return patched.ok ? b3ok(null) : b3fail(patched.error);
 }
 
 /** The journal, plus the reservation minted before any effect (§5.4, §20). */
