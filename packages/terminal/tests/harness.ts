@@ -35,7 +35,12 @@ export interface MovableClock extends Clock {
   onNextRead(hook: () => void): void;
 }
 
-export function movableClock(startMs = 1_760_000_000_000): MovableClock {
+/**
+ * Starts at wall-clock now on purpose: records stamped with the real clock
+ * (`createdAt`, `connectedAt`) and records stamped with THIS clock have to be
+ * comparable, or a test that advances time compares two different eras.
+ */
+export function movableClock(startMs = Date.now()): MovableClock {
   let current = startMs;
   let pending: (() => void) | null = null;
   return {
@@ -75,7 +80,7 @@ export function runtimeContext(epochId?: RuntimeEpochId): SystemCommandContext<'
   };
 }
 
-export function createRig(options: { replayBytes?: number } = {}): Rig {
+export function createRig(options: { replayBytes?: number; staleAfterMs?: number } = {}): Rig {
   const root = mkdtempSync(path.join(tmpdir(), 'nvk-terminal-'));
   const ptyHost = createFakePtyHost();
   const clock = movableClock();
@@ -104,6 +109,7 @@ export function createRig(options: { replayBytes?: number } = {}): Rig {
   const terminal = composeTerminal({
     root, ptyHost, epochFence, clock,
     ...(options.replayBytes === undefined ? {} : { replayBytes: options.replayBytes }),
+    ...(options.staleAfterMs === undefined ? {} : { staleAfterMs: options.staleAfterMs }),
   });
 
   return {

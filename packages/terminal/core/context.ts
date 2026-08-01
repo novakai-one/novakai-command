@@ -1,6 +1,6 @@
 // The private wiring every Terminal operation shares.
 import type {
-  B3ContractError, B3Result, CommandContext, PublicOperationName, ReceiptStore,
+  B3ContractError, B3Result, CommandContext, IsoUtc, PublicOperationName, ReceiptStore,
   RecordVersion, TerminalSessionId,
 } from '@novakai/foundation/contract';
 import { b3err, b3fail, b3ok } from '@novakai/foundation/contract';
@@ -19,6 +19,8 @@ export interface TerminalCore {
   readonly clock: Clock;
   readonly receipts: ReceiptStore;
   readonly replayBytes: number;
+  /** How long a controller may go unseen before it is `stale` (§13.4). */
+  readonly staleAfterMs: number;
 }
 
 export const OPERATION = {
@@ -31,6 +33,8 @@ export const OPERATION = {
   resize: 'terminal.resizeTerminal' as PublicOperationName,
   interrupt: 'terminal.interruptTerminalTurn' as PublicOperationName,
   terminate: 'terminal.terminateTerminal' as PublicOperationName,
+  observe: 'terminal.observeControllers' as PublicOperationName,
+  reconcile: 'terminal.reconcileAfterRestart' as PublicOperationName,
 } as const;
 
 export const FINAL_STATUSES = new Set(['exited', 'failed']);
@@ -70,6 +74,15 @@ export async function requireLiveSession(
 
 export function versionOf(record: { readonly recordVersion: RecordVersion }): RecordVersion {
   return record.recordVersion;
+}
+
+/**
+ * Presence times come from the injected clock, not the wall clock. "Last seen"
+ * and "is that too long ago" have to be read off ONE clock, or a test that
+ * moves time is comparing two different eras — and so is a machine that sleeps.
+ */
+export function clockIso(core: TerminalCore): IsoUtc {
+  return new Date(core.clock.nowMs()).toISOString() as IsoUtc;
 }
 
 /** Positive-integer viewport guard: a zero-column terminal is not a viewport. */

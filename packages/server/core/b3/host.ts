@@ -3,10 +3,32 @@
 // It is deliberately independent of the desktop shell: closing Novakai closes a
 // controller, not this. Everything it exposes rides the existing nvk-ws v1
 // transport, so an external terminal and the app are the same kind of client.
-import { mintClientOpId, mintTraceCorrelationId, type HumanPrincipalId } from '@novakai/foundation/contract';
-import { startTransport, type RunningTransport } from '../transport/server.js';
+import {
+  mintClientOpId, mintTraceCorrelationId,
+  type B3Result, type ControllerAttachmentId, type HumanPrincipalId,
+  type SystemCommandContext, type TerminalSessionId,
+} from '@novakai/foundation/contract';
+import { DEFAULT_STALE_AFTER_MS } from '../../../terminal/contract/index.js';
+import { startTransport, type DispatchedCall, type RunningTransport } from '../transport/server.js';
 import { composeB3Runtime, type B3Runtime, type B3RuntimeOptions } from './composition.js';
 import { buildB3Methods } from './methods.js';
+
+/** Comfortably inside the stale window, so a live window is never called gone. */
+const SIGHTING_INTERVAL_MS = Math.floor(DEFAULT_STALE_AFTER_MS / 3);
+
+interface OpenedController {
+  readonly terminalSessionId: TerminalSessionId;
+  readonly attachmentId: ControllerAttachmentId;
+}
+
+/** The attach/detach result as it comes back off the method table. */
+function attachmentIn(result: unknown): OpenedController | null {
+  const outcome = result as B3Result<OpenedController & { id?: ControllerAttachmentId }>;
+  if (!outcome?.ok) return null;
+  const attachmentId = outcome.value.id ?? outcome.value.attachmentId;
+  if (attachmentId === undefined || outcome.value.terminalSessionId === undefined) return null;
+  return { attachmentId, terminalSessionId: outcome.value.terminalSessionId };
+}
 
 export interface RuntimeHostProcessOptions extends B3RuntimeOptions {
   readonly port: number;
@@ -32,19 +54,69 @@ export async function startRuntimeHost(
 
   const methods = buildB3Methods({ runtime, principalId });
   const following = new Set<string>();
+  /** Which windows each connection opened — the host's own fact (§13.4). */
+  const controllersByConnection = new Map<number, Map<string, OpenedController>>();
+
+  const systemContext = (): SystemCommandContext<'sys_agent_runtime'> => ({
+    principal: { id: 'sys_agent_runtime', kind: 'system', verifiedScopes: [] },
+    clientOpId: mintClientOpId(),
+    traceId: mintTraceCorrelationId(),
+    contractVersion: 1,
+  });
+
+  function remember(call: DispatchedCall): void {
+    const attachment = attachmentIn(call.result);
+    if (!attachment) return;
+    const held = controllersByConnection.get(call.connectionId) ?? new Map();
+    if (call.method === 'b3.terminal.detach') held.delete(attachment.attachmentId);
+    else held.set(attachment.attachmentId, attachment);
+    controllersByConnection.set(call.connectionId, held);
+  }
+
+  /**
+   * The window is gone, so it is detached — not killed, and not left inflating
+   * the count forever. §13.4: closing a socket IS detach.
+   */
+  async function detachConnection(connectionId: number): Promise<void> {
+    const held = controllersByConnection.get(connectionId);
+    controllersByConnection.delete(connectionId);
+    for (const controller of held?.values() ?? []) {
+      await runtime.terminal.detachController(systemContext(), controller);
+    }
+  }
+
+  /** Everything the host can still see, for Terminal to judge (§13.4). */
+  async function reportSightings(): Promise<void> {
+    const visible: ControllerAttachmentId[] = [];
+    for (const held of controllersByConnection.values()) {
+      for (const controller of held.values()) visible.push(controller.attachmentId);
+    }
+    await runtime.terminal.system.observeControllers(systemContext(), {
+      attachmentIds: visible,
+    });
+  }
 
   const transport = await startTransport({
     root: options.root,
     port: options.port,
     ...(options.staticDir === undefined ? {} : { staticDir: options.staticDir }),
     methods,
-    onDispatch(method: string) {
+    onDispatch(call: DispatchedCall) {
+      if (call.method === 'b3.terminal.attach' || call.method === 'b3.terminal.detach') {
+        remember(call);
+      }
       // A controller that opened or attached wants to SEE the session, so the
       // host starts pushing its output as ordinary v1 event frames.
-      if (method !== 'b3.terminal.open' && method !== 'b3.terminal.attach') return;
+      if (call.method !== 'b3.terminal.open' && call.method !== 'b3.terminal.attach') return;
       void followNewSessions();
     },
+    onDisconnect(connectionId: number) {
+      void detachConnection(connectionId);
+    },
   });
+
+  const sightings = setInterval(() => { void reportSightings(); }, SIGHTING_INTERVAL_MS);
+  sightings.unref(); // a heartbeat must never be the reason a process stays up
 
   /** Push one session's live output until it ends. Idempotent per session. */
   function follow(terminalSessionId: string): void {
@@ -93,6 +165,7 @@ export async function startRuntimeHost(
     runtime,
     transport,
     async close() {
+      clearInterval(sightings);
       await transport.close();
       await runtime.close();
     },

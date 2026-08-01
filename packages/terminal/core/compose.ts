@@ -25,6 +25,8 @@ import { SessionQueue } from './serialize.js';
 import { DEFAULT_REPLAY_BYTES } from './replay.js';
 import { createTerminalStore, type TerminalStoreOptions } from './store.js';
 import { OPERATION, type TerminalCore } from './context.js';
+import { DEFAULT_STALE_AFTER_MS } from '../contract/api.js';
+import { observeControllers } from './presence.js';
 import {
   getTerminalSession, listTerminalSessions, openManagedTerminal,
   reconcileAfterRestart, terminateTerminal,
@@ -42,6 +44,8 @@ export interface ComposeTerminalOptions extends TerminalStoreOptions {
   readonly receipts?: ReceiptStore;
   /** Bytes of output kept for replay per session. */
   readonly replayBytes?: number;
+  /** How long a controller may go unseen before it is `stale` (§13.4). */
+  readonly staleAfterMs?: number;
 }
 
 export function composeTerminal(options: ComposeTerminalOptions): TerminalContract {
@@ -54,6 +58,7 @@ export function composeTerminal(options: ComposeTerminalOptions): TerminalContra
     clock: options.clock ?? systemClock,
     receipts: options.receipts ?? composeReceiptStore(options),
     replayBytes: options.replayBytes ?? DEFAULT_REPLAY_BYTES,
+    staleAfterMs: options.staleAfterMs ?? DEFAULT_STALE_AFTER_MS,
   };
 
   /**
@@ -174,10 +179,21 @@ export function composeTerminal(options: ComposeTerminalOptions): TerminalContra
         if (live?.activeTurn?.providerTurnId === input.providerTurnId) live.activeTurn = null;
         return b3ok(null);
       },
+      async observeControllers(context, input) {
+        const authorised = requireSystemAuthority(
+          context, 'sys_agent_runtime', OPERATION.observe,
+        );
+        if (!authorised.ok) return authorised;
+        return observeControllers(core, input.attachmentIds);
+      },
+
       async reconcileAfterRestart(
         context, input: { readonly activeRuntimeEpochId: RuntimeEpochId },
       ) {
-        void context;
+        const authorised = requireSystemAuthority(
+          context, 'sys_agent_runtime', OPERATION.reconcile,
+        );
+        if (!authorised.ok) return authorised;
         return reconcileAfterRestart(core, input.activeRuntimeEpochId);
       },
     },

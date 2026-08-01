@@ -36,7 +36,21 @@ export interface StartTransportOptions {
   /** Internal Artifact HTTP adapter override for bounded tests. */
   artifactMaxUploadBytes?: number;
   /** Called for every dispatched method (boot tracing / supervision). */
-  onDispatch?(method: string): void;
+  onDispatch?(event: DispatchedCall): void;
+  /**
+   * A connection went away. §13.4: closing a socket is detach, so whoever
+   * composed this transport is the only thing that can honour it — the socket
+   * is the one fact this layer owns.
+   */
+  onDisconnect?(connectionId: number): void;
+}
+
+export interface DispatchedCall {
+  readonly method: string;
+  /** Which connection asked, so per-connection state can be tracked. */
+  readonly connectionId: number;
+  /** Whatever the method returned, already awaited. */
+  readonly result: unknown;
 }
 
 export interface RunningTransport {
@@ -157,9 +171,15 @@ export async function startTransport(options: StartTransportOptions): Promise<Ru
     wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
   });
 
+  let nextConnectionId = 1;
   wss.on('connection', (ws: WebSocket) => {
+    const connectionId = nextConnectionId;
+    nextConnectionId += 1;
     sockets.add(ws);
-    ws.on('close', () => sockets.delete(ws));
+    ws.on('close', () => {
+      sockets.delete(ws);
+      options.onDisconnect?.(connectionId);
+    });
     ws.on('message', async (raw) => {
       let frame: RequestFrame;
       try { frame = JSON.parse(String(raw)) as RequestFrame; } catch { return; }
@@ -205,9 +225,10 @@ export async function startTransport(options: StartTransportOptions): Promise<Ru
       }
       const handler = options.methods[frame.method];
       if (!handler) { reply({ id: frame.id, error: `unknown method ${frame.method}` }); return; }
-      options.onDispatch?.(frame.method);
       try {
-        reply({ id: frame.id, result: await handler(frame.params as never) });
+        const result = await handler(frame.params as never);
+        options.onDispatch?.({ method: frame.method, connectionId, result });
+        reply({ id: frame.id, result });
       } catch (cause) {
         reply({ id: frame.id, error: cause instanceof Error ? cause.message : String(cause) });
       }

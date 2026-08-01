@@ -15,7 +15,7 @@ import { LiveSession } from './live.js';
 import { settleAndFindActive } from './leases.js';
 import type { Persisted } from './store.js';
 import {
-  CLAIMS_TO_BE_RUNNING, FINAL_STATUSES, OPERATION, requireSession, viewportIssues,
+  CLAIMS_TO_BE_RUNNING, clockIso, FINAL_STATUSES, OPERATION, requireSession, viewportIssues,
   type TerminalCore,
 } from './context.js';
 
@@ -322,7 +322,7 @@ export async function detachAllAttachments(
     if (attachment.state === 'detached') continue;
     const updated = await core.store.update<ControllerAttachment>(
       'sys_terminal', 'controllerAttachment', attachment.id,
-      { state: 'detached', lastSeenAt: nowIsoUtc() as IsoUtc },
+      { state: 'detached', lastSeenAt: clockIso(core) },
       attachment.recordVersion, mintClientOpId(),
     );
     if (!updated.ok) return updated;

@@ -17,6 +17,15 @@ import type {
  * where they are typing, which needs no permission from anyone.
  */
 export const TERMINAL_TAKEOVER_SCOPE = 'terminal.takeover' as AuthorityScope;
+
+/**
+ * A controller the Runtime has not seen for this long is `stale` (§13.4). Long
+ * enough that a slow reload or a sleeping laptop is not called a disappearance;
+ * short enough that "3 windows attached" stops being true within a couple of
+ * minutes of it not being true. A host that reports sightings must do so
+ * comfortably more often than this.
+ */
+export const DEFAULT_STALE_AFTER_MS = 120_000;
 import type {
   ControllerAttachment, ControllerKind, TerminalInputAttempt, TerminalInputKind,
   TerminalInputLease, TerminalSession, TerminalSessionOwner,
@@ -140,6 +149,19 @@ export interface ListTerminalSessionsFilter {
 }
 
 /**
+ * Most recent first. Two controllers seen in the same millisecond are ordered
+ * by attachment id, which is a UUIDv7 and therefore carries the time it was
+ * minted — so "most recently focused" is a total order, not whatever the
+ * sort happened to leave behind.
+ */
+function byMostRecent(
+  left: ControllerAttachment, right: ControllerAttachment,
+): number {
+  const seen = right.lastSeenAt.localeCompare(left.lastSeenAt);
+  return seen === 0 ? right.id.localeCompare(left.id) : seen;
+}
+
+/**
  * Which attachment's viewport the PTY actually follows (DEC-B3V4-29). Exposed
  * as one pure function so Shell, CLI and core cannot each invent their own
  * answer — and so "the chosen source is visible" is checkable, not folklore.
@@ -164,10 +186,8 @@ export function resolveAuthoritativeViewport(view: TerminalSessionView): {
       source: 'input-lease-holder',
     };
   }
-  const focused = [...attached]
-    .filter((item) => item.focused)
-    .sort((left, right) => right.lastSeenAt.localeCompare(left.lastSeenAt))[0]
-    ?? [...attached].sort((left, right) => right.lastSeenAt.localeCompare(left.lastSeenAt))[0];
+  const focused = [...attached].filter((item) => item.focused).sort(byMostRecent)[0]
+    ?? [...attached].sort(byMostRecent)[0];
   if (!focused?.viewport) return null;
   return {
     attachmentId: focused.id,
@@ -239,6 +259,18 @@ export interface TerminalSystemSeam {
       readonly providerTurnId: ProviderTurnId;
     },
   ): Promise<B3Result<null>>;
+
+  /**
+   * Which controllers the Runtime host can still see (§13.4). Terminal owns
+   * attachment truth, but whether a window's connection is still open is the
+   * host's fact — it holds the sockets — so the host reports and Terminal
+   * decides. Anything unseen for longer than the stale window becomes `stale`;
+   * `detached` stays final.
+   */
+  observeControllers(
+    context: SystemCommandContext<'sys_agent_runtime'>,
+    input: { readonly attachmentIds: readonly ControllerAttachmentId[] },
+  ): Promise<B3Result<{ readonly staleAttachmentIds: readonly ControllerAttachmentId[] }>>;
 
   /**
    * Reconcile records left behind by a dead Runtime epoch. Terminal owns its

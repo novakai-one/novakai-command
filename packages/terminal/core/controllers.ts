@@ -4,7 +4,7 @@
 // records that the window is gone. It never touches the process.
 import {
   b3fail, b3err, b3ok, mintClientOpId, mintControllerAttachmentId, nowIsoUtc, validationFailed,
-  type B3Result, type CommandContext, type IsoUtc, type TerminalSessionId,
+  type B3Result, type CommandContext, type TerminalSessionId,
 } from '@novakai/foundation/contract';
 import { resolveAuthoritativeViewport } from '../contract/api.js';
 import type {
@@ -16,7 +16,8 @@ import { endLease, settleAndFindActive } from './leases.js';
 import { viewOfSession } from './sessions.js';
 import type { Persisted } from './store.js';
 import {
-  OPERATION, requireLiveSession, requireSession, viewportIssues, type TerminalCore,
+  clockIso, OPERATION, requireLiveSession, requireSession, viewportIssues,
+  type TerminalCore,
 } from './context.js';
 
 export async function attachController(
@@ -37,8 +38,8 @@ export async function attachController(
     terminalSessionId: input.terminalSessionId,
     controllerKind: input.controllerKind,
     principalId: context.principal.id,
-    connectedAt: nowIsoUtc(),
-    lastSeenAt: nowIsoUtc(),
+    connectedAt: clockIso(core),
+    lastSeenAt: clockIso(core),
     focused: true,
     viewport: { columns: input.columns, rows: input.rows },
     state: 'attached',
@@ -79,7 +80,7 @@ export async function detachController(
 
   const updated = await core.store.update<ControllerAttachment>(
     context.principal.id, 'controllerAttachment', attachment.value.id,
-    { state: 'detached', focused: false, lastSeenAt: nowIsoUtc() as IsoUtc },
+    { state: 'detached', focused: false, lastSeenAt: clockIso(core) },
     attachment.value.recordVersion, mintClientOpId(),
   );
   if (!updated.ok) return updated;
@@ -116,7 +117,7 @@ export async function resizeTerminal(
     {
       viewport: { columns: input.columns, rows: input.rows },
       focused: true,
-      lastSeenAt: nowIsoUtc() as IsoUtc,
+      lastSeenAt: clockIso(core),
     },
     attachment.value.recordVersion, mintClientOpId(),
   );
