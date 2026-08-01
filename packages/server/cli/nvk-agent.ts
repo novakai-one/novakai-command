@@ -6,7 +6,7 @@
 //                   [--provider claude|codex|kimi] [--model <id>] [--effort <v>]
 //                   [--cwd <path>]
 //   nvk-agent list [--state live|final|all]
-//   nvk-agent tree --root <agentId>
+//   nvk-agent tree <agentId>
 //   nvk-agent inspect <agentRunId>
 //   nvk-agent attach <agentRunId>
 //   nvk-agent controls <agentRunId>
@@ -159,8 +159,11 @@ const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
   },
 
   async tree(argFlags) {
-    const rootAgentId = argFlags.value('root') ?? argFlags.positional[0];
-    if (!rootAgentId) return usage('agent tree', argFlags, '--root <agentId>');
+    // NOT `--root`: that flag names the DATA root on every nvk CLI, and an
+    // operator typing `--root agent_x` would have silently pointed the client
+    // at a directory called `agent_x` as well as mis-targeting the tree.
+    const rootAgentId = argFlags.value('agent') ?? argFlags.positional[0];
+    if (!rootAgentId) return usage('agent tree', argFlags, '<agentId> | --agent <agentId>');
     emit('agent tree', argFlags, await withClient<AgentRunTreeView>(
       (client) => client.call('b3.agent.getTree', { rootAgentId, maxDepth: 8 }),
     ), describeTree);

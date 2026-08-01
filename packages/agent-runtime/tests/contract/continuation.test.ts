@@ -275,3 +275,32 @@ test('a caller without the continue scope cannot restart anything', async () => 
     if (!refused.ok) assert.equal(refused.error.code, 'PermissionDenied');
   });
 });
+
+test('RED GATE 8: a continuation is never recorded as a family edge', async () => {
+  await withRig(async (rig) => {
+    const agent = await oneAgent(rig);
+    // The Runtime creates family ONLY by asking Agents for a new Agent, so the
+    // Agent count is the observable: a continuation that grew the family would
+    // have had to create one.
+    const before = rig.agents.agents.size;
+
+    const continued = await rig.runtime.continueAgent(rig.human(), {
+      agentId: agent.agentId,
+      expectedOldRunId: agent.runId,
+      mode: 'fresh',
+      configurationMode: 'inherit-plan',
+    });
+    assert.equal(continued.ok, true, continued.ok ? '' : continued.error.message);
+    if (!continued.ok) return;
+
+    // Restarting yourself is not spawning a subordinate. If it were recorded as
+    // one, the family tree would grow a generation every time an Agent was
+    // compacted — and "who spawned this" would stop meaning anything.
+    assert.equal(rig.agents.agents.size, before,
+      'a continuation created a new Agent — that is a family edge, not a restart');
+    assert.equal(continued.value.agent.agentId, agent.agentId,
+      'a continuation must stay the SAME Agent');
+    assert.notEqual(continued.value.run.id, agent.runId,
+      'a continuation must be a NEW Run');
+  });
+});
