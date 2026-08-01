@@ -18,7 +18,7 @@ import {
   type ProviderSessionId, type SystemCommandContext,
 } from '@novakai/foundation/contract';
 import type {
-  AgentsPort, ProviderPort, RunCredentialPort, TerminalPort,
+  AgentsPort, ProviderPort, RunCredentialPort, TerminalPort, TurnDeliveryStep,
 } from '../../../agent-runtime/contract/index.js';
 import type { GovernedAgentsContract } from '../../../agents/b3/contract/index.js';
 import type { TerminalContract } from '../../../terminal/contract/index.js';
@@ -179,7 +179,7 @@ export function terminalPort(
       const submitted = await typeAsRuntime(terminal, step, {
         terminalSessionId: input.terminalSessionId,
         attachmentId: attached.value.id,
-        text: input.text,
+        keystrokes: input.keystrokes,
       });
       // Released whatever happened: a Runtime that kept the keyboard would lock
       // Chris out of a session it is not using.
@@ -246,14 +246,25 @@ export function terminalPort(
 
 const RUNTIME_VIEWPORT = { columns: 120, rows: 40 } as const;
 
-/** Acquire, write, release. The lease is held for one turn and no longer. */
+/** The beat between two keystrokes of one turn. */
+async function pause(milliseconds: number): Promise<void> {
+  await new Promise((settle) => {
+    setTimeout(settle, milliseconds);
+  });
+}
+
+/**
+ * Acquire, type the whole turn, release. The lease is held across every
+ * keystroke because they are ONE turn — releasing between the text and the key
+ * that sends it would let another controller land a line in the middle of it.
+ */
 async function typeAsRuntime(
   terminal: TerminalContract,
   step: (name: string) => CommandContext,
   input: {
     readonly terminalSessionId: Parameters<TerminalContract['writeInput']>[1]['terminalSessionId'];
     readonly attachmentId: Parameters<TerminalContract['writeInput']>[1]['attachmentId'];
-    readonly text: string;
+    readonly keystrokes: readonly TurnDeliveryStep[];
   },
 ): Promise<B3Result<{ readonly confirmed: boolean }>> {
   const lease = await terminal.acquireInputLease(step('lease'), {
@@ -272,27 +283,42 @@ async function typeAsRuntime(
   const view = await terminal.getTerminalSession(
     systemContext().principal, input.terminalSessionId,
   );
-  if (!view.ok) return view;
-  const written = await terminal.writeInput(step('write'), {
-    terminalSessionId: input.terminalSessionId,
-    attachmentId: input.attachmentId,
-    inputLeaseId: lease.value.id,
-    leaseGeneration: lease.value.generation,
-    expectedNextInputSequence: view.value.nextInputSequence,
-    kindOfInput: 'message-delivery',
-    // Exactly what the caller gave. The key that SENDS a turn is the provider
-    // adapter's business (`submitTurn`), because it is the only layer that
-    // knows what this CLI's composer treats as Enter.
-    utf8Text: input.text,
-  });
+  let outcome: B3Result<{ readonly confirmed: boolean }> = view.ok
+    ? b3ok({ confirmed: true }) : view;
+  let sequence = view.ok ? view.value.nextInputSequence : 0;
+
+  for (const [index, keystroke] of input.keystrokes.entries()) {
+    if (!outcome.ok) break;
+    const written = await terminal.writeInput(step(`write-${String(index)}`), {
+      terminalSessionId: input.terminalSessionId,
+      attachmentId: input.attachmentId,
+      inputLeaseId: lease.value.id,
+      leaseGeneration: lease.value.generation,
+      expectedNextInputSequence: sequence,
+      kindOfInput: 'message-delivery',
+      // Exactly what the adapter gave, one step at a time. WHAT to type and
+      // when is the provider adapter's business (`deliverTurn`), because it is
+      // the only layer that knows what this CLI's composer does with a burst.
+      // Each write gets its own idempotency key: sharing one would make every
+      // keystroke after the first a swallowed replay of it (P0-1's lesson).
+      utf8Text: keystroke.utf8Text,
+    });
+    if (!written.ok) {
+      outcome = written;
+      break;
+    }
+    sequence = written.value.inputSequence + 1;
+    outcome = b3ok({ confirmed: written.value.outcome !== 'submitted-unconfirmed' });
+    if (keystroke.pauseMsAfter > 0) await pause(keystroke.pauseMsAfter);
+  }
+
   await terminal.releaseInputLease(step('release'), {
     terminalSessionId: input.terminalSessionId,
     attachmentId: input.attachmentId,
     leaseId: lease.value.id,
     generation: lease.value.generation,
   });
-  if (!written.ok) return written;
-  return b3ok({ confirmed: written.value.outcome !== 'submitted-unconfirmed' });
+  return outcome;
 }
 
 export type { ProviderPort, RunCredentialPort };

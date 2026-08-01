@@ -197,7 +197,7 @@ async function sendConfirmationTurn(
 
   const submitted = await core.terminal.submitRuntimeInput(context, {
     terminalSessionId,
-    text: core.providers.submitTurn(
+    keystrokes: core.providers.deliverTurn(
       input.plan.provider,
       confirmationPrompt(input.plan, input.brief, turnRefFor(effectKey)),
     ),
@@ -270,7 +270,7 @@ async function awaitConfirmation(
     const again = await maybeAskAgain(core, context, {
       terminalSessionId,
       effectKey,
-      text: core.providers.submitTurn(
+      keystrokes: core.providers.deliverTurn(
         input.plan.provider,
         confirmationPrompt(input.plan, input.brief, turnRefFor(effectKey)),
       ),
@@ -333,7 +333,7 @@ async function releaseWorkTurn(
   }
   const submitted = await core.terminal.submitRuntimeInput(context, {
     terminalSessionId: input.agentRun.terminalSessionId!,
-    text: core.providers.submitTurn(input.plan.provider, workPrompt(input.brief)),
+    keystrokes: core.providers.deliverTurn(input.plan.provider, workPrompt(input.brief)),
     effectKey: effectKeyFor(input.operation.id, 'supervised-work-released'),
   });
   if (!submitted.ok) return submitted;

@@ -9,6 +9,7 @@ import {
 import type {
   ProviderPort, TerminalFacts, TerminalPort,
 } from '../contract/ports.js';
+import type { TurnDeliveryStep } from '../contract/types.js';
 
 // ── A fake Terminal that remembers exactly what was typed into it ───────────
 
@@ -23,7 +24,13 @@ export type ScriptedReply =
 
 export interface FakeTerminal extends TerminalPort {
   readonly opened: { id: TerminalSessionId; fingerprint: string; authority: string }[];
-  readonly submitted: { terminalSessionId: TerminalSessionId; text: string; effectKey: string }[];
+  readonly submitted: {
+    terminalSessionId: TerminalSessionId;
+    keystrokes: readonly TurnDeliveryStep[];
+    /** What those keystrokes spell, for the tests that are about the words. */
+    text: string;
+    effectKey: string;
+  }[];
   readonly terminated: TerminalSessionId[];
   /** What `readOutputSoFar` returns — a test may also write this directly. */
   output: string;
@@ -117,11 +124,16 @@ export function createFakeTerminal(): FakeTerminal {
     },
 
     async submitRuntimeInput(_context, input) {
-      port.submitted.push(input);
+      const typed = input.keystrokes.map((step) => step.utf8Text).join('');
+      port.submitted.push({ ...input, text: typed });
       // A real PTY shows what was typed at it, and §13.5's "retry observes
       // transcript before sending again" reads exactly that. A fake whose
       // output never contained the prompt would let a re-prompting retry pass.
-      port.output = `${port.output}${input.text}\n`;
+      port.output = `${port.output}${typed}\n`;
+      // And a real composer only ANSWERS a turn that was actually submitted.
+      // A fake that replies to bytes alone cannot tell a sent turn from one
+      // sitting in a composer for ever, which is the whole of hold-out B3.
+      if (!typed.includes('\r')) return b3ok({ confirmed: false });
       // A scripted agent answers turn 1 — correctly, or with one of the ways an
       // agent gets it wrong. Turn 1 is the one that HOLDS the work; turn 2
       // releases it and is never answered.
@@ -218,7 +230,10 @@ export function createFakeProviders(): FakeProviders {
     },
 
     async requestInterrupt() { return b3ok({ kind: 'interrupt-requested' }); },
-    submitTurn: (_provider, text) => `${text}\n`,
+    deliverTurn: (_provider, text) => [
+      { utf8Text: text, pauseMsAfter: 0 },
+      { utf8Text: '\r', pauseMsAfter: 0 },
+    ],
     findConfirmationLine: (_provider, text, marker) => {
       const lines = text.split(/\r?\n/);
       for (let index = lines.length - 1; index >= 0; index -= 1) {

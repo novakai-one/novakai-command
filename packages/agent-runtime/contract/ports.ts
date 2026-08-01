@@ -16,6 +16,7 @@ import type {
   RecordVersion, ResolvedLaunchPlanId, RuntimeEpochId, TerminalSessionId,
 } from '@novakai/foundation/contract';
 import type { ContinuationMode, LaunchConfigurationMode, LaunchSurface } from './runs.js';
+import type { TurnDeliveryStep } from './types.js';
 import type {
   AgentControlFacts, AgentControlOutcomeFacts, ControlCapabilityFacts,
 } from './controls.js';
@@ -262,7 +263,8 @@ export interface TerminalPort {
     context: CommandContext,
     input: {
       readonly terminalSessionId: TerminalSessionId;
-      readonly text: string;
+      /** The whole turn, in the order it must be typed, under one lease. */
+      readonly keystrokes: readonly TurnDeliveryStep[];
       readonly effectKey: string;
     },
   ): Promise<B3Result<{ readonly confirmed: boolean }>>;
@@ -380,8 +382,11 @@ export interface ProviderPort {
     },
   ): Promise<B3Result<{ readonly kind: 'interrupt-requested' | 'already-completed' | 'unsupported' }>>;
 
-  /** How this provider ends a submitted prompt. Not the same for all three. */
-  submitTurn(provider: 'claude' | 'codex' | 'kimi', text: string): string;
+  /**
+   * How this provider's composer must be TYPED at to accept one turn. Never one
+   * write: an Enter inside a big burst is absorbed as pasted text.
+   */
+  deliverTurn(provider: 'claude' | 'codex' | 'kimi', text: string): readonly TurnDeliveryStep[];
 
   findConfirmationLine(
     provider: 'claude' | 'codex' | 'kimi', text: string, marker: string,

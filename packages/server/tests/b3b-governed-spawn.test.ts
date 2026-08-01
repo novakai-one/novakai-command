@@ -185,16 +185,28 @@ test('every turn the Runtime types ends with the key that SENDS it', async () =>
     const spawned = await spawning;
     assert.equal(spawned.ok, true, spawned.ok ? '' : spawned.error.message);
 
-    // A real provider is a TUI: text typed without Enter sits in its composer
-    // for ever. Against `claude` 2.1.219 the gate prompt landed, echoed, and
-    // was never sent — so no confirmation could ever arrive and every governed
-    // launch failed after the full gate timeout (hold-out B3).
+    // A real provider is a TUI, and a TUI takes a big fast burst for a PASTE:
+    // an Enter INSIDE that burst is absorbed into the pasted text instead of
+    // submitting it, so the turn lands in the composer, echoes, and sits there
+    // for ever. Measured against `claude` 2.1.219 on 2026-08-02 — a 554-char
+    // turn with the Enter inline was never submitted, 6/6; the same turn with
+    // the Enter as its OWN write was submitted every time. That is hold-out B3.
+    //
+    // So the property is not "each write ends with Enter". It is: the text goes
+    // in one write, and the key that sends it goes in another.
     const enter = String.fromCharCode(13);
     const written = rig.ptyHost.latest().written;
-    assert.equal(written.length >= 2, true, 'the gate typed fewer than two turns');
-    for (const turn of written) {
-      assert.equal(turn.endsWith(enter), true,
-        `a turn the Runtime typed was never sent: ${JSON.stringify(turn.slice(-40))}`);
+    assert.equal(written.length >= 4, true,
+      'two turns delivered as text-then-key are four writes; fewer means the key rode along');
+    for (const write of written) {
+      if (write === enter) continue;
+      assert.equal(write.includes(enter), false,
+        `a turn carried its own Enter and can be absorbed as paste: ${JSON.stringify(write.slice(-40))}`);
+    }
+    for (const phrase of ['do NOT begin it yet', 'Begin the task now']) {
+      const at = written.findIndex((write) => write.includes(phrase));
+      assert.notEqual(at, -1, `${phrase} was never typed`);
+      assert.equal(written[at + 1], enter, `${phrase} was never followed by the key that sends it`);
     }
   } finally {
     await rig.close();

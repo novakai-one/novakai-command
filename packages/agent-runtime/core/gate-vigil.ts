@@ -8,6 +8,7 @@
 // one that never did is perfectly still. Stillness, not a stopwatch, is what
 // earns a second ask.
 import { b3fail, b3ok, type B3Result, type CommandContext } from '@novakai/foundation/contract';
+import type { TurnDeliveryStep } from '../contract/types.js';
 import type { RunsCore } from './runs-context.js';
 
 /** How still a session must be before turn 1 is asked again. */
@@ -46,7 +47,7 @@ export async function maybeAskAgain(
   turn: {
     readonly terminalSessionId: string;
     readonly effectKey: string;
-    readonly text: string;
+    readonly keystrokes: readonly TurnDeliveryStep[];
   },
   vigil: Vigil,
 ): Promise<B3Result<null>> {
@@ -54,7 +55,7 @@ export async function maybeAskAgain(
   if (vigil.asked >= MAX_PROMPT_SENDS) return b3ok(null);
   const submitted = await core.terminal.submitRuntimeInput(context, {
     terminalSessionId: turn.terminalSessionId as never,
-    text: turn.text,
+    keystrokes: turn.keystrokes,
     effectKey: `${turn.effectKey}:again-${String(vigil.asked)}`,
   });
   if (!submitted.ok) return b3fail(submitted.error);

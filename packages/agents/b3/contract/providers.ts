@@ -125,6 +125,18 @@ export interface ProviderReplyObservation {
   readonly text: string;
 }
 
+/**
+ * One write in a turn's delivery, and the beat that must pass before the next.
+ *
+ * The pause is part of the contract rather than a caller's guess: two writes
+ * issued back to back can still reach the provider as a single chunk, and a
+ * chunk is exactly what a composer takes for a paste.
+ */
+export interface TurnDeliveryStep {
+  readonly utf8Text: string;
+  readonly pauseMsAfter: number;
+}
+
 export interface InteractiveProviderAdapter {
   readonly provider: ProviderKind;
 
@@ -151,11 +163,15 @@ export interface InteractiveProviderAdapter {
   ): Promise<B3Result<ProviderControlOutcome>>;
 
   /**
-   * The bytes a supervised turn must be submitted as. Providers differ in what
-   * ends a prompt, and guessing "\r" for all three is exactly the invented
-   * parity §14 forbids.
+   * How a supervised turn must be TYPED at this provider, in order. Providers
+   * differ in what ends a prompt, and guessing "\r" for all three is exactly
+   * the invented parity §14 forbids.
+   *
+   * Not one string, because delivering a turn is not one write: a TUI takes a
+   * big fast burst for a paste and absorbs an Enter inside it as text. See
+   * `deliverAsOneLine` for what was measured.
    */
-  submitTurn(text: string): string;
+  deliverTurn(text: string): readonly TurnDeliveryStep[];
 
   /**
    * Whether this output carries the canonical confirmation line. The ADAPTER

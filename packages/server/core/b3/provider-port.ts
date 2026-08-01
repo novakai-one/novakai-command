@@ -159,7 +159,7 @@ export function createProviderPort(
       return b3ok({ kind: outcome.value.kind });
     },
 
-    submitTurn: (provider, text) => adapterFor(provider).submitTurn(text),
+    deliverTurn: (provider, text) => adapterFor(provider).deliverTurn(text),
     findConfirmationLine: (provider, text, marker) =>
       adapterFor(provider).findConfirmationLine({ text }, marker),
   };

@@ -11,7 +11,7 @@ import type {
   ProviderCapability, ProviderCapabilityReport, ProviderContinuationInput,
   ProviderControlInput, ProviderControlOutcome, ProviderInterruptInput,
   ProviderInterruptOutcome, ProviderLaunchInput, ProviderReplyObservation,
-  ProviderSessionDiscoveryInput, ProviderSessionEvidence,
+  ProviderSessionDiscoveryInput, ProviderSessionEvidence, TurnDeliveryStep,
 } from '../../contract/providers.js';
 import type { ResolvedLaunchPlan } from '../../contract/records.js';
 
@@ -155,7 +155,7 @@ export function createFakeProviderAdapter(
     // newline, which every `cat`-shaped stand-in accepts and no TUI treats as
     // "send" — so a suite built on it could not tell a submitted turn from an
     // unsubmitted one.
-    submitTurn: (text) => oneLine(text),
+    deliverTurn: (text) => deliverAsOneLine(text),
 
     findConfirmationLine(observation: ProviderReplyObservation, marker: string) {
       return findMarkerLine(observation.text, marker);
@@ -175,9 +175,25 @@ export function createFakeProviderAdapter(
  *
  * Blank lines become a separator that survives as text, so nothing the turn
  * said is lost — only its shape.
+ *
+ * The Enter cannot ride along in the same write, either. A big fast burst is
+ * taken for a PASTE, and an Enter inside that burst is absorbed into the pasted
+ * text instead of submitting it. Measured 2026-08-02 on a raw PTY with no
+ * Novakai machinery in the way: a 554-character turn with the Enter inline was
+ * NEVER submitted (6 trials); the same turn with the Enter as its own write,
+ * after a beat, was submitted every time, as was a 2615-character one. A SHORT
+ * turn submits either way \u2014 which is why this stayed invisible until someone
+ * typed a real gate prompt at a real CLI.
+ *
+ * The beat is measured too: 150ms already sufficed for the 2615-character turn,
+ * so 250ms is the cheapest value with room above what was observed to work.
  */
-export function oneLine(text: string): string {
-  return `${text.replace(/\s*\n\s*\n\s*/gu, ' \u00b7 ').replace(/\s*\n\s*/gu, ' ').trim()}\r`;
+export function deliverAsOneLine(text: string): readonly TurnDeliveryStep[] {
+  const line = text.replace(/\s*\n\s*\n\s*/gu, ' \u00b7 ').replace(/\s*\n\s*/gu, ' ').trim();
+  return [
+    { utf8Text: line, pauseMsAfter: 250 },
+    { utf8Text: '\r', pauseMsAfter: 0 },
+  ];
 }
 
 /**

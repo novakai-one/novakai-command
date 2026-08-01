@@ -152,3 +152,17 @@ export interface RuntimeCensus {
   /** Whatever needs recovery, by id, when it is not a terminal session. */
   readonly recoveryRequiredRefs?: readonly string[];
 }
+
+/**
+ * One write in a turn's delivery, and the beat that must pass before the next.
+ * Declared here, not imported: Agent Runtime does not depend on Agents, and
+ * this is the shape the two agree on at the seam.
+ *
+ * Delivery is never one write. A provider TUI takes a big fast burst for a
+ * PASTE and absorbs an Enter inside it as text, so the turn lands in the
+ * composer and is never submitted (hold-out B3, measured 2026-08-02).
+ */
+export interface TurnDeliveryStep {
+  readonly utf8Text: string;
+  readonly pauseMsAfter: number;
+}

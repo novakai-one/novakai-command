@@ -374,7 +374,7 @@ test('a turn is delivered as ONE line, because a composer treats a newline as a 
   const enter = String.fromCharCode(13);
   const turn = 'You are a governed agent.\n\nTASK: say BANANA\n  1. tdd@v1#abc\n';
   for (const provider of PROVIDER_KINDS) {
-    const wire = adapters[provider].submitTurn(turn);
+    const wire = adapters[provider].deliverTurn(turn).map((step) => step.utf8Text).join('');
     assert.equal(wire.endsWith(enter), true, `${provider} never presses Enter`);
     assert.equal(wire.slice(0, -1).includes('\n'), false,
       `${provider} sends a newline mid-turn, which a TUI composer will not submit`);
@@ -382,5 +382,40 @@ test('a turn is delivered as ONE line, because a composer treats a newline as a 
     for (const word of ['governed', 'BANANA', 'tdd@v1#abc']) {
       assert.equal(wire.includes(word), true, `${provider} dropped "${word}" from the turn`);
     }
+  }
+});
+
+test('the Enter that submits a turn is its own write, after a beat', async () => {
+  // Measured against the real `claude` 2.1.219, 2026-08-02, driving a raw PTY
+  // with no Novakai machinery in the way:
+  //
+  //   short line + Enter, one write   -> SUBMITTED
+  //   554-char line + Enter, ONE write -> NOT SUBMITTED  (6/6, reproducible)
+  //   554-char line, Enter as its OWN write after a beat -> SUBMITTED
+  //   2615-char line, same, 150ms beat -> SUBMITTED
+  //
+  // A big burst is taken as a PASTE, and an Enter inside that burst is absorbed
+  // into the pasted text instead of submitting it. The turn lands in the
+  // composer, echoes, and sits there forever — which is hold-out B3, and why a
+  // governed launch timed out at the gate against every real provider.
+  //
+  // So delivery is not one string. The text goes first, then a pause, then the
+  // key. This is the ONE property that makes the difference.
+  const enter = String.fromCharCode(13);
+  const turn = `a governed turn long enough to be taken for a paste: ${'token '.repeat(90)}`;
+  for (const provider of PROVIDER_KINDS) {
+    const steps = adapters[provider].deliverTurn(turn);
+    assert.equal(steps.length >= 2, true,
+      `${provider} delivers a turn in one write, so its Enter can be absorbed as paste`);
+    const last = steps[steps.length - 1]!;
+    assert.equal(last.utf8Text, enter, `${provider} does not end by pressing Enter alone`);
+    for (const step of steps.slice(0, -1)) {
+      assert.equal(step.utf8Text.includes(enter), false,
+        `${provider} puts Enter inside the same write as the turn`);
+    }
+    // The beat is what separates the burst from the key. Without it the two
+    // writes can still arrive as one chunk.
+    assert.equal(steps[steps.length - 2]!.pauseMsAfter > 0, true,
+      `${provider} presses Enter with no pause after the text`);
   }
 });
