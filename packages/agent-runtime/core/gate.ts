@@ -110,6 +110,52 @@ export function plainText(output: string): string {
   return output.replace(/\u001B\[[0-9;?]*[A-Za-z]/g, '');
 }
 
+/**
+ * The screen with the whitespace taken out, and a map back to where each
+ * surviving character came from.
+ *
+ * A TUI does not type spaces. It moves the cursor to a column and paints the
+ * next word, so once `plainText` has stripped those CSI sequences the words run
+ * together: the re-probe read `(novakaiturnfb276bd5d5ba)` off a real session for
+ * a fingerprint composed as `(novakai turn fb276bd5d5ba)`. Any anchor that has
+ * to be FOUND on a real screen has to be looked for in this form.
+ */
+function compacted(text: string): { readonly text: string; readonly origin: readonly number[] } {
+  let compact = '';
+  const origin: number[] = [];
+  for (let at = 0; at < text.length; at += 1) {
+    const character = text[at]!;
+    if (/\s/u.test(character)) continue;
+    compact += character;
+    origin.push(at);
+  }
+  return { text: compact, origin };
+}
+
+/**
+ * Everything that arrived after turn 1 finished painting, or `null` if turn 1
+ * has not appeared on the screen yet.
+ *
+ * This is the whole of the N-1 repair. The old gate subtracted "lines we typed"
+ * from the screen, which works only against a session that echoes line for
+ * line; against a composer that re-wraps, no row equals a line the Runtime
+ * composed, every one of them survives the filter, and the marker sentence
+ * inside the Runtime's OWN instructions gets read back as the agent's answer.
+ *
+ * Position is the property that cannot be reflowed away. The prompt ends with
+ * its fingerprint — the one short string only the Runtime could have written —
+ * so the last time that fingerprint appears is the last time turn 1 finished
+ * being painted, and an answer to turn 1 can only be after it.
+ */
+export function afterPromptEcho(output: string, fingerprint: string): string | null {
+  const screen = compacted(output);
+  const needle = fingerprint.replace(/\s+/gu, '');
+  const at = screen.text.lastIndexOf(needle);
+  if (at < 0) return null;
+  const end = at + needle.length;
+  return output.slice(screen.origin[end] ?? output.length);
+}
+
 function marker(plan: LaunchPlanFacts): string {
   return plan.skillsConfirmationGate.mode === 'required-two-turn'
     ? plan.skillsConfirmationGate.confirmationMarker : 'SKILLS-CONFIRMED:';
@@ -126,9 +172,9 @@ export async function runSkillsGate(
 
   const sent = await sendConfirmationTurn(core, context, input);
   if (!sent.ok) return sent;
-  let operation = sent.value;
+  let operation = sent.value.operation;
 
-  const confirmed = await awaitConfirmation(core, context, input);
+  const confirmed = await awaitConfirmation(core, context, input, sent.value.paintedBefore);
   if (!confirmed.ok) {
     const failed = await failGate(core, input, confirmed.error.message);
     return failed.ok ? confirmed : failed;
@@ -163,6 +209,19 @@ async function recordSkipped(
   return b3ok({ agentRun: input.agentRun, operation });
 }
 
+interface SentTurn {
+  readonly operation: RunOperation;
+  /**
+   * How much had been painted before turn 1 went out.
+   *
+   * The second anchor, and the one that holds when the first cannot: a provider
+   * that does not echo leaves no fingerprint to find, and everything before this
+   * offset is still, definitionally, not an answer to a question that had not
+   * been asked yet.
+   */
+  readonly paintedBefore: number;
+}
+
 /**
  * Turn 1. Replay-safe by construction: the stage is recorded with its effect
  * key, so a retry that already sent it does not send it again (§13.5's "retry
@@ -170,9 +229,10 @@ async function recordSkipped(
  */
 async function sendConfirmationTurn(
   core: RunsCore, context: CommandContext, input: GateInput,
-): Promise<B3Result<RunOperation>> {
+): Promise<B3Result<SentTurn>> {
   if (completed(input.operation, 'skills-gate-prompt-sent') !== null) {
-    return b3ok(input.operation);
+    // An earlier attempt asked; its echo is the only anchor available now.
+    return b3ok({ operation: input.operation, paintedBefore: 0 });
   }
   const terminalSessionId = input.agentRun.terminalSessionId;
   if (terminalSessionId === undefined) {
@@ -187,14 +247,18 @@ async function sendConfirmationTurn(
   // record of; re-prompting would ask the same agent the same question twice.
   // Whatever it has already said is the evidence that it was asked.
   const effectKey = effectKeyFor(input.operation.id, 'skills-gate-prompt-sent');
-  const spoken = await alreadyPrompted(core, input, terminalSessionId, turnRefFor(effectKey));
-  if (!spoken.ok) return spoken;
-  if (spoken.value) {
-    return advance(core, input.operation, {
+  const before = await screenSoFar(core, terminalSessionId);
+  if (!before.ok) return before;
+  if (before.value.includes(promptFingerprint(turnRefFor(effectKey)))
+    || compacted(before.value).text.includes(
+      promptFingerprint(turnRefFor(effectKey)).replace(/\s+/gu, ''))) {
+    const advanced = await advance(core, input.operation, {
       stage: 'skills-gate-prompt-sent', owner: 'terminal', ownerObjectId: terminalSessionId,
     });
+    return advanced.ok ? b3ok({ operation: advanced.value, paintedBefore: 0 }) : advanced;
   }
 
+  const paintedBefore = before.value.length;
   const submitted = await core.terminal.submitRuntimeInput(context, {
     terminalSessionId,
     keystrokes: core.providers.deliverTurn(
@@ -204,27 +268,29 @@ async function sendConfirmationTurn(
     effectKey,
   });
   if (!submitted.ok) return submitted;
-  return advance(core, input.operation, {
+  const advanced = await advance(core, input.operation, {
     stage: 'skills-gate-prompt-sent', owner: 'terminal', ownerObjectId: terminalSessionId,
   });
+  return advanced.ok ? b3ok({ operation: advanced.value, paintedBefore }) : advanced;
 }
 
 /**
- * Whether this session has already been asked. The evidence is the prompt's own
- * fingerprint coming back off the session — the one string only the Runtime
- * could have put there. It used to look for a CONFIRMATION instead, which
- * answers a different question: "has it answered" is not "has it been asked",
- * and a session that echoes is a session where the two look identical.
+ * What is on the screen right now, as a human would read it.
+ *
+ * Shared by the two questions the gate asks of a session — "has it already been
+ * asked" (the prompt's own fingerprint coming back, the one string only the
+ * Runtime could have put there) and "what has it said since". Both are answered
+ * from the same bytes, so neither can drift from the other.
  */
-async function alreadyPrompted(
-  core: RunsCore, input: GateInput, terminalSessionId: string, turnRef: string,
-): Promise<B3Result<boolean>> {
+async function screenSoFar(
+  core: RunsCore, terminalSessionId: string,
+): Promise<B3Result<string>> {
   const output = await core.terminal.readOutputSoFar(
     { id: 'sys_agent_runtime', kind: 'system', verifiedScopes: [] },
     terminalSessionId as never,
   );
   if (!output.ok) return output;
-  return b3ok(plainText(output.value).includes(promptFingerprint(turnRef)));
+  return b3ok(plainText(output.value));
 }
 
 /**
@@ -237,7 +303,7 @@ async function alreadyPrompted(
  * this gate is a line the Runtime did not write.
  */
 async function awaitConfirmation(
-  core: RunsCore, context: CommandContext, input: GateInput,
+  core: RunsCore, context: CommandContext, input: GateInput, paintedBefore: number,
 ): Promise<B3Result<string>> {
   const terminalSessionId = input.agentRun.terminalSessionId!;
   const mark = marker(input.plan);
@@ -251,17 +317,16 @@ async function awaitConfirmation(
   );
 
   const effectKey = effectKeyFor(input.operation.id, 'skills-gate-prompt-sent');
+  const fingerprint = promptFingerprint(turnRefFor(effectKey));
   const vigil = startVigil(core);
 
   for (;;) {
-    const output = await core.terminal.readOutputSoFar(
-      { id: 'sys_agent_runtime', kind: 'system', verifiedScopes: [] }, terminalSessionId,
-    );
-    if (!output.ok) return output;
-    const seen = plainText(output.value);
-    noteStillness(core, vigil, seen);
-    const line = core.providers.findConfirmationLine(
-      input.plan.provider, withoutOurOwnWords(seen, ours), mark,
+    const seen = await screenSoFar(core, terminalSessionId);
+    if (!seen.ok) return seen;
+    noteStillness(core, vigil, seen.value);
+    const reply = sinceTheQuestion(seen.value, fingerprint, paintedBefore);
+    const line = reply === null ? null : core.providers.findConfirmationLine(
+      input.plan.provider, withoutOurOwnWords(reply, ours), mark,
     );
     if (line !== null) return judge(line, mark, expected, input.agentRun.id);
     if (core.clock() >= deadline) {
@@ -278,6 +343,27 @@ async function awaitConfirmation(
     if (!again.ok) return again;
     await new Promise((settle) => { setTimeout(settle, 100); });
   }
+}
+
+/**
+ * The part of the screen that can possibly be an answer to turn 1.
+ *
+ * Two anchors, and the later one wins. The prompt's echo is the stronger — it
+ * ends exactly where the Runtime stopped speaking — and it survives a reflow
+ * because it is found in the whitespace-free form. Where a provider does not
+ * echo at all there is nothing to find, and the fallback is the offset the
+ * screen stood at when turn 1 went out.
+ *
+ * A screen that has neither is a screen where nothing that could be an answer
+ * has arrived, and the honest verdict there is silence, not a guess.
+ */
+function sinceTheQuestion(
+  screen: string, fingerprint: string, paintedBefore: number,
+): string | null {
+  const afterEcho = afterPromptEcho(screen, fingerprint);
+  if (afterEcho !== null) return afterEcho;
+  if (screen.length <= paintedBefore) return null;
+  return screen.slice(paintedBefore);
 }
 
 /** Drop every line the Runtime itself typed at this session. */

@@ -52,6 +52,37 @@ export interface FakeTerminal extends TerminalPort {
    * has already missed the window it is trying to prove.
    */
   duringNextTerminate: (() => Promise<void>) | null;
+  /**
+   * Echo like a REAL TUI: re-wrap what was typed at this width instead of
+   * echoing it back line for line.
+   *
+   * Every gate test until now ran against a session that echoed exactly what it
+   * was handed, so "strip the lines we typed" worked perfectly — and in the
+   * field the claude composer takes one long line, re-wraps it at the window
+   * width, and paints each word at an explicit cursor column, which leaves the
+   * Runtime's own words on screen in a shape no line-set subtraction can find.
+   * The re-probe measured 9 of 13 governed spawns and 3 of 3 continuations dying
+   * on it (NVK-KIMI-030 N-1). `null` keeps the old faithful echo.
+   */
+  reflowColumns: number | null;
+}
+
+/**
+ * What the screen looks like after a TUI has painted a turn.
+ *
+ * Two things happen and both matter. The text is re-wrapped, so no row is a
+ * line the Runtime composed; and the spaces vanish, because the provider moves
+ * the cursor between words with CSI sequences rather than emitting them, and
+ * `plainText` strips those. The re-probe read exactly this off a real Run:
+ * `SKILLS-CONFIRMED:thenonespace,thenaJSONarrayofthetokensabove,quoted,...`
+ */
+export function reflow(text: string, columns: number): string {
+  const painted = text.split(/\s+/u).filter((word) => word !== '').join('');
+  const rows: string[] = [];
+  for (let at = 0; at < painted.length; at += columns) {
+    rows.push(painted.slice(at, at + columns));
+  }
+  return rows.join('\n');
 }
 
 const MARKER = 'SKILLS-CONFIRMED:';
@@ -97,6 +128,7 @@ export function createFakeTerminal(): FakeTerminal {
     interruptOutcome: 'barrier-committed',
     failTerminate: null,
     duringNextTerminate: null,
+    reflowColumns: null,
 
     async openManagedTerminal(context, input) {
       if (port.failOpen) {
@@ -129,7 +161,8 @@ export function createFakeTerminal(): FakeTerminal {
       // A real PTY shows what was typed at it, and §13.5's "retry observes
       // transcript before sending again" reads exactly that. A fake whose
       // output never contained the prompt would let a re-prompting retry pass.
-      port.output = `${port.output}${typed}\n`;
+      port.output = `${port.output}${
+        port.reflowColumns === null ? typed : reflow(typed, port.reflowColumns)}\n`;
       // And a real composer only ANSWERS a turn that was actually submitted.
       // A fake that replies to bytes alone cannot tell a sent turn from one
       // sitting in a composer for ever, which is the whole of hold-out B3.
