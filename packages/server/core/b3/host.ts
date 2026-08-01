@@ -30,12 +30,46 @@ export async function startRuntimeHost(
   const runtime = await composeB3Runtime(options);
   const principalId = options.principalId ?? ('person_chris' as HumanPrincipalId);
 
+  const methods = buildB3Methods({ runtime, principalId });
+  const following = new Set<string>();
+
   const transport = await startTransport({
     root: options.root,
     port: options.port,
     ...(options.staticDir === undefined ? {} : { staticDir: options.staticDir }),
-    methods: buildB3Methods({ runtime, principalId }),
+    methods,
+    onDispatch(method: string) {
+      // A controller that opened or attached wants to SEE the session, so the
+      // host starts pushing its output as ordinary v1 event frames.
+      if (method !== 'b3.terminal.open' && method !== 'b3.terminal.attach') return;
+      void followNewSessions();
+    },
   });
+
+  /** Push one session's live output until it ends. Idempotent per session. */
+  function follow(terminalSessionId: string): void {
+    if (following.has(terminalSessionId)) return;
+    following.add(terminalSessionId);
+    void (async () => {
+      for await (const frame of runtime.terminal.readTerminalStream(
+        { id: principalId, kind: 'human', verifiedScopes: [] },
+        { terminalSessionId: terminalSessionId as never },
+      )) {
+        if (!frame.ok) break;
+        transport.broadcast('b3.terminal.output', { terminalSessionId, frame: frame.value });
+        if (frame.value.kind === 'exit') break;
+      }
+      following.delete(terminalSessionId);
+    })();
+  }
+
+  async function followNewSessions(): Promise<void> {
+    const listed = await runtime.terminal.listTerminalSessions(
+      { id: principalId, kind: 'human', verifiedScopes: [] }, { state: 'live' },
+    );
+    if (!listed.ok) return;
+    for (const view of listed.value) follow(view.session.id);
+  }
 
   // Claim the machine before accepting a single command, so a second host can
   // never serve a request it is not allowed to have served.
