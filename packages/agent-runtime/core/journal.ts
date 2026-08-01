@@ -10,13 +10,15 @@
 // first, and if the answer is "I cannot tell", it says `recovery-required`
 // rather than trying again — because trying again is how one Run becomes two.
 import {
-  b3ok, commandReceiptId, mintClientOpId, mintProviderSessionId, mintRunOperationId,
+  b3fail, b3ok, commandReceiptId, mintClientOpId, mintProviderSessionId, mintRunOperationId,
   nowIsoUtc,
   type AgentId, type AgentRunId, type B3Result, type CommandContext,
   type CommandReceiptId, type ProviderSessionId, type RuntimeEpochId,
 } from '@novakai/foundation/contract';
-import type {
-  RunOperation, RunOperationKind, RunOperationStage, RunOperationStageOutcome,
+import {
+  FINAL_LIFECYCLES,
+  type AgentRun, type RunOperation, type RunOperationKind, type RunOperationStage,
+  type RunOperationStageOutcome,
 } from '../contract/runs.js';
 import type { RunsCore } from './runs-context.js';
 import type { Persisted } from './runs-store.js';
@@ -175,10 +177,18 @@ function stageForState(state: RunOperation['state']): RunOperationStage {
  */
 export async function compensate(
   core: RunsCore,
-  operation: RunOperation,
+  stale: RunOperation,
   epochId: RuntimeEpochId,
   reason: string,
 ): Promise<B3Result<RunOperation>> {
+  // RE-READ. The caller holds the journal as it was when the command opened it,
+  // which is before any stage ran — so compensation used to see no terminal
+  // stage and no `newRunId`, compensate nothing, and then lose its CAS against
+  // a record that had moved on several times (NVK-KIMI-028 finding 5).
+  const current = await core.store.read<RunOperation>('runOperation', stale.id);
+  if (!current.ok) return current;
+  const operation = current.value ?? stale;
+
   const outcomes: RunOperation['compensation'][number][] = [];
   const terminal = completed(operation, 'terminal-live') ?? completed(operation, 'terminal-reserved');
   if (terminal?.ownerObjectId !== undefined && operation.newRunId !== undefined) {
@@ -195,12 +205,49 @@ export async function compensate(
       ...(stopped.ok ? {} : { reason: stopped.error.message }),
     });
   }
+  // The Run this attempt reserved is settled too. Compensation used to stop the
+  // PTY and walk away, leaving a Run that says `provisioning` forever under a
+  // Runtime that will never finish provisioning it (§20, hold-out G7).
+  const closed = await closeReservedRun(core, operation, outcomes);
+  if (!closed.ok) return closed;
+
   const settled = await settleOperation(core, operation, 'recovery-required', {
     compensation: [...operation.compensation, ...outcomes],
   });
   if (!settled.ok) return settled;
   core.publish('runtime.recovery.required', { operationId: operation.id, reason });
   return settled;
+}
+
+/** Whatever this attempt reserved, marked final — honestly, including doubt. */
+async function closeReservedRun(
+  core: RunsCore,
+  operation: RunOperation,
+  outcomes: readonly RunOperation['compensation'][number][],
+): Promise<B3Result<null>> {
+  const runId = operation.newRunId;
+  if (runId === undefined) return b3ok(null);
+  const found = await core.store.read<AgentRun>('agentRun', runId);
+  if (!found.ok) return found;
+  const agentRun = found.value;
+  if (agentRun === null || FINAL_LIFECYCLES.has(agentRun.lifecycle)) return b3ok(null);
+  const uncertain = outcomes.filter((item) => item.outcome === 'uncertain');
+  const settled = await core.store.update<AgentRun>(
+    'sys_agent_runtime', runId,
+    {
+      lifecycle: 'failed',
+      activity: uncertain.length > 0 ? 'unknown' : 'idle',
+      finalReason: 'unrecoverable-failure',
+      finalAt: nowIsoUtc(),
+      uncertainty: uncertain.map((item) => ({
+        code: 'provider-liveness-unknown' as const,
+        summary: `compensation for ${item.stage} could not confirm its effect`,
+        evidenceRefs: [item.effectKey],
+      })),
+    } as Record<string, unknown>,
+    agentRun.recordVersion, mintClientOpId(),
+  );
+  return settled.ok ? b3ok(null) : b3fail(settled.error);
 }
 
 const OPERATION_NAMES: Readonly<Record<RunOperationKind, string>> = {

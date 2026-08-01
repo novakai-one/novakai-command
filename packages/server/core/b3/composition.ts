@@ -4,7 +4,10 @@
 // and goes; the PTYs live here (DEC-B3V4-01, red gate 2). Server composes and
 // transports — it owns no Runtime or Terminal domain fact (DEC-B3V4-22).
 import path from 'node:path';
-import { b3ok, type B3Result, type SystemCommandContext, type TerminalSessionId } from '@novakai/foundation/contract';
+import {
+  b3err, b3fail, b3ok,
+  type B3Result, type SystemCommandContext, type TerminalSessionId,
+} from '@novakai/foundation/contract';
 import {
   composeAgentRuns, composeRuntimeHost, createFileInstanceLease,
   type AgentRunsContract, type RecoverableCapability, type RuntimeCensus,
@@ -120,12 +123,46 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
       terminalAsRecoverable(terminal!).stopSession(context, epochId, sessionId),
   };
 
+  // Runs reconcile at boot too. Only Terminal was ever registered, so §13.1.6's
+  // "startup reconciles all non-final RunOperation records" simply never ran:
+  // a SIGKILLed spawn left its Run `provisioning` and its operation `running`
+  // forever, under a Runtime reporting `recoveryRequiredCount: 0`.
+  let runs: AgentRunsContract | null = null;
+  const runsCapability: RecoverableCapability = {
+    name: 'agent-runs',
+    async reconcile() {
+      const reconciled = await runs!.reconcileAfterRestart();
+      if (!reconciled.ok) return reconciled;
+      // Runs are not terminal sessions; Terminal reports those.
+      return b3ok({ reconciledSessionIds: [] });
+    },
+    async census() {
+      const counted = await runs!.census();
+      if (!counted.ok) return counted;
+      return b3ok({
+        liveTerminalSessionIds: [],
+        attachedControllerCount: 0,
+        recoveryRequiredCount: counted.value.recoveryRequiredCount,
+        recoveryRequiredSessionIds: [],
+        liveAgentRunCount: counted.value.liveAgentRunCount,
+        recoveryRequiredRefs: counted.value.recoveryRequiredRefs,
+      });
+    },
+    async stopSession() {
+      // It owns no terminal sessions, so it is never the one asked. Saying so
+      // beats a silent `ok` that would report a session stopped by nobody.
+      return b3fail(b3err('UnsupportedOperation',
+        'agent-runs owns no terminal sessions to stop',
+        { operation: 'runtime.stopSession', reason: 'not-a-session-owner' }, false));
+    },
+  };
+
   const runtime = composeRuntimeHost({
     root: options.root,
     dataRoot,
     hostVersion: options.hostVersion ?? 'b3a',
     lease: createFileInstanceLease({ root: options.root }),
-    capabilities: [capability],
+    capabilities: [capability, runsCapability],
   });
 
   terminal = composeTerminal({
@@ -143,7 +180,7 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
     providers: options.providers ?? createProviderAdapters(),
   });
   const credentials = createRunCredentials(options.root);
-  const runs = composeAgentRuns({
+  runs = composeAgentRuns({
     root: options.root,
     dataRoot,
     agents: agentsPort(agents),

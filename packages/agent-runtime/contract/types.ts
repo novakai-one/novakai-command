@@ -142,4 +142,13 @@ export interface RuntimeCensus {
   readonly recoveryRequiredCount: number;
   /** Named, not just counted, so `nvk runtime doctor` can point at them. */
   readonly recoveryRequiredSessionIds: readonly TerminalSessionId[];
+  /**
+   * Additive (§3.5). Runs are not sessions, and a Runtime that could only count
+   * terminal sessions reported `liveAgentRunCount: 0` while three Agents were
+   * running — and `recoveryRequiredCount: 0` over stranded operations, which is
+   * the §24.5 honesty failure the hold-out named.
+   */
+  readonly liveAgentRunCount?: number;
+  /** Whatever needs recovery, by id, when it is not a terminal session. */
+  readonly recoveryRequiredRefs?: readonly string[];
 }

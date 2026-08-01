@@ -44,21 +44,27 @@ export function composeRuntimeHost(options: ComposeRuntimeHostOptions): RuntimeH
   async function censusTotal(): Promise<B3Result<RuntimeCensus>> {
     const sessions: TerminalSessionId[] = [];
     const recovering: TerminalSessionId[] = [];
+    const refs: string[] = [];
     let controllers = 0;
     let recoveringCount = 0;
+    let runs = 0;
     for (const capability of capabilities) {
       const counted = await capability.census();
       if (!counted.ok) return counted;
       sessions.push(...counted.value.liveTerminalSessionIds);
       recovering.push(...counted.value.recoveryRequiredSessionIds);
+      refs.push(...counted.value.recoveryRequiredRefs ?? []);
       controllers += counted.value.attachedControllerCount;
       recoveringCount += counted.value.recoveryRequiredCount;
+      runs += counted.value.liveAgentRunCount ?? 0;
     }
     return b3ok({
       liveTerminalSessionIds: sessions,
       attachedControllerCount: controllers,
       recoveryRequiredCount: recoveringCount,
       recoveryRequiredSessionIds: recovering,
+      liveAgentRunCount: runs,
+      recoveryRequiredRefs: refs,
     });
   }
 
@@ -73,7 +79,7 @@ export function composeRuntimeHost(options: ComposeRuntimeHostOptions): RuntimeH
       version: epoch.hostVersion,
       startedAt: epoch.startedAt,
       recoveryRequiredCount: counted.value.recoveryRequiredCount,
-      liveAgentRunCount: 0, // B3a owns no Agent Runs; zero here is a fact, not a gap
+      liveAgentRunCount: counted.value.liveAgentRunCount ?? 0,
       liveTerminalSessionCount: counted.value.liveTerminalSessionIds.length,
       attachedControllerCount: counted.value.attachedControllerCount,
       ownedByThisProcess,
@@ -335,8 +341,13 @@ async function surveyCapabilities(
     if (!counted.ok) return counted;
     sessionsNeedingRecovery.push(...counted.value.recoveryRequiredSessionIds);
     if (counted.value.recoveryRequiredCount > 0) {
+      const named = [
+        ...counted.value.recoveryRequiredSessionIds,
+        ...counted.value.recoveryRequiredRefs ?? [],
+      ];
       findings.push(
-        `${capability.name}: ${counted.value.recoveryRequiredCount} session(s) need recovery`,
+        `${capability.name}: ${counted.value.recoveryRequiredCount} need(s) recovery`
+        + (named.length > 0 ? ` — ${named.join(', ')}` : ''),
       );
     }
   }

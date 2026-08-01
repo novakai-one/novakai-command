@@ -36,7 +36,7 @@ import { applyRunControl, discoverRunControls } from './controls.js';
 import { continueAgent } from './continue.js';
 import {
   getAgentRun, getAgentRunTree, getRunLaunchPlanId, getRunOperation, listAgentRuns,
-  listRunOperations, reconcileAfterRestart, viewOfRun,
+  listRunOperations, reconcileAfterRestart, runsCensus, viewOfRun,
 } from './queries.js';
 
 export interface ComposeAgentRunsOptions extends RunsStoreOptions {
@@ -178,6 +178,10 @@ export function composeAgentRuns(options: ComposeAgentRunsOptions): AgentRunsCon
       const active = core.fence.activeEpochId();
       if (active === null) return b3ok({ reconciledRunIds: [] });
       return reconcileAfterRestart(core, active);
+    },
+
+    async census() {
+      return runsCensus(core);
     },
   };
 }

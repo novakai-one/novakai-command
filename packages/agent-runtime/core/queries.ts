@@ -238,5 +238,80 @@ export async function reconcileAfterRestart(
     await core.agents.expireGrantsOfRun(agentRun.id);
     reconciled.push(agentRun.id);
   }
+  const operations2 = await settleAbandonedOperations(core, operations.value, activeEpochId);
+  if (!operations2.ok) return operations2;
   return b3ok({ reconciledRunIds: reconciled });
+}
+
+/**
+ * §13.1.6: "Startup reconciles all non-final RunOperation records before
+ * accepting new lifecycle commands for their Agents."
+ *
+ * An operation belonging to an epoch that is over cannot make progress: the
+ * process that was running it is gone. It is settled as `recovery-required`
+ * rather than left `running`, because "running" is a claim about a process, and
+ * a Runtime that reports thirteen running operations it is not running is
+ * lying in the one place an operator goes to find out what is in flight.
+ */
+async function settleAbandonedOperations(
+  core: RunsCore, operations: readonly RunOperation[], activeEpochId: string,
+): Promise<B3Result<null>> {
+  for (const operation of operations) {
+    if (SETTLED_OPERATION_STATES.has(operation.state)) continue;
+    if (operation.runtimeEpochId === activeEpochId) continue;
+    const settled = await core.store.update<RunOperation>(
+      'sys_agent_runtime', operation.id,
+      {
+        state: 'recovery-required',
+        compensation: [
+          ...operation.compensation,
+          {
+            stage: operation.currentStage,
+            effectKey: `${operation.id}:${operation.currentStage}`,
+            outcome: 'uncertain',
+            reason: 'the runtime running this operation ended before it settled',
+          },
+        ],
+      } as Record<string, unknown>,
+      operation.recordVersion, `op_${crypto.randomUUID()}` as never,
+    );
+    if (!settled.ok) return settled;
+    core.publish('runtime.recovery.required', {
+      operationId: operation.id, reason: 'abandoned by a runtime that ended',
+    });
+  }
+  return b3ok(null);
+}
+
+const SETTLED_OPERATION_STATES: ReadonlySet<RunOperation['state']> =
+  new Set<RunOperation['state']>(['completed', 'recovery-required']);
+
+/**
+ * What this Runtime is currently responsible for, in Run terms. Counted from
+ * the durable records rather than from memory, so a restarted Runtime reports
+ * what is on disk instead of what it happens to remember.
+ */
+export async function runsCensus(
+  core: RunsCore,
+): Promise<B3Result<{
+  readonly liveAgentRunCount: number;
+  readonly recoveryRequiredCount: number;
+  readonly recoveryRequiredRefs: readonly string[];
+}>> {
+  const runs = await core.store.list<AgentRun>('agentRun');
+  if (!runs.ok) return runs;
+  const operations = await core.store.list<RunOperation>('runOperation');
+  if (!operations.ok) return operations;
+  const needing = [
+    ...runs.value.filter((item) => item.lifecycle === 'recovery-required').map((item) => item.id),
+    ...operations.value
+      .filter((item) => item.state === 'recovery-required').map((item) => item.id),
+  ];
+  return b3ok({
+    liveAgentRunCount: runs.value.filter(
+      (item) => !FINAL_LIFECYCLES.has(item.lifecycle),
+    ).length,
+    recoveryRequiredCount: needing.length,
+    recoveryRequiredRefs: needing,
+  });
 }

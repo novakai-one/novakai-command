@@ -308,6 +308,18 @@ export interface AgentRuntimeQueries {
 export type AgentRunsContract = AgentRuntimeCommands & AgentRuntimeQueries & {
   /** Reconcile what an earlier epoch left behind. Called once, at boot. */
   reconcileAfterRestart(): Promise<B3Result<{ readonly reconciledRunIds: readonly AgentRunId[] }>>;
+
+  /**
+   * What the Runtime is responsible for in RUN terms — counted from the durable
+   * records, so a restarted Runtime reports what is on disk rather than what it
+   * remembers. Without it, status could only count terminal sessions, and
+   * reported `liveAgentRunCount: 0` beside three live Agents.
+   */
+  census(): Promise<B3Result<{
+    readonly liveAgentRunCount: number;
+    readonly recoveryRequiredCount: number;
+    readonly recoveryRequiredRefs: readonly string[];
+  }>>;
   /** The launch plan a Run is pinned to, for callers that need it by Run. */
   getRunLaunchPlanId(
     principal: AuthenticatedPrincipal, agentRunId: AgentRunId,
