@@ -33,9 +33,11 @@ export type TreeMutationFenceId = B3Brand<string, 'TreeMutationFenceId'>;
 export type RunOperationId = B3Brand<string, 'RunOperationId'>;
 /** Inherited from Agents unchanged (§4.1, AMD-001 §4): existing `sess_<uuidv4>`. */
 export type ProviderSessionId = B3Brand<string, 'ProviderSessionId'>;
-/** The stable individual, distinct from every one of its Runs (DEC-B3V4-02). */
-export type B3AgentId = B3Brand<string, 'AgentId'>;
 export type PolicyVersion = B3Brand<number, 'PolicyVersion'>;
+// The stable individual (DEC-B3V4-02) keeps Foundation's existing `AgentId`
+// brand and `agent_<uuidv4>` format. Build 3 deliberately does NOT mint a
+// second Agent identity type: two brands for one fact is exactly the
+// interchangeability red gate 3 forbids.
 export type ProviderTurnId = B3Brand<string, 'ProviderTurnId'>;
 export type TerminalSessionId = B3Brand<string, 'TerminalSessionId'>;
 export type ControllerAttachmentId = B3Brand<string, 'ControllerAttachmentId'>;
@@ -161,7 +163,6 @@ export const mintSupervisionAssignmentId = (): SupervisionAssignmentId => `super
 export const mintTreeMutationFenceId = (): TreeMutationFenceId => `treeFence_${uuidv7()}` as TreeMutationFenceId;
 /** §4.1 + AMD-001 §4: keeps the existing Agents UUIDv4 shape, not a new v7. */
 export const mintProviderSessionId = (): ProviderSessionId => `sess_${randomUUID()}` as ProviderSessionId;
-export const mintB3AgentId = (): B3AgentId => `agent_${randomUUID()}` as B3AgentId;
 
 /**
  * One edge per ordered pair, so recording the same parent→child twice is

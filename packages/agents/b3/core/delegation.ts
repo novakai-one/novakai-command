@@ -1,0 +1,275 @@
+// Server-enforced delegation (DEC-B3V4-12, red gate 6).
+//
+// One sentence decides everything here: a grant is the INTERSECTION of root
+// policy, role policy and what the issuer actually holds. Intersection has the
+// property the red gate needs — it can only ever shrink. There is no code path
+// in this file that can add a scope to a grant, which is why "a child receives
+// authority its parent could not delegate" is not merely tested against but
+// unrepresentable.
+import {
+  b3fail, b3ok, mintDelegationGrantId, nowIsoUtc,
+  type AgentId, type AuthenticatedPrincipal, type AuthorityScope, type B3Result,
+  type CommandContext, type DelegationGrantId, type AgentRoleProfileId,
+} from '@novakai/foundation/contract';
+import type {
+  AuthoriseSpawnInput, IssueDelegationGrantInput, SpawnAuthority,
+} from '../contract/api.js';
+import {
+  readAuthoriseSpawnInput, readIssueDelegationGrantInput,
+} from '../contract/validate.js';
+import type { Agent, AgentRoleProfile, DelegationGrant } from '../contract/records.js';
+import {
+  authorityEscalation, permissionDenied, RUN_OPERATION_SCOPE, SCOPE,
+  type GovernedAgentsCore,
+} from './context.js';
+import { roleNotAllowed, type Persisted } from './store.js';
+import { requireAgent } from './agents.js';
+import { getRoleProfile } from './roles.js';
+import { ancestorIdsOf, descendantIdsOf } from './relationships.js';
+
+/**
+ * What an issuing Run may hand on. A human-rooted Run holds the full human set;
+ * an Agent-rooted Run holds whatever ITS grant carries, and never more.
+ */
+async function issuerScopes(
+  core: GovernedAgentsCore, principal: AuthenticatedPrincipal,
+): Promise<B3Result<readonly AuthorityScope[]>> {
+  if (principal.kind !== 'agent-run') return b3ok(principal.verifiedScopes);
+  const grants = await liveGrantsFor(core, principal);
+  if (!grants.ok) return grants;
+  const held = new Set<AuthorityScope>();
+  for (const grant of grants.value) for (const scope of grant.scopes) held.add(scope);
+  return b3ok([...held]);
+}
+
+/**
+ * Every active grant this authenticated Run holds.
+ *
+ * `issuerAgentRunId` names the Run whose authority the grant derives from and
+ * dies with — which is the holder's own Run, because the Runtime issues a Run's
+ * grants against that Run when it starts and whenever it gains a child. That is
+ * what makes `expiresWhenIssuerRunFinal` mean something: an Agent cannot
+ * outlive the authority it was given.
+ */
+async function liveGrantsFor(
+  core: GovernedAgentsCore, principal: AuthenticatedPrincipal,
+): Promise<B3Result<readonly DelegationGrant[]>> {
+  const listed = await core.store.list<DelegationGrant>('delegationGrant', { status: 'active' });
+  if (!listed.ok) return listed;
+  const holder = principal.agentRunId;
+  if (holder === undefined) return b3ok([]);
+  return b3ok(listed.value.filter((grant) => grant.issuerAgentRunId === holder));
+}
+
+export async function issueDelegationGrant(
+  core: GovernedAgentsCore, context: CommandContext, input: IssueDelegationGrantInput,
+): Promise<B3Result<DelegationGrant>> {
+  const read = readIssueDelegationGrantInput(input);
+  if (!read.ok) return read;
+  const request = read.value;
+
+  const issuable = await issuerScopes(core, context.principal);
+  if (!issuable.ok) return issuable;
+
+  const subject = await requireAgent(core, request.subjectAgentId);
+  if (!subject.ok) return subject;
+  const role = await getRoleProfile(core, context.principal, subject.value.roleProfileId);
+  if (!role.ok) return role;
+
+  const scopes = request.requestedScopes.filter((scope) => issuable.value.includes(scope));
+  if (scopes.length !== request.requestedScopes.length) {
+    return b3fail(authorityEscalation(request.requestedScopes, issuable.value));
+  }
+
+  const childRoles = intersectRoles(request.requestedChildRoleIds, role.value);
+  if (childRoles.length !== request.requestedChildRoleIds.length) {
+    return b3fail(roleNotAllowed(
+      request.requestedChildRoleIds.find((id) => !childRoles.includes(id)) ?? '',
+      `role "${role.value.name}" may not spawn that child role`,
+      request.subjectAgentId,
+    ));
+  }
+
+  const record: Persisted<DelegationGrant> = {
+    kind: 'delegationGrant',
+    id: mintDelegationGrantId(),
+    schemaVersion: 1,
+    createdAt: nowIsoUtc(),
+    permissionLevel: 'private',
+    createdBy: context.principal.id,
+    issuerAgentRunId: request.issuerAgentRunId,
+    subjectAgentId: request.subjectAgentId,
+    targetAgentIds: request.targetAgentIds,
+    scopes,
+    allowedChildRoleIds: childRoles,
+    expiresWhenIssuerRunFinal: true,
+    status: 'active',
+  };
+  return core.store.create<DelegationGrant>(
+    context.principal.id, record as never, context.clientOpId,
+  );
+}
+
+/** The role's own spawn policy is the ceiling; the request can only narrow it. */
+function intersectRoles(
+  requested: readonly AgentRoleProfileId[], role: AgentRoleProfile,
+): readonly AgentRoleProfileId[] {
+  return requested.filter((id) => role.spawnPolicy.allowedChildRoleIds.includes(id));
+}
+
+/**
+ * Whose tree this lands in, who the parent is, and which grant permitted it.
+ * All three derived here — a caller that could name its own parent could
+ * attach itself anywhere in the org chart (red gate 5).
+ */
+export async function authoriseSpawn(
+  core: GovernedAgentsCore, principal: AuthenticatedPrincipal, input: AuthoriseSpawnInput,
+): Promise<B3Result<SpawnAuthority>> {
+  const read = readAuthoriseSpawnInput(input);
+  if (!read.ok) return read;
+  const request = read.value;
+
+  if (principal.kind === 'agent-run') return authoriseAgentSpawn(core, principal, request);
+  if (principal.kind === 'system') {
+    return b3fail(permissionDenied('agent.spawn', SCOPE.spawn));
+  }
+  // Human, script and Operations callers spawn ROOT Agents in the local
+  // human's tree. They still need the scope; a principal without it is refused.
+  if (!principal.verifiedScopes.includes(SCOPE.spawn)) {
+    return b3fail(permissionDenied('agent.spawn', SCOPE.spawn));
+  }
+  return b3ok({
+    rootHumanPrincipalId: core.rootHumanPrincipalId,
+    launchSurface: principal.kind === 'script' ? 'script'
+      : principal.kind === 'operations' ? 'operations' : 'novakai-shell',
+  });
+}
+
+async function authoriseAgentSpawn(
+  core: GovernedAgentsCore, principal: AuthenticatedPrincipal, request: AuthoriseSpawnInput,
+): Promise<B3Result<SpawnAuthority>> {
+  if (request.callerAgentId === undefined) {
+    return b3fail(permissionDenied('agent.spawn', SCOPE.spawn));
+  }
+  const parent = await requireAgent(core, request.callerAgentId);
+  if (!parent.ok) return parent;
+
+  const grants = await liveGrantsFor(core, principal);
+  if (!grants.ok) return grants;
+  const permitting = grants.value.find((grant) => grant.scopes.includes(SCOPE.spawn)
+    && grant.allowedChildRoleIds.includes(request.roleProfileId));
+  if (!permitting) {
+    // Distinguishing these two matters to whoever reads the error: "you cannot
+    // spawn at all" and "you cannot spawn THAT role" are different problems.
+    const canSpawn = grants.value.some((grant) => grant.scopes.includes(SCOPE.spawn));
+    return b3fail(canSpawn
+      ? roleNotAllowed(request.roleProfileId,
+        'no active grant permits this caller to spawn that role', request.callerAgentId)
+      : permissionDenied('agent.spawn', SCOPE.spawn));
+  }
+
+  const depth = await depthOf(core, parent.value);
+  if (!depth.ok) return depth;
+  const role = await getRoleProfile(core, principal, parent.value.roleProfileId);
+  if (!role.ok) return role;
+  const maxDepth = role.value.spawnPolicy.maxDepth;
+  if (maxDepth !== undefined && depth.value + 1 > maxDepth) {
+    return b3fail(roleNotAllowed(request.roleProfileId,
+      `role "${role.value.name}" allows at most ${maxDepth} generations below the root`,
+      request.callerAgentId));
+  }
+
+  return b3ok({
+    rootHumanPrincipalId: parent.value.rootHumanPrincipalId,
+    parentAgentId: parent.value.id,
+    grantId: permitting.id,
+    launchSurface: 'agent',
+  });
+}
+
+async function depthOf(
+  core: GovernedAgentsCore, agent: Agent,
+): Promise<B3Result<number>> {
+  const ancestors = await ancestorIdsOf(core, agent.id);
+  if (!ancestors.ok) return ancestors;
+  return b3ok(ancestors.value.length);
+}
+
+/**
+ * The same intersection rule for everything a caller can do TO another Agent,
+ * so a human, a script and an Agent are judged by one code path (red gate 23).
+ */
+export async function authoriseRunOperation(
+  core: GovernedAgentsCore,
+  principal: AuthenticatedPrincipal,
+  input: {
+    readonly targetAgentId: AgentId;
+    readonly operation: 'interrupt' | 'stop-one' | 'stop-tree' | 'adopt' | 'continue' | 'control';
+  },
+): Promise<B3Result<{ readonly grantId?: DelegationGrantId }>> {
+  const required = RUN_OPERATION_SCOPE[input.operation]!;
+  const denied = b3fail(permissionDenied(`agent.${input.operation}`, required));
+  if (principal.kind !== 'agent-run') {
+    return principal.verifiedScopes.includes(required) ? b3ok({}) : denied;
+  }
+  const grants = await liveGrantsFor(core, principal);
+  if (!grants.ok) return grants;
+  const permitting = await firstGrantReaching(
+    core, grants.value, required, input.targetAgentId,
+  );
+  if (!permitting.ok) return permitting;
+  return permitting.value === null ? denied : b3ok({ grantId: permitting.value.id });
+}
+
+/**
+ * A grant reaches a named target OR any descendant of one, so a parent that may
+ * stop its child may also stop that child's own subtree — and no further.
+ */
+async function firstGrantReaching(
+  core: GovernedAgentsCore,
+  grants: readonly DelegationGrant[],
+  required: AuthorityScope,
+  targetAgentId: AgentId,
+): Promise<B3Result<DelegationGrant | null>> {
+  for (const grant of grants) {
+    if (!grant.scopes.includes(required)) continue;
+    const reaches = await grantReaches(core, grant, targetAgentId);
+    if (!reaches.ok) return reaches;
+    if (reaches.value) return b3ok(grant);
+  }
+  return b3ok(null);
+}
+
+async function grantReaches(
+  core: GovernedAgentsCore, grant: DelegationGrant, targetAgentId: AgentId,
+): Promise<B3Result<boolean>> {
+  if (grant.targetAgentIds.includes(targetAgentId)) return b3ok(true);
+  for (const target of grant.targetAgentIds) {
+    const descendants = await descendantIdsOf(core, target);
+    if (!descendants.ok) return descendants;
+    if (descendants.value.includes(targetAgentId)) return b3ok(true);
+  }
+  return b3ok(false);
+}
+
+/**
+ * `expiresWhenIssuerRunFinal` made real: when a Run ends, everything it handed
+ * out ends with it. Otherwise an Agent could outlive its own authority.
+ */
+export async function expireGrantsOfRun(
+  core: GovernedAgentsCore, context: CommandContext, agentRunId: string,
+): Promise<B3Result<{ readonly expired: readonly DelegationGrantId[] }>> {
+  const listed = await core.store.list<DelegationGrant>('delegationGrant', { status: 'active' });
+  if (!listed.ok) return listed;
+  const expired: DelegationGrantId[] = [];
+  for (const grant of listed.value) {
+    if (grant.issuerAgentRunId !== agentRunId) continue;
+    const updated = await core.store.update<DelegationGrant>(
+      context.principal.id, grant.id, { status: 'expired' },
+      grant.recordVersion, context.clientOpId,
+    );
+    if (!updated.ok) return updated;
+    expired.push(grant.id);
+  }
+  return b3ok({ expired });
+}

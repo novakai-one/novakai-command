@@ -1,14 +1,16 @@
 {
   "name": "@novakai/agents",
   "version": "0.1.0",
-  "description": "Novakai Agents capability — S1 agents-lite: definition registry (agents.jsonl via foundation), spawn via the existing terminal host, agentEvent presence stream (R3-17), live lane to messaging (R3-1).",
+  "description": "Novakai Agents capability \u2014 S1 agents-lite: definition registry (agents.jsonl via foundation), spawn via the existing terminal host, agentEvent presence stream (R3-17), live lane to messaging (R3-1).",
   "type": "module",
   "engines": {
     "node": ">=20"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "npm run build && node --test \"dist/tests/**/*.test.js\""
+    "test": "npm run build && node --test \"dist/tests/**/*.test.js\"",
+    "typecheck:b3": "tsc -p tsconfig.b3.json",
+    "test:b3": "npm run typecheck:b3 && tsx --test \"b3/tests/**/*.test.ts\""
   },
   "license": "UNLICENSED",
   "private": true,
