@@ -35,9 +35,10 @@ import { adoptAgent } from './adoption.js';
 import { applyRunControl, discoverRunControls } from './controls.js';
 import { continueAgent } from './continue.js';
 import {
-  getAgentRun, getAgentRunTree, getRunLaunchPlanId, getRunOperation, listAgentRuns,
+  getAgentRun, getRunLaunchPlanId, getRunOperation, listAgentRuns,
   listRunOperations, reconcileAfterRestart, runsCensus, viewOfRun,
 } from './queries.js';
+import { getAgentRunTree } from './tree.js';
 
 export interface ComposeAgentRunsOptions extends RunsStoreOptions {
   /**

@@ -19,8 +19,12 @@ import type { ContinuationMode, LaunchConfigurationMode, LaunchSurface } from '.
 import type {
   AgentControlFacts, AgentControlOutcomeFacts, ControlCapabilityFacts,
 } from './controls.js';
+import type { AgentRelationshipFacts } from './family.js';
 
-export type { AgentControlFacts, AgentControlOutcomeFacts, ControlCapabilityFacts };
+export type {
+  AgentControlFacts, AgentControlOutcomeFacts, AgentRelationshipFacts,
+  ControlCapabilityFacts,
+};
 
 // ── What Agents must answer ─────────────────────────────────────────────────
 
@@ -133,9 +137,14 @@ export interface AgentsPort {
     principal: AuthenticatedPrincipal, agentId: AgentId,
   ): Promise<B3Result<AgentFacts>>;
 
-  listChildAgentIds(
+  /**
+   * This Agent's children, each with the edge that made it. One seam, not two:
+   * a caller that only wants ids takes them off the edges, and the tree that
+   * must PUBLISH the edges (§12.7) does not need a second question.
+   */
+  listChildRelationships(
     principal: AuthenticatedPrincipal, parentAgentId: AgentId,
-  ): Promise<B3Result<readonly AgentId[]>>;
+  ): Promise<B3Result<readonly AgentRelationshipFacts[]>>;
 
   /** Who spawned this Agent. Immutable history, owned by Agents (red gate 9). */
   parentAgentIdOf(

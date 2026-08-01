@@ -10,8 +10,7 @@ import {
   type B3Result, type ResolvedLaunchPlanId, type RunOperationId,
 } from '@novakai/foundation/contract';
 import type {
-  AgentRunTreeView, AgentRunView, GetAgentRunTreeInput, ListAgentRunsFilter,
-  RunOperationView,
+  AgentRunView, ListAgentRunsFilter, RunOperationView,
 } from '../contract/runs-api.js';
 import {
   FINAL_LIFECYCLES, type AgentRun, type RunOperation,
@@ -89,7 +88,7 @@ export async function viewOfRun(
   if (!agent.ok) return agent;
   const plan = await core.agents.getLaunchPlan(principal, agentRun.launchPlanId);
   if (!plan.ok) return plan;
-  const children = await core.agents.listChildAgentIds(principal, agentRun.agentId);
+  const children = await core.agents.listChildRelationships(principal, agentRun.agentId);
   if (!children.ok) return children;
   const supervision = await assignmentChain(core, agentRun.agentId);
   if (!supervision.ok) return supervision;
@@ -170,43 +169,8 @@ export async function listAgentRuns(
   });
 }
 
-export async function getAgentRunTree(
-  core: RunsCore, principal: AuthenticatedPrincipal, input: GetAgentRunTreeInput,
-): Promise<B3Result<AgentRunTreeView>> {
-  const nodes: AgentRunView[] = [];
-  const seen = new Set<AgentId>();
-  let frontier: readonly AgentId[] = [input.rootAgentId];
-  for (let depth = 0; depth <= input.maxDepth && frontier.length > 0; depth += 1) {
-    const generation = await oneGeneration(core, principal, frontier, seen, nodes);
-    if (!generation.ok) return generation;
-    frontier = generation.value;
-  }
-  return b3ok({ rootAgentId: input.rootAgentId, nodes, generatedAt: nowIsoUtc() });
-}
-
-/** Every Run of every Agent at this depth, plus who to visit next. */
-async function oneGeneration(
-  core: RunsCore,
-  principal: AuthenticatedPrincipal,
-  frontier: readonly AgentId[],
-  seen: Set<AgentId>,
-  into: AgentRunView[],
-): Promise<B3Result<readonly AgentId[]>> {
-  const next: AgentId[] = [];
-  for (const agentId of frontier) {
-    if (seen.has(agentId)) continue;
-    seen.add(agentId);
-    const collected = await runsOfAgent(core, principal, agentId);
-    if (!collected.ok) return collected;
-    into.push(...collected.value);
-    const children = await core.agents.listChildAgentIds(principal, agentId);
-    if (!children.ok) return children;
-    next.push(...children.value);
-  }
-  return b3ok(next);
-}
-
-async function runsOfAgent(
+/** Every Run this Agent has ever had, viewed. Shared with the tree walk. */
+export async function runsOfAgent(
   core: RunsCore, principal: AuthenticatedPrincipal, agentId: AgentId,
 ): Promise<B3Result<readonly AgentRunView[]>> {
   const runs = await core.store.list<AgentRun>('agentRun', { agentId });

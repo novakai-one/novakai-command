@@ -15,7 +15,8 @@ import type {
   LaunchSurface, RunOperation, SupervisionAssignment,
 } from './runs.js';
 import type {
-  AgentControlFacts, AgentControlOutcomeFacts, ControlCapabilityFacts,
+  AgentControlFacts, AgentControlOutcomeFacts, AgentRelationshipFacts,
+  ControlCapabilityFacts,
 } from './ports.js';
 
 // ── Inputs ──────────────────────────────────────────────────────────────────
@@ -131,7 +132,16 @@ export interface ListAgentRunsFilter {
 export interface GetAgentRunTreeInput {
   readonly rootAgentId: AgentId;
   readonly maxDepth: number;
+  /**
+   * Which way to walk (§12.7). Absent means `descendants`, which is what every
+   * caller before this asked for — but a caller that ASKS for ancestors and is
+   * handed descendants has been lied to, and that is what the blind hold-out
+   * found (D8).
+   */
+  readonly direction?: TreeDirection;
 }
+
+export type TreeDirection = 'ancestors' | 'descendants' | 'both';
 
 // ── Views (§19.1) ───────────────────────────────────────────────────────────
 
@@ -188,9 +198,23 @@ export interface RunOperationView {
   }[];
 }
 
+/**
+ * A Run in the family, plus the two facts that only the TREE knows: how far
+ * from the queried root it sits, and who is supervising it right now (§12.7
+ * `AgentTreeNode`). Supervision is repeated at node level on purpose — a
+ * consumer reading a tree reads nodes, and making it dig into `family` for the
+ * one field the tree contract names is the drift D9 caught.
+ */
+export interface AgentRunTreeNode extends AgentRunView {
+  readonly depth: number;
+  readonly currentSupervision: SupervisionAssignment['supervisor'];
+}
+
 export interface AgentRunTreeView {
   readonly rootAgentId: AgentId;
-  readonly nodes: readonly AgentRunView[];
+  readonly nodes: readonly AgentRunTreeNode[];
+  /** Every parent→child edge inside the returned set (§12.7, normative). */
+  readonly edges: readonly AgentRelationshipFacts[];
   readonly generatedAt: IsoUtc;
 }
 

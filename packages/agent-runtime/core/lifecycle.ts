@@ -302,9 +302,9 @@ export async function closeRun(
 async function applyOrphanPolicy(
   core: RunsCore, context: CommandContext, parentAgentId: AgentId,
 ): Promise<B3Result<null>> {
-  const children = await core.agents.listChildAgentIds(context.principal, parentAgentId);
+  const children = await core.agents.listChildRelationships(context.principal, parentAgentId);
   if (!children.ok) return children;
-  for (const childAgentId of children.value) {
+  for (const { childAgentId } of children.value) {
     const reassigned = await reassignOrphan(core, context, parentAgentId, childAgentId);
     if (!reassigned.ok) return reassigned;
   }

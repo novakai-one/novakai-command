@@ -193,10 +193,17 @@ export function createFakeAgents(options: FakeAgentsOptions = {}): FakeAgents {
       return b3ok(held);
     },
 
-    async listChildAgentIds(_principal, parentAgentId) {
+    async listChildRelationships(_principal, parentAgentId) {
       return b3ok([...agents.values()]
         .filter((agent) => agent.parentAgentId === parentAgentId)
-        .map((agent) => agent.id));
+        .map((agent) => ({
+          id: `rel_${parentAgentId}_${agent.id}`,
+          kind: 'agentRelationship' as const,
+          rootHumanPrincipalId: 'person_chris' as never,
+          parentAgentId,
+          childAgentId: agent.id,
+          createdFromRunId: 'agentRun_fake' as never,
+        })));
     },
 
     async parentAgentIdOf(_principal, agentId) {

@@ -52,10 +52,8 @@ export function agentsPort(agents: GovernedAgentsContract): AgentsPort {
     getLaunchPlan: (principal, launchPlanId) => agents.getLaunchPlan(principal, launchPlanId),
     getAgent: (principal, agentId) => agents.getAgent(principal, agentId),
 
-    async listChildAgentIds(principal, parentAgentId) {
-      const edges = await agents.listChildren(principal, parentAgentId);
-      if (!edges.ok) return edges;
-      return b3ok(edges.value.map((edge) => edge.childAgentId));
+    async listChildRelationships(principal, parentAgentId) {
+      return agents.listChildren(principal, parentAgentId);
     },
 
     async parentAgentIdOf(principal, agentId) {

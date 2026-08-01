@@ -22,6 +22,7 @@ import {
 const PROVIDERS = ['claude', 'codex', 'kimi'] as const;
 /** Restated rather than imported: the Runtime carries controls, Agents owns them. */
 const AGENT_CONTROL_NAMES = ['model', 'effort', 'provider-setting'] as const;
+const TREE_DIRECTIONS = ['ancestors', 'descendants', 'both'] as const;
 
 function flag(field: FieldReader, path: string): boolean {
   const value = field.given(path);
@@ -191,10 +192,14 @@ export function readListAgentRunsFilter(candidate: unknown): B3Result<ListAgentR
 }
 
 export function readGetAgentRunTreeInput(candidate: unknown): B3Result<GetAgentRunTreeInput> {
-  return readBoundary(candidate, (field) => ({
-    rootAgentId: field.id<AgentId>('rootAgentId', 'agent', 'uuidv4'),
-    maxDepth: field.count('maxDepth', 0, 64),
-  }));
+  return readBoundary(candidate, (field) => {
+    const direction = field.optionalChoice('direction', TREE_DIRECTIONS);
+    return {
+      rootAgentId: field.id<AgentId>('rootAgentId', 'agent', 'uuidv4'),
+      maxDepth: field.count('maxDepth', 0, 64),
+      ...(direction === undefined ? {} : { direction }),
+    };
+  });
 }
 
 export function readAgentRunIdInput(

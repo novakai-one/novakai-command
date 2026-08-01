@@ -223,12 +223,12 @@ async function unseenChildren(
 ): Promise<B3Result<readonly AgentId[]>> {
   const next: AgentId[] = [];
   for (const parent of frontier) {
-    const children = await core.agents.listChildAgentIds(context.principal, parent);
+    const children = await core.agents.listChildRelationships(context.principal, parent);
     if (!children.ok) return children;
-    for (const child of children.value) {
-      if (seen.has(child)) continue;
-      seen.add(child);
-      next.push(child);
+    for (const edge of children.value) {
+      if (seen.has(edge.childAgentId)) continue;
+      seen.add(edge.childAgentId);
+      next.push(edge.childAgentId);
     }
   }
   return b3ok(next);
