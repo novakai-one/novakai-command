@@ -7,7 +7,7 @@
 // authority its parent could not delegate" is not merely tested against but
 // unrepresentable.
 import {
-  b3fail, b3ok, mintDelegationGrantId, nowIsoUtc,
+  b3err, b3fail, b3ok, deriveClientOpId, mintDelegationGrantId, nowIsoUtc,
   type AgentId, type AuthenticatedPrincipal, type AuthorityScope, type B3Result,
   type CommandContext, type DelegationGrantId, type AgentRoleProfileId,
 } from '@novakai/foundation/contract';
@@ -296,6 +296,14 @@ async function grantReaches(
 /**
  * `expiresWhenIssuerRunFinal` made real: when a Run ends, everything it handed
  * out ends with it. Otherwise an Agent could outlive its own authority.
+ *
+ * Each grant is expired under its OWN derived key (§3.2). One command's
+ * `clientOpId` across N writes is N-1 replays: Foundation deduplicates by
+ * clientOpId, so the second and later grants came back as the record that was
+ * already there — `status: 'active'` — while this function reported all of them
+ * expired and every caller discarded the result (NVK-KIMI-031 finding 2).
+ *
+ * The returned list is what the STORE now says, not what was attempted.
  */
 export async function expireGrantsOfRun(
   core: GovernedAgentsCore, context: CommandContext, agentRunId: string,
@@ -307,9 +315,15 @@ export async function expireGrantsOfRun(
     if (grant.issuerAgentRunId !== agentRunId) continue;
     const updated = await core.store.update<DelegationGrant>(
       context.principal.id, grant.id, { status: 'expired' },
-      grant.recordVersion, context.clientOpId,
+      grant.recordVersion,
+      deriveClientOpId(`${String(context.clientOpId)}:expire-grant:${String(grant.id)}`),
     );
     if (!updated.ok) return updated;
+    if (updated.value.status !== 'expired') {
+      return b3fail(b3err('RecoveryRequired',
+        'a grant could not be expired with its issuing Run',
+        { grantId: grant.id, agentRunId, status: updated.value.status }, true));
+    }
     expired.push(grant.id);
   }
   return b3ok({ expired });

@@ -15,7 +15,7 @@ import type {
 } from '../contract/runs-api.js';
 import { FINAL_LIFECYCLES, type AgentRun } from '../contract/runs.js';
 import {
-  assignSupervisor, currentAssignment, liveRunOf, patchRun, requireRun,
+  assignSupervisor, currentAssignment, expireAuthorityOf, liveRunOf, patchRun, requireRun,
   type RunsCore,
 } from './runs-context.js';
 import { runFinal } from './runs-store.js';
@@ -289,7 +289,7 @@ export async function closeRun(
   });
   if (!stopped.ok) return stopped;
   // `expiresWhenIssuerRunFinal`, made real.
-  await core.agents.expireGrantsOfRun(agentRun.id);
+  await expireAuthorityOf(core, agentRun);
   void context;
   return stopped;
 }

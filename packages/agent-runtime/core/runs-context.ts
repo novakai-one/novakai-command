@@ -162,6 +162,25 @@ export async function assignSupervisor(
   return written;
 }
 
+/**
+ * `expiresWhenIssuerRunFinal`, at every place a Run becomes final.
+ *
+ * The result used to be discarded at all three call sites, so a Run could end
+ * while the authority it handed out stayed live and nothing anywhere said so.
+ * A failure here cannot un-finalise the Run — the Run IS over — but it is a
+ * recovery item, and it is now named as one instead of vanishing.
+ */
+export async function expireAuthorityOf(
+  core: RunsCore, agentRun: AgentRun,
+): Promise<void> {
+  const expired = await core.agents.expireGrantsOfRun(agentRun.id);
+  if (expired.ok) return;
+  core.publish('runtime.recovery.required', {
+    agentRunId: agentRun.id,
+    reason: `authority outlived its Run: ${expired.error.message}`,
+  });
+}
+
 /** Patch a Run under CAS. Every lifecycle move in this package goes through here. */
 export async function patchRun(
   core: RunsCore, agentRun: AgentRun, patch: Partial<Persisted<AgentRun>>,

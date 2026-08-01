@@ -267,6 +267,61 @@ test('a grant dies with the Run it came from', async () => {
   });
 });
 
+/**
+ * The same Run, two grants. §5.3's `expiresWhenIssuerRunFinal` is a claim about
+ * the RUN, not about one lucky record — an Agent that keeps a second grant when
+ * its issuer is final is an Agent holding authority nobody can revoke.
+ *
+ * This is the case the single-grant test above could never see: expiry wrote
+ * every grant under the command's ONE clientOpId, and Foundation deduplicates by
+ * clientOpId, so grants 2..N came back as replays with `status` untouched — and
+ * were reported expired anyway.
+ */
+test('every grant a Run issued dies with it, not just the first', async () => {
+  await withRig(async (rig) => {
+    const org = await team(rig);
+    const first = await grant(rig, {
+      runId: org.managerRunId, subject: org.manager, targets: [org.builder],
+      scopes: [String(SCOPE.interrupt)], childRoles: [],
+    });
+    assert.equal(first.ok, true);
+    const second = await grant(rig, {
+      runId: org.managerRunId, subject: org.manager, targets: [org.builder],
+      scopes: [String(SCOPE.stopOne)], childRoles: [],
+    });
+    assert.equal(second.ok, true);
+
+    const principal = rig.agentRun(org.managerRunId).principal;
+    for (const operation of ['interrupt', 'stop-one'] as const) {
+      const before = await rig.agents.authoriseRunOperation(principal, {
+        targetAgentId: org.builder, operation,
+      });
+      assert.equal(before.ok, true, `the ${operation} grant was not live to begin with`);
+    }
+
+    const expired = await rig.agents.expireGrantsOfRun(rig.system(), org.managerRunId);
+    assert.equal(expired.ok, true);
+    if (expired.ok) assert.equal(expired.value.expired.length, 2);
+
+    // What the store actually says, not what the return value claims.
+    const remaining = await rig.agents.listDelegationGrants(rig.human(scopeNames).principal);
+    assert.equal(remaining.ok, true);
+    if (remaining.ok) {
+      assert.deepEqual(
+        remaining.value.filter((item) => item.issuerAgentRunId === org.managerRunId).map((item) => item.id),
+        [], 'a grant reported expired is still active in the store',
+      );
+    }
+
+    for (const operation of ['interrupt', 'stop-one'] as const) {
+      const after = await rig.agents.authoriseRunOperation(principal, {
+        targetAgentId: org.builder, operation,
+      });
+      assert.equal(after.ok, false, `${operation} survived the Run that granted it`);
+    }
+  });
+});
+
 test('a human without the scope is refused, exactly like an Agent', async () => {
   await withRig(async (rig) => {
     const org = await team(rig);
