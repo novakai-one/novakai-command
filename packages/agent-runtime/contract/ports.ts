@@ -13,9 +13,14 @@ import type {
   AgentId, AgentRoleProfileId, AgentRunId, AuthenticatedPrincipal, AuthorityScope,
   B3Result, CommandContext, ControlReplacementPlanId, DelegationGrantId,
   HumanPrincipalId, ProviderSessionId, ProviderTurnId, ActivityGeneration,
-  ResolvedLaunchPlanId, RuntimeEpochId, TerminalSessionId,
+  RecordVersion, ResolvedLaunchPlanId, RuntimeEpochId, TerminalSessionId,
 } from '@novakai/foundation/contract';
 import type { ContinuationMode, LaunchConfigurationMode, LaunchSurface } from './runs.js';
+import type {
+  AgentControlFacts, AgentControlOutcomeFacts, ControlCapabilityFacts,
+} from './controls.js';
+
+export type { AgentControlFacts, AgentControlOutcomeFacts, ControlCapabilityFacts };
 
 // ── What Agents must answer ─────────────────────────────────────────────────
 
@@ -152,6 +157,35 @@ export interface AgentsPort {
   expireGrantsOfRun(
     agentRunId: AgentRunId,
   ): Promise<B3Result<{ readonly expired: readonly DelegationGrantId[] }>>;
+
+  /** What this provider can actually change on a live Run, and how honestly. */
+  discoverAgentControls(
+    principal: AuthenticatedPrincipal,
+    input: {
+      readonly agentRunId: AgentRunId;
+      readonly launchPlanId: ResolvedLaunchPlanId;
+      readonly delegationGrantId?: DelegationGrantId;
+    },
+  ): Promise<B3Result<ControlCapabilityFacts>>;
+
+  /**
+   * Change one. The Runtime supplies the Run facts because it owns the Run;
+   * Agents decides whether the role and the provider allow it, because it owns
+   * the role. Neither half can answer alone, which is why this is a port call
+   * and not a re-derivation on either side (red gate 6).
+   */
+  applyAgentControl(
+    context: CommandContext,
+    input: {
+      readonly agentRunId: AgentRunId;
+      readonly agentId: AgentId;
+      readonly launchPlanId: ResolvedLaunchPlanId;
+      readonly providerSessionId: ProviderSessionId;
+      readonly expectedRunVersion: RecordVersion;
+      readonly delegationGrantId?: DelegationGrantId;
+      readonly control: AgentControlFacts;
+    },
+  ): Promise<B3Result<AgentControlOutcomeFacts>>;
 
   registerProviderSession(
     input: {

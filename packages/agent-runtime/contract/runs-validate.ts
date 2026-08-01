@@ -10,9 +10,9 @@ import {
   type AgentRoleProfileId,
 } from '@novakai/foundation/contract';
 import type {
-  AdoptAgentInput, ContinueAgentInput, GetAgentRunTreeInput, InterruptAgentTurnInput,
-  ListAgentRunsFilter, PrepareStopAgentTreeInput, SpawnAgentInput, StopAgentInput,
-  StopAgentTreeInput,
+  AdoptAgentInput, ApplyRunControlInput, ContinueAgentInput, DiscoverRunControlsInput,
+  GetAgentRunTreeInput, InterruptAgentTurnInput, ListAgentRunsFilter,
+  PrepareStopAgentTreeInput, SpawnAgentInput, StopAgentInput, StopAgentTreeInput,
 } from './runs-api.js';
 import {
   AGENT_RUN_LIFECYCLES, CONTINUATION_MODES, LAUNCH_CONFIGURATION_MODES, LAUNCH_SURFACES,
@@ -20,6 +20,8 @@ import {
 } from './runs.js';
 
 const PROVIDERS = ['claude', 'codex', 'kimi'] as const;
+/** Restated rather than imported: the Runtime carries controls, Agents owns them. */
+const AGENT_CONTROL_NAMES = ['model', 'effort', 'provider-setting'] as const;
 
 function flag(field: FieldReader, path: string): boolean {
   const value = field.given(path);
@@ -140,6 +142,30 @@ function readSupervisor(field: FieldReader): AdoptAgentInput['supervisor'] {
     return { kind: 'agent', agentId: nested.id<AgentId>('agentId', 'agent', 'uuidv4') };
   }
   return { kind: 'human', principalId: nested.text('principalId') as HumanPrincipalId };
+}
+
+export function readDiscoverRunControlsInput(
+  candidate: unknown,
+): B3Result<DiscoverRunControlsInput> {
+  return readBoundary(candidate, (field) => ({
+    agentRunId: field.id<AgentRunId>('agentRunId', 'agentRun'),
+  }));
+}
+
+export function readApplyRunControlInput(candidate: unknown): B3Result<ApplyRunControlInput> {
+  return readBoundary(candidate, (field) => {
+    const control = field.nested('control');
+    return {
+      agentRunId: field.id<AgentRunId>('agentRunId', 'agentRun'),
+      expectedRunVersion: field.count(
+        'expectedRunVersion', 0, Number.MAX_SAFE_INTEGER,
+      ) as RecordVersion,
+      control: {
+        name: control.choice('name', AGENT_CONTROL_NAMES),
+        value: control.text('value'),
+      },
+    };
+  });
 }
 
 export function readListAgentRunsFilter(candidate: unknown): B3Result<ListAgentRunsFilter> {

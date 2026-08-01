@@ -38,6 +38,7 @@ export const OPERATION = {
   stopTree: 'agent.stopTree',
   continueRun: 'agent.continue',
   adopt: 'agent.adopt',
+  control: 'agent.control',
   repair: 'agent.repair',
 } as const;
 

@@ -16,7 +16,7 @@ import type {
 import {
   FINAL_LIFECYCLES, type AgentRun, type RunOperation,
 } from '../contract/runs.js';
-import { currentAssignment, requireRun, type RunsCore } from './runs-context.js';
+import { assignmentChain, requireRun, type RunsCore } from './runs-context.js';
 import { recoveryRequired, unknownRun } from './runs-store.js';
 
 /**
@@ -36,8 +36,8 @@ export async function viewOfRun(
   if (!plan.ok) return plan;
   const children = await core.agents.listChildAgentIds(principal, agentRun.agentId);
   if (!children.ok) return children;
-  const assignment = await currentAssignment(core, agentRun.agentId);
-  if (!assignment.ok) return assignment;
+  const supervision = await assignmentChain(core, agentRun.agentId);
+  if (!supervision.ok) return supervision;
   // Parentage is asked for, never cached: Agents owns it (§3.3, red gate 9).
   const parent = await core.agents.parentAgentIdOf(principal, agentRun.agentId);
   if (!parent.ok) return parent;
@@ -62,8 +62,12 @@ export async function viewOfRun(
     family: {
       ...(parent.value === null ? {} : { parentAgentId: parent.value }),
       childCount: children.value.length,
-      supervisor: assignment.value?.supervisor
+      supervisor: supervision.value.current?.supervisor
         ?? { kind: 'orphaned', reason: 'no supervision assignment has been recorded' },
+      // The CAS token an adoption has to quote. Without it here, the only way
+      // to obtain it is to guess — and a compare-and-set nobody can read the
+      // "expected" side of is not a safety mechanism, it is a retry loop.
+      supervisionVersion: supervision.value.generation,
     },
     // Named absence, not zero. B3d is where usage becomes a number.
     usage: { quality: 'unavailable', reason: 'per-Run usage arrives in B3d' },

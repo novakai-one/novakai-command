@@ -12,10 +12,10 @@ import {
   type PublicOperationName, type RunOperationId,
 } from '@novakai/foundation/contract';
 import {
-  readAdoptAgentInput, readAgentRunIdInput, readContinueAgentInput,
-  readGetAgentRunTreeInput, readInterruptAgentTurnInput, readListAgentRunsFilter,
-  readPrepareStopAgentTreeInput, readRunOperationIdInput, readSpawnAgentInput,
-  readStopAgentInput, readStopAgentTreeInput,
+  readAdoptAgentInput, readAgentRunIdInput, readApplyRunControlInput,
+  readContinueAgentInput, readDiscoverRunControlsInput, readGetAgentRunTreeInput,
+  readInterruptAgentTurnInput, readListAgentRunsFilter, readPrepareStopAgentTreeInput,
+  readRunOperationIdInput, readSpawnAgentInput, readStopAgentInput, readStopAgentTreeInput,
 } from '../../../agent-runtime/contract/index.js';
 import {
   readCreateRoleProfileInput, readUpdateRoleProfileInput,
@@ -129,6 +129,12 @@ export function buildB3AgentMethods(options: B3AgentMethodOptions): MethodTable 
 
     'b3.agent.updateRole': method(readUpdateRoleProfileInput,
       (payload, context) => agents.updateRoleProfile(context, payload)),
+
+    'b3.agent.controls': method(readDiscoverRunControlsInput,
+      (payload, _context, principal) => runs.discoverRunControls(principal, payload)),
+
+    'b3.agent.control': method(readApplyRunControlInput,
+      (payload, context) => runs.applyRunControl(context, payload)),
 
     'b3.agent.getRoles': method(noPayload, async (_payload, _context, principal) => {
       // A list of every role, so `nvk agent spawn --role builder` can resolve a

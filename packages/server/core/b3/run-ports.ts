@@ -98,6 +98,25 @@ export function agentsPort(agents: GovernedAgentsContract): AgentsPort {
 
     continuationAllowed: (principal, input) => agents.continuationAllowed(principal, input),
 
+    discoverAgentControls: (principal, input) =>
+      agents.discoverAgentControls(principal, input),
+
+    async applyAgentControl(context, input) {
+      const outcome = await agents.applyAgentControl(context, input);
+      if (!outcome.ok) return outcome;
+      // The plan does not cross the port — its ID does. A Runtime that held the
+      // whole replacement record could act on it without the caller asking,
+      // which is exactly what §12.1 says a control must never do.
+      if (outcome.value.kind === 'replacement-required') {
+        return b3ok({
+          kind: 'replacement-required',
+          replacementPlanId: outcome.value.plan.id,
+          proposedLaunchPlanId: outcome.value.plan.proposedLaunchPlanId,
+        });
+      }
+      return b3ok(outcome.value);
+    },
+
     async getControlReplacementPlan(principal, planId) {
       const found = await agents.getControlReplacementPlan(principal, planId);
       if (!found.ok) return found;

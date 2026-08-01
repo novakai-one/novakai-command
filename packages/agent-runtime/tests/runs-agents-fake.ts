@@ -27,6 +27,8 @@ export interface FakeAgents extends AgentsPort {
   readonly sessions: Map<ProviderSessionId, { native: string; discovered: boolean }>;
   readonly grantsIssued: { readonly issuerAgentRunId: AgentRunId; readonly scopes: readonly AuthorityScope[] }[];
   readonly expiredRuns: AgentRunId[];
+  /** Every control that reached Agents, in order — what the Runtime forwarded. */
+  readonly controlsApplied: { readonly name: string; readonly value: string }[];
   /** Every scope the NEXT authorisation may return; empty means "denied". */
   allowedScopes: readonly AuthorityScope[];
   /** Force one refusal, so a test can be about that refusal. */
@@ -49,6 +51,7 @@ export function createFakeAgents(options: FakeAgentsOptions = {}): FakeAgents {
   const sessions = new Map<ProviderSessionId, { native: string; discovered: boolean }>();
   const grantsIssued: FakeAgents['grantsIssued'] = [];
   const expiredRuns: AgentRunId[] = [];
+  const controlsApplied: FakeAgents['controlsApplied'] = [];
   const skills = options.skills ?? [{ id: 'tdd', version: 1, digest: 'digest-tdd' }];
 
   /** Which role this Agent stands on, so its plan carries that role's policy. */
@@ -85,6 +88,7 @@ export function createFakeAgents(options: FakeAgentsOptions = {}): FakeAgents {
     sessions,
     grantsIssued,
     expiredRuns,
+    controlsApplied,
     allowedScopes: EVERY_SCOPE,
     refuseNext: null,
 
@@ -257,6 +261,50 @@ export function createFakeAgents(options: FakeAgentsOptions = {}): FakeAgents {
     async getControlReplacementPlan(_principal, planId) {
       return b3fail(b3err('LaunchPlanInvalid', 'no replacement plans in this rig',
         { issues: [{ path: 'replacementPlanId', message: String(planId) }] }, false));
+    },
+
+    async discoverAgentControls(_principal, input) {
+      return b3ok({
+        agentRunId: input.agentRunId,
+        provider: 'claude',
+        testedProviderVersion: 'fake-1.0.0',
+        controls: [
+          {
+            name: 'model', allowedValues: ['cli-default', 'other-model'],
+            support: 'native', enforcement: 'enforced', reason: 'fake adapter',
+          },
+          {
+            name: 'effort', support: 'replacement-required',
+            enforcement: 'enforced', reason: 'fake adapter cannot change effort in place',
+          },
+        ],
+      });
+    },
+
+    /**
+     * Answers the way the real one does for the three cases that matter, so a
+     * Runtime test proves something about all three rather than about `model`.
+     */
+    async applyAgentControl(_context, input) {
+      controlsApplied.push(input.control);
+      if (input.control.name === 'effort') {
+        return b3ok({
+          kind: 'replacement-required',
+          replacementPlanId: mintObjectId('controlReplacement') as never,
+          proposedLaunchPlanId: input.launchPlanId,
+        });
+      }
+      if (input.control.name === 'provider-setting') {
+        return b3ok({
+          kind: 'unsupported', support: 'unsupported',
+          reason: `the fake provider has no setting named ${input.control.value}`,
+        });
+      }
+      return b3ok({
+        kind: 'applied-native',
+        agentRunId: input.agentRunId,
+        control: input.control,
+      });
     },
   };
   return port;

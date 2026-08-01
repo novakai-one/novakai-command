@@ -14,6 +14,9 @@ import type {
   AgentRun, AgentRunLifecycle, ContinuationMode, LaunchConfigurationMode,
   LaunchSurface, RunOperation, SupervisionAssignment,
 } from './runs.js';
+import type {
+  AgentControlFacts, AgentControlOutcomeFacts, ControlCapabilityFacts,
+} from './ports.js';
 
 // ── Inputs ──────────────────────────────────────────────────────────────────
 
@@ -101,6 +104,22 @@ export interface AdoptAgentInput {
     | { readonly kind: 'human'; readonly principalId: HumanPrincipalId };
 }
 
+/**
+ * The two facts a caller actually has: which Run, and which version of it it
+ * read. Everything else a control needs — the Agent, the pinned plan, the
+ * provider session — is looked up from the Run, because accepting them from
+ * the request would let a caller aim a control at someone else's plan.
+ */
+export interface ApplyRunControlInput {
+  readonly agentRunId: AgentRunId;
+  readonly expectedRunVersion: RecordVersion;
+  readonly control: AgentControlFacts;
+}
+
+export interface DiscoverRunControlsInput {
+  readonly agentRunId: AgentRunId;
+}
+
 export interface ListAgentRunsFilter {
   readonly lifecycle?: readonly AgentRunLifecycle[];
   readonly agentId?: AgentId;
@@ -143,6 +162,14 @@ export interface AgentRunView {
     readonly parentAgentId?: AgentId;
     readonly childCount: number;
     readonly supervisor: SupervisionAssignment['supervisor'];
+    /**
+     * How many times supervision has been assigned. This is the number an
+     * adoption must quote as `expectedAssignmentVersion` — published here
+     * because a compare-and-set whose "expected" side is unreadable from the
+     * contract is not a safety mechanism (§12.2, and the same lesson B3a
+     * learned about `expectedNextInputSequence`).
+     */
+    readonly supervisionVersion: RecordVersion;
   };
   /**
    * Present as a NAMED absence until B3d: a zero here would be an invented
@@ -210,6 +237,15 @@ export interface AgentRuntimeCommands {
   ): Promise<B3Result<SupervisionAssignment>>;
 
   /**
+   * Change one control on a live Run (§12.1, B3R-006/025). Answers natively,
+   * refuses with a reason, or returns a replacement plan — never restarts an
+   * Agent on its own initiative.
+   */
+  applyRunControl(
+    context: CommandContext, input: ApplyRunControlInput,
+  ): Promise<B3Result<AgentControlOutcomeFacts>>;
+
+  /**
    * A provider turn began (§13.2). Activity is Runtime-authoritative, so
    * SOMETHING has to commit it: the gate when it submits a turn, and the
    * transport when a controller's input reaches a managed terminal.
@@ -246,6 +282,11 @@ export interface AgentRuntimeQueries {
   getAgentRunTree(
     principal: AuthenticatedPrincipal, input: GetAgentRunTreeInput,
   ): Promise<B3Result<AgentRunTreeView>>;
+
+  /** What could be changed on this Run, before anyone tries to change it. */
+  discoverRunControls(
+    principal: AuthenticatedPrincipal, input: DiscoverRunControlsInput,
+  ): Promise<B3Result<ControlCapabilityFacts>>;
 
   getRunOperation(
     principal: AuthenticatedPrincipal, operationId: RunOperationId,

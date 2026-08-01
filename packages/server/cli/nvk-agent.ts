@@ -8,6 +8,9 @@
 //   nvk-agent list [--state live|final|all]
 //   nvk-agent tree --root <agentId>
 //   nvk-agent inspect <agentRunId>
+//   nvk-agent attach <agentRunId>
+//   nvk-agent controls <agentRunId>
+//   nvk-agent control <agentRunId> --set model=<id>|effort=<v>|provider-setting=<v>
 //   nvk-agent interrupt <agentRunId>
 //   nvk-agent stop <agentId> --run <agentRunId> --confirm stop-one
 //   nvk-agent stop-tree <agentId> --prepare
@@ -31,14 +34,15 @@ import {
   type B3ClientOpId, type B3Result,
 } from '@novakai/foundation/contract';
 import type {
-  AgentRunTreeView, AgentRunView, RunOperationView, StopTreeConfirmation,
-  SupervisionAssignment,
+  AgentControlOutcomeFacts, AgentRunTreeView, AgentRunView, ControlCapabilityFacts,
+  RunOperationView, StopTreeConfirmation, SupervisionAssignment,
 } from '../../agent-runtime/contract/index.js';
 import type { AgentRoleProfile } from '../../agents/b3/contract/index.js';
 import { connectRuntime, type RuntimeClient } from '../core/b3/client.js';
 import {
   clientOpIdFrom, emit, fail, parseFlags, type Flags,
 } from '../core/b3/cli-shared.js';
+import { describeControls, describeList, describeRun, describeTree } from './agent-describe.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '..', '..', '..');
@@ -105,46 +109,6 @@ async function roleIdFor(client: RuntimeClient, given: string): Promise<B3Result
       { roleProfileId: given }, false));
   }
   return b3ok(matched[0]!.id);
-}
-
-/**
- * The sentence Chris needs, with the four facts kept apart: where it came from,
- * who supervises it, what it is doing, and what we do NOT know (§24.5).
- */
-function describeRun(view: AgentRunView): string {
-  const supervisor = view.family.supervisor.kind === 'agent'
-    ? `supervised by ${view.family.supervisor.agentId}`
-    : view.family.supervisor.kind === 'human'
-      ? `supervised by ${view.family.supervisor.principalId}`
-      : `orphaned (${view.family.supervisor.reason})`;
-  const family = view.family.parentAgentId === undefined
-    ? 'a root agent' : `child of ${view.family.parentAgentId}`;
-  const doubts = view.run.uncertainty.length === 0
-    ? '' : `\n  Not known: ${view.run.uncertainty.map((item) => item.summary).join('; ')}`;
-  return `${view.agent.displayName}  ${view.run.id}\n`
-    + `  ${view.provider.provider}/${view.provider.modelId} (${view.provider.effort}); `
-    + `${view.run.lifecycle}, ${view.run.activity}\n`
-    + `  Started from ${view.launch.surface} by ${view.launch.requestedBy}; ${family}; ${supervisor}\n`
-    + `  ${view.family.childCount} child agent(s); usage ${view.usage.quality} (${view.usage.reason})`
-    + doubts;
-}
-
-const describeList = (views: readonly AgentRunView[]): string =>
-  (views.length === 0 ? 'No agent runs.' : views.map(describeRun).join('\n\n'));
-
-/** Indented by generation, so the family reads as a family. */
-function describeTree(tree: AgentRunTreeView): string {
-  if (tree.nodes.length === 0) return 'No agents under that root.';
-  const depthOf = new Map<string, number>([[tree.rootAgentId, 0]]);
-  const lines: string[] = [];
-  for (const node of tree.nodes) {
-    const parent = node.family.parentAgentId;
-    const depth = parent === undefined ? 0 : (depthOf.get(parent) ?? 0) + 1;
-    depthOf.set(node.agent.agentId, depth);
-    lines.push(`${'  '.repeat(depth)}${node.agent.displayName} `
-      + `[${node.provider.provider}] ${node.run.lifecycle} — ${node.run.id}`);
-  }
-  return lines.join('\n');
 }
 
 const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
@@ -304,6 +268,60 @@ const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
     ), () => `${subjectAgentId} now answers to ${supervisor}. Who SPAWNED it is unchanged.`);
   },
 
+  /**
+   * Watch and type into a running Agent's terminal. It hands over to the
+   * Terminal CLI rather than reimplementing attach: one attach path, one lease,
+   * one stream (red gate 23).
+   */
+  async attach(argFlags) {
+    const agentRunId = argFlags.positional[0];
+    if (!agentRunId) return usage('agent attach', argFlags, '<agentRunId>');
+    emit('agent attach', argFlags, await withClient<AgentRunView>(
+      (client) => client.call('b3.agent.getRun', { agentRunId }),
+    ), (view) => (view.run.terminalSessionId === undefined
+      ? `${view.agent.displayName} has no terminal yet (${view.run.lifecycle}).`
+      : `${view.agent.displayName} is on ${view.run.terminalSessionId}.\n`
+        + `  Watch it:  nvk-terminal read ${view.run.terminalSessionId}\n`
+        + `  Type into it:  nvk-terminal attach ${view.run.terminalSessionId}`));
+  },
+
+  async controls(argFlags) {
+    const agentRunId = argFlags.positional[0];
+    if (!agentRunId) return usage('agent controls', argFlags, '<agentRunId>');
+    emit('agent controls', argFlags, await withClient<ControlCapabilityFacts>(
+      (client) => client.call('b3.agent.controls', { agentRunId }),
+    ), describeControls);
+  },
+
+  async control(argFlags) {
+    const agentRunId = argFlags.positional[0];
+    const setting = argFlags.value('set');
+    const separator = setting?.indexOf('=') ?? -1;
+    if (!agentRunId || setting === undefined || separator <= 0) {
+      return usage('agent control', argFlags, '<agentRunId> --set model|effort|provider-setting=<value>');
+    }
+    emit('agent control', argFlags, await withClient<AgentControlOutcomeFacts>(async (client) => {
+      // The version the CALLER read, so two people changing one Agent cannot
+      // both silently win.
+      const view = await client.call<AgentRunView>('b3.agent.getRun', { agentRunId });
+      if (!view.ok) return view;
+      return client.call('b3.agent.control', {
+        agentRunId,
+        expectedRunVersion: view.value.run.recordVersion,
+        control: { name: setting.slice(0, separator), value: setting.slice(separator + 1) },
+      }, operationId());
+    }), (outcome) => {
+      if (outcome.kind === 'applied-native') {
+        return `Changed ${outcome.control.name} to ${outcome.control.value}, in place.`;
+      }
+      if (outcome.kind === 'unsupported') return `Not possible: ${outcome.reason}`;
+      return 'That change needs a replacement run — nothing has changed yet.\n'
+        + `  To go ahead: nvk-agent continue <agentId> --from ${agentRunId} `
+        + `--mode fresh --config signed-control-replacement `
+        + `--replacement ${outcome.replacementPlanId}`;
+    });
+  },
+
   async operations(argFlags) {
     emit('agent operations', argFlags, await withClient<readonly RunOperationView[]>(
       (client) => client.call('b3.agent.listOperations', {}),
@@ -319,7 +337,8 @@ async function runCommand(name: string, argFlags: Flags): Promise<never> {
   const handler = COMMANDS[name];
   if (!handler) {
     return usage('agent', argFlags,
-      'roles|spawn|list|tree|inspect|interrupt|stop|stop-tree|continue|adopt|operations');
+      'roles|spawn|list|tree|inspect|attach|controls|control|interrupt|stop|stop-tree'
+      + '|continue|adopt|operations');
   }
   return handler(argFlags);
 }

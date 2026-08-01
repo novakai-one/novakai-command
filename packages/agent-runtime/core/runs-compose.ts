@@ -15,7 +15,8 @@ import {
   type PublicOperationName, type ReceiptStore, type RunOperationId,
 } from '@novakai/foundation/contract';
 import type {
-  AdoptAgentInput, AgentRunsContract, AgentRunView, ContinueAgentInput,
+  AdoptAgentInput, AgentRunsContract, AgentRunView, ApplyRunControlInput,
+  ContinueAgentInput,
   InterruptAgentTurnInput, PrepareStopAgentTreeInput, RunOperationView,
   SpawnAgentInput, StopAgentInput, StopAgentTreeInput,
 } from '../contract/runs-api.js';
@@ -31,6 +32,7 @@ import {
 } from './lifecycle.js';
 import { prepareStopAgentTree, stopAgentTree } from './stop-tree.js';
 import { adoptAgent } from './adoption.js';
+import { applyRunControl, discoverRunControls } from './controls.js';
 import { continueAgent } from './continue.js';
 import {
   getAgentRun, getAgentRunTree, getRunLaunchPlanId, getRunOperation, listAgentRuns,
@@ -150,6 +152,9 @@ export function composeAgentRuns(options: ComposeAgentRunsOptions): AgentRunsCon
     adoptAgent: guarded(OPERATION.adopt,
       (context, input: AdoptAgentInput) => adoptAgent(core, context, input)),
 
+    applyRunControl: guarded(OPERATION.control,
+      (context, input: ApplyRunControlInput) => applyRunControl(core, context, input)),
+
     async repairRunOperation(context: CommandContext, operationId: RunOperationId) {
       const version = versionGuard<RunOperationView>(context);
       if (version) return version;
@@ -162,6 +167,7 @@ export function composeAgentRuns(options: ComposeAgentRunsOptions): AgentRunsCon
     getAgentRun: (principal, agentRunId) => getAgentRun(core, principal, agentRunId),
     listAgentRuns: (principal, filter) => listAgentRuns(core, principal, filter),
     getAgentRunTree: (principal, input) => getAgentRunTree(core, principal, input),
+    discoverRunControls: (principal, input) => discoverRunControls(core, principal, input),
     getRunOperation: (principal, operationId) => getRunOperation(core, principal, operationId),
     listRunOperations: (principal: AuthenticatedPrincipal, filter) =>
       listRunOperations(core, principal, filter),
