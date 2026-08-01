@@ -40,6 +40,7 @@ import {
 } from './queries.js';
 import { getAgentRunTree } from './tree.js';
 import { repairRunOperation } from './repair.js';
+import { createRunEventLog } from './events.js';
 
 export interface ComposeAgentRunsOptions extends RunsStoreOptions {
   /**
@@ -64,6 +65,12 @@ export interface ComposeAgentRunsOptions extends RunsStoreOptions {
 const DEFAULT_GATE_TIMEOUT_MS = 120_000;
 
 export function composeAgentRuns(options: ComposeAgentRunsOptions): AgentRunsContract {
+  // Every published event lands here first, so the stream a consumer reads and
+  // the frames a controller is pushed are the same events with the same
+  // cursors — not two views of "something happened" that can disagree.
+  const events = createRunEventLog();
+  const publish = options.publish;
+
   const core: RunsCore = {
     store: options.store ?? createRunsStore(options),
     agents: options.agents,
@@ -72,7 +79,10 @@ export function composeAgentRuns(options: ComposeAgentRunsOptions): AgentRunsCon
     credentials: options.credentials,
     receipts: options.receipts ?? composeReceiptStore(options),
     fence: options.fence,
-    publish: options.publish ?? (() => undefined),
+    publish: (kind, payload, traceId) => {
+      const event = events.append(kind, payload, traceId);
+      publish?.(kind, { ...payload, cursor: event.cursor, eventId: event.eventId });
+    },
     defaultViewport: options.defaultViewport ?? { columns: 120, rows: 40 },
     gateTimeoutMs: options.gateTimeoutMs ?? DEFAULT_GATE_TIMEOUT_MS,
     clock: options.clock ?? (() => Date.now()),
@@ -172,6 +182,9 @@ export function composeAgentRuns(options: ComposeAgentRunsOptions): AgentRunsCon
     getAgentRunTree: (principal, input) => getAgentRunTree(core, principal, input),
     discoverRunControls: (principal, input) => discoverRunControls(core, principal, input),
     getRunOperation: (principal, operationId) => getRunOperation(core, principal, operationId),
+    subscribeRunEvents: (_principal, after) => events.subscribe(after),
+    readRunEvents: async (_principal, input) => events.read(input.after, input.limit ?? 200),
+
     getTreeFence: (principal, input) => insideClosingTree(
       core, { principal, clientOpId: mintClientOpId(), traceId: mintTraceCorrelationId(), contractVersion: 1 },
       input.agentId,

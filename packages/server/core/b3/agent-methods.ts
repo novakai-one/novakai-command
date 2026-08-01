@@ -20,7 +20,9 @@ import {
 import {
   readCreateRoleProfileInput, readIssueDelegationGrantInput, readUpdateRoleProfileInput,
 } from '../../../agents/b3/contract/index.js';
-import { readAgentIdInput, readListGrantsFilter } from './agent-reads.js';
+import {
+  readAgentIdInput, readListGrantsFilter, readReadRunEventsInput,
+} from './agent-reads.js';
 import type { CallerSession, MethodTable } from '../../contract/protocol.js';
 import type { B3Runtime } from './composition.js';
 
@@ -209,6 +211,13 @@ export function buildB3AgentMethods(options: B3AgentMethodOptions): MethodTable 
       (payload, context) => runs.applyRunControl(context, payload)),
     'b3.agent.applyControl': method(readApplyRunControlInput,
       (payload, context) => runs.applyRunControl(context, payload)),
+
+    // §16.2's `subscribeEvents`, on a request/response frame: a bounded page
+    // from the caller's cursor, while the host pushes what follows as ordinary
+    // v1 event frames. Both halves carry the SAME cursors, so a consumer that
+    // misses a push resumes from the last one it saw (§15).
+    'b3.agent.subscribeEvents': method(readReadRunEventsInput,
+      (payload, _context, principal) => runs.readRunEvents(principal, payload)),
 
     // §12.1 publishes `issueDelegationGrant`; §16.2 lists no wire name for it,
     // so it takes the name every §16.2 method has — the capability method,

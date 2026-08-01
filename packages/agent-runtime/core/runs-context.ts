@@ -3,7 +3,7 @@ import {
   b3err, b3fail, b3ok, mintClientOpId, mintSupervisionAssignmentId, nowIsoUtc,
   type AgentId, type AgentRunId, type AuthorityScope, type B3Result,
   type CommandContext, type ReceiptStore, type RecordVersion,
-  type SystemCommandContext,
+  type SystemCommandContext, type TraceCorrelationId,
 } from '@novakai/foundation/contract';
 import type { RuntimeHostContract } from '../contract/types.js';
 import type {
@@ -23,7 +23,11 @@ export interface RunsCore {
   readonly receipts: ReceiptStore;
   readonly fence: RuntimeHostContract['fence'];
   /** Emitted after a commit, never before it (§15). */
-  readonly publish: (kind: string, payload: Readonly<Record<string, unknown>>) => void;
+  readonly publish: (
+    kind: string,
+    payload: Readonly<Record<string, unknown>>,
+    traceId?: TraceCorrelationId,
+  ) => void;
   readonly defaultViewport: { readonly columns: number; readonly rows: number };
   /** How long the gate waits for turn 1's confirmation before failing it. */
   readonly gateTimeoutMs: number;

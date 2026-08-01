@@ -20,10 +20,12 @@ import { buildB3AgentMethods } from '../core/b3/agent-methods.js';
 /** The §16.2 names, as written in the spec. */
 const PUBLISHED = [
   'b3.agent.spawn', 'b3.agent.continue', 'b3.agent.adopt',
-  'b3.agent.interrupt', 'b3.agent.stop', 'b3.agent.stopTree',
+  'b3.agent.interrupt', 'b3.agent.stop', 'b3.agent.prepareStopTree', 'b3.agent.stopTree',
   'b3.agent.getRun', 'b3.agent.listRuns', 'b3.agent.getTree',
   'b3.agent.getControls', 'b3.agent.applyControl',
   'b3.agent.getOperation', 'b3.agent.listOperations',
+  'b3.agent.createRole', 'b3.agent.updateRole',
+  'b3.agent.subscribeEvents',
 ] as const;
 
 test('every method §16.2 publishes is on the table, by its published name', async () => {

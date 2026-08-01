@@ -81,3 +81,42 @@ test('an operator can define a role and spawn from a clean data root, by CLI alo
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('an operator can read the stream, the fence and the grants by CLI', async () => {
+  // §17.1 lists `nvk agent events [--after <cursor>]` among the canonical
+  // commands and it did not exist; the fence, the grants and the repair door
+  // had no operator surface either, so every one of them was reachable only by
+  // someone willing to write a WebSocket client (hold-out D10, E9, G6, H3).
+  const root = mkdtempSync(path.join(tmpdir(), 'nvk-b3b-cli-reads-'));
+  const host = await startRuntimeHost({
+    root, port: 0, ptyHost: createFakePtyHost(), providers: createFakeProviderAdapters(),
+  });
+  try {
+    const file = path.join(root, 'role.json');
+    writeFileSync(file, JSON.stringify(chatRole('cli-watched')), 'utf8');
+    const where = ['--root', root, '--port', String(host.port), '--json'];
+    await runNvk(['agent', 'define-role', '--file', file, ...where]);
+    const spawned = await runNvk([
+      'agent', 'spawn', '--role', 'cli-watched', '--name', 'Watched', '--cwd', root, ...where,
+    ]);
+    assert.equal(spawned.code, 0, `spawn failed: ${spawned.out}`);
+    const agentId = /agent_[0-9a-f-]{36}/.exec(spawned.out)?.[0] ?? '';
+    assert.notEqual(agentId, '', `no agentId in ${spawned.out}`);
+
+    const events = await runNvk(['agent', 'events', ...where]);
+    assert.equal(events.code, 0, `events failed: ${events.out}`);
+    assert.equal(events.out.includes('agent.run.lifecycle.changed'), true,
+      `the spawn published nothing an operator can read: ${events.out}`);
+
+    const fence = await runNvk(['agent', 'fence', agentId, ...where]);
+    assert.equal(fence.code, 0, `fence failed: ${fence.out}`);
+
+    const grants = await runNvk(['agent', 'grants', ...where]);
+    assert.equal(grants.code, 0, `grants failed: ${grants.out}`);
+    assert.equal(grants.out.includes('delegationGrant_'), true,
+      `the grants the Runtime issues are invisible: ${grants.out}`);
+  } finally {
+    await host.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});

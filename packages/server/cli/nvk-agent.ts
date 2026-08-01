@@ -35,15 +35,17 @@ import {
 } from '@novakai/foundation/contract';
 import type {
   AgentControlOutcomeFacts, AgentRunTreeView, AgentRunView, ControlCapabilityFacts,
-  RunOperationView, StopTreeConfirmation, SupervisionAssignment,
+  RunEventPage, RunOperationView, StopTreeConfirmation, SupervisionAssignment,
+  TreeMutationFence,
 } from '../../agent-runtime/contract/index.js';
-import type { AgentRoleProfile } from '../../agents/b3/contract/index.js';
+import type { AgentRoleProfile, DelegationGrant } from '../../agents/b3/contract/index.js';
 import { connectRuntime, type RuntimeClient } from '../core/b3/client.js';
 import {
   clientOpIdFrom, emit, fail, parseFlags, type Flags,
 } from '../core/b3/cli-shared.js';
 import { describeControls, describeList, describeRun, describeTree } from './agent-describe.js';
 import { roleFromFile, roleIdFor } from './agent-roles.js';
+import { observeCommands } from './agent-observe.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '..', '..', '..');
@@ -174,8 +176,12 @@ const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
     // at a directory called `agent_x` as well as mis-targeting the tree.
     const rootAgentId = argFlags.value('agent') ?? argFlags.positional[0];
     if (!rootAgentId) return usage('agent tree', argFlags, '<agentId> | --agent <agentId>');
+    const direction = argFlags.value('direction');
     emit('agent tree', argFlags, await withClient<AgentRunTreeView>(
-      (client) => client.call('b3.agent.getTree', { rootAgentId, maxDepth: 8 }),
+      (client) => client.call('b3.agent.getTree', {
+        rootAgentId, maxDepth: 8,
+        ...(direction === undefined ? {} : { direction }),
+      }),
     ), describeTree);
   },
 
@@ -335,6 +341,8 @@ const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
     });
   },
 
+  ...observeCommands({ withClient, emit, usage, operationId }),
+
   async operations(argFlags) {
     emit('agent operations', argFlags, await withClient<readonly RunOperationView[]>(
       (client) => client.call('b3.agent.listOperations', {}),
@@ -349,9 +357,9 @@ async function runCommand(name: string, argFlags: Flags): Promise<never> {
   if (!mintedOperationId.ok) return fail(`agent ${name}`, argFlags, mintedOperationId.error);
   const handler = COMMANDS[name];
   if (!handler) {
-    return usage('agent', argFlags,
-      'roles|define-role|spawn|list|tree|inspect|attach|controls|control|interrupt|stop|stop-tree'
-      + '|continue|adopt|operations');
+    // Derived from the table, so a verb added without a usage line is
+    // impossible rather than merely unlikely.
+    return usage('agent', argFlags, Object.keys(COMMANDS).join('|'));
   }
   return handler(argFlags);
 }

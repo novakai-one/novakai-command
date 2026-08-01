@@ -6,7 +6,7 @@
 // `unknown` before anything acts on it (§4.2 MUST).
 import {
   readBoundary,
-  type AgentId, type AgentRunId, type B3Result,
+  type AgentId, type AgentRunId, type B3Result, type EventCursor,
 } from '@novakai/foundation/contract';
 
 export function readAgentIdInput(
@@ -15,6 +15,20 @@ export function readAgentIdInput(
   return readBoundary(candidate, (field) => ({
     agentId: field.id<AgentId>('agentId', 'agent', 'uuidv4'),
   }));
+}
+
+export function readReadRunEventsInput(
+  candidate: unknown,
+): B3Result<{ readonly after?: EventCursor; readonly limit?: number }> {
+  return readBoundary(candidate, (field) => {
+    const after = field.given('after') === undefined
+      ? undefined : field.text('after') as EventCursor;
+    const limit = field.optionalCount('limit', 1, 1_000);
+    return {
+      ...(after === undefined ? {} : { after }),
+      ...(limit === undefined ? {} : { limit }),
+    };
+  });
 }
 
 export function readListGrantsFilter(

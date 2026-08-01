@@ -58,7 +58,18 @@ export interface RunningRuntimeHost {
 export async function startRuntimeHost(
   options: RuntimeHostProcessOptions,
 ): Promise<RunningRuntimeHost> {
-  const runtime = await composeB3Runtime(options);
+  // Live events leave as ordinary v1 event frames, exactly as terminal output
+  // does. Composition is where that is decided: the capability publishes, and
+  // the HOST chooses who hears it (§12.6 — server transports, it owns no state).
+  let broadcastEvent: (kind: string, payload: Readonly<Record<string, unknown>>) => void
+    = () => undefined;
+  const runtime = await composeB3Runtime({
+    ...options,
+    publish: (kind, payload) => {
+      options.publish?.(kind, payload);
+      broadcastEvent(kind, payload);
+    },
+  });
   const principalId = options.principalId ?? ('person_chris' as HumanPrincipalId);
 
   /**
@@ -174,6 +185,10 @@ export async function startRuntimeHost(
       void detachConnection(connectionId);
     },
   });
+
+  broadcastEvent = (kind, payload) => {
+    transport.broadcast('b3.agent.event', { kind, ...payload });
+  };
 
   const sightings = setInterval(() => { void reportSightings(); }, SIGHTING_INTERVAL_MS);
   sightings.unref(); // a heartbeat must never be the reason a process stays up

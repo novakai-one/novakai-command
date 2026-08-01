@@ -266,6 +266,11 @@ const WIRE_STEPS: readonly WireStep[] = [
     }),
   },
   { method: 'b3.agent.listGrants', payload: () => ({}) },
+  {
+    // Read the stream this whole life published, from the beginning.
+    method: 'b3.agent.subscribeEvents',
+    payload: () => ({ limit: 50 }),
+  },
 ];
 
 interface Rig {

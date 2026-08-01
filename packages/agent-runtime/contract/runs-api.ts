@@ -8,7 +8,7 @@ import type {
   AgentId, AgentRunId, AuthenticatedPrincipal, B3Page, B3Result, CommandContext,
   ControlReplacementPlanId, EventCursor, HumanPrincipalId, IsoUtc,
   ProviderSessionId, ProviderTurnId, ActivityGeneration, RecordVersion,
-  AgentRoleProfileId, ResolvedLaunchPlanId, RunOperationId,
+  AgentRoleProfileId, ResolvedLaunchPlanId, RunOperationId, TraceCorrelationId,
 } from '@novakai/foundation/contract';
 import type {
   AgentRun, AgentRunLifecycle, ContinuationMode, LaunchConfigurationMode,
@@ -218,14 +218,28 @@ export interface AgentRunTreeView {
   readonly generatedAt: IsoUtc;
 }
 
+/** The §15 envelope, whole. A consumer reads events, not payloads. */
 export interface RunEvent {
   readonly eventId: string;
   readonly kind: string;
   readonly schemaVersion: 1;
   readonly occurredAt: IsoUtc;
+  readonly committedAt: IsoUtc;
   readonly sourceOwner: 'agent-runtime';
+  readonly traceId: TraceCorrelationId;
   readonly cursor: EventCursor;
   readonly payload: Readonly<Record<string, unknown>>;
+}
+
+export interface RunEventPage {
+  readonly events: readonly RunEvent[];
+  /** Feed this back as `after` to continue exactly where this page ended. */
+  readonly nextCursor: EventCursor;
+}
+
+export interface ReadRunEventsInput {
+  readonly after?: EventCursor;
+  readonly limit?: number;
 }
 
 // ── The contract ────────────────────────────────────────────────────────────
@@ -315,6 +329,24 @@ export interface AgentRuntimeQueries {
   getRunOperation(
     principal: AuthenticatedPrincipal, operationId: RunOperationId,
   ): Promise<B3Result<RunOperationView>>;
+
+  /**
+   * §12.2's event subscription: every event after `after`, live, until the
+   * consumer stops reading. An expired cursor yields ONE typed gap and ends —
+   * §15 forbids resuming silently at "now".
+   */
+  subscribeRunEvents(
+    principal: AuthenticatedPrincipal, after?: EventCursor,
+  ): AsyncIterable<B3Result<RunEvent>>;
+
+  /**
+   * The same stream, pulled. A request/response wire cannot hold an
+   * `AsyncIterable` open, so the socket method reads a bounded page and the
+   * host pushes what follows as ordinary v1 event frames (§16.1).
+   */
+  readRunEvents(
+    principal: AuthenticatedPrincipal, input: ReadRunEventsInput,
+  ): Promise<B3Result<RunEventPage>>;
 
   /**
    * The tree-closing fence covering this Agent, or `null` when nothing is
