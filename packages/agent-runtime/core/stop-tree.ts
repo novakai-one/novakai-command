@@ -83,13 +83,53 @@ export async function stopAgentTree(
   const outcomes = await stopEachBottomUp(core, context, order.value, epoch.value);
   if (!outcomes.ok) return outcomes;
 
-  const everyOneStopped = outcomes.value.every((item) => item.outcome === 'succeeded');
-  if (everyOneStopped) await releaseFence(core, fenced.value);
-  return settleOperation(
-    core, opened.value.operation,
-    everyOneStopped ? 'completed' : 'tree-stop-pending',
-    { perAgentOutcomes: outcomes.value },
+  return settleTreeStop(core, opened.value.operation, fenced.value, outcomes.value);
+}
+
+/**
+ * Release the fence and settle — or REFUSE, naming the operation to resume.
+ *
+ * A partial stop used to come back `ok` carrying a `tree-stop-pending`
+ * operation. The command receipt above then settled `succeeded` over it, so the
+ * retry §20 promises ("resume same operation") replayed that pending answer
+ * instead of running, and the half-stopped subtree stayed half-stopped. The
+ * outcome of a command that did not do what it was asked is a typed failure —
+ * retryable, because the same request with the same key is exactly what should
+ * be sent again (§11).
+ */
+export async function settleTreeStop(
+  core: RunsCore,
+  operation: RunOperation,
+  fence: TreeMutationFence | null,
+  outcomes: NonNullable<RunOperation['perAgentOutcomes']>,
+): Promise<B3Result<RunOperation>> {
+  const unfinished = outcomes.filter((item) => item.outcome !== 'succeeded');
+  if (unfinished.length === 0 && fence !== null) await releaseFence(core, fence);
+  const settled = await settleOperation(
+    core, operation,
+    unfinished.length === 0 ? 'completed' : 'tree-stop-pending',
+    { perAgentOutcomes: outcomes },
   );
+  if (!settled.ok || unfinished.length === 0) return settled;
+  return b3fail(b3err('RecoveryRequired',
+    `${String(unfinished.length)} of ${String(outcomes.length)} Agents were not stopped; `
+    + 'the fence is still closed and this operation can be resumed',
+    {
+      operationId: operation.id,
+      stage: 'tree-stop-pending',
+      reason: unfinished.map((item) => `${item.agentId}: ${item.reason ?? item.outcome}`).join('; '),
+    }, true));
+}
+
+/** The fence this operation closed, if it is still closing. */
+export async function fenceOfOperation(
+  core: RunsCore, operation: RunOperation,
+): Promise<B3Result<TreeMutationFence | null>> {
+  const fences = await core.store.list<TreeMutationFence>('treeMutationFence', {
+    operationId: operation.id, state: 'closing',
+  });
+  if (!fences.ok) return fences;
+  return b3ok(fences.value[0] ?? null);
 }
 
 /**
@@ -116,7 +156,7 @@ async function confirmedOrder(
   return b3ok([...snapshot.value].reverse().concat(input.rootAgentId));
 }
 
-async function stopEachBottomUp(
+export async function stopEachBottomUp(
   core: RunsCore,
   context: CommandContext,
   order: readonly AgentId[],

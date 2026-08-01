@@ -237,6 +237,12 @@ export interface GovernedAgentsQueries {
     principal: AuthenticatedPrincipal, parentAgentId: AgentId,
   ): Promise<B3Result<readonly AgentRelationship[]>>;
 
+  /** Every active grant this caller may see, optionally one holder's (§12.1). */
+  listDelegationGrants(
+    principal: AuthenticatedPrincipal,
+    filter?: { readonly holderAgentRunId?: AgentRunId },
+  ): Promise<B3Result<readonly DelegationGrant[]>>;
+
   getProviderSession(
     principal: AuthenticatedPrincipal, providerSessionId: ProviderSessionId,
   ): Promise<B3Result<ProviderSessionView>>;

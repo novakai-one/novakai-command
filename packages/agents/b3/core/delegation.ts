@@ -314,3 +314,27 @@ export async function expireGrantsOfRun(
   }
   return b3ok({ expired });
 }
+
+/**
+ * The grants a caller may SEE (§12.1, hold-out D10).
+ *
+ * Grants were being written all along — a blind consumer watched
+ * `delegationGrants.jsonl` grow — but nothing read them back, so every §22 row
+ * that turns on a grant was untestable from outside. A human sees the machine's
+ * grants; an Agent Run sees only the ones it holds, because a grant it cannot
+ * use is not its business.
+ */
+export async function listDelegationGrants(
+  core: GovernedAgentsCore,
+  principal: AuthenticatedPrincipal,
+  filter: { readonly holderAgentRunId?: string } = {},
+): Promise<B3Result<readonly DelegationGrant[]>> {
+  const listed = await core.store.list<DelegationGrant>('delegationGrant', { status: 'active' });
+  if (!listed.ok) return listed;
+  const visible = principal.kind === 'agent-run'
+    ? listed.value.filter((grant) => grant.issuerAgentRunId === principal.agentRunId)
+    : listed.value;
+  const holder = filter.holderAgentRunId;
+  if (holder === undefined) return b3ok(visible);
+  return b3ok(visible.filter((grant) => grant.issuerAgentRunId === holder));
+}

@@ -244,6 +244,28 @@ const WIRE_STEPS: readonly WireStep[] = [
     payload: (state) => ({ operationId: state.operationId }),
   },
   { method: 'b3.agent.listOperations', payload: () => ({}) },
+  {
+    // The stop above completed, so repairing it is the honest no-op case: the
+    // door exists, answers, and does not re-drive a finished operation.
+    method: 'b3.agent.repairOperation',
+    payload: (state) => ({ operationId: state.operationId }),
+  },
+  {
+    // The team is stopped, so nothing is freezing it. `null` is the answer.
+    method: 'b3.agent.getTreeFence',
+    payload: (state) => ({ agentId: state.managerAgentId }),
+  },
+  {
+    method: 'b3.agent.issueGrant',
+    payload: (state) => ({
+      issuerAgentRunId: state.managerRunId,
+      subjectAgentId: state.managerAgentId,
+      targetAgentIds: [state.builderAgentId],
+      requestedScopes: ['agent.interrupt'],
+      requestedChildRoleIds: [],
+    }),
+  },
+  { method: 'b3.agent.listGrants', payload: () => ({}) },
 ];
 
 interface Rig {

@@ -12,7 +12,7 @@ import type {
 } from '@novakai/foundation/contract';
 import type {
   AgentRun, AgentRunLifecycle, ContinuationMode, LaunchConfigurationMode,
-  LaunchSurface, RunOperation, SupervisionAssignment,
+  LaunchSurface, RunOperation, SupervisionAssignment, TreeMutationFence,
 } from './runs.js';
 import type {
   AgentControlFacts, AgentControlOutcomeFacts, AgentRelationshipFacts,
@@ -315,6 +315,19 @@ export interface AgentRuntimeQueries {
   getRunOperation(
     principal: AuthenticatedPrincipal, operationId: RunOperationId,
   ): Promise<B3Result<RunOperationView>>;
+
+  /**
+   * The tree-closing fence covering this Agent, or `null` when nothing is
+   * freezing it (§6.2, §13.7 step 3).
+   *
+   * Published because "fence" is named in B3b's exit line and was provable only
+   * from inside the code: a blind consumer could see `TreeClosing` refusals but
+   * could not read the fence that caused them, and a stop that only half worked
+   * leaves the fence closed with no other way to notice (hold-out E9).
+   */
+  getTreeFence(
+    principal: AuthenticatedPrincipal, input: { readonly agentId: AgentId },
+  ): Promise<B3Result<TreeMutationFence | null>>;
 
   /**
    * Every operation, or only the ones an earlier epoch left unfinished.

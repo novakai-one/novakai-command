@@ -27,6 +27,7 @@ import { getLaunchPlan, resolveLaunchPlan } from './plans.js';
 import { getAgentTree, listChildren, recordRelationship } from './relationships.js';
 import {
   authoriseRunOperation, authoriseSpawn, expireGrantsOfRun, issueDelegationGrant,
+  listDelegationGrants,
 } from './delegation.js';
 import { applyAgentControl, discoverAgentControls } from './controls.js';
 import { getProviderSession, registerProviderSession } from './sessions.js';
@@ -105,6 +106,8 @@ export function composeGovernedAgents(
         () => registerProviderSession(core, context, input),
       );
     },
+
+    listDelegationGrants: (principal, filter) => listDelegationGrants(core, principal, filter),
 
     expireGrantsOfRun: (context, agentRunId) =>
       expireGrantsOfRun(core, context, agentRunId),

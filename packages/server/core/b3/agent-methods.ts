@@ -18,8 +18,9 @@ import {
   readRunOperationIdInput, readSpawnAgentInput, readStopAgentInput, readStopAgentTreeInput,
 } from '../../../agent-runtime/contract/index.js';
 import {
-  readCreateRoleProfileInput, readUpdateRoleProfileInput,
+  readCreateRoleProfileInput, readIssueDelegationGrantInput, readUpdateRoleProfileInput,
 } from '../../../agents/b3/contract/index.js';
+import { readAgentIdInput, readListGrantsFilter } from './agent-reads.js';
 import type { CallerSession, MethodTable } from '../../contract/protocol.js';
 import type { B3Runtime } from './composition.js';
 
@@ -77,6 +78,42 @@ function readClientOpId(given: string | undefined): B3Result<ClientOpId> {
       { issues: [{ path: 'clientOpId', message: `not a ClientOpId: ${given}` }] }, false));
   }
   return b3ok(given as ClientOpId);
+}
+
+/**
+ * An Agent may only hand its authority to a Run it can already reach.
+ *
+ * `issuerAgentRunId` names the Run a grant is FOR — the Run it dies with — and
+ * it arrives in the payload, because a human legitimately names somebody else's
+ * Run. For an Agent caller that is authority-widening by target: "hand my own
+ * bounded authority to a stranger's Run" (the residue P0-4 reported and could
+ * not close inside Agents, which cannot map a Run to its Agent without crossing
+ * the one-writer boundary). The composition root CAN: it holds both contracts,
+ * so it asks each owner its own question and joins the answers here.
+ */
+async function issuerWithinReach(
+  runtime: B3Runtime,
+  principal: AuthenticatedPrincipal,
+  issuerAgentRunId: string,
+): Promise<B3Result<null>> {
+  if (principal.kind !== 'agent-run' || principal.agentRunId === undefined) return b3ok(null);
+  if (issuerAgentRunId === principal.agentRunId) return b3ok(null);
+
+  const denied = b3fail(b3err('PermissionDenied',
+    'a grant may only name a Run inside the issuing Agent\'s own reach',
+    { operation: 'agent.issueGrant', requiredScope: 'agent.delegate' }, false));
+
+  const holder = await runtime.runs.getAgentRun(principal, issuerAgentRunId as never);
+  const caller = await runtime.runs.getAgentRun(principal, principal.agentRunId);
+  if (!holder.ok || !caller.ok) return denied;
+  const family = await runtime.agents.getAgentTree(principal, {
+    rootAgentId: caller.value.agent.agentId, direction: 'descendants', maxDepth: 64,
+  });
+  if (!family.ok) return denied;
+  const inside = family.value.items.some(
+    (node) => node.agent.id === holder.value.agent.agentId,
+  );
+  return inside ? b3ok(null) : denied;
 }
 
 export function buildB3AgentMethods(options: B3AgentMethodOptions): MethodTable {
@@ -172,6 +209,34 @@ export function buildB3AgentMethods(options: B3AgentMethodOptions): MethodTable 
       (payload, context) => runs.applyRunControl(context, payload)),
     'b3.agent.applyControl': method(readApplyRunControlInput,
       (payload, context) => runs.applyRunControl(context, payload)),
+
+    // §12.1 publishes `issueDelegationGrant`; §16.2 lists no wire name for it,
+    // so it takes the name every §16.2 method has — the capability method,
+    // minus the noise (`getAgentRun` → `getRun`). Without it, `DelegationGrant`
+    // was written on every spawn and readable by nobody, and the four §22 rows
+    // that turn on a grant could not be tested from outside at all (D10).
+    'b3.agent.issueGrant': method(readIssueDelegationGrantInput,
+      async (payload, context, principal) => {
+        const reachable = await issuerWithinReach(
+          options.runtime, principal, payload.issuerAgentRunId,
+        );
+        if (!reachable.ok) return reachable;
+        return agents.issueDelegationGrant(context, payload);
+      }),
+
+    'b3.agent.listGrants': method(readListGrantsFilter,
+      (payload, _context, principal) => agents.listDelegationGrants(principal, payload)),
+
+    // §12.2's recovery action, and until now `unknown method`: a stranded
+    // operation had no public cleanup at all (G6).
+    'b3.agent.repairOperation': method(readRunOperationIdInput,
+      (payload, context) => runs.repairRunOperation(context, payload.operationId)),
+
+    // "fence" is named in B3b's exit line and was provable only from inside the
+    // code (E9). A partial stop leaves it closed, which is exactly when someone
+    // needs to see it.
+    'b3.agent.getTreeFence': method(readAgentIdInput,
+      (payload, _context, principal) => runs.getTreeFence(principal, payload)),
 
     'b3.agent.getRoles': method(noPayload, async (_payload, _context, principal) => {
       // A list of every role, so `nvk agent spawn --role builder` can resolve a

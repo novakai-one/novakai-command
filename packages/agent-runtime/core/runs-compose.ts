@@ -10,7 +10,7 @@
 // happened and queries them by key instead of repeating them (§13.5). Refusing
 // at the receipt layer would put that recovery permanently out of reach.
 import {
-  b3ok, composeReceiptStore,
+  b3ok, composeReceiptStore, mintClientOpId, mintTraceCorrelationId,
   type AuthenticatedPrincipal, type B3Result, type CommandContext,
   type PublicOperationName, type ReceiptStore, type RunOperationId,
 } from '@novakai/foundation/contract';
@@ -30,7 +30,7 @@ import { spawnAgent } from './spawn.js';
 import {
   beginProviderTurn, endProviderTurn, interruptAgentTurn, stopAgent,
 } from './lifecycle.js';
-import { prepareStopAgentTree, stopAgentTree } from './stop-tree.js';
+import { insideClosingTree, prepareStopAgentTree, stopAgentTree } from './stop-tree.js';
 import { adoptAgent } from './adoption.js';
 import { applyRunControl, discoverRunControls } from './controls.js';
 import { continueAgent } from './continue.js';
@@ -39,6 +39,7 @@ import {
   listRunOperations, reconcileAfterRestart, runsCensus, viewOfRun,
 } from './queries.js';
 import { getAgentRunTree } from './tree.js';
+import { repairRunOperation } from './repair.js';
 
 export interface ComposeAgentRunsOptions extends RunsStoreOptions {
   /**
@@ -159,10 +160,11 @@ export function composeAgentRuns(options: ComposeAgentRunsOptions): AgentRunsCon
     async repairRunOperation(context: CommandContext, operationId: RunOperationId) {
       const version = versionGuard<RunOperationView>(context);
       if (version) return version;
-      // Repair is a QUERY of what happened plus a decision by whoever reads it.
-      // It deliberately does not re-drive effects: §20 says an uncertain effect
-      // is reconciled, and reconciliation is not something to do automatically.
-      return getRunOperation(core, context.principal, operationId);
+      // Not receipt-guarded: repair is idempotent by construction (it re-reads
+      // the journal and only finishes what is unfinished), and a receipt would
+      // cache the FIRST repair's answer over an operation whose whole point is
+      // that it may need asking again.
+      return repairRunOperation(core, context, operationId);
     },
 
     getAgentRun: (principal, agentRunId) => getAgentRun(core, principal, agentRunId),
@@ -170,6 +172,10 @@ export function composeAgentRuns(options: ComposeAgentRunsOptions): AgentRunsCon
     getAgentRunTree: (principal, input) => getAgentRunTree(core, principal, input),
     discoverRunControls: (principal, input) => discoverRunControls(core, principal, input),
     getRunOperation: (principal, operationId) => getRunOperation(core, principal, operationId),
+    getTreeFence: (principal, input) => insideClosingTree(
+      core, { principal, clientOpId: mintClientOpId(), traceId: mintTraceCorrelationId(), contractVersion: 1 },
+      input.agentId,
+    ),
     listRunOperations: (principal: AuthenticatedPrincipal, filter) =>
       listRunOperations(core, principal, filter),
     getRunLaunchPlanId: (principal, agentRunId) =>
