@@ -7,7 +7,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  deterministicId, isValidId,
+  agentRunPrincipalId, deterministicId, isValidId,
   mintAgentRelationshipId, mintAgentRunId, mintControlReplacementPlanId,
   mintDelegationGrantId, mintProviderSessionId, mintResolvedLaunchPlanId,
   mintAgentRoleProfileId, mintRunContinuationId, mintRunOperationId,
@@ -106,4 +106,21 @@ test('a field carrying the tuple separator is refused, not hashed', () => {
     deterministicId('agentRelationship', ['ab', 'c']),
     deterministicId('agentRelationship', ['a', 'bc']),
   );
+});
+
+test('a Run PRINCIPAL id can never be mistaken for the Run it names (red gate 3)', () => {
+  const agentRunId = mintAgentRunId();
+  const principalId = agentRunPrincipalId(agentRunId as never);
+
+  // It CONTAINS the Run id on purpose — that is what makes a `createdBy` line
+  // traceable back to the Run that wrote it. The risk that creates is exactly
+  // red gate 3: containing an id must not mean passing FOR one.
+  assert.ok(principalId.includes(agentRunId), 'the principal must name its Run');
+  assert.equal(isValidId(principalId, 'agentRun', 'uuidv7'), false,
+    'a principal id validated as an AgentRunId — those are interchangeable now');
+  assert.notEqual(principalId, agentRunId);
+
+  // Derived, not minted: the same Run always authenticates as the same
+  // principal, so its trail is one trail rather than one per connection.
+  assert.equal(agentRunPrincipalId(agentRunId as never), principalId);
 });
