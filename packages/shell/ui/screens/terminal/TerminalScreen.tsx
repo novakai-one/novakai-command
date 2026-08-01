@@ -9,7 +9,8 @@ import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import './TerminalScreen.css';
 import {
-  describeTerminal, type TerminalOutcome, type TerminalTabView,
+  chooseAdoptable, describeTerminal, SHELL_INSTANCE_ID,
+  type TerminalOutcome, type TerminalTabView,
 } from '../../../contract/terminalServices.js';
 import type { TerminalConnection } from '../../../app/terminalClient.js';
 
@@ -24,12 +25,18 @@ interface Attached {
   readonly leaseGeneration: number;
 }
 
-/** Reuse the session already running, or start one. Reuse is the normal case. */
+/**
+ * Reuse the session this tab left running, or start one. Reuse is the normal
+ * case — but only of a session this shell owns, in this directory. Anything
+ * else on the machine belongs to someone else (see `chooseAdoptable`).
+ */
 async function adoptOrOpen(
   services: TerminalConnection, workingDirectory: string, columns: number, rows: number,
 ): Promise<TerminalOutcome<TerminalTabView>> {
   const existing = await services.listTerminals();
-  const reuse = existing.succeeded ? existing.value[0] : undefined;
+  const reuse = existing.succeeded
+    ? chooseAdoptable(existing.value, workingDirectory, SHELL_INSTANCE_ID)
+    : null;
   if (reuse) return { succeeded: true, value: reuse };
   return services.openTerminal(workingDirectory, columns, rows);
 }
@@ -51,6 +58,8 @@ export function TerminalScreen(props: TerminalScreenProps): React.JSX.Element {
   const terminal = useRef<Terminal | null>(null);
   const fitter = useRef<FitAddon | null>(null);
   const attachment = useRef<Attached | null>(null);
+  /** Also a ref: unmount cleanup must know it without waiting for a render. */
+  const attachedTo = useRef<string | null>(null);
   const inputSequence = useRef(1);
   const [view, setView] = useState<TerminalTabView | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
@@ -96,6 +105,7 @@ export function TerminalScreen(props: TerminalScreenProps): React.JSX.Element {
         return;
       }
       attachment.current = joined.value;
+      attachedTo.current = sessionId;
       if (joined.value.leaseId === '') setWatchingOnly(true);
 
       // Whatever happened while nobody was watching is shown before live output.
@@ -128,6 +138,15 @@ export function TerminalScreen(props: TerminalScreenProps): React.JSX.Element {
 
     return () => {
       disposed = true;
+      // Going away IS detaching (§13.4). Without this, leaving the tab leaves a
+      // window the Runtime still counts — the terminal keeps running either way.
+      const held = attachment.current;
+      const sessionId = attachedTo.current;
+      if (held && sessionId !== null) {
+        attachment.current = null;
+        attachedTo.current = null;
+        void services.detach(sessionId, held.attachmentId);
+      }
       screen.dispose();
     };
   }, [services, workingDirectory, refresh]);
@@ -150,6 +169,7 @@ export function TerminalScreen(props: TerminalScreenProps): React.JSX.Element {
     if (!held || !view) return;
     const detached = await services.detach(view.terminalSessionId, held.attachmentId);
     attachment.current = null;
+    attachedTo.current = null;
     if (!detached.succeeded) {
       setProblem(`${detached.code}: ${detached.message}`);
       return;
