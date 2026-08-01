@@ -23,7 +23,7 @@ import { patchRun, requireRun, type RunsCore } from './runs-context.js';
 import { recoveryRequired, runFinal, type Persisted } from './runs-store.js';
 import { advance, compensate, openOperation } from './journal.js';
 import { runSkillsGate } from './gate.js';
-import { startReplacement } from './continue-launch.js';
+import { startReplacement, type ContinuationWork } from './continue-launch.js';
 import { closeRun } from './lifecycle.js';
 import { insideClosingTree, treeClosing } from './stop-tree.js';
 
@@ -105,50 +105,6 @@ async function openContinuationJournal(
       'the continuation was journalled without its provider-session reservation'));
   }
   return b3ok({ operation: opened.value.operation, reserved });
-}
-
-/**
- * Everything that must be true before a continuation may start: the caller may,
- * the subtree is not being stopped, the old Run is this Agent's and is live, and
- * the MODE is permitted both by the pinned plan and by what the provider can
- * actually do. All of it refuses before any effect exists.
- */
-async function continuableRun(
-  core: RunsCore, context: CommandContext, input: ContinueAgentInput,
-): Promise<B3Result<AgentRun>> {
-  const authorised = await core.agents.authoriseRunOperation(context.principal, {
-    targetAgentId: input.agentId, operation: 'continue',
-  });
-  if (!authorised.ok) return authorised;
-
-  const fenced = await insideClosingTree(core, context, input.agentId);
-  if (!fenced.ok) return fenced;
-  if (fenced.value !== null) {
-    return b3fail(treeClosing(fenced.value.rootAgentId, fenced.value.id));
-  }
-
-  const oldRun = await requireRun(core, input.expectedOldRunId);
-  if (!oldRun.ok) return oldRun;
-  if (oldRun.value.agentId !== input.agentId) {
-    return b3fail(recoveryRequired(input.expectedOldRunId, 'old-run-fenced',
-      'that run belongs to a different Agent'));
-  }
-  if (FINAL_LIFECYCLES.has(oldRun.value.lifecycle)) {
-    return b3fail(runFinal(oldRun.value.id, oldRun.value.lifecycle));
-  }
-  const allowed = await core.agents.continuationAllowed(context.principal, {
-    launchPlanId: oldRun.value.launchPlanId, mode: input.mode,
-  });
-  if (!allowed.ok) return allowed;
-  return oldRun;
-}
-
-export interface ContinuationWork {
-  readonly input: ContinueAgentInput;
-  readonly oldRun: AgentRun;
-  readonly operation: RunOperation;
-  readonly reserved: ProviderSessionId;
-  readonly epochId: RuntimeEpochId;
 }
 
 /**

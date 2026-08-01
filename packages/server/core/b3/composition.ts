@@ -6,13 +6,23 @@
 import path from 'node:path';
 import { b3ok, type B3Result, type SystemCommandContext, type TerminalSessionId } from '@novakai/foundation/contract';
 import {
-  composeRuntimeHost, createFileInstanceLease,
-  type RecoverableCapability, type RuntimeCensus, type RuntimeHostContract,
+  composeAgentRuns, composeRuntimeHost, createFileInstanceLease,
+  type AgentRunsContract, type RecoverableCapability, type RuntimeCensus,
+  type RuntimeHostContract,
 } from '../../../agent-runtime/contract/index.js';
 import {
   composeTerminal, type PtyHost, type TerminalContract,
 } from '../../../terminal/contract/index.js';
-import { createNodePtyHost } from '../../../terminal/adapters/pty-host/node-pty.js';
+import {
+  createLaunchAuthorities, createNodePtyHost,
+  type LaunchAuthorityRegistrar,
+} from '../../../terminal/adapters/pty-host/node-pty.js';
+import {
+  composeGovernedAgents, createProviderAdapters,
+  type GovernedAgentsContract, type ProviderAdapterRegistry,
+} from '../../../agents/b3/contract/index.js';
+import { agentsPort, createRunCredentials, terminalPort } from './run-ports.js';
+import { createProviderPort } from './provider-port.js';
 
 export interface B3RuntimeOptions {
   /** `.novakai/` root. Domain records live in `<root>/stores`. */
@@ -20,11 +30,20 @@ export interface B3RuntimeOptions {
   readonly hostVersion?: string;
   /** Overridable for tests; production launches real PTYs. */
   readonly ptyHost?: PtyHost;
+  /** Overridable for tests; production probes the real CLIs. */
+  readonly providers?: ProviderAdapterRegistry;
+  /** Launch authorities the Runtime adds to at spawn time. */
+  readonly authorities?: LaunchAuthorityRegistrar;
+  /** Live output pushed to attached controllers. */
+  readonly publish?: (kind: string, payload: Readonly<Record<string, unknown>>) => void;
 }
 
 export interface B3Runtime {
   readonly runtime: RuntimeHostContract;
   readonly terminal: TerminalContract;
+  readonly agents: GovernedAgentsContract;
+  readonly runs: AgentRunsContract;
+  readonly credentials: ReturnType<typeof createRunCredentials>;
   readonly dataRoot: string;
   close(): Promise<void>;
 }
@@ -80,7 +99,8 @@ function terminalAsRecoverable(terminal: TerminalContract): RecoverableCapabilit
 
 export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Runtime> {
   const dataRoot = path.join(options.root, 'stores');
-  const ptyHost = options.ptyHost ?? await createNodePtyHost();
+  const authorities = options.authorities ?? createLaunchAuthorities();
+  const ptyHost = options.ptyHost ?? await createNodePtyHost({ authorities });
 
   // Deliberate ordering: the runtime host exists first so Terminal is born
   // already fenced, then Terminal registers itself for recovery.
@@ -109,9 +129,33 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
     epochFence: runtime.fence,
   });
 
+  // Agents owns roles, family and grants; Agent Runtime owns Runs. They meet
+  // ONLY through the narrow ports in `run-ports.ts` — neither imports the other.
+  const agents = composeGovernedAgents({
+    root: options.root,
+    dataRoot,
+    providers: options.providers ?? createProviderAdapters(),
+  });
+  const credentials = createRunCredentials(options.root);
+  const runs = composeAgentRuns({
+    root: options.root,
+    dataRoot,
+    agents: agentsPort(agents),
+    terminal: terminalPort(terminal, () => runtime.fence.activeEpochId()),
+    providers: createProviderPort(
+      options.providers ?? createProviderAdapters(), authorities,
+    ),
+    credentials,
+    fence: runtime.fence,
+    ...(options.publish === undefined ? {} : { publish: options.publish }),
+  });
+
   return {
     runtime,
     terminal,
+    agents,
+    runs,
+    credentials,
     dataRoot,
     async close() {
       await terminal?.dispose();

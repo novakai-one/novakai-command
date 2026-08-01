@@ -64,6 +64,29 @@ export interface BootstrapDocument {
   protocolVersion: number;
 }
 
-/** One WS method: params in, JSON-serializable value out. */
-export type MethodHandler = (params: never) => Promise<unknown>;
+/**
+ * Who is on the other end of a connection.
+ *
+ * B3b's Agents call `nvk agent spawn` from inside their own PTYs, so "the
+ * caller" stopped being one local human. Identity is resolved at the UPGRADE
+ * from what the connection presented and travels with the dispatch — it is
+ * never read out of `params`, because a caller that can name its own identity
+ * can name its own parent (red gate 5).
+ */
+export type CallerIdentity =
+  | { readonly kind: 'human' }
+  | { readonly kind: 'agent-run'; readonly agentRunId: string };
+
+export interface CallerSession {
+  readonly connectionId: number;
+  readonly identity: CallerIdentity;
+}
+
+/**
+ * One WS method: params in, JSON-serializable value out.
+ *
+ * `session` is additive and optional, so every pre-B3b handler — which declares
+ * one parameter — remains assignable unchanged.
+ */
+export type MethodHandler = (params: never, session?: CallerSession) => Promise<unknown>;
 export type MethodTable = Record<string, MethodHandler>;

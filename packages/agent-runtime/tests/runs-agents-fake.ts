@@ -51,6 +51,10 @@ export function createFakeAgents(options: FakeAgentsOptions = {}): FakeAgents {
   const expiredRuns: AgentRunId[] = [];
   const skills = options.skills ?? [{ id: 'tdd', version: 1, digest: 'digest-tdd' }];
 
+  /** Which role this Agent stands on, so its plan carries that role's policy. */
+  const planRoleOf = (agentId: AgentId): AgentRoleProfileId =>
+    agents.get(agentId)?.roleProfileId ?? ('' as AgentRoleProfileId);
+
   const planFor = (agentId: AgentId): LaunchPlanFacts => ({
     id: mintResolvedLaunchPlanId(),
     agentId,
@@ -71,7 +75,7 @@ export function createFakeAgents(options: FakeAgentsOptions = {}): FakeAgents {
       allowedContinuationModes: options.allowedContinuationModes
         ?? ['resume', 'fresh', 'compact', 'handover'],
     },
-    spawnPolicy: {},
+    spawnPolicy: { allowedChildRoleIds: roles.get(planRoleOf(agentId))?.childRoles ?? [] },
   });
 
   const port: FakeAgents = {

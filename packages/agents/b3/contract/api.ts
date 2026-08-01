@@ -216,6 +216,15 @@ export interface GovernedAgentsQueries {
     principal: AuthenticatedPrincipal, roleProfileId: AgentRoleProfileId,
   ): Promise<B3Result<AgentRoleProfile>>;
 
+  /**
+   * Every role, so a caller can spawn by NAME. Chris types "builder"; ids are
+   * for machines, and a CLI that made him paste a uuidv7 would be a CLI he
+   * stops using.
+   */
+  listRoleProfiles(
+    principal: AuthenticatedPrincipal,
+  ): Promise<B3Result<readonly AgentRoleProfile[]>>;
+
   getLaunchPlan(
     principal: AuthenticatedPrincipal, launchPlanId: ResolvedLaunchPlanId,
   ): Promise<B3Result<ResolvedLaunchPlan>>;

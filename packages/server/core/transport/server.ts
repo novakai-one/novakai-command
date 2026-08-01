@@ -16,7 +16,8 @@ import path from 'node:path';
 import { WebSocketServer, type WebSocket } from 'ws';
 import {
   BOOTSTRAP_PATH, PROTOCOL_VERSION, WS_PATH, WS_TOKEN_FILE,
-  type BootstrapDocument, type EventFrame, type MethodTable, type RequestFrame, type ResponseFrame,
+  type BootstrapDocument, type CallerIdentity, type EventFrame, type MethodTable,
+  type RequestFrame, type ResponseFrame,
 } from '../../contract/protocol.js';
 import type { ArtifactsHost } from '../../../artifacts/contract/index.js';
 import { handleArtifactHttpRequest } from '../b2a/artifact-http.js';
@@ -43,6 +44,12 @@ export interface StartTransportOptions {
    * is the one fact this layer owns.
    */
   onDisconnect?(connectionId: number): void;
+  /**
+   * Who a connection is, decided at the UPGRADE from what it presented.
+   * Returning `null` refuses the socket outright — an unrecognised claim never
+   * becomes a weaker identity, it becomes no connection at all.
+   */
+  authenticate?(url: URL): CallerIdentity | null;
 }
 
 export interface DispatchedCall {
@@ -168,13 +175,23 @@ export async function startTransport(options: StartTransportOptions): Promise<Ru
       socket.destroy();
       return;
     }
-    wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
+    // B3b: an Agent may present its Run credential on the same socket. A claim
+    // that does not verify is refused here — it must never fall back to being
+    // treated as the local human.
+    const identity = options.authenticate?.(url) ?? { kind: 'human' as const };
+    if (identity === null) {
+      socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+      socket.destroy();
+      return;
+    }
+    wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req, identity));
   });
 
   let nextConnectionId = 1;
-  wss.on('connection', (ws: WebSocket) => {
+  wss.on('connection', (ws: WebSocket, _req: IncomingMessage, identity?: CallerIdentity) => {
     const connectionId = nextConnectionId;
     nextConnectionId += 1;
+    const session = { connectionId, identity: identity ?? { kind: 'human' as const } };
     sockets.add(ws);
     ws.on('close', () => {
       sockets.delete(ws);
@@ -226,7 +243,7 @@ export async function startTransport(options: StartTransportOptions): Promise<Ru
       const handler = options.methods[frame.method];
       if (!handler) { reply({ id: frame.id, error: `unknown method ${frame.method}` }); return; }
       try {
-        const result = await handler(frame.params as never);
+        const result = await handler(frame.params as never, session);
         options.onDispatch?.({ method: frame.method, connectionId, result });
         reply({ id: frame.id, result });
       } catch (cause) {

@@ -5,13 +5,16 @@
 // transport, so an external terminal and the app are the same kind of client.
 import {
   mintClientOpId, mintTraceCorrelationId,
-  type B3Result, type ControllerAttachmentId, type HumanPrincipalId,
-  type SystemCommandContext, type TerminalSessionId,
+  type AuthenticatedPrincipal, type B3Result, type ControllerAttachmentId,
+  type HumanPrincipalId, type SystemCommandContext, type TerminalSessionId,
 } from '@novakai/foundation/contract';
+import { HUMAN_SCOPES } from '../../../agents/b3/contract/index.js';
 import { DEFAULT_STALE_AFTER_MS } from '../../../terminal/contract/index.js';
 import { startTransport, type DispatchedCall, type RunningTransport } from '../transport/server.js';
+import type { CallerIdentity, CallerSession } from '../../contract/protocol.js';
 import { composeB3Runtime, type B3Runtime, type B3RuntimeOptions } from './composition.js';
 import { buildB3Methods } from './methods.js';
+import { buildB3AgentMethods } from './agent-methods.js';
 
 /** Comfortably inside the stale window, so a live window is never called gone. */
 const SIGHTING_INTERVAL_MS = Math.floor(DEFAULT_STALE_AFTER_MS / 3);
@@ -52,7 +55,47 @@ export async function startRuntimeHost(
   const runtime = await composeB3Runtime(options);
   const principalId = options.principalId ?? ('person_chris' as HumanPrincipalId);
 
-  const methods = buildB3Methods({ runtime, principalId });
+  /**
+   * Who a connection is. A spawned Agent presents the Run credential the
+   * Runtime handed it; anything else is the local human. A credential that does
+   * not verify is REFUSED rather than downgraded — a forged Agent identity that
+   * silently became "Chris" would hand it every scope Chris has.
+   */
+  const authenticate = (connection: URL): CallerIdentity | null => {
+    const agentRunId = connection.searchParams.get('agentRunId');
+    const runToken = connection.searchParams.get('runToken');
+    if (agentRunId === null && runToken === null) return { kind: 'human' };
+    if (agentRunId === null || runToken === null) return null;
+    if (!runtime.credentials.verify(agentRunId as never, runToken)) return null;
+    return { kind: 'agent-run', agentRunId };
+  };
+
+  const principalFor = (session: CallerSession | undefined): AuthenticatedPrincipal => {
+    if (session?.identity.kind === 'agent-run') {
+      return {
+        id: 'agentRun_principal' as never,
+        kind: 'agent-run',
+        agentRunId: session.identity.agentRunId as never,
+        // An Agent's authority comes from its GRANTS, never from the socket.
+        verifiedScopes: [],
+      };
+    }
+    return { id: principalId, kind: 'human', verifiedScopes: HUMAN_SCOPES };
+  };
+
+  const methods = {
+    ...buildB3Methods({ runtime, principalId }),
+    ...buildB3AgentMethods({
+      runtime,
+      principalFor,
+      contextFor: (principal) => ({
+        principal,
+        clientOpId: mintClientOpId(),
+        traceId: mintTraceCorrelationId(),
+        contractVersion: 1,
+      }),
+    }),
+  };
   const following = new Set<string>();
   /** Which windows each connection opened — the host's own fact (§13.4). */
   const controllersByConnection = new Map<number, Map<string, OpenedController>>();
@@ -101,6 +144,7 @@ export async function startRuntimeHost(
     port: options.port,
     ...(options.staticDir === undefined ? {} : { staticDir: options.staticDir }),
     methods,
+    authenticate,
     onDispatch(call: DispatchedCall) {
       if (call.method === 'b3.terminal.attach' || call.method === 'b3.terminal.detach') {
         remember(call);

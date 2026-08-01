@@ -6,13 +6,28 @@
 import {
   b3fail, b3ok, mintAgentRunId, nowIsoUtc,
   type ActivityGeneration, type B3Result, type CommandContext,
+  type ProviderSessionId, type RuntimeEpochId,
 } from '@novakai/foundation/contract';
+import type { ContinueAgentInput } from '../contract/runs-api.js';
 import type { LaunchPlanFacts } from '../contract/ports.js';
 import type { AgentRun, RunOperation } from '../contract/runs.js';
 import { patchRun, type RunsCore } from './runs-context.js';
 import { recoveryRequired, type Persisted } from './runs-store.js';
 import { advance, completed } from './journal.js';
-import type { ContinuationWork } from './continue.js';
+
+/**
+ * The shape both halves of a continuation carry. It lives HERE, in the module
+ * `continue.ts` depends on, rather than the other way round: the order-of-events
+ * file may know how a replacement starts, but the starter must never need to
+ * know the order. Defining it above the arrow keeps the dependency one-way.
+ */
+export interface ContinuationWork {
+  readonly input: ContinueAgentInput;
+  readonly oldRun: AgentRun;
+  readonly operation: RunOperation;
+  readonly reserved: ProviderSessionId;
+  readonly epochId: RuntimeEpochId;
+}
 
 export async function startReplacement(
   core: RunsCore,

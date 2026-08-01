@@ -41,6 +41,12 @@ export interface LaunchPlanFacts {
     readonly allowedContinuationModes: readonly ContinuationMode[];
   };
   readonly spawnPolicy: {
+    /**
+     * The child roles this Run may spawn. The Runtime asks for exactly these
+     * when it issues the Run's own grant — Agents then intersects them down to
+     * what the CALLER actually held, so the grant can only ever shrink.
+     */
+    readonly allowedChildRoleIds: readonly AgentRoleProfileId[];
     readonly maxLiveChildren?: number;
   };
 }

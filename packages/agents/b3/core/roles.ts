@@ -80,3 +80,9 @@ export const unknownRole = (roleProfileId: string): ReturnType<typeof roleNotAll
   roleNotAllowed(roleProfileId, `no role profile "${roleProfileId}"`);
 
 export const roleVersionOf = (role: AgentRoleProfile): RecordVersion => role.recordVersion;
+
+export async function listRoleProfiles(
+  core: GovernedAgentsCore, _principal: AuthenticatedPrincipal,
+): Promise<B3Result<readonly AgentRoleProfile[]>> {
+  return core.store.list<AgentRoleProfile>('agentRoleProfile');
+}

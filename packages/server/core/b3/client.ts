@@ -17,6 +17,13 @@ export interface RuntimeClientOptions {
   readonly host?: string;
   readonly token?: string;
   readonly connectTimeoutMs?: number;
+  /**
+   * B3b: an Agent running inside a managed PTY presents the credential the
+   * Runtime handed it at launch, so it authenticates as ITSELF rather than as
+   * the human who happens to own the machine (DEC-B3V4-05).
+   */
+  readonly agentRunId?: string;
+  readonly runToken?: string;
 }
 
 export interface RuntimeClient {
@@ -41,7 +48,11 @@ export async function connectRuntime(options: RuntimeClientOptions): Promise<Run
     throw new Error(`no runtime token under ${options.root}; is the runtime running?`);
   }
   const host = options.host ?? '127.0.0.1';
-  const socket = new WebSocket(`ws://${host}:${options.port}/ws?token=${token}`);
+  const identity = options.agentRunId === undefined || options.runToken === undefined
+    ? ''
+    : `&agentRunId=${encodeURIComponent(options.agentRunId)}`
+      + `&runToken=${encodeURIComponent(options.runToken)}`;
+  const socket = new WebSocket(`ws://${host}:${options.port}/ws?token=${token}${identity}`);
   const pending = new Map<number, (frame: ResponseFrame) => void>();
   const listeners: ((name: string, data: unknown) => void)[] = [];
   let nextId = 1;

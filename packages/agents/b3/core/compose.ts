@@ -19,7 +19,9 @@ import {
   createGovernedAgentsStore, type GovernedAgentsStoreOptions,
 } from './store.js';
 import { OPERATION, versionGuard, type GovernedAgentsCore } from './context.js';
-import { createRoleProfile, getRoleProfile, updateRoleProfile } from './roles.js';
+import {
+  createRoleProfile, getRoleProfile, listRoleProfiles, updateRoleProfile,
+} from './roles.js';
 import { createAgentFromRole, getAgent } from './agents.js';
 import { getLaunchPlan, resolveLaunchPlan } from './plans.js';
 import { getAgentTree, listChildren, recordRelationship } from './relationships.js';
@@ -109,6 +111,7 @@ export function composeGovernedAgents(
 
     getAgent: (principal, agentId) => getAgent(core, principal, agentId),
     getRoleProfile: (principal, roleProfileId) => getRoleProfile(core, principal, roleProfileId),
+    listRoleProfiles: (principal) => listRoleProfiles(core, principal),
     getLaunchPlan: (principal, launchPlanId) => getLaunchPlan(core, principal, launchPlanId),
     getAgentTree: (principal, input) => getAgentTree(core, principal, input),
     listChildren: (principal, parentAgentId) => listChildren(core, principal, parentAgentId),

@@ -233,6 +233,7 @@ export async function finishRun(
     readonly operation: RunOperation;
     readonly agentId: AgentId;
     readonly authority: SpawnAuthorityFacts;
+    readonly plan: LaunchPlanFacts;
   },
 ): Promise<B3Result<{ agentRun: AgentRun; operation: RunOperation }>> {
   // Who looks after it: its spawn parent, or Chris when it is a root.
@@ -246,14 +247,15 @@ export async function finishRun(
   if (!assigned.ok) return assigned;
 
   // The Run's OWN authority, issued against the Run it dies with. Requested
-  // scopes are the Runtime's standard set; Agents intersects them down to what
-  // the caller actually held, so this can only ever shrink (red gate 6).
+  // scopes are the Runtime's standard set and the child roles are the ones this
+  // Run's ROLE permits; Agents intersects both down to what the caller actually
+  // held, so this can only ever shrink (red gate 6).
   const granted = await core.agents.issueDelegationGrant(context, {
     issuerAgentRunId: input.agentRun.id,
     subjectAgentId: input.agentId,
     targetAgentIds: [],
     requestedScopes: RUN_SCOPES,
-    requestedChildRoleIds: [],
+    requestedChildRoleIds: input.plan.spawnPolicy.allowedChildRoleIds,
   });
   if (!granted.ok && granted.error.code !== 'AuthorityEscalation'
     && granted.error.code !== 'RoleNotAllowed') {

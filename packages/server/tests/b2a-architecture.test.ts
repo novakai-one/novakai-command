@@ -197,6 +197,13 @@ test('every Server persistence-writer authority is explicitly classified', () =>
     }
   }
   assert.deepEqual(authorities.sort(), [
+    // Run-credential secret only. Runtime-private under `.novakai/runtime/`
+    // (§18.3): not a durable domain record, gitignored, and losing it costs
+    // nothing but a re-issue — which is what a Runtime restart does anyway.
+    // Every Run FACT this file touches goes through the Agents/Terminal
+    // contracts above it, never through the filesystem.
+    'core/b3/run-ports.ts -> node:fs:mkdirSync',
+    'core/b3/run-ports.ts -> node:fs:writeFileSync',
     'core/boot.ts -> @novakai/foundation/dist/contract/index.js:recordSystemAction',
     'core/config/store.ts -> @novakai/foundation/dist/contract/index.js:composeHandle',
     'core/config/store.ts -> @novakai/foundation/dist/contract/index.js:createObject',

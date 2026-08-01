@@ -174,6 +174,7 @@ async function buildRun(
     operation: provisioned.value.operation,
     agentId: governed.value.agentId,
     authority: build.authority,
+    plan: governed.value.plan,
   });
   if (!ready.ok) return ready;
   return b3ok({
