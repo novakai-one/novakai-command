@@ -87,9 +87,13 @@ export function parseFlags(argv: readonly string[]): Flags {
   };
 }
 
-export function emit<Value>(
+/**
+ * Say the answer without ending the process — for commands like `attach` that
+ * report what they did and then keep doing it.
+ */
+export function report<Value>(
   command: string, flags: Flags, result: B3Result<Value>, human: (value: Value) => string,
-): never {
+): void {
   if (flags.json) {
     process.stdout.write(`${JSON.stringify(cliEnvelope(command, result))}\n`);
   } else if (result.ok) {
@@ -97,6 +101,12 @@ export function emit<Value>(
   } else {
     process.stderr.write(`${result.error.code}: ${result.error.message}\n`);
   }
+}
+
+export function emit<Value>(
+  command: string, flags: Flags, result: B3Result<Value>, human: (value: Value) => string,
+): never {
+  report(command, flags, result, human);
   process.exit(result.ok ? EXIT.success : exitCodeFor(result.error));
 }
 

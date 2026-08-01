@@ -17,7 +17,7 @@ import type {
   TerminalOutputFrame, TerminalSession, TerminalSessionView,
 } from '../../terminal/contract/index.js';
 import { connectRuntime, type RuntimeClient } from '../core/b3/client.js';
-import { emit, parseFlags, type Flags } from '../core/b3/cli-shared.js';
+import { emit, EXIT, fail, parseFlags, report, type Flags } from '../core/b3/cli-shared.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '..', '..', '..');
@@ -27,6 +27,10 @@ const flags = parseFlags(rest);
 const root = flags.value('root') ?? process.env['NOVAKAI_ROOT'] ?? path.join(repoRoot, '.novakai');
 const port = Number(flags.value('port') ?? process.env['NOVAKAI_RUNTIME_PORT'] ?? 5190);
 
+const unreachable = (cause: unknown): ReturnType<typeof b3err> => b3err('RuntimeUnavailable',
+  `no Novakai Runtime is reachable on port ${port}: ${cause instanceof Error ? cause.message : String(cause)}`,
+  { reason: 'not-reachable' }, true);
+
 async function withClient<Value>(
   work: (client: RuntimeClient) => Promise<B3Result<Value>>,
 ): Promise<B3Result<Value>> {
@@ -34,9 +38,7 @@ async function withClient<Value>(
   try {
     client = await connectRuntime({ root, port });
   } catch (cause) {
-    return b3fail(b3err('RuntimeUnavailable',
-      `no Novakai Runtime is reachable on port ${port}: ${cause instanceof Error ? cause.message : String(cause)}`,
-      { reason: 'not-reachable' }, true));
+    return b3fail(unreachable(cause));
   }
   try {
     return await work(client);
@@ -103,18 +105,41 @@ const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
       + 'the terminal is running in the Novakai Runtime.');
   },
 
+  /**
+   * Attaching is something you DO for as long as you are here, not a record you
+   * leave behind: this follows the session's output until you interrupt it, and
+   * then detaches. The terminal keeps running — that is the whole point (§13.4).
+   */
   async attach(argFlags) {
     const terminalSessionId = argFlags.positional[0] as TerminalSessionId | undefined;
     if (!terminalSessionId) return usage('terminal attach', argFlags, 'terminalSessionId');
-    emit('terminal attach', argFlags, await withClient<ControllerAttachment>(
-      (client) => client.call('b3.terminal.attach', {
-        terminalSessionId,
-        controllerKind: 'external-terminal',
-        columns: viewportColumns(argFlags),
-        rows: viewportRows(argFlags),
-      }),
-    ), (attachment) => `attached as ${attachment.id}. Closing this window detaches it; `
-      + 'the terminal keeps running.');
+    let client: RuntimeClient;
+    try {
+      client = await connectRuntime({ root, port });
+    } catch (cause) {
+      return fail('terminal attach', argFlags, unreachable(cause));
+    }
+    const attached = await client.call<ControllerAttachment>('b3.terminal.attach', {
+      terminalSessionId,
+      controllerKind: 'external-terminal',
+      columns: viewportColumns(argFlags),
+      rows: viewportRows(argFlags),
+    });
+    if (!attached.ok) {
+      client.close();
+      return emit('terminal attach', argFlags, attached, () => '');
+    }
+    report('terminal attach', argFlags, attached,
+      (attachment) => `attached as ${attachment.id}. Closing this window detaches it; `
+        + 'the terminal keeps running. Press Ctrl-C to leave.');
+
+    client.onEvent((name, data) => {
+      if (name !== 'b3.terminal.output') return;
+      const event = data as { terminalSessionId: string; frame: TerminalOutputFrame };
+      if (event.terminalSessionId !== terminalSessionId) return;
+      process.stdout.write(renderFrame(event.frame));
+    });
+    return followUntilInterrupted(client, terminalSessionId, attached.value.id);
   },
 
   async detach(argFlags) {
@@ -128,15 +153,38 @@ const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
     ), (attachment) => `detached ${attachment.id}. The terminal is still running.`);
   },
 
+  /**
+   * A one-shot write does not need a window. Without `--attachment` this opens
+   * one, types, and closes it again — so a script can never leave a controller
+   * behind, and never has to own an attachment id that dies with its socket.
+   */
   async write(argFlags) {
     const terminalSessionId = argFlags.value('session') as TerminalSessionId | undefined;
     const attachmentId = argFlags.value('attachment');
     const text = argFlags.value('text');
-    if (!terminalSessionId || !attachmentId || text === undefined) {
-      return usage('terminal write', argFlags, '--session <id> --attachment <id> --text <text>');
+    if (!terminalSessionId || text === undefined) {
+      return usage('terminal write', argFlags, '--session <id> --text <text> [--attachment <id>]');
     }
     emit('terminal write', argFlags, await withClient<TerminalInputAttempt>(
-      (client) => sendInput(client, argFlags, { terminalSessionId, attachmentId, text }),
+      async (client) => {
+        if (attachmentId) {
+          return sendInput(client, argFlags, { terminalSessionId, attachmentId, text });
+        }
+        const attached = await client.call<ControllerAttachment>('b3.terminal.attach', {
+          terminalSessionId, controllerKind: 'script',
+          columns: viewportColumns(argFlags), rows: viewportRows(argFlags),
+        });
+        if (!attached.ok) return attached;
+        const written = await sendInput(client, argFlags, {
+          terminalSessionId, attachmentId: attached.value.id, text,
+        });
+        // Detaching hands back the lease too, so the next writer is never
+        // locked out by a script that has already finished.
+        await client.call('b3.terminal.detach', {
+          terminalSessionId, attachmentId: attached.value.id,
+        });
+        return written;
+      },
     ), (attempt) => `input #${attempt.inputSequence} ${attempt.outcome}`);
   },
 
@@ -174,7 +222,7 @@ async function sendInput(
   });
   if (!lease.ok) return lease;
   const controlC = argFlags.value('control-c') !== undefined;
-  return client.call<TerminalInputAttempt>('b3.terminal.write', {
+  const written = await client.call<TerminalInputAttempt>('b3.terminal.write', {
     terminalSessionId: target.terminalSessionId,
     attachmentId: target.attachmentId,
     inputLeaseId: lease.value.id,
@@ -183,6 +231,33 @@ async function sendInput(
     kindOfInput: controlC ? 'raw-control-c' : 'text',
     ...(controlC ? {} : { utf8Text: target.text }),
   });
+  // A finished script has stopped typing, so it stops holding the keyboard.
+  await client.call('b3.terminal.releaseLease', {
+    terminalSessionId: target.terminalSessionId,
+    attachmentId: target.attachmentId,
+    leaseId: lease.value.id,
+    generation: lease.value.generation,
+  });
+  return written;
+}
+
+/**
+ * Stay attached until the operator leaves, then detach — the CLI's half of
+ * "closing a window is detach". A hard kill is covered too: the socket closing
+ * is itself a detach, so no path leaves the count wrong.
+ */
+async function followUntilInterrupted(
+  client: RuntimeClient, terminalSessionId: TerminalSessionId, attachmentId: string,
+): Promise<never> {
+  const leave = async (): Promise<never> => {
+    await client.call('b3.terminal.detach', { terminalSessionId, attachmentId });
+    client.close();
+    process.exit(EXIT.success);
+  };
+  process.on('SIGINT', () => { void leave(); });
+  process.on('SIGTERM', () => { void leave(); });
+  await new Promise(() => undefined); // until interrupted
+  throw new Error('unreachable');
 }
 
 async function runCommand(name: string, argFlags: Flags): Promise<never> {

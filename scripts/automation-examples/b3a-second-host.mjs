@@ -67,26 +67,38 @@ async function main() {
   record('ensure the background runtime, with no desktop app open',
     status !== null && status.state === 'active',
     status ? `epoch ${status.activeEpochId}` : 'the runtime never became reachable');
-  if (status === null) return finish(serve);
+  if (status === null) return finish(serve, null);
 
   // 2. Open a real terminal from outside the app.
   const opened = cli(terminalCli, ['open', '--cwd', root, '--authority', 'plain-shell']);
   const session = opened.json?.ok ? opened.json.value : null;
   record('open a real terminal from an external process',
     session !== null, session ? session.id : opened.stderr.trim());
-  if (!session) return finish(serve);
+  if (!session) return finish(serve, null);
 
-  // 3. Attach as an external controller.
-  const attached = cli(terminalCli, ['attach', session.id]);
-  const attachment = attached.json?.ok ? attached.json.value : null;
+  // 3. Attach as an external controller. Attaching is something you DO for as
+  //    long as you are there, so this stays running and the count says so.
+  const follower = spawn(process.execPath, [
+    tsx, terminalCli, 'attach', session.id, '--root', root, '--port', port,
+    // Its own process group, so the hard kill in step 6 reaches the CLI itself
+    // and not just the tsx launcher in front of it.
+  ], { cwd: repoRoot, stdio: 'ignore', detached: true });
+
+  let attachedCount = 0;
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    await sleep(100);
+    const seen = cli(runtimeCli, ['status']);
+    attachedCount = seen.json?.ok ? seen.json.value.attachedControllerCount : 0;
+    if (attachedCount === 1) break;
+  }
   record('attach to it as an external controller',
-    attachment !== null, attachment ? attachment.id : attached.stderr.trim());
-  if (!attachment) return finish(serve);
+    attachedCount === 1, `${attachedCount} controller(s) attached`);
+  if (attachedCount !== 1) return finish(serve, follower);
 
-  // 4. Send input and read the ordered stream back.
+  // 4. Send input and read the ordered stream back. A one-shot write needs no
+  //    window of its own — and must not leave one behind.
   const written = cli(terminalCli, [
-    'write', '--session', session.id, '--attachment', attachment.id,
-    '--text', 'echo second-host-proof\r',
+    'write', '--session', session.id, '--text', 'echo second-host-proof\r',
   ]);
   record('send input under the input lease', written.json?.ok === true,
     written.json?.ok ? `input #${written.json.value.inputSequence}` : written.stderr.trim());
@@ -112,13 +124,25 @@ async function main() {
   record('list and inspect live terminals', found === true,
     listed.json?.ok ? `${listed.json.value.length} live session(s)` : listed.stderr.trim());
 
-  // 6. THE point of the slice: detaching must not terminate anything.
-  const detached = cli(terminalCli, ['detach', attachment.id, '--session', session.id]);
+  // 6. THE point of the slice: the controller goes away — hard, with no
+  //    goodbye — and the terminal keeps running with an honest count of zero.
+  try { process.kill(-follower.pid, 'SIGKILL'); } catch { /* already gone */ }
+  let afterClose = null;
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    await sleep(100);
+    const seen = cli(runtimeCli, ['status']);
+    if (seen.json?.ok && seen.json.value.attachedControllerCount === 0) {
+      afterClose = seen.json.value;
+      break;
+    }
+  }
   const afterDetach = cli(terminalCli, ['inspect', session.id]);
   const stillLive = afterDetach.json?.ok && afterDetach.json.value.session.status === 'live';
-  record('detach WITHOUT terminating the terminal',
-    detached.json?.ok === true && stillLive === true,
-    afterDetach.json?.ok ? `status after detach: ${afterDetach.json.value.session.status}` : '');
+  record('a hard-killed controller detaches WITHOUT terminating the terminal',
+    afterClose !== null && stillLive === true,
+    afterClose === null
+      ? 'the controller count never returned to zero'
+      : `0 controllers attached; status ${afterDetach.json.value.session.status}`);
 
   // 7. Refusing to stop while something is live is not a failure — it is the
   //    no-surprises rule doing its job.
@@ -133,10 +157,11 @@ async function main() {
     stopped.json?.ok === true && stopped.json.value.stopped === true,
     stopped.json?.ok ? `stopped ${stopped.json.value.stoppedTerminalSessionIds.length} terminal(s)` : stopped.stderr.trim());
 
-  return finish(serve);
+  return finish(serve, follower);
 }
 
-function finish(serve) {
+function finish(serve, follower) {
+  try { if (follower) process.kill(-follower.pid, 'SIGKILL'); } catch { /* already gone */ }
   try { process.kill(-serve.pid, 'SIGTERM'); } catch { /* already gone */ }
   try { serve.kill('SIGTERM'); } catch { /* already gone */ }
   if (ownsRoot) rmSync(root, { recursive: true, force: true });
