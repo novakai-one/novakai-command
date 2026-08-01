@@ -142,6 +142,26 @@ export async function advance(
   return written;
 }
 
+/**
+ * The doubt an operation still carries.
+ *
+ * Compensation is a LOG, not a verdict. The same effect can be recorded
+ * `uncertain` by the attempt that could not reach it and `succeeded` by the
+ * repair that later did, so the LAST entry for an effect key is the current
+ * answer. Reading the whole array instead meant one unresolvable line — and boot
+ * appended one to every abandoned operation — made the record permanently
+ * unclosable: repair verified the effect, appended the proof, and then refused
+ * to close because the superseded doubt was still in the list
+ * (NVK-KIMI-031 finding 1).
+ */
+export function unresolvedUncertainty(
+  operation: RunOperation,
+): readonly RunOperation['compensation'][number][] {
+  const latest = new Map<string, RunOperation['compensation'][number]>();
+  for (const item of operation.compensation) latest.set(item.effectKey, item);
+  return [...latest.values()].filter((item) => item.outcome === 'uncertain');
+}
+
 /** Whether an earlier attempt already got past a stage. */
 export function completed(
   operation: RunOperation, stage: RunOperationStage,

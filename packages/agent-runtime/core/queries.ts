@@ -17,6 +17,7 @@ import {
 } from '../contract/runs.js';
 import { assignmentChain, expireAuthorityOf, requireRun, type RunsCore } from './runs-context.js';
 import { recoveryRequired, unknownRun } from './runs-store.js';
+import { completed } from './journal.js';
 
 /**
  * §19.1 names this view field `run`. It is a compatibility contract — the CLI
@@ -271,6 +272,19 @@ export async function reconcileAfterRestart(
  * rather than left `running`, because "running" is a claim about a process, and
  * a Runtime that reports thirteen running operations it is not running is
  * lying in the one place an operator goes to find out what is in flight.
+ *
+ * What boot may NOT do is invent doubt. It used to append an `uncertain`
+ * compensation line to every abandoned operation, including the ones that died
+ * at `receipt-accepted` with no Agent, no Run, no PTY and nothing to be
+ * uncertain about — after which spawn refused to resume them and repair refused
+ * to close them, so §20's "resume same operation and same reservation" row
+ * became a permanent quarantine (NVK-KIMI-031 finding 1).
+ *
+ * Uncertainty is a claim about a specific EFFECT, and boot knows of exactly one
+ * it cannot see the end of: a PTY this operation started, which lived in the
+ * process that died. That line is keyed to the terminal stage, so the repair
+ * that later confirms the terminal is gone supersedes it instead of arguing
+ * with it.
  */
 async function settleAbandonedOperations(
   core: RunsCore, operations: readonly RunOperation[], activeEpochId: string,
@@ -282,15 +296,7 @@ async function settleAbandonedOperations(
       'sys_agent_runtime', operation.id,
       {
         state: 'recovery-required',
-        compensation: [
-          ...operation.compensation,
-          {
-            stage: operation.currentStage,
-            effectKey: `${operation.id}:${operation.currentStage}`,
-            outcome: 'uncertain',
-            reason: 'the runtime running this operation ended before it settled',
-          },
-        ],
+        compensation: [...operation.compensation, ...unverifiableEffectsOf(operation)],
       } as Record<string, unknown>,
       operation.recordVersion, `op_${crypto.randomUUID()}` as never,
     );
@@ -300,6 +306,21 @@ async function settleAbandonedOperations(
     });
   }
   return b3ok(null);
+}
+
+/** The effects of a dead epoch whose outcome this Runtime genuinely cannot see. */
+function unverifiableEffectsOf(
+  operation: RunOperation,
+): readonly RunOperation['compensation'][number][] {
+  const terminal = completed(operation, 'terminal-live') ?? completed(operation, 'terminal-reserved');
+  if (terminal === null) return [];
+  return [{
+    stage: terminal.stage,
+    effectKey: terminal.effectKey,
+    outcome: 'uncertain',
+    reason: 'the runtime running this operation ended before it settled; whether '
+      + 'its managed terminal stopped with it is not known from here',
+  }];
 }
 
 const SETTLED_OPERATION_STATES: ReadonlySet<RunOperation['state']> =

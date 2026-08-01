@@ -167,6 +167,110 @@ test('a crash never opens a second PTY for one Run', async () => {
   }
 });
 
+/**
+ * The same matrix, with BOOT in the middle.
+ *
+ * `crashAndRetry` models a store that stopped accepting writes while the
+ * process lived — so it never runs the boot reconciler, and every property it
+ * proves is a property of a Runtime that never restarted. A real crash restarts
+ * something, and boot is the first thing that touches those records.
+ *
+ * NVK-KIMI-031 finding 1 says boot converts resumable work into permanently
+ * quarantined work: it marks every abandoned operation `recovery-required` and
+ * appends an unconditional `uncertain` compensation, after which spawn refuses
+ * the state and repair refuses the uncertainty — so nothing can ever close it.
+ */
+interface BootedRetry {
+  readonly retried: boolean;
+  readonly retryError: string;
+  readonly runsCreated: number;
+  readonly reservations: readonly (string | undefined)[];
+  readonly repaired: readonly { id: string; ok: boolean; error: string; state: string }[];
+}
+
+async function crashBootAndRetry(writes: number): Promise<BootedRetry> {
+  const root = mkdtempSync(path.join(tmpdir(), 'nvk-b3b-bootcrash-'));
+  try {
+    const command = sameCommand();
+    const dying = createRunsRig({ root, crashAfterWrites: writes, gateTimeoutMs: 400 });
+    const role = dying.agents.defineRole('builder');
+    await dying.runtime.spawnAgent(command, spawnInput(role));
+
+    const restarted = createRunsRig({
+      root, gateTimeoutMs: 400,
+      agents: dying.agents, terminal: dying.terminal, providers: dying.providers,
+    });
+    // The real thing the host does before it accepts a command (§13.1.6).
+    const booted = await restarted.runtime.reconcileAfterRestart();
+    assert.equal(booted.ok, true, booted.ok ? '' : booted.error.message);
+
+    const second = await restarted.runtime.spawnAgent(command, spawnInput(role));
+
+    // Whatever is still open, the operator must be able to close (§20).
+    const open = await restarted.runtime.listRunOperations(restarted.principal(), {
+      includeCompleted: true,
+    });
+    assert.equal(open.ok, true);
+    const repaired: { id: string; ok: boolean; error: string; state: string }[] = [];
+    for (const item of open.ok ? open.value : []) {
+      if (item.operation.state === 'completed') continue;
+      const fixed = await restarted.runtime.repairRunOperation(restarted.human(), item.operation.id);
+      repaired.push({
+        id: item.operation.id,
+        ok: fixed.ok,
+        error: fixed.ok ? '' : `${fixed.error.code}: ${fixed.error.message}`,
+        state: fixed.ok ? fixed.value.operation.state : item.operation.state,
+      });
+    }
+
+    const runs = await restarted.runtime.listAgentRuns(restarted.principal(), { includeFinal: true });
+    const journals = await restarted.runtime.listRunOperations(restarted.principal(), {
+      includeCompleted: true,
+    });
+    return {
+      retried: second.ok,
+      retryError: second.ok ? '' : `${second.error.code}: ${second.error.message}`,
+      runsCreated: runs.ok ? runs.value.items.length : -1,
+      reservations: (journals.ok ? journals.value : []).map(
+        (item) => item.operation.reservedProviderSessionId,
+      ),
+      repaired,
+    };
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+test('after a crash AND a boot, the operator can still finish the work', async () => {
+  for (let writes = 0; writes <= 14; writes += 1) {
+    const outcome = await crashBootAndRetry(writes);
+    assert.equal(outcome.runsCreated <= 1, true,
+      `crashing after ${writes} writes and rebooting produced ${outcome.runsCreated} Runs`);
+    // Either the retry finished the job, or every operation it left behind can
+    // be repaired. What is forbidden is neither: work nobody can advance and
+    // nobody can close.
+    const stuck = outcome.repaired.filter((item) => !item.ok);
+    assert.deepEqual(stuck.map((item) => item.error), [],
+      `crashing after ${writes} writes left an operation repair refuses forever `
+      + `(retry said: ${outcome.retryError || 'ok'})`);
+  }
+});
+
+test('a crash before the Run exists resumes on the same reservation after boot', async () => {
+  // §20 row 2, exactly: "Runtime dies after first RunOperation append but before
+  // Run reservation → resume same operation and same reservation". Boot is not
+  // allowed to turn that row into a dead end.
+  for (let writes = 1; writes <= 3; writes += 1) {
+    const outcome = await crashBootAndRetry(writes);
+    assert.equal(outcome.retried, true,
+      `crashing after ${writes} writes then rebooting made the retry impossible: `
+      + outcome.retryError);
+    const reservations = outcome.reservations.filter((item) => item !== undefined);
+    assert.equal(new Set(reservations).size, 1,
+      `the retry did not resume the one reservation (${String(new Set(reservations).size)} seen)`);
+  }
+});
+
 test('a stale epoch cannot advance any stage of an operation', async () => {
   const rig = createRunsRig();
   try {

@@ -19,7 +19,7 @@ import {
 import type { RunOperationView } from '../contract/runs-api.js';
 import type { RunOperation, RunOperationKind } from '../contract/runs.js';
 import type { RunsCore } from './runs-context.js';
-import { compensate, settleOperation } from './journal.js';
+import { compensate, settleOperation, unresolvedUncertainty } from './journal.js';
 import { getRunOperation } from './queries.js';
 import {
   descendantsOf, fenceOfOperation, settleTreeStop, stopEachBottomUp,
@@ -142,9 +142,7 @@ async function closeAbandoned(
     );
     if (!released.ok) return released;
   }
-  const uncertain = compensated.value.compensation.filter(
-    (item) => item.outcome === 'uncertain',
-  );
+  const uncertain = unresolvedUncertainty(compensated.value);
   if (uncertain.length > 0) {
     return b3fail(b3err('RecoveryRequired',
       'repair could not confirm every effect; the operation stays open',

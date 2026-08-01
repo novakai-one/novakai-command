@@ -18,7 +18,7 @@ import type { LaunchPlanFacts, SpawnAuthorityFacts } from '../contract/ports.js'
 import type { AgentRun, LaunchSurface, RunOperation } from '../contract/runs.js';
 import type { RunsCore } from './runs-context.js';
 import { recoveryRequired } from './runs-store.js';
-import { advance, compensate, openOperation } from './journal.js';
+import { advance, compensate, openOperation, unresolvedUncertainty } from './journal.js';
 import { insideClosingTree, treeClosing } from './stop-tree.js';
 import { runSkillsGate } from './gate.js';
 import {
@@ -57,10 +57,8 @@ export async function spawnAgent(
   });
   if (!opened.ok) return opened;
   let operation = opened.value.operation;
-  if (operation.state === 'recovery-required') {
-    return b3fail(recoveryRequired(operation.id, operation.currentStage,
-      'an earlier attempt left an uncertain effect'));
-  }
+  const blocked = resumeRefusal(operation);
+  if (blocked !== null) return b3fail(blocked);
   const reserved = operation.reservedProviderSessionId;
   if (reserved === undefined) {
     return b3fail(recoveryRequired(operation.id, operation.currentStage,
@@ -77,6 +75,37 @@ export async function spawnAgent(
   }
   operation = built.value.operation;
   return b3ok(built.value);
+}
+
+/**
+ * Whether this attempt may pick up where the last one stopped, and why not.
+ *
+ * §20 row 2 is a REQUIREMENT, not a courtesy: "Runtime dies after first
+ * RunOperation append but before Run reservation → resume same operation and
+ * same reservation." The command that arrives after that crash carries the same
+ * `clientOpId`, finds the same journal, and must be allowed to finish it — the
+ * reservation predates every effect precisely so that it can.
+ *
+ * Two things stop it, and only two. An effect nobody has been able to verify
+ * (§20's "PTY existence uncertain → reconcile and block input") — repair exists
+ * for that, and it works. And a Run this operation already reserved: past that
+ * line the ladder points at a Run whose PTY died with its Runtime, and resuming
+ * would drive a corpse. That case ends in repair too, then a fresh command.
+ */
+function resumeRefusal(operation: RunOperation): ReturnType<typeof recoveryRequired> | null {
+  if (operation.state !== 'recovery-required') return null;
+  const doubtful = unresolvedUncertainty(operation);
+  if (doubtful.length > 0) {
+    return recoveryRequired(operation.id, operation.currentStage,
+      `an earlier attempt left an effect nobody has verified: ${
+        doubtful.map((item) => item.effectKey).join('; ')}`);
+  }
+  if (operation.newRunId !== undefined) {
+    return recoveryRequired(operation.id, operation.currentStage,
+      `an earlier attempt already reserved ${operation.newRunId}; repair that operation, `
+      + 'then spawn under a new client-op-id');
+  }
+  return null;
 }
 
 /**

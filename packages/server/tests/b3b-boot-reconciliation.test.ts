@@ -29,7 +29,13 @@ import { connectRuntime } from '../core/b3/client.js';
 import { governedRole } from './governed-role.js';
 
 interface RunSummary { run: { id: string; lifecycle: string; uncertainty?: readonly unknown[] } }
-interface OperationSummary { id: string; state: string }
+/**
+ * `b3.agent.listOperations` publishes §12.7's RunOperationView — the operation
+ * nested under `operation`, not flattened. Read as a flat record, every
+ * `item.state` in this file was `undefined`, so every filter below matched
+ * nothing and every assertion passed without looking at anything.
+ */
+interface OperationSummary { operation: { id: string; state: string } }
 interface RuntimeStatus { recoveryRequiredCount: number }
 
 /**
@@ -95,9 +101,10 @@ test('a restart reconciles the Runs and operations the last Runtime abandoned', 
       assert.equal(operations.ok, true);
       if (!operations.ok) return;
       const unsettled = operations.value.filter(
-        (item) => item.state === 'running' || item.state === 'continuation-pending',
+        (item) => item.operation.state === 'running'
+          || item.operation.state === 'continuation-pending',
       );
-      assert.deepEqual(unsettled.map((item) => item.id), [],
+      assert.deepEqual(unsettled.map((item) => item.operation.id), [],
         'an operation from a dead Runtime is still "running"');
     },
   );
@@ -134,7 +141,7 @@ test('a Runtime holding stranded work does not report nothing needs recovery', a
       assert.equal(operations.ok, true);
       if (!operations.ok) return;
       const needingRecovery = operations.value.filter(
-        (item) => item.state === 'recovery-required',
+        (item) => item.operation.state === 'recovery-required',
       ).length;
       assert.equal(status.value.recoveryRequiredCount >= needingRecovery, true,
         `${String(needingRecovery)} operation(s) need recovery but the Runtime `
@@ -214,10 +221,63 @@ test('a SIGKILL mid-spawn leaves nothing a restart cannot settle', async () => {
       assert.equal(operations.ok, true);
       if (!operations.ok) return;
       assert.deepEqual(
-        operations.value.filter((item) => item.state === 'running').map((item) => item.id),
+        operations.value.filter((item) => item.operation.state === 'running')
+          .map((item) => item.operation.id),
         [],
         'an operation from a SIGKILLed Runtime is still running',
       );
+    } finally {
+      await client.close();
+      await host.close();
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+/**
+ * The other half of the same question, through the real host boot path: once
+ * the restart has said what needs recovery, can the operator ACT on it?
+ *
+ * Boot used to append an unconditional `uncertain` compensation line to every
+ * abandoned operation, and repair refuses to close an operation carrying
+ * uncertainty — so `recovery-required` was a terminal diagnosis rather than a
+ * work item, and the published repair method could never succeed on the one
+ * shape it exists for (NVK-KIMI-031 finding 1).
+ */
+test('an operation a SIGKILL abandoned can actually be repaired', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'nvk-b3b-repair-'));
+  try {
+    await crashMidSpawn(root);
+    const host = await startRuntimeHost({
+      root, port: 0, ptyHost: createFakePtyHost(),
+      providers: createFakeProviderAdapters(), gateTimeoutMs: 1_500,
+    });
+    const client = await connectRuntime({ root, port: host.port, token: host.token });
+    try {
+      const operations = await client.call<readonly OperationSummary[]>(
+        'b3.agent.listOperations', {}, mintClientOpId(),
+      );
+      assert.equal(operations.ok, true);
+      if (!operations.ok) return;
+      const stranded = operations.value.filter(
+        (item) => item.operation.state === 'recovery-required',
+      );
+      assert.equal(stranded.length >= 1, true,
+        'the SIGKILL left no operation needing recovery, so this proves nothing');
+
+      for (const item of stranded) {
+        const repaired = await client.call<OperationSummary>(
+          'b3.agent.repairOperation', { operationId: item.operation.id }, mintClientOpId(),
+        );
+        assert.equal(repaired.ok, true,
+          `repair refused the operation it exists for: ${
+            repaired.ok ? '' : repaired.error.message}`);
+        if (repaired.ok) {
+          assert.equal(repaired.value.operation.state, 'completed',
+            'repair returned success without closing the operation');
+        }
+      }
     } finally {
       await client.close();
       await host.close();
@@ -290,7 +350,8 @@ test('a spawn that dies after its Run exists compensates instead of stranding it
     assert.equal(operations.ok, true);
     if (!operations.ok) return;
     assert.deepEqual(
-      operations.value.filter((item) => item.state === 'running').map((item) => item.id), [],
+      operations.value.filter((item) => item.operation.state === 'running')
+        .map((item) => item.operation.id), [],
       'the failed spawn left its operation running',
     );
   } finally {
