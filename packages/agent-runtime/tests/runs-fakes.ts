@@ -65,6 +65,8 @@ function scriptedConfirmation(prompt: string, reply: ScriptedReply): string | nu
 
 export function createFakeTerminal(): FakeTerminal {
   const sessions = new Map<TerminalSessionId, TerminalFacts>();
+  /** One PTY per open OPERATION, so a retry adopts instead of launching. */
+  const byOperation = new Map<string, TerminalFacts>();
   const port: FakeTerminal = {
     opened: [],
     submitted: [],
@@ -75,18 +77,29 @@ export function createFakeTerminal(): FakeTerminal {
     interruptOutcome: 'barrier-committed',
     failTerminate: null,
 
-    async openManagedTerminal(_context, input) {
+    async openManagedTerminal(context, input) {
       if (port.failOpen) {
         const error = port.failOpen;
         port.failOpen = null;
         return b3fail(error);
       }
+      // The REAL Terminal keys an open on `{principal, operation, clientOpId}`
+      // and, on a retry, adopts the PTY its own earlier attempt started rather
+      // than launching a second one (§13.5, packages/terminal/core/sessions.ts).
+      // A fake that opened a fresh PTY per call would let a duplicate-launch
+      // bug pass, so it keys the same way.
+      const adoptionKey = `${context.clientOpId}:${input.launchFingerprint}`;
+      const adopted = byOperation.get(adoptionKey);
+      if (adopted !== undefined) return b3ok(adopted);
+
       const id = mintTerminalSessionId();
-      sessions.set(id, { id, status: 'live' });
+      const opened: TerminalFacts = { id, status: 'live' };
+      sessions.set(id, opened);
+      byOperation.set(adoptionKey, opened);
       port.opened.push({
         id, fingerprint: input.launchFingerprint, authority: input.launchAuthorityRef,
       });
-      return b3ok({ id, status: 'live' });
+      return b3ok(opened);
     },
 
     async submitRuntimeInput(_context, input) {

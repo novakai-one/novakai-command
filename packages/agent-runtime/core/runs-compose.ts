@@ -23,7 +23,7 @@ import type {
   AgentsPort, ProviderPort, RunCredentialPort, TerminalPort,
 } from '../contract/ports.js';
 import type { RuntimeHostContract } from '../contract/types.js';
-import { createRunsStore, type RunsStoreOptions } from './runs-store.js';
+import { createRunsStore, type RunsStore, type RunsStoreOptions } from './runs-store.js';
 import { OPERATION, versionGuard, type RunsCore } from './runs-context.js';
 import { spawnAgent } from './spawn.js';
 import {
@@ -38,6 +38,12 @@ import {
 } from './queries.js';
 
 export interface ComposeAgentRunsOptions extends RunsStoreOptions {
+  /**
+   * @internal failure injection. §24.3 requires a crash before AND after every
+   * spawn/continuation stage; the honest way to produce one is a store that
+   * stops accepting writes, exactly as a dying process would.
+   */
+  readonly store?: RunsStore;
   readonly agents: AgentsPort;
   readonly terminal: TerminalPort;
   readonly providers: ProviderPort;
@@ -55,7 +61,7 @@ const DEFAULT_GATE_TIMEOUT_MS = 120_000;
 
 export function composeAgentRuns(options: ComposeAgentRunsOptions): AgentRunsContract {
   const core: RunsCore = {
-    store: createRunsStore(options),
+    store: options.store ?? createRunsStore(options),
     agents: options.agents,
     terminal: options.terminal,
     providers: options.providers,

@@ -135,6 +135,19 @@ async function sendConfirmationTurn(
       { operationId: input.operation.id, stage: 'skills-gate-prompt-sent', reason: 'no-terminal' },
       true));
   }
+
+  // §13.5: "retry observes transcript before sending again". A crash between
+  // submitting turn 1 and journalling it leaves a prompt the journal has no
+  // record of; re-prompting would ask the same agent the same question twice.
+  // Whatever it has already said is the evidence that it was asked.
+  const spoken = await alreadyPrompted(core, input, terminalSessionId);
+  if (!spoken.ok) return spoken;
+  if (spoken.value) {
+    return advance(core, input.operation, {
+      stage: 'skills-gate-prompt-sent', owner: 'terminal', ownerObjectId: terminalSessionId,
+    });
+  }
+
   const submitted = await core.terminal.submitRuntimeInput(context, {
     terminalSessionId,
     text: core.providers.submitTurn(
@@ -146,6 +159,26 @@ async function sendConfirmationTurn(
   return advance(core, input.operation, {
     stage: 'skills-gate-prompt-sent', owner: 'terminal', ownerObjectId: terminalSessionId,
   });
+}
+
+/**
+ * Whether this session has already been asked. The evidence is the session's
+ * own output carrying the marker — which is what a re-entering attempt can see
+ * and a lost in-memory record cannot.
+ */
+async function alreadyPrompted(
+  core: RunsCore, input: GateInput, terminalSessionId: string,
+): Promise<B3Result<boolean>> {
+  const output = await core.terminal.readOutputSoFar(
+    { id: 'sys_agent_runtime', kind: 'system', verifiedScopes: [] },
+    terminalSessionId as never,
+  );
+  if (!output.ok) return output;
+  const marker = input.plan.skillsConfirmationGate.mode === 'required-two-turn'
+    ? input.plan.skillsConfirmationGate.confirmationMarker : 'SKILLS-CONFIRMED:';
+  return b3ok(core.providers.findConfirmationLine(
+    input.plan.provider, output.value, marker,
+  ) !== null);
 }
 
 /** Read what the provider actually said, until it says it or time runs out. */

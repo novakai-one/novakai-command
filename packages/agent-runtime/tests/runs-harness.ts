@@ -13,7 +13,7 @@ import {
   b3err, b3fail, b3ok, mintClientOpId, mintProviderSessionId, mintRuntimeEpochId,
   mintTraceCorrelationId,
   type AgentRunId, type AuthenticatedPrincipal, type AuthorityScope,
-  type CommandContext, type ProviderSessionId, type RuntimeEpochId,
+  type B3Result, type CommandContext, type ProviderSessionId, type RuntimeEpochId,
 } from '@novakai/foundation/contract';
 import type { LaunchPlanFacts, RunCredentialPort } from '../contract/ports.js';
 import {
@@ -27,6 +27,7 @@ import {
 import type { AgentRunsContract } from '../contract/runs-api.js';
 import type { RuntimeHostContract } from '../contract/types.js';
 import { composeAgentRuns } from '../core/runs-compose.js';
+import { createRunsStore, type RunsStore } from '../core/runs-store.js';
 
 
 // ── The fence and the credentials ───────────────────────────────────────────
@@ -80,19 +81,43 @@ export interface RunsRig {
 
 export interface RunsRigOptions extends FakeAgentsOptions {
   readonly gateTimeoutMs?: number;
+  /**
+   * Stop accepting durable writes after N of them — a crash, modelled as what a
+   * crash actually looks like from inside the operation. A rig built on the
+   * SAME root afterwards is the restarted process.
+   */
+  readonly crashAfterWrites?: number;
+  /** Reuse a root, so a "restart" reads what the dead attempt left behind. */
+  readonly root?: string;
+  /**
+   * Reuse the live ports.
+   *
+   * `crashAfterWrites` models a STORE that stopped accepting writes — a full
+   * disk, a lock timeout — while the process and its PTY lived on. A retry in
+   * that world can still see what the session printed, which is what §13.5's
+   * "retry observes transcript before sending again" depends on. Handing the
+   * retry a blank terminal would model a different failure (the whole Runtime
+   * dying, where the PTY goes with it) and answer it with the wrong mechanism.
+   */
+  readonly agents?: FakeAgents;
+  readonly terminal?: FakeTerminal;
+  readonly providers?: FakeProviders;
 }
 
 export function createRunsRig(options: RunsRigOptions = {}): RunsRig {
-  const root = mkdtempSync(path.join(tmpdir(), 'nvk-b3b-runs-'));
-  const agents = createFakeAgents(options);
-  const terminal = createFakeTerminal();
-  const providers = createFakeProviders();
+  const root = options.root ?? mkdtempSync(path.join(tmpdir(), 'nvk-b3b-runs-'));
+  const agents = options.agents ?? createFakeAgents(options);
+  const terminal = options.terminal ?? createFakeTerminal();
+  const providers = options.providers ?? createFakeProviders();
   const fence = createFakeFence();
   const events: RunsRig['events'] = [];
 
+  const storeOptions = { root, dataRoot: path.join(root, 'stores') };
   const runtime = composeAgentRuns({
-    root,
-    dataRoot: path.join(root, 'stores'),
+    ...storeOptions,
+    ...(options.crashAfterWrites === undefined
+      ? {}
+      : { store: crashingStore(createRunsStore(storeOptions), options.crashAfterWrites) }),
     agents,
     terminal,
     providers,
@@ -141,3 +166,31 @@ export {
   createFakeAgents, CHRIS, EVERY_SCOPE,
   type FakeAgents, type FakeAgentsOptions,
 } from './runs-agents-fake.js';
+
+/**
+ * A store that dies after N durable writes.
+ *
+ * Reads keep working, because a crashed process leaves its FILES intact — what
+ * stops is this process's ability to append. That is the shape recovery has to
+ * cope with; a store that also stopped reading would be a different and easier
+ * problem.
+ */
+function crashingStore(real: RunsStore, afterWrites: number): RunsStore {
+  let written = 0;
+  const dead = (): B3Result<never> => b3fail(b3err('StoreUnavailable',
+    'the runtime process died mid-operation', { owner: 'agent-runtime', cause: 'crash' }, true));
+  return {
+    async create(principal, payload, clientOpId) {
+      written += 1;
+      if (written > afterWrites) return dead();
+      return real.create(principal, payload, clientOpId);
+    },
+    async update(principal, id, patch, expectedVersion, clientOpId) {
+      written += 1;
+      if (written > afterWrites) return dead();
+      return real.update(principal, id, patch, expectedVersion, clientOpId);
+    },
+    read: (kind, id) => real.read(kind, id),
+    list: (kind, filter) => real.list(kind, filter),
+  };
+}

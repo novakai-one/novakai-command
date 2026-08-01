@@ -130,21 +130,10 @@ export function composeReceiptStore(options: ComposeReceiptsOptions): ReceiptSto
     const prior = await readReceipt(id);
 
     if (prior) {
-      if (prior.canonicalRequestHash !== hash) {
-        return b3fail(b3err('IdempotencyConflict',
-          `clientOpId ${context.clientOpId} was already used for a different ${descriptor.operation} request`,
-          { receiptId: id, originalHash: prior.canonicalRequestHash, receivedHash: hash }, false));
-      }
-      if (prior.state === 'succeeded' || prior.state === 'failed') {
-        return replayOutcome<T>(prior);
-      }
-      if (!descriptor.replaySafe) {
-        return b3fail(b3err('RecoveryRequired',
-          `${descriptor.operation} was interrupted after its effect may have been applied`,
-          { operationId: id, stage: prior.state, reason: 'effect-outcome-uncertain' }, true));
-      }
-      // replay-safe: fall through and re-execute; every effect underneath is
-      // idempotent on the same clientOpId.
+      const settled = await answerFromPrior<T>(id, prior, hash, context, descriptor);
+      if (settled !== null) return settled;
+      // Otherwise fall through and re-execute; every effect underneath a
+      // replay-safe command is idempotent on the same clientOpId.
     } else {
       const opened = await createObject<CommandReceiptRecord>(handle, {
         kind: 'commandReceipt', id, schemaVersion: 1,
@@ -168,6 +157,65 @@ export function composeReceiptStore(options: ComposeReceiptsOptions): ReceiptSto
     return result;
   }
 
+  /**
+   * What an EARLIER attempt already decided — or `null` when this attempt
+   * should run.
+   *
+   * Four answers live here, and the differences matter: a different request is
+   * a conflict; a success replays; a settled refusal replays, because a caller
+   * must not be able to retry its way past a denial; and a RETRYABLE failure
+   * runs again, because §11 promised it could.
+   */
+  async function answerFromPrior<T>(
+    id: CommandReceiptId,
+    prior: CommandReceiptRecord,
+    hash: string,
+    context: CommandContext,
+    descriptor: CommandDescriptor,
+  ): Promise<B3Result<T> | null> {
+    if (prior.canonicalRequestHash !== hash) {
+      return b3fail(b3err('IdempotencyConflict',
+        `clientOpId ${context.clientOpId} was already used for a different ${descriptor.operation} request`,
+        { receiptId: id, originalHash: prior.canonicalRequestHash, receivedHash: hash }, false));
+    }
+    if (prior.state === 'succeeded') return replayOutcome<T>(prior);
+    if (prior.state === 'failed' && !retryableFailure(prior)) return replayOutcome<T>(prior);
+    if (!descriptor.replaySafe) {
+      return b3fail(b3err('RecoveryRequired',
+        `${descriptor.operation} was interrupted after its effect may have been applied`,
+        { operationId: id, stage: prior.state, reason: 'effect-outcome-uncertain' }, true));
+    }
+    if (prior.state === 'failed') {
+      const reopened = await reopen(id, prior);
+      if (!reopened.ok) return reopened;
+    }
+    return null;
+  }
+
+  /** Put a retryable failure back into `running` so this attempt can settle it. */
+  async function reopen(
+    id: CommandReceiptId, prior: CommandReceiptRecord,
+  ): Promise<B3Result<null>> {
+    const current = await getObject<CommandReceiptRecord>(
+      handle, 'commandReceipt', id as unknown as ObjectId,
+    );
+    if (!current.ok || isAbsent(current.value)) {
+      return b3fail(b3err('StoreUnavailable', 'the command receipt could not be re-read',
+        { owner: 'foundation', cause: 'receipt-missing' }, true));
+    }
+    const written = await updateObject<CommandReceiptRecord>(
+      handle, id as unknown as ObjectId, { state: 'running' },
+      current.value.version, mintClientOpId(),
+    );
+    if (!written.ok) {
+      return b3fail(b3err('StoreUnavailable',
+        `the command receipt could not be reopened: ${written.error.message}`,
+        { owner: 'foundation', cause: written.error.code }, true));
+    }
+    void prior;
+    return b3ok(null);
+  }
+
   async function settle<T>(id: CommandReceiptId, result: B3Result<T>): Promise<void> {
     const current = await getObject<CommandReceiptRecord>(handle, 'commandReceipt', id as unknown as ObjectId);
     if (!current.ok || isAbsent(current.value)) return;
@@ -184,6 +232,11 @@ export function composeReceiptStore(options: ComposeReceiptsOptions): ReceiptSto
   }
 
   return { runCommand, readReceipt };
+}
+
+/** Whether the stored failure was one the caller was invited to retry. */
+function retryableFailure(prior: CommandReceiptRecord): boolean {
+  return prior.outcome?.error?.retryable === true;
 }
 
 function replayOutcome<T>(prior: CommandReceiptRecord): B3Result<T> {
