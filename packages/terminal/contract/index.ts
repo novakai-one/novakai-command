@@ -4,3 +4,4 @@ export * from './records.js';
 export * from './api.js';
 export * from './ports.js';
 export { composeTerminal, type ComposeTerminalOptions } from '../core/compose.js';
+export * from './validate.js';

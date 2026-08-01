@@ -6,3 +6,4 @@
 export * from './types.js';
 export { composeRuntimeHost, type ComposeRuntimeHostOptions } from '../core/compose.js';
 export { createFileInstanceLease } from '../adapters/file-lease.js';
+export * from './validate.js';

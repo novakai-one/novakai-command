@@ -7,6 +7,9 @@ export * from './types.js';
 // B3 (B3V4-P2 §§4, 11): the shared identifier/context/error kernel every Build
 // 3 capability speaks, and the one durable command-receipt writer (§3.3).
 export * from './b3.js';
+// §4.2's MUST, as machinery: the rules live with the capability that owns the
+// shape, but every boundary reads its payload the same way.
+export { readBoundary, type FieldIssue, type FieldReader } from './validate.js';
 export {
   composeReceiptStore, canonicalJson, canonicalRequestHash, commandReceiptId,
   type CommandDescriptor, type CommandReceiptRecord, type CommandReceiptState,

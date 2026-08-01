@@ -1,0 +1,151 @@
+// The runtime validators for Terminal's public inputs (§3.2, §4.2 MUST).
+//
+// They live beside the shapes they check, because the capability that owns a
+// meaning is the only thing that can say what a valid one looks like. Every
+// caller — the wire, the CLI through it, any future host — reads its payload
+// through these, so there is one answer to "is this a terminal session id"
+// rather than one per surface.
+//
+// Red gate 3 is the point of the id rules: TerminalSessionId, controller id and
+// AgentRunId are NOT interchangeable, and a well-formed body under the wrong
+// prefix is rejected on purpose.
+import {
+  readBoundary,
+  type B3Result, type FieldReader, type LeaseGeneration, type TerminalSessionId,
+} from '@novakai/foundation/contract';
+import type {
+  AcquireInputLeaseInput, AttachControllerInput, DetachControllerInput,
+  ListTerminalSessionsFilter, OpenManagedTerminalInput, ReadTerminalStreamInput,
+  ReleaseInputLeaseInput, ResizeTerminalInput, WriteTerminalInput,
+} from './api.js';
+import {
+  CONTROLLER_KINDS, TERMINAL_INPUT_KINDS, type TerminalSessionOwner,
+} from './records.js';
+
+/** A terminal is a window on a screen, not an address space. */
+const VIEWPORT_LIMIT = 10_000;
+const LEASE_TTL_LIMIT_MS = 3_600_000;
+const SEQUENCE_LIMIT = Number.MAX_SAFE_INTEGER;
+
+const LEASE_MODES = ['acquire-if-free', 'renew', 'explicit-takeover'] as const;
+const LIST_STATES = ['live', 'final', 'all'] as const;
+const OWNER_KINDS = ['plain-shell', 'agent-run'] as const;
+
+/** The owner is a union, so its tag decides which id has to be valid. */
+function readOwner(field: FieldReader): TerminalSessionOwner {
+  const owner = field.nested('owner');
+  const kind = owner.choice('kind', OWNER_KINDS);
+  if (kind === 'agent-run') {
+    return { kind, agentRunId: owner.id('agentRunId', 'agentRun') };
+  }
+  return { kind: 'plain-shell', shellInstanceId: owner.text('shellInstanceId') };
+}
+
+function readViewport(field: FieldReader): { columns: number; rows: number } {
+  return {
+    columns: field.count('columns', 1, VIEWPORT_LIMIT),
+    rows: field.count('rows', 1, VIEWPORT_LIMIT),
+  };
+}
+
+export function readOpenManagedTerminalInput(
+  payload: unknown,
+): B3Result<OpenManagedTerminalInput> {
+  return readBoundary(payload, (field) => ({
+    owner: readOwner(field),
+    launchAuthorityRef: field.text('launchAuthorityRef'),
+    launchFingerprint: field.text('launchFingerprint'),
+    workingDirectory: field.text('workingDirectory'),
+    ...readViewport(field),
+  }));
+}
+
+export function readAttachControllerInput(payload: unknown): B3Result<AttachControllerInput> {
+  return readBoundary(payload, (field) => ({
+    terminalSessionId: field.id('terminalSessionId', 'terminal'),
+    controllerKind: field.choice('controllerKind', CONTROLLER_KINDS),
+    ...readViewport(field),
+    ...optional('afterOutputSequence', field.optionalCount('afterOutputSequence', 0, SEQUENCE_LIMIT)),
+  }));
+}
+
+export function readDetachControllerInput(payload: unknown): B3Result<DetachControllerInput> {
+  return readBoundary(payload, (field) => ({
+    terminalSessionId: field.id('terminalSessionId', 'terminal'),
+    attachmentId: field.id('attachmentId', 'controller'),
+  }));
+}
+
+export function readAcquireInputLeaseInput(payload: unknown): B3Result<AcquireInputLeaseInput> {
+  return readBoundary(payload, (field) => ({
+    terminalSessionId: field.id('terminalSessionId', 'terminal'),
+    attachmentId: field.id('attachmentId', 'controller'),
+    mode: field.choice('mode', LEASE_MODES),
+    ttlMs: field.count('ttlMs', 1, LEASE_TTL_LIMIT_MS),
+    ...optional('expectedLeaseGeneration',
+      field.optionalCount('expectedLeaseGeneration', 1, SEQUENCE_LIMIT) as
+        LeaseGeneration | undefined),
+  }));
+}
+
+export function readReleaseInputLeaseInput(payload: unknown): B3Result<ReleaseInputLeaseInput> {
+  return readBoundary(payload, (field) => ({
+    terminalSessionId: field.id('terminalSessionId', 'terminal'),
+    attachmentId: field.id('attachmentId', 'controller'),
+    leaseId: field.id('leaseId', 'terminalInputLease'),
+    generation: field.count('generation', 1, SEQUENCE_LIMIT) as LeaseGeneration,
+  }));
+}
+
+export function readWriteTerminalInput(payload: unknown): B3Result<WriteTerminalInput> {
+  return readBoundary(payload, (field) => ({
+    terminalSessionId: field.id('terminalSessionId', 'terminal'),
+    attachmentId: field.id('attachmentId', 'controller'),
+    inputLeaseId: field.id('inputLeaseId', 'terminalInputLease'),
+    leaseGeneration: field.count('leaseGeneration', 1, SEQUENCE_LIMIT) as LeaseGeneration,
+    expectedNextInputSequence: field.count('expectedNextInputSequence', 1, SEQUENCE_LIMIT),
+    kindOfInput: field.choice('kindOfInput', TERMINAL_INPUT_KINDS),
+    // Bytes are not validated for content — a terminal accepts what you type.
+    ...optional('utf8Text', typeof field.given('utf8Text') === 'string'
+      ? field.given('utf8Text') as string : undefined),
+  }));
+}
+
+export function readResizeTerminalInput(payload: unknown): B3Result<ResizeTerminalInput> {
+  return readBoundary(payload, (field) => ({
+    terminalSessionId: field.id('terminalSessionId', 'terminal'),
+    attachmentId: field.id('attachmentId', 'controller'),
+    ...readViewport(field),
+  }));
+}
+
+export function readReadTerminalStreamInput(payload: unknown): B3Result<ReadTerminalStreamInput> {
+  return readBoundary(payload, (field) => ({
+    terminalSessionId: field.id('terminalSessionId', 'terminal'),
+    ...optional('afterOutputSequence',
+      field.optionalCount('afterOutputSequence', 0, SEQUENCE_LIMIT)),
+  }));
+}
+
+export function readTerminalSessionIdInput(
+  payload: unknown,
+): B3Result<{ readonly terminalSessionId: TerminalSessionId }> {
+  return readBoundary(payload, (field) => ({
+    terminalSessionId: field.id<TerminalSessionId>('terminalSessionId', 'terminal'),
+  }));
+}
+
+export function readListTerminalSessionsFilter(
+  payload: unknown,
+): B3Result<ListTerminalSessionsFilter> {
+  return readBoundary(payload, (field) => ({
+    ...optional('state', field.optionalChoice('state', LIST_STATES)),
+  }));
+}
+
+/** Absent stays absent: an optional field is not the same as an undefined one. */
+function optional<Name extends string, Value>(
+  name: Name, value: Value | undefined,
+): Record<Name, Value> | Record<string, never> {
+  return value === undefined ? {} : { [name]: value } as Record<Name, Value>;
+}

@@ -49,7 +49,12 @@ export interface TerminalSession extends RecordEnvelope<TerminalSessionId, 'term
   readonly earliestReplaySequence: number;
 }
 
-export type ControllerKind = 'novakai-shell' | 'external-terminal' | 'script' | 'operations';
+/** One list, so the type and the runtime validator can never disagree (§4.2). */
+export const CONTROLLER_KINDS = [
+  'novakai-shell', 'external-terminal', 'script', 'operations',
+] as const;
+
+export type ControllerKind = typeof CONTROLLER_KINDS[number];
 
 export interface ControllerAttachment
   extends RecordEnvelope<ControllerAttachmentId, 'controllerAttachment'> {
@@ -76,7 +81,9 @@ export interface TerminalInputLease
   readonly endedReason?: LeaseEndedReason;
 }
 
-export type TerminalInputKind = 'text' | 'raw-control-c' | 'message-delivery';
+export const TERMINAL_INPUT_KINDS = ['text', 'raw-control-c', 'message-delivery'] as const;
+
+export type TerminalInputKind = typeof TERMINAL_INPUT_KINDS[number];
 
 export type TerminalInputOutcome =
   | 'accepted' | 'submitted-confirmed' | 'submitted-unconfirmed' | 'rejected';

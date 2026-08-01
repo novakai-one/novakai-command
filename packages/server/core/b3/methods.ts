@@ -6,8 +6,15 @@
 import {
   b3err, b3fail, b3ok, mintClientOpId, mintTraceCorrelationId,
   type AuthenticatedPrincipal, type B3ClientOpId, type B3Result, type CommandContext,
-  type HumanPrincipalId, type TerminalSessionId,
+  type HumanPrincipalId,
 } from '@novakai/foundation/contract';
+import {
+  readAcquireInputLeaseInput, readAttachControllerInput, readDetachControllerInput,
+  readListTerminalSessionsFilter, readOpenManagedTerminalInput,
+  readReadTerminalStreamInput, readReleaseInputLeaseInput, readResizeTerminalInput,
+  readTerminalSessionIdInput, readWriteTerminalInput,
+} from '../../../terminal/contract/index.js';
+import { readRequestRuntimeStopInput } from '../../../agent-runtime/contract/index.js';
 import type { MethodTable } from '../../contract/protocol.js';
 import type { B3Runtime } from './composition.js';
 
@@ -61,62 +68,57 @@ export function buildB3Methods(options: B3MethodOptions): MethodTable {
     contractVersion: 1,
   });
 
-  /** Every method is the same three steps: parse params, run, return a Result. */
+  /**
+   * Every method is the same four steps: read the envelope, VALIDATE the
+   * payload at runtime, run, return a Result.
+   *
+   * The validator is not optional and not a type assertion (§4.2 MUST): a cast
+   * is erased, and everything past this point treats the payload as true.
+   */
   function method<Payload, Value>(
+    validate: (payload: unknown) => B3Result<Payload>,
     perform: (payload: Payload, context: CommandContext) => Promise<B3Result<Value>>,
   ) {
     return async (params: never): Promise<B3Result<Value>> => {
-      const parsed = readParams<Payload>(params);
+      const parsed = readParams<unknown>(params);
       if (!parsed.ok) return parsed;
-      return perform(parsed.value.payload, contextFrom(parsed.value.clientOpId));
+      const payload = validate(parsed.value.payload);
+      if (!payload.ok) return payload;
+      return perform(payload.value, contextFrom(parsed.value.clientOpId));
     };
   }
 
-  return {
-    'b3.runtime.ensure': method<Record<string, never>, unknown>(
-      (_payload, context) => runtime.ensureLocalRuntime(context),
-    ),
-    'b3.runtime.getStatus': method<Record<string, never>, unknown>(
-      () => runtime.getRuntimeStatus(principal),
-    ),
-    'b3.runtime.doctor': method<Record<string, never>, unknown>(
-      () => runtime.runtimeDoctor(principal),
-    ),
-    'b3.runtime.stop': method<Parameters<typeof runtime.requestRuntimeStop>[1], unknown>(
-      (payload, context) => runtime.requestRuntimeStop(context, payload),
-    ),
+  /** A method whose payload carries nothing to validate. */
+  const noPayload = (): B3Result<Record<string, never>> => b3ok({});
 
-    'b3.terminal.open': method<Parameters<typeof terminal.openManagedTerminal>[1], unknown>(
-      (payload, context) => terminal.openManagedTerminal(context, payload),
-    ),
-    'b3.terminal.list': method<{ state?: 'live' | 'final' | 'all' }, unknown>(
-      (payload) => terminal.listTerminalSessions(principal, payload),
-    ),
-    'b3.terminal.inspect': method<{ terminalSessionId: TerminalSessionId }, unknown>(
-      (payload) => terminal.getTerminalSession(principal, payload.terminalSessionId),
-    ),
-    'b3.terminal.attach': method<Parameters<typeof terminal.attachController>[1], unknown>(
-      (payload, context) => terminal.attachController(context, payload),
-    ),
-    'b3.terminal.detach': method<Parameters<typeof terminal.detachController>[1], unknown>(
-      (payload, context) => terminal.detachController(context, payload),
-    ),
-    'b3.terminal.acquireLease': method<Parameters<typeof terminal.acquireInputLease>[1], unknown>(
-      (payload, context) => terminal.acquireInputLease(context, payload),
-    ),
-    'b3.terminal.releaseLease': method<Parameters<typeof terminal.releaseInputLease>[1], unknown>(
-      (payload, context) => terminal.releaseInputLease(context, payload),
-    ),
-    'b3.terminal.write': method<Parameters<typeof terminal.writeInput>[1], unknown>(
-      (payload, context) => terminal.writeInput(context, payload),
-    ),
-    'b3.terminal.resize': method<Parameters<typeof terminal.resizeTerminal>[1], unknown>(
-      (payload, context) => terminal.resizeTerminal(context, payload),
-    ),
+  return {
+    'b3.runtime.ensure': method(noPayload,
+      (_payload, context) => runtime.ensureLocalRuntime(context)),
+    'b3.runtime.getStatus': method(noPayload, () => runtime.getRuntimeStatus(principal)),
+    'b3.runtime.doctor': method(noPayload, () => runtime.runtimeDoctor(principal)),
+    'b3.runtime.stop': method(readRequestRuntimeStopInput,
+      (payload, context) => runtime.requestRuntimeStop(context, payload)),
+
+    'b3.terminal.open': method(readOpenManagedTerminalInput,
+      (payload, context) => terminal.openManagedTerminal(context, payload)),
+    'b3.terminal.list': method(readListTerminalSessionsFilter,
+      (payload) => terminal.listTerminalSessions(principal, payload)),
+    'b3.terminal.inspect': method(readTerminalSessionIdInput,
+      (payload) => terminal.getTerminalSession(principal, payload.terminalSessionId)),
+    'b3.terminal.attach': method(readAttachControllerInput,
+      (payload, context) => terminal.attachController(context, payload)),
+    'b3.terminal.detach': method(readDetachControllerInput,
+      (payload, context) => terminal.detachController(context, payload)),
+    'b3.terminal.acquireLease': method(readAcquireInputLeaseInput,
+      (payload, context) => terminal.acquireInputLease(context, payload)),
+    'b3.terminal.releaseLease': method(readReleaseInputLeaseInput,
+      (payload, context) => terminal.releaseInputLease(context, payload)),
+    'b3.terminal.write': method(readWriteTerminalInput,
+      (payload, context) => terminal.writeInput(context, payload)),
+    'b3.terminal.resize': method(readResizeTerminalInput,
+      (payload, context) => terminal.resizeTerminal(context, payload)),
     /** Bounded replay pull. Live following rides the event frame, not a method. */
-    'b3.terminal.read': method<
-      { terminalSessionId: TerminalSessionId; afterOutputSequence?: number }, unknown
-    >(async (payload) => {
+    'b3.terminal.read': method(readReadTerminalStreamInput, async (payload) => {
       const frames = [];
       for await (const frame of terminal.readTerminalStream(principal, {
         ...payload, replayOnly: true,
