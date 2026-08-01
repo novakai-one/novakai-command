@@ -12,6 +12,13 @@ const adapters = new Map([
   ['artifact', path.join(repoRoot, 'packages/artifacts/cli/nvk-artifact.ts')],
   ['spine', path.join(repoRoot, 'packages/spine/cli/nvk-spine.ts')],
   ['transcript', path.join(repoRoot, 'packages/transcript/cli/nvk-transcript.ts')],
+  // B3: the canonical families of §17.1 / DEC-B3V4-04. `nvk agent spawn` is the
+  // command the onboarding promises and the one an operator actually types;
+  // until now it was a usage error, and every verb had to be driven as
+  // `npx tsx <absolute path to>/nvk-agent.ts`.
+  ['agent', path.join(repoRoot, 'packages/server/cli/nvk-agent.ts')],
+  ['runtime', path.join(repoRoot, 'packages/server/cli/nvk-runtime.ts')],
+  ['terminal', path.join(repoRoot, 'packages/server/cli/nvk-terminal.ts')],
 ]);
 
 const [group, ...args] = process.argv.slice(2);
@@ -19,7 +26,7 @@ const adapter = adapters.get(group);
 if (!adapter) {
   process.stderr.write(`${JSON.stringify({
     code: 'Usage',
-    message: 'usage: nvk project|artifact|spine|transcript <verb> [options]',
+    message: `usage: nvk ${[...adapters.keys()].join('|')} <verb> [options]`,
   })}\n`);
   process.exitCode = 2;
 } else {

@@ -43,6 +43,7 @@ import {
   clientOpIdFrom, emit, fail, parseFlags, type Flags,
 } from '../core/b3/cli-shared.js';
 import { describeControls, describeList, describeRun, describeTree } from './agent-describe.js';
+import { roleFromFile, roleIdFor } from './agent-roles.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '..', '..', '..');
@@ -100,25 +101,6 @@ async function withClient<Value>(
   }
 }
 
-/** A role by NAME, because that is what Chris types. */
-async function roleIdFor(client: RuntimeClient, given: string): Promise<B3Result<string>> {
-  if (given.startsWith('agentRole_')) return b3ok(given);
-  const roles = await client.call<readonly AgentRoleProfile[]>('b3.agent.getRoles', {});
-  if (!roles.ok) return roles;
-  const matched = roles.value.filter((role) => role.name === given && role.status === 'active');
-  if (matched.length === 0) {
-    return b3fail(b3err('RoleNotAllowed',
-      `no active role is named "${given}"; try \`nvk-agent roles\``,
-      { roleProfileId: given }, false));
-  }
-  if (matched.length > 1) {
-    return b3fail(b3err('RoleNotAllowed',
-      `${matched.length} active roles are named "${given}"; name it by id`,
-      { roleProfileId: given }, false));
-  }
-  return b3ok(matched[0]!.id);
-}
-
 const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
   async roles(argFlags) {
     emit('agent roles', argFlags, await withClient<readonly AgentRoleProfile[]>(
@@ -128,6 +110,26 @@ const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
       : found.map((role) => `${role.name}  ${role.status}  ${role.id}\n`
         + `  ${role.providerPolicy.allowed.join('/')} · models ${role.modelPolicy.allowedModelIds.join(', ')}`
         + ` · gate ${role.skillsConfirmationGate.mode}`).join('\n')));
+  },
+
+  /**
+   * `nvk agent define-role --file <role.json>`.
+   *
+   * Without it a clean install can never spawn anything: `b3.agent.createRole`
+   * was published on the wire and used by tests and the bundled proof, and no
+   * operator surface called it, so "spawn a governed agent from anywhere" was
+   * unreachable by CLI from a fresh data root (probe M-2).
+   */
+  async ['define-role'](argFlags) {
+    const file = argFlags.value('file');
+    if (file === undefined) {
+      return usage('agent define-role', argFlags, '--file <role.json>');
+    }
+    const payload = roleFromFile(file);
+    if (!payload.ok) return fail('agent define-role', argFlags, payload.error);
+    emit('agent define-role', argFlags, await withClient<AgentRoleProfile>(
+      (client) => client.call('b3.agent.createRole', payload.value, operationId()),
+    ), (role) => `Defined role ${role.name} (${role.id}), gate ${role.skillsConfirmationGate.mode}.`);
   },
 
   async spawn(argFlags) {
@@ -348,7 +350,7 @@ async function runCommand(name: string, argFlags: Flags): Promise<never> {
   const handler = COMMANDS[name];
   if (!handler) {
     return usage('agent', argFlags,
-      'roles|spawn|list|tree|inspect|attach|controls|control|interrupt|stop|stop-tree'
+      'roles|define-role|spawn|list|tree|inspect|attach|controls|control|interrupt|stop|stop-tree'
       + '|continue|adopt|operations');
   }
   return handler(argFlags);
