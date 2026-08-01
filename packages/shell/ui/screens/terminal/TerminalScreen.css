@@ -1,76 +1,67 @@
-/* The terminal tab. Calm by default: grayscale, spacing and weight carry the
-   structure. The one accent is reserved for the single thing that needs you. */
+/* The terminal tab — the kit's classes do the composing; this file only says
+   what is specific to a tab hosting a live shell.
+
+   Nothing here reaches for the accent token. The composed viewport already
+   spends its ONE gold on the rail (tools/lint-accent.mjs), so state is drawn
+   the quiet way: ink tier, weight, and a single hairline rule. */
 
 .nvkTerminal {
-  display: flex;
-  flex-direction: column;
   height: 100%;
   min-height: 0;
-  background: var(--workspace, #0d0d0f);
-  color: var(--ink-1, #ececee);
+  background: var(--workspace);
+  color: var(--ink);
 }
 
 .nvkTerminalBar {
-  display: flex;
   align-items: baseline;
   gap: 14px;
   padding: 10px 16px;
-  border-bottom: 1px solid var(--hairline, #252529);
+  border-bottom: 1px solid var(--hairline);
+  flex: 0 0 auto;
 }
 
 .nvkTerminalTitle {
-  font-size: 13px;
+  font-size: var(--text-2);
   font-weight: 500;
   letter-spacing: 0.01em;
+  flex: 0 0 auto;
 }
 
+/* The truth line is quiet by default and steps forward when the session needs
+   a person: ink rises to tier 1, weight ticks up, a rule appears under it.
+   Resolving RELEASES all three — the line goes sage, then calm. Nothing writes
+   a sentence to announce any of it. */
 .nvkTerminalTruth {
-  font-size: 12px;
-  color: var(--ink-3, #8b8b94);
+  font-size: var(--text-3);
+  color: var(--ink-3);
   flex: 1;
+  min-width: 0;
+  /* The rule hugs the words, so it can never read as an input's underline. */
+  text-decoration: underline solid transparent 1px;
+  text-underline-offset: 5px;
+  transition:
+    color var(--motion-structural) var(--ease),
+    text-decoration-color var(--motion-structural) var(--ease);
 }
 
-/* Exactly one attention signal at a time, and it RELEASES when resolved:
-   attention (gold) -> settled (sage) -> calm. Nothing writes a sentence to
-   say so; the line simply changes. */
 .nvkTerminalTruth[data-tone='attention'] {
-  color: var(--accent, #d0a14b);
+  color: var(--ink);
+  font-weight: 500;
+  text-decoration-color: var(--ink-2);
 }
 
 .nvkTerminalTruth[data-tone='settled'] {
-  color: var(--sage, #78a886);
-  transition: color 700ms ease;
-}
-
-.nvkTerminalActions {
-  display: flex;
-  gap: 8px;
+  color: var(--sage);
 }
 
 .nvkTerminalButton {
-  font: inherit;
-  font-size: 12px;
-  color: var(--ink-2, #a2a2aa);
-  background: transparent;
-  border: 0;
-  padding: 4px 8px;
-  border-radius: 5px;
-  cursor: pointer;
-}
-
-.nvkTerminalButton:hover {
-  color: var(--ink-1, #ececee);
-  background: var(--panel-2, #1b1b1e);
-}
-
-.nvkTerminalButton:focus-visible {
-  outline: 2px solid var(--accent, #d0a14b);
-  outline-offset: 2px;
+  font-size: var(--text-3);
+  color: var(--ink-2);
+  flex: 0 0 auto;
 }
 
 .nvkTerminalSurface {
   flex: 1;
-  min-height: 0;
   padding: 8px 10px;
 }
 
@@ -80,11 +71,12 @@
 
 .nvkTerminalNotice {
   padding: 10px 16px;
-  font-size: 12px;
-  color: var(--ink-2, #a2a2aa);
-  border-top: 1px solid var(--hairline, #252529);
+  font-size: var(--text-3);
+  color: var(--ink-2);
+  border-top: 1px solid var(--hairline);
+  flex: 0 0 auto;
 }
 
 .nvkTerminalNotice[data-tone='problem'] {
-  color: var(--ink-1, #ececee);
+  color: var(--ink);
 }

@@ -291,6 +291,19 @@ export const ScrollArea = React.forwardRef<HTMLDivElement, React.HTMLAttributes<
   },
 );
 
+// ── Surface (kit v1.3, B3a) — a bare mount point for a FOREIGN renderer ─────
+// A screen that hosts something drawing its own pixels (the terminal's xterm,
+// later a canvas) has to hand it a live DOM node. That was the one thing the
+// kit could not do without lying: ScrollArea forwards a ref but imposes scroll
+// semantics the terminal does not want — it scrolls its own viewport. So the
+// primitive is named for what it is, and screens still write no raw markup.
+export const Surface = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(
+  function Surface(props, forwarded) {
+    const { className, ...rest } = props;
+    return <div ref={forwarded} className={`k-surface${className ? ` ${className}` : ''}`} {...rest} />;
+  },
+);
+
 // ── Presence dot (dedicated liveness tokens — never the accent, R3-25) ──────
 export function PresenceDot(props: { state: 'offline' | 'online' | 'active'; live?: boolean; title?: string }) {
   return (

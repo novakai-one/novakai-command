@@ -7,7 +7,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
-import './TerminalScreen.css';
+import { TerminalChrome, toneFor } from './TerminalChrome.js';
 import {
   chooseAdoptable, describeTerminal, SHELL_INSTANCE_ID,
   type TerminalOutcome, type TerminalTabView,
@@ -39,6 +39,22 @@ async function adoptOrOpen(
     : null;
   if (reuse) return { succeeded: true, value: reuse };
   return services.openTerminal(workingDirectory, columns, rows);
+}
+
+/**
+ * xterm paints its own pixels, so it is handed the kit's tokens rather than a
+ * second palette (§16: one token source). No gold: the composed viewport's one
+ * attention signal belongs to the rail, and a cursor is not an exception.
+ */
+function xtermTheme(): { background: string; foreground: string; cursor: string } {
+  const tokens = getComputedStyle(document.documentElement);
+  const token = (name: string, fallback: string): string =>
+    tokens.getPropertyValue(name).trim() || fallback;
+  return {
+    background: token('--workspace', '#1b1b1e'),
+    foreground: token('--ink', '#ececee'),
+    cursor: token('--ink-2', '#b4b4bb'),
+  };
 }
 
 async function writeReplay(
@@ -80,7 +96,7 @@ export function TerminalScreen(props: TerminalScreenProps): React.JSX.Element {
       convertEol: false,
       fontSize: 13,
       fontFamily: 'JetBrains Mono, SFMono-Regular, Menlo, monospace',
-      theme: { background: '#0d0d0f', foreground: '#ececee', cursor: '#d0a14b' },
+      theme: xtermTheme(),
     });
     const fitAddon = new FitAddon();
     screen.loadAddon(fitAddon);
@@ -180,41 +196,14 @@ export function TerminalScreen(props: TerminalScreenProps): React.JSX.Element {
     await refresh(view.terminalSessionId);
   }, [services, view, refresh]);
 
-  const truth = view ? describeTerminal(view) : 'Reaching the background Runtime…';
-  // One attention signal at a time, and only for the thing that needs a person.
-  const tone = view?.status === 'recovery-required'
-    ? 'attention'
-    : (settled ? 'settled' : 'calm');
-
   return (
-    <section className="nvkTerminal" aria-label="Terminal">
-      <header className="nvkTerminalBar">
-        <span className="nvkTerminalTitle">Terminal</span>
-        <span className="nvkTerminalTruth" data-tone={tone} data-testid="terminal-truth">
-          {truth}
-        </span>
-        <span className="nvkTerminalActions">
-          <button
-            type="button"
-            className="nvkTerminalButton"
-            data-testid="terminal-close"
-            onClick={() => { void closeTab(); }}
-          >
-            Close window
-          </button>
-        </span>
-      </header>
-      <div className="nvkTerminalSurface" ref={surface} data-testid="terminal-surface" />
-      {watchingOnly && (
-        <p className="nvkTerminalNotice" data-testid="terminal-watching">
-          Another window is typing. This one is watching.
-        </p>
-      )}
-      {problem && (
-        <p className="nvkTerminalNotice" data-tone="problem" data-testid="terminal-problem">
-          {problem}
-        </p>
-      )}
-    </section>
+    <TerminalChrome
+      truth={view ? describeTerminal(view) : 'Reaching the background Runtime…'}
+      tone={toneFor(view, settled)}
+      watchingOnly={watchingOnly}
+      problem={problem}
+      surfaceRef={surface}
+      onClose={() => { void closeTab(); }}
+    />
   );
 }

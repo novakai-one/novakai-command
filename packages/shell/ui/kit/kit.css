@@ -125,6 +125,9 @@ body {
 .k-scroll::-webkit-scrollbar { width: 8px; }
 .k-scroll::-webkit-scrollbar-thumb { background: var(--hairline); border-radius: 4px; }
 
+/* ── surface — host for a foreign renderer; it owns its own scrolling ──── */
+.k-surface { position: relative; min-height: 0; overflow: hidden; }
+
 /* ── presence dot — dedicated liveness tokens, NEVER the accent (R3-25) ── */
 .k-presence {
   width: 8px; height: 8px; border-radius: 50%;
