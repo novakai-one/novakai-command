@@ -159,10 +159,18 @@ export function buildB3AgentMethods(options: B3AgentMethodOptions): MethodTable 
     'b3.agent.updateRole': method(readUpdateRoleProfileInput,
       (payload, context) => agents.updateRoleProfile(context, payload)),
 
+    // §16.2 names these `getControls` and `applyControl`. The short names came
+    // first and are kept, because scripts and the CLI already speak them — but
+    // a second host written from the spec calls a method by the name the SPEC
+    // gives it, and until now that name was `unknown method` (hold-out H3).
     'b3.agent.controls': method(readDiscoverRunControlsInput,
+      (payload, _context, principal) => runs.discoverRunControls(principal, payload)),
+    'b3.agent.getControls': method(readDiscoverRunControlsInput,
       (payload, _context, principal) => runs.discoverRunControls(principal, payload)),
 
     'b3.agent.control': method(readApplyRunControlInput,
+      (payload, context) => runs.applyRunControl(context, payload)),
+    'b3.agent.applyControl': method(readApplyRunControlInput,
       (payload, context) => runs.applyRunControl(context, payload)),
 
     'b3.agent.getRoles': method(noPayload, async (_payload, _context, principal) => {

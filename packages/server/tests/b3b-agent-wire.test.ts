@@ -127,7 +127,21 @@ const WIRE_STEPS: readonly WireStep[] = [
     payload: (state) => ({ agentRunId: state.managerRunId }),
   },
   {
+    // The §16.2 spelling of the same call. Both are served, because scripts
+    // already speak the short name and a second host reads the spec.
+    method: 'b3.agent.getControls',
+    payload: (state) => ({ agentRunId: state.managerRunId }),
+  },
+  {
     method: 'b3.agent.control',
+    payload: (state) => ({
+      agentRunId: state.managerRunId,
+      expectedRunVersion: state.managerRunVersion,
+      control: { name: 'model', value: 'cli-default' },
+    }),
+  },
+  {
+    method: 'b3.agent.applyControl',
     payload: (state) => ({
       agentRunId: state.managerRunId,
       expectedRunVersion: state.managerRunVersion,
