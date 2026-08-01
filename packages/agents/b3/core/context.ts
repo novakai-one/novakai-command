@@ -69,10 +69,18 @@ export const permissionDenied = (
   { operation, ...(requiredScope === undefined ? {} : { requiredScope }) }, false);
 
 export const authorityEscalation = (
-  requestedScopes: readonly AuthorityScope[], allowedScopes: readonly AuthorityScope[],
+  requestedScopes: readonly AuthorityScope[],
+  allowedScopes: readonly AuthorityScope[],
+  /** Targets outside the issuer's reach: widening by pointing, not by naming. */
+  unreachableTargetAgentIds: readonly string[] = [],
 ): ReturnType<typeof b3err> => b3err('AuthorityEscalation',
-  'a grant may not carry authority its issuer does not hold',
-  { requestedScopes, allowedScopes }, false);
+  unreachableTargetAgentIds.length > 0
+    ? 'a grant may not name an Agent its issuer cannot already reach'
+    : 'a grant may not carry authority its issuer does not hold',
+  {
+    requestedScopes, allowedScopes,
+    ...(unreachableTargetAgentIds.length > 0 ? { unreachableTargetAgentIds } : {}),
+  }, false);
 
 /**
  * Content identity for a resolved plan: the same role version, the same

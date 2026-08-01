@@ -369,3 +369,46 @@ test('an Agent-run grant can only be narrowed by the next generation', async () 
     assert.equal(narrowed.ok, true, 'narrowing a grant was refused');
   });
 });
+
+test('an Agent cannot mint a grant over a stranger it does not reach', async () => {
+  await withRig(async (rig) => {
+    const org = await team(rig);
+    // A second family, on the same machine, nothing to do with the manager.
+    const stranger = await rig.agents.createAgentFromRole(rig.human(), {
+      roleProfileId: org.builderRoleId, displayName: 'Stranger', rootHumanPrincipalId: CHRIS,
+    });
+    assert.equal(stranger.ok, true);
+    if (!stranger.ok) return;
+
+    // The manager's own authority, exactly as the Runtime issues it at spawn.
+    const own = await grant(rig, {
+      runId: org.managerRunId, subject: org.manager, targets: [],
+      scopes: [String(SCOPE.stopOne)], childRoles: [],
+    });
+    assert.equal(own.ok, true);
+
+    // Scope-name widening was already refused; TARGET widening was not
+    // (NVK-KIMI-028 finding 3). A grant whose scopes the issuer holds is still
+    // an escalation when it points at an Agent the issuer cannot reach.
+    const overreach = await rig.agents.issueDelegationGrant(rig.agentRun(org.managerRunId), {
+      issuerAgentRunId: org.managerRunId,
+      subjectAgentId: org.manager,
+      targetAgentIds: [stranger.value.agent.id],
+      requestedScopes: [SCOPE.stopOne],
+      requestedChildRoleIds: [],
+    });
+    assert.equal(overreach.ok, false, 'an Agent minted authority over a stranger');
+    if (!overreach.ok) assert.equal(overreach.error.code, 'AuthorityEscalation');
+
+    // The control: its own descendant is inside its authority and is allowed.
+    const lawful = await rig.agents.issueDelegationGrant(rig.agentRun(org.managerRunId), {
+      issuerAgentRunId: org.managerRunId,
+      subjectAgentId: org.manager,
+      targetAgentIds: [org.builder],
+      requestedScopes: [SCOPE.stopOne],
+      requestedChildRoleIds: [],
+    });
+    assert.equal(lawful.ok, true,
+      lawful.ok ? '' : `a parent could not name its own child: ${lawful.error.code}`);
+  });
+});

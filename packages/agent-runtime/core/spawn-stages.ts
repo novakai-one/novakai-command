@@ -4,7 +4,7 @@
 // what each rung actually does. Every function here is re-entrant: it looks for
 // what an earlier attempt recorded before it does anything.
 import {
-  b3err, b3fail, b3ok, mintAgentRunId, nowIsoUtc,
+  b3err, b3fail, b3ok, deriveClientOpId, mintAgentRunId, nowIsoUtc,
   type ActivityGeneration, type AgentId, type B3Result, type CommandContext,
   type AgentRunId, type ProviderSessionId, type RuntimeEpochId,
 } from '@novakai/foundation/contract';
@@ -224,6 +224,64 @@ export async function recordDeferredStages(
   return b3ok(current);
 }
 
+/**
+ * The two grants one spawn writes: the new Run's OWN authority, and — when a
+ * parent asked for it — that parent's authority OVER the child it just gained.
+ *
+ * Two DIFFERENT effects, so two idempotency keys. They used to share the
+ * command's, and the store dedupes by (kind, clientOpId): the second create
+ * came back as an idempotent replay of the first, the parent never got its
+ * grant, and nobody noticed because the result was discarded (§3.2, red gate 6,
+ * NVK-KIMI-028 finding 3).
+ *
+ * `AuthorityEscalation` and `RoleNotAllowed` are the intersection doing its job
+ * — the caller simply held less than it asked for — so they are not failures of
+ * the spawn. Anything else is.
+ */
+async function issueRunGrants(
+  core: RunsCore,
+  context: CommandContext,
+  input: {
+    readonly agentRun: AgentRun;
+    readonly operation: RunOperation;
+    readonly agentId: AgentId;
+    readonly authority: SpawnAuthorityFacts;
+    readonly plan: LaunchPlanFacts;
+  },
+): Promise<B3Result<null>> {
+  const effect = (name: string): CommandContext => ({
+    ...context,
+    clientOpId: deriveClientOpId(`${effectKeyFor(input.operation.id, 'run-ready')}:${name}`),
+  });
+  const bounded = (result: B3Result<unknown>): B3Result<null> =>
+    result.ok || result.error.code === 'AuthorityEscalation'
+      || result.error.code === 'RoleNotAllowed'
+      ? b3ok(null) : b3fail(result.error);
+
+  const ownAuthority = bounded(await core.agents.issueDelegationGrant(effect('own-authority'), {
+    issuerAgentRunId: input.agentRun.id,
+    subjectAgentId: input.agentId,
+    targetAgentIds: [],
+    requestedScopes: RUN_SCOPES,
+    requestedChildRoleIds: input.plan.spawnPolicy.allowedChildRoleIds,
+  }));
+  if (!ownAuthority.ok) return ownAuthority;
+
+  const parentAgentId = input.authority.parentAgentId;
+  if (parentAgentId === undefined || context.principal.agentRunId === undefined) {
+    return b3ok(null);
+  }
+  // A spawn that quietly leaves the parent unable to stop what it started is
+  // worse than a spawn that refuses.
+  return bounded(await core.agents.issueDelegationGrant(effect('parent-over-child'), {
+    issuerAgentRunId: context.principal.agentRunId,
+    subjectAgentId: parentAgentId,
+    targetAgentIds: [input.agentId],
+    requestedScopes: RUN_SCOPES,
+    requestedChildRoleIds: [],
+  }));
+}
+
 /** Ready, supervised, and holding exactly the authority its role permits. */
 export async function finishRun(
   core: RunsCore,
@@ -246,33 +304,8 @@ export async function finishRun(
   });
   if (!assigned.ok) return assigned;
 
-  // The Run's OWN authority, issued against the Run it dies with. Requested
-  // scopes are the Runtime's standard set and the child roles are the ones this
-  // Run's ROLE permits; Agents intersects both down to what the caller actually
-  // held, so this can only ever shrink (red gate 6).
-  const granted = await core.agents.issueDelegationGrant(context, {
-    issuerAgentRunId: input.agentRun.id,
-    subjectAgentId: input.agentId,
-    targetAgentIds: [],
-    requestedScopes: RUN_SCOPES,
-    requestedChildRoleIds: input.plan.spawnPolicy.allowedChildRoleIds,
-  });
-  if (!granted.ok && granted.error.code !== 'AuthorityEscalation'
-    && granted.error.code !== 'RoleNotAllowed') {
-    return granted;
-  }
-
-  // A parent that just gained a child gains authority OVER that child, from the
-  // same intersection — never more than it already held.
-  if (input.authority.parentAgentId !== undefined && context.principal.agentRunId !== undefined) {
-    await core.agents.issueDelegationGrant(context, {
-      issuerAgentRunId: context.principal.agentRunId,
-      subjectAgentId: input.authority.parentAgentId,
-      targetAgentIds: [input.agentId],
-      requestedScopes: RUN_SCOPES,
-      requestedChildRoleIds: [],
-    });
-  }
+  const granted = await issueRunGrants(core, context, input);
+  if (!granted.ok) return granted;
 
   const agentRun = await patchRun(core, input.agentRun, {
     lifecycle: 'ready', activity: 'idle', startedAt: nowIsoUtc(),

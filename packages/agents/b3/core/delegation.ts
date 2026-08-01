@@ -81,6 +81,19 @@ export async function issueDelegationGrant(
     return b3fail(authorityEscalation(request.requestedScopes, issuable.value));
   }
 
+  // Scope names were the only thing ever intersected, so a grant carrying
+  // scopes its issuer held could still POINT at an Agent the issuer cannot
+  // reach — authority widening by target rather than by name
+  // (NVK-KIMI-028 finding 3, §22, red gate 6).
+  const reachable = await callerReach(core, context.principal);
+  if (!reachable.ok) return reachable;
+  if (reachable.value !== null) {
+    const beyond = request.targetAgentIds.filter((id) => !reachable.value!.has(id));
+    if (beyond.length > 0) {
+      return b3fail(authorityEscalation(request.requestedScopes, issuable.value, beyond));
+    }
+  }
+
   const childRoles = intersectRoles(request.requestedChildRoleIds, role.value);
   if (childRoles.length !== request.requestedChildRoleIds.length) {
     return b3fail(roleNotAllowed(
@@ -108,6 +121,34 @@ export async function issueDelegationGrant(
   return core.store.create<DelegationGrant>(
     context.principal.id, record as never, context.clientOpId,
   );
+}
+
+/**
+ * Every Agent this caller may already act upon — or `null` for a human, who
+ * roots every family on the machine and is bounded by scopes alone.
+ *
+ * An Agent's own identity is read from the self-grant the Runtime issues it at
+ * spawn (issuer = its Run, no targets); from there its reach is its own
+ * subtree plus whatever its other grants name, and their subtrees.
+ */
+async function callerReach(
+  core: GovernedAgentsCore, principal: AuthenticatedPrincipal,
+): Promise<B3Result<Set<AgentId> | null>> {
+  if (principal.kind !== 'agent-run') return b3ok(null);
+  const grants = await liveGrantsFor(core, principal);
+  if (!grants.ok) return grants;
+  const roots = new Set<AgentId>();
+  for (const held of grants.value) {
+    roots.add(held.subjectAgentId);
+    for (const target of held.targetAgentIds) roots.add(target);
+  }
+  const reach = new Set<AgentId>(roots);
+  for (const root of roots) {
+    const descendants = await descendantIdsOf(core, root);
+    if (!descendants.ok) return descendants;
+    for (const id of descendants.value) reach.add(id);
+  }
+  return b3ok(reach);
 }
 
 /** The role's own spawn policy is the ceiling; the request can only narrow it. */
