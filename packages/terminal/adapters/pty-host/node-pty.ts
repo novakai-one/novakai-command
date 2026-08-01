@@ -10,9 +10,51 @@ import type { PtyExit, PtyHandle, PtyHost, PtyLaunchSpec } from '../../contract/
 export interface LaunchAuthority {
   readonly file: string;
   readonly args: readonly string[];
+  /**
+   * B3b: a managed Agent's PTY needs the environment its provider adapter
+   * assembled — including how the spawned Agent authenticates as itself. It
+   * rides WITH the authority, so no caller can put environment on the public
+   * Terminal contract (§14: environment stays private to adapters).
+   */
+  readonly environment?: Readonly<Record<string, string>>;
 }
 
 export type LaunchAuthorityRegistry = Readonly<Record<string, LaunchAuthority>>;
+
+/** What the PTY host asks when a session names an authority. */
+export interface LaunchAuthoritySource {
+  lookup(ref: string): LaunchAuthority | undefined;
+}
+
+/**
+ * B3b: authorities the Runtime adds at spawn time.
+ *
+ * A provider launch is decided per Run — model, resume handle, environment —
+ * so it cannot live in a static table. The Runtime registers the resolved
+ * launch under an opaque ref and passes only that ref through Terminal's
+ * public door, which is how argv and environment stay out of every contract
+ * (red gate: adapter privates never leak).
+ *
+ * Registrations are runtime-private and in-memory on purpose: they describe a
+ * process this Runtime owns, and a Runtime restart ends its PTYs (DEC-B3V4-23).
+ */
+export interface LaunchAuthorityRegistrar extends LaunchAuthoritySource {
+  register(ref: string, authority: LaunchAuthority): void;
+  forget(ref: string): void;
+}
+
+export function createLaunchAuthorities(
+  environment: NodeJS.ProcessEnv = process.env,
+): LaunchAuthorityRegistrar {
+  const registered = new Map<string, LaunchAuthority>(
+    Object.entries(defaultLaunchAuthorities(environment)),
+  );
+  return {
+    lookup: (ref) => registered.get(ref),
+    register: (ref, authority) => { registered.set(ref, authority); },
+    forget: (ref) => { registered.delete(ref); },
+  };
+}
 
 /**
  * B3a ships the two proofs the slice contract names: a plain shell, and one
@@ -36,7 +78,8 @@ const MOCK_MANAGED_SCRIPT = [
 ].join(' ');
 
 export interface NodePtyHostOptions {
-  readonly authorities?: LaunchAuthorityRegistry;
+  /** A fixed table, or a registrar the Runtime adds to at spawn time. */
+  readonly authorities?: LaunchAuthorityRegistry | LaunchAuthoritySource;
   readonly environment?: NodeJS.ProcessEnv;
 }
 
@@ -65,13 +108,13 @@ interface NodePtyProcess {
  * the CLIs, a second host — runs without a native module present.
  */
 export async function createNodePtyHost(options: NodePtyHostOptions = {}): Promise<PtyHost> {
-  const authorities = options.authorities ?? defaultLaunchAuthorities(options.environment);
+  const authorities = asSource(options.authorities ?? defaultLaunchAuthorities(options.environment));
   const loaded = await import('node-pty') as unknown as NodePtyModule;
   const alive = new Map<string, () => boolean>();
 
   return {
     async start(spec: PtyLaunchSpec): Promise<B3Result<PtyHandle>> {
-      const authority = authorities[spec.launchAuthorityRef];
+      const authority = authorities.lookup(spec.launchAuthorityRef);
       if (!authority) {
         return b3fail(b3err('UnsupportedOperation',
           `no launch authority named "${spec.launchAuthorityRef}"`,
@@ -83,7 +126,10 @@ export async function createNodePtyHost(options: NodePtyHostOptions = {}): Promi
           cwd: spec.workingDirectory,
           cols: spec.columns,
           rows: spec.rows,
-          env: mergedEnvironment(options.environment ?? process.env, spec.environment),
+          env: mergedEnvironment(
+            options.environment ?? process.env,
+            { ...authority.environment, ...spec.environment },
+          ),
         });
         const handle = new NodePtyHandle(child);
         alive.set(handle.processRef, () => handle.isAlive());
@@ -110,6 +156,16 @@ export async function createNodePtyHost(options: NodePtyHostOptions = {}): Promi
       }
     },
   };
+}
+
+/** A plain table and a registrar answer the same question; ask it one way. */
+function asSource(
+  authorities: LaunchAuthorityRegistry | LaunchAuthoritySource,
+): LaunchAuthoritySource {
+  const candidate = authorities as Partial<LaunchAuthoritySource>;
+  if (typeof candidate.lookup === 'function') return candidate as LaunchAuthoritySource;
+  const table = authorities as LaunchAuthorityRegistry;
+  return { lookup: (ref) => table[ref] };
 }
 
 function mergedEnvironment(

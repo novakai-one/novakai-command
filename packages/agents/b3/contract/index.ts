@@ -24,3 +24,8 @@ export {
   createFakeProviderAdapter, createFakeProviderAdapters, findMarkerLine,
   type FakeProviderOptions,
 } from '../adapters/providers/fake.js';
+export {
+  createProviderAdapters, createClaudeAdapter, createCodexAdapter, createKimiAdapter,
+  type ClaudeAdapterOptions, type CodexAdapterOptions, type KimiAdapterOptions,
+  type ProviderAdapterOptions,
+} from '../adapters/providers/index.js';

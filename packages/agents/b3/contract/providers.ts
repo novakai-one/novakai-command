@@ -43,6 +43,12 @@ export interface ProviderLaunchInput {
   readonly columns: number;
   readonly rows: number;
   /**
+   * The id Runtime minted BEFORE the Run record existed (§5.4). A CLI that
+   * accepts a pre-assigned conversation id gets it here, which makes the
+   * reservation an identity rather than something to be inferred later.
+   */
+  readonly reservedProviderSessionId: ProviderSessionId;
+  /**
    * Environment the Runtime needs the child to inherit — how a spawned Agent
    * authenticates as ITSELF when it runs `nvk agent spawn` (DEC-B3V4-05).
    * The adapter merges it; it never invents or inspects it.
