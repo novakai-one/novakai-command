@@ -4,6 +4,8 @@ node_modules/
 # Worktree-local symlink to the main checkout's node_modules.
 /node_modules
 dist/
+# Built pages (the B3a terminal tab is built, never committed).
+dist-terminal/
 release/
 desktop/package-lock.json
 .novakai-command/agents.json
@@ -36,3 +38,5 @@ tsconfig.tsbuildinfo
 .watchdog-sessions.json
 browse-shot.png
 packages/shell/dist/
+# Built pages (the B3a terminal tab is built, never committed).
+dist-terminal/

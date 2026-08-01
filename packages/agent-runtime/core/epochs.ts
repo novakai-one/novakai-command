@@ -9,7 +9,7 @@ import {
   type B3Result, type ObjectId, type RecordVersion, type RuntimeEpochId,
   type ScopedStoreHandle, type StoredObject,
 } from '@novakai/foundation/contract';
-import type { RuntimeEpoch, RuntimeEpochState } from '../contract/index.js';
+import type { RuntimeEpoch, RuntimeEpochState } from '../contract/types.js';
 
 /** As persisted: the public view minus Foundation's two derived fields. */
 type Persisted = Omit<RuntimeEpoch, 'recordVersion' | 'lastMutation'>;

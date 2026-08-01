@@ -13,7 +13,7 @@ import {
 import type {
   InstanceLease, RecoverableCapability, RequestRuntimeStopInput, RuntimeCensus,
   RuntimeDoctorReport, RuntimeEpoch, RuntimeHostContract, RuntimeStatus, RuntimeStopOutcome,
-} from '../contract/index.js';
+} from '../contract/types.js';
 import { createEpochStore, type EpochStore, type EpochStoreOptions } from './epochs.js';
 
 export interface ComposeRuntimeHostOptions extends EpochStoreOptions {

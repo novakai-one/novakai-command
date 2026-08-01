@@ -7,7 +7,7 @@ import {
   closeSync, existsSync, mkdirSync, openSync, readFileSync, unlinkSync, writeSync,
 } from 'node:fs';
 import path from 'node:path';
-import type { InstanceLease } from '../contract/index.js';
+import type { InstanceLease } from '../contract/types.js';
 
 export interface FileInstanceLeaseOptions {
   /** `.novakai/` root. The lock lives under runtime/, which is not durable truth. */
