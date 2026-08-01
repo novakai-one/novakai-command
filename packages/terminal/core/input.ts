@@ -43,8 +43,8 @@ export async function acquireInputLease(
   if (!session.ok) return session;
   const controller = await attachedController(core, input.terminalSessionId, input.attachmentId);
   if (!controller.ok) return controller;
-  const own = requireOwnAttachment(context, controller.value, OPERATION.acquire);
-  if (!own.ok) return own;
+  const allowed = requireOwnAttachment(context, controller.value, OPERATION.acquire);
+  if (!allowed.ok) return allowed;
 
   const active = await settleAndFindActive(core, input.terminalSessionId);
   if (!active.ok) return active;
@@ -139,8 +139,8 @@ export async function releaseInputLease(
   );
   if (!holder.ok) return holder;
   if (holder.value !== null) {
-    const own = requireOwnAttachment(context, holder.value, OPERATION.release);
-    if (!own.ok) return own;
+    const allowed = requireOwnAttachment(context, holder.value, OPERATION.release);
+    if (!allowed.ok) return allowed;
   }
   return endLease(core, held, 'released', 'released');
 }
@@ -154,8 +154,8 @@ export async function writeInput(
   // attachment is checked first, so a stolen lease id alone types nothing.
   const controller = await attachedController(core, input.terminalSessionId, input.attachmentId);
   if (!controller.ok) return controller;
-  const own = requireOwnAttachment(context, controller.value, OPERATION.write);
-  if (!own.ok) return own;
+  const allowed = requireOwnAttachment(context, controller.value, OPERATION.write);
+  if (!allowed.ok) return allowed;
   const guarded = await guardWrite(core, input);
   if (!guarded.ok) return guarded;
 
