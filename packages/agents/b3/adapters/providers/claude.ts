@@ -25,7 +25,7 @@ import type {
   ProviderSessionEvidence,
 } from '../../contract/providers.js';
 import type { ResolvedLaunchPlan } from '../../contract/records.js';
-import { findMarkerLine } from './fake.js';
+import { findMarkerLine, oneLine } from './fake.js';
 import { mergedEnvironment, probeVersion, resolveCli, uuidOf } from './cli-probe.js';
 
 /** Values that mean "pass no --model flag; let the CLI decide" (carried from B1). */
@@ -175,7 +175,7 @@ export function createClaudeAdapter(
     },
 
     /** The interactive prompt submits on a carriage return, not a newline. */
-    submitTurn: (text) => `${text}\r`,
+    submitTurn: (text) => oneLine(text),
 
     findConfirmationLine(observation: ProviderReplyObservation, marker: string) {
       return findMarkerLine(observation.text, marker);

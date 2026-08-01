@@ -151,16 +151,33 @@ export function createFakeProviderAdapter(
       return b3ok({ kind: 'unsupported', reason: report.modelChange.evidence });
     },
 
-    // A carriage return, exactly like the three real adapters: that is what the
-    // Enter key sends down a PTY. The fake used to send a newline, which every
-    // `cat`-shaped stand-in accepts and no TUI treats as "send" — so a suite
-    // built on it could not tell a submitted turn from an unsubmitted one.
-    submitTurn: (text) => `${text}\r`,
+    // Exactly what the real adapters do. The fake used to send the text with a
+    // newline, which every `cat`-shaped stand-in accepts and no TUI treats as
+    // "send" — so a suite built on it could not tell a submitted turn from an
+    // unsubmitted one.
+    submitTurn: (text) => oneLine(text),
 
     findConfirmationLine(observation: ProviderReplyObservation, marker: string) {
       return findMarkerLine(observation.text, marker);
     },
   };
+}
+
+
+/**
+ * One line, then Enter.
+ *
+ * Every provider CLI is a TUI whose composer treats a newline as "add a line",
+ * so a multi-line turn arrives, echoes, and sits there unsent — and the Enter
+ * that follows adds one more line. Driving the real `claude` 2.1.219 that way
+ * produced no answer for as long as anyone waited; the same words as one line
+ * are answered in seconds (hold-out B3).
+ *
+ * Blank lines become a separator that survives as text, so nothing the turn
+ * said is lost — only its shape.
+ */
+export function oneLine(text: string): string {
+  return `${text.replace(/\s*\n\s*\n\s*/gu, ' \u00b7 ').replace(/\s*\n\s*/gu, ' ').trim()}\r`;
 }
 
 /**

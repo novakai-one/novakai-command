@@ -23,6 +23,7 @@ import type { LaunchPlanFacts } from '../contract/ports.js';
 import type { AgentRun, RunOperation } from '../contract/runs.js';
 import { advance, completed, effectKeyFor } from './journal.js';
 import type { RunsCore } from './runs-context.js';
+import { maybeAskAgain, noteStillness, startVigil } from './gate-vigil.js';
 
 export interface GateInput {
   readonly agentRun: AgentRun;
@@ -127,7 +128,7 @@ export async function runSkillsGate(
   if (!sent.ok) return sent;
   let operation = sent.value;
 
-  const confirmed = await awaitConfirmation(core, input);
+  const confirmed = await awaitConfirmation(core, context, input);
   if (!confirmed.ok) {
     const failed = await failGate(core, input, confirmed.error.message);
     return failed.ok ? confirmed : failed;
@@ -236,7 +237,7 @@ async function alreadyPrompted(
  * this gate is a line the Runtime did not write.
  */
 async function awaitConfirmation(
-  core: RunsCore, input: GateInput,
+  core: RunsCore, context: CommandContext, input: GateInput,
 ): Promise<B3Result<string>> {
   const terminalSessionId = input.agentRun.terminalSessionId!;
   const mark = marker(input.plan);
@@ -249,18 +250,32 @@ async function awaitConfirmation(
     ).split('\n').map((line) => line.trim()).filter((line) => line !== ''),
   );
 
+  const effectKey = effectKeyFor(input.operation.id, 'skills-gate-prompt-sent');
+  const vigil = startVigil(core);
+
   for (;;) {
     const output = await core.terminal.readOutputSoFar(
       { id: 'sys_agent_runtime', kind: 'system', verifiedScopes: [] }, terminalSessionId,
     );
     if (!output.ok) return output;
+    const seen = plainText(output.value);
+    noteStillness(core, vigil, seen);
     const line = core.providers.findConfirmationLine(
-      input.plan.provider, withoutOurOwnWords(plainText(output.value), ours), mark,
+      input.plan.provider, withoutOurOwnWords(seen, ours), mark,
     );
     if (line !== null) return judge(line, mark, expected, input.agentRun.id);
     if (core.clock() >= deadline) {
       return b3fail(skillsFailed(input.agentRun.id, 'no confirmation arrived before the gate timed out', []));
     }
+    const again = await maybeAskAgain(core, context, {
+      terminalSessionId,
+      effectKey,
+      text: core.providers.submitTurn(
+        input.plan.provider,
+        confirmationPrompt(input.plan, input.brief, turnRefFor(effectKey)),
+      ),
+    }, vigil);
+    if (!again.ok) return again;
     await new Promise((settle) => { setTimeout(settle, 100); });
   }
 }

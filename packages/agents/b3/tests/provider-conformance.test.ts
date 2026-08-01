@@ -363,3 +363,24 @@ test('the LAST confirmation wins, so a prompt cannot confirm itself', async () =
     assert.equal(found, `${marker} ["tdd@v1#abc"]`);
   }
 });
+
+test('a turn is delivered as ONE line, because a composer treats a newline as a newline', async () => {
+  // Driving the real `claude` 2.1.219: a multi-line turn arrives, echoes into
+  // the composer, and is never sent — the embedded newlines make it a multi-line
+  // draft, and the Enter that follows adds another line instead of submitting.
+  // The same text as one line, with Enter after it, is answered in seconds.
+  // This is the whole reason a governed spawn could not reach `ready` against a
+  // real provider (hold-out B3).
+  const enter = String.fromCharCode(13);
+  const turn = 'You are a governed agent.\n\nTASK: say BANANA\n  1. tdd@v1#abc\n';
+  for (const provider of PROVIDER_KINDS) {
+    const wire = adapters[provider].submitTurn(turn);
+    assert.equal(wire.endsWith(enter), true, `${provider} never presses Enter`);
+    assert.equal(wire.slice(0, -1).includes('\n'), false,
+      `${provider} sends a newline mid-turn, which a TUI composer will not submit`);
+    // Nothing may be lost in the flattening: every word still arrives.
+    for (const word of ['governed', 'BANANA', 'tdd@v1#abc']) {
+      assert.equal(wire.includes(word), true, `${provider} dropped "${word}" from the turn`);
+    }
+  }
+});

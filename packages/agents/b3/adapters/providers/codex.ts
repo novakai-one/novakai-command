@@ -28,7 +28,7 @@ import type {
   ProviderSessionEvidence,
 } from '../../contract/providers.js';
 import type { ResolvedLaunchPlan } from '../../contract/records.js';
-import { findMarkerLine } from './fake.js';
+import { findMarkerLine, oneLine } from './fake.js';
 import { everyCapability } from './claude.js';
 import {
   codexSessionIdFrom, mergedEnvironment, newestSessionSince, probeVersion, resolveCli,
@@ -200,7 +200,7 @@ export function createCodexAdapter(
       });
     },
 
-    submitTurn: (text) => `${text}\r`,
+    submitTurn: (text) => oneLine(text),
 
     findConfirmationLine(observation: ProviderReplyObservation, marker: string) {
       return findMarkerLine(observation.text, marker);
