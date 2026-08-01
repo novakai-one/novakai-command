@@ -5,7 +5,7 @@
 // live, and whether it is working. "No controller" is not "stopped"; "unknown"
 // is not "zero" (§24.5, red gates 4 and 13).
 import {
-  b3fail, b3ok, nowIsoUtc,
+  b3fail, b3ok, mintClientOpId, nowIsoUtc,
   type AgentId, type AgentRunId, type AuthenticatedPrincipal, type B3Page,
   type B3Result, type ResolvedLaunchPlanId, type RunOperationId,
 } from '@novakai/foundation/contract';
@@ -27,9 +27,64 @@ import { recoveryRequired, unknownRun } from './runs-store.js';
  */
 const RUN_FIELD = 'run';
 
+/**
+ * A Run whose managed terminal is provably gone is settled here, at the moment
+ * the fact becomes observable.
+ *
+ * The probe killed a provider's PTY and then watched three operator surfaces
+ * report `ready, idle` for as long as anyone cared to wait: the Agent layer
+ * never reconciled against the Terminal layer directly beneath it. Agent
+ * Runtime is the sole writer of Run truth (§3.3), so noticing and recording is
+ * its job — and `exited` is a fact Terminal already holds, not a guess.
+ *
+ * Only a DEFINITE non-live status settles a Run. `reserved` and `starting` are
+ * a launch in progress, and `recovery-required` is Terminal saying it does not
+ * know — none of those is evidence the provider is gone.
+ */
+const TERMINAL_IS_OVER: ReadonlySet<string> = new Set(['exited', 'failed']);
+
+async function settleIfTerminalGone(
+  core: RunsCore, agentRun: AgentRun,
+): Promise<B3Result<AgentRun>> {
+  if (FINAL_LIFECYCLES.has(agentRun.lifecycle)) return b3ok(agentRun);
+  const terminalSessionId = agentRun.terminalSessionId;
+  if (terminalSessionId === undefined) return b3ok(agentRun);
+  const found = await core.terminal.getTerminal(
+    { id: 'sys_agent_runtime', kind: 'system', verifiedScopes: [] }, terminalSessionId,
+  );
+  if (!found.ok) return b3ok(agentRun);
+  if (found.value === null || !TERMINAL_IS_OVER.has(found.value.status)) return b3ok(agentRun);
+
+  const settled = await core.store.update<AgentRun>(
+    'sys_agent_runtime', agentRun.id,
+    {
+      lifecycle: 'interrupted',
+      activity: 'unknown',
+      finalReason: 'runtime-reconciled-missing',
+      finalAt: nowIsoUtc(),
+      uncertainty: [{
+        code: 'provider-liveness-unknown',
+        summary: 'the managed terminal for this Run has ended; whether the provider '
+          + 'finished its work or was killed mid-turn is not known',
+        evidenceRefs: [terminalSessionId],
+      }],
+    } as Record<string, unknown>,
+    agentRun.recordVersion, mintClientOpId(),
+  );
+  if (!settled.ok) return b3ok(agentRun);
+  core.publish('agent.run.lifecycle.changed', {
+    agentRunId: agentRun.id, toLifecycle: 'interrupted',
+  });
+  await core.agents.expireGrantsOfRun(agentRun.id);
+  return b3ok(settled.value);
+}
+
 export async function viewOfRun(
-  core: RunsCore, principal: AuthenticatedPrincipal, agentRun: AgentRun,
+  core: RunsCore, principal: AuthenticatedPrincipal, stale: AgentRun,
 ): Promise<B3Result<AgentRunView>> {
+  const reconciled = await settleIfTerminalGone(core, stale);
+  if (!reconciled.ok) return reconciled;
+  const agentRun = reconciled.value;
   const agent = await core.agents.getAgent(principal, agentRun.agentId);
   if (!agent.ok) return agent;
   const plan = await core.agents.getLaunchPlan(principal, agentRun.launchPlanId);

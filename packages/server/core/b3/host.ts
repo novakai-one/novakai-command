@@ -39,6 +39,11 @@ export interface RuntimeHostProcessOptions extends B3RuntimeOptions {
   readonly principalId?: HumanPrincipalId;
   /** Bundle directory, when this host also serves the shell. */
   readonly staticDir?: string;
+  /**
+   * The runtime has been stopped through its own contract. A serving daemon
+   * uses this to release the port; an in-process host may ignore it.
+   */
+  readonly onRuntimeStopped?: () => void;
 }
 
 export interface RunningRuntimeHost {
@@ -89,7 +94,13 @@ export async function startRuntimeHost(
   };
 
   const methods = {
-    ...buildB3Methods({ runtime, principalId }),
+    ...buildB3Methods({
+      runtime, principalId,
+      // Announced, not acted on here: whether a stopped runtime should exit its
+      // process is the HOST's decision (a serving daemon exits; an in-process
+      // test host does not), so `startRuntimeHost` only forwards the fact.
+      onRuntimeStopped: () => { options.onRuntimeStopped?.(); },
+    }),
     ...buildB3AgentMethods({
       runtime,
       principalFor,

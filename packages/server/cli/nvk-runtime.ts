@@ -113,14 +113,27 @@ function describeStop(outcome: RuntimeStopOutcome): string {
   ].join('\n');
 }
 
+/** Long enough for the reply that ordered the stop to reach the caller. */
+const GOODBYE_MS = 250;
+
 async function serveForever(argFlags: Flags): Promise<never> {
   {
+    let running: Awaited<ReturnType<typeof startRuntimeHost>> | null = null;
+    const shutdown = (): void => { void running?.close().then(() => process.exit(0)); };
     const host = await startRuntimeHost({
       root, port,
       ...(argFlags.value('static') === undefined ? {} : { staticDir: argFlags.value('static')! }),
+      // `nvk-runtime stop` means STOP. A daemon that kept its port after
+      // reporting itself stopped 401s every later request, and `doctor` — the
+      // tool for exactly that situation — cannot reach it to say so (probe S-6).
+      //
+      // Deferred by one beat, because the caller is still holding the socket
+      // waiting to be told the runtime stopped: exiting inside the handler
+      // takes the answer down with the server, and the operator's command hangs.
+      onRuntimeStopped: () => { setTimeout(shutdown, GOODBYE_MS); },
     });
+    running = host;
     process.stdout.write(`[nvk-runtime] background runtime ready on ${host.httpUrl}\n`);
-    const shutdown = (): void => { void host.close().then(() => process.exit(0)); };
     process.on('SIGINT', shutdown);
     process.on('SIGTERM', shutdown);
     await new Promise(() => undefined); // serve forever

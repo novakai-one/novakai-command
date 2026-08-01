@@ -223,6 +223,23 @@ export async function stopAgent(
       'that agentRun does not belong to that agent',
       { agentRunId: input.expectedLiveRunId }, false));
   }
+  // `expectedLiveRunId` is a compare-and-set, and it has to LOSE when it names
+  // a Run that is no longer the live one. `closeRun` is idempotent on a final
+  // Run, so a stale id used to return a cheerful success while the Agent's
+  // actual Run kept running and kept billing (probe S-5).
+  const live = await liveRunOf(core, input.agentId);
+  if (!live.ok) return live;
+  if (live.value !== null && live.value.id !== agentRun.value.id) {
+    return b3fail(b3err('VersionConflict',
+      'that Run is not the one this Agent is running now',
+      {
+        objectId: input.agentId,
+        expected: input.expectedLiveRunId,
+        actual: live.value.id,
+        liveAgentRunId: live.value.id,
+      }, false));
+  }
+
   const authorised = await core.agents.authoriseRunOperation(context.principal, {
     targetAgentId: input.agentId, operation: 'stop-one',
   });

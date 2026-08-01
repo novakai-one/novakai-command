@@ -33,6 +33,11 @@ export interface B3MethodOptions {
   readonly runtime: B3Runtime;
   /** The authenticated local human. B3a has exactly one. */
   readonly principalId: HumanPrincipalId;
+  /**
+   * Fired once a stop request actually stopped the runtime, so a serving
+   * process can release the port it no longer has any business holding.
+   */
+  readonly onRuntimeStopped?: () => void;
 }
 
 const unsupportedVersion = (received: unknown): B3Result<never> => b3fail(
@@ -96,8 +101,15 @@ export function buildB3Methods(options: B3MethodOptions): MethodTable {
       (_payload, context) => runtime.ensureLocalRuntime(context)),
     'b3.runtime.getStatus': method(noPayload, () => runtime.getRuntimeStatus(principal)),
     'b3.runtime.doctor': method(noPayload, () => runtime.runtimeDoctor(principal)),
-    'b3.runtime.stop': method(readRequestRuntimeStopInput,
-      (payload, context) => runtime.requestRuntimeStop(context, payload)),
+    // A runtime that reports itself stopped and keeps its port is a zombie:
+    // every later request 401s, `doctor` cannot reach it to say why, and
+    // `ensure --start` spawns a child that dies on EADDRINUSE. The one thing
+    // that ends it is the serving process letting go (probe S-6).
+    'b3.runtime.stop': method(readRequestRuntimeStopInput, async (payload, context) => {
+      const outcome = await runtime.requestRuntimeStop(context, payload);
+      if (outcome.ok && outcome.value.stopped) options.onRuntimeStopped?.();
+      return outcome;
+    }),
 
     'b3.terminal.open': method(readOpenManagedTerminalInput,
       (payload, context) => terminal.openManagedTerminal(context, payload)),

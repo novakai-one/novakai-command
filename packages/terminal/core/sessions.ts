@@ -174,9 +174,35 @@ function patchSession(
   );
 }
 
-export async function viewOfSession(
+/**
+ * A session whose process has ENDED is recorded as ended, at the moment anyone
+ * looks.
+ *
+ * The PTY's exit was only ever broadcast to attached controllers, so the
+ * durable record kept saying `live` after the process was gone — and every
+ * layer above it repeated that. The probe killed a provider with `kill -9` and
+ * watched `nvk-terminal inspect`, `nvk-agent inspect` and `nvk-runtime status`
+ * all insist it was running, indefinitely.
+ */
+async function settleIfProcessGone(
   core: TerminalCore, session: TerminalSession,
+): Promise<TerminalSession> {
+  if (FINAL_STATUSES.has(session.status)) return session;
+  const live = core.live.lookup(session.id);
+  if (live === undefined || live.exit === null) return session;
+  const closed = await closeSession(core, session, {
+    status: 'exited',
+    exitedAt: nowIsoUtc(),
+    ...(live.exit.exitCode === undefined ? {} : { exitCode: live.exit.exitCode }),
+    ...(live.exit.signal === undefined ? {} : { signal: live.exit.signal }),
+  });
+  return closed.ok ? closed.value : session;
+}
+
+export async function viewOfSession(
+  core: TerminalCore, stale: TerminalSession,
 ): Promise<B3Result<TerminalSessionView>> {
+  const session = await settleIfProcessGone(core, stale);
   const attachments = await core.store.list<ControllerAttachment>(
     'controllerAttachment', { terminalSessionId: session.id },
   );
