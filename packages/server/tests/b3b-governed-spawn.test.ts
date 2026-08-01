@@ -20,8 +20,14 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { mintClientOpId, type B3Result, type ClientOpId } from '@novakai/foundation/contract';
-import { createFakePtyHost, type FakePtyHost } from '../../terminal/adapters/pty-host/fake.js';
+import {
+  createFakePtyHost, type FakePty, type FakePtyHost,
+} from '../../terminal/adapters/pty-host/fake.js';
 import { createFakeProviderAdapters } from '../../agents/b3/contract/index.js';
+import type {
+  InteractiveProviderAdapter, ProviderAdapterRegistry,
+} from '../../agents/b3/contract/providers.js';
+import type { ProviderKind } from '../../agents/b3/contract/records.js';
 import { startRuntimeHost, type RunningRuntimeHost } from '../core/b3/host.js';
 import { connectRuntime, type RuntimeClient } from '../core/b3/client.js';
 import { governedRole, governedTokens } from './governed-role.js';
@@ -33,11 +39,19 @@ interface Rig {
   close(): Promise<void>;
 }
 
-async function createRig(options: { echoInput?: boolean } = {}): Promise<Rig> {
+async function createRig(
+  options: { echoInput?: boolean; inlineSubmit?: boolean } = {},
+): Promise<Rig> {
   const root = mkdtempSync(path.join(tmpdir(), 'nvk-b3b-governed-'));
-  const ptyHost = createFakePtyHost({ echoInput: options.echoInput ?? false });
+  // A composer, not a byte sink: a turn exists only once the submit key arrives
+  // on its own. Everything below depends on that distinction.
+  const ptyHost = createFakePtyHost({
+    echoInput: options.echoInput ?? false, composer: true,
+  });
   const host = await startRuntimeHost({
-    root, port: 0, ptyHost, providers: createFakeProviderAdapters(),
+    root, port: 0, ptyHost,
+    providers: options.inlineSubmit === true
+      ? withInlineSubmit(createFakeProviderAdapters()) : createFakeProviderAdapters(),
     // Short, because every refusal case here is proved by the gate giving up.
     gateTimeoutMs: 2_000,
   });
@@ -60,19 +74,55 @@ function unwrap<T>(result: B3Result<T>, what: string): T {
 const opId = (): ClientOpId => mintClientOpId();
 
 /**
- * Reply as the provider would, once the Runtime has actually opened the PTY.
- * The tokens come from the role WE created, so nothing here can pass by reading
- * the prompt back — which is exactly the failure mode being guarded.
+ * Delivery with the submit key riding inside the text — the shape hold-out B3
+ * measured a real `claude` never sending. Used to prove the pass above is
+ * CAUSED by submission and not merely correlated with bytes arriving.
  */
-async function replyAsProvider(ptyHost: FakePtyHost, text: string): Promise<void> {
-  for (let attempt = 0; attempt < 200; attempt += 1) {
-    if (ptyHost.started.length > 0 && ptyHost.started[0]!.written.length > 0) {
-      ptyHost.latest().emit(`${text}\n`);
-      return;
-    }
-    await new Promise((settle) => { setTimeout(settle, 25); });
+function withInlineSubmit(registry: ProviderAdapterRegistry): ProviderAdapterRegistry {
+  const built = {} as Record<ProviderKind, InteractiveProviderAdapter>;
+  for (const [provider, adapter] of Object.entries(registry) as [
+    ProviderKind, InteractiveProviderAdapter,
+  ][]) {
+    built[provider] = {
+      ...adapter,
+      deliverTurn: (text: string) => [
+        { utf8Text: `${text}${String.fromCharCode(13)}`, pauseMsAfter: 0 },
+      ],
+    };
   }
-  throw new Error('the Runtime never typed the gate prompt at a PTY');
+  return built;
+}
+
+/**
+ * Answer as the provider would — but ONLY a turn that was actually sent.
+ *
+ * This used to fire as soon as the first byte reached the PTY, which lands
+ * during the production pause between the text write and the separate Enter
+ * write. The gate then reached `ready` whether or not the Enter was ever sent,
+ * so the pass proved that a supplied confirmation is accepted and nothing at
+ * all about submission (NVK-KIMI-031 finding 3). Now the reply is a reaction to
+ * a submitted turn: no submission, no reply, and the gate times out.
+ */
+function answerWhenAsked(ptyHost: FakePtyHost, text: string): { submitted(): number } {
+  let seen = 0;
+  const attach = (pty: FakePty): void => {
+    pty.onTurn((turn) => {
+      seen += 1;
+      // Turn 1 is the question; turn 2 is the released work, which is answered
+      // by doing it, not by confirming again.
+      if (turn.includes('do NOT begin it yet')) pty.emit(`${text}\n`);
+    });
+  };
+  const known = new Set<FakePty>();
+  const timer = setInterval(() => {
+    for (const pty of ptyHost.started) {
+      if (known.has(pty)) continue;
+      known.add(pty);
+      attach(pty);
+    }
+  }, 5);
+  timer.unref();
+  return { submitted: () => seen };
 }
 
 test('a supervised launch through a real two-turn gate reaches ready', async () => {
@@ -82,7 +132,10 @@ test('a supervised launch through a real two-turn gate reaches ready', async () 
       'b3.agent.createRole', governedRole('governed-builder'), opId(),
     ), 'createRole');
 
-    const spawning = rig.chris.call<{
+    const provider = answerWhenAsked(
+      rig.ptyHost, `SKILLS-CONFIRMED: ${JSON.stringify(governedTokens())}`,
+    );
+    const spawned = await rig.chris.call<{
       agent: { agentId: string };
       run: { id: string; lifecycle: string };
     }>('b3.agent.spawn', {
@@ -91,11 +144,6 @@ test('a supervised launch through a real two-turn gate reaches ready', async () 
       workingDirectory: tmpdir(),
       task: { kind: 'supervised', brief: 'Say the word BANANA once, then stop.' },
     }, opId());
-
-    await replyAsProvider(
-      rig.ptyHost, `SKILLS-CONFIRMED: ${JSON.stringify(governedTokens())}`,
-    );
-    const spawned = await spawning;
 
     assert.equal(spawned.ok, true,
       spawned.ok ? '' : `governed spawn failed: ${spawned.error.code} — ${spawned.error.message}`);
@@ -108,6 +156,55 @@ test('a supervised launch through a real two-turn gate reaches ready', async () 
     assert.equal(typed.includes('Begin the task now'), true, 'the work turn was never released');
     assert.equal(typed.split('Begin the task now').length - 1, 1,
       'the work turn was released more than once');
+
+    // The causal half. The provider only ever answered because a turn was
+    // SUBMITTED — two of them, question and released work — and the reply was a
+    // reaction to that submission rather than to bytes appearing.
+    assert.equal(provider.submitted(), 2,
+      `the gate passed on ${String(provider.submitted())} submitted turn(s); `
+      + 'a governed launch is exactly two');
+    assert.deepEqual(
+      rig.ptyHost.latest().turns.map((turn) => turn.includes('do NOT begin it yet')),
+      [true, false],
+      'the turns that were actually sent are not the question then the work',
+    );
+  } finally {
+    await rig.close();
+  }
+});
+
+test('an unsubmitted turn cannot pass the gate, however correct the reply', async () => {
+  // The control experiment for the test above, and the whole of its causal
+  // claim. Everything is identical except one thing: the submit key rides
+  // inside the text write instead of arriving as its own, which is the shape a
+  // real `claude` absorbs as paste and never sends. A scripted provider stands
+  // ready with the exactly-correct confirmation and is never asked, because a
+  // turn nobody sent is a turn nobody answers.
+  const rig = await createRig({ inlineSubmit: true });
+  try {
+    const role = unwrap(await rig.chris.call<{ id: string }>(
+      'b3.agent.createRole', governedRole('governed-unsent'), opId(),
+    ), 'createRole');
+
+    const provider = answerWhenAsked(
+      rig.ptyHost, `SKILLS-CONFIRMED: ${JSON.stringify(governedTokens())}`,
+    );
+    const spawned = await rig.chris.call('b3.agent.spawn', {
+      roleProfileId: role.id,
+      displayName: 'Never Sent',
+      workingDirectory: tmpdir(),
+      task: { kind: 'supervised', brief: 'Say the word BANANA once, then stop.' },
+    }, opId());
+
+    assert.equal(spawned.ok, false,
+      'the gate passed without the turn ever being submitted');
+    if (spawned.ok) return;
+    assert.equal(spawned.error.code, 'SkillsConfirmationFailed');
+    assert.equal(provider.submitted(), 0,
+      'the composer registered a submitted turn from an inline Enter');
+    const typed = rig.ptyHost.latest().written.join('');
+    assert.equal(typed.includes('Begin the task now'), false,
+      'the work turn was released behind an unsubmitted gate');
   } finally {
     await rig.close();
   }
@@ -173,16 +270,13 @@ test('every turn the Runtime types ends with the key that SENDS it', async () =>
       'b3.agent.createRole', governedRole('governed-submit'), opId(),
     ), 'createRole');
 
-    const spawning = rig.chris.call('b3.agent.spawn', {
+    answerWhenAsked(rig.ptyHost, `SKILLS-CONFIRMED: ${JSON.stringify(governedTokens())}`);
+    const spawned = await rig.chris.call('b3.agent.spawn', {
       roleProfileId: role.id,
       displayName: 'Submit Check',
       workingDirectory: tmpdir(),
       task: { kind: 'supervised', brief: 'Say the word BANANA once, then stop.' },
     }, opId());
-    await replyAsProvider(
-      rig.ptyHost, `SKILLS-CONFIRMED: ${JSON.stringify(governedTokens())}`,
-    );
-    const spawned = await spawning;
     assert.equal(spawned.ok, true, spawned.ok ? '' : spawned.error.message);
 
     // A real provider is a TUI, and a TUI takes a big fast burst for a PASTE:

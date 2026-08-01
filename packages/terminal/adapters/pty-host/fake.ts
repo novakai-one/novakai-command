@@ -15,20 +15,39 @@ export interface FakePty extends PtyHandle {
   emit(text: string): void;
   /** End the process from the outside, as a real one can end at any moment. */
   finish(exit: PtyExit): void;
+  /**
+   * Every turn this session has actually been SENT, as a TUI composer would
+   * see them: text accumulates, and a turn exists only once the submit key
+   * arrives on its own.
+   *
+   * Only populated when the host was built with `composer: true`. Reading
+   * `written` instead answers a different question — what bytes arrived — and a
+   * test that replies to bytes cannot tell a sent turn from one sitting in a
+   * composer for ever (NVK-KIMI-031 finding 3).
+   */
+  readonly turns: readonly string[];
+  /** Called with each submitted turn, so a scripted provider can answer it. */
+  onTurn(listener: (turn: string) => void): void;
 }
+
+const SUBMIT_KEY = String.fromCharCode(13);
 
 class FakePtyHandle implements FakePty {
   readonly written: string[] = [];
   readonly resizes: { columns: number; rows: number }[] = [];
+  readonly turns: string[] = [];
   killed = false;
   private alive = true;
+  private composing = '';
   private readonly dataListeners: ((chunk: Buffer) => void)[] = [];
   private readonly exitListeners: ((exit: PtyExit) => void)[] = [];
+  private readonly turnListeners: ((turn: string) => void)[] = [];
 
   constructor(
     readonly processRef: string,
     readonly spec: PtyLaunchSpec,
     private readonly echoInput = false,
+    private readonly composer = false,
   ) {}
 
   write(data: string): void {
@@ -38,6 +57,36 @@ class FakePtyHandle implements FakePty {
     // echoing fake is the faithful one: it is the shape in which a prompt can
     // arrive back as if the agent had said it.
     if (this.echoInput) this.emit(data.replace(/\r/g, '\n'));
+    if (this.composer) this.compose(data);
+  }
+
+  /**
+   * A TUI composer, modelled at the byte seam.
+   *
+   * Text accumulates. A turn EXISTS only when the submit key arrives as its own
+   * write — because a big fast burst is taken for a paste, and a submit key
+   * inside that burst is absorbed into the pasted text instead of sending it.
+   * That is not a modelling flourish: it was measured against `claude` 2.1.219
+   * on 2026-08-02, where a 554-character turn with the Enter inline was never
+   * submitted in 6 trials and the same turn with the Enter as its own write was
+   * submitted every time.
+   */
+  private compose(data: string): void {
+    if (data === SUBMIT_KEY) {
+      const turn = this.composing;
+      this.composing = '';
+      if (turn === '') return;
+      this.turns.push(turn);
+      for (const listener of this.turnListeners) listener(turn);
+      return;
+    }
+    // Anything else is pasted text — including a submit key riding along inside
+    // it, which a paste-detecting TUI keeps as a character rather than sending.
+    this.composing += data;
+  }
+
+  onTurn(listener: (turn: string) => void): void {
+    this.turnListeners.push(listener);
   }
 
   resize(columns: number, rows: number): void {
@@ -88,6 +137,14 @@ export interface FakePtyHost extends PtyHost {
 export interface FakePtyHostOptions {
   /** Echo written bytes back as output, the way a real PTY does. */
   readonly echoInput?: boolean;
+  /**
+   * Behave like a TUI composer rather than a byte sink: accumulate text and
+   * record a TURN only when the submit key arrives as its own write.
+   *
+   * A test that answers as soon as bytes appear proves nothing about
+   * submission — it reaches `ready` whether or not the Enter is ever sent.
+   */
+  readonly composer?: boolean;
 }
 
 export function createFakePtyHost(options: FakePtyHostOptions = {}): FakePtyHost {
@@ -120,7 +177,7 @@ export function createFakePtyHost(options: FakePtyHostOptions = {}): FakePtyHost
       }
       counter += 1;
       const handle = new FakePtyHandle(
-        `fake-pty:${counter}`, spec, options.echoInput ?? false,
+        `fake-pty:${counter}`, spec, options.echoInput ?? false, options.composer ?? false,
       );
       started.push(handle);
       return b3ok(handle);
