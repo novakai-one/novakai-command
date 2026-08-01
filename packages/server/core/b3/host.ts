@@ -93,9 +93,9 @@ export async function startRuntimeHost(
     ...buildB3AgentMethods({
       runtime,
       principalFor,
-      contextFor: (principal) => ({
+      contextFor: (principal, _session, clientOpId) => ({
         principal,
-        clientOpId: mintClientOpId(),
+        clientOpId,
         traceId: mintTraceCorrelationId(),
         contractVersion: 1,
       }),

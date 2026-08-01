@@ -57,3 +57,14 @@ export function governedRole(
     budgetPolicy: { hardStopEnabled: false },
   };
 }
+
+/** The ungoverned counterpart: no gate, for tests about anything but the gate. */
+export function chatRole(
+  name: string, allowedChildRoleIds: readonly string[] = [], provider = 'claude',
+): Record<string, unknown> {
+  return {
+    ...governedRole(name, allowedChildRoleIds, provider),
+    skillRefs: [],
+    skillsConfirmationGate: { mode: 'disabled', allowedFor: 'interactive-chat-only' },
+  };
+}

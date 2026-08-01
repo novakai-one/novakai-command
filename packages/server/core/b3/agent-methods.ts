@@ -7,8 +7,8 @@
 // identity comes from the connection rather than from anything in `params`
 // (red gate 5).
 import {
-  b3err, b3fail, b3ok,
-  type AuthenticatedPrincipal, type B3Result, type CommandContext,
+  b3err, b3fail, b3ok, mintClientOpId,
+  type AuthenticatedPrincipal, type B3Result, type ClientOpId, type CommandContext,
   type PublicOperationName, type RunOperationId,
 } from '@novakai/foundation/contract';
 import {
@@ -28,7 +28,9 @@ export interface B3AgentMethodOptions {
   /** Resolve the caller from the connection. Never from `params`. */
   readonly principalFor: (session: CallerSession | undefined) => AuthenticatedPrincipal;
   readonly contextFor: (
-    principal: AuthenticatedPrincipal, session: CallerSession | undefined,
+    principal: AuthenticatedPrincipal,
+    session: CallerSession | undefined,
+    clientOpId: ClientOpId,
   ) => CommandContext;
 }
 
@@ -55,6 +57,28 @@ function readParams<Payload>(candidate: unknown): B3Result<B3Params<Payload>> {
   return b3ok(params as B3Params<Payload>);
 }
 
+/**
+ * §4.1: `op_<uuidv4>`, and "validators MUST reject the wrong prefix even if the
+ * remaining string is otherwise valid".
+ *
+ * A caller that sends a malformed key is making an idempotency claim the server
+ * cannot honour. Minting a replacement — which is what used to happen — throws
+ * that claim away silently and turns the caller's next retry into a second
+ * command. So it is refused, by name.
+ */
+const CLIENT_OP_ID = /^op_[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function readClientOpId(given: string | undefined): B3Result<ClientOpId> {
+  // Absent is legal: §17.2 makes the key mandatory on the CLI, and a caller
+  // that never claims idempotency gets a fresh operation, which is honest.
+  if (given === undefined) return b3ok(mintClientOpId());
+  if (!CLIENT_OP_ID.test(given)) {
+    return b3fail(b3err('ValidationFailed', 'clientOpId must be op_<uuid>',
+      { issues: [{ path: 'clientOpId', message: `not a ClientOpId: ${given}` }] }, false));
+  }
+  return b3ok(given as ClientOpId);
+}
+
 export function buildB3AgentMethods(options: B3AgentMethodOptions): MethodTable {
   const { runs, agents } = options.runtime;
 
@@ -74,8 +98,13 @@ export function buildB3AgentMethods(options: B3AgentMethodOptions): MethodTable 
       if (!parsed.ok) return parsed;
       const payload = validate(parsed.value.payload);
       if (!payload.ok) return payload;
+      // The caller's key, not one minted here: the receipt id is derived from
+      // {principal, operation, clientOpId}, so a fresh key per call made every
+      // retry a brand-new command (NVK-KIMI-028 finding 2).
+      const clientOpId = readClientOpId(parsed.value.clientOpId);
+      if (!clientOpId.ok) return clientOpId;
       const principal = options.principalFor(session);
-      const context = options.contextFor(principal, session);
+      const context = options.contextFor(principal, session, clientOpId.value);
       return perform(payload.value, context, principal);
     };
   }
