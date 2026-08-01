@@ -1,10 +1,13 @@
 // The real OS single-instance lease.
 //
-// `open(..., 'wx')` is atomic on POSIX: two processes racing to create the same
-// path, exactly one wins. A lease is only ever stolen from a holder the OS
-// says no longer exists — never from one that is merely quiet.
+// Creating a name that does not exist yet is atomic on POSIX: two processes
+// racing to publish the same path, exactly one wins. The lock is published with
+// `link()` rather than `open(..., 'wx')` so it is never seen half-written — see
+// `claim()`. A lease is only ever stolen from a holder the OS says no longer
+// exists — never from one that is merely quiet.
+import { randomUUID } from 'node:crypto';
 import {
-  closeSync, existsSync, mkdirSync, openSync, readFileSync, unlinkSync, writeSync,
+  closeSync, existsSync, linkSync, mkdirSync, openSync, readFileSync, unlinkSync, writeSync,
 } from 'node:fs';
 import path from 'node:path';
 import type { InstanceLease } from '../contract/types.js';
@@ -43,16 +46,31 @@ export function createFileInstanceLease(options: FileInstanceLeaseOptions): Inst
     }
   }
 
+  /**
+   * Claim the lock, contents and all, in ONE atomic step.
+   *
+   * `open(..., 'wx')` is atomic about the NAME but not about the bytes: it
+   * creates an empty file that is only filled a moment later, and a second
+   * process reading in that window sees a lock that names nobody — so the
+   * machine briefly has no owner on record. `link()` publishes a file that is
+   * already complete, and fails with EEXIST if somebody got there first, so the
+   * lock is never observable in a half-written state (NVK-KIMI-025 repair 2:
+   * eight real processes racing found the empty-file window).
+   */
   function claim(): boolean {
     mkdirSync(path.dirname(lockPath), { recursive: true });
+    const staging = `${lockPath}.${String(hostPid)}.${randomUUID()}`;
     try {
-      const handle = openSync(lockPath, 'wx');
+      const handle = openSync(staging, 'wx');
       writeSync(handle, JSON.stringify({ hostPid, startedAt: new Date().toISOString() }));
       closeSync(handle);
+      linkSync(staging, lockPath);
       holding = true;
       return true;
     } catch {
       return false;
+    } finally {
+      try { unlinkSync(staging); } catch { /* nothing was staged */ }
     }
   }
 
