@@ -73,6 +73,14 @@ const unreachable = (cause: unknown): ReturnType<typeof b3err> => b3err('Runtime
 async function withClient<Value>(
   work: (client: RuntimeClient) => Promise<B3Result<Value>>,
 ): Promise<B3Result<Value>> {
+  // Half a credential is refused rather than dropped. A PTY whose environment
+  // carries one variable and not the other is a broken Agent identity; treating
+  // it as "no claim" promoted that Agent to Chris (NVK-KIMI-028 finding 1).
+  if ((runIdentity.agentRunId === undefined) !== (runIdentity.runToken === undefined)) {
+    return b3fail(b3err('PermissionDenied',
+      'NVK_AGENT_RUN_ID and NVK_AGENT_RUN_TOKEN must both be set or both be unset',
+      { reason: 'half-agent-run-credential' }, false));
+  }
   let client: RuntimeClient;
   try {
     client = await connectRuntime({

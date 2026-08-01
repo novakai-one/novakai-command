@@ -5,6 +5,8 @@ import { b3fail, b3ok, type B3Result } from '@novakai/foundation/contract';
 import type { PtyExit, PtyHandle, PtyHost, PtyLaunchSpec } from '../../contract/ports.js';
 
 export interface FakePty extends PtyHandle {
+  /** What this PTY was started with — the authority, viewport and cwd. */
+  readonly spec: PtyLaunchSpec;
   /** Everything the session has been sent, in order. */
   readonly written: readonly string[];
   readonly resizes: readonly { columns: number; rows: number }[];

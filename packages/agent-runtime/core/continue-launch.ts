@@ -39,20 +39,11 @@ export async function startReplacement(
   );
   const oldNativeSessionId = session.ok ? session.value.providerNativeSessionId : '';
 
-  const prepared = await core.providers.prepareContinuation({
-    launchPlan: work.plan,
-    mode: work.input.mode,
-    agentRunId: work.oldRun.id,
-    reservedProviderSessionId: work.reserved,
-    oldNativeSessionId,
-    ...(work.input.handoverArtifactId === undefined
-      ? {} : { handoverArtifactId: work.input.handoverArtifactId }),
-    runtimeEnvironment: {},
-    columns: core.defaultViewport.columns,
-    rows: core.defaultViewport.rows,
-  });
-  if (!prepared.ok) return prepared;
-
+  // The replacement Run exists BEFORE its launch is assembled, because a Run
+  // authenticates as itself with a credential minted for its own id. This used
+  // to prepare first and pass `runtimeEnvironment: {}` — so every continued
+  // Agent lost its identity, and a credential-less caller is the local human
+  // with every scope Chris holds (§13.6, DEC-B3V4-05, red gate 5).
   const created = await reserveReplacementRun(core, context, work);
   if (!created.ok) return created;
 
@@ -60,6 +51,20 @@ export async function startReplacement(
     stage: 'run-reserved', owner: 'agent-runtime', ownerObjectId: created.value.id,
   }, { newRunId: created.value.id });
   if (!reservedStage.ok) return reservedStage;
+
+  const prepared = await core.providers.prepareContinuation({
+    launchPlan: work.plan,
+    mode: work.input.mode,
+    agentRunId: created.value.id,
+    reservedProviderSessionId: work.reserved,
+    oldNativeSessionId,
+    ...(work.input.handoverArtifactId === undefined
+      ? {} : { handoverArtifactId: work.input.handoverArtifactId }),
+    runtimeEnvironment: core.credentials.issue(created.value.id),
+    columns: core.defaultViewport.columns,
+    rows: core.defaultViewport.rows,
+  });
+  if (!prepared.ok) return prepared;
 
   const opened = await core.terminal.openManagedTerminal(context, {
     agentRunId: created.value.id,

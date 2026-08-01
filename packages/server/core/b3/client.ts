@@ -48,6 +48,16 @@ export async function connectRuntime(options: RuntimeClientOptions): Promise<Run
     throw new Error(`no runtime token under ${options.root}; is the runtime running?`);
   }
   const host = options.host ?? '127.0.0.1';
+  // Half a credential is a BROKEN credential, not an absent one. Suppressing
+  // the whole identity when one field is missing is how a managed Run used to
+  // arrive at the door claiming nothing — and a caller claiming nothing is the
+  // local human, who holds every scope Chris does (NVK-KIMI-028 finding 1).
+  if ((options.agentRunId === undefined) !== (options.runToken === undefined)) {
+    throw new Error(
+      'an Agent-Run credential needs both agentRunId and runToken; '
+      + 'connecting with one half would authenticate as the human',
+    );
+  }
   const identity = options.agentRunId === undefined || options.runToken === undefined
     ? ''
     : `&agentRunId=${encodeURIComponent(options.agentRunId)}`
