@@ -3,9 +3,9 @@
 // Terminal writes these four kinds and nothing else, through one Foundation
 // scoped handle. It never opens a JSONL file (§18.2).
 import type {
-  ActivityGeneration, AgentRunId, B3PrincipalId, ControllerAttachmentId, IsoUtc,
-  LeaseGeneration, ProviderTurnId, RecordEnvelope, RuntimeEpochId,
-  TerminalInputAttemptId, TerminalInputLeaseId, TerminalSessionId,
+  ActivityGeneration, AgentRunId, B3PrincipalId, CommandReceiptId,
+  ControllerAttachmentId, IsoUtc, LeaseGeneration, ProviderTurnId, RecordEnvelope,
+  RuntimeEpochId, TerminalInputAttemptId, TerminalInputLeaseId, TerminalSessionId,
 } from '@novakai/foundation/contract';
 
 export type TerminalSessionStatus =
@@ -22,8 +22,18 @@ export interface TerminalSession extends RecordEnvelope<TerminalSessionId, 'term
   /** Identifies WHAT was launched, so a recovering runtime can tell whether a
    *  surviving process is the same session or a different one. */
   readonly launchFingerprint: string;
+  /**
+   * The open command that owns this session — §13.5's deterministic effect key.
+   * It is what lets a retry find the PTY its own earlier attempt started, so a
+   * repeated open adopts or reports recovery instead of spawning a second one.
+   */
+  readonly launchOperationId: CommandReceiptId;
   readonly runtimeEpochId: RuntimeEpochId;
-  /** Opaque to every caller: PIDs and socket paths are not public facts. */
+  /**
+   * Opaque to every caller: PIDs and socket paths are not public facts. Empty
+   * until a launch actually returns a process — an empty ref is the durable
+   * statement "nothing was ever owned here", not "we lost it".
+   */
   readonly privateProcessRef: string;
   readonly workingDirectory: string;
   readonly openedAt?: IsoUtc;

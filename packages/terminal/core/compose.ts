@@ -56,9 +56,14 @@ export function composeTerminal(options: ComposeTerminalOptions): TerminalContra
   };
 
   /**
-   * `replaySafe` says whether repeating the work after an interrupted attempt
-   * is harmless. Only `writeInput` can already have moved bytes into a real
-   * process, so only it refuses to repeat.
+   * `replaySafe` says whether re-entering the operation after an interrupted
+   * attempt is harmless. Only `writeInput` can already have moved bytes into a
+   * real process with no way to tell, so only it refuses at this layer.
+   *
+   * `open` is replay-safe because re-entering it is not a second launch: it
+   * finds its own earlier reservation by operation id and adopts, resumes, or
+   * reports recovery (§13.5). Refusing here instead would make adoption
+   * unreachable — the receipt would answer before Terminal ever looked.
    */
   function guarded<Input, Value>(
     operation: typeof OPERATION[keyof typeof OPERATION],
