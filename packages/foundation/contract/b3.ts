@@ -21,6 +21,21 @@ export type IsoUtc = B3Brand<string, 'IsoUtc'>;
 export type CommandReceiptId = B3Brand<string, 'CommandReceiptId'>;
 export type RuntimeEpochId = B3Brand<string, 'RuntimeEpochId'>;
 export type AgentRunId = B3Brand<string, 'AgentRunId'>;
+// B3b (§4.2). Agents mints the first five; Agent Runtime the next five.
+export type AgentRoleProfileId = B3Brand<string, 'AgentRoleProfileId'>;
+export type ResolvedLaunchPlanId = B3Brand<string, 'ResolvedLaunchPlanId'>;
+export type AgentRelationshipId = B3Brand<string, 'AgentRelationshipId'>;
+export type DelegationGrantId = B3Brand<string, 'DelegationGrantId'>;
+export type ControlReplacementPlanId = B3Brand<string, 'ControlReplacementPlanId'>;
+export type RunContinuationId = B3Brand<string, 'RunContinuationId'>;
+export type SupervisionAssignmentId = B3Brand<string, 'SupervisionAssignmentId'>;
+export type TreeMutationFenceId = B3Brand<string, 'TreeMutationFenceId'>;
+export type RunOperationId = B3Brand<string, 'RunOperationId'>;
+/** Inherited from Agents unchanged (§4.1, AMD-001 §4): existing `sess_<uuidv4>`. */
+export type ProviderSessionId = B3Brand<string, 'ProviderSessionId'>;
+/** The stable individual, distinct from every one of its Runs (DEC-B3V4-02). */
+export type B3AgentId = B3Brand<string, 'AgentId'>;
+export type PolicyVersion = B3Brand<number, 'PolicyVersion'>;
 export type ProviderTurnId = B3Brand<string, 'ProviderTurnId'>;
 export type TerminalSessionId = B3Brand<string, 'TerminalSessionId'>;
 export type ControllerAttachmentId = B3Brand<string, 'ControllerAttachmentId'>;
@@ -88,8 +103,22 @@ export function base32(bytes: Buffer): string {
 
 const HASH_FIELD_SEPARATOR = '\u001F';
 
-/** Deterministic identity from a field tuple (§4.1): `b3v4` + U+001F-joined UTF-8. */
+/**
+ * Deterministic identity from a field tuple (§4.1): `b3v4` + U+001F-joined UTF-8.
+ *
+ * A field may not contain the separator itself. If it could, `["a<SEP>b","c"]`
+ * and `["a","b","c"]` would hash identically — one record able to claim
+ * another's deterministic identity. Every field a B3 caller passes is an
+ * already-validated identifier, so this is unreachable through a public door;
+ * it throws rather than hashes because a broken invariant here is a programming
+ * error, not a caller outcome to be returned.
+ */
 export function deterministicId(prefix: string, fields: readonly string[]): string {
+  for (const field of fields) {
+    if (field.includes(HASH_FIELD_SEPARATOR)) {
+      throw new Error(`deterministic id field contains the tuple separator: ${prefix}`);
+    }
+  }
   const digest = createHash('sha256')
     .update(['b3v4', ...fields].join(HASH_FIELD_SEPARATOR), 'utf8')
     .digest();
@@ -123,6 +152,33 @@ export const mintTerminalInputLeaseId = (): TerminalInputLeaseId => `terminalInp
 export const mintTerminalInputAttemptId = (): TerminalInputAttemptId => `terminalInput_${uuidv7()}` as TerminalInputAttemptId;
 export const mintAgentRunId = (): AgentRunId => `agentRun_${uuidv7()}` as AgentRunId;
 export const mintProviderTurnId = (): ProviderTurnId => `providerTurn_${uuidv7()}` as ProviderTurnId;
+export const mintAgentRoleProfileId = (): AgentRoleProfileId => `agentRole_${uuidv7()}` as AgentRoleProfileId;
+export const mintResolvedLaunchPlanId = (): ResolvedLaunchPlanId => `launchPlan_${uuidv7()}` as ResolvedLaunchPlanId;
+export const mintDelegationGrantId = (): DelegationGrantId => `delegationGrant_${uuidv7()}` as DelegationGrantId;
+export const mintControlReplacementPlanId = (): ControlReplacementPlanId => `controlReplacement_${uuidv7()}` as ControlReplacementPlanId;
+export const mintRunContinuationId = (): RunContinuationId => `runContinuation_${uuidv7()}` as RunContinuationId;
+export const mintSupervisionAssignmentId = (): SupervisionAssignmentId => `supervisionAssignment_${uuidv7()}` as SupervisionAssignmentId;
+export const mintTreeMutationFenceId = (): TreeMutationFenceId => `treeFence_${uuidv7()}` as TreeMutationFenceId;
+/** §4.1 + AMD-001 §4: keeps the existing Agents UUIDv4 shape, not a new v7. */
+export const mintProviderSessionId = (): ProviderSessionId => `sess_${randomUUID()}` as ProviderSessionId;
+export const mintB3AgentId = (): B3AgentId => `agent_${randomUUID()}` as B3AgentId;
+
+/**
+ * One edge per ordered pair, so recording the same parent→child twice is
+ * idempotent rather than a second edge (§13.5's "deterministic edge ID").
+ * Direction is part of the tuple: an edge is not symmetric.
+ */
+export const mintAgentRelationshipId = (
+  parentAgentId: string, childAgentId: string,
+): AgentRelationshipId =>
+  deterministicId('agentRelationship', [parentAgentId, childAgentId]) as AgentRelationshipId;
+
+/**
+ * One journal per command receipt (DEC-B3V4-26/30). Derived rather than random
+ * so a crash before the first append still finds the same operation on retry.
+ */
+export const mintRunOperationId = (commandReceiptId: string): RunOperationId =>
+  deterministicId('runOperation', [commandReceiptId]) as RunOperationId;
 export const mintTraceCorrelationId = (): TraceCorrelationId => `trace_${randomUUID()}` as TraceCorrelationId;
 export const nowIsoUtc = (): IsoUtc => new Date().toISOString() as IsoUtc;
 

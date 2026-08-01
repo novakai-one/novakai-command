@@ -49,6 +49,18 @@ export const OBJECT_KINDS = [
   'controllerAttachment', // DEC-B3V4-08: terminal-owned controller attachment
   'terminalInputLease',   // DEC-B3V4-29: terminal-owned single-writer lease
   'terminalInputAttempt', // DEC-B3V4-29: terminal-owned ordered input outcome
+  // B3b (B3V4-P2 §§5, 6, 18.1): governed Runs, roles, family and delegation.
+  // Agents owns the first five; Agent Runtime owns the last five (§3.3).
+  'agentRoleProfile',       // DEC-B3V4-03: agents-owned reusable governed role
+  'resolvedLaunchPlan',     // DEC-B3V4-03/31: agents-owned immutable pinned plan
+  'agentRelationship',      // DEC-B3V4-06: agents-owned immutable spawn edge
+  'delegationGrant',        // DEC-B3V4-12: agents-owned run-scoped authority
+  'controlReplacementPlan', // DEC-B3V4-31: agents-owned signed control replacement
+  'agentRun',               // DEC-B3V4-02: runtime-owned one provider context
+  'runContinuation',        // DEC-B3V4-19: runtime-owned resume/fresh/compact/handover
+  'supervisionAssignment',  // DEC-B3V4-07: runtime-owned reassignable supervision
+  'treeMutationFence',      // DEC-B3V4-11: runtime-owned stop-tree fence
+  'runOperation',           // DEC-B3V4-26: runtime-owned recoverable stage journal
   'quarantine',
   'token',
   'trace',

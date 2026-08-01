@@ -42,6 +42,16 @@ export const KIND_FILES: Readonly<Record<Exclude<ObjectKind, 'token'>, string>> 
   controllerAttachment: 'controllerAttachments.jsonl', // B3a DEC-B3V4-08
   terminalInputLease: 'terminalInputLeases.jsonl',     // B3a DEC-B3V4-29
   terminalInputAttempt: 'terminalInputAttempts.jsonl', // B3a DEC-B3V4-29
+  agentRoleProfile: 'agentRoleProfiles.jsonl',           // B3b DEC-B3V4-03
+  resolvedLaunchPlan: 'resolvedLaunchPlans.jsonl',       // B3b DEC-B3V4-03/31
+  agentRelationship: 'agentRelationships.jsonl',         // B3b DEC-B3V4-06
+  delegationGrant: 'delegationGrants.jsonl',             // B3b DEC-B3V4-12
+  controlReplacementPlan: 'controlReplacementPlans.jsonl', // B3b DEC-B3V4-31
+  agentRun: 'agentRuns.jsonl',                           // B3b DEC-B3V4-02
+  runContinuation: 'runContinuations.jsonl',             // B3b DEC-B3V4-19
+  supervisionAssignment: 'supervisionAssignments.jsonl', // B3b DEC-B3V4-07
+  treeMutationFence: 'treeMutationFences.jsonl',         // B3b DEC-B3V4-11
+  runOperation: 'runOperations.jsonl',                   // B3b DEC-B3V4-26
   quarantine: 'quarantine.jsonl',
   trace: 'traces.jsonl',
 });
@@ -55,6 +65,10 @@ export const RECORD_KINDS: readonly string[] = [
   'transcriptCheckpoint',
   'runtimeEpoch', 'commandReceipt', 'terminalSession',
   'controllerAttachment', 'terminalInputLease', 'terminalInputAttempt',
+  'agentRoleProfile', 'resolvedLaunchPlan', 'agentRelationship',
+  'delegationGrant', 'controlReplacementPlan',
+  'agentRun', 'runContinuation', 'supervisionAssignment',
+  'treeMutationFence', 'runOperation',
 ];
 
 // Lazy upgrade registry (DEC-F10): pure v_n → v_n+1 transforms per kind,

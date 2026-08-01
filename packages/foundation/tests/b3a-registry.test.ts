@@ -43,6 +43,17 @@ const EXPECTED: ReadonlyArray<readonly [ObjectKind, string, CapabilityId]> = [
   ['controllerAttachment', 'controllerAttachments.jsonl', 'terminal'],
   ['terminalInputLease', 'terminalInputLeases.jsonl', 'terminal'],
   ['terminalInputAttempt', 'terminalInputAttempts.jsonl', 'terminal'],
+  // ── B3b additions ──────────────────────────────────────────────────────
+  ['agentRoleProfile', 'agentRoleProfiles.jsonl', 'agents'],
+  ['resolvedLaunchPlan', 'resolvedLaunchPlans.jsonl', 'agents'],
+  ['agentRelationship', 'agentRelationships.jsonl', 'agents'],
+  ['delegationGrant', 'delegationGrants.jsonl', 'agents'],
+  ['controlReplacementPlan', 'controlReplacementPlans.jsonl', 'agents'],
+  ['agentRun', 'agentRuns.jsonl', 'agent-runtime'],
+  ['runContinuation', 'runContinuations.jsonl', 'agent-runtime'],
+  ['supervisionAssignment', 'supervisionAssignments.jsonl', 'agent-runtime'],
+  ['treeMutationFence', 'treeMutationFences.jsonl', 'agent-runtime'],
+  ['runOperation', 'runOperations.jsonl', 'agent-runtime'],
 ];
 
 /** The three named special cases §18.1 allows to sit outside the ordinary path. */
