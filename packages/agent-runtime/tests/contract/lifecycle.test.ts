@@ -396,3 +396,80 @@ async function markWorking(rig: RunsRig, agentRunId: AgentRunId): Promise<AgentR
   if (!after.ok) throw new Error('unreachable');
   return after.value.run;
 }
+
+test('adoption cannot close a supervision cycle', async () => {
+  await withRig(async (rig) => {
+    // Two ROOT Agents, unrelated by family. Supervision is not parentage, so
+    // either may lawfully be put under the other — and that is exactly why the
+    // cycle check has to be about supervision rather than about descent.
+    const role = rig.agents.defineRole('root');
+    const first = await rig.runtime.spawnAgent(rig.human(), spawnInput(role, 'First'));
+    const second = await rig.runtime.spawnAgent(rig.human(), spawnInput(role, 'Second'));
+    assert.equal(first.ok && second.ok, true);
+    if (!first.ok || !second.ok) return;
+
+    const under = await rig.runtime.adoptAgent(rig.human(), {
+      subjectAgentId: first.value.agent.agentId,
+      expectedAssignmentVersion: 1 as RecordVersion,
+      supervisor: { kind: 'agent', agentId: second.value.agent.agentId },
+    });
+    assert.equal(under.ok, true, under.ok ? '' : under.error.message);
+
+    // Now the other way, which closes the loop: each supervises the other, and
+    // a supervisor chain that never reaches a human means nobody is accountable
+    // for either of them. §13.7 requires the CAS to check that the candidate
+    // "cannot create a cycle"; the check did not exist, and both
+    // `RelationshipCycle` and `SupervisorIneligible` sat unused in the §11
+    // table (hold-out F9).
+    const cycle = await rig.runtime.adoptAgent(rig.human(), {
+      subjectAgentId: second.value.agent.agentId,
+      expectedAssignmentVersion: 1 as RecordVersion,
+      supervisor: { kind: 'agent', agentId: first.value.agent.agentId },
+    });
+    assert.equal(cycle.ok, false, 'adoption closed a two-node supervision cycle');
+    if (!cycle.ok) {
+      assert.equal(
+        cycle.error.code === 'RelationshipCycle' || cycle.error.code === 'SupervisorIneligible',
+        true, `a cycle was refused as ${cycle.error.code}`);
+    }
+  });
+});
+
+test('a tree that is closing cannot gain a new child mid-stop', async () => {
+  await withRig(async (rig) => {
+    const childRole = rig.agents.defineRole('fence-child');
+    const parentRole = rig.agents.defineRole('fence-parent', [childRole]);
+    const parent = await rig.runtime.spawnAgent(rig.human(), spawnInput(parentRole, 'Parent'));
+    assert.equal(parent.ok, true, parent.ok ? '' : parent.error.message);
+    if (!parent.ok) return;
+
+    const prepared = await rig.runtime.prepareStopAgentTree(rig.human(), {
+      rootAgentId: parent.value.agent.agentId,
+    });
+    assert.equal(prepared.ok, true, prepared.ok ? '' : prepared.error.message);
+    if (!prepared.ok) return;
+
+    // The fence is only up WHILE the stop runs, so the spawn is fired from
+    // inside the stop. Continue and adopt both check that fence; spawn never
+    // did, so a parent inside a tree being stopped could add a child the stop
+    // had already counted past — and the stop would then report success over a
+    // live descendant it never saw (NVK-KIMI-028 finding 6, §13.7).
+    let late: Awaited<ReturnType<typeof rig.runtime.spawnAgent>> | null = null;
+    rig.terminal.duringNextTerminate = async () => {
+      late = await rig.runtime.spawnAgent(
+        rig.agentRun(parent.value.run.id), spawnInput(childRole, 'Late Child'),
+      );
+    };
+    const stopped = await rig.runtime.stopAgentTree(rig.human(), {
+      rootAgentId: parent.value.agent.agentId,
+      confirmationToken: prepared.value.confirmationToken,
+      confirmation: 'stop-tree',
+    });
+    assert.equal(stopped.ok, true, stopped.ok ? '' : stopped.error.message);
+
+    assert.notEqual(late, null, 'the spawn never ran inside the stop');
+    const attempted = late as unknown as { ok: boolean; error?: { code: string } };
+    assert.equal(attempted.ok, false, 'a closing tree gained a child after it was counted');
+    if (!attempted.ok) assert.equal(attempted.error?.code, 'TreeClosing');
+  });
+});

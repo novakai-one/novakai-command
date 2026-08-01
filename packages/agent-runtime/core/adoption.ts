@@ -91,6 +91,36 @@ async function checkSupervisor(
     return b3fail(ineligible(candidate,
       'the candidate is a descendant of the Agent it would supervise'));
   }
+  return noCycle(core, input.subjectAgentId, candidate);
+}
+
+/**
+ * Supervision has its own acyclicity, independent of the family tree.
+ *
+ * Two Agents on unrelated trees may each lawfully be put under the other — one
+ * at a time. Doing both closes a loop in which each supervises the other and
+ * the chain never reaches a human, so nobody is accountable for either. The
+ * family-descendant check cannot see this, because no family edge is involved
+ * (hold-out F9).
+ */
+async function noCycle(
+  core: RunsCore, subjectAgentId: AgentId, candidate: AgentId,
+): Promise<B3Result<null>> {
+  const seen = new Set<AgentId>([subjectAgentId]);
+  let walking: AgentId | null = candidate;
+  while (walking !== null) {
+    if (seen.has(walking)) {
+      return b3fail(b3err('RelationshipCycle',
+        'that supervisor is already supervised by the Agent it would take on',
+        { subjectAgentId, candidate, throughAgentId: walking }, false));
+    }
+    seen.add(walking);
+    const chain: Awaited<ReturnType<typeof assignmentChain>> =
+      await assignmentChain(core, walking);
+    if (!chain.ok) return chain;
+    const above = chain.value.current?.supervisor;
+    walking = above !== undefined && above.kind === 'agent' ? above.agentId : null;
+  }
   return b3ok(null);
 }
 

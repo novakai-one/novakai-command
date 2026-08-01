@@ -38,6 +38,13 @@ export interface FakeTerminal extends TerminalPort {
   failOpen: ReturnType<typeof b3err> | null;
   interruptOutcome: 'barrier-committed' | 'target-turn-not-active' | 'raced-with-completion';
   failTerminate: ReturnType<typeof b3err> | null;
+  /**
+   * Run something INSIDE a terminate, once. It is the only way to land a
+   * command in the middle of a stop-tree from outside: the fence exists only
+   * while the stop is executing, and a test that waits for the stop to finish
+   * has already missed the window it is trying to prove.
+   */
+  duringNextTerminate: (() => Promise<void>) | null;
 }
 
 const MARKER = 'SKILLS-CONFIRMED:';
@@ -82,6 +89,7 @@ export function createFakeTerminal(): FakeTerminal {
     failOpen: null,
     interruptOutcome: 'barrier-committed',
     failTerminate: null,
+    duringNextTerminate: null,
 
     async openManagedTerminal(context, input) {
       if (port.failOpen) {
@@ -136,6 +144,11 @@ export function createFakeTerminal(): FakeTerminal {
     },
 
     async terminate(input) {
+      const during = port.duringNextTerminate;
+      if (during !== null) {
+        port.duringNextTerminate = null;
+        await during();
+      }
       if (port.failTerminate) {
         const error = port.failTerminate;
         port.failTerminate = null;

@@ -19,6 +19,7 @@ import type { AgentRun, LaunchSurface, RunOperation } from '../contract/runs.js'
 import type { RunsCore } from './runs-context.js';
 import { recoveryRequired } from './runs-store.js';
 import { advance, compensate, openOperation } from './journal.js';
+import { insideClosingTree, treeClosing } from './stop-tree.js';
 import { runSkillsGate } from './gate.js';
 import {
   bindProviderSession, finishRun, recordDeferredStages, reserveRun, startTerminal,
@@ -45,6 +46,9 @@ export async function spawnAgent(
     ...(await callerAgentIdOf(core, context)),
   });
   if (!authority.ok) return authority;
+
+  const open = await treeAcceptsAChild(core, context, authority.value.parentAgentId);
+  if (!open.ok) return open;
 
   const opened = await openOperation(core, context, {
     kindOfOperation: 'spawn',
@@ -73,6 +77,22 @@ export async function spawnAgent(
   }
   operation = built.value.operation;
   return b3ok(built.value);
+}
+
+/**
+ * A tree being stopped may not GROW. Continue and adopt both check the closing
+ * fence; spawn never did, so a parent inside a closing tree could add a child
+ * the stop had already counted past — and the stop would then report success
+ * over a live descendant it never saw (§13.7, NVK-KIMI-028 finding 6).
+ */
+async function treeAcceptsAChild(
+  core: RunsCore, context: CommandContext, parentAgentId: AgentId | undefined,
+): Promise<B3Result<null>> {
+  if (parentAgentId === undefined) return b3ok(null);
+  const fenced = await insideClosingTree(core, context, parentAgentId);
+  if (!fenced.ok) return fenced;
+  if (fenced.value === null) return b3ok(null);
+  return b3fail(treeClosing(fenced.value.rootAgentId, fenced.value.id));
 }
 
 interface BuildInput {
