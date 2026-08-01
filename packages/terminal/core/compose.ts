@@ -19,6 +19,7 @@ import type {
 } from '../contract/api.js';
 import type { Clock, PtyHost, RuntimeEpochFence } from '../contract/ports.js';
 import { systemClock } from '../contract/ports.js';
+import { requireSystemAuthority } from './authority.js';
 import { LiveSessions } from './live.js';
 import { SessionQueue } from './serialize.js';
 import { DEFAULT_REPLAY_BYTES } from './replay.js';
@@ -115,6 +116,8 @@ export function composeTerminal(options: ComposeTerminalOptions): TerminalContra
     ) {
       const version = versionGuard<InterruptTerminalTurnOutcome>(context);
       if (version) return version;
+      const authorised = requireSystemAuthority(context, 'sys_agent_runtime', OPERATION.interrupt);
+      if (!authorised.ok) return authorised;
       return core.queue.enqueue(input.terminalSessionId, () => core.receipts.runCommand(
         context, { operation: OPERATION.interrupt, request: input, replaySafe: false },
         () => interruptTerminalTurn(core, context, input),
@@ -126,6 +129,9 @@ export function composeTerminal(options: ComposeTerminalOptions): TerminalContra
     ) {
       const version = versionGuard<TerminalSession>(context);
       if (version) return version;
+      // Red gate 1: the type says system-only and the type is erased at runtime.
+      const authorised = requireSystemAuthority(context, 'sys_agent_runtime', OPERATION.terminate);
+      if (!authorised.ok) return authorised;
       return core.queue.enqueue(input.terminalSessionId, () => core.receipts.runCommand(
         context, { operation: OPERATION.terminate, request: input, replaySafe: true },
         () => terminateTerminal(core, context, input),

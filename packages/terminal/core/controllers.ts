@@ -11,11 +11,12 @@ import type {
   AttachControllerInput, DetachControllerInput, ResizeTerminalInput, TerminalSessionView,
 } from '../contract/api.js';
 import type { ControllerAttachment } from '../contract/records.js';
+import { requireOwnAttachment } from './authority.js';
 import { endLease, settleAndFindActive } from './leases.js';
 import { viewOfSession } from './sessions.js';
 import type { Persisted } from './store.js';
 import {
-  requireLiveSession, requireSession, viewportIssues, type TerminalCore,
+  OPERATION, requireLiveSession, requireSession, viewportIssues, type TerminalCore,
 } from './context.js';
 
 export async function attachController(
@@ -64,6 +65,8 @@ export async function detachController(
       `attachment "${input.attachmentId}" is not on session "${input.terminalSessionId}"`,
       { issues: [{ path: 'attachmentId', message: 'unknown for this session' }] }, false));
   }
+  const allowed = requireOwnAttachment(context, attachment.value, OPERATION.detach);
+  if (!allowed.ok) return allowed;
   if (attachment.value.state === 'detached') return b3ok(attachment.value); // idempotent
 
   // If this controller held the lease, hand it back — but never stop the PTY.
@@ -103,6 +106,8 @@ export async function resizeTerminal(
       `attachment "${input.attachmentId}" is not attached to "${input.terminalSessionId}"`,
       { issues: [{ path: 'attachmentId', message: 'not an attached controller' }] }, false));
   }
+  const allowed = requireOwnAttachment(context, attachment.value, OPERATION.resize);
+  if (!allowed.ok) return allowed;
 
   // Every controller records ITS OWN viewport; arbitration decides whose the
   // PTY follows, so a background window can never silently reshape the shell.

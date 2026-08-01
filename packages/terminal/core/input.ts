@@ -10,13 +10,14 @@ import type {
 import type {
   ControllerAttachment, TerminalInputAttempt, TerminalInputLease,
 } from '../contract/records.js';
+import { requireOwnAttachment, requireTakeoverAuthority } from './authority.js';
 import {
   endLease, generationChangedError, grantLease, leaseBusyError, leasesOf,
   nextGeneration, settleAndFindActive, ttlIssues,
 } from './leases.js';
 import { applyAuthoritativeViewport } from './controllers.js';
 import type { Persisted } from './store.js';
-import { requireLiveSession, type TerminalCore } from './context.js';
+import { OPERATION, requireLiveSession, type TerminalCore } from './context.js';
 
 async function attachedController(
   core: TerminalCore, terminalSessionId: string, attachmentId: string,
@@ -42,11 +43,13 @@ export async function acquireInputLease(
   if (!session.ok) return session;
   const controller = await attachedController(core, input.terminalSessionId, input.attachmentId);
   if (!controller.ok) return controller;
+  const own = requireOwnAttachment(context, controller.value, OPERATION.acquire);
+  if (!own.ok) return own;
 
   const active = await settleAndFindActive(core, input.terminalSessionId);
   if (!active.ok) return active;
 
-  const cleared = await clearTheWay(core, input, active.value);
+  const cleared = await clearTheWay(core, context, input, active.value);
   if (cleared !== null) return cleared;
 
   const everyLease = await leasesOf(core, input.terminalSessionId);
@@ -70,14 +73,28 @@ export async function acquireInputLease(
  * way is clear to grant one.
  */
 async function clearTheWay(
-  core: TerminalCore, input: AcquireInputLeaseInput, held: TerminalInputLease | null,
+  core: TerminalCore,
+  context: CommandContext,
+  input: AcquireInputLeaseInput,
+  held: TerminalInputLease | null,
 ): Promise<B3Result<TerminalInputLease> | null> {
   if (input.mode === 'renew') return renewLease(core, input, held);
   if (held === null) return null;
   // Asking again for a lease you already hold is not a race; it is a no-op.
   if (held.attachmentId === input.attachmentId) return b3ok(held);
   if (input.mode === 'acquire-if-free') return b3fail(leaseBusyError(held));
-  // explicit-takeover: the prior holder learns WHY it lost the lease.
+
+  // explicit-takeover: whose keyboard is being taken decides whether authority
+  // is needed (§13.4), so the holder's controller is read, not assumed.
+  const holder = await core.store.read<ControllerAttachment>(
+    'controllerAttachment', held.attachmentId,
+  );
+  if (!holder.ok) return holder;
+  if (holder.value !== null) {
+    const authorised = requireTakeoverAuthority(context, holder.value, OPERATION.acquire);
+    if (!authorised.ok) return authorised;
+  }
+  // The prior holder learns WHY it lost the lease.
   const revoked = await endLease(core, held, 'revoked', 'takeover');
   return revoked.ok ? null : revoked;
 }
@@ -107,7 +124,6 @@ async function renewLease(
 export async function releaseInputLease(
   core: TerminalCore, context: CommandContext, input: ReleaseInputLeaseInput,
 ): Promise<B3Result<TerminalInputLease>> {
-  void context;
   const active = await settleAndFindActive(core, input.terminalSessionId);
   if (!active.ok) return active;
   const held = active.value;
@@ -117,6 +133,15 @@ export async function releaseInputLease(
       held === null ? 'no-active-lease' : 'not-holder',
     ));
   }
+  // Knowing the lease id is not the same as holding the keyboard.
+  const holder = await core.store.read<ControllerAttachment>(
+    'controllerAttachment', held.attachmentId,
+  );
+  if (!holder.ok) return holder;
+  if (holder.value !== null) {
+    const own = requireOwnAttachment(context, holder.value, OPERATION.release);
+    if (!own.ok) return own;
+  }
   return endLease(core, held, 'released', 'released');
 }
 
@@ -125,6 +150,12 @@ export async function writeInput(
 ): Promise<B3Result<TerminalInputAttempt>> {
   const session = await requireLiveSession(core, input.terminalSessionId);
   if (!session.ok) return session;
+  // §22: writing terminal input needs an ACTIVE ATTACHMENT and the lease. The
+  // attachment is checked first, so a stolen lease id alone types nothing.
+  const controller = await attachedController(core, input.terminalSessionId, input.attachmentId);
+  if (!controller.ok) return controller;
+  const own = requireOwnAttachment(context, controller.value, OPERATION.write);
+  if (!own.ok) return own;
   const guarded = await guardWrite(core, input);
   if (!guarded.ok) return guarded;
 

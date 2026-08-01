@@ -4,11 +4,19 @@
 // they get is: a session, who is attached, who may type, an ordered stream,
 // and typed failure.
 import type {
-  ActivityGeneration, AgentRunId, AuthenticatedPrincipal, B3ContractError,
-  B3Result, CommandContext, ControllerAttachmentId, LeaseGeneration,
+  ActivityGeneration, AgentRunId, AuthenticatedPrincipal, AuthorityScope,
+  B3ContractError, B3Result, CommandContext, ControllerAttachmentId, LeaseGeneration,
   ProviderTurnId, RuntimeEpochId, SystemCommandContext, TerminalInputLeaseId,
   TerminalSessionId,
 } from '@novakai/foundation/contract';
+
+/**
+ * §13.4: "Takeover is an explicit command WITH AUTHORITY." Taking the keyboard
+ * from a controller belonging to ANOTHER principal needs this verified scope.
+ * Taking it from your own second window does not — that is one person deciding
+ * where they are typing, which needs no permission from anyone.
+ */
+export const TERMINAL_TAKEOVER_SCOPE = 'terminal.takeover' as AuthorityScope;
 import type {
   ControllerAttachment, ControllerKind, TerminalInputAttempt, TerminalInputKind,
   TerminalInputLease, TerminalSession, TerminalSessionOwner,
