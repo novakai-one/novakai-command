@@ -364,43 +364,62 @@ test('the LAST confirmation wins, so a prompt cannot confirm itself', async () =
   }
 });
 
-test('a turn is delivered as ONE line, because a composer treats a newline as a newline', async () => {
-  // Driving the real `claude` 2.1.219: a multi-line turn arrives, echoes into
-  // the composer, and is never sent — the embedded newlines make it a multi-line
-  // draft, and the Enter that follows adds another line instead of submitting.
-  // The same text as one line, with Enter after it, is answered in seconds.
-  // This is the whole reason a governed spawn could not reach `ready` against a
-  // real provider (hold-out B3).
+test('a turn arrives with its lines intact', async () => {
+  // This test used to assert the OPPOSITE — that every newline was replaced
+  // before the turn went out — on the belief that a composer treats an embedded
+  // newline as "add a line" and never submits.
+  //
+  // That belief was never measured. It is false, and the flattening it justified
+  // did two kinds of damage: it silently rewrote code, JSON, Markdown and
+  // numbered instructions before sending them, so what the agent was asked to do
+  // was not what the operator wrote; and `kimi` submits the flattened long turn
+  // about a third of the time against seven eighths for the same content with
+  // its lines intact. See `adapters/providers/turn-delivery.ts` for the table
+  // and `tests/turn-delivery-probe.mts` for the harness that produced it.
   const enter = String.fromCharCode(13);
   const turn = 'You are a governed agent.\n\nTASK: say BANANA\n  1. tdd@v1#abc\n';
   for (const provider of PROVIDER_KINDS) {
-    const wire = adapters[provider].deliverTurn(turn).map((step) => step.utf8Text).join('');
+    const steps = adapters[provider].deliverTurn(turn);
+    const wire = steps.map((step) => step.utf8Text).join('');
     assert.equal(wire.endsWith(enter), true, `${provider} never presses Enter`);
-    assert.equal(wire.slice(0, -1).includes('\n'), false,
-      `${provider} sends a newline mid-turn, which a TUI composer will not submit`);
-    // Nothing may be lost in the flattening: every word still arrives.
-    for (const word of ['governed', 'BANANA', 'tdd@v1#abc']) {
-      assert.equal(wire.includes(word), true, `${provider} dropped "${word}" from the turn`);
+    assert.equal(wire.slice(0, -1), turn,
+      `${provider} rewrote the turn on the way out instead of typing what it was given`);
+  }
+});
+
+test('a carriage return inside a brief is a line break, never half a turn', async () => {
+  // The one transformation that survives, and the reason it has to: a bare CR
+  // in the text would submit whatever came before it and leave the rest in the
+  // composer. In a brief a CR means a line break, so that is what it becomes.
+  const enter = String.fromCharCode(13);
+  const turn = `first${enter}second${enter}\nthird`;
+  for (const provider of PROVIDER_KINDS) {
+    const steps = adapters[provider].deliverTurn(turn);
+    assert.equal(steps.length, 2, `${provider} split a turn containing a CR into extra writes`);
+    assert.equal(steps[0]!.utf8Text.includes(enter), false,
+      `${provider} would submit half of this brief`);
+    for (const word of ['first', 'second', 'third']) {
+      assert.equal(steps[0]!.utf8Text.includes(word), true, `${provider} dropped "${word}"`);
     }
   }
 });
 
 test('the Enter that submits a turn is its own write, after a beat', async () => {
-  // Measured against the real `claude` 2.1.219, 2026-08-02, driving a raw PTY
-  // with no Novakai machinery in the way:
+  // Measured against all THREE real binaries on 2026-08-02, driving raw PTYs
+  // with no Novakai machinery in the way (tests/turn-delivery-probe.mts):
   //
-  //   short line + Enter, one write   -> SUBMITTED
-  //   554-char line + Enter, ONE write -> NOT SUBMITTED  (6/6, reproducible)
-  //   554-char line, Enter as its OWN write after a beat -> SUBMITTED
-  //   2615-char line, same, 150ms beat -> SUBMITTED
+  //   the gate's real 532-char turn 1        claude    codex     kimi
+  //   text and Enter in ONE write            NOT SENT  NOT SENT  NOT SENT
+  //   text, beat, Enter alone                SENT      SENT      SENT
   //
   // A big burst is taken as a PASTE, and an Enter inside that burst is absorbed
   // into the pasted text instead of submitting it. The turn lands in the
   // composer, echoes, and sits there forever — which is hold-out B3, and why a
   // governed launch timed out at the gate against every real provider.
   //
-  // So delivery is not one string. The text goes first, then a pause, then the
-  // key. This is the ONE property that makes the difference.
+  // The claim used to be Claude-only and generalised by assertion; it is now
+  // three measurements. So delivery is not one string: the text goes first,
+  // then a pause, then the key.
   const enter = String.fromCharCode(13);
   const turn = `a governed turn long enough to be taken for a paste: ${'token '.repeat(90)}`;
   for (const provider of PROVIDER_KINDS) {

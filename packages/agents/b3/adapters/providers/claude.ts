@@ -25,7 +25,7 @@ import type {
   ProviderSessionEvidence,
 } from '../../contract/providers.js';
 import type { ResolvedLaunchPlan } from '../../contract/records.js';
-import { deliverAsOneLine, findMarkerLine } from './fake.js';
+import { deliverTurn, findMarkerLine } from './turn-delivery.js';
 import { mergedEnvironment, probeVersion, resolveCli, uuidOf } from './cli-probe.js';
 
 /** Values that mean "pass no --model flag; let the CLI decide" (carried from B1). */
@@ -174,8 +174,9 @@ export function createClaudeAdapter(
       });
     },
 
-    /** The interactive prompt submits on a carriage return, not a newline. */
-    deliverTurn: (text) => deliverAsOneLine(text),
+    // The turn as written, then the key that sends it — see turn-delivery.ts
+    // for what was measured against this binary.
+    deliverTurn,
 
     findConfirmationLine(observation: ProviderReplyObservation, marker: string) {
       return findMarkerLine(observation.text, marker);

@@ -169,7 +169,8 @@ export interface InteractiveProviderAdapter {
    *
    * Not one string, because delivering a turn is not one write: a TUI takes a
    * big fast burst for a paste and absorbs an Enter inside it as text. See
-   * `deliverAsOneLine` for what was measured.
+   * `adapters/providers/turn-delivery.ts` for what was measured, on which
+   * binaries, and why the turn is no longer flattened on the way through.
    */
   deliverTurn(text: string): readonly TurnDeliveryStep[];
 

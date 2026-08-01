@@ -79,8 +79,8 @@ export interface FakeTerminal extends TerminalPort {
 export function reflow(text: string, columns: number): string {
   const painted = text.split(/\s+/u).filter((word) => word !== '').join('');
   const rows: string[] = [];
-  for (let at = 0; at < painted.length; at += columns) {
-    rows.push(painted.slice(at, at + columns));
+  for (let start = 0; start < painted.length; start += columns) {
+    rows.push(painted.slice(start, start + columns));
   }
   return rows.join('\n');
 }

@@ -1,25 +1,31 @@
 #!/usr/bin/env -S npx tsx
-// B3b's public proof, as an OUTSIDE harness (§25 B3b, §24.4).
+// A DEV HARNESS for the three-generation shape. NOT the second-host proof.
+//
+// Read this line before quoting anything below as evidence: this file IMPORTS
+// the private Server host it is driving, and by default hands the gate to a
+// scripted provider whose shell script prints the right answer straight out of
+// the launch plan. Both are fine for a fast inner loop and neither is a second
+// host. Presenting it as one is exactly what NVK-KIMI-031 finding 4 called out.
+//
+// The second-host proof is `b3b-public-three-generations.mjs`, which imports
+// nothing, boots the Runtime through `nvk runtime ensure --start`, and runs the
+// three real binaries every time.
+//
+// What this one is FOR: driving all thirty-odd published methods in about
+// twenty seconds, deterministically, when you have just changed one of them.
+//
+//   node scripts/automation-examples/b3b-three-generations-inprocess.mjs
+//   node scripts/automation-examples/b3b-three-generations-inprocess.mjs --live
 //
 //   A governed Claude Manager — real two-turn skills gate — spawns a governed
 //   Codex Builder, which spawns a governed Kimi Auditor. Forbidden role and
 //   provider overrides fail WITHOUT spawning. Restart-fresh keeps the Agent and
 //   its family and mints a new Run. The tree stops with a confirmation.
 //
-// What makes it a proof rather than a demo: after the Runtime is started, this
-// file touches NOTHING but the published surface. It speaks the nvk-ws v1 frame
-// with the platform's own WebSocket, reads the connection token off disk the way
-// the shipped CLIs do, and takes each generation's credential from the RUN'S OWN
-// TERMINAL — never from a Runtime object. It imports no Novakai module except
-// the host it is booting, because somebody has to boot one.
-//
-//   node scripts/automation-examples/b3b-three-generations.mjs         # scripted providers
-//   node scripts/automation-examples/b3b-three-generations.mjs --live  # the real CLIs
-//
-// `--live` launches real claude/codex/kimi PTYs and lets THEM answer the gate.
-// That is the proof Chris wants and it costs real tokens, so it is opt-in.
-// Without it, a scripted stand-in confirms from the launch plan it was given —
-// the same place a real model's skills come from, never the prompt.
+// Everything after the boot does speak the published nvk-ws v1 frame, written
+// from §16.1 rather than borrowed, and takes each generation's credential from
+// that Run's own terminal. That part is honest; the boot and the provider are
+// the two places it is a harness rather than a stranger.
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';

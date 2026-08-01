@@ -14,6 +14,7 @@ import type {
   ProviderSessionDiscoveryInput, ProviderSessionEvidence, TurnDeliveryStep,
 } from '../../contract/providers.js';
 import type { ResolvedLaunchPlan } from '../../contract/records.js';
+import { deliverTurn, findMarkerLine } from './turn-delivery.js';
 
 const capability = (support: ProviderCapability['support'], evidence: string): ProviderCapability =>
   ({ support, evidence, limitations: [] });
@@ -151,11 +152,11 @@ export function createFakeProviderAdapter(
       return b3ok({ kind: 'unsupported', reason: report.modelChange.evidence });
     },
 
-    // Exactly what the real adapters do. The fake used to send the text with a
-    // newline, which every `cat`-shaped stand-in accepts and no TUI treats as
-    // "send" — so a suite built on it could not tell a submitted turn from an
-    // unsubmitted one.
-    deliverTurn: (text) => deliverAsOneLine(text),
+    // Exactly what the real adapters do — the same module, not a copy of it.
+    // The fake used to send the text with a newline, which every `cat`-shaped
+    // stand-in accepts and no TUI treats as "send", so a suite built on it
+    // could not tell a submitted turn from an unsubmitted one.
+    deliverTurn,
 
     findConfirmationLine(observation: ProviderReplyObservation, marker: string) {
       return findMarkerLine(observation.text, marker);
@@ -163,52 +164,6 @@ export function createFakeProviderAdapter(
   };
 }
 
-
-/**
- * One line, then Enter.
- *
- * Every provider CLI is a TUI whose composer treats a newline as "add a line",
- * so a multi-line turn arrives, echoes, and sits there unsent — and the Enter
- * that follows adds one more line. Driving the real `claude` 2.1.219 that way
- * produced no answer for as long as anyone waited; the same words as one line
- * are answered in seconds (hold-out B3).
- *
- * Blank lines become a separator that survives as text, so nothing the turn
- * said is lost — only its shape.
- *
- * The Enter cannot ride along in the same write, either. A big fast burst is
- * taken for a PASTE, and an Enter inside that burst is absorbed into the pasted
- * text instead of submitting it. Measured 2026-08-02 on a raw PTY with no
- * Novakai machinery in the way: a 554-character turn with the Enter inline was
- * NEVER submitted (6 trials); the same turn with the Enter as its own write,
- * after a beat, was submitted every time, as was a 2615-character one. A SHORT
- * turn submits either way \u2014 which is why this stayed invisible until someone
- * typed a real gate prompt at a real CLI.
- *
- * The beat is measured too: 150ms already sufficed for the 2615-character turn,
- * so 250ms is the cheapest value with room above what was observed to work.
- */
-export function deliverAsOneLine(text: string): readonly TurnDeliveryStep[] {
-  const line = text.replace(/\s*\n\s*\n\s*/gu, ' \u00b7 ').replace(/\s*\n\s*/gu, ' ').trim();
-  return [
-    { utf8Text: line, pauseMsAfter: 250 },
-    { utf8Text: '\r', pauseMsAfter: 0 },
-  ];
-}
-
-/**
- * The shared line-finder: last occurrence wins, because a session that was
- * prompted twice must be judged on what it said LAST, and a provider that
- * echoes the prompt back would otherwise let the prompt confirm itself.
- */
-export function findMarkerLine(text: string, marker: string): string | null {
-  const lines = text.split(/\r?\n/);
-  for (let index = lines.length - 1; index >= 0; index -= 1) {
-    const line = lines[index]!.trim();
-    if (line.startsWith(marker)) return line;
-  }
-  return null;
-}
 
 export function createFakeProviderAdapters(
   options: Partial<Record<ProviderKind, FakeProviderOptions>> & {

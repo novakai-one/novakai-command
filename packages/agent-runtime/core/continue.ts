@@ -39,6 +39,34 @@ export async function continueAgent(
   const epoch = core.fence.assertActive(context.runtimeEpochId);
   if (!epoch.ok) return epoch;
 
+  const oldRun = await continuableRun(core, context, input);
+  if (!oldRun.ok) return oldRun;
+
+  const journal = await openContinuationJournal(core, context, input, oldRun.value, epoch.value);
+  if (!journal.ok) return journal;
+
+  const performed = await performContinuation(core, context, {
+    input,
+    oldRun: oldRun.value,
+    operation: journal.value.operation,
+    reserved: journal.value.reserved,
+    epochId: epoch.value,
+  });
+  if (performed.ok) return performed;
+  const unwound = await unwind(core, journal.value.operation, oldRun.value, epoch.value, performed.error.message);
+  return unwound.ok ? performed : unwound;
+}
+
+/**
+ * The Run this continuation may act on, and every reason it may not.
+ *
+ * All of it refuses BEFORE any effect: the caller's authority, a tree already
+ * closing, a Run belonging to somebody else, a Run that is already over, and a
+ * mode the pinned plan or the provider does not offer.
+ */
+async function continuableRun(
+  core: RunsCore, context: CommandContext, input: ContinueAgentInput,
+): Promise<B3Result<AgentRun>> {
   const authorised = await core.agents.authoriseRunOperation(context.principal, {
     targetAgentId: input.agentId, operation: 'continue',
   });
@@ -60,29 +88,22 @@ export async function continueAgent(
     return b3fail(runFinal(oldRun.value.id, oldRun.value.lifecycle));
   }
 
-  // Whether this MODE is permitted at all — by the plan the old Run was pinned
-  // to, and by what the provider can actually do. Both refuse before effects.
   const allowed = await core.agents.continuationAllowed(context.principal, {
     launchPlanId: oldRun.value.launchPlanId, mode: input.mode,
   });
-  if (!allowed.ok) return allowed;
+  return allowed.ok ? b3ok(oldRun.value) : b3fail(allowed.error);
+}
 
-  const journal = await openContinuationJournal(core, context, input, oldRun.value, epoch.value);
-  if (!journal.ok) return journal;
-
-  const performed = await performContinuation(core, context, {
-    input,
-    oldRun: oldRun.value,
-    operation: journal.value.operation,
-    reserved: journal.value.reserved,
-    epochId: epoch.value,
-  });
-  if (!performed.ok) {
-    await compensate(core, journal.value.operation, epoch.value, performed.error.message);
-    const released = await releaseFencedRun(core, oldRun.value.id, performed.error.message);
-    if (!released.ok) return released;
-  }
-  return performed;
+/** Everything a failed continuation owes: the journal, then the fenced Run. */
+async function unwind(
+  core: RunsCore,
+  operation: RunOperation,
+  oldRun: AgentRun,
+  epochId: RuntimeEpochId,
+  reason: string,
+): Promise<B3Result<null>> {
+  await compensate(core, operation, epochId, reason);
+  return releaseFencedRun(core, oldRun.id, reason);
 }
 
 /**

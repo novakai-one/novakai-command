@@ -21,9 +21,12 @@ export {
 } from '../core/context.js';
 export { GOVERNED_AGENT_KINDS } from '../core/store.js';
 export {
-  createFakeProviderAdapter, createFakeProviderAdapters, findMarkerLine,
+  createFakeProviderAdapter, createFakeProviderAdapters,
   type FakeProviderOptions,
 } from '../adapters/providers/fake.js';
+export {
+  deliverTurn, findMarkerLine,
+} from '../adapters/providers/turn-delivery.js';
 export {
   createProviderAdapters, createClaudeAdapter, createCodexAdapter, createKimiAdapter,
   type ClaudeAdapterOptions, type CodexAdapterOptions, type KimiAdapterOptions,

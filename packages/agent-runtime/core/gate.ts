@@ -24,6 +24,9 @@ import type { AgentRun, RunOperation } from '../contract/runs.js';
 import { advance, completed, effectKeyFor } from './journal.js';
 import type { RunsCore } from './runs-context.js';
 import { maybeAskAgain, noteStillness, startVigil } from './gate-vigil.js';
+import {
+  bearsFingerprint, plainText, sinceTheQuestion, withoutOurOwnWords,
+} from './gate-screen.js';
 
 export interface GateInput {
   readonly agentRun: AgentRun;
@@ -100,60 +103,6 @@ export function promptFingerprint(turnRef: string): string {
 /** A short, stable name for one gate turn, derived from its own effect key. */
 export function turnRefFor(effectKey: string): string {
   return createHash('sha256').update(effectKey, 'utf8').digest('hex').slice(0, 12);
-}
-
-/**
- * What a human would read off the screen: ANSI dressing removed, so a match is
- * about what was SAID and not about how the provider painted it.
- */
-export function plainText(output: string): string {
-  return output.replace(/\u001B\[[0-9;?]*[A-Za-z]/g, '');
-}
-
-/**
- * The screen with the whitespace taken out, and a map back to where each
- * surviving character came from.
- *
- * A TUI does not type spaces. It moves the cursor to a column and paints the
- * next word, so once `plainText` has stripped those CSI sequences the words run
- * together: the re-probe read `(novakaiturnfb276bd5d5ba)` off a real session for
- * a fingerprint composed as `(novakai turn fb276bd5d5ba)`. Any anchor that has
- * to be FOUND on a real screen has to be looked for in this form.
- */
-function compacted(text: string): { readonly text: string; readonly origin: readonly number[] } {
-  let compact = '';
-  const origin: number[] = [];
-  for (let at = 0; at < text.length; at += 1) {
-    const character = text[at]!;
-    if (/\s/u.test(character)) continue;
-    compact += character;
-    origin.push(at);
-  }
-  return { text: compact, origin };
-}
-
-/**
- * Everything that arrived after turn 1 finished painting, or `null` if turn 1
- * has not appeared on the screen yet.
- *
- * This is the whole of the N-1 repair. The old gate subtracted "lines we typed"
- * from the screen, which works only against a session that echoes line for
- * line; against a composer that re-wraps, no row equals a line the Runtime
- * composed, every one of them survives the filter, and the marker sentence
- * inside the Runtime's OWN instructions gets read back as the agent's answer.
- *
- * Position is the property that cannot be reflowed away. The prompt ends with
- * its fingerprint — the one short string only the Runtime could have written —
- * so the last time that fingerprint appears is the last time turn 1 finished
- * being painted, and an answer to turn 1 can only be after it.
- */
-export function afterPromptEcho(output: string, fingerprint: string): string | null {
-  const screen = compacted(output);
-  const needle = fingerprint.replace(/\s+/gu, '');
-  const at = screen.text.lastIndexOf(needle);
-  if (at < 0) return null;
-  const end = at + needle.length;
-  return output.slice(screen.origin[end] ?? output.length);
 }
 
 function marker(plan: LaunchPlanFacts): string {
@@ -249,9 +198,7 @@ async function sendConfirmationTurn(
   const effectKey = effectKeyFor(input.operation.id, 'skills-gate-prompt-sent');
   const before = await screenSoFar(core, terminalSessionId);
   if (!before.ok) return before;
-  if (before.value.includes(promptFingerprint(turnRefFor(effectKey)))
-    || compacted(before.value).text.includes(
-      promptFingerprint(turnRefFor(effectKey)).replace(/\s+/gu, ''))) {
+  if (bearsFingerprint(before.value, promptFingerprint(turnRefFor(effectKey)))) {
     const advanced = await advance(core, input.operation, {
       stage: 'skills-gate-prompt-sent', owner: 'terminal', ownerObjectId: terminalSessionId,
     });
@@ -320,14 +267,20 @@ async function awaitConfirmation(
   const fingerprint = promptFingerprint(turnRefFor(effectKey));
   const vigil = startVigil(core);
 
+  /** The one line on this screen that could be an answer, or none. */
+  const answerOn = (screen: string): string | null => {
+    const reply = sinceTheQuestion(screen, fingerprint, paintedBefore);
+    if (reply === null) return null;
+    return core.providers.findConfirmationLine(
+      input.plan.provider, withoutOurOwnWords(reply, ours), mark,
+    );
+  };
+
   for (;;) {
     const seen = await screenSoFar(core, terminalSessionId);
     if (!seen.ok) return seen;
     noteStillness(core, vigil, seen.value);
-    const reply = sinceTheQuestion(seen.value, fingerprint, paintedBefore);
-    const line = reply === null ? null : core.providers.findConfirmationLine(
-      input.plan.provider, withoutOurOwnWords(reply, ours), mark,
-    );
+    const line = answerOn(seen.value);
     if (line !== null) return judge(line, mark, expected, input.agentRun.id);
     if (core.clock() >= deadline) {
       return b3fail(skillsFailed(input.agentRun.id, 'no confirmation arrived before the gate timed out', []));
@@ -343,35 +296,6 @@ async function awaitConfirmation(
     if (!again.ok) return again;
     await new Promise((settle) => { setTimeout(settle, 100); });
   }
-}
-
-/**
- * The part of the screen that can possibly be an answer to turn 1.
- *
- * Two anchors, and the later one wins. The prompt's echo is the stronger — it
- * ends exactly where the Runtime stopped speaking — and it survives a reflow
- * because it is found in the whitespace-free form. Where a provider does not
- * echo at all there is nothing to find, and the fallback is the offset the
- * screen stood at when turn 1 went out.
- *
- * A screen that has neither is a screen where nothing that could be an answer
- * has arrived, and the honest verdict there is silence, not a guess.
- */
-function sinceTheQuestion(
-  screen: string, fingerprint: string, paintedBefore: number,
-): string | null {
-  const afterEcho = afterPromptEcho(screen, fingerprint);
-  if (afterEcho !== null) return afterEcho;
-  if (screen.length <= paintedBefore) return null;
-  return screen.slice(paintedBefore);
-}
-
-/** Drop every line the Runtime itself typed at this session. */
-function withoutOurOwnWords(output: string, ours: ReadonlySet<string>): string {
-  return output
-    .split(/\r?\n/)
-    .filter((line) => !ours.has(line.trim()))
-    .join('\n');
 }
 
 /**

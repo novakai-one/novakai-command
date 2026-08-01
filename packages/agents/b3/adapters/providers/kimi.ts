@@ -28,7 +28,7 @@ import type {
   ProviderSessionEvidence,
 } from '../../contract/providers.js';
 import type { ResolvedLaunchPlan } from '../../contract/records.js';
-import { deliverAsOneLine, findMarkerLine } from './fake.js';
+import { deliverTurn, findMarkerLine } from './turn-delivery.js';
 import { everyCapability } from './claude.js';
 import {
   kimiSessionIdFrom, mergedEnvironment, newestSessionSince, probeVersion, resolveCli,
@@ -199,7 +199,7 @@ export function createKimiAdapter(
       });
     },
 
-    deliverTurn: (text) => deliverAsOneLine(text),
+    deliverTurn,
 
     findConfirmationLine(observation: ProviderReplyObservation, marker: string) {
       return findMarkerLine(observation.text, marker);
