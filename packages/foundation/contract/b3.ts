@@ -165,6 +165,19 @@ export const mintTreeMutationFenceId = (): TreeMutationFenceId => `treeFence_${u
 export const mintProviderSessionId = (): ProviderSessionId => `sess_${randomUUID()}` as ProviderSessionId;
 
 /**
+ * The principal an Agent authenticates AS (DEC-B3V4-05, §12.1).
+ *
+ * DERIVED from the Run rather than minted, and that is the whole point:
+ * `principal.id` is what every write stores as `createdBy` and `requestedBy`,
+ * so a single shared literal would make three generations of Agents leave
+ * byte-identical traces. This one names which Run did it, and a reader can go
+ * straight from the record back to the Run — while the brand keeps it from
+ * being passed anywhere an `AgentRunId` is expected (red gate 3).
+ */
+export const agentRunPrincipalId = (agentRunId: AgentRunId): AgentRunPrincipalId =>
+  `principal_${agentRunId}` as AgentRunPrincipalId;
+
+/**
  * One edge per ordered pair, so recording the same parent→child twice is
  * idempotent rather than a second edge (§13.5's "deterministic edge ID").
  * Direction is part of the tuple: an edge is not symmetric.

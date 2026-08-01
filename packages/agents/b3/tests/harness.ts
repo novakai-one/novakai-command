@@ -7,7 +7,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
-  mintClientOpId, mintTraceCorrelationId,
+  agentRunPrincipalId, mintClientOpId, mintTraceCorrelationId,
   type AgentRunId, type AuthenticatedPrincipal, type AuthorityScope,
   type CommandContext, type HumanPrincipalId, type SystemCommandContext,
 } from '@novakai/foundation/contract';
@@ -51,7 +51,9 @@ export function createRig(): Rig {
       id: CHRIS, kind: 'human', verifiedScopes: scopes as readonly AuthorityScope[],
     }),
     agentRun: (agentRunId, scopes = []) => envelope({
-      id: `agentRun_principal` as never, kind: 'agent-run', agentRunId,
+      // Derived exactly as the server derives it, so a harness never proves
+      // something about a principal shape production does not use.
+      id: agentRunPrincipalId(agentRunId), kind: 'agent-run', agentRunId,
       verifiedScopes: scopes as readonly AuthorityScope[],
     }),
     system: () => ({

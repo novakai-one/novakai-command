@@ -4,9 +4,10 @@
 // controller, not this. Everything it exposes rides the existing nvk-ws v1
 // transport, so an external terminal and the app are the same kind of client.
 import {
-  mintClientOpId, mintTraceCorrelationId,
-  type AuthenticatedPrincipal, type B3Result, type ControllerAttachmentId,
-  type HumanPrincipalId, type SystemCommandContext, type TerminalSessionId,
+  agentRunPrincipalId, mintClientOpId, mintTraceCorrelationId,
+  type AgentRunId, type AuthenticatedPrincipal, type B3Result,
+  type ControllerAttachmentId, type HumanPrincipalId, type SystemCommandContext,
+  type TerminalSessionId,
 } from '@novakai/foundation/contract';
 import { HUMAN_SCOPES } from '../../../agents/b3/contract/index.js';
 import { DEFAULT_STALE_AFTER_MS } from '../../../terminal/contract/index.js';
@@ -61,7 +62,7 @@ export async function startRuntimeHost(
    * not verify is REFUSED rather than downgraded — a forged Agent identity that
    * silently became "Chris" would hand it every scope Chris has.
    */
-  const authenticate = (connection: URL): CallerIdentity | null => {
+  const identifyCaller = (connection: URL): CallerIdentity | null => {
     const agentRunId = connection.searchParams.get('agentRunId');
     const runToken = connection.searchParams.get('runToken');
     if (agentRunId === null && runToken === null) return { kind: 'human' };
@@ -72,10 +73,14 @@ export async function startRuntimeHost(
 
   const principalFor = (session: CallerSession | undefined): AuthenticatedPrincipal => {
     if (session?.identity.kind === 'agent-run') {
+      const agentRunId = session.identity.agentRunId as AgentRunId;
       return {
-        id: 'agentRun_principal' as never,
+        // Derived from the Run, because this id is what every record it writes
+        // stores as `createdBy`. A constant here would leave three generations
+        // of Agents indistinguishable in the trace.
+        id: agentRunPrincipalId(agentRunId),
         kind: 'agent-run',
-        agentRunId: session.identity.agentRunId as never,
+        agentRunId,
         // An Agent's authority comes from its GRANTS, never from the socket.
         verifiedScopes: [],
       };
@@ -144,7 +149,7 @@ export async function startRuntimeHost(
     port: options.port,
     ...(options.staticDir === undefined ? {} : { staticDir: options.staticDir }),
     methods,
-    authenticate,
+    identifyCaller,
     onDispatch(call: DispatchedCall) {
       if (call.method === 'b3.terminal.attach' || call.method === 'b3.terminal.detach') {
         remember(call);

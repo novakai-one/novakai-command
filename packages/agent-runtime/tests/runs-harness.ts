@@ -10,8 +10,8 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
-  b3err, b3fail, b3ok, mintClientOpId, mintProviderSessionId, mintRuntimeEpochId,
-  mintTraceCorrelationId,
+  agentRunPrincipalId, b3err, b3fail, b3ok, mintClientOpId, mintProviderSessionId,
+  mintRuntimeEpochId, mintTraceCorrelationId,
   type AgentRunId, type AuthenticatedPrincipal, type AuthorityScope,
   type B3Result, type CommandContext, type ProviderSessionId, type RuntimeEpochId,
 } from '@novakai/foundation/contract';
@@ -140,7 +140,8 @@ export function createRunsRig(options: RunsRigOptions = {}): RunsRig {
       id: CHRIS, kind: 'human', verifiedScopes: scopes,
     }),
     agentRun: (agentRunId, scopes = EVERY_SCOPE) => envelope({
-      id: 'agentRun_principal' as never, kind: 'agent-run', agentRunId, verifiedScopes: scopes,
+      // Derived exactly as the server derives it (see `agentRunPrincipalId`).
+      id: agentRunPrincipalId(agentRunId), kind: 'agent-run', agentRunId, verifiedScopes: scopes,
     }),
     principal: () => ({ id: CHRIS, kind: 'human', verifiedScopes: EVERY_SCOPE }),
     close: () => rmSync(root, { recursive: true, force: true }),

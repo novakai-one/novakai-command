@@ -48,8 +48,12 @@ export interface StartTransportOptions {
    * Who a connection is, decided at the UPGRADE from what it presented.
    * Returning `null` refuses the socket outright — an unrecognised claim never
    * becomes a weaker identity, it becomes no connection at all.
+   *
+   * Deliberately NOT called `authenticate`: in this server that word already
+   * means "vend a messaging session", and only the holder factory may do that
+   * (red gate 5). Two different jobs get two different names.
    */
-  authenticate?(url: URL): CallerIdentity | null;
+  identifyCaller?(url: URL): CallerIdentity | null;
 }
 
 export interface DispatchedCall {
@@ -178,7 +182,15 @@ export async function startTransport(options: StartTransportOptions): Promise<Ru
     // B3b: an Agent may present its Run credential on the same socket. A claim
     // that does not verify is refused here — it must never fall back to being
     // treated as the local human.
-    const identity = options.authenticate?.(url) ?? { kind: 'human' as const };
+    //
+    // Written the long way ON PURPOSE. `identifyCaller?.(url) ?? human` reads
+    // as the same sentence and is not: `??` cannot tell "there is no
+    // identifier" from "the identifier said no", so a forged credential would
+    // arrive as Chris and inherit every scope he has. Absence and refusal are
+    // different answers, so they are asked as different questions.
+    const identity = options.identifyCaller === undefined
+      ? { kind: 'human' as const }
+      : options.identifyCaller(url);
     if (identity === null) {
       socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
       socket.destroy();
