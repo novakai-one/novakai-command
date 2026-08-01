@@ -22,7 +22,7 @@ export async function interruptTerminalTurn(
   if (!epoch.ok) return epoch;
   const session = await requireLiveSession(core, input.terminalSessionId);
   if (!session.ok) return session;
-  const live = core.live.get(input.terminalSessionId);
+  const live = core.live.lookup(input.terminalSessionId);
 
   // Steps 4–5: the tuple is not the active turn → change NOTHING. The lease,
   // the controller's draft and any queued writes are untouched.

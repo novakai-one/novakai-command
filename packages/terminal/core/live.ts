@@ -71,19 +71,19 @@ export class LiveSession {
 export class LiveSessions {
   private readonly sessions = new Map<string, LiveSession>();
 
-  set(session: LiveSession): void {
+  track(session: LiveSession): void {
     this.sessions.set(session.sessionId, session);
   }
 
-  get(sessionId: TerminalSessionId): LiveSession | undefined {
+  lookup(sessionId: TerminalSessionId): LiveSession | undefined {
     return this.sessions.get(sessionId);
   }
 
-  delete(sessionId: TerminalSessionId): void {
+  forget(sessionId: TerminalSessionId): void {
     this.sessions.delete(sessionId);
   }
 
-  all(): readonly LiveSession[] {
+  list(): readonly LiveSession[] {
     return [...this.sessions.values()];
   }
 }

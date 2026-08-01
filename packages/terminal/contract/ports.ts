@@ -57,7 +57,7 @@ export interface RuntimeEpochFence {
 
 /** Injected so lease expiry is deterministic under test rather than wall-clock luck. */
 export interface Clock {
-  now(): number;
+  nowMs(): number;
 }
 
-export const systemClock: Clock = { now: () => Date.now() };
+export const systemClock: Clock = { nowMs: () => Date.now() };

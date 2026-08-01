@@ -8,12 +8,12 @@
 export class SessionQueue {
   private readonly tails = new Map<string, Promise<unknown>>();
 
-  run<T>(key: string, work: () => Promise<T>): Promise<T> {
-    const previous = this.tails.get(key) ?? Promise.resolve();
+  enqueue<T>(lane: string, work: () => Promise<T>): Promise<T> {
+    const previous = this.tails.get(lane) ?? Promise.resolve();
     const next = previous.then(work, work);
     // Swallow only the CHAIN's rejection, never the caller's: the caller still
     // receives `next` and its error.
-    this.tails.set(key, next.then(() => undefined, () => undefined));
+    this.tails.set(lane, next.then(() => undefined, () => undefined));
     return next;
   }
 }

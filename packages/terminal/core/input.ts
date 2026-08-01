@@ -1,7 +1,7 @@
 // Acquiring the right to type, and typing.
 import { createHash } from 'node:crypto';
 import {
-  b3err, b3ok, mintClientOpId, mintTerminalInputAttemptId, nowIsoUtc, validationFailed,
+  b3fail, b3err, b3ok, mintClientOpId, mintTerminalInputAttemptId, nowIsoUtc, validationFailed,
   type B3Result, type CommandContext, type IsoUtc, type LeaseGeneration,
 } from '@novakai/foundation/contract';
 import type {
@@ -26,9 +26,9 @@ async function attachedController(
   if (found.value === null
     || found.value.terminalSessionId !== terminalSessionId
     || found.value.state !== 'attached') {
-    return { ok: false, error: b3err('ValidationFailed',
+    return b3fail(b3err('ValidationFailed',
       `attachment "${attachmentId}" is not attached to "${terminalSessionId}"`,
-      { issues: [{ path: 'attachmentId', message: 'not an attached controller' }] }, false) };
+      { issues: [{ path: 'attachmentId', message: 'not an attached controller' }] }, false));
   }
   return b3ok(found.value);
 }
@@ -37,7 +37,7 @@ export async function acquireInputLease(
   core: TerminalCore, context: CommandContext, input: AcquireInputLeaseInput,
 ): Promise<B3Result<TerminalInputLease>> {
   const issues = ttlIssues(input.ttlMs);
-  if (issues.length > 0) return { ok: false, error: validationFailed(issues) };
+  if (issues.length > 0) return b3fail(validationFailed(issues));
   const session = await requireLiveSession(core, input.terminalSessionId);
   if (!session.ok) return session;
   const controller = await attachedController(core, input.terminalSessionId, input.attachmentId);
@@ -45,25 +45,16 @@ export async function acquireInputLease(
 
   const active = await settleAndFindActive(core, input.terminalSessionId);
   if (!active.ok) return active;
-  const held = active.value;
 
-  if (input.mode === 'renew') return renewLease(core, input, held);
-  if (held !== null && held.attachmentId === input.attachmentId) return b3ok(held);
-  if (held !== null && input.mode === 'acquire-if-free') {
-    return { ok: false, error: leaseBusyError(held) };
-  }
-  if (held !== null) {
-    // explicit-takeover: the prior holder learns WHY it lost the lease.
-    const revoked = await endLease(core, held, 'revoked', 'takeover');
-    if (!revoked.ok) return revoked;
-  }
+  const cleared = await clearTheWay(core, input, active.value);
+  if (cleared !== null) return cleared;
 
-  const all = await leasesOf(core, input.terminalSessionId);
-  if (!all.ok) return all;
+  const everyLease = await leasesOf(core, input.terminalSessionId);
+  if (!everyLease.ok) return everyLease;
   const granted = await grantLease(core, context, {
     terminalSessionId: input.terminalSessionId,
     attachmentId: controller.value.id,
-    generation: nextGeneration(all.value),
+    generation: nextGeneration(everyLease.value),
     ttlMs: input.ttlMs,
   });
   if (!granted.ok) return granted;
@@ -73,24 +64,42 @@ export async function acquireInputLease(
   return granted;
 }
 
+/**
+ * Decide what happens to whoever holds the lease now. Returns a finished
+ * outcome when the caller must NOT be granted a fresh lease, or null when the
+ * way is clear to grant one.
+ */
+async function clearTheWay(
+  core: TerminalCore, input: AcquireInputLeaseInput, held: TerminalInputLease | null,
+): Promise<B3Result<TerminalInputLease> | null> {
+  if (input.mode === 'renew') return renewLease(core, input, held);
+  if (held === null) return null;
+  // Asking again for a lease you already hold is not a race; it is a no-op.
+  if (held.attachmentId === input.attachmentId) return b3ok(held);
+  if (input.mode === 'acquire-if-free') return b3fail(leaseBusyError(held));
+  // explicit-takeover: the prior holder learns WHY it lost the lease.
+  const revoked = await endLease(core, held, 'revoked', 'takeover');
+  return revoked.ok ? null : revoked;
+}
+
 async function renewLease(
   core: TerminalCore, input: AcquireInputLeaseInput, held: TerminalInputLease | null,
 ): Promise<B3Result<TerminalInputLease>> {
   if (held === null || held.attachmentId !== input.attachmentId) {
-    return { ok: false, error: generationChangedError(
+    return b3fail(generationChangedError(
       input.expectedLeaseGeneration, held?.generation ?? 0,
       held === null ? 'no-active-lease' : 'not-holder',
-    ) };
+    ));
   }
   if (input.expectedLeaseGeneration !== undefined
     && input.expectedLeaseGeneration !== held.generation) {
-    return { ok: false, error: generationChangedError(
+    return b3fail(generationChangedError(
       input.expectedLeaseGeneration, held.generation, 'not-holder',
-    ) };
+    ));
   }
   return core.store.update<TerminalInputLease>(
     'sys_terminal', 'terminalInputLease', held.id,
-    { expiresAt: new Date(core.clock.now() + input.ttlMs).toISOString() as IsoUtc },
+    { expiresAt: new Date(core.clock.nowMs() + input.ttlMs).toISOString() as IsoUtc },
     held.recordVersion, mintClientOpId(),
   );
 }
@@ -103,10 +112,10 @@ export async function releaseInputLease(
   if (!active.ok) return active;
   const held = active.value;
   if (held === null || held.id !== input.leaseId || held.generation !== input.generation) {
-    return { ok: false, error: generationChangedError(
+    return b3fail(generationChangedError(
       input.generation, held?.generation ?? 0,
       held === null ? 'no-active-lease' : 'not-holder',
-    ) };
+    ));
   }
   return endLease(core, held, 'released', 'released');
 }
@@ -119,11 +128,11 @@ export async function writeInput(
   const guarded = await guardWrite(core, input);
   if (!guarded.ok) return guarded;
 
-  const live = core.live.get(input.terminalSessionId);
+  const live = core.live.lookup(input.terminalSessionId);
   if (!live) {
-    return { ok: false, error: b3err('TerminalNotLive',
+    return b3fail(b3err('TerminalNotLive',
       'the runtime holds no live process for this session',
-      { terminalSessionId: input.terminalSessionId, status: session.value.status }, false) };
+      { terminalSessionId: input.terminalSessionId, status: session.value.status }, false));
   }
 
   const payload = bytesFor(input);
@@ -171,34 +180,34 @@ async function guardWrite(
   core: TerminalCore, input: WriteTerminalInput,
 ): Promise<B3Result<null>> {
   if (input.kindOfInput !== 'raw-control-c' && (input.utf8Text ?? '') === '') {
-    return { ok: false, error: validationFailed([{ path: 'utf8Text', message: 'must not be empty' }]) };
+    return b3fail(validationFailed([{ path: 'utf8Text', message: 'must not be empty' }]));
   }
   const active = await settleAndFindActive(core, input.terminalSessionId);
   if (!active.ok) return active;
   const held = active.value;
   if (held === null || held.id !== input.inputLeaseId) {
-    return { ok: false, error: generationChangedError(
+    return b3fail(generationChangedError(
       input.leaseGeneration, held?.generation ?? 0,
       held === null ? 'no-active-lease' : 'not-holder',
-    ) };
+    ));
   }
   if (held.generation !== input.leaseGeneration) {
-    return { ok: false, error: generationChangedError(
+    return b3fail(generationChangedError(
       input.leaseGeneration, held.generation, 'takeover',
-    ) };
+    ));
   }
   if (held.attachmentId !== input.attachmentId) {
-    return { ok: false, error: generationChangedError(
+    return b3fail(generationChangedError(
       input.leaseGeneration, held.generation, 'not-holder',
-    ) };
+    ));
   }
-  const live = core.live.get(input.terminalSessionId);
+  const live = core.live.lookup(input.terminalSessionId);
   const expected = live?.nextInputSequence ?? 1;
   if (input.expectedNextInputSequence !== expected) {
-    return { ok: false, error: b3err('VersionConflict',
+    return b3fail(b3err('VersionConflict',
       'the input stream moved on before this write',
       { objectId: input.terminalSessionId, expected: input.expectedNextInputSequence, actual: expected },
-      true) };
+      true));
   }
   return b3ok(null);
 }

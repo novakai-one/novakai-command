@@ -24,7 +24,7 @@ test('closing one controller detaches it and the plain shell keeps running', asy
 
     const view = unwrap(await rig.terminal.getTerminalSession(humanPrincipal(), session.id), 'get');
     assert.equal(view.session.status, 'live', 'detaching a controller stopped the session');
-    assert.equal(rig.pty.latest().killed, false, 'the PTY was killed by a window close');
+    assert.equal(rig.ptyHost.latest().killed, false, 'the PTY was killed by a window close');
     assert.equal(view.attachments.find((item) => item.id === shell.id)?.state, 'detached');
   } finally {
     await rig.dispose();
@@ -38,7 +38,7 @@ test('the LAST controller leaving still leaves the session live and reattachable
     const only = unwrap(await rig.terminal.attachController(humanContext(), {
       terminalSessionId: session.id, controllerKind: 'external-terminal', columns: 80, rows: 24,
     }), 'attach');
-    rig.pty.latest().emit('before the window closed\r\n');
+    rig.ptyHost.latest().emit('before the window closed\r\n');
 
     unwrap(await rig.terminal.detachController(humanContext(), {
       terminalSessionId: session.id, attachmentId: only.id,
@@ -49,7 +49,7 @@ test('the LAST controller leaving still leaves the session live and reattachable
     assert.equal(afterClose.attachments.filter((item) => item.state === 'attached').length, 0);
 
     // ...and output produced while NOBODY watched is still there on return.
-    rig.pty.latest().emit('while nobody was watching\r\n');
+    rig.ptyHost.latest().emit('while nobody was watching\r\n');
     unwrap(await rig.terminal.attachController(humanContext(), {
       terminalSessionId: session.id, controllerKind: 'novakai-shell', columns: 80, rows: 24,
     }), 'reattach');
@@ -86,7 +86,7 @@ test('two controllers on one session: either can close without touching the othe
     assert.equal(view.session.status, 'live');
     assert.equal(view.attachments.find((item) => item.id === inApp.id)?.state, 'attached');
     assert.equal(view.attachments.find((item) => item.id === inTerminal.id)?.state, 'detached');
-    assert.equal(rig.pty.latest().killed, false);
+    assert.equal(rig.ptyHost.latest().killed, false);
   } finally {
     await rig.dispose();
   }
@@ -111,7 +111,7 @@ test('a detaching lease holder releases the lease without ending the session', a
     const view = unwrap(await rig.terminal.getTerminalSession(humanPrincipal(), session.id), 'get');
     assert.equal(view.session.status, 'live');
     assert.equal(view.activeInputLease, undefined, 'a released lease is still held');
-    assert.equal(rig.pty.latest().killed, false);
+    assert.equal(rig.ptyHost.latest().killed, false);
 
     // the freed lease is immediately acquirable by whoever is still there
     const second = unwrap(await rig.terminal.attachController(humanContext(), {
@@ -146,7 +146,7 @@ test('a mock managed session survives every controller close case too', async ()
 
     const view = unwrap(await rig.terminal.getTerminalSession(humanPrincipal(), session.id), 'get');
     assert.equal(view.session.status, 'live');
-    assert.equal(rig.pty.latest().killed, false);
+    assert.equal(rig.ptyHost.latest().killed, false);
   } finally {
     await rig.dispose();
   }
@@ -165,7 +165,7 @@ test('stopping a session requires Runtime lifecycle authority, not a controller'
       reason: 'stop-one',
     });
     assert.equal(expectError(stale, 'stale-epoch terminate').code, 'StaleRuntimeEpoch');
-    assert.equal(rig.pty.latest().killed, false);
+    assert.equal(rig.ptyHost.latest().killed, false);
 
     const stopped = unwrap(await rig.terminal.terminateTerminal(runtimeContext(rig.epochId), {
       terminalSessionId: session.id,
@@ -173,7 +173,7 @@ test('stopping a session requires Runtime lifecycle authority, not a controller'
       reason: 'stop-one',
     }), 'terminate');
     assert.equal(stopped.status, 'exited');
-    assert.equal(rig.pty.latest().killed, true);
+    assert.equal(rig.ptyHost.latest().killed, true);
   } finally {
     await rig.dispose();
   }

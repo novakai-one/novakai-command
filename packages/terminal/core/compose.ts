@@ -5,7 +5,7 @@
 // is what makes "two controllers in the same millisecond" and "a retry after a
 // crash" ordinary rather than exceptional.
 import {
-  b3err, b3ok, composeReceiptStore,
+  b3fail, b3err, b3ok, composeReceiptStore,
   type AuthenticatedPrincipal, type B3Result, type CommandContext,
   type ReceiptStore, type RuntimeEpochId, type SystemCommandContext,
   type TerminalSessionId,
@@ -62,15 +62,15 @@ export function composeTerminal(options: ComposeTerminalOptions): TerminalContra
    */
   function guarded<Input, Value>(
     operation: typeof OPERATION[keyof typeof OPERATION],
-    key: (input: Input) => string,
+    lane: (input: Input) => string,
     replaySafe: boolean,
-    run: (context: CommandContext, input: Input) => Promise<B3Result<Value>>,
+    perform: (context: CommandContext, input: Input) => Promise<B3Result<Value>>,
   ) {
     return async (context: CommandContext, input: Input): Promise<B3Result<Value>> => {
       const version = versionGuard<Value>(context);
       if (version) return version;
-      return core.queue.run(key(input), () => core.receipts.runCommand(
-        context, { operation, request: input, replaySafe }, () => run(context, input),
+      return core.queue.enqueue(lane(input), () => core.receipts.runCommand(
+        context, { operation, request: input, replaySafe }, () => perform(context, input),
       ));
     };
   }
@@ -110,7 +110,7 @@ export function composeTerminal(options: ComposeTerminalOptions): TerminalContra
     ) {
       const version = versionGuard<InterruptTerminalTurnOutcome>(context);
       if (version) return version;
-      return core.queue.run(input.terminalSessionId, () => core.receipts.runCommand(
+      return core.queue.enqueue(input.terminalSessionId, () => core.receipts.runCommand(
         context, { operation: OPERATION.interrupt, request: input, replaySafe: false },
         () => interruptTerminalTurn(core, context, input),
       ));
@@ -121,7 +121,7 @@ export function composeTerminal(options: ComposeTerminalOptions): TerminalContra
     ) {
       const version = versionGuard<TerminalSession>(context);
       if (version) return version;
-      return core.queue.run(input.terminalSessionId, () => core.receipts.runCommand(
+      return core.queue.enqueue(input.terminalSessionId, () => core.receipts.runCommand(
         context, { operation: OPERATION.terminate, request: input, replaySafe: true },
         () => terminateTerminal(core, context, input),
       ));
@@ -145,10 +145,10 @@ export function composeTerminal(options: ComposeTerminalOptions): TerminalContra
     system: {
       async beginProviderTurn(context, input) {
         void context;
-        const live = core.live.get(input.terminalSessionId);
+        const live = core.live.lookup(input.terminalSessionId);
         if (!live) {
-          return { ok: false, error: b3err('TerminalNotLive',
-            'no live process for this session', { terminalSessionId: input.terminalSessionId, status: 'unknown' }, false) };
+          return b3fail(b3err('TerminalNotLive',
+            'no live process for this session', { terminalSessionId: input.terminalSessionId, status: 'unknown' }, false));
         }
         live.activeTurn = {
           providerTurnId: input.providerTurnId,
@@ -159,7 +159,7 @@ export function composeTerminal(options: ComposeTerminalOptions): TerminalContra
       },
       async endProviderTurn(context, input) {
         void context;
-        const live = core.live.get(input.terminalSessionId);
+        const live = core.live.lookup(input.terminalSessionId);
         if (live?.activeTurn?.providerTurnId === input.providerTurnId) live.activeTurn = null;
         return b3ok(null);
       },
@@ -174,7 +174,7 @@ export function composeTerminal(options: ComposeTerminalOptions): TerminalContra
     async dispose() {
       // Runtime-private teardown only. Deliberately does NOT stop any PTY:
       // disposing a composition is not an authorised stop (red gate 1).
-      for (const session of core.live.all()) core.live.delete(session.sessionId);
+      for (const session of core.live.list()) core.live.forget(session.sessionId);
     },
   };
   return contract;
@@ -183,7 +183,7 @@ export function composeTerminal(options: ComposeTerminalOptions): TerminalContra
 /** §3.5: an unknown newer contract version is refused, never guessed at. */
 function versionGuard<T>(context: CommandContext): B3Result<T> | null {
   if (context.contractVersion === 1) return null;
-  return { ok: false, error: b3err('UnsupportedContractVersion',
+  return b3fail(b3err('UnsupportedContractVersion',
     `contract version ${String(context.contractVersion)} is not supported`,
-    { received: context.contractVersion, supported: [1] }, false) };
+    { received: context.contractVersion, supported: [1] }, false));
 }

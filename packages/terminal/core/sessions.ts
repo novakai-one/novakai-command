@@ -1,6 +1,6 @@
 // Session lifecycle: open, view, list, terminate, recover.
 import {
-  b3err, b3ok, mintClientOpId, mintTerminalSessionId, nowIsoUtc, validationFailed,
+  b3fail, b3err, b3ok, mintClientOpId, mintTerminalSessionId, nowIsoUtc, validationFailed,
   type AuthenticatedPrincipal, type B3Result, type CommandContext, type IsoUtc,
   type RuntimeEpochId, type SystemCommandContext, type TerminalSessionId,
 } from '@novakai/foundation/contract';
@@ -13,7 +13,8 @@ import { LiveSession } from './live.js';
 import { settleAndFindActive } from './leases.js';
 import type { Persisted } from './store.js';
 import {
-  FINAL_STATUSES, requireSession, viewportIssues, type TerminalCore,
+  CLAIMS_TO_BE_RUNNING, FINAL_STATUSES, requireSession, viewportIssues,
+  type TerminalCore,
 } from './context.js';
 
 export async function openManagedTerminal(
@@ -23,7 +24,7 @@ export async function openManagedTerminal(
   if (input.workingDirectory.trim() === '') {
     issues.push({ path: 'workingDirectory', message: 'must not be empty' });
   }
-  if (issues.length > 0) return { ok: false, error: validationFailed(issues) };
+  if (issues.length > 0) return b3fail(validationFailed(issues));
 
   // Only the active Runtime host may own a PTY (red gate 2 + DEC-B3V4-27).
   const epoch = core.epochFence.assertActive(context.runtimeEpochId);
@@ -61,7 +62,7 @@ export async function openManagedTerminal(
     started.value.kill(); // never leave an unowned PTY behind (red gate 25/28)
     return written;
   }
-  core.live.set(new LiveSession(
+  core.live.track(new LiveSession(
     written.value.id, started.value, input.columns, input.rows, core.replayBytes,
   ));
   return written;
@@ -76,7 +77,7 @@ export async function viewOfSession(
   if (!attachments.ok) return attachments;
   const active = await settleAndFindActive(core, session.id);
   if (!active.ok) return active;
-  const live = core.live.get(session.id);
+  const live = core.live.lookup(session.id);
   return b3ok({
     session,
     attachments: attachments.value,
@@ -125,7 +126,7 @@ export async function terminateTerminal(
   if (!session.ok) return session;
   if (FINAL_STATUSES.has(session.value.status)) return session; // already final: idempotent
 
-  const live = core.live.get(session.value.id);
+  const live = core.live.lookup(session.value.id);
   live?.pty.kill();
   const closed = await closeSession(core, session.value, {
     status: 'exited',
@@ -133,7 +134,7 @@ export async function terminateTerminal(
     ...(live?.exit?.exitCode === undefined ? {} : { exitCode: live.exit.exitCode }),
     ...(live?.exit?.signal === undefined ? {} : { signal: live.exit.signal }),
   });
-  if (closed.ok) core.live.delete(session.value.id);
+  if (closed.ok) core.live.forget(session.value.id);
   void context;
   return closed;
 }
@@ -144,7 +145,7 @@ export async function closeSession(
   session: TerminalSession,
   patch: Partial<Persisted<TerminalSession>> & { status: TerminalSession['status'] },
 ): Promise<B3Result<TerminalSession>> {
-  const live = core.live.get(session.id);
+  const live = core.live.lookup(session.id);
   return core.store.update<TerminalSession>(
     'sys_terminal', 'terminalSession', session.id,
     {
@@ -169,18 +170,35 @@ export async function reconcileAfterRestart(
   if (!sessions.ok) return sessions;
   const reconciled: TerminalSessionId[] = [];
   for (const session of sessions.value) {
-    if (session.runtimeEpochId === activeRuntimeEpochId) continue;
-    if (FINAL_STATUSES.has(session.status)) continue;
-    const stillThere = core.ptyHost.probe(session.privateProcessRef);
-    const updated = await closeSession(core, session, {
-      status: stillThere ? 'recovery-required' : 'exited',
-    });
-    if (!updated.ok) return updated;
-    const detached = await detachAllAttachments(core, session.id);
-    if (!detached.ok) return detached;
+    if (!needsReconciling(session, activeRuntimeEpochId)) continue;
+    const settled = await settleOrphanedSession(core, session);
+    if (!settled.ok) return settled;
     reconciled.push(session.id);
   }
   return b3ok({ reconciledSessionIds: reconciled });
+}
+
+/**
+ * Only records that still CLAIM to be running need reconciling. A session
+ * already resolved — final, or marked recovery-required by an earlier pass —
+ * must not be reprocessed, or recovery never converges.
+ */
+function needsReconciling(
+  session: TerminalSession, activeRuntimeEpochId: RuntimeEpochId,
+): boolean {
+  if (session.runtimeEpochId === activeRuntimeEpochId) return false;
+  return CLAIMS_TO_BE_RUNNING.has(session.status);
+}
+
+async function settleOrphanedSession(
+  core: TerminalCore, session: TerminalSession,
+): Promise<B3Result<null>> {
+  const stillThere = core.ptyHost.probe(session.privateProcessRef);
+  const updated = await closeSession(core, session, {
+    status: stillThere ? 'recovery-required' : 'exited',
+  });
+  if (!updated.ok) return updated;
+  return detachAllAttachments(core, session.id);
 }
 
 export async function detachAllAttachments(

@@ -1,7 +1,7 @@
 // Deterministic in-memory PTY host. The test adapter at the same seam the
 // real one uses — so the contract suite runs the SAME code paths without a
 // real process, and a race test can decide exactly when bytes arrive.
-import { b3ok, type B3Result } from '@novakai/foundation/contract';
+import { b3fail, b3ok, type B3Result } from '@novakai/foundation/contract';
 import type { PtyExit, PtyHandle, PtyHost, PtyLaunchSpec } from '../../contract/ports.js';
 
 export interface FakePty extends PtyHandle {
@@ -98,10 +98,10 @@ export function createFakePtyHost(): FakePtyHost {
       if (failure !== null) {
         const message = failure;
         failure = null;
-        return { ok: false, error: {
+        return b3fail({
           code: 'StoreUnavailable', message,
           details: { owner: 'terminal', cause: 'pty-launch-failed' }, retryable: true,
-        } };
+        });
       }
       counter += 1;
       const handle = new FakePtyHandle(`fake-pty:${counter}`, spec);

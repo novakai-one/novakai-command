@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
-  b3ok, mintClientOpId, mintRuntimeEpochId, mintTraceCorrelationId,
+  b3fail, b3ok, mintClientOpId, mintRuntimeEpochId, mintTraceCorrelationId,
   type AgentRunId, type AuthenticatedPrincipal, type B3Result, type CommandContext,
   type HumanPrincipalId, type RuntimeEpochId, type SystemCommandContext,
 } from '@novakai/foundation/contract';
@@ -16,7 +16,7 @@ import { createFakePtyHost, type FakePtyHost } from '../adapters/pty-host/fake.j
 
 export interface Rig {
   readonly terminal: TerminalContract;
-  readonly pty: FakePtyHost;
+  readonly ptyHost: FakePtyHost;
   readonly epochId: RuntimeEpochId;
   readonly clock: MovableClock;
   readonly root: string;
@@ -27,11 +27,27 @@ export interface Rig {
 
 export interface MovableClock extends Clock {
   advance(milliseconds: number): void;
+  /**
+   * Run something the next time the core reads the clock. The clock is read
+   * while a command is mid-flight, which makes it the one precise place a test
+   * can land an event INSIDE an operation without a production test seam.
+   */
+  onNextRead(hook: () => void): void;
 }
 
 export function movableClock(startMs = 1_760_000_000_000): MovableClock {
   let current = startMs;
-  return { now: () => current, advance: (ms: number) => { current += ms; } };
+  let pending: (() => void) | null = null;
+  return {
+    nowMs: () => {
+      const hook = pending;
+      pending = null;
+      hook?.();
+      return current;
+    },
+    advance: (milliseconds: number) => { current += milliseconds; },
+    onNextRead: (hook: () => void) => { pending = hook; },
+  };
 }
 
 export const chris = 'person_chris' as HumanPrincipalId;
@@ -61,7 +77,7 @@ export function runtimeContext(epochId?: RuntimeEpochId): SystemCommandContext<'
 
 export function createRig(options: { replayBytes?: number } = {}): Rig {
   const root = mkdtempSync(path.join(tmpdir(), 'nvk-terminal-'));
-  const pty = createFakePtyHost();
+  const ptyHost = createFakePtyHost();
   const clock = movableClock();
   const epochId = mintRuntimeEpochId();
   let active: RuntimeEpochId | null = epochId;
@@ -70,28 +86,28 @@ export function createRig(options: { replayBytes?: number } = {}): Rig {
     activeEpochId: () => active,
     assertActive(candidate) {
       if (active === null) {
-        return { ok: false, error: {
+        return b3fail({
           code: 'RuntimeUnavailable', message: 'no active runtime epoch',
           details: { reason: 'no-active-epoch' }, retryable: true,
-        } };
+        });
       }
       if (candidate !== undefined && candidate !== active) {
-        return { ok: false, error: {
+        return b3fail({
           code: 'StaleRuntimeEpoch', message: 'epoch is no longer active',
           details: { received: candidate, active }, retryable: true,
-        } };
+        });
       }
       return b3ok(active);
     },
   };
 
   const terminal = composeTerminal({
-    root, ptyHost: pty, epochFence, clock,
+    root, ptyHost, epochFence, clock,
     ...(options.replayBytes === undefined ? {} : { replayBytes: options.replayBytes }),
   });
 
   return {
-    terminal, pty, epochId, clock, root,
+    terminal, ptyHost, epochId, clock, root,
     setActiveEpoch(next) { active = next; },
     async dispose() {
       await terminal.dispose();
@@ -113,8 +129,8 @@ export function expectError<T>(result: B3Result<T>, what: string): { code: strin
 export const someAgentRunId = 'agentRun_00000000-0000-7000-8000-000000000001' as AgentRunId;
 
 /** A plain shell — the proof case a human can actually see. */
-export async function openPlainShell(rig: Rig, columns = 80, rows = 24) {
-  return rig.terminal.openManagedTerminal(humanContext(), {
+export async function openPlainShell(harness: Rig, columns = 80, rows = 24) {
+  return harness.terminal.openManagedTerminal(humanContext(), {
     owner: { kind: 'plain-shell', shellInstanceId: 'shell_1' },
     launchAuthorityRef: 'plain-shell',
     launchFingerprint: 'plain-shell:/bin/zsh',
@@ -124,8 +140,8 @@ export async function openPlainShell(rig: Rig, columns = 80, rows = 24) {
 }
 
 /** The mock managed session — a session owned by an Agent Run, without B3b. */
-export async function openMockManagedSession(rig: Rig, agentRunId = someAgentRunId) {
-  return rig.terminal.openManagedTerminal(humanContext(), {
+export async function openMockManagedSession(harness: Rig, agentRunId = someAgentRunId) {
+  return harness.terminal.openManagedTerminal(humanContext(), {
     owner: { kind: 'agent-run', agentRunId },
     launchAuthorityRef: 'mock-managed',
     launchFingerprint: 'mock:provider',

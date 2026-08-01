@@ -4,6 +4,7 @@
 // composed per authenticated principal so `createdBy` is the real caller —
 // Foundation stamps it from the handle, never from the request (red gate 5).
 import {
+  b3fail,
   composeHandle, createObject, getObject, isAbsent, listObjects, updateObject,
   storeFailure, b3ok, b3err,
   type B3PrincipalId, type B3Result, type ClientOpId, type ObjectId, type ObjectKind,
@@ -59,7 +60,7 @@ export function createTerminalStore(options: TerminalStoreOptions): TerminalStor
   return {
     async create(principal, payload, clientOpId) {
       const written = await createObject(handleFor(principal), payload, clientOpId);
-      if (!written.ok) return { ok: false, error: storeFailure('terminal', written.error) };
+      if (!written.ok) return b3fail(storeFailure('terminal', written.error));
       return b3ok(viewOf(written.value));
     },
 
@@ -67,20 +68,20 @@ export function createTerminalStore(options: TerminalStoreOptions): TerminalStor
       const written = await updateObject(
         handleFor(principal), id as ObjectId, patch, expectedVersion, clientOpId,
       );
-      if (!written.ok) return { ok: false, error: storeFailure('terminal', written.error) };
+      if (!written.ok) return b3fail(storeFailure('terminal', written.error));
       return b3ok(viewOf(written.value));
     },
 
     async read(kind, id) {
       const stored = await getObject(reader, kind, id as ObjectId);
-      if (!stored.ok) return { ok: false, error: storeFailure('terminal', stored.error) };
+      if (!stored.ok) return b3fail(storeFailure('terminal', stored.error));
       if (isAbsent(stored.value)) return b3ok(null);
       return b3ok(viewOf(stored.value));
     },
 
     async list(kind, filter) {
       const page = await listObjects(reader, kind, filter, { limit: 100_000 });
-      if (!page.ok) return { ok: false, error: storeFailure('terminal', page.error) };
+      if (!page.ok) return b3fail(storeFailure('terminal', page.error));
       return b3ok(page.value.items.map((item) => viewOf(item)));
     },
   };

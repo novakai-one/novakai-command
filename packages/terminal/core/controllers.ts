@@ -3,7 +3,7 @@
 // The rule that matters: detach is detach. It releases a held lease and it
 // records that the window is gone. It never touches the process.
 import {
-  b3err, b3ok, mintClientOpId, mintControllerAttachmentId, nowIsoUtc, validationFailed,
+  b3fail, b3err, b3ok, mintClientOpId, mintControllerAttachmentId, nowIsoUtc, validationFailed,
   type B3Result, type CommandContext, type IsoUtc, type TerminalSessionId,
 } from '@novakai/foundation/contract';
 import { resolveAuthoritativeViewport } from '../contract/api.js';
@@ -22,7 +22,7 @@ export async function attachController(
   core: TerminalCore, context: CommandContext, input: AttachControllerInput,
 ): Promise<B3Result<ControllerAttachment>> {
   const issues = viewportIssues(input.columns, input.rows);
-  if (issues.length > 0) return { ok: false, error: validationFailed(issues) };
+  if (issues.length > 0) return b3fail(validationFailed(issues));
   const session = await requireLiveSession(core, input.terminalSessionId);
   if (!session.ok) return session;
 
@@ -60,9 +60,9 @@ export async function detachController(
   );
   if (!attachment.ok) return attachment;
   if (attachment.value === null || attachment.value.terminalSessionId !== input.terminalSessionId) {
-    return { ok: false, error: b3err('ValidationFailed',
+    return b3fail(b3err('ValidationFailed',
       `attachment "${input.attachmentId}" is not on session "${input.terminalSessionId}"`,
-      { issues: [{ path: 'attachmentId', message: 'unknown for this session' }] }, false) };
+      { issues: [{ path: 'attachmentId', message: 'unknown for this session' }] }, false));
   }
   if (attachment.value.state === 'detached') return b3ok(attachment.value); // idempotent
 
@@ -89,7 +89,7 @@ export async function resizeTerminal(
   core: TerminalCore, context: CommandContext, input: ResizeTerminalInput,
 ): Promise<B3Result<TerminalSessionView>> {
   const issues = viewportIssues(input.columns, input.rows);
-  if (issues.length > 0) return { ok: false, error: validationFailed(issues) };
+  if (issues.length > 0) return b3fail(validationFailed(issues));
   const session = await requireLiveSession(core, input.terminalSessionId);
   if (!session.ok) return session;
   const attachment = await core.store.read<ControllerAttachment>(
@@ -99,9 +99,9 @@ export async function resizeTerminal(
   if (attachment.value === null
     || attachment.value.terminalSessionId !== input.terminalSessionId
     || attachment.value.state !== 'attached') {
-    return { ok: false, error: b3err('ValidationFailed',
+    return b3fail(b3err('ValidationFailed',
       `attachment "${input.attachmentId}" is not attached to "${input.terminalSessionId}"`,
-      { issues: [{ path: 'attachmentId', message: 'not an attached controller' }] }, false) };
+      { issues: [{ path: 'attachmentId', message: 'not an attached controller' }] }, false));
   }
 
   // Every controller records ITS OWN viewport; arbitration decides whose the
@@ -134,7 +134,7 @@ export async function applyAuthoritativeViewport(
   const view = await viewOfSession(core, session.value);
   if (!view.ok) return view;
   const chosen = resolveAuthoritativeViewport(view.value);
-  const live = core.live.get(terminalSessionId);
+  const live = core.live.lookup(terminalSessionId);
   if (!chosen || !live) return b3ok(null);
   if (live.appliedViewport.columns === chosen.columns
     && live.appliedViewport.rows === chosen.rows) {

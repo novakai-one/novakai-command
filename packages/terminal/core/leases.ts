@@ -35,13 +35,16 @@ function expired(lease: TerminalInputLease, nowMs: number): boolean {
 export async function settleAndFindActive(
   core: TerminalCore, terminalSessionId: TerminalSessionId,
 ): Promise<B3Result<TerminalInputLease | null>> {
-  const all = await leasesOf(core, terminalSessionId);
-  if (!all.ok) return all;
-  const nowMs = core.clock.now();
+  const everyLease = await leasesOf(core, terminalSessionId);
+  if (!everyLease.ok) return everyLease;
+  const nowMs = core.clock.nowMs();
   let active: TerminalInputLease | null = null;
-  for (const lease of all.value) {
+  for (const lease of everyLease.value) {
     if (lease.state !== 'active') continue;
-    if (!expired(lease, nowMs)) { active = lease; continue; }
+    if (!expired(lease, nowMs)) {
+      active = lease;
+      continue;
+    }
     const ended = await endLease(core, lease, 'expired', 'expired');
     if (!ended.ok) return ended;
   }
@@ -80,7 +83,7 @@ export async function grantLease(
     terminalSessionId: input.terminalSessionId,
     attachmentId: input.attachmentId,
     generation: input.generation,
-    expiresAt: new Date(core.clock.now() + input.ttlMs).toISOString() as ReturnType<typeof nowIsoUtc>,
+    expiresAt: new Date(core.clock.nowMs() + input.ttlMs).toISOString() as ReturnType<typeof nowIsoUtc>,
     state: 'active',
   };
   return core.store.create<TerminalInputLease>(context.principal.id, record, mintClientOpId());

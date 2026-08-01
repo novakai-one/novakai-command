@@ -3,10 +3,14 @@
 // Buffered replay first, then live frames, in one uninterrupted sequence — so
 // a controller that attaches mid-session sees exactly what it missed, or an
 // explicit gap when it missed more than the buffer holds.
-import { b3ok, type B3Result, type AuthenticatedPrincipal } from '@novakai/foundation/contract';
+import {
+  b3fail, b3ok, type AuthenticatedPrincipal, type B3Result,
+} from '@novakai/foundation/contract';
 import type { ReadTerminalStreamInput, TerminalOutputFrame } from '../contract/api.js';
 import { unknownSessionError, type TerminalCore } from './context.js';
+import type { PtyExit } from '../contract/ports.js';
 import type { TerminalSession } from '../contract/records.js';
+import type { LiveSession } from './live.js';
 
 export async function* readTerminalStream(
   core: TerminalCore,
@@ -15,24 +19,28 @@ export async function* readTerminalStream(
 ): AsyncIterable<B3Result<TerminalOutputFrame>> {
   void principal;
   const stored = await core.store.read<TerminalSession>('terminalSession', input.terminalSessionId);
-  if (!stored.ok) { yield stored; return; }
+  if (!stored.ok) {
+    yield stored;
+    return;
+  }
   if (stored.value === null) {
-    yield { ok: false, error: unknownSessionError(input.terminalSessionId) };
+    yield b3fail(unknownSessionError(input.terminalSessionId));
     return;
   }
 
-  const live = core.live.get(input.terminalSessionId);
+  const live = core.live.lookup(input.terminalSessionId);
   if (!live) {
     // A final session with no live process still answers honestly: whatever
     // the record says happened, and no pretend replay.
-    yield b3ok({
-      kind: 'exit',
-      ...(stored.value.exitCode === undefined ? {} : { exitCode: stored.value.exitCode }),
-      ...(stored.value.signal === undefined ? {} : { signal: stored.value.signal }),
-    });
+    yield b3ok(exitFrame(stored.value));
     return;
   }
+  yield* followSession(live, input);
+}
 
+async function* followSession(
+  live: LiveSession, input: ReadTerminalStreamInput,
+): AsyncIterable<B3Result<TerminalOutputFrame>> {
   const queue = new FrameQueue();
   const unsubscribe = live.subscribe((frame) => queue.push(frame));
   try {
@@ -41,11 +49,7 @@ export async function* readTerminalStream(
     }
     if (input.replayOnly === true) return;
     if (live.exit !== null) {
-      yield b3ok({
-        kind: 'exit',
-        ...(live.exit.exitCode === undefined ? {} : { exitCode: live.exit.exitCode }),
-        ...(live.exit.signal === undefined ? {} : { signal: live.exit.signal }),
-      });
+      yield b3ok(exitFrame(live.exit));
       return;
     }
     for await (const frame of queue) {
@@ -58,6 +62,14 @@ export async function* readTerminalStream(
   }
 }
 
+function exitFrame(source: PtyExit | TerminalSession): TerminalOutputFrame {
+  return {
+    kind: 'exit',
+    ...(source.exitCode === undefined ? {} : { exitCode: source.exitCode }),
+    ...(source.signal === undefined ? {} : { signal: source.signal }),
+  };
+}
+
 /** Back-pressure-free hand-off from the synchronous PTY callback to the reader. */
 class FrameQueue {
   private readonly pending: TerminalOutputFrame[] = [];
@@ -67,8 +79,12 @@ class FrameQueue {
   push(frame: TerminalOutputFrame): void {
     if (this.closed) return;
     const waiter = this.waiting;
-    if (waiter) { this.waiting = null; waiter(frame); return; }
-    this.pending.push(frame);
+    if (!waiter) {
+      this.pending.push(frame);
+      return;
+    }
+    this.waiting = null;
+    waiter(frame);
   }
 
   close(): void {
@@ -81,7 +97,10 @@ class FrameQueue {
   async *[Symbol.asyncIterator](): AsyncIterator<TerminalOutputFrame> {
     while (!this.closed) {
       const buffered = this.pending.shift();
-      if (buffered) { yield buffered; continue; }
+      if (buffered) {
+        yield buffered;
+        continue;
+      }
       const next = await new Promise<TerminalOutputFrame | null>((resolve) => {
         this.waiting = resolve;
       });

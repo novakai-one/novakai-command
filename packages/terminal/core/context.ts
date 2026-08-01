@@ -3,7 +3,7 @@ import type {
   B3ContractError, B3Result, CommandContext, PublicOperationName, ReceiptStore,
   RecordVersion, TerminalSessionId,
 } from '@novakai/foundation/contract';
-import { b3err } from '@novakai/foundation/contract';
+import { b3err, b3fail, b3ok } from '@novakai/foundation/contract';
 import type { Clock, PtyHost, RuntimeEpochFence } from '../contract/ports.js';
 import type { TerminalSession } from '../contract/records.js';
 import type { LiveSessions } from './live.js';
@@ -35,6 +35,9 @@ export const OPERATION = {
 
 export const FINAL_STATUSES = new Set(['exited', 'failed']);
 
+/** Statuses whose record asserts a process is currently running. */
+export const CLAIMS_TO_BE_RUNNING = new Set(['reserved', 'starting', 'live']);
+
 export function unknownSessionError(terminalSessionId: TerminalSessionId): B3ContractError {
   return b3err('UnknownTerminalSession', `no terminal session "${terminalSessionId}"`,
     { terminalSessionId }, false);
@@ -52,8 +55,8 @@ export async function requireSession(
 ): Promise<B3Result<TerminalSession>> {
   const found = await core.store.read<TerminalSession>('terminalSession', terminalSessionId);
   if (!found.ok) return found;
-  if (found.value === null) return { ok: false, error: unknownSessionError(terminalSessionId) };
-  return { ok: true, value: found.value };
+  if (found.value === null) return b3fail(unknownSessionError(terminalSessionId));
+  return b3ok(found.value);
 }
 
 export async function requireLiveSession(
@@ -61,7 +64,7 @@ export async function requireLiveSession(
 ): Promise<B3Result<TerminalSession>> {
   const found = await requireSession(core, terminalSessionId);
   if (!found.ok) return found;
-  if (found.value.status !== 'live') return { ok: false, error: notLiveError(found.value) };
+  if (found.value.status !== 'live') return b3fail(notLiveError(found.value));
   return found;
 }
 
