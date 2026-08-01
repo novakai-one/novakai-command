@@ -8,12 +8,15 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import type { B3Result } from '@novakai/foundation/dist/contract/index.js';
+import type {
+  B3Result, HumanPrincipalId,
+} from '@novakai/foundation/dist/contract/index.js';
 import { createFakePtyHost } from '../../terminal/adapters/pty-host/fake.js';
 import type { TerminalSession, TerminalSessionView } from '../../terminal/contract/index.js';
 import type { RuntimeStatus } from '../../agent-runtime/contract/index.js';
 import { startRuntimeHost, type RunningRuntimeHost } from '../core/b3/host.js';
 import { connectRuntime, type RuntimeClient } from '../core/b3/client.js';
+import { buildB3Methods } from '../core/b3/methods.js';
 
 interface Rig {
   readonly host: RunningRuntimeHost;
@@ -42,18 +45,166 @@ function unwrap<Value>(result: B3Result<Value>, what: string): Value {
   return result.value;
 }
 
+/**
+ * NVK-KIMI-025 repair 4: this test used to check ONE method and claim "every".
+ * It is now parameterised over the whole B3a method table, and the table is
+ * READ FROM THE SERVER (`buildB3Methods`) rather than copied here — so a method
+ * added without wire coverage fails this test instead of quietly riding along.
+ *
+ * Ordered on purpose: the calls are a real session's life (open, attach, take
+ * the keyboard, type, resize, read, give it back, leave), because a method
+ * answering a valid request proves more than one answering a rejected one.
+ */
+interface WireStep {
+  readonly method: string;
+  /** Built from what earlier steps returned — this is one session, not fourteen. */
+  readonly payload: (state: WireState) => unknown;
+  readonly remember?: (state: WireState, value: unknown) => void;
+}
+
+interface WireState {
+  sessionId: string;
+  attachmentId: string;
+  leaseId: string;
+  leaseGeneration: number;
+  nextInputSequence: number;
+  epochId: string;
+}
+
+const WIRE_STEPS: readonly WireStep[] = [
+  {
+    method: 'b3.runtime.ensure', payload: () => ({}),
+    remember: (state, value) => {
+      state.epochId = (value as { activeEpochId: string }).activeEpochId;
+    },
+  },
+  { method: 'b3.runtime.getStatus', payload: () => ({}) },
+  { method: 'b3.runtime.doctor', payload: () => ({}) },
+  {
+    method: 'b3.terminal.open',
+    payload: () => ({
+      owner: { kind: 'plain-shell', shellInstanceId: 'wire' },
+      launchAuthorityRef: 'plain-shell',
+      launchFingerprint: 'plain-shell:wire-coverage',
+      workingDirectory: '/tmp', columns: 80, rows: 24,
+    }),
+    remember: (state, value) => { state.sessionId = (value as { id: string }).id; },
+  },
+  { method: 'b3.terminal.list', payload: () => ({ state: 'live' }) },
+  {
+    method: 'b3.terminal.inspect',
+    payload: (state) => ({ terminalSessionId: state.sessionId }),
+    remember: (state, value) => {
+      state.nextInputSequence = (value as { nextInputSequence: number }).nextInputSequence;
+    },
+  },
+  {
+    method: 'b3.terminal.attach',
+    payload: (state) => ({
+      terminalSessionId: state.sessionId, controllerKind: 'external-terminal',
+      columns: 80, rows: 24,
+    }),
+    remember: (state, value) => { state.attachmentId = (value as { id: string }).id; },
+  },
+  {
+    method: 'b3.terminal.acquireLease',
+    payload: (state) => ({
+      terminalSessionId: state.sessionId, attachmentId: state.attachmentId,
+      mode: 'acquire-if-free', ttlMs: 30_000,
+    }),
+    remember: (state, value) => {
+      const lease = value as { id: string; generation: number };
+      state.leaseId = lease.id;
+      state.leaseGeneration = lease.generation;
+    },
+  },
+  {
+    method: 'b3.terminal.write',
+    payload: (state) => ({
+      terminalSessionId: state.sessionId, attachmentId: state.attachmentId,
+      inputLeaseId: state.leaseId, leaseGeneration: state.leaseGeneration,
+      expectedNextInputSequence: state.nextInputSequence,
+      kindOfInput: 'text', utf8Text: 'echo wire\r',
+    }),
+  },
+  {
+    method: 'b3.terminal.resize',
+    payload: (state) => ({
+      terminalSessionId: state.sessionId, attachmentId: state.attachmentId,
+      columns: 100, rows: 30,
+    }),
+  },
+  {
+    method: 'b3.terminal.read',
+    payload: (state) => ({ terminalSessionId: state.sessionId, afterOutputSequence: 0 }),
+  },
+  {
+    method: 'b3.terminal.releaseLease',
+    payload: (state) => ({
+      terminalSessionId: state.sessionId, attachmentId: state.attachmentId,
+      leaseId: state.leaseId, generation: state.leaseGeneration,
+    }),
+  },
+  {
+    method: 'b3.terminal.detach',
+    payload: (state) => ({
+      terminalSessionId: state.sessionId, attachmentId: state.attachmentId,
+    }),
+  },
+  // Last, and deliberately: it ends the runtime this rig is talking to.
+  {
+    method: 'b3.runtime.stop',
+    payload: (state) => ({ expectedEpochId: state.epochId, liveRuns: 'refuse' }),
+  },
+];
+
 test('every b3 method rides the existing {id, method, params, v:1} frame', async () => {
+  const rig = await createRig();
+  try {
+    // The list of methods is the SERVER's, not this file's opinion of it.
+    const served = Object.keys(buildB3Methods({
+      runtime: rig.host.runtime, principalId: 'person_chris' as HumanPrincipalId,
+    }));
+    assert.deepEqual(
+      [...served].sort(),
+      [...WIRE_STEPS.map((step) => step.method)].sort(),
+      'a b3 method is served that this test never puts on the wire',
+    );
+
+    const state: WireState = {
+      sessionId: '', attachmentId: '', leaseId: '',
+      leaseGeneration: 0, nextInputSequence: 1, epochId: '',
+    };
+    for (const [index, step] of WIRE_STEPS.entries()) {
+      const id = 100 + index;
+      const raw = await rig.client.sendRaw({
+        id, method: step.method, v: 1,
+        params: { contractVersion: 1, payload: step.payload(state) },
+      });
+      assert.equal(raw.v, 1, `${step.method}: the response frame is not v1`);
+      assert.equal(raw.id, id, `${step.method}: the frame id was not echoed`);
+      assert.equal(raw.error, undefined,
+        `${step.method}: a domain call used the frame-level error slot`);
+
+      // Domain success/failure travels as a Result INSIDE result (§16.1).
+      const result = raw.result as B3Result<unknown> | undefined;
+      assert.equal(typeof result?.ok, 'boolean', `${step.method}: no Result inside result`);
+      assert.equal(result?.ok, true,
+        `${step.method} was refused: ${JSON.stringify(result)}`);
+      if (result?.ok) step.remember?.(state, result.value);
+    }
+  } finally {
+    await rig.close();
+  }
+});
+
+test('the frame carries the runtime\'s own answer, not a shape that merely parses', async () => {
   const rig = await createRig();
   try {
     const raw = await rig.client.sendRaw({
       id: 41, method: 'b3.runtime.getStatus', v: 1,
       params: { contractVersion: 1, payload: {} },
     });
-    assert.equal(raw.v, 1, 'the response frame is not v1');
-    assert.equal(raw.id, 41);
-    assert.equal(raw.error, undefined, 'a domain call used the frame-level error slot');
-
-    // Domain success/failure travels as a Result INSIDE result (§16.1).
     const result = raw.result as B3Result<RuntimeStatus>;
     assert.equal(result.ok, true);
     if (!result.ok) return;

@@ -15,6 +15,11 @@ import type { ControllerAttachment, TerminalSession } from '../../terminal/contr
 import type { RuntimeStatus } from '../../agent-runtime/contract/index.js';
 import { startRuntimeHost, type RunningRuntimeHost } from '../core/b3/host.js';
 import { connectRuntime, type RuntimeClient } from '../core/b3/client.js';
+// The page's own public seam: the two pure functions the terminal tab uses to
+// turn a Runtime view into the one sentence it shows.
+import {
+  describeTerminal, SHELL_INSTANCE_ID, toTabView,
+} from '../../shell/contract/terminalServices.js';
 
 function unwrap<Value>(result: B3Result<Value>, what: string): Value {
   if (!result.ok) throw new Error(`${what} failed: ${result.error.code} — ${result.error.message}`);
@@ -56,6 +61,83 @@ async function settlesTo(
   }
   return seen;
 }
+
+/**
+ * NVK-KIMI-025 repair 3. The tab's one sentence used to be "proved" by a test
+ * that handed `TerminalChrome` a string and found the same string in the markup
+ * — a prop echo with no Runtime anywhere near it.
+ *
+ * This is the sentence a person actually reads, built the way the page builds
+ * it: a REAL Runtime's view of a REAL session, over the wire, through the same
+ * two functions the tab uses. Nothing here is injected; every fact in the line
+ * came back from the Runtime.
+ */
+test('the tab\'s truth line is built from what the Runtime reports, end to end', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'nvk-truth-line-'));
+  const host = await startRuntimeHost({ root, port: 0, ptyHost: createFakePtyHost() });
+  const client = await connectRuntime({ root, port: host.port, token: host.token });
+  try {
+    const session = unwrap(await client.call<TerminalSession>('b3.terminal.open', {
+      owner: { kind: 'plain-shell', shellInstanceId: SHELL_INSTANCE_ID },
+      launchAuthorityRef: 'plain-shell',
+      launchFingerprint: 'plain-shell:truth-line',
+      workingDirectory: '/tmp', columns: 80, rows: 24,
+    }), 'open');
+    const attachment = unwrap(await client.call<ControllerAttachment>('b3.terminal.attach', {
+      terminalSessionId: session.id, controllerKind: 'novakai-shell', columns: 80, rows: 24,
+    }), 'attach');
+
+    const watching = toTabView(unwrap(
+      await client.call('b3.terminal.inspect', { terminalSessionId: session.id }), 'inspect',
+    ));
+    assert.equal(describeTerminal(watching),
+      'Started as a plain shell · 1 window attached · running in the background Runtime');
+
+    // The signature moment: the window closes, the session does not.
+    unwrap(await client.call('b3.terminal.detach', {
+      terminalSessionId: session.id, attachmentId: attachment.id,
+    }), 'detach');
+
+    const settled = toTabView(unwrap(
+      await client.call('b3.terminal.inspect', { terminalSessionId: session.id }), 'inspect',
+    ));
+    assert.equal(describeTerminal(settled),
+      'Started as a plain shell · 0 windows attached · running in the background Runtime');
+    // ...and the same view is what tells a reopened window where to start typing.
+    assert.equal(settled.nextInputSequence, 1);
+    assert.equal(settled.holdsInputLease, false);
+  } finally {
+    client.close();
+    await host.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('a session an agent run owns says so, in the line a person reads', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'nvk-truth-line-agent-'));
+  const host = await startRuntimeHost({ root, port: 0, ptyHost: createFakePtyHost() });
+  const client = await connectRuntime({ root, port: host.port, token: host.token });
+  const agentRunId = 'agentRun_00000000-0000-7000-8000-0000000000a1';
+  try {
+    const session = unwrap(await client.call<TerminalSession>('b3.terminal.open', {
+      owner: { kind: 'agent-run', agentRunId },
+      launchAuthorityRef: 'mock-managed',
+      launchFingerprint: 'mock:provider',
+      workingDirectory: '/tmp', columns: 80, rows: 24,
+    }), 'open');
+
+    const view = toTabView(unwrap(
+      await client.call('b3.terminal.inspect', { terminalSessionId: session.id }), 'inspect',
+    ));
+    // §24.5: launch origin is reported, never inferred from who is attached now.
+    assert.equal(describeTerminal(view),
+      `Started for ${agentRunId} · 0 windows attached · running in the background Runtime`);
+  } finally {
+    client.close();
+    await host.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test('a controller that closes its socket without saying goodbye is detached', async () => {
   const root = mkdtempSync(path.join(tmpdir(), 'nvk-controller-truth-'));

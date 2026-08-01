@@ -17,7 +17,7 @@ import path from 'node:path';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { TerminalChrome, toneFor } from '../ui/screens/terminal/TerminalChrome.js';
-import type { TerminalTabView } from '../contract/terminalServices.js';
+import { describeTerminal, type TerminalTabView } from '../contract/terminalServices.js';
 
 const TERMINAL_DIR = path.resolve(import.meta.dirname, '../ui/screens/terminal');
 
@@ -92,9 +92,23 @@ describe('tone: one signal at a time, and it releases when resolved', () => {
 });
 
 describe('what the chrome draws', () => {
-  it('the truth line the Runtime reported, carrying its tone', () => {
-    const html = chrome({ truth: '0 windows attached · running in the background Runtime', tone: 'settled' });
-    expect(html).toContain('0 windows attached · running in the background Runtime');
+  /**
+   * NVK-KIMI-025 repair 3: this used to hand the chrome a literal and then find
+   * the same literal in the markup — a prop echo that would pass with the truth
+   * line broken. The sentence is now PRODUCED by `describeTerminal`, so the
+   * chrome is checked against what the tab actually draws.
+   *
+   * The other end of the chain — that `describeTerminal(toTabView(...))` is fed
+   * a REAL Runtime's view of a REAL session — is proved over the wire in
+   * packages/server/tests/b3-controller-truth.test.ts.
+   */
+  it('draws the truth line the tab builds, carrying its tone', () => {
+    const settledLine = describeTerminal(view({ attachedControllerCount: 0 }));
+    const html = chrome({ truth: settledLine, tone: 'settled' });
+    expect(settledLine).toBe(
+      'Started as a plain shell · 0 windows attached · running in the background Runtime',
+    );
+    expect(html).toContain(settledLine);
     expect(html).toContain('data-tone="settled"');
     expect(html).toContain('data-testid="terminal-truth"');
   });
