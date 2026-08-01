@@ -96,7 +96,7 @@ export interface StageAdvance {
   readonly ownerObjectId?: string;
   /** `not-needed` records a stage whose owning capability arrives in a later slice. */
   readonly outcome?: 'completed' | 'not-needed';
-  readonly deferredTo?: string;
+  readonly notNeededBecause?: string;
 }
 
 /**
@@ -121,7 +121,7 @@ export async function advance(
     ...(step.ownerObjectId === undefined ? {} : { ownerObjectId: step.ownerObjectId }),
     completedAt: nowIsoUtc(),
     ...(step.outcome === undefined ? {} : { outcome: step.outcome }),
-    ...(step.deferredTo === undefined ? {} : { deferredTo: step.deferredTo }),
+    ...(step.notNeededBecause === undefined ? {} : { notNeededBecause: step.notNeededBecause }),
   };
   const written = await core.store.update<RunOperation>(
     'sys_agent_runtime', operation.id,

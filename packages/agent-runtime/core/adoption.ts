@@ -10,7 +10,7 @@ import {
 import type { AdoptAgentInput } from '../contract/runs-api.js';
 import type { SupervisionAssignment } from '../contract/runs.js';
 import {
-  assignSupervisor, currentAssignment, liveRunOf, type RunsCore,
+  assignSupervisor, assignmentChain, liveRunOf, type RunsCore,
 } from './runs-context.js';
 import { descendantsOf, insideClosingTree, treeClosing } from './stop-tree.js';
 
@@ -34,18 +34,17 @@ export async function adoptAgent(
   const eligible = await checkSupervisor(core, context, input);
   if (!eligible.ok) return eligible;
 
-  const previous = await currentAssignment(core, input.subjectAgentId);
-  if (!previous.ok) return previous;
-  // Compare-and-set on the assignment the caller actually read. Two concurrent
-  // adoptions cannot both win (§24.3 case 13).
-  const heldVersion = previous.value?.recordVersion ?? 0;
-  if (heldVersion !== input.expectedAssignmentVersion) {
+  // Compare-and-set against the supervision GENERATION the caller read. Two
+  // concurrent adoptions cannot both win (§24.3 case 13).
+  const chain = await assignmentChain(core, input.subjectAgentId);
+  if (!chain.ok) return chain;
+  if (chain.value.generation !== input.expectedAssignmentVersion) {
     return b3fail(b3err('VersionConflict',
       'this Agent was reassigned while you were deciding',
       {
-        objectId: previous.value?.id ?? input.subjectAgentId,
+        objectId: chain.value.current?.id ?? input.subjectAgentId,
         expected: input.expectedAssignmentVersion,
-        actual: heldVersion,
+        actual: chain.value.generation,
       }, true));
   }
 
@@ -53,7 +52,7 @@ export async function adoptAgent(
     subjectAgentId: input.subjectAgentId,
     supervisor: input.supervisor,
     reason: 'explicit-adoption',
-    ...(previous.value === null ? {} : { previousAssignmentId: previous.value.id }),
+    ...(chain.value.current === null ? {} : { previousAssignmentId: chain.value.current.id }),
   });
 }
 

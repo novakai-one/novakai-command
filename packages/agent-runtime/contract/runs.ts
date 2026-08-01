@@ -168,13 +168,14 @@ export interface RunOperationStageOutcome {
   readonly ownerObjectId?: string;
   readonly completedAt: IsoUtc;
   /**
-   * Additive to §6.3: a stage whose owning capability does not exist yet is
-   * recorded as `not-needed` with the slice that will own it, rather than
-   * silently skipped. A gap in the ladder that nobody wrote down is how a
-   * later slice discovers it was never wired.
+   * Additive to §6.3: a stage that did not APPLY is recorded as `not-needed`
+   * with the reason, rather than silently skipped. Two reasons exist — the
+   * owning capability arrives in a later slice, or this particular Run never
+   * needed it (a root Agent has no family edge to record). A gap in the ladder
+   * that nobody wrote down is how a later slice discovers it was never wired.
    */
   readonly outcome?: 'completed' | 'not-needed';
-  readonly deferredTo?: string;
+  readonly notNeededBecause?: string;
 }
 
 export interface CompensationOutcome {

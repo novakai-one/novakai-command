@@ -16,11 +16,13 @@ import {
 import type { ContinueAgentInput } from '../contract/runs-api.js';
 import type { LaunchPlanFacts } from '../contract/ports.js';
 import {
-  FINAL_LIFECYCLES, type AgentRun, type RunContinuation, type RunOperation,
+  FINAL_LIFECYCLES,
+  type AgentRun, type ContinuationMode, type RunContinuation, type RunOperation,
 } from '../contract/runs.js';
 import { patchRun, requireRun, type RunsCore } from './runs-context.js';
 import { recoveryRequired, runFinal, type Persisted } from './runs-store.js';
 import { advance, compensate, openOperation } from './journal.js';
+import { runSkillsGate } from './gate.js';
 import { startReplacement } from './continue-launch.js';
 import { closeRun } from './lifecycle.js';
 import { insideClosingTree, treeClosing } from './stop-tree.js';
@@ -169,13 +171,27 @@ async function performContinuation(
   if (!started.ok) return started;
   operation = started.value.operation;
 
+  // A replacement Run is a NEW provider context, so it confirms its skills the
+  // same way a fresh spawn does. Restarting is not a way around the gate: §6.3
+  // gives every managed launch its own, and a parent's earlier confirmation is
+  // never accepted on a successor's behalf.
+  const gated = await runSkillsGate(core, context, {
+    agentRun: started.value.agentRun,
+    plan: plan.value,
+    operation,
+    brief: continuationBrief(work.input.mode),
+    supervised: plan.value.skillsConfirmationGate.mode === 'required-two-turn',
+  });
+  if (!gated.ok) return gated;
+  operation = gated.value.operation;
+
   const linked = await linkContinuation(core, context, {
     ...work, newRun: started.value.agentRun, resumeHandleUsed: started.value.resumeHandleUsed,
   });
   if (!linked.ok) return linked;
 
   const transferred = await advance(core, operation, {
-    stage: 'endpoint-transferred', owner: 'messaging', outcome: 'not-needed', deferredTo: 'B3c',
+    stage: 'endpoint-transferred', owner: 'messaging', outcome: 'not-needed', notNeededBecause: 'B3c',
   });
   if (!transferred.ok) return transferred;
   operation = transferred.value;
@@ -220,7 +236,7 @@ async function fenceAndDrainOldRun(
   ] as const;
   for (const step of deferred) {
     operation = await advance(core, operation.value, {
-      stage: step.stage, owner: step.owner, outcome: 'not-needed', deferredTo: step.slice,
+      stage: step.stage, owner: step.owner, outcome: 'not-needed', notNeededBecause: step.slice,
     });
     if (!operation.ok) return operation;
   }
@@ -293,4 +309,16 @@ async function linkContinuation(
   return core.store.create<RunContinuation>(
     context.principal.id, record as never, mintClientOpId(),
   );
+}
+
+/** What the replacement is told it is doing, so turn 1 has honest context. */
+function continuationBrief(mode: ContinuationMode): string {
+  const shape: Readonly<Record<ContinuationMode, string>> = {
+    resume: 'You are resuming your own earlier session. Continue where it left off.',
+    fresh: 'You are a fresh context replacing your own earlier session. Its history '
+      + 'is deliberately not loaded.',
+    compact: 'You are continuing your own earlier session from a compacted context.',
+    handover: 'You are taking over from an earlier session through a written handover.',
+  };
+  return shape[mode] ?? shape.fresh;
 }

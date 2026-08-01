@@ -4,13 +4,15 @@
 // what each rung actually does. Every function here is re-entrant: it looks for
 // what an earlier attempt recorded before it does anything.
 import {
-  b3fail, b3ok, mintAgentRunId, nowIsoUtc,
+  b3err, b3fail, b3ok, mintAgentRunId, nowIsoUtc,
   type ActivityGeneration, type AgentId, type B3Result, type CommandContext,
   type AgentRunId, type ProviderSessionId, type RuntimeEpochId,
 } from '@novakai/foundation/contract';
 import type { LaunchPlanFacts, SpawnAuthorityFacts } from '../contract/ports.js';
 import type { AgentRun, LaunchSurface, RunOperation } from '../contract/runs.js';
-import { assignSupervisor, liveRunOf, RUN_SCOPES, type RunsCore } from './runs-context.js';
+import {
+  assignSupervisor, liveRunOf, patchRun, RUN_SCOPES, type RunsCore,
+} from './runs-context.js';
 import { liveRunConflict, recoveryRequired, type Persisted } from './runs-store.js';
 import { advance, completed, effectKeyFor } from './journal.js';
 
@@ -118,10 +120,13 @@ export async function startTerminal(
   });
   if (!liveStage.ok) return liveStage;
 
-  const agentRun = await core.store.update<AgentRun>(
-    'sys_agent_runtime', input.agentRun.id,
-    { terminalSessionId: opened.value.id }, input.agentRun.recordVersion, context.clientOpId,
-  );
+  // A fresh clientOpId, deliberately. The Run's CREATE claimed the command's
+  // own id so a retry finds the same Run; reusing it on a later UPDATE would
+  // land in Foundation's dedup path and return the record with the patch
+  // silently dropped. This mutation's idempotency is the journal stage above it.
+  const agentRun = await patchRun(core, input.agentRun, {
+    terminalSessionId: opened.value.id,
+  });
   if (!agentRun.ok) return agentRun;
   return b3ok({ agentRun: agentRun.value, operation: liveStage.value });
 }
@@ -149,12 +154,25 @@ export async function bindProviderSession(
     launchFingerprint: effectKeyFor(input.operation.id, 'terminal-live'),
   });
 
+  // §13.5: the adapter confirms the EXACT pre-reserved id. A substitute is
+  // refused HERE, before Agents ever hears of it — a rebind is how one Run
+  // quietly acquires another Run's provider session.
+  if (discovered.ok && discovered.value.providerSessionId !== input.reserved) {
+    return b3fail(b3err('ProviderSessionReservationConflict',
+      'the provider adapter returned a session id this Run never reserved',
+      {
+        reservedProviderSessionId: input.reserved,
+        receivedProviderSessionId: discovered.value.providerSessionId,
+        conflictingRunId: input.agentRun.id,
+      }, false));
+  }
+
   // A discovery that FAILED still has to leave the Run resolvable, so Agents
   // materialises the same id as `failed-before-discovery` rather than leaving a
   // final Run pointing at nothing (§5.4, §20).
   const registration = discovered.ok
     ? await core.agents.registerProviderSession({
-      expectedProviderSessionId: discovered.value.providerSessionId,
+      expectedProviderSessionId: input.reserved,
       agentId: input.agentRun.agentId,
       provider: input.plan.provider,
       providerConversationId: discovered.value.providerNativeSessionId === ''
@@ -198,7 +216,7 @@ export async function recordDeferredStages(
   for (const stage of stages) {
     const named = owners[stage]!;
     const advanced = await advance(core, current, {
-      stage, owner: named.owner, outcome: 'not-needed', deferredTo: named.slice,
+      stage, owner: named.owner, outcome: 'not-needed', notNeededBecause: named.slice,
     });
     if (!advanced.ok) return advanced;
     current = advanced.value;
@@ -254,11 +272,9 @@ export async function finishRun(
     });
   }
 
-  const agentRun = await core.store.update<AgentRun>(
-    'sys_agent_runtime', input.agentRun.id,
-    { lifecycle: 'ready', activity: 'idle', startedAt: nowIsoUtc() },
-    input.agentRun.recordVersion, context.clientOpId,
-  );
+  const agentRun = await patchRun(core, input.agentRun, {
+    lifecycle: 'ready', activity: 'idle', startedAt: nowIsoUtc(),
+  });
   if (!agentRun.ok) return agentRun;
   const operation = await advance(core, input.operation, {
     stage: 'run-ready', owner: 'agent-runtime', ownerObjectId: input.agentRun.id,

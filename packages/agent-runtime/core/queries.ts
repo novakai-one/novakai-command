@@ -171,16 +171,18 @@ export async function getRunOperation(
   return b3ok({ operation: found.value, perAgentOutcomes: found.value.perAgentOutcomes ?? [] });
 }
 
-export async function listUnfinishedOperations(
-  core: RunsCore, _principal: AuthenticatedPrincipal,
+export async function listRunOperations(
+  core: RunsCore,
+  _principal: AuthenticatedPrincipal,
+  filter?: { readonly includeCompleted?: boolean },
 ): Promise<B3Result<readonly RunOperationView[]>> {
   const listed = await core.store.list<RunOperation>('runOperation');
   if (!listed.ok) return listed;
-  return b3ok(listed.value
-    .filter((operation) => operation.state !== 'completed')
-    .map((operation) => ({
-      operation, perAgentOutcomes: operation.perAgentOutcomes ?? [],
-    })));
+  const wanted = filter?.includeCompleted === true
+    ? listed.value : listed.value.filter((operation) => operation.state !== 'completed');
+  return b3ok(wanted.map((operation) => ({
+    operation, perAgentOutcomes: operation.perAgentOutcomes ?? [],
+  })));
 }
 
 export async function getRunLaunchPlanId(

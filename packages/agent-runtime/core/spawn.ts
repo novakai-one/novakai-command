@@ -134,7 +134,11 @@ async function governedIdentity(
     stage: 'relationship-recorded',
     owner: 'agents',
     ...(build.authority.parentAgentId === undefined
-      ? { outcome: 'not-needed' as const } : { ownerObjectId: build.authority.parentAgentId }),
+      ? {
+        outcome: 'not-needed' as const,
+        notNeededBecause: 'this Agent is a root: it has no spawn parent',
+      }
+      : { ownerObjectId: build.authority.parentAgentId }),
   });
   if (!related.ok) return related;
   return b3ok({ agentId, plan: plan.value, supervised, operation: related.value });

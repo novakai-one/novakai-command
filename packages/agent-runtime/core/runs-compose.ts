@@ -26,13 +26,15 @@ import type { RuntimeHostContract } from '../contract/types.js';
 import { createRunsStore, type RunsStoreOptions } from './runs-store.js';
 import { OPERATION, versionGuard, type RunsCore } from './runs-context.js';
 import { spawnAgent } from './spawn.js';
-import { interruptAgentTurn, stopAgent } from './lifecycle.js';
+import {
+  beginProviderTurn, endProviderTurn, interruptAgentTurn, stopAgent,
+} from './lifecycle.js';
 import { prepareStopAgentTree, stopAgentTree } from './stop-tree.js';
 import { adoptAgent } from './adoption.js';
 import { continueAgent } from './continue.js';
 import {
   getAgentRun, getAgentRunTree, getRunLaunchPlanId, getRunOperation, listAgentRuns,
-  listUnfinishedOperations, reconcileAfterRestart, viewOfRun,
+  listRunOperations, reconcileAfterRestart, viewOfRun,
 } from './queries.js';
 
 export interface ComposeAgentRunsOptions extends RunsStoreOptions {
@@ -121,6 +123,24 @@ export function composeAgentRuns(options: ComposeAgentRunsOptions): AgentRunsCon
       return asView(context, continued.value.agentRun);
     }),
 
+    beginProviderTurn: guarded('agent.beginTurn', async (context, input: {
+      agentRunId: Parameters<typeof beginProviderTurn>[2]['agentRunId'];
+      expectedRecordVersion: Parameters<typeof beginProviderTurn>[2]['expectedRecordVersion'];
+    }) => {
+      const started = await beginProviderTurn(core, context, input);
+      if (!started.ok) return started;
+      return asView(context, started.value);
+    }),
+
+    endProviderTurn: guarded('agent.endTurn', async (context, input: {
+      agentRunId: Parameters<typeof endProviderTurn>[2]['agentRunId'];
+      providerTurnId: Parameters<typeof endProviderTurn>[2]['providerTurnId'];
+    }) => {
+      const ended = await endProviderTurn(core, context, input);
+      if (!ended.ok) return ended;
+      return asView(context, ended.value);
+    }),
+
     adoptAgent: guarded(OPERATION.adopt,
       (context, input: AdoptAgentInput) => adoptAgent(core, context, input)),
 
@@ -137,8 +157,8 @@ export function composeAgentRuns(options: ComposeAgentRunsOptions): AgentRunsCon
     listAgentRuns: (principal, filter) => listAgentRuns(core, principal, filter),
     getAgentRunTree: (principal, input) => getAgentRunTree(core, principal, input),
     getRunOperation: (principal, operationId) => getRunOperation(core, principal, operationId),
-    listUnfinishedOperations: (principal: AuthenticatedPrincipal) =>
-      listUnfinishedOperations(core, principal),
+    listRunOperations: (principal: AuthenticatedPrincipal, filter) =>
+      listRunOperations(core, principal, filter),
     getRunLaunchPlanId: (principal, agentRunId) =>
       getRunLaunchPlanId(core, principal, agentRunId),
 

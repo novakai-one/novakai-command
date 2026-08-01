@@ -2,7 +2,8 @@
 import {
   b3err, b3fail, b3ok, mintClientOpId, mintSupervisionAssignmentId, nowIsoUtc,
   type AgentId, type AgentRunId, type AuthorityScope, type B3Result,
-  type CommandContext, type ReceiptStore, type SystemCommandContext,
+  type CommandContext, type ReceiptStore, type RecordVersion,
+  type SystemCommandContext,
 } from '@novakai/foundation/contract';
 import type { RuntimeHostContract } from '../contract/types.js';
 import type {
@@ -90,15 +91,35 @@ export async function liveRunOf(
 export async function currentAssignment(
   core: RunsCore, subjectAgentId: AgentId,
 ): Promise<B3Result<SupervisionAssignment | null>> {
+  const chain = await assignmentChain(core, subjectAgentId);
+  if (!chain.ok) return chain;
+  return b3ok(chain.value.current);
+}
+
+/**
+ * The whole supervision history of one Agent, newest first, and how long it is.
+ *
+ * The length matters: assignments are APPEND-ONLY records, so every one of them
+ * has `recordVersion: 1` and comparing record versions would be a compare-and-set
+ * that always agrees. The chain length is the generation counter — adoption N+1
+ * must present N, so two adopters who read the same state cannot both win.
+ */
+export async function assignmentChain(
+  core: RunsCore, subjectAgentId: AgentId,
+): Promise<B3Result<{
+  readonly current: SupervisionAssignment | null;
+  readonly generation: RecordVersion;
+}>> {
   const listed = await core.store.list<SupervisionAssignment>(
     'supervisionAssignment', { subjectAgentId },
   );
   if (!listed.ok) return listed;
-  // Latest wins: assignments are append-only and each names its predecessor,
-  // so the newest createdAt is the one in force.
   const sorted = [...listed.value].sort((left, right) =>
     right.createdAt.localeCompare(left.createdAt));
-  return b3ok(sorted[0] ?? null);
+  return b3ok({
+    current: sorted[0] ?? null,
+    generation: sorted.length as RecordVersion,
+  });
 }
 
 /** Record who supervises an Agent now. Never touches who spawned it. */

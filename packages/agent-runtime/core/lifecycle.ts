@@ -6,9 +6,9 @@
 //   - STOP ends one Run and applies the recorded orphan policy to its children.
 //   - STOP-TREE is a separate scope, a separate confirmation, and a fence.
 import {
-  b3err, b3fail, b3ok, nowIsoUtc,
-  type ActivityGeneration, type AgentId, type B3Result, type CommandContext,
-  type RuntimeEpochId,
+  b3err, b3fail, b3ok, mintProviderTurnId, nowIsoUtc,
+  type ActivityGeneration, type AgentId, type AgentRunId, type B3Result,
+  type CommandContext, type ProviderTurnId, type RecordVersion, type RuntimeEpochId,
 } from '@novakai/foundation/contract';
 import type {
   InterruptAgentTurnInput, InterruptAgentTurnOutcome, StopAgentInput,
@@ -131,6 +131,82 @@ export async function interruptAgentTurn(
     activityGeneration: interrupting.value.activityGeneration,
     inputLeaseRevoked: true,
   });
+}
+
+// ── Activity (§13.2) ────────────────────────────────────────────────────────
+
+/**
+ * A turn started. Run identity does not change; the ACTIVITY generation does,
+ * and the tuple `{ProviderTurnId, ActivityGeneration}` is what an interrupt
+ * barrier is later compared against.
+ */
+export async function beginProviderTurn(
+  core: RunsCore,
+  context: CommandContext,
+  input: { readonly agentRunId: AgentRunId; readonly expectedRecordVersion: RecordVersion },
+): Promise<B3Result<AgentRun>> {
+  const agentRun = await requireRun(core, input.agentRunId);
+  if (!agentRun.ok) return agentRun;
+  if (agentRun.value.recordVersion !== input.expectedRecordVersion) {
+    return b3fail(b3err('VersionConflict', 'the run changed since it was read',
+      {
+        objectId: agentRun.value.id,
+        expected: input.expectedRecordVersion,
+        actual: agentRun.value.recordVersion,
+      }, true));
+  }
+  if (FINAL_LIFECYCLES.has(agentRun.value.lifecycle)) {
+    return b3fail(runFinal(agentRun.value.id, agentRun.value.lifecycle));
+  }
+  const generation = (agentRun.value.activityGeneration + 1) as ActivityGeneration;
+  const providerTurnId = mintProviderTurnId();
+  const working = await patchRun(core, agentRun.value, {
+    activity: 'working',
+    activityGeneration: generation,
+    activeProviderTurn: {
+      providerTurnId, activityGeneration: generation, startedAt: nowIsoUtc(), state: 'working',
+    },
+  });
+  if (!working.ok) return working;
+  if (agentRun.value.terminalSessionId !== undefined) {
+    // Terminal cannot judge an interrupt barrier without knowing the tuple.
+    await core.terminal.beginProviderTurn({
+      terminalSessionId: agentRun.value.terminalSessionId,
+      agentRunId: agentRun.value.id,
+      providerTurnId,
+      activityGeneration: generation,
+    });
+  }
+  void context;
+  return working;
+}
+
+export async function endProviderTurn(
+  core: RunsCore,
+  context: CommandContext,
+  input: { readonly agentRunId: AgentRunId; readonly providerTurnId: ProviderTurnId },
+): Promise<B3Result<AgentRun>> {
+  const agentRun = await requireRun(core, input.agentRunId);
+  if (!agentRun.ok) return agentRun;
+  if (agentRun.value.activeProviderTurn?.providerTurnId !== input.providerTurnId) {
+    // Ending a turn that is not the active one is a no-op, not an error: the
+    // turn already ended, which is what the caller wanted.
+    return agentRun;
+  }
+  const idle = await patchRun(core, agentRun.value, {
+    activity: 'idle',
+    activityGeneration: (agentRun.value.activityGeneration + 1) as ActivityGeneration,
+    activeProviderTurn: undefined,
+  });
+  if (!idle.ok) return idle;
+  if (agentRun.value.terminalSessionId !== undefined) {
+    await core.terminal.endProviderTurn({
+      terminalSessionId: agentRun.value.terminalSessionId,
+      providerTurnId: input.providerTurnId,
+    });
+  }
+  void context;
+  return idle;
 }
 
 // ── Stop one (DEC-B3V4-11) ──────────────────────────────────────────────────

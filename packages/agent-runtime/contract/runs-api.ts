@@ -209,6 +209,25 @@ export interface AgentRuntimeCommands {
     context: CommandContext, input: AdoptAgentInput,
   ): Promise<B3Result<SupervisionAssignment>>;
 
+  /**
+   * A provider turn began (§13.2). Activity is Runtime-authoritative, so
+   * SOMETHING has to commit it: the gate when it submits a turn, and the
+   * transport when a controller's input reaches a managed terminal.
+   *
+   * Without this the interrupt barrier has no tuple to target and §13.3 is
+   * unreachable code — a turn nobody recorded cannot be interrupted.
+   */
+  beginProviderTurn(
+    context: CommandContext,
+    input: { readonly agentRunId: AgentRunId; readonly expectedRecordVersion: RecordVersion },
+  ): Promise<B3Result<AgentRunView>>;
+
+  /** That turn ended. Activity returns to idle and the tuple is cleared. */
+  endProviderTurn(
+    context: CommandContext,
+    input: { readonly agentRunId: AgentRunId; readonly providerTurnId: ProviderTurnId },
+  ): Promise<B3Result<AgentRunView>>;
+
   /** Resume an operation an earlier attempt left in the middle (§20). */
   repairRunOperation(
     context: CommandContext, operationId: RunOperationId,
@@ -232,9 +251,16 @@ export interface AgentRuntimeQueries {
     principal: AuthenticatedPrincipal, operationId: RunOperationId,
   ): Promise<B3Result<RunOperationView>>;
 
-  /** Recovery, at boot: every operation an earlier epoch left unfinished. */
-  listUnfinishedOperations(
+  /**
+   * Every operation, or only the ones an earlier epoch left unfinished.
+   *
+   * Boot recovery wants the unfinished set. Chris wants "what did that spawn
+   * actually do", which is the same ladder read after it succeeded. One query,
+   * because they are the same question asked at different times.
+   */
+  listRunOperations(
     principal: AuthenticatedPrincipal,
+    filter?: { readonly includeCompleted?: boolean },
   ): Promise<B3Result<readonly RunOperationView[]>>;
 }
 
