@@ -167,6 +167,25 @@ export async function startTransport(options: StartTransportOptions): Promise<Ru
       const reply = (payload: Omit<ResponseFrame, 'v'>): void =>
         ws.send(JSON.stringify({ ...payload, v: PROTOCOL_VERSION } satisfies ResponseFrame));
 
+      // AMD-001 A-02: one dialect on this socket. A JSON-RPC 2.0 frame is
+      // shaped enough like ours to dispatch by accident, which is exactly how
+      // a second protocol gets in. It is refused by name.
+      if ((frame as { jsonrpc?: unknown }).jsonrpc !== undefined) {
+        reply({
+          id: frame.id,
+          error: {
+            code: 'UnsupportedProtocolVersion',
+            message: 'this socket speaks nvk-ws v1; JSON-RPC 2.0 framing is not accepted',
+            details: {
+              received: (frame as { jsonrpc?: unknown }).jsonrpc,
+              supported: [PROTOCOL_VERSION],
+            },
+            retryable: false,
+          },
+        });
+        return;
+      }
+
       if (frame.v !== undefined && frame.v !== PROTOCOL_VERSION) {
         reply({
           id: frame.id,
