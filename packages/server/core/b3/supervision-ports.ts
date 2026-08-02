@@ -10,7 +10,7 @@ import {
   type SystemCommandContext,
 } from '@novakai/foundation/contract';
 import type { AgentRunsContract, RunWatcherPort } from '../../../agent-runtime/contract/index.js';
-import type { SupervisionCore } from '../../../supervision/core/index.js';
+import type { SupervisionCore } from '../../../supervision/public/index.js';
 import type { VersionedRef } from '../../../supervision/contract/index.js';
 
 const runtimeContext = (): SystemCommandContext<'sys_agent_runtime'> => ({

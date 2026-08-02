@@ -36,7 +36,7 @@ import {
 } from '../../../transcript/b3/contract/index.js';
 import {
   composeSupervision, type SupervisionCore, type WatcherTemplate,
-} from '../../../supervision/core/index.js';
+} from '../../../supervision/public/index.js';
 import { followEventsIntoSupervision, supervisionWatcherPort } from './supervision-ports.js';
 
 export interface B3RuntimeOptions {

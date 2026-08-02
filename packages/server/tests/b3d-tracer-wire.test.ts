@@ -22,7 +22,7 @@ import { fileURLToPath } from 'node:url';
 import { mintClientOpId, type B3Result, type ClientOpId } from '@novakai/foundation/contract';
 import { createFakePtyHost, type FakePty, type FakePtyHost } from '../../terminal/adapters/pty-host/fake.js';
 import { createFakeProviderAdapters } from '../../agents/b3/contract/index.js';
-import { createIdleWatchTemplate } from '../../supervision/core/index.js';
+import { createIdleWatchTemplate } from '../../supervision/public/index.js';
 import type { Notification, WatchDeadline, WatchRule } from '../../supervision/contract/index.js';
 import { startRuntimeHost, type RunningRuntimeHost } from '../core/b3/host.js';
 import { connectRuntime, type RuntimeClient } from '../core/b3/client.js';

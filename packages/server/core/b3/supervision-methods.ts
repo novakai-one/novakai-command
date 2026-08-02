@@ -19,7 +19,7 @@ import {
 import type {
   Notification, NotificationFilter, WatchDeadline, WatchRule,
 } from '../../../supervision/contract/index.js';
-import type { SupervisionCore } from '../../../supervision/core/index.js';
+import type { SupervisionCore } from '../../../supervision/public/index.js';
 import type { CallerSession, MethodTable } from '../../contract/protocol.js';
 
 export interface B3SupervisionMethodOptions {
