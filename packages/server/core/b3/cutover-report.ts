@@ -30,7 +30,15 @@ export interface CutoverReport {
   readonly schemaVersion: 1;
   readonly dataRoot: string;
   readonly perKind: readonly CutoverKindReport[];
-  /** How many migrated Messaging operations there are, by StoreOp variant. */
+  /**
+   * Operations in the CANONICAL journal, by StoreOp variant.
+   *
+   * Not "migrated" operations: after a cutover the canonical journal holds
+   * both the migrated ones and everything written since, and there is no
+   * honest way to tell them apart from the outside. Calling the total
+   * "migrated" would overstate what a cutover did on a store that was never
+   * migrated at all.
+   */
   readonly messagingVariantCounts: Readonly<Record<string, number>>;
   readonly normalisations: {
     readonly addedInboxItems: number;
@@ -145,7 +153,7 @@ export function describeCutover(report: CutoverReport): string {
       + ' Boot stays blocked until one of them is dealt with.',
   }[report.verdict];
   return `Store route under ${report.dataRoot}\n${rows}\n`
-    + `  migrated operations: ${variants === '' ? 'none' : variants}\n`
+    + `  canonical journal: ${variants === '' ? 'empty' : variants}\n`
     + `  normalisations: +agentInboxItems ${String(report.normalisations.addedInboxItems)}`
     + ` · journal[] ${String(report.normalisations.wrappedSingletonJournals)}\n`
     + `  replay equal: ${report.replayEqual === null ? 'not run' : String(report.replayEqual)}\n`

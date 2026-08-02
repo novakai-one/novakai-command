@@ -45,7 +45,13 @@ export async function senderFor(
     const agentId = await agentOfRun(store, principal.agentRunId);
     if (agentId !== null) return agentPersonId(agentId);
   }
-  return `person_${String(principal.id).replace(/[^A-Za-z0-9-]/g, "-")}` as PersonId;
+  // A principal that is ALREADY a Messaging identity is used as it stands.
+  // Wrapping it again produced `person_person-chris` in the first real CLI
+  // run — a second identity for one human, and every Thread keyed on it would
+  // have been a Thread Chris could not find.
+  const given = String(principal.id);
+  if (given.startsWith("person_")) return given as PersonId;
+  return `person_${given.replace(/[^A-Za-z0-9-]/g, "-")}` as PersonId;
 }
 
 /** The endpoint claim is the durable join from a Run back to its Agent. */
