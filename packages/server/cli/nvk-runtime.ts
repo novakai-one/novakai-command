@@ -17,7 +17,7 @@ import type { RuntimeStatus, RuntimeDoctorReport, RuntimeStopOutcome } from '../
 import { startRuntimeHost } from '../core/b3/host.js';
 import { connectRuntime, type RuntimeClient } from '../core/b3/client.js';
 import { clientOpIdFrom, emit, fail, parseFlags, type Flags } from '../core/b3/cli-shared.js';
-import { buildCutoverReport, describeCutover } from '../core/b3/cutover-report.js';
+import { buildCutoverReport, describeCutover, LEGACY_MESSAGING_STORE } from '../core/b3/cutover-report.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '..', '..', '..');
@@ -170,7 +170,10 @@ const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
       const report = await buildCutoverReport({
         root,
         dataRoot: path.join(root, 'stores'),
-        legacySources: { messagingStoreOp: path.join(root, 'messaging-store.jsonl') },
+        // The file the product actually writes (packages/server/core/boot.ts:146).
+        // It said `messaging-store.jsonl`, which nothing has ever written, so a
+        // root with a real legacy journal beside it reported `clear`.
+        legacySources: { messagingStoreOp: path.join(root, LEGACY_MESSAGING_STORE) },
       });
       emit('runtime doctor --cutover', argFlags, report, describeCutover);
     }

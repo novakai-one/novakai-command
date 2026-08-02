@@ -2,7 +2,7 @@
 // scoped handle (composed by composeHandle). Absence is typed data, never a throw.
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
-import type { ClientOpId, ObjectId, ObjectKind, ServerOpId } from './brands.js';
+import type { CapabilityId, ClientOpId, ObjectId, ObjectKind, ServerOpId } from './brands.js';
 import { Envelope, QuarantineTombstone, Ref } from './schemas.js';
 import type { Envelope as EnvelopeT, QuarantineTombstone as TombstoneT, TraceLine as TraceLineT } from './schemas.js';
 import { err, type StoreError } from './errors.js';
@@ -12,6 +12,7 @@ import {
   type ScopedStoreHandle, type StoredObject, type TraceFilter,
 } from './types.js';
 import { CURRENT_SCHEMA_VERSION, KIND_FILES, StoreEngine } from '../core/store-engine/engine.js';
+import { composeEngine } from './compose.js';
 
 const ENVELOPE_FIELDS = ['kind', 'id', 'schemaVersion', 'createdAt', 'permissionLevel', 'createdBy'] as const;
 
@@ -512,3 +513,77 @@ export function defaultEngine(): StoreEngine {
 }
 /** @internal tests: reset the shared default engine. */
 export function __resetDefaultEngine(): void { sharedDefault = null; }
+
+// ── §18.1 store-route cutover: the Foundation bootstrap ────────────────────
+
+export interface BootstrapCutoverRecord {
+  readonly kind: string;
+  readonly payload: unknown;
+  readonly clientOpId: ClientOpId;
+}
+
+export interface BootstrapCutoverInput {
+  /** `.novakai/` root — the same global lock every mutation uses. */
+  readonly root: string;
+  readonly dataRoot?: string;
+  readonly lockTimeoutMs?: number;
+  /** The converted operations, in the order they must be replayed. */
+  readonly records: readonly BootstrapCutoverRecord[];
+  /** The `storeRouteCutover` receipt this migration is sealed with. */
+  readonly receipt: BootstrapCutoverRecord;
+}
+
+/**
+ * Run one offline store-route cutover — §18.1 steps 5–7, AMD-001 A-01.
+ *
+ * `storeRouteCutover` is Foundation-bootstrap-only, which is why this is a
+ * Foundation function rather than a handle a capability can hold. A capability
+ * that could obtain that kind could write itself a receipt saying its own
+ * migration succeeded, and canonical dispatch waits on exactly that receipt.
+ * The shipped Messaging cutover granted itself the kind and did precisely this
+ * — while `b3a-registry.test.ts` proved the same handle is refused.
+ *
+ * Everything happens inside ONE lock hold, with the §18.1 fsync choreography:
+ * receipt and trace files durably prepared before either append, file-data
+ * fsync on every append, and a directory barrier after each of the two receipt
+ * appends. `traceComplete` is read back from the trace journal and then written
+ * to disk, so the value dispatch gates on survives this process.
+ */
+export async function bootstrapStoreRouteCutover(
+  input: BootstrapCutoverInput,
+): Promise<Result<{ readonly traceComplete: boolean }, StoreError>> {
+  const engine = composeEngine({
+    root: input.root,
+    ...(input.dataRoot === undefined ? {} : { dataRoot: input.dataRoot }),
+    ...(input.lockTimeoutMs === undefined ? {} : { lockTimeoutMs: input.lockTimeoutMs }),
+    capability: 'foundation' as CapabilityId,
+    allowedKinds: [],
+    principal: 'sys_foundation',
+  });
+  const bootFailure = engine.bootError();
+  if (bootFailure) return fail(bootFailure);
+
+  const prepared: {
+    kind: string; flat: EnvelopeT & Record<string, unknown>; clientOpId: ClientOpId;
+  }[] = [];
+  for (const record of [...input.records, input.receipt]) {
+    const { flat, error } = validateEnvelope(record.payload);
+    if (error) return fail(error);
+    if (!(record.kind in KIND_FILES)) {
+      return fail(err('KindUnknown', `kind "${record.kind}" is not registered`,
+        { kind: record.kind, registered: Object.keys(KIND_FILES) }, false));
+    }
+    // Bootstrap derives `createdBy` the same way every other write does: from
+    // the principal, never from the caller's payload (red gate 4).
+    prepared.push({
+      kind: record.kind,
+      flat: { ...flat!, createdBy: 'sys_foundation' },
+      clientOpId: record.clientOpId,
+    });
+  }
+  const receipt = prepared.pop()!;
+
+  const result = engine.bootstrapStoreRouteCutover({ records: prepared, receipt });
+  if (!result.ok) return fail(result.error);
+  return ok({ traceComplete: result.value.traceComplete });
+}

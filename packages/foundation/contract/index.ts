@@ -26,6 +26,10 @@ export {
   queryTrace, queryTraceBound, listQuarantine, listQuarantineBound,
   requestQuarantine, resolveQuarantine, recordSystemAction,
   defaultEngine, __resetDefaultEngine,
+  // §18.1's Foundation-bootstrap-only store-route cutover. Not a handle: a
+  // capability that could hold `storeRouteCutover` could seal its own migration.
+  bootstrapStoreRouteCutover,
+  type BootstrapCutoverInput, type BootstrapCutoverRecord,
 } from './api.js';
 // Token ops (mint/authenticate) are foundation-internal but part of the legal
 // import surface so the CLI never reaches into core/ (red gate 6).

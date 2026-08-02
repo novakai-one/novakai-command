@@ -1165,6 +1165,189 @@ export class StoreEngine {
     });
   }
 
+  /**
+   * §18.1 steps 5–7 — the offline store-route cutover, as ONE lock-held
+   * bootstrap.
+   *
+   * This is the "explicit additive Foundation bootstrap method over its
+   * existing object append, trace append, CAS and fsync primitives" the spec
+   * names. It is not a capability-visible writer and not a second engine: it
+   * reuses `wrapRecord`, `appendLineFsync` and the same global lock every other
+   * mutation uses. What it adds is the choreography a per-record loop cannot
+   * have — one lock hold across the whole migration, receipt/trace files
+   * durably prepared BEFORE either append, and directory barriers after each.
+   *
+   * The cutover shipped as a per-line `createObject` loop through a MESSAGING
+   * handle that granted itself `storeRouteCutover` — the one kind §18.1 marks
+   * Foundation-bootstrap-only, and which `b3a-registry.test.ts` proves is
+   * refused through exactly that handle. Each line took the lock separately, so
+   * there was no offline fence at all: another writer could interleave between
+   * any two migrated lines.
+   *
+   * `traceComplete` is written, not asserted. The receipt is appended, its
+   * trace is appended, the trace is READ BACK, and only then is a second
+   * receipt line appended carrying `traceComplete: true`. Dispatch waits on
+   * that persisted value, so a receipt that claimed it on faith would let the
+   * canonical route open over an unproven migration — which is what shipped:
+   * `true` in memory, `false` on disk, forever.
+   */
+  bootstrapStoreRouteCutover(input: {
+    readonly records: readonly {
+      readonly kind: string;
+      readonly flat: EnvelopeT & Record<string, unknown>;
+      readonly clientOpId: ClientOpId;
+    }[];
+    readonly receipt: {
+      readonly kind: string;
+      readonly flat: EnvelopeT & Record<string, unknown>;
+      readonly clientOpId: ClientOpId;
+    };
+  }): EngineResult<{ readonly traceComplete: boolean; readonly receiptOpId: ServerOpId }> {
+    return this.withLock(() => {
+      const touched = new Set<string>();
+      const receiptPath = this.storePath(input.receipt.kind);
+      const tracePath = this.storePath('trace');
+
+      // Step 5: the receipt and trace files exist DURABLY before either append,
+      // so their directory entries are already on disk and the post-append
+      // barriers below have something to make durable.
+      try {
+        this.prepareFile(receiptPath);
+        this.prepareFile(tracePath);
+        this.fsyncDirectory(path.dirname(receiptPath));
+      } catch (cause) {
+        return {
+          ok: false,
+          error: err('ObjectWriteFailed',
+            `preparing the cutover target files failed: ${String(cause)}`,
+            { opId: mintServerOpId(), cause: String(cause) }, true),
+        };
+      }
+
+      // Step 4/5: every converted record, one source operation to one atomic
+      // persisted operation, all inside this single lock hold.
+      for (const record of input.records) {
+        const opId = mintServerOpId();
+        const trace: TraceLineT = {
+          kind: 'trace', id: `trace_${randomUUID()}`, schemaVersion: 1,
+          createdAt: nowIso(), permissionLevel: 'team', createdBy: record.flat.createdBy,
+          seq: this.nextSeq(this.readTraces()), opId, clientOpId: record.clientOpId,
+          action: 'create', target: { kind: record.kind, id: record.flat.id },
+        };
+        try {
+          const filePath = this.storePath(record.kind);
+          this.appendLineFsync(filePath, JSON.stringify(
+            this.wrapRecord(record.flat, { opId, clientOpId: record.clientOpId, version: 1 }),
+          ));
+          touched.add(filePath);
+          this.appendLineFsync(tracePath, JSON.stringify(trace));
+        } catch (cause) {
+          return {
+            ok: false,
+            error: err('ObjectWriteFailed',
+              `migrating ${record.flat.id} failed: ${String(cause)}`,
+              { opId, cause: String(cause) }, true),
+          };
+        }
+      }
+
+      // Step 5's remainder: each copied target file is fsynced by the append
+      // above; the DIRECTORY is fsynced here, once, and never as a substitute
+      // for the file-data fsync.
+      try {
+        for (const filePath of touched) this.fsyncDirectory(path.dirname(filePath));
+      } catch (cause) {
+        return {
+          ok: false,
+          error: err('ObjectWriteFailed', `directory barrier failed: ${String(cause)}`,
+            { opId: mintServerOpId(), cause: String(cause) }, true),
+        };
+      }
+
+      // Step 6: the receipt object, then its directory barrier.
+      const receiptOpId = mintServerOpId();
+      try {
+        this.appendLineFsync(receiptPath, JSON.stringify(this.wrapRecord(
+          input.receipt.flat,
+          { opId: receiptOpId, clientOpId: input.receipt.clientOpId, version: 1 },
+        )));
+        this.fsyncDirectory(path.dirname(receiptPath));
+      } catch (cause) {
+        return {
+          ok: false,
+          error: err('ObjectWriteFailed', `the cutover receipt append failed: ${String(cause)}`,
+            { opId: receiptOpId, cause: String(cause) }, true),
+        };
+      }
+
+      // Step 6's second half: the receipt trace, then ITS directory barrier.
+      try {
+        this.appendLineFsync(tracePath, JSON.stringify({
+          kind: 'trace', id: `trace_${randomUUID()}`, schemaVersion: 1,
+          createdAt: nowIso(), permissionLevel: 'team',
+          createdBy: input.receipt.flat.createdBy,
+          seq: this.nextSeq(this.readTraces()), opId: receiptOpId,
+          clientOpId: input.receipt.clientOpId, action: 'create',
+          target: { kind: input.receipt.kind, id: input.receipt.flat.id },
+        } satisfies TraceLineT));
+        this.fsyncDirectory(path.dirname(tracePath));
+      } catch (cause) {
+        return {
+          ok: false,
+          error: err('TraceWriteFailed', `the cutover receipt trace failed: ${String(cause)}`,
+            { opId: receiptOpId, cause: String(cause) }, true),
+        };
+      }
+
+      // Step 7: reconcile, then PERSIST the reconciliation. Reading the trace
+      // back is the proof; the second receipt line is what makes the proof
+      // survive this process.
+      const traceComplete = this.hasTraceOpId(receiptOpId);
+      if (traceComplete) {
+        try {
+          this.appendLineFsync(receiptPath, JSON.stringify(this.wrapRecord(
+            { ...input.receipt.flat, traceComplete: true },
+            { opId: mintServerOpId(), clientOpId: input.receipt.clientOpId, version: 2 },
+          )));
+          this.fsyncDirectory(path.dirname(receiptPath));
+        } catch (cause) {
+          return {
+            ok: false,
+            error: err('ObjectWriteFailed',
+              `sealing the cutover receipt failed: ${String(cause)}`,
+              { opId: receiptOpId, cause: String(cause) }, true),
+          };
+        }
+      }
+      return { ok: true, value: { traceComplete, receiptOpId } };
+    });
+  }
+
+  /** Create an empty target file if absent, and make its data durable. */
+  private prepareFile(filePath: string): void {
+    mkdirSync(path.dirname(filePath), { recursive: true });
+    const fd = openSync(filePath, 'a');
+    try {
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
+  }
+
+  /**
+   * §18.1: "Directory fsync never substitutes for file-data fsync." This is the
+   * other half — a file whose data is durable but whose directory entry is not
+   * can still vanish across a power loss.
+   */
+  private fsyncDirectory(dir: string): void {
+    const fd = openSync(dir, 'r');
+    try {
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
+  }
+
   /** Append a new line to an engine-managed store directly (tombstone status transitions). */
   appendRecordLine(
     kind: string, flat: EnvelopeT & Record<string, unknown>,

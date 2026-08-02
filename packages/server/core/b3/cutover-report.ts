@@ -15,6 +15,17 @@ import {
   listMigratedOperations, readMessagingCutoverReceipt,
 } from '../../../messaging/b3/contract/index.js';
 
+/**
+ * The legacy Messaging journal, as the product actually writes it
+ * (`packages/server/core/boot.ts:146` opens `<root>/messaging.jsonl`).
+ *
+ * A constant because it was a literal in two places and they disagreed: the
+ * doctor looked for `messaging-store.jsonl`, which nothing has ever written, so
+ * a root with a real legacy journal beside it reported `clear`. One name, one
+ * place, and boot and the doctor now cannot drift apart.
+ */
+export const LEGACY_MESSAGING_STORE = 'messaging.jsonl';
+
 export interface CutoverKindReport {
   readonly kind: string;
   readonly canonicalPath: string;

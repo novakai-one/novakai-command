@@ -23,8 +23,9 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import {
-  b3err, b3fail, b3ok, canonicalJson, composeHandle, createObject, deriveClientOpId,
-  getObject, isAbsent, listObjects, mintStoreRouteCutoverId, nowIsoUtc,
+  b3err, b3fail, b3ok, bootstrapStoreRouteCutover, canonicalJson, composeHandle,
+  deriveClientOpId, getObject, isAbsent, listObjects, mintMessagingStoreOpId,
+  mintStoreRouteCutoverId, nowIsoUtc,
   type B3Result, type ObjectId, type ScopedStoreHandle,
 } from "@novakai/foundation/contract";
 
@@ -73,11 +74,24 @@ export type MessagingCutoverOutcome =
   | { readonly kind: "already-done"; readonly receipt: MessagingCutoverReceipt | null }
   | { readonly kind: "not-required" };
 
+/**
+ * Messaging's own READ handle.
+ *
+ * `storeRouteCutover` is deliberately absent. It shipped in this list, and
+ * `packages/foundation/tests/b3a-registry.test.ts` proves the same handle is
+ * refused that kind — the cutover was granting itself the one thing §18.1
+ * marks Foundation-bootstrap-only, which would let a capability seal its own
+ * migration and open the canonical route on its own say-so.
+ *
+ * The receipt is now written by `bootstrapStoreRouteCutover`, which is a
+ * Foundation function rather than a handle anyone can hold. This handle only
+ * READS it back.
+ */
 const foundationHandle = (input: MessagingCutoverInput): ScopedStoreHandle => composeHandle({
   root: input.root,
   dataRoot: input.dataRoot,
   capability: "messaging",
-  allowedKinds: ["messagingStoreOp", "storeRouteCutover"],
+  allowedKinds: ["messagingStoreOp"],
   principal: "sys_messaging",
 });
 
@@ -109,7 +123,92 @@ export function readLegacyStoreOp(line: string, ordinal: number): B3Result<Store
       { issues: [{ path: `line.${String(ordinal)}.op`, message: "not a carried-forward variant" }] },
       false));
   }
+  const shaped = payloadIssues(variant, parsed as Record<string, unknown>);
+  if (shaped !== null) {
+    return b3fail(b3err("ValidationFailed",
+      `legacy line ${ordinal} is a malformed "${variant}": ${shaped}`,
+      { issues: [{ path: `line.${String(ordinal)}.${shaped}`, message: "missing or malformed" }] },
+      false));
+  }
   return b3ok(parsed as StoreOp);
+}
+
+/**
+ * The rest of the payload, not just the discriminant.
+ *
+ * §18.1 step 1 says "parses every old line with the promoted public validator
+ * covering all seven carried-forward variants". Checking only `op` is not that:
+ * a line reading `{"op":"acceptance"}` passed, was wrapped as a Foundation
+ * record, and only failed later at replay — by which point the failure names
+ * the replay rather than the line that caused it. Worse, a malformed variant
+ * that happens to replay identically on both sides (because both sides are
+ * equally broken) is silently PROMOTED into the canonical journal.
+ *
+ * Each rule below is the shape `StoreCore.applyOp` actually dereferences for
+ * that variant. Nothing more is asserted, because anything more would reject a
+ * legitimate historic line.
+ */
+function payloadIssues(variant: string, line: Record<string, unknown>): string | null {
+  const isObject = (value: unknown): value is Record<string, unknown> =>
+    typeof value === "object" && value !== null && !Array.isArray(value);
+  const hasId = (value: unknown): boolean =>
+    isObject(value) && typeof value["id"] === "string" && value["id"] !== "";
+  const journalEntry = (value: unknown): boolean =>
+    isObject(value) && typeof value["sequence"] === "number";
+  // The historic acceptance journal is legitimately a singleton OR an array
+  // (§8.1, AMD-001 §7). Both are accepted here and normalised afterwards.
+  const journalShape = (value: unknown): boolean =>
+    value === undefined
+    || (Array.isArray(value) ? value.every(journalEntry) : journalEntry(value));
+
+  switch (variant) {
+    case "acceptance": {
+      if (!hasId(line["thread"])) return "thread.id";
+      if (!hasId(line["message"])) return "message.id";
+      if (!hasId(line["snapshot"])) return "snapshot.id";
+      // `deliveries` is iterated unconditionally by `applyOp`, so an absent one
+      // is a crash at replay rather than an empty result.
+      if (!(Array.isArray(line["deliveries"]) && line["deliveries"].every(hasId))) {
+        return "deliveries";
+      }
+      // The acceptance record IS the idempotency key: replay indexes it by
+      // (senderId, clientMessageId), and a line missing either would make one
+      // migrated Message unfindable by the send that already accepted it.
+      const acceptance = line["acceptance"];
+      if (!isObject(acceptance)) return "acceptance";
+      if (typeof acceptance["senderId"] !== "string") return "acceptance.senderId";
+      if (typeof acceptance["clientMessageId"] !== "string") {
+        return "acceptance.clientMessageId";
+      }
+      if (!journalShape(line["journal"])) return "journal";
+      return null;
+    }
+    case "room-thread":
+      return hasId(line["thread"]) ? null : "thread.id";
+    case "delivery-transition": {
+      if (!hasId(line["delivery"])) return "delivery.id";
+      if (!journalEntry(line["journal"])) return "journal.sequence";
+      if (line["attempt"] !== undefined && !hasId(line["attempt"])) return "attempt.id";
+      return null;
+    }
+    case "attempt":
+      return hasId(line["attempt"]) ? null : "attempt.id";
+    case "policy": {
+      if (!isObject(line["contact"]) && !isObject(line["dnd"])) return "contact|dnd";
+      if (!journalEntry(line["journal"])) return "journal.sequence";
+      return null;
+    }
+    case "template": {
+      if (!hasId(line["template"])) return "template.id";
+      if (!journalEntry(line["journal"])) return "journal.sequence";
+      return null;
+    }
+    case "settled":
+      return typeof line["messageId"] === "string" && line["messageId"] !== ""
+        ? null : "messageId";
+    default:
+      return "op";
+  }
 }
 
 interface Normalised {
@@ -280,37 +379,36 @@ export async function runMessagingCutover(
       }, false));
   }
 
+  // Every converted operation, prepared BEFORE the bootstrap takes the lock.
+  // Ids are the same deterministic base32 digest the live adapter mints
+  // (`mintMessagingStoreOpId(operationKey)`), which is what makes a post-cutover
+  // retry of a migrated operation land on its own record. The shipped
+  // `messagingStoreOp_migratedNNNNNNNN` ids matched no live key, so the first
+  // replay of any migrated operation would have appended a twin.
   let maxStoreSequence = 0;
-  for (const [index, operation] of converted.entries()) {
+  const records = converted.map((operation, index) => {
     const storeSequence = index + 1;
     maxStoreSequence = storeSequence;
     const operationKey = operationKeyOf(operation);
     const payload: MessagingStoreOpPayload = {
       kind: "messagingStoreOp",
-      id: `messagingStoreOp_migrated${String(storeSequence).padStart(8, "0")}` as
-        MessagingStoreOpId,
+      id: mintMessagingStoreOpId(operationKey) as string as MessagingStoreOpId,
       schemaVersion: 1,
       createdAt: nowIsoUtc(),
       permissionLevel: "private",
+      // Foundation's bootstrap derives the real value from its own principal.
       createdBy: "overridden-by-foundation",
       storeSequence,
       operationKey,
       payloadDigest: digestOf(operation),
       storeOp: operation,
     };
-    const written = await createObject(
-      handle, payload as unknown as Record<string, unknown> & {
-        kind: string; id: string; schemaVersion: number; createdAt: string;
-        permissionLevel: "private"; createdBy: string;
-      },
-      deriveClientOpId(`messagingCutover:${operationKey}:${String(storeSequence)}`),
-    );
-    if (!written.ok) {
-      return b3fail(b3err("StoreUnavailable",
-        `migrating legacy line ${String(storeSequence)} failed: ${written.error.code}`,
-        { owner: "messaging", cause: written.error.code }, true));
-    }
-  }
+    return {
+      kind: "messagingStoreOp",
+      payload,
+      clientOpId: deriveClientOpId(`messagingStoreOp:${operationKey}`),
+    };
+  });
 
   const receipt: MessagingCutoverReceipt = {
     kind: "storeRouteCutover",
@@ -327,36 +425,43 @@ export async function runMessagingCutover(
     normalisedSingletonJournals,
     maxStoreSequence,
     replayEqual: true,
+    // Set by the bootstrap after it reads its own trace back, and PERSISTED.
     traceComplete: false,
   };
-  const wroteReceipt = await createObject(
-    handle, receipt as unknown as Record<string, unknown> & {
-      kind: string; id: string; schemaVersion: number; createdAt: string;
-      permissionLevel: "private"; createdBy: string;
+
+  // One lock-held bootstrap, through Foundation — not a per-line createObject
+  // loop through a handle that granted itself the receipt kind. §18.1's fsync
+  // choreography and the durable trace-complete seal live in there, because
+  // that is where the lock and the engine primitives are.
+  const bootstrapped = await bootstrapStoreRouteCutover({
+    root: input.root,
+    dataRoot: input.dataRoot,
+    records,
+    receipt: {
+      kind: "storeRouteCutover",
+      payload: receipt,
+      clientOpId: deriveClientOpId(`messagingCutoverReceipt:${input.dataRoot}`),
     },
-    deriveClientOpId(`messagingCutoverReceipt:${input.dataRoot}`),
-  );
-  if (!wroteReceipt.ok) {
+  });
+  if (!bootstrapped.ok) {
     return b3fail(b3err("StoreUnavailable",
-      `the cutover receipt could not be written: ${wroteReceipt.error.code}`,
-      { owner: "messaging", cause: wroteReceipt.error.code }, true));
+      `the Messaging cutover bootstrap failed: ${bootstrapped.error.code} `
+      + bootstrapped.error.message,
+      { owner: "messaging", cause: bootstrapped.error.code }, true));
   }
-
-  // Trace-complete is RECONCILED, not asserted: the receipt claims it only
-  // after its own trace is readable back through Foundation. Dispatch waits on
-  // this, so a receipt that says `traceComplete: true` on faith would let the
-  // canonical route open over an unproven migration.
-  const reconciled = await traceComplete(handle, receipt.id);
-  const sealed: MessagingCutoverReceipt = { ...receipt, traceComplete: reconciled };
-  return b3ok({ kind: "completed", receipt: sealed });
-}
-
-async function traceComplete(handle: ScopedStoreHandle, receiptId: string): Promise<boolean> {
-  const stored = await getObject<MessagingCutoverReceipt>(
-    handle, "storeRouteCutover", receiptId as ObjectId,
-  );
-  if (!stored.ok || isAbsent(stored.value)) return false;
-  return stored.value.lastMutation.serverOpId !== undefined;
+  if (!bootstrapped.value.traceComplete) {
+    // §18.1 step 7: dispatch stays blocked until the receipt reconciles
+    // trace-complete. Returning `completed` here would open the canonical route
+    // over a migration whose own trace could not be read back.
+    return b3fail(b3err("StoreRouteConflict",
+      "the cutover receipt did not reconcile trace-complete; the canonical route stays closed",
+      {
+        kind: "messagingStoreOp",
+        canonicalPath: `${input.dataRoot}/messagingStoreOps.jsonl`,
+        legacyPath: input.legacyStorePath,
+      }, false));
+  }
+  return b3ok({ kind: "completed", receipt: { ...receipt, traceComplete: true } });
 }
 
 /** Every migrated operation, for a verification command to count (§17.1 doctor). */

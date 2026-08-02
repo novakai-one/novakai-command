@@ -16,7 +16,7 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -24,6 +24,7 @@ import {
   checkMessagingStoreRoute, listMigratedOperations, normaliseLegacyOp,
   readLegacyStoreOp, readMessagingCutoverReceipt, runMessagingCutover,
 } from "../adapters/cutover.js";
+import { mintMessagingStoreOpId } from "@novakai/foundation/contract";
 import { openFoundationMessagingStore } from "../adapters/store-foundation.js";
 import { createSeededClock } from "../../adapters/clock-seeded.js";
 import type { StoreOp } from "../../adapters/store-shared.js";
@@ -370,5 +371,128 @@ test("no legacy file means there is nothing to cut over", async () => {
     assert.equal(outcome.ok && outcome.value.kind, "not-required");
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// --- the cutover HELPER LAW (§18.1, §4.1, AMD-001 A-01) ----------------------
+//
+// Five things the shipped helper got wrong, each with its own consequence:
+// it granted itself a Foundation-bootstrap-only kind, sealed the receipt with
+// an in-memory `true` over a persisted `false`, minted ids no live retry could
+// ever match, and validated only the `op` discriminant.
+
+test("the receipt is written by Foundation's bootstrap, not by Messaging", async () => {
+  const harness = rig(ALL_VARIANTS);
+  try {
+    const done = await runMessagingCutover(harness);
+    assert.equal(done.ok, true);
+
+    // `createdBy` is derived from the writing principal and can never be set by
+    // a payload (red gate 4). So it names who actually wrote the receipt.
+    const line = readFileSync(
+      path.join(harness.dataRoot, "storeRouteCutovers.jsonl"), "utf8",
+    ).split("\n").filter((item) => item !== "").pop()!;
+    const record = JSON.parse(line) as { envelope: { createdBy: string } };
+    assert.equal(record.envelope.createdBy, "sys_foundation",
+      "the cutover receipt was written by a capability. `storeRouteCutover` is "
+      + "Foundation-bootstrap-only (§18.1), and a capability that can write it "
+      + "can seal its own migration — which is what canonical dispatch waits on");
+
+  } finally {
+    rmSync(harness.root, { recursive: true, force: true });
+  }
+});
+
+test("Messaging never grants itself the Foundation-bootstrap-only kind", () => {
+  // Foundation's scope check reads the handle's OWN allowedKinds, so a
+  // capability that lists a kind can write it — which is precisely why
+  // `b3a-registry.test.ts` tests the handle WITHOUT it. The law therefore lives
+  // in what this module composes, and that is what is checked here: a source
+  // read, because the defect was a source fact.
+  const source = readFileSync(
+    new URL("../adapters/cutover.ts", import.meta.url), "utf8",
+  );
+  const grants = source.match(/allowedKinds:\s*\[[^\]]*\]/g) ?? [];
+  assert.notEqual(grants.length, 0, "the cutover composes no handle at all any more?");
+  for (const grant of grants) {
+    assert.equal(grant.includes("storeRouteCutover"), false,
+      `the cutover grants Messaging a Foundation-bootstrap-only kind: ${grant}`);
+  }
+});
+
+test("trace-complete is PERSISTED, not just returned", async () => {
+  const harness = rig(ALL_VARIANTS);
+  try {
+    const done = await runMessagingCutover(harness);
+    assert.equal(done.ok, true);
+    if (!done.ok || done.value.kind !== "completed") return;
+    assert.equal(done.value.receipt.traceComplete, true);
+
+    // The value dispatch gates on has to survive this process. It shipped as
+    // `true` in the returned copy and `false` on disk, forever.
+    const stored = await readMessagingCutoverReceipt(harness);
+    assert.notEqual(stored, null);
+    assert.equal(stored?.traceComplete, true,
+      "the persisted receipt says trace-complete is false; a restart would gate "
+      + "canonical dispatch on a migration that in fact succeeded");
+  } finally {
+    rmSync(harness.root, { recursive: true, force: true });
+  }
+});
+
+test("migrated ids are the SAME deterministic ids a live retry would mint", async () => {
+  const harness = rig(ALL_VARIANTS);
+  try {
+    await runMessagingCutover(harness);
+    const migrated = await listMigratedOperations(harness);
+    assert.equal(migrated.ok, true);
+    if (!migrated.ok) return;
+    assert.equal(migrated.value.length, ALL_VARIANTS.length);
+    for (const record of migrated.value) {
+      // §4.1: `messagingStoreOp_<base32sha256>`. `_migratedNNNNNNNN` matched no
+      // live key, so the first replay of a migrated operation would have found
+      // nothing at its own id and appended a twin.
+      assert.match(String(record.id), /^messagingStoreOp_[a-z2-7]{16,}$/,
+        `${String(record.id)} is not a §4.1 base32 digest id`);
+      assert.equal(String(record.id), String(mintMessagingStoreOpId(record.operationKey)),
+        "a migrated id does not match what the live adapter mints for the same "
+        + "operation key, so a post-cutover retry cannot find its own record");
+    }
+  } finally {
+    rmSync(harness.root, { recursive: true, force: true });
+  }
+});
+
+test("the validator reads the whole payload, not just the op discriminant", async () => {
+  // Each of these carries a legal `op` and is unusable: replay dereferences the
+  // field that is missing. Under an op-only check they were all promotable.
+  const malformed: readonly [string, unknown][] = [
+    ["acceptance with no message", { op: "acceptance", thread: { id: "t" }, snapshot: { id: "s" }, deliveries: [], acceptance: { senderId: "p", clientMessageId: "c" } }],
+    ["acceptance with no acceptance record", { op: "acceptance", thread: { id: "t" }, message: { id: "m" }, snapshot: { id: "s" }, deliveries: [] }],
+    ["acceptance with no deliveries array", { op: "acceptance", thread: { id: "t" }, message: { id: "m" }, snapshot: { id: "s" }, acceptance: { senderId: "p", clientMessageId: "c" } }],
+    ["room-thread with no thread", { op: "room-thread" }],
+    ["delivery-transition with no journal sequence", { op: "delivery-transition", delivery: { id: "d" }, journal: {} }],
+    ["attempt with no attempt", { op: "attempt" }],
+    ["policy with neither contact nor dnd", { op: "policy", journal: { sequence: 1 } }],
+    ["template with no template", { op: "template", journal: { sequence: 1 } }],
+    ["settled with no messageId", { op: "settled" }],
+  ];
+  for (const [what, line] of malformed) {
+    const parsed = readLegacyStoreOp(JSON.stringify(line), 1);
+    assert.equal(parsed.ok, false, `${what} was accepted as a legacy line`);
+    if (!parsed.ok) assert.equal(parsed.error.code, "ValidationFailed");
+  }
+
+  // And a malformed line anywhere in the file migrates NOTHING.
+  const harness = rig([ALL_VARIANTS[0], { op: "attempt" }, ALL_VARIANTS[1]]);
+  try {
+    const outcome = await runMessagingCutover(harness);
+    assert.equal(outcome.ok, false, "a file with a malformed line was migrated anyway");
+    assert.equal(
+      existsSync(path.join(harness.dataRoot, "messagingStoreOps.jsonl")), false,
+      "a refused cutover left canonical lines behind",
+    );
+  } finally {
+    rmSync(harness.root, { recursive: true, force: true });
   }
 });
