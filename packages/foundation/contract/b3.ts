@@ -43,6 +43,17 @@ export type TerminalSessionId = B3Brand<string, 'TerminalSessionId'>;
 export type ControllerAttachmentId = B3Brand<string, 'ControllerAttachmentId'>;
 export type TerminalInputLeaseId = B3Brand<string, 'TerminalInputLeaseId'>;
 export type TerminalInputAttemptId = B3Brand<string, 'TerminalInputAttemptId'>;
+// B3c (§4.1). Messaging mints the first three; Transcript the next three;
+// Foundation's bootstrap the last. All deterministic base32-sha256, because
+// each names a fact a retry must land on again rather than duplicate.
+export type AgentEndpointClaimId = B3Brand<string, 'AgentEndpointClaimId'>;
+export type AgentInboxItemId = B3Brand<string, 'AgentInboxItemId'>;
+export type MessagingStoreOpId = B3Brand<string, 'MessagingStoreOpId'>;
+export type TranscriptBindingId = B3Brand<string, 'TranscriptBindingId'>;
+/** Provider/source-specific deterministic ID (§4.1) — Transcript owns its shape. */
+export type TranscriptLineId = B3Brand<string, 'TranscriptLineId'>;
+export type ObservedSubagentId = B3Brand<string, 'ObservedSubagentId'>;
+export type StoreRouteCutoverId = B3Brand<string, 'StoreRouteCutoverId'>;
 /** Inherited from Foundation unchanged (§4.1): existing `op_<uuidv4>`. */
 export type B3ClientOpId = ClientOpId;
 export type TraceCorrelationId = B3Brand<string, 'TraceId'>;
@@ -193,6 +204,47 @@ export const mintAgentRelationshipId = (
  */
 export const mintRunOperationId = (commandReceiptId: string): RunOperationId =>
   deterministicId('runOperation', [commandReceiptId]) as RunOperationId;
+
+// ── B3c deterministic identities (§4.1) ────────────────────────────────────
+//
+// Every one of these names a fact that a crash-and-retry must find again
+// rather than duplicate: one claim per (Agent, generation), one inbox item per
+// (Agent, Message), one record per StoreOp, one binding per Run, one observed
+// subagent per (binding, native id). Random ids would turn each retry into a
+// second fact, which is precisely the failure §13.6 and §13.9 forbid.
+
+/** One endpoint claim per Agent per endpoint generation (§8.1). */
+export const mintAgentEndpointClaimId = (
+  agentId: string, endpointGeneration: number,
+): AgentEndpointClaimId =>
+  deterministicId('agentEndpoint', [agentId, String(endpointGeneration)]) as AgentEndpointClaimId;
+
+/** One inbox item per (Agent, Message): re-accepting the same Message is idempotent. */
+export const mintAgentInboxItemId = (
+  agentId: string, messageId: string,
+): AgentInboxItemId =>
+  deterministicId('agentInbox', [agentId, messageId]) as AgentInboxItemId;
+
+/** The digest of one StoreOp's stable logical key (§8.1). */
+export const mintMessagingStoreOpId = (operationKey: string): MessagingStoreOpId =>
+  deterministicId('messagingStoreOp', [operationKey]) as MessagingStoreOpId;
+
+/** One binding per Run: re-binding the same Run returns the same custody record. */
+export const mintTranscriptBindingId = (
+  agentRunId: string, provider: string, providerSessionId: string,
+): TranscriptBindingId =>
+  deterministicId('transcriptBinding',
+    [agentRunId, provider, providerSessionId]) as TranscriptBindingId;
+
+/** One observed subagent per (binding, provider-native id). */
+export const mintObservedSubagentId = (
+  bindingId: string, providerNativeId: string,
+): ObservedSubagentId =>
+  deterministicId('observedSubagent', [bindingId, providerNativeId]) as ObservedSubagentId;
+
+/** One receipt per cutover target root (§18.1): a resumed boot finds its own. */
+export const mintStoreRouteCutoverId = (dataRoot: string): StoreRouteCutoverId =>
+  deterministicId('storeRouteCutover', [dataRoot]) as StoreRouteCutoverId;
 export const mintTraceCorrelationId = (): TraceCorrelationId => `trace_${randomUUID()}` as TraceCorrelationId;
 export const nowIsoUtc = (): IsoUtc => new Date().toISOString() as IsoUtc;
 

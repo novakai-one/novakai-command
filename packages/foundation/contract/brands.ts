@@ -61,6 +61,14 @@ export const OBJECT_KINDS = [
   'supervisionAssignment',  // DEC-B3V4-07: runtime-owned reassignable supervision
   'treeMutationFence',      // DEC-B3V4-11: runtime-owned stop-tree fence
   'runOperation',           // DEC-B3V4-26: runtime-owned recoverable stage journal
+  // B3c (B3V4-P2 §§8, 18.1): Messages, transcript custody, and the one receipt
+  // that lets a legacy route retire. Messaging's whole atomic StoreOp is ONE
+  // record here — Message/Thread/Delivery/acceptance/endpoint/inbox stay
+  // entities inside its payload and get no file of their own (§18.1).
+  'messagingStoreOp',   // DEC-B3V4-33: messaging-owned atomic operation journal
+  'transcriptBinding',  // DEC-B3V4-24: transcript-owned Run↔source custody
+  'observedSubagent',   // DEC-B3V4-18: transcript-owned observed native subagent
+  'storeRouteCutover',  // DEC-B3V4-25: foundation-bootstrap-only cutover receipt
   'quarantine',
   'token',
   'trace',

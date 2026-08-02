@@ -54,6 +54,11 @@ const EXPECTED: ReadonlyArray<readonly [ObjectKind, string, CapabilityId]> = [
   ['supervisionAssignment', 'supervisionAssignments.jsonl', 'agent-runtime'],
   ['treeMutationFence', 'treeMutationFences.jsonl', 'agent-runtime'],
   ['runOperation', 'runOperations.jsonl', 'agent-runtime'],
+  // ── B3c additions ──────────────────────────────────────────────────────
+  ['messagingStoreOp', 'messagingStoreOps.jsonl', 'messaging'],
+  ['transcriptBinding', 'transcriptBindings.jsonl', 'transcript'],
+  ['observedSubagent', 'observedSubagents.jsonl', 'transcript'],
+  ['storeRouteCutover', 'storeRouteCutovers.jsonl', 'foundation'],
 ];
 
 /** The three named special cases §18.1 allows to sit outside the ordinary path. */
@@ -95,10 +100,12 @@ test('manifest equality: OBJECT_KINDS, KIND_FILES and RECORD_KINDS agree', () =>
   }
 });
 
-test('every B3a kind round-trips through its owning scoped handle', async () => {
+test('every B3a/B3c kind round-trips through its owning scoped handle', async () => {
   const root = mkdtempSync(path.join(tmpdir(), 'nvk-b3a-registry-'));
   try {
-    const b3a = EXPECTED.filter(([kind]) => B3A_KINDS.has(kind));
+    const b3a = EXPECTED.filter(
+      ([kind]) => B3A_KINDS.has(kind) || B3C_KINDS.has(kind),
+    );
     for (const [kind, file, capability] of b3a) {
       const handle = composeHandle({
         root, capability, allowedKinds: [kind], principal: 'sys_foundation',
@@ -125,6 +132,13 @@ test('a B3a kind is refused through every foreign handle', async () => {
       ['terminal', 'terminalSession', 'runtimeEpoch'],
       ['agent-runtime', 'runtimeEpoch', 'terminalSession'],
       ['terminal', 'terminalSession', 'commandReceipt'],
+      // B3c: Messaging owns its StoreOp journal; Transcript owns custody. The
+      // one thing red gate 18 forbids is either reaching into the other.
+      ['transcript', 'transcriptBinding', 'messagingStoreOp'],
+      ['messaging', 'messagingStoreOp', 'transcriptBinding'],
+      ['messaging', 'messagingStoreOp', 'observedSubagent'],
+      // The cutover receipt is Foundation-bootstrap-only (§18.1).
+      ['messaging', 'messagingStoreOp', 'storeRouteCutover'],
     ];
     for (const [capability, granted, forbidden] of cases) {
       const handle = composeHandle({
@@ -146,4 +160,8 @@ test('a B3a kind is refused through every foreign handle', async () => {
 const B3A_KINDS = new Set<string>([
   'runtimeEpoch', 'commandReceipt', 'terminalSession',
   'controllerAttachment', 'terminalInputLease', 'terminalInputAttempt',
+]);
+
+const B3C_KINDS = new Set<string>([
+  'messagingStoreOp', 'transcriptBinding', 'observedSubagent', 'storeRouteCutover',
 ]);
