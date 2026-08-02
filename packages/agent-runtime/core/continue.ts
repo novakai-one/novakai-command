@@ -24,7 +24,9 @@ import { recoveryRequired, runFinal, type Persisted } from './runs-store.js';
 import { advance, compensate, openOperation } from './journal.js';
 import { runSkillsGate } from './gate.js';
 import { startReplacement, type ContinuationWork } from './continue-launch.js';
-import { drainOldEndpoint, transferEndpoint, type DrainedEndpoint } from './spawn-b3c.js';
+import {
+  bindContinuedTranscript, drainOldEndpoint, transferEndpoint, type DrainedEndpoint,
+} from './spawn-b3c.js';
 import { closeRun } from './lifecycle.js';
 import { insideClosingTree, treeClosing } from './stop-tree.js';
 
@@ -214,6 +216,27 @@ async function performContinuation(
   });
   if (!transferred.ok) return transferred;
   operation = transferred.value;
+
+  // §13.6's transcript half. The replacement is a NEW provider context with a
+  // new ProviderSession, so its custody cannot be the retired Run's — that
+  // binding names the retired Run's file. The ladder drained, finalised and
+  // transferred and never bound, so a continued Agent's LIVE Run had no
+  // transcript binding at all while its RETIRED Run's read back perfectly.
+  // The Agent record is where the root human lives, which is what resolves the
+  // Thread. Read, never assumed from the caller: a continuation ordered by a
+  // supervising Agent must land in the same conversation as the spawn Chris
+  // ordered, not in a second one keyed on the supervisor.
+  const agentRecord = await core.agents.getAgent(context.principal, work.input.agentId);
+  if (!agentRecord.ok) return agentRecord;
+  const custody = await bindContinuedTranscript(core, {
+    agentRun: started.value.agentRun,
+    agentId: work.input.agentId,
+    provider: plan.value.provider,
+    rootHumanPrincipalId: agentRecord.value.rootHumanPrincipalId,
+    operation,
+  });
+  if (!custody.ok) return custody;
+  operation = custody.value;
 
   const ready = await patchRun(core, started.value.agentRun, {
     lifecycle: 'ready', activity: 'idle', startedAt: nowIsoUtc(),

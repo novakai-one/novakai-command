@@ -29,6 +29,12 @@ import {
 export interface B3MessagingMethodOptions {
   readonly messaging: AgentMessagingContract;
   readonly transcript: B3TranscriptContract;
+  /**
+   * Which Agent a Run belongs to, answered from durable state rather than from
+   * anything the caller sent (red gate 5). This is the join that turns "an
+   * Agent Run is connected" into "this Run may read THIS Agent".
+   */
+  readonly agentOfRun: (agentRunId: string) => Promise<string | null>;
   readonly principalFor: (session: CallerSession | undefined) => AuthenticatedPrincipal;
   readonly contextFor: (
     principal: AuthenticatedPrincipal,
@@ -103,12 +109,74 @@ export function buildB3MessagingMethods(options: B3MessagingMethodOptions): Meth
     principal: { id: 'sys_transcript', kind: 'system', verifiedScopes: [] },
   });
 
+  const denied = (what: string): B3Result<never> => b3fail(b3err('PermissionDenied',
+    `an Agent Run may not ${what}`,
+    { required: 'human', held: 'agent-run' }, false));
+
+  /**
+   * The elevation above is FOR THE HUMAN, and only the human.
+   *
+   * The server being the composition root is what makes it legitimate for Chris
+   * to ask Transcript to ingest — he is asking the root, and the root holds the
+   * authority. An Agent Run connected to the same socket inherited that
+   * sentence and therefore the authority, which is not the same thing at all:
+   * `sys_transcript` writes the mirror, and a Run that can drive it can mirror
+   * its own terminal into anyone's conversation.
+   */
+  function humanOnly<Payload, Value>(
+    validate: (payload: unknown) => B3Result<Payload>,
+    what: string,
+    perform: (
+      payload: Payload, context: CommandContext, principal: AuthenticatedPrincipal,
+    ) => Promise<B3Result<Value>>,
+  ) {
+    const inner = method<Payload, Value>(validate, perform);
+    // BEFORE the validator, deliberately. Authority does not depend on the
+    // shape of the payload, and checking it second means a caller who may not
+    // perform the operation at all is told their id is malformed — a refusal
+    // they can fix, which is the wrong answer to a question they may not ask.
+    return async (params: never, session?: CallerSession): Promise<B3Result<Value>> =>
+      options.principalFor(session).kind === 'agent-run'
+        ? denied(what)
+        : inner(params, session);
+  }
+
+  /**
+   * A read scoped to the caller's OWN Agent.
+   *
+   * `verifiedScopes: []` is set on every agent-run principal on purpose — "an
+   * Agent's authority comes from its GRANTS, never from the socket" — and then
+   * nothing read it, so a Run could enumerate any Agent's inbox, endpoint and
+   * communications by naming them. The Run→Agent join is the endpoint claim,
+   * which is Messaging's own durable record rather than anything the caller
+   * sends (red gate 5).
+   */
+  function ownAgentOnly<Payload, Value>(
+    validate: (payload: unknown) => B3Result<Payload>,
+    subjectsOf: (payload: Payload) => readonly string[],
+    perform: (
+      payload: Payload, context: CommandContext, principal: AuthenticatedPrincipal,
+    ) => Promise<B3Result<Value>>,
+  ) {
+    return method<Payload, Value>(validate, async (payload, context, principal) => {
+      if (principal.kind !== 'agent-run') return perform(payload, context, principal);
+      const own = await options.agentOfRun(principal.agentRunId ?? '');
+      const subjects = subjectsOf(payload);
+      if (own === null || !subjects.every((subject) => subject === own)) {
+        return denied('read another Agent');
+      }
+      return perform(payload, context, principal);
+    });
+  }
+
   return {
     // --- §16.2, exactly these names -----------------------------------------
     'b3.messaging.sendAgent': method(readSendAgentMessageInput,
       (payload, context) => messaging.sendAgentMessage(context, payload)),
 
-    'b3.messaging.listAgentCommunications': method(readListAgentCommunicationsInput,
+    'b3.messaging.listAgentCommunications': ownAgentOnly(
+      readListAgentCommunicationsInput,
+      (payload) => payload.agentIds,
       (payload, _context, principal) => messaging.listAgentCommunications(principal, payload)),
 
     'b3.messaging.openConversation': method(readOpenConversationInput,
@@ -121,7 +189,8 @@ export function buildB3MessagingMethods(options: B3MessagingMethodOptions): Meth
     'b3.transcript.listObservedSubagents': method(readListObservedSubagentsInput,
       (payload, _context, principal) => transcript.listObservedSubagents(principal, payload)),
 
-    'b3.transcript.promoteObservedSubagent': method(readPromoteObservedSubagentInput,
+    'b3.transcript.promoteObservedSubagent': humanOnly(readPromoteObservedSubagentInput,
+      'promote an observed subagent',
       (payload, context) =>
         transcript.promoteObservedSubagent(transcriptSystem(context), payload)),
 
@@ -135,14 +204,23 @@ export function buildB3MessagingMethods(options: B3MessagingMethodOptions): Meth
     'b3.messaging.ensureGroupThread': method(readEnsureGroupThreadInput,
       (payload, context) => messaging.ensureGroupThread(context, payload)),
 
-    'b3.messaging.listAgentInbox': method(readListAgentInboxInput,
+    'b3.messaging.listAgentInbox': ownAgentOnly(
+      readListAgentInboxInput,
+      (payload) => [payload.agentId],
       (payload, _context, principal) => messaging.listAgentInbox(principal, payload)),
 
-    'b3.messaging.getAgentEndpoint': method(readGetAgentEndpointInput,
+    'b3.messaging.getAgentEndpoint': ownAgentOnly(
+      readGetAgentEndpointInput,
+      (payload) => [payload.agentId],
       (payload, _context, principal) => messaging.getAgentEndpoint(principal, payload.agentId)),
 
-    'b3.messaging.listConversationViews': method(
+    // Chris's sidebar, not an Agent's. §19.2 keeps conversation views as a
+    // HUMAN's arrangement of what to look at; an Agent enumerating them learns
+    // which conversations Chris has open, which is neither its business nor
+    // anything it could act on.
+    'b3.messaging.listConversationViews': humanOnly(
       () => b3ok({}),
+      'read the conversation-view sidebar',
       (_payload, _context, principal) => messaging.listConversationViews(principal)),
 
     'b3.messaging.closeConversation': method(readThreadIdInput,
@@ -150,7 +228,8 @@ export function buildB3MessagingMethods(options: B3MessagingMethodOptions): Meth
 
     // Makes the quarantine and mirror suites drivable from outside without
     // touching a provider file (§27, surface #5).
-    'b3.transcript.ingest': method(readIngestTranscriptSourceInput,
+    'b3.transcript.ingest': humanOnly(readIngestTranscriptSourceInput,
+      'drive the transcript mirror',
       (payload, context) =>
         transcript.ingestTranscriptSource(transcriptSystem(context), payload)),
   };

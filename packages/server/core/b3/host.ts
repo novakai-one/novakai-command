@@ -126,6 +126,16 @@ export async function startRuntimeHost(
     ...buildB3MessagingMethods({
       messaging: runtime.messaging,
       transcript: runtime.transcript,
+      // The Run→Agent join, read from the Runtime's own records. An Agent Run
+      // may read ITS Agent and no other, and this is how the wire finds out
+      // which one that is without believing anything the caller said.
+      agentOfRun: async (agentRunId) => {
+        const view = await runtime.runs.getAgentRun(
+          { id: 'sys_agent_runtime', kind: 'system', verifiedScopes: [] },
+          agentRunId as AgentRunId,
+        );
+        return view.ok ? view.value.agent.agentId : null;
+      },
       principalFor,
       contextFor: (principal, _session, clientOpId) => ({
         principal,

@@ -173,6 +173,48 @@ export async function bindTranscript(
   return record(core, input.operation, 'transcript-bound', 'transcript', bound.value.bindingId);
 }
 
+/**
+ * §13.6's transcript half — the continued Run's OWN custody.
+ *
+ * A continuation is a new provider context with a new ProviderSession, so it
+ * needs its own binding for exactly the reason a fresh spawn does: the mirror
+ * reads the session's file, and the superseded Run's binding names the
+ * superseded file. The continuation ladder drained, finalised and transferred
+ * and never bound, so the moment an Agent was continued its LIVE Run had no
+ * transcript custody at all — while the retired Run's binding read back
+ * perfectly, which is what made the gap easy to miss.
+ *
+ * It reuses `bindTranscript` rather than repeating it, and resolves the Thread
+ * the same way the spawn ladder does: a continuation continues a conversation,
+ * so `ensureAgentThread` returns the one the Agent already has.
+ */
+export async function bindContinuedTranscript(
+  core: RunsCore,
+  input: {
+    readonly agentRun: AgentRun;
+    readonly agentId: AgentId;
+    readonly provider: 'claude' | 'codex' | 'kimi';
+    readonly rootHumanPrincipalId: HumanPrincipalId;
+    readonly operation: RunOperation;
+  },
+): Promise<B3Result<RunOperation>> {
+  const messaging = core.messagingEndpoint;
+  if (messaging === undefined) {
+    return absent(core, input.operation, 'transcript-bound', 'transcript');
+  }
+  const thread = await messaging.ensureAgentThread({
+    agentId: input.agentId, rootHumanPrincipalId: input.rootHumanPrincipalId,
+  });
+  if (!thread.ok) return thread;
+  return bindTranscript(core, {
+    agentRun: input.agentRun,
+    agentId: input.agentId,
+    provider: input.provider,
+    threadId: thread.value.threadId,
+    operation: input.operation,
+  });
+}
+
 /** §13.5 row 10 — "Messaging activates exact claim generation; one active endpoint." */
 export async function activateEndpoint(
   core: RunsCore,

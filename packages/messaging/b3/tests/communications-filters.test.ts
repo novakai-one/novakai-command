@@ -27,14 +27,20 @@ const TERMINAL_1 = "terminalSession_019fc000-0000-7000-8000-000000000001";
 const TERMINAL_2 = "terminalSession_019fc000-0000-7000-8000-000000000002";
 
 const human: AuthenticatedPrincipal = {
-  id: "person_chris" as never, kind: "human", verifiedScopes: ["messaging.read"],
+  id: "person_chris" as never, kind: "human", verifiedScopes: [],
 };
 
-const humanCtx = { principal: human, clientOpId: "op_1" as never, contractVersion: 1 as const };
+const humanCtx = {
+  principal: human,
+  clientOpId: "op_1" as never,
+  traceId: "trace_1" as never,
+  contractVersion: 1 as const,
+};
 
 const runtimeCtx = (): SystemCommandContext<"sys_agent_runtime"> => ({
   principal: { id: "sys_agent_runtime", kind: "system", verifiedScopes: [] },
   clientOpId: `op_${String(Math.random()).slice(2)}` as never,
+  traceId: "trace_runtime" as never,
   contractVersion: 1,
 });
 

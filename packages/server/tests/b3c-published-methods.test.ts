@@ -53,6 +53,10 @@ async function rig(): Promise<Rig> {
   const table = buildB3MessagingMethods({
     messaging: host.runtime.messaging,
     transcript: host.runtime.transcript,
+    // This table's caller is always Chris, so the Run→Agent join is never
+    // consulted; it is here because the option is not optional, and an
+    // always-null answer is the honest value for "no Agent Run is calling".
+    agentOfRun: async () => null,
     principalFor: () => ({ id: 'person_chris' as never, kind: 'human', verifiedScopes: [] }),
     contextFor: (principal, _session, clientOpId) => ({
       principal, clientOpId, traceId: 'trace_x' as never, contractVersion: 1,

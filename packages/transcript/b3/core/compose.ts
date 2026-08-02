@@ -20,7 +20,9 @@ import type {
   AgentId, AgentRunId, ObservedSubagent, ObservedSubagentId, TranscriptBinding,
   TranscriptBindingId,
 } from '../contract/records.js';
-import { ingestTranscriptSource, type MessagingMirrorPort } from './mirror.js';
+import {
+  ingestTranscriptSource, type MessagingMirrorPort, type MirrorLedgerEntry,
+} from './mirror.js';
 import type { TranscriptStore } from './store.js';
 
 export interface B3TranscriptOptions {
@@ -193,6 +195,17 @@ export function composeB3Transcript(options: B3TranscriptOptions): B3TranscriptC
             expectedDigest: '', actualDigest: '',
           }, false));
       }
+      // §13.9: "the mirror watermark advances only after a durable filtered
+      // outcome or durable Message/effect result." `outcomeRefs` is that
+      // sentence as an argument — the outcomes the caller says justify the
+      // advance — and nothing read it. So an explicit promotion could push a
+      // healthy binding's watermark to any string, and every source position it
+      // skipped would never be read again: turns lost silently, with nothing
+      // afterwards saying a gap exists. `outcomeRefs: []` is the claim "nothing
+      // justifies this", and it was the shape every caller happened to pass.
+      const justified = await outcomesFor(store, binding.id, input);
+      if (!justified.ok) return justified;
+
       return announce(await store.update<TranscriptBinding>(binding.id, {
         mirrorWatermark: input.nextWatermark,
       }, binding.recordVersion, keyFor(`watermark:${binding.id}:${input.nextWatermark}`)),
@@ -286,6 +299,54 @@ export function composeB3Transcript(options: B3TranscriptOptions): B3TranscriptC
       return b3ok({ items: items.slice(0, input.limit) });
     },
   };
+}
+
+/**
+ * §13.9's precondition, checked: does something DURABLE justify this advance?
+ *
+ * Each ref must resolve to a mirror ledger entry — the record the ingest writes
+ * for one source position, carrying `mirrored` or `filtered` — and it must
+ * belong to THIS binding. One of them must cover `nextWatermark` itself, which
+ * is the whole point: the watermark may only come to rest on a position whose
+ * outcome is on disk.
+ *
+ * A ref belonging to another binding is refused rather than ignored. Ignoring
+ * it would let a caller pad a legitimate list with someone else's outcomes and
+ * learn nothing about why it worked.
+ */
+async function outcomesFor(
+  store: TranscriptStore,
+  bindingId: TranscriptBindingId,
+  input: PromoteMirrorWatermarkInput,
+): Promise<B3Result<null>> {
+  const invalid = (message: string, path: string): B3Result<never> =>
+    b3fail(b3err('ValidationFailed', message, { issues: [{ path, message }] }, false));
+
+  if (input.outcomeRefs.length === 0) {
+    return invalid(
+      'a watermark advance must name the durable outcomes that justify it (§13.9)',
+      'outcomeRefs',
+    );
+  }
+  let coversTarget = false;
+  for (const ref of input.outcomeRefs) {
+    const found = await store.read<MirrorLedgerEntry>('transcriptLine', ref as never);
+    if (!found.ok) return found;
+    if (found.value === null) {
+      return invalid(`outcome ${ref} does not exist`, 'outcomeRefs');
+    }
+    if (found.value.bindingId !== bindingId) {
+      return invalid(`outcome ${ref} belongs to another binding`, 'outcomeRefs');
+    }
+    if (found.value.sourcePosition === input.nextWatermark) coversTarget = true;
+  }
+  if (!coversTarget) {
+    return invalid(
+      `no named outcome covers position ${input.nextWatermark}`,
+      'nextWatermark',
+    );
+  }
+  return b3ok(null);
 }
 
 /**

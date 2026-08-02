@@ -255,7 +255,11 @@ test('a continuation journals the drain order §13.6 requires', async () => {
       'old-run-fenced', 'old-endpoint-drained', 'old-transcript-finalised',
       'old-usage-finalised', 'run-reserved', 'terminal-live',
       'provider-session-recorded', 'skills-gate-prompt-sent', 'skills-gate-confirmed',
-      'supervised-work-released', 'endpoint-transferred', 'run-ready',
+      // The replacement's OWN custody, after the claim moves and before the Run
+      // is called ready. It was missing entirely: a continued Agent's live Run
+      // had no TranscriptBinding, so nothing could mirror a turn it spoke, while
+      // the retired Run's binding read back perfectly (exam B5).
+      'supervised-work-released', 'endpoint-transferred', 'transcript-bound', 'run-ready',
     ], 'the old Run must be fenced and drained BEFORE the replacement starts, and '
       + 'the replacement must pass its own gate before it is called ready');
   });
