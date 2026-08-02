@@ -4,6 +4,7 @@ import type {
   ProviderUsageEvidenceCommittedEvent,
   ProviderUsageMeasurement,
 } from '../contract/index.js';
+import type { SafeBoundaryStatusTurnRequest } from '../contract/testkit/index.js';
 
 /** Frozen usage event fixture shared by the usage seam pair. */
 export function usageEvidenceEvent(
@@ -33,6 +34,23 @@ export function usageEvidenceEvent(
       source: 'provider-meter',
       sourceCursor: 'usage-cursor-1',
       measurement,
+    },
+  };
+}
+
+/** Queued drift request: no submitted/reply timestamps exist before Runtime acts. */
+export function queuedDriftStatusTurn(): SafeBoundaryStatusTurnRequest {
+  return {
+    agentRunId: 'agentRun_018f0f8a-4f7b-7abc-8def-0123456789ab' as never,
+    watchDeadlineId: `watchDeadline_${'c'.repeat(52)}` as never,
+    expectedDeadlineRecordVersion: 4 as never,
+    prompt: 'Status check: reply with one line — what are you working on right now?',
+    status: {
+      episodeId: `driftEpisode_${'d'.repeat(52)}` as never,
+      effectKey: 'drift-status:episode-1',
+      notificationId: `notification_${'e'.repeat(52)}` as never,
+      state: 'queued',
+      requestedAt: '2026-08-02T00:02:00.000Z' as never,
     },
   };
 }
