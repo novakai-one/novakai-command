@@ -28,11 +28,7 @@ import { agentsPort, createRunCredentials, terminalPort } from './run-ports.js';
 import { createProviderPort } from './provider-port.js';
 import { composeB3Messaging, composeB3TranscriptFor } from './messaging-composition.js';
 import { messagingEndpointPort, transcriptCustodyPort } from './b3c-ports.js';
-import { LEGACY_MESSAGING_STORE } from './cutover-report.js';
-import {
-  checkMessagingStoreRoute, readMessagingCutoverReceipt, runMessagingCutover,
-} from '../../../messaging/b3/contract/index.js';
-import { surveyStoreRoute } from '@novakai/foundation/contract';
+import { gateStoreRoute } from '../store-route.js';
 import type { AgentMessagingContract } from '../../../messaging/b3/contract/index.js';
 import {
   createProviderFileLocator, createProviderFileSource, defaultProviderHomes,
@@ -132,59 +128,6 @@ function terminalAsRecoverable(terminal: TerminalContract): RecoverableCapabilit
       return stopped.ok ? b3ok(null) : stopped;
     },
   };
-}
-
-/**
- * §18.1 steps 1–7, before a single canonical handle opens.
- *
- * "Deployment first stops every old Server process... no old handle may remain
- * reachable", then the fenced copy, then dispatch. The helper shipped tested
- * and unreachable: nothing in the boot path called it, so canonical dispatch
- * could open and write beside a legacy journal — the two-writers-one-invisible
- * case the conflict rule exists to prevent.
- *
- * This runs FIRST, before Foundation opens anything else under this root, and
- * it throws rather than returning: a Runtime that came up after a route
- * conflict would be a Runtime writing to a route nobody proved is current.
- */
-async function gateStoreRoute(root: string, dataRoot: string): Promise<void> {
-  const legacyStorePath = path.join(root, LEGACY_MESSAGING_STORE);
-
-  // §18.1 step 3: the legacy root for THIS cutover is `.novakai` itself — the
-  // B1 Foundation files sitting flat beside the new `stores/` directory —
-  // stated explicitly rather than left to Foundation's sibling
-  // `.novakai-command` default. That default is a different migration; relying
-  // on it here migrated nothing, because a B1 root has no sibling.
-  const survey = surveyStoreRoute({ dataRoot, legacyRoot: root });
-
-  // §18.1's last paragraph, before anything is read or written: canonical and
-  // legacy both present with no receipt is a blocked boot, not a preference.
-  // Foundation's new-root-first fallback would otherwise serve the canonical
-  // file and never mention that the legacy one may hold newer truth.
-  const sealed = await readMessagingCutoverReceipt({ root, dataRoot, legacyStorePath });
-  if (sealed === null && survey.conflicting.length > 0) {
-    throw new Error('StoreRouteConflict: '
-      + `${survey.conflicting.join(', ')} exist on both the canonical and the legacy `
-      + 'route with no cutover receipt');
-  }
-
-  const cutoverInput = {
-    root,
-    dataRoot,
-    legacyStorePath,
-    copy: { legacyRoot: root, kinds: survey.migratable },
-  };
-
-  const route = await checkMessagingStoreRoute(cutoverInput);
-  if (!route.ok) {
-    throw new Error(`${route.error.code}: ${route.error.message}`);
-  }
-  if (route.value === 'clear' && survey.migratable.length === 0) return;
-
-  const migrated = await runMessagingCutover(cutoverInput);
-  if (!migrated.ok) {
-    throw new Error(`${migrated.error.code}: ${migrated.error.message}`);
-  }
 }
 
 export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Runtime> {

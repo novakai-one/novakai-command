@@ -20,6 +20,7 @@ import {
   DEFAULT_SUPERVISION, PROVIDER_NAMES, configKeyOf,
   type ConfigObject, type ProviderName, type ProviderSettings, type ServerConfig,
 } from '../../contract/config.js';
+import { gateStoreRoute } from '../store-route.js';
 
 const ok = <T>(value: T): Result<T, never> => ({ ok: true, value });
 const fail = <E>(error: E): Result<never, E> => ({ ok: false, error });
@@ -163,6 +164,12 @@ export async function openConfigStore(
   options: OpenConfigStoreOptions,
 ): Promise<Result<ConfigStore, StoreError>> {
   const dataRoot = options.dataRoot ?? path.join(options.root, 'stores');
+  // §18.1: the cutover runs before ANY handle opens under the root, and this is
+  // routinely the first one — `nvk token mint` is offline and has to precede
+  // the Runtime. An explicit `dataRoot` means the caller is deliberately naming
+  // a route (a test seeding a legacy shape, the doctor reading one), so it is
+  // not the canonical open the gate is about.
+  if (options.dataRoot === undefined) await gateStoreRoute(options.root, dataRoot);
   const handle = composeHandle({
     root: options.root,
     dataRoot,
