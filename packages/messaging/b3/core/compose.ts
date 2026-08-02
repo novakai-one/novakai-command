@@ -46,6 +46,8 @@ export interface AgentMessagingOptions {
    * keeps red gate 12 trivially true.
    */
   readonly conversationViews?: ConversationViewPort;
+  /** Who exists. Absent means this host cannot check, and says so by not checking. */
+  readonly agents?: AgentDirectoryPort;
   /**
    * Where §15's committed facts go. Messaging owns the facts; the composition
    * root owns the stream, so a consumer holds ONE cursor across every
@@ -57,6 +59,22 @@ export interface AgentMessagingOptions {
 export type CapabilityEventEmitter = (
   kind: string, payload: Readonly<Record<string, unknown>>,
 ) => void;
+
+/**
+ * "Does this Agent exist?", and nothing else.
+ *
+ * Messaging does not own Agent identity and must not start (§3.3), so it ASKS.
+ * Optional because a standalone Messaging host has no Agents capability at all
+ * — and a host that cannot ask cannot refuse, which is honest. Every composed
+ * Novakai host supplies one.
+ *
+ * Without it, `nvk agent message <unknown-agent> --text x` returned exit 0,
+ * ok:true, `queued-for-agent`, and wrote a durable inbox item addressed to an
+ * Agent that has never existed.
+ */
+export interface AgentDirectoryPort {
+  exists(agentId: AgentId): Promise<boolean>;
+}
 
 /** The Shell-owned sidebar, seen through the narrowest possible door. */
 export interface ConversationViewPort {
@@ -119,6 +137,16 @@ export function composeAgentMessaging(options: AgentMessagingOptions): AgentMess
   return {
     // --- §12.5 send ---------------------------------------------------------
     async sendAgentMessage(context: CommandContext, input: SendAgentMessageInput) {
+      // BEFORE the commit, because §8.1 accepts to a durable inbox first and
+      // there is no undo. An Agent that does not exist cannot read an inbox, so
+      // "accepted and queued" would be a lie the store then keeps forever.
+      const target = input.target.kind === "agent"
+        ? input.target.agentId : null;
+      if (target !== null && options.agents !== undefined
+        && !await options.agents.exists(target)) {
+        return b3fail(b3err("UnknownAgent", `no Agent ${target}`,
+          { agentId: target }, false));
+      }
       const sent = await sendAgentMessage({ store, clock }, context, input);
       // The inbox item is committed INSIDE the acceptance transaction, not
       // through a later transition — so without this the durable inbox would

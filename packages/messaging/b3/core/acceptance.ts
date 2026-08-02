@@ -35,6 +35,18 @@ export interface AcceptanceDraft {
   readonly threadId: ThreadId;
   readonly text: string;
   readonly clientMessageId: string;
+  /**
+   * The endpoint identity this Message CAME FROM, when it came from one.
+   *
+   * §24.6: "origin loopback does not return to the same endpoint." That is made
+   * structural here — no Delivery is built for this identity at all — rather
+   * than checked downstream. It was implemented as `recipients: [senderId]`,
+   * and every recipient becomes a pending Delivery, so every turn an Agent
+   * spoke carried a pending Delivery addressed back to its own terminal. The
+   * shipped test looked only for an AgentInboxItem, which is precisely the
+   * shortcut it was testing.
+   */
+  readonly originIdentity?: PersonId;
   /** Absent for a Message nobody has to deliver into a terminal (a mirror). */
   readonly inboxFor?: {
     readonly agentId: AgentId;
@@ -74,7 +86,13 @@ export function buildAcceptance(clock: ClockIds, draft: AcceptanceDraft): Accept
     messageId,
     recipients: [...draft.recipients],
   };
-  const deliveries: Delivery[] = draft.recipients.map((recipientId) => ({
+  // A recipient that IS the origin gets no Delivery. Not filtered later, not
+  // marked undeliverable — never built, so there is nothing to pull, attempt,
+  // or emit an effect for.
+  const deliverable = draft.recipients.filter(
+    (recipientId) => recipientId !== draft.originIdentity,
+  );
+  const deliveries: Delivery[] = deliverable.map((recipientId) => ({
     id: clock.newId("delivery"),
     kind: "delivery",
     schemaVersion,

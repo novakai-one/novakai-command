@@ -236,9 +236,19 @@ async function guardWrite(
   const live = core.live.lookup(input.terminalSessionId);
   const expected = live?.nextInputSequence ?? FIRST_INPUT_SEQUENCE;
   if (input.expectedNextInputSequence !== expected) {
+    // `expected`/`actual` follow Foundation's CAS convention — `expected` is
+    // what the CALLER claimed — which reads backwards to anyone RECOVERING from
+    // the conflict. `expectedNextInputSequence` is named after the request
+    // field it belongs in, so a client has nothing to guess and no convention
+    // to know: send this value back.
     return b3fail(b3err('VersionConflict',
       'the input stream moved on before this write',
-      { objectId: input.terminalSessionId, expected: input.expectedNextInputSequence, actual: expected },
+      {
+        objectId: input.terminalSessionId,
+        expected: input.expectedNextInputSequence,
+        actual: expected,
+        expectedNextInputSequence: expected,
+      },
       true));
   }
   return b3ok(null);

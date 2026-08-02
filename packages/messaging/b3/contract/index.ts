@@ -11,7 +11,8 @@ export * from './api.js';
 export * from './records.js';
 export {
   composeAgentMessaging, createMemoryConversationViews,
-  type AgentMessagingOptions, type CapabilityEventEmitter, type ConversationViewPort,
+  type AgentDirectoryPort, type AgentMessagingOptions, type CapabilityEventEmitter,
+  type ConversationViewPort,
 } from '../core/compose.js';
 export {
   openFoundationMessagingStore,

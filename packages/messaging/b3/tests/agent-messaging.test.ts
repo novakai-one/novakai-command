@@ -53,9 +53,14 @@ const transcriptCtx = (): SystemCommandContext<"sys_transcript"> => ({
   contractVersion: 1,
 });
 
+/** The store behind the last `messaging()`, so a test can read what was committed. */
+let lastStore: ReturnType<typeof createMemoryStore> | null = null;
+
 function messaging(): AgentMessagingContract {
+  const store = createMemoryStore(createSeededClock({ seed: "b3c" }));
+  lastStore = store;
   return composeAgentMessaging({
-    store: createMemoryStore(createSeededClock({ seed: "b3c" })),
+    store,
     clock: createSeededClock({ seed: "b3c" }),
   });
 }
@@ -253,7 +258,37 @@ test("a terminal-originated Message never routes back into its own endpoint", as
 
   const inbox = await api.listAgentInbox(human, { agentId: AGENT_A });
   assert.equal(inbox.ok && inbox.value.items.length, 0);
+
+  // "No inbox item" was the whole of this test, and it exactly matched the
+  // implementation shortcut. §24.6 says "origin loopback does not return to the
+  // same endpoint" — NO route back, not one route back that happens to be
+  // unused. So the Delivery is what has to be checked: a pending Delivery
+  // addressed to the origin is pullable, attemptable, and emits delivery
+  // effects at whatever wires them next.
+  const deliveries = await deliveriesOf(api, mirrored.value.messageId);
+  assert.equal(deliveries.length, 0,
+    `the mirrored Message carries ${String(deliveries.length)} Delivery(s), and its `
+    + "own origin is the recipient — a route straight back into the endpoint it came from");
+
+  // The control: an INBOUND Message to the same Agent does get a Delivery, so
+  // the assertion above is about loopback and not about deliveries being off.
+  const inbound = await api.sendAgentMessage(ctx(), {
+    target: { kind: "agent", agentId: AGENT_A },
+    threadId: threadId as never, text: "from Chris", clientMessageId: "cmid-inbound",
+  });
+  assert.equal(inbound.ok, true);
+  if (!inbound.ok) return;
+  assert.equal((await deliveriesOf(api, inbound.value.messageId)).length, 1,
+    "an inbound Message lost its Delivery too, so the loopback check proves nothing");
 });
+
+/** Every Delivery the store actually holds for a Message. */
+async function deliveriesOf(
+  _api: ReturnType<typeof messaging>, messageId: string,
+): Promise<readonly { recipientId: string }[]> {
+  const found = await lastStore!.getDeliveries(messageId as never);
+  return found.kind === "ok" ? found.value : [];
+}
 
 test("the same transcript turn mirrors exactly once, however often it replays", async () => {
   const api = messaging();

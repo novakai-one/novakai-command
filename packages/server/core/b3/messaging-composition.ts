@@ -6,7 +6,8 @@
 import { b3ok } from '@novakai/foundation/contract';
 import {
   composeAgentMessaging, createSystemClock, openFoundationMessagingStore,
-  type AgentId, type AgentMessagingContract, type MessagingStore,
+  type AgentDirectoryPort, type AgentId, type AgentMessagingContract,
+  type MessagingStore,
 } from '../../../messaging/b3/contract/index.js';
 import {
   composeB3Transcript, createTranscriptStore,
@@ -22,6 +23,11 @@ export interface B3MessagingCompositionOptions {
   readonly root: string;
   readonly dataRoot: string;
   readonly emit: CapabilityEmit;
+  /**
+   * Who exists. Messaging does not own Agent identity (§3.3) and refuses a send
+   * to an unknown Agent by ASKING, so the composition root supplies the answer.
+   */
+  readonly agents: AgentDirectoryPort;
 }
 
 export interface ComposedMessaging {
@@ -44,7 +50,9 @@ export async function composeB3Messaging(
   const store = await openFoundationMessagingStore(clock, {
     root: options.root, dataRoot: options.dataRoot,
   });
-  const capability = composeAgentMessaging({ store, clock, emit: options.emit });
+  const capability = composeAgentMessaging({
+    store, clock, emit: options.emit, agents: options.agents,
+  });
   return { ...capability, store };
 }
 

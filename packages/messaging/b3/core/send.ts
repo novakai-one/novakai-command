@@ -167,11 +167,13 @@ export async function commitTerminalOriginatedMessage(
   const clientMessageId = `mirror:${input.turn.transcriptLineId}`;
   const built = buildAcceptance(clock, {
     senderId,
-    // No recipient inbox at all — this is the loopback rule made
-    // structural rather than checked. There is no inbox item to deliver,
-    // so there is nothing that could be typed back into the endpoint the
-    // turn came from.
+    // The Agent is on the recipient snapshot because it IS a participant in
+    // this conversation — dropping it there would make the Message look like
+    // it belonged to nobody. What it does not get is a Delivery: `originIdentity`
+    // means "this identity is where the Message came from", and no Delivery,
+    // attempt or effect is ever built for it. §24.6's loopback rule, structural.
     recipients: [senderId],
+    originIdentity: senderId,
     threadId: input.threadId,
     text: input.turn.text,
     clientMessageId,

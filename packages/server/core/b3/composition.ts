@@ -257,7 +257,20 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
   // and §13.6 transfers one. It shipped composed after, so those rungs could
   // only ever be recorded `not-needed` — which is exactly what they were.
   const messaging = await composeB3Messaging({
-    root: options.root, dataRoot, emit: emit('messaging'),
+    root: options.root,
+    dataRoot,
+    emit: emit('messaging'),
+    // Agents owns identity; Messaging asks. This is the whole port: one
+    // question, answered by the capability that can answer it.
+    agents: {
+      async exists(agentId) {
+        const found = await agents.getAgent(
+          { id: 'sys_messaging', kind: 'system', verifiedScopes: [] },
+          agentId as never,
+        );
+        return found.ok;
+      },
+    },
   });
 
   runs = composeAgentRuns({

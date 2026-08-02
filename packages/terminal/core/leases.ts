@@ -99,14 +99,36 @@ export function leaseBusyError(lease: TerminalInputLease): B3ContractError {
     }, true);
 }
 
+/**
+ * A lease conflict a client can actually act on.
+ *
+ * This is typed and named as a recoverable condition, which is a promise: a
+ * caller that reads it and does what it says gets through. It was not keeping
+ * that promise. With no lease held it advertised `actual: 0`, and
+ * `readWriteTerminalInput` refuses `leaseGeneration: 0` as a validation error —
+ * so a client that trusted the answer had no legal value to send, ever. Two
+ * changes make the loop unwinnable to enter rather than to leave:
+ *
+ *   - `actual` is `null` when there is no live lease. Zero is not a generation;
+ *     advertising it as one invited exactly the retry the validator rejects.
+ *   - `nextAction` says what to DO. When the generation moved, the client may
+ *     retry with the one named; when nobody holds the lease there is nothing to
+ *     retry with and the answer is `acquire-lease`.
+ */
 export function generationChangedError(
   expectedGeneration: LeaseGeneration | undefined,
   actualGeneration: LeaseGeneration | 0,
   reason: LeaseEndedReason | 'not-holder' | 'no-active-lease',
 ): B3ContractError {
+  const held = actualGeneration === 0 ? null : actualGeneration;
   return b3err('InputLeaseGenerationChanged',
     `the input lease is no longer generation ${String(expectedGeneration ?? 'unknown')} (${reason})`,
-    { expected: expectedGeneration ?? null, actual: actualGeneration, reason }, false);
+    {
+      expected: expectedGeneration ?? null,
+      actual: held,
+      reason,
+      nextAction: held === null ? 'acquire-lease' : 'retry-with-actual-generation',
+    }, false);
 }
 
 export function ttlIssues(ttlMs: number): { path: string; message: string }[] {
