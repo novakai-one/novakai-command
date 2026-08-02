@@ -1,8 +1,10 @@
 import type {
   NotificationEvent,
   Notification,
+  InstallRunWatchersInput,
   ProviderUsageEvidenceCommittedEvent,
   ProviderUsageMeasurement,
+  WatchRule,
 } from '../contract/index.js';
 import type { SafeBoundaryStatusTurnRequest } from '../contract/testkit/index.js';
 
@@ -36,6 +38,34 @@ export function usageEvidenceEvent(
       measurement,
     },
   };
+}
+
+/** Two installed rules for the two required spawn templates. */
+export function installedWatchRules(
+  input: InstallRunWatchersInput,
+): readonly WatchRule[] {
+  const identifiers = [
+    'watchRule_018f0f8a-4f7b-7abc-8def-0123456789ab',
+    'watchRule_018f0f8a-4f7b-7abc-8def-0123456789ac',
+  ] as const;
+  return identifiers.map((id, index) => ({
+    id: id as never,
+    kind: 'watchRule',
+    schemaVersion: 1,
+    recordVersion: 1 as never,
+    createdAt: '2026-08-02T00:04:00.000Z' as never,
+    permissionLevel: 'team' as const,
+    createdBy: 'sys_supervision' as const,
+    lastMutation: { state: 'legacy-no-trace' as const },
+    subject: { kind: 'agent-run' as const, agentRunId: input.agentRunId },
+    condition: index === 0
+      ? { kind: 'turn-count-at-least' as const, value: 100 }
+      : { kind: 'output-tokens-at-least' as const, value: 100_000 },
+    recipient: { kind: 'human' as const, principalId: 'human_chris' as never },
+    deliveryMode: 'queue-only' as const,
+    cooldownMs: 0,
+    status: 'active' as const,
+  }));
 }
 
 /** Queued drift request: no submitted/reply timestamps exist before Runtime acts. */
