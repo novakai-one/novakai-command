@@ -25,7 +25,9 @@ import type {
 } from '../contract/ports.js';
 import type { RuntimeHostContract } from '../contract/types.js';
 import { createRunsStore, type RunsStore, type RunsStoreOptions } from './runs-store.js';
-import { OPERATION, versionGuard, type RunsCore } from './runs-context.js';
+import {
+  OPERATION, versionGuard, type RunsCore, type TranscriptBindingLookup,
+} from './runs-context.js';
 import { spawnAgent } from './spawn.js';
 import {
   beginProviderTurn, endProviderTurn, interruptAgentTurn, stopAgent,
@@ -59,6 +61,8 @@ export interface ComposeAgentRunsOptions extends RunsStoreOptions {
   readonly defaultViewport?: { readonly columns: number; readonly rows: number };
   readonly gateTimeoutMs?: number;
   readonly clock?: () => number;
+  /** §19.1's transcript section, read through Transcript's contract. */
+  readonly transcriptBinding?: TranscriptBindingLookup;
 }
 
 /** Generous, because a real model reading its skills is not instant. */
@@ -101,6 +105,8 @@ export function composeAgentRuns(options: ComposeAgentRunsOptions): AgentRunsCon
     defaultViewport: options.defaultViewport ?? MANAGED_VIEWPORT,
     gateTimeoutMs: options.gateTimeoutMs ?? DEFAULT_GATE_TIMEOUT_MS,
     clock: options.clock ?? (() => Date.now()),
+    ...(options.transcriptBinding === undefined
+      ? {} : { transcriptBinding: options.transcriptBinding }),
   };
 
   const named = (name: string): PublicOperationName => name as PublicOperationName;

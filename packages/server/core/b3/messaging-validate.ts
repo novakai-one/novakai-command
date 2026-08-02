@@ -13,17 +13,15 @@ import {
 // Foundation's AgentId here would just move the cast one call deeper.
 import type {
   AgentEndpointClaimId, AgentId, AgentInboxItem, AgentRunId,
-} from '../../../messaging/b3/contract/records.js';
-import type { ThreadId } from '../../../messaging/public/contract/index.js';
-import type {
   ConversationParticipant, EnsureDirectThreadInput, EnsureGroupThreadInput,
   ListAgentCommunicationsInput, ListAgentInboxInput, OpenConversationViewInput,
   SendAgentMessageInput,
-} from '../../../messaging/b3/contract/api.js';
+} from '../../../messaging/b3/contract/index.js';
+import type { ThreadId } from '../../../messaging/public/contract/index.js';
 import type {
-  IngestTranscriptSourceInput, ListObservedSubagentsInput, PromoteObservedSubagentInput,
-} from '../../../transcript/b3/contract/api.js';
-import type { ObservedSubagentId } from '../../../transcript/b3/contract/records.js';
+  IngestTranscriptSourceInput, ListObservedSubagentsInput, ObservedSubagentId,
+  PromoteObservedSubagentInput,
+} from '../../../transcript/b3/contract/index.js';
 
 const invalid = (path: string, message: string): B3Result<never> =>
   b3fail(b3err('ValidationFailed', `invalid input: ${path} ${message}`,

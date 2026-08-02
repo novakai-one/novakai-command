@@ -45,6 +45,7 @@ import {
 } from '../core/b3/cli-shared.js';
 import { describeControls, describeList, describeRun, describeTree } from './agent-describe.js';
 import { roleFromFile, roleIdFor } from './agent-roles.js';
+import { messageCommands } from './agent-messages.js';
 import { observeCommands } from './agent-observe.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -342,6 +343,14 @@ const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
   },
 
   ...observeCommands({ withClient, emit, usage, operationId }),
+
+  // §17.1's message/communications verbs. `personId` is how Messaging names
+  // the human at this keyboard; it is derived from the same principal the
+  // socket authenticates, never taken from a flag (red gate 5).
+  ...messageCommands({
+    withClient, emit, usage, operationId,
+    personId: `person_${(process.env['NOVAKAI_PRINCIPAL'] ?? 'chris').replace(/[^A-Za-z0-9-]/gu, '-')}`,
+  }),
 
   async operations(argFlags) {
     emit('agent operations', argFlags, await withClient<readonly RunOperationView[]>(

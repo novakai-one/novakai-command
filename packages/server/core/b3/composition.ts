@@ -27,10 +27,10 @@ import {
 import { agentsPort, createRunCredentials, terminalPort } from './run-ports.js';
 import { createProviderPort } from './provider-port.js';
 import { composeB3Messaging, composeB3TranscriptFor } from './messaging-composition.js';
-import type { AgentMessagingContract } from '../../../messaging/b3/contract/api.js';
+import type { AgentMessagingContract } from '../../../messaging/b3/contract/index.js';
 import type {
   B3TranscriptContract, TranscriptSourcePort,
-} from '../../../transcript/b3/contract/api.js';
+} from '../../../transcript/b3/contract/index.js';
 
 export interface B3RuntimeOptions {
   /** `.novakai/` root. Domain records live in `<root>/stores`. */
@@ -193,6 +193,11 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
     providers: options.providers ?? createProviderAdapters(),
   });
   const credentials = createRunCredentials(options.root);
+  // Late-bound on purpose: Transcript is composed AFTER Runs (it needs the
+  // Messaging capability, which needs the store this root opens). The closure
+  // reads whatever is wired by the time somebody asks, and answers `null`
+  // before that — which the view renders as `unbound`, not as a lie.
+  let transcript: B3TranscriptContract | null = null;
   runs = composeAgentRuns({
     root: options.root,
     dataRoot,
@@ -205,6 +210,19 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
     fence: runtime.fence,
     ...(options.publish === undefined ? {} : { publish: options.publish }),
     ...(options.gateTimeoutMs === undefined ? {} : { gateTimeoutMs: options.gateTimeoutMs }),
+    async transcriptBinding(agentRunId) {
+      if (transcript === null) return null;
+      const found = await transcript.getTranscriptBinding(
+        { id: 'sys_agent_runtime', kind: 'system', verifiedScopes: [] },
+        agentRunId,
+      );
+      if (!found.ok) return null;
+      return {
+        bindingState: found.value.sourceDiscoveryState,
+        ...(found.value.mirrorWatermark === undefined
+          ? {} : { mirrorWatermark: found.value.mirrorWatermark }),
+      };
+    },
   });
 
   // Messaging and Transcript publish their committed facts into the ONE event
@@ -219,7 +237,7 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
   const messaging = await composeB3Messaging({
     root: options.root, dataRoot, emit: emit('messaging'),
   });
-  const transcript = composeB3TranscriptFor({
+  transcript = composeB3TranscriptFor({
     root: options.root,
     dataRoot,
     messaging,

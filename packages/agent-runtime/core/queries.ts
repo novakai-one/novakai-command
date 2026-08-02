@@ -96,6 +96,9 @@ export async function viewOfRun(
   // Parentage is asked for, never cached: Agents owns it (§3.3, red gate 9).
   const parent = await core.agents.parentAgentIdOf(principal, agentRun.agentId);
   if (!parent.ok) return parent;
+  // Transcript owns this fact; the Runtime asks. A null answer is "no binding",
+  // never "no transcript" — the two are told apart in the view below.
+  const binding = (await core.transcriptBinding?.(agentRun.id)) ?? null;
 
   return b3ok({
     agent: {
@@ -126,6 +129,16 @@ export async function viewOfRun(
     },
     // Named absence, not zero. B3d is where usage becomes a number.
     usage: { quality: 'unavailable', reason: 'per-Run usage arrives in B3d' },
+    // §19.1: where this Run's transcript is, in the same four words Transcript
+    // uses. `unbound` is the fifth: nobody has bound this Run at all, which is
+    // a different fact from a file that is missing.
+    transcript: binding === null
+      ? { bindingState: 'unbound' as const }
+      : {
+          bindingState: binding.bindingState,
+          ...(binding.mirrorWatermark === undefined
+            ? {} : { mirrorWatermark: binding.mirrorWatermark }),
+        },
     [RUN_FIELD]: agentRun,
   } as AgentRunView);
 }

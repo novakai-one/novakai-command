@@ -53,6 +53,16 @@ const BY_CODE: Readonly<Record<string, number>> = {
   Backpressure: EXIT.retryable,
   RecoveryRequired: EXIT.recovery,
   InputSubmittedUnconfirmed: EXIT.recovery,
+  // B3c. The endpoint conflicts are retryable because the SAME request with
+  // the same key is safe once the generation settles; `ExactRunEndpointClosed`
+  // is not — that Run will never accept another Message, so a retry is a
+  // changed decision. `TranscriptCorrupt` needs a human to look at a
+  // quarantine, which is exactly what exit 6 means.
+  EndpointClaimConflict: EXIT.conflict,
+  ExactRunEndpointClosed: EXIT.conflict,
+  TranscriptSourceUnavailable: EXIT.retryable,
+  TranscriptCorrupt: EXIT.recovery,
+  CursorExpired: EXIT.recovery,
 };
 
 export function exitCodeFor(error: B3ContractError): number {

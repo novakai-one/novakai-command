@@ -4,18 +4,15 @@
 // endpoint — it holds the two capability contracts and the ONE narrow port
 // between them, which is the only place Transcript and Messaging meet.
 import { b3ok } from '@novakai/foundation/contract';
-import { createSystemClock } from '../../../messaging/adapters/clock-system.js';
-import { openFoundationMessagingStore } from '../../../messaging/b3/adapters/store-foundation.js';
-import { composeAgentMessaging } from '../../../messaging/b3/core/compose.js';
-import type { AgentMessagingContract } from '../../../messaging/b3/contract/api.js';
-import type { MessagingStore } from '../../../messaging/seams/store.js';
-import { composeB3Transcript } from '../../../transcript/b3/core/compose.js';
-import { createTranscriptStore } from '../../../transcript/b3/core/store.js';
-import type {
-  B3TranscriptContract, SourceReadOutcome, TranscriptSourcePort,
-} from '../../../transcript/b3/contract/api.js';
-import type { MessagingMirrorPort } from '../../../transcript/b3/core/mirror.js';
-import type { AgentId } from '../../../messaging/b3/contract/records.js';
+import {
+  composeAgentMessaging, createSystemClock, openFoundationMessagingStore,
+  type AgentId, type AgentMessagingContract, type MessagingStore,
+} from '../../../messaging/b3/contract/index.js';
+import {
+  composeB3Transcript, createTranscriptStore,
+  type B3TranscriptContract, type MessagingMirrorPort, type SourceReadOutcome,
+  type TranscriptSourcePort,
+} from '../../../transcript/b3/contract/index.js';
 
 export type CapabilityEmit = (
   kind: string, payload: Readonly<Record<string, unknown>>,

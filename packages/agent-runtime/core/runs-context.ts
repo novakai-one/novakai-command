@@ -14,6 +14,18 @@ import {
 } from '../contract/runs.js';
 import type { RunsStore, Persisted } from './runs-store.js';
 
+/**
+ * What Agent Runtime may ask Transcript about a Run (§19.1).
+ *
+ * A read, through a contract, of a fact Transcript owns — never a store
+ * access. Optional because a host with no Transcript wired is a legitimate
+ * configuration, and the view says `unbound` rather than inventing a state.
+ */
+export type TranscriptBindingLookup = (agentRunId: AgentRunId) => Promise<{
+  readonly bindingState: 'bound' | 'waiting' | 'missing' | 'corrupt';
+  readonly mirrorWatermark?: string;
+} | null>;
+
 export interface RunsCore {
   readonly store: RunsStore;
   readonly agents: AgentsPort;
@@ -22,6 +34,8 @@ export interface RunsCore {
   readonly credentials: RunCredentialPort;
   readonly receipts: ReceiptStore;
   readonly fence: RuntimeHostContract['fence'];
+  /** §19.1's transcript section. Absent means no Transcript is composed. */
+  readonly transcriptBinding?: TranscriptBindingLookup;
   /** Emitted after a commit, never before it (§15). */
   readonly publish: (
     kind: string,

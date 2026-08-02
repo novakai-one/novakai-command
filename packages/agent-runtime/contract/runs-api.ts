@@ -186,6 +186,18 @@ export interface AgentRunView {
    * measurement, which red gate 13 forbids.
    */
   readonly usage: { readonly quality: 'unavailable'; readonly reason: string };
+  /**
+   * §19.1's transcript section (B3c).
+   *
+   * `bindingState` is `unbound` when Transcript has never been asked about
+   * this Run — a fourth answer beside bound/waiting/missing, and a different
+   * fact from "the file is missing". Absence of a watermark means nothing has
+   * been mirrored yet, which is not the same as zero.
+   */
+  readonly transcript: {
+    readonly bindingState: 'bound' | 'waiting' | 'missing' | 'corrupt' | 'unbound';
+    readonly mirrorWatermark?: string;
+  };
 }
 
 export interface RunOperationView {
