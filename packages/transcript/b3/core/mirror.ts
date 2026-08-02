@@ -326,7 +326,10 @@ async function mirrorOne(
 
   const recorded = await recordLedger(deps.store, {
     id: ledgerId, bindingId: binding.id, position: line.position, digest: line.digest,
-    outcome: 'mirrored', role, messageId: committed.value.messageId,
+    // `text` is the turn itself. Without it the transcript records that
+    // SOMETHING at this position was mirrored, and a reader holding the turn
+    // rather than the messageId has nothing to match on (exam row C3).
+    outcome: 'mirrored', role, text, messageId: committed.value.messageId,
   });
   if (!recorded.ok) return { kind: 'failed', error: recorded };
 

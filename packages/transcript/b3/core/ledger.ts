@@ -36,6 +36,18 @@ export interface MirrorLedgerEntry
    * conversation role" is exactly why it was filtered.
    */
   readonly role?: 'human' | 'assistant';
+  /**
+   * What was said. `role` alone told a reader whose turn it was but never
+   * WHICH turn, so `transcriptLines.jsonl` — the file §18.1 registers as the
+   * transcript — could not answer "was the turn I just typed mirrored?"
+   * without already holding the messageId the transcript is what gives you.
+   * The sealed B2b `transcriptLine` schema and §8.2's `NormalisedTranscriptTurn`
+   * carry role AND text; this line is the same kind and now says both.
+   *
+   * Absent on a filtered line, exactly as `role` is: noise is not conversation,
+   * and §8.2 keeps tool chatter out of the turns a reader asks about.
+   */
+  readonly text?: string;
   readonly filterReason?: string;
   readonly messageId?: string;
 }
@@ -58,6 +70,7 @@ export interface LedgerWrite {
   readonly digest: string;
   readonly outcome: 'mirrored' | 'filtered';
   readonly role?: 'human' | 'assistant';
+  readonly text?: string;
   readonly filterReason?: string;
   readonly messageId?: string;
 }
@@ -77,6 +90,7 @@ export async function recordLedger(
     sourceDigest: entry.digest,
     outcome: entry.outcome,
     ...(entry.role === undefined ? {} : { role: entry.role }),
+    ...(entry.text === undefined ? {} : { text: entry.text }),
     ...(entry.filterReason === undefined ? {} : { filterReason: entry.filterReason }),
     ...(entry.messageId === undefined ? {} : { messageId: entry.messageId }),
   } as never, keyFor(`ledger:${entry.id}`));
