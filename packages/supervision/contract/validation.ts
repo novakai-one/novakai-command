@@ -1,5 +1,6 @@
 import {
   b3fail,
+  b3err,
   b3ok,
   isValidId,
   validationFailed,
@@ -189,7 +190,20 @@ export function parseCreateWatchRuleInput(candidate: unknown): B3Result<CreateWa
   };
   return issues.length === 0
     ? b3ok(parsed)
-    : b3fail(validationFailed(issues));
+    : b3fail(driftRangeError(issues));
+}
+
+function driftRangeError(issues: readonly Issue[]) {
+  const rangePaths = new Set(['condition.intervalMs', 'driftPolicy.replyWindowMs']);
+  if (issues.some((issue) => rangePaths.has(issue.path))) {
+    return b3err(
+      'WatchRuleInvalid',
+      'activity-drift timing must be between 300000 and 600000 milliseconds',
+      { issues },
+      false,
+    );
+  }
+  return validationFailed(issues);
 }
 
 function stringArray(value: unknown, path: string, issues: Issue[]): readonly string[] {
@@ -206,6 +220,9 @@ function readUsageValue(value: unknown, path: string, issues: Issue[]): UsageVal
   if (rawValue !== undefined
     && (typeof rawValue !== 'number' || !Number.isFinite(rawValue) || rawValue < 0)) {
     issues.push({ path: `${path}.value`, message: 'must be a non-negative finite number' });
+  }
+  if (usage.quality === 'unavailable' && rawValue !== undefined) {
+    issues.push({ path: `${path}.value`, message: 'must be absent when quality is unavailable' });
   }
   return {
     quality: choice<MeasurementQuality>(usage.quality, [

@@ -5,16 +5,19 @@ import {
   readBoundary,
   validationFailed,
   type ActivityGeneration,
+  type AgentId,
   type AgentRunId,
   type EventCursor,
   type FieldReader,
   type IsoUtc,
+  type HumanPrincipalId,
   type RecordVersion,
   type ResolvedLaunchPlanId,
 } from '@novakai/foundation/contract';
 import type {
   CheckRunDriftInput,
   ClaimDueDeadlinesInput,
+  EvaluateSupervisionEventInput,
   InstallRunWatchersInput,
   NotificationFilter,
   ResetDriftEpisodeInput,
@@ -22,6 +25,8 @@ import type {
   VersionedRef,
 } from './api.js';
 import type { DriftEpisodeId, WatchDeadlineId, WatchRuleId } from './identifiers.js';
+import type { NotificationRecipient } from './records.js';
+import { isUrlSafeEventCursor, parsePublicEvent } from './event-validation.js';
 import { parseCreateWatchRuleInput } from './validation.js';
 
 function versionedRefs(field: FieldReader): readonly VersionedRef[] {
@@ -52,8 +57,9 @@ function versionedRefs(field: FieldReader): readonly VersionedRef[] {
 function positiveBrand<Brand extends number>(
   field: FieldReader,
   path: string,
+  least = 1,
 ): Brand {
-  return field.count(path, 0, Number.MAX_SAFE_INTEGER) as Brand;
+  return field.count(path, least, Number.MAX_SAFE_INTEGER) as Brand;
 }
 
 function isoUtc(field: FieldReader, path: string): IsoUtc {
@@ -107,6 +113,7 @@ export const parseCheckRunDriftInput = (
   expectedActivityGeneration: positiveBrand<ActivityGeneration>(
     field,
     'expectedActivityGeneration',
+    0,
   ),
   dueDeadlineId: field.id<WatchDeadlineId>(
     'dueDeadlineId',
@@ -148,12 +155,54 @@ export function parseNotificationFilter(candidate: unknown) {
     const rawStates = field.given('state');
     const states = rawStates === undefined ? undefined : readStates(rawStates, field);
     const cursor = field.optionalText('cursor') as EventCursor | undefined;
+    if (cursor !== undefined && !isUrlSafeEventCursor(cursor)) {
+      field.reject('cursor', 'must be a non-empty URL-safe string');
+    }
+    const rawRecipient = field.given('recipient');
+    const recipient = rawRecipient === undefined
+      ? undefined
+      : readRecipient(rawRecipient, field);
     return {
+      ...(recipient === undefined ? {} : { recipient }),
       ...(states === undefined ? {} : { state: states }),
       ...(cursor === undefined ? {} : { cursor }),
       limit: field.count('limit', 1, Number.MAX_SAFE_INTEGER),
     };
   });
+}
+
+/** Runtime parser for the generic at-least-once evaluateEvent boundary. */
+export function parseEvaluateSupervisionEventInput(candidate: unknown) {
+  if (typeof candidate !== 'object' || candidate === null || Array.isArray(candidate)) {
+    return b3fail(validationFailed([{ path: 'payload', message: 'must be an object' }]));
+  }
+  const event = (candidate as Readonly<Record<string, unknown>>).event;
+  const parsed = parsePublicEvent(event);
+  return parsed.ok
+    ? b3ok<EvaluateSupervisionEventInput>({ event: parsed.value })
+    : b3fail(parsed.error);
+}
+
+function readRecipient(value: unknown, field: FieldReader): NotificationRecipient {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    field.reject('recipient', 'must be an object');
+    return { kind: 'human', principalId: '' as HumanPrincipalId };
+  }
+  const recipient = value as Readonly<Record<string, unknown>>;
+  if (recipient.kind === 'agent') {
+    if (!isValidId(recipient.agentId, 'agent', 'uuidv4')) {
+      field.reject('recipient.agentId', 'must be an agent identifier');
+    }
+    return { kind: 'agent', agentId: recipient.agentId as AgentId };
+  }
+  if (recipient.kind === 'human') {
+    if (typeof recipient.principalId !== 'string' || recipient.principalId.trim() === '') {
+      field.reject('recipient.principalId', 'must be a non-empty string');
+    }
+    return { kind: 'human', principalId: recipient.principalId as HumanPrincipalId };
+  }
+  field.reject('recipient.kind', 'must be one of: agent, human');
+  return { kind: 'human', principalId: '' as HumanPrincipalId };
 }
 
 function readStates(value: unknown, field: FieldReader): NotificationFilter['state'] {

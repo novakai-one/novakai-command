@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   parseNotificationEvent,
+  parseNotificationPage,
+  parseCliOutput,
   parseProviderUsageEvidenceCommittedEvent,
 } from '../contract/index.js';
 import {
@@ -19,6 +21,28 @@ test('notification event parser enforces the concrete §12.7 payload', () => {
     payload: { ...event.payload, phase: 'drift-status-request' },
   });
   assert.equal(invalid.ok, false);
+});
+
+test('notification Page output validates every item and omission', () => {
+  const event = queuedNotificationEvent('queue-only');
+  const parsed = parseNotificationPage({
+    items: [event.payload],
+    nextCursor: 'cursor_page-2',
+    omissions: [{ reason: 'permission', count: 1 }],
+  });
+  assert.equal(parsed.ok, true, parsed.ok ? '' : parsed.error.message);
+
+  const cli = parseCliOutput({
+    schemaVersion: 1,
+    ok: true,
+    command: 'nvk watch notifications',
+    value: {
+      items: [event.payload],
+      nextCursor: 'cursor_page-2',
+      omissions: [],
+    },
+  }, parseNotificationPage);
+  assert.equal(cli.ok, true, cli.ok ? '' : cli.error.message);
 });
 
 test('usage-evidence event parser rejects a non-numeric provider total', () => {

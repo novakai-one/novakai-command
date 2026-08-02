@@ -11,6 +11,10 @@ import type {
   PublicEvent,
 } from './events.js';
 import type { Notification, ProviderUsageEvidence } from './records.js';
+import {
+  finish,
+  recordEnvelope as validateRecordEnvelope,
+} from './validation-support.js';
 
 interface Issue {
   readonly path: string;
@@ -55,6 +59,11 @@ function stringArray(value: unknown, path: string, issues: Issue[]): void {
   }
 }
 
+/** Runtime predicate for §4.1 opaque URL-safe event cursors. */
+export function isUrlSafeEventCursor(value: unknown): value is string {
+  return typeof value === 'string' && /^[A-Za-z0-9._~-]+$/.test(value);
+}
+
 function id(
   value: unknown,
   prefix: string,
@@ -81,31 +90,10 @@ function eventEnvelope(
   isoUtc(event.committedAt, 'committedAt', issues);
   exact(event.sourceOwner, owner, 'sourceOwner', issues);
   id(event.traceId, 'trace', 'uuidv4', 'traceId', issues);
-  nonEmpty(event.cursor, 'cursor', issues);
+  if (!isUrlSafeEventCursor(event.cursor)) {
+    issues.push({ path: 'cursor', message: 'must be a non-empty URL-safe string' });
+  }
   return event;
-}
-
-function recordEnvelope(
-  record: ObjectValue,
-  kind: string,
-  idPrefix: string,
-  idFormat: 'uuidv4' | 'uuidv7' | 'base32sha256',
-  issues: Issue[],
-): void {
-  id(record.id, idPrefix, idFormat, 'payload.id', issues);
-  exact(record.kind, kind, 'payload.kind', issues);
-  exact(record.schemaVersion, 1, 'payload.schemaVersion', issues);
-  wholeNumber(record.recordVersion, 'payload.recordVersion', issues);
-  isoUtc(record.createdAt, 'payload.createdAt', issues);
-  if (!['private', 'team', 'external'].includes(record.permissionLevel as string)) {
-    issues.push({ path: 'payload.permissionLevel', message: 'is not a permission level' });
-  }
-  nonEmpty(record.createdBy, 'payload.createdBy', issues);
-  const mutation = objectValue(record.lastMutation, 'payload.lastMutation', issues);
-  if (!['trace-complete', 'object-appended-trace-missing', 'legacy-no-trace']
-    .includes(mutation.state as string)) {
-    issues.push({ path: 'payload.lastMutation.state', message: 'is not a provenance state' });
-  }
 }
 
 function providerMeasurement(value: unknown, issues: Issue[]): void {
@@ -138,7 +126,13 @@ export function parseProviderUsageEvidenceCommittedEvent(
     issues,
   );
   const payload = objectValue(event.payload, 'payload', issues);
-  recordEnvelope(payload, 'providerUsageEvidence', 'providerUsage', 'base32sha256', issues);
+  validateRecordEnvelope(
+    payload,
+    'providerUsageEvidence',
+    'providerUsage',
+    'base32sha256',
+    issues,
+  );
   id(payload.providerSessionId, 'sess', 'uuidv4', 'payload.providerSessionId', issues);
   if (payload.providerConversationId !== null && typeof payload.providerConversationId !== 'string') {
     issues.push({ path: 'payload.providerConversationId', message: 'must be string or null' });
@@ -176,7 +170,7 @@ function recipient(value: unknown, issues: Issue[]): void {
 
 function notificationPayload(value: unknown, issues: Issue[]): void {
   const payload = objectValue(value, 'payload', issues);
-  recordEnvelope(payload, 'notification', 'notification', 'base32sha256', issues);
+  validateRecordEnvelope(payload, 'notification', 'notification', 'base32sha256', issues);
   id(payload.watchRuleId, 'watchRule', 'uuidv7', 'payload.watchRuleId', issues);
   subject(payload.subject, issues);
   recipient(payload.recipient, issues);
@@ -217,6 +211,40 @@ export function parseNotificationEvent(candidate: unknown): B3Result<Notificatio
   return issues.length === 0
     ? b3ok(candidate as NotificationEvent)
     : b3fail(validationFailed(issues));
+}
+
+/** Parse a Notification record outside its event envelope. */
+export function parseNotificationRecord(candidate: unknown): B3Result<Notification> {
+  const issues: Issue[] = [];
+  notificationPayload(candidate, issues);
+  return finish<Notification>(candidate, issues);
+}
+
+const CAPABILITY_OWNERS = [
+  'foundation', 'agents', 'agent-runtime', 'terminal', 'messaging', 'transcript',
+  'supervision', 'shell', 'server', 'projects', 'artifacts', 'spine',
+] as const;
+
+/** Parse the generic committed event envelope accepted by evaluateEvent. */
+export function parsePublicEvent(
+  candidate: unknown,
+): B3Result<PublicEvent<string, Readonly<Record<string, unknown>>>> {
+  const issues: Issue[] = [];
+  const event = objectValue(candidate, 'event', issues);
+  nonEmpty(event.eventId, 'eventId', issues);
+  nonEmpty(event.kind, 'kind', issues);
+  exact(event.schemaVersion, 1, 'schemaVersion', issues);
+  isoUtc(event.occurredAt, 'occurredAt', issues);
+  isoUtc(event.committedAt, 'committedAt', issues);
+  if (!CAPABILITY_OWNERS.includes(event.sourceOwner as never)) {
+    issues.push({ path: 'sourceOwner', message: 'is not a capability owner' });
+  }
+  id(event.traceId, 'trace', 'uuidv4', 'traceId', issues);
+  if (!isUrlSafeEventCursor(event.cursor)) {
+    issues.push({ path: 'cursor', message: 'must be a non-empty URL-safe string' });
+  }
+  objectValue(event.payload, 'payload', issues);
+  return finish<PublicEvent<string, Readonly<Record<string, unknown>>>>(candidate, issues);
 }
 
 /** Runtime narrowing aliases for callers validating payloads separately. */

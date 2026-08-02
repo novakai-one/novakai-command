@@ -55,3 +55,27 @@ test('usage truth preserves unavailable evidence without inventing a zero', () =
   assert.equal(parsed.value.inputTokens.value, undefined);
   assert.equal(parsed.value.providerTurns.value, undefined);
 });
+
+test('out-of-range drift timing returns the spec-named WatchRuleInvalid code', () => {
+  const parsed = parseCreateWatchRuleInput({
+    subject: { kind: 'agent-run', agentRunId: 'agentRun_018f0f8a-4f7b-7abc-8def-0123456789ab' },
+    condition: {
+      kind: 'activity-drift', intervalMs: 299_999,
+      staleAfterIntervals: 2, escalateAfterConsecutive: 3,
+    },
+    recipient: { kind: 'human', principalId: 'human_chris' },
+    deliveryMode: 'queue-only',
+    cooldownMs: 0,
+    status: 'active',
+    driftPolicy: {
+      mode: 'cheap-first',
+      freeEvidence: ['terminal-liveness', 'transcript-advance', 'usage-delta'],
+      statusTurn: 'queue-runtime-status-request-only-after-free-evidence-suspicious',
+      replyWindowMs: 300_000,
+      statusPrompt: 'Status check: reply with one line — what are you working on right now?',
+    },
+  });
+  assert.equal(parsed.ok, false);
+  if (parsed.ok) return;
+  assert.equal(parsed.error.code, 'WatchRuleInvalid');
+});
