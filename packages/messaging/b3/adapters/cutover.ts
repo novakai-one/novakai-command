@@ -45,6 +45,19 @@ export interface MessagingCutoverInput {
   readonly dataRoot: string;
   /** The legacy `store-jsonl` file. Read-only, always. */
   readonly legacyStorePath: string;
+  /**
+   * §18.1 step 4's byte-copyable half — the B1 Foundation files sitting flat in
+   * `.novakai/`, and the kinds among them the canonical route does not have yet.
+   *
+   * It rides in the SAME cutover because §18.1 gives the two halves one fence
+   * and one receipt: "before allowing the shared trace-complete cutover receipt
+   * to commit". Two receipts would mean two moments at which dispatch could
+   * open, and the second half would open over the first half's unproven state.
+   */
+  readonly copy?: {
+    readonly legacyRoot: string;
+    readonly kinds: readonly string[];
+  };
 }
 
 export interface MessagingCutoverReceipt {
@@ -66,6 +79,15 @@ export interface MessagingCutoverReceipt {
   /** Only ever `true`: a mismatch blocks the receipt rather than recording it. */
   readonly replayEqual: true;
   readonly traceComplete: boolean;
+  /**
+   * §18.1 step 4's byte-copied kinds, named on the receipt.
+   *
+   * A receipt that recorded only the converted Messaging journal would say the
+   * route moved while being silent about the forty files that moved with it —
+   * and this receipt is the only durable record of which files a given root's
+   * canonical route inherited rather than wrote.
+   */
+  readonly copiedKinds: readonly string[];
 }
 
 export type MessagingCutoverOutcome =
@@ -353,15 +375,25 @@ function readLegacyJournal(legacyStorePath: string): B3Result<LegacyJournal> {
 export async function runMessagingCutover(
   input: MessagingCutoverInput,
 ): Promise<B3Result<MessagingCutoverOutcome>> {
-  if (!existsSync(input.legacyStorePath)) return b3ok({ kind: "not-required" });
+  const converting = existsSync(input.legacyStorePath);
+  const copying = (input.copy?.kinds.length ?? 0) > 0;
+  // Nothing to convert AND nothing to copy is the only "not required". It used
+  // to be "no legacy Messaging journal", which meant a B1 root with forty
+  // Foundation files and no custom Messaging journal migrated nothing at all
+  // and sealed no receipt.
+  if (!converting && !copying) return b3ok({ kind: "not-required" });
 
   const existingReceipt = await readMessagingCutoverReceipt(input);
   if (existingReceipt !== null) {
     return b3ok({ kind: "already-done", receipt: existingReceipt });
   }
 
-  const handle = foundationHandle(input);
-  const read = readLegacyJournal(input.legacyStorePath);
+  const read = converting
+    ? readLegacyJournal(input.legacyStorePath)
+    : b3ok<LegacyJournal>({
+      lineCount: 0, source: [], converted: [],
+      normalisedInboxItems: 0, normalisedSingletonJournals: 0,
+    });
   if (!read.ok) return read;
   const {
     lineCount, source, converted, normalisedInboxItems, normalisedSingletonJournals,
@@ -427,6 +459,7 @@ export async function runMessagingCutover(
     replayEqual: true,
     // Set by the bootstrap after it reads its own trace back, and PERSISTED.
     traceComplete: false,
+    copiedKinds: [...(input.copy?.kinds ?? [])],
   };
 
   // One lock-held bootstrap, through Foundation — not a per-line createObject
@@ -436,6 +469,7 @@ export async function runMessagingCutover(
   const bootstrapped = await bootstrapStoreRouteCutover({
     root: input.root,
     dataRoot: input.dataRoot,
+    ...(input.copy === undefined ? {} : { copy: input.copy }),
     records,
     receipt: {
       kind: "storeRouteCutover",

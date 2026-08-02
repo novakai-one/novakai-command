@@ -1,6 +1,8 @@
 // §3 Foundation contract functions. Free functions; the engine rides on the
 // scoped handle (composed by composeHandle). Absence is typed data, never a throw.
 import { createHash } from 'node:crypto';
+import { existsSync } from 'node:fs';
+import path from 'node:path';
 import { z } from 'zod';
 import type { CapabilityId, ClientOpId, ObjectId, ObjectKind, ServerOpId } from './brands.js';
 import { Envelope, QuarantineTombstone, Ref } from './schemas.js';
@@ -527,6 +529,15 @@ export interface BootstrapCutoverInput {
   readonly root: string;
   readonly dataRoot?: string;
   readonly lockTimeoutMs?: number;
+  /**
+   * §18.1 step 4 — the kinds to byte-copy from a legacy root, whole, inside the
+   * same fence as the converted records. Absent when there is nothing to copy
+   * (a root with only the custom Messaging journal to convert).
+   */
+  readonly copy?: {
+    readonly legacyRoot: string;
+    readonly kinds: readonly string[];
+  };
   /** The converted operations, in the order they must be replayed. */
   readonly records: readonly BootstrapCutoverRecord[];
   /** The `storeRouteCutover` receipt this migration is sealed with. */
@@ -583,7 +594,41 @@ export async function bootstrapStoreRouteCutover(
   }
   const receipt = prepared.pop()!;
 
-  const result = engine.bootstrapStoreRouteCutover({ records: prepared, receipt });
+  const result = engine.bootstrapStoreRouteCutover({
+    ...(input.copy === undefined ? {} : { copy: input.copy }),
+    records: prepared,
+    receipt,
+  });
   if (!result.ok) return fail(result.error);
-  return ok({ traceComplete: result.value.traceComplete });
+  return ok({
+    traceComplete: result.value.traceComplete,
+    copiedKinds: result.value.copiedKinds,
+  });
+}
+
+/**
+ * Which registered kinds a legacy root still owns — §18.1 steps 3 and 4, and
+ * the conflict rule that guards them.
+ *
+ * `migratable` is every kind whose legacy file exists and whose canonical
+ * target does not: exactly step 4's condition. `conflicting` is every kind
+ * where BOTH exist, which §18.1's last paragraph turns into a blocked boot —
+ * Foundation's new-root-first fallback would otherwise read the canonical file
+ * and never mention that the legacy one may hold newer truth.
+ *
+ * A pure read. It opens no handle and takes no lock, because it runs before
+ * either is allowed to exist.
+ */
+export function surveyStoreRoute(input: {
+  readonly dataRoot: string;
+  readonly legacyRoot: string;
+}): { readonly migratable: readonly string[]; readonly conflicting: readonly string[] } {
+  const migratable: string[] = [];
+  const conflicting: string[] = [];
+  for (const [kind, file] of Object.entries(KIND_FILES)) {
+    if (!existsSync(path.join(input.legacyRoot, file))) continue;
+    if (existsSync(path.join(input.dataRoot, file))) conflicting.push(kind);
+    else migratable.push(kind);
+  }
+  return { migratable, conflicting };
 }

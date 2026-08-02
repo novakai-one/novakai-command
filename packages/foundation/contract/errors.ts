@@ -28,11 +28,23 @@ export type NotFoundError = ContractError<'NotFound', { ref: Ref }>;
 // (Named by the ruling; additive to the §6 union — see NOTES.md.)
 export type QuarantinedError = ContractError<'Quarantined', { ref: Ref; tombstoneId: string }>;
 export type AuthError = ContractError<'AuthFailed', { cause: string }>;
+/**
+ * §18.1's store-route outcome, and therefore Foundation's to name.
+ *
+ * "If both canonical and legacy files already exist without a successful
+ * cutover receipt, boot returns typed `StoreRouteConflict`" — boot is
+ * Foundation's bootstrap, so the code belongs in Foundation's union rather than
+ * being re-invented by whichever capability happened to notice first. The same
+ * code covers a copy that did not verify against its source: in both cases the
+ * canonical route is not proven current and must not open.
+ */
+export type StoreRouteConflictError = ContractError<'StoreRouteConflict',
+  { kind: string; canonicalPath: string; legacyPath: string }>;
 
 export type StoreError =
   | InvalidEnvelopeError | KindUnknownError | ScopeViolationError | CasConflictError
   | LockBusyError | TraceIncompleteError | TraceWriteFailedError | ObjectWriteFailedError | FilterInvalidError
-  | NotFoundError | QuarantinedError | AuthError;
+  | NotFoundError | QuarantinedError | AuthError | StoreRouteConflictError;
 
 export function err<C extends string, P>(code: C, message: string, details: P, retryable: boolean): ContractError<C, P> {
   return { code, message, details, retryable };

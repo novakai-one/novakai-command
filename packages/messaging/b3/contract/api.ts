@@ -50,12 +50,23 @@ export type AgentMessageTarget =
 export interface SendAgentMessageInput {
   readonly target: AgentMessageTarget;
   /**
-   * §12.5 declares this required. It stays required — but `ensureDirectThread`
-   * and `ensureGroupThread` below are how a caller obtains one, and
-   * `MessageAcceptance` returns the resolved Thread so a caller that already
-   * had it never has to look it up again.
+   * Which conversation this Message joins. OPTIONAL, and absent means "the
+   * direct Thread between me and this Agent".
+   *
+   * §12.5 declares it required, and that made the send surface unusable on its
+   * own terms: a Thread is the one input a caller cannot construct, and §16.2
+   * publishes no method that mints one. A client holding the complete published
+   * contract could not send a single Message — every send answered
+   * `ValidationFailed: threadId must be a thread_ id`, forever.
+   *
+   * `ensureDirectThread`/`ensureGroupThread` below remain the way to name a
+   * conversation deliberately, and `MessageAcceptance` always returns the
+   * resolved Thread. What changed is that not naming one is now an answerable
+   * question rather than a refusal: the CLI already resolved the same direct
+   * Thread on the caller's behalf, so the rule existed — it just lived one layer
+   * too high to help anyone else.
    */
-  readonly threadId: ThreadId;
+  readonly threadId?: ThreadId;
   readonly text: string;
   /**
    * Deterministic idempotency key. Absent means "mint one" — honest for an

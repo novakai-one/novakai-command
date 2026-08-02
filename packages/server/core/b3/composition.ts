@@ -30,8 +30,9 @@ import { composeB3Messaging, composeB3TranscriptFor } from './messaging-composit
 import { messagingEndpointPort, transcriptCustodyPort } from './b3c-ports.js';
 import { LEGACY_MESSAGING_STORE } from './cutover-report.js';
 import {
-  checkMessagingStoreRoute, runMessagingCutover,
+  checkMessagingStoreRoute, readMessagingCutoverReceipt, runMessagingCutover,
 } from '../../../messaging/b3/contract/index.js';
+import { surveyStoreRoute } from '@novakai/foundation/contract';
 import type { AgentMessagingContract } from '../../../messaging/b3/contract/index.js';
 import {
   createProviderFileLocator, createProviderFileSource, defaultProviderHomes,
@@ -148,13 +149,37 @@ function terminalAsRecoverable(terminal: TerminalContract): RecoverableCapabilit
  */
 async function gateStoreRoute(root: string, dataRoot: string): Promise<void> {
   const legacyStorePath = path.join(root, LEGACY_MESSAGING_STORE);
-  const cutoverInput = { root, dataRoot, legacyStorePath };
+
+  // §18.1 step 3: the legacy root for THIS cutover is `.novakai` itself — the
+  // B1 Foundation files sitting flat beside the new `stores/` directory —
+  // stated explicitly rather than left to Foundation's sibling
+  // `.novakai-command` default. That default is a different migration; relying
+  // on it here migrated nothing, because a B1 root has no sibling.
+  const survey = surveyStoreRoute({ dataRoot, legacyRoot: root });
+
+  // §18.1's last paragraph, before anything is read or written: canonical and
+  // legacy both present with no receipt is a blocked boot, not a preference.
+  // Foundation's new-root-first fallback would otherwise serve the canonical
+  // file and never mention that the legacy one may hold newer truth.
+  const sealed = await readMessagingCutoverReceipt({ root, dataRoot, legacyStorePath });
+  if (sealed === null && survey.conflicting.length > 0) {
+    throw new Error('StoreRouteConflict: '
+      + `${survey.conflicting.join(', ')} exist on both the canonical and the legacy `
+      + 'route with no cutover receipt');
+  }
+
+  const cutoverInput = {
+    root,
+    dataRoot,
+    legacyStorePath,
+    copy: { legacyRoot: root, kinds: survey.migratable },
+  };
 
   const route = await checkMessagingStoreRoute(cutoverInput);
   if (!route.ok) {
     throw new Error(`${route.error.code}: ${route.error.message}`);
   }
-  if (route.value === 'clear') return;
+  if (route.value === 'clear' && survey.migratable.length === 0) return;
 
   const migrated = await runMessagingCutover(cutoverInput);
   if (!migrated.ok) {

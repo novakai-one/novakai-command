@@ -27,6 +27,18 @@ const fail = <E>(error: E): Result<never, E> => ({ ok: false, error });
 export interface OpenConfigStoreOptions {
   /** `.novakai/` root. */
   root: string;
+  /**
+   * The canonical JSONL directory. Defaults to `<root>/stores`, which is where
+   * §18.1's inventory puts `config.jsonl` alongside every other registered kind.
+   *
+   * It defaulted to the root, so `nvk token mint` — the first command anyone
+   * runs — wrote `.novakai/config.jsonl` and, because its engine's dataRoot came
+   * with it, `.novakai/traces.jsonl`: two record journals on a route no B3
+   * handle reads, in a root whose law is "no Novakai JSONL file outside
+   * `.novakai/stores/`". A root that already has them is migrated by §18.1's
+   * boot cutover, which treats `config` as one more legacy kind to copy.
+   */
+  dataRoot?: string;
   /** The principal foundation stamps onto config writes (server identity). */
   principal: string;
 }
@@ -150,8 +162,10 @@ async function readObjects(handle: ScopedStoreHandle): Promise<Result<StoredConf
 export async function openConfigStore(
   options: OpenConfigStoreOptions,
 ): Promise<Result<ConfigStore, StoreError>> {
+  const dataRoot = options.dataRoot ?? path.join(options.root, 'stores');
   const handle = composeHandle({
     root: options.root,
+    dataRoot,
     capability: 'server',
     allowedKinds: ['config'],
     principal: options.principal,
@@ -159,7 +173,7 @@ export async function openConfigStore(
 
   let objects: StoredConfig[] = [];
   let snapshot: ServerConfig = resolve(objects, options.root);
-  const configPath = path.join(options.root, 'config.jsonl');
+  const configPath = path.join(dataRoot, 'config.jsonl');
 
   const refresh = async (): Promise<Result<ServerConfig, StoreError>> => {
     const read = await readObjects(handle);

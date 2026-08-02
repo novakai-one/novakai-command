@@ -28,7 +28,7 @@ export {
   defaultEngine, __resetDefaultEngine,
   // §18.1's Foundation-bootstrap-only store-route cutover. Not a handle: a
   // capability that could hold `storeRouteCutover` could seal its own migration.
-  bootstrapStoreRouteCutover,
+  bootstrapStoreRouteCutover, surveyStoreRoute,
   type BootstrapCutoverInput, type BootstrapCutoverRecord,
 } from './api.js';
 // Token ops (mint/authenticate) are foundation-internal but part of the legal

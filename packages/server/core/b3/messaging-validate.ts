@@ -76,7 +76,11 @@ export function readSendAgentMessageInput(
   } else {
     return invalid('target.kind', 'must be "agent" with agentId or "exact-run" with agentRunId');
   }
-  const threadId = readThreadId(body['threadId']);
+  // Absent means "the direct Thread with this Agent" — the capability resolves
+  // it. A present-but-malformed one is still a refusal: a caller that named a
+  // Thread meant a specific conversation, and quietly sending somewhere else
+  // would be worse than saying no.
+  const threadId = body['threadId'] === undefined ? undefined : readThreadId(body['threadId']);
   if (threadId === null) return invalid('threadId', 'must be a thread_ id');
   const scalars = readBoundary(body, (field) => ({
     text: field.text('text'),
@@ -85,7 +89,7 @@ export function readSendAgentMessageInput(
   if (!scalars.ok) return scalars;
   return b3ok({
     target: resolved,
-    threadId,
+    ...(threadId === undefined ? {} : { threadId }),
     text: scalars.value.text,
     ...(scalars.value.clientMessageId === undefined
       ? {} : { clientMessageId: scalars.value.clientMessageId }),

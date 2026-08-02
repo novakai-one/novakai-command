@@ -27,6 +27,17 @@ export const ConversationViewRecord = z.object({
   archived: z.boolean(),
   titleOverride: z.string().optional(),
   lastActivityAt: z.string().datetime(),
+  /**
+   * Who opened it, and as what — §19.2's deliberate open, recorded.
+   *
+   * Optional because every record written before B3c has neither, and a
+   * required field would make those records unparseable (they are drawn as
+   * absence, which would silently delete Chris's existing pins). They are still
+   * view state: WHOSE sidebar this row belongs to, and whether the row is a
+   * direct conversation or a group — never thread facts.
+   */
+  openedForPrincipalId: z.string().min(1).optional(),
+  membershipKind: z.enum(['direct', 'group']).optional(),
 });
 export type ConversationViewRecord = z.infer<typeof ConversationViewRecord>;
 
@@ -47,6 +58,8 @@ export interface ConversationViewPatch {
   archived?: boolean;
   titleOverride?: string;
   lastActivityAt?: string;
+  openedForPrincipalId?: string;
+  membershipKind?: 'direct' | 'group';
 }
 
 /**
@@ -75,6 +88,9 @@ export async function setConversationView(
       archived: patch.archived ?? false,
       ...(patch.titleOverride !== undefined ? { titleOverride: patch.titleOverride } : {}),
       lastActivityAt: patch.lastActivityAt ?? new Date().toISOString(),
+      ...(patch.openedForPrincipalId !== undefined
+        ? { openedForPrincipalId: patch.openedForPrincipalId } : {}),
+      ...(patch.membershipKind !== undefined ? { membershipKind: patch.membershipKind } : {}),
     };
     ConversationViewRecord.parse(record); // never persist a record the schema rejects
     return driver.create(record, clientOpId);

@@ -46,7 +46,7 @@ test('mint runs with NO server: writes a token record and a principal config lin
   assert.equal(cfg.principals[0]!.personId, 'person_chris');
   assert.deepEqual(cfg.principals[0]!.roles, ['Human']);
   assert.equal(cfg.principals[0]!.token, record.bearer);
-  assert.equal(readFileSync(path.join(dir, 'config.jsonl'), 'utf8').includes(record.bearer), false);
+  assert.equal(readFileSync(path.join(dir, 'stores', 'config.jsonl'), 'utf8').includes(record.bearer), false);
 });
 
 test('re-minting the same principal rotates the token: the config points at the NEW record', async () => {
@@ -84,5 +84,5 @@ test('mint without a principal id, or without grants, fails loudly and writes no
   assert.throws(() => runCli(dir, ['mint']), /usage|principal/i);
   assert.throws(() => runCli(dir, ['mint', 'person_chris']), /grants/i);
   assert.equal(existsSync(path.join(dir, 'tokens')), false);
-  assert.equal(existsSync(path.join(dir, 'config.jsonl')), false, 'a rejected mint materializes nothing');
+  assert.equal(existsSync(path.join(dir, 'stores', 'config.jsonl')), false, 'a rejected mint materializes nothing');
 });

@@ -22,6 +22,12 @@ export interface ShellPersistence {
 
 export function composeShellPersistence(opts: {
   root: string;
+  /**
+   * The canonical JSONL directory (§18.1). Callers that pass it get
+   * `<dataRoot>/conversationViews.jsonl`; callers that do not keep the
+   * pre-B3 root-level layout they were written against.
+   */
+  dataRoot?: string;
   legacyRoot?: string;
   principal: string;
   lockTimeoutMs?: number;
@@ -30,6 +36,7 @@ export function composeShellPersistence(opts: {
 }): ShellPersistence {
   const handle = composeHandle({
     root: opts.root,
+    ...(opts.dataRoot === undefined ? {} : { dataRoot: opts.dataRoot }),
     legacyRoot: opts.legacyRoot,
     capability: 'shell',
     // F1/DEC-S2-11: shell's permitted kinds = layout, settings, conversationView.

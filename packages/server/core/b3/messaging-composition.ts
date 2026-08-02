@@ -9,6 +9,7 @@ import {
   type AgentDirectoryPort, type AgentId, type AgentMessagingContract,
   type MessagingStore,
 } from '../../../messaging/b3/contract/index.js';
+import { createFoundationConversationViews } from './conversation-views.js';
 import {
   composeB3Transcript, createTranscriptStore,
   type B3TranscriptContract, type MessagingMirrorPort,
@@ -51,7 +52,17 @@ export async function composeB3Messaging(
     root: options.root, dataRoot: options.dataRoot,
   });
   const capability = composeAgentMessaging({
-    store, clock, emit: options.emit, agents: options.agents,
+    store,
+    clock,
+    emit: options.emit,
+    agents: options.agents,
+    // Shell owns the `conversationView` kind, so production hands Messaging the
+    // real Shell-backed port. Without it Messaging fell back to the in-memory
+    // default meant for headless hosts, and a deliberately opened Conversation
+    // died with the process.
+    conversationViews: createFoundationConversationViews({
+      root: options.root, dataRoot: options.dataRoot,
+    }),
   });
   return { ...capability, store };
 }

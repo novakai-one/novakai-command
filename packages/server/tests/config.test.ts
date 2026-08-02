@@ -38,8 +38,8 @@ test('first boot with no config.jsonl materializes defaults with ZERO principals
   assert.ok(cfg.providers.kimi, 'provider settings materialize for kimi');
   assert.equal(cfg.providers.kimi.defaultModel, 'cli-default', 'never invent a model name (red gate 3)');
 
-  assert.ok(existsSync(path.join(dir, 'config.jsonl')), 'materialization writes the store file');
-  const lines = readFileSync(path.join(dir, 'config.jsonl'), 'utf8').trim().split('\n');
+  assert.ok(existsSync(path.join(dir, 'stores', 'config.jsonl')), 'materialization writes the store file');
+  const lines = readFileSync(path.join(dir, 'stores', 'config.jsonl'), 'utf8').trim().split('\n');
   assert.ok(lines.length > 0);
   for (const line of lines) {
     const rec = JSON.parse(line) as { envelope: { kind: string }; payload: { configKind: string } };
@@ -69,7 +69,7 @@ test('a principal config object resolves to a bearer principal through its token
   assert.equal(cfg.principals[0]!.token, minted.bearer, 'bearer comes from the token record, never from config');
   assert.deepEqual(cfg.principals[0]!.roles, ['Human']);
 
-  const raw = readFileSync(path.join(dir, 'config.jsonl'), 'utf8');
+  const raw = readFileSync(path.join(dir, 'stores', 'config.jsonl'), 'utf8');
   assert.equal(raw.includes(minted.bearer), false, 'the bearer secret never lands in config.jsonl');
 });
 

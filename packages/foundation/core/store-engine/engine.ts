@@ -1192,6 +1192,21 @@ export class StoreEngine {
    * `true` in memory, `false` on disk, forever.
    */
   bootstrapStoreRouteCutover(input: {
+    /**
+     * §18.1 step 4 — the byte-copyable half of the migration.
+     *
+     * Every registered kind whose canonical target is absent and whose legacy
+     * source exists is copied WHOLE, inside this same lock hold, before any
+     * record is appended. It was left to `migrateStoreIfNeeded`, which copies a
+     * kind lazily on its FIRST WRITE — so a root upgraded from B1 came up with
+     * ~40 legacy files unmigrated and served them through the dual-read
+     * fallback, which is the "new-root-first fallback silently hiding a newer
+     * legacy append" §18.1's last paragraph forbids by name.
+     */
+    readonly copy?: {
+      readonly legacyRoot: string;
+      readonly kinds: readonly string[];
+    };
     readonly records: readonly {
       readonly kind: string;
       readonly flat: EnvelopeT & Record<string, unknown>;
@@ -1202,16 +1217,58 @@ export class StoreEngine {
       readonly flat: EnvelopeT & Record<string, unknown>;
       readonly clientOpId: ClientOpId;
     };
-  }): EngineResult<{ readonly traceComplete: boolean; readonly receiptOpId: ServerOpId }> {
+  }): EngineResult<{
+    readonly traceComplete: boolean;
+    readonly receiptOpId: ServerOpId;
+    readonly copiedKinds: readonly string[];
+  }> {
     return this.withLock(() => {
       const touched = new Set<string>();
       const receiptPath = this.storePath(input.receipt.kind);
       const tracePath = this.storePath('trace');
 
-      // Step 5: the receipt and trace files exist DURABLY before either append,
-      // so their directory entries are already on disk and the post-append
-      // barriers below have something to make durable.
+      // Step 4, then step 5's verification: copy, then PROVE the copy — byte
+      // length, content digest, and every line still parsing as a record line.
+      // A copy that silently truncated would otherwise be sealed by a receipt
+      // saying the route moved successfully.
+      const copiedKinds: string[] = [];
+      const copiedPaths: string[] = [];
+      if (input.copy !== undefined) {
+        for (const kind of input.copy.kinds) {
+          const source = this.storePath(kind, input.copy.legacyRoot);
+          const target = this.storePath(kind);
+          try {
+            mkdirSync(path.dirname(target), { recursive: true });
+            copyFileSync(source, target); // the source is never written
+          } catch (cause) {
+            return {
+              ok: false,
+              error: err('ObjectWriteFailed',
+                `copying the legacy ${kind} store failed: ${String(cause)}`,
+                { opId: mintServerOpId(), cause: String(cause) }, true),
+            };
+          }
+          const mismatch = verifyCopiedStore(source, target);
+          if (mismatch !== null) {
+            return {
+              ok: false,
+              error: err('StoreRouteConflict',
+                `the migrated ${kind} store does not match its legacy source: ${mismatch}`,
+                { kind, legacyPath: source, canonicalPath: target }, false),
+            };
+          }
+          copiedKinds.push(kind);
+          copiedPaths.push(target);
+        }
+      }
+
+      // Step 5: every copied target, plus the receipt and trace files, exist
+      // DURABLY before either append — so their directory entries are already
+      // on disk and the post-append barriers below have something to make
+      // durable. The directory fsync comes last and never substitutes for the
+      // per-file one.
       try {
+        for (const copied of copiedPaths) this.prepareFile(copied);
         this.prepareFile(receiptPath);
         this.prepareFile(tracePath);
         this.fsyncDirectory(path.dirname(receiptPath));
@@ -1223,6 +1280,12 @@ export class StoreEngine {
             { opId: mintServerOpId(), cause: String(cause) }, true),
         };
       }
+      // A copied store is on disk now, so every cached index built from the
+      // absent-file state is stale. Reading one back would report the canonical
+      // route as empty — which is exactly what a pre-cutover Message would look
+      // like to a client afterwards.
+      this.recordIndexes.clear();
+      this.traceIndex = undefined;
 
       // Step 4/5: every converted record, one source operation to one atomic
       // persisted operation, all inside this single lock hold.
@@ -1319,7 +1382,7 @@ export class StoreEngine {
           };
         }
       }
-      return { ok: true, value: { traceComplete, receiptOpId } };
+      return { ok: true, value: { traceComplete, receiptOpId, copiedKinds } };
     });
   }
 
@@ -1355,6 +1418,49 @@ export class StoreEngine {
   ): void {
     this.appendLineFsync(this.storePath(kind), JSON.stringify(this.wrapRecord(flat, meta)));
   }
+}
+
+/**
+ * §18.1 step 5's verification of one copied store file.
+ *
+ * "verifies source/target byte length, content digest, record-line validity".
+ * All three, because each catches something the others miss: length catches a
+ * short write, the digest catches a corrupted one, and parsing catches a file
+ * that copied perfectly but was never a record journal in the first place.
+ *
+ * Returns the reason it failed, or null when the copy is sound.
+ */
+function verifyCopiedStore(source: string, target: string): string | null {
+  const from = readFileSync(source);
+  const to = readFileSync(target);
+  if (from.length !== to.length) {
+    return `byte length ${String(to.length)} != source ${String(from.length)}`;
+  }
+  const digest = (buffer: Buffer): string =>
+    createHash('sha256').update(buffer).digest('hex');
+  const sourceDigest = digest(from);
+  const targetDigest = digest(to);
+  if (sourceDigest !== targetDigest) {
+    return `content digest ${targetDigest} != source ${sourceDigest}`;
+  }
+  const lines = to.toString('utf8').split('\n');
+  for (const [index, line] of lines.entries()) {
+    if (line.trim() === '') continue;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      return `line ${String(index + 1)} is not JSON`;
+    }
+    // Both shapes the engine reads: a wrapped `{envelope,payload,meta}` record
+    // line, and the v0 flat record the dual-read shim still upgrades lazily.
+    const record = parsed as { envelope?: unknown; kind?: unknown };
+    const valid = record.envelope !== undefined
+      ? Envelope.safeParse(record.envelope).success
+      : Envelope.safeParse(parsed).success;
+    if (!valid) return `line ${String(index + 1)} is not a record line`;
+  }
+  return null;
 }
 
 export { Ref };

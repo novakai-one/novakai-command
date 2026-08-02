@@ -12,7 +12,7 @@ import {
   b3err, b3fail, b3ok, mintAgentInboxItemId, nowIsoUtc,
   type AuthenticatedPrincipal, type B3Result, type CommandContext,
 } from "@novakai/foundation/contract";
-import type { PersonId } from "../../public/contract/index.js";
+import type { PersonId, ThreadId } from "../../public/contract/index.js";
 import type { ClockIds } from "../../seams/clock.js";
 import type { MessagingStore } from "../../seams/store.js";
 import type {
@@ -24,7 +24,7 @@ import { agentPersonId } from "./identity.js";
 import {
   ORIGIN_BINDING_FIELD, ORIGIN_ENDPOINT_FIELD, ORIGIN_LINE_FIELD,
 } from "./mirror-fields.js";
-import { storeError } from "./threads.js";
+import { ensureDirectThread, storeError } from "./threads.js";
 
 export interface SendDeps {
   readonly store: MessagingStore;
@@ -64,6 +64,37 @@ export async function agentOfRun(
 }
 
 /**
+ * The conversation this Message joins: the one named, or the direct Thread
+ * between the sender and the Agent.
+ *
+ * §12.5 required a ThreadId and §16.2 published nothing that mints one, so a
+ * client holding the complete contract had exactly one possible outcome from
+ * every send: `ValidationFailed: threadId must be a thread_ id`. The CLI worked
+ * only because it resolved the same direct Thread privately before calling —
+ * which means the rule was already decided, just not available to anyone else.
+ *
+ * A Message from an Agent to itself has no direct Thread (a direct Thread needs
+ * two participants), and that refusal is left to `ensureDirectThread` rather
+ * than being pre-empted here: one rule, one place.
+ */
+async function threadFor(
+  store: MessagingStore, senderId: PersonId, agentId: AgentId, named?: ThreadId,
+): Promise<B3Result<ThreadId>> {
+  if (named !== undefined) return b3ok(named);
+  // `kind: "human"` here means only "this participant is already a PersonId" —
+  // an Agent sender arrives as `person_agent_<uuid>`, which is what its side of
+  // a direct Thread is either way.
+  const resolved = await ensureDirectThread(store, {
+    between: [
+      { kind: "human", personId: senderId },
+      { kind: "agent", agentId },
+    ],
+  });
+  if (!resolved.ok) return resolved;
+  return b3ok(resolved.value.id);
+}
+
+/**
  * One Agent-addressed acceptance. DEC-B3V4-32: no endpoint is consulted, so an
  * Agent with no live Run — or one halfway through a continuation — still
  * accepts Messages into its durable inbox.
@@ -73,11 +104,13 @@ async function acceptanceFor(
   clientMessageId: string, requestedRunId?: string,
 ): Promise<B3Result<MessageAcceptance>> {
   const { store, clock } = deps;
+  const threadId = await threadFor(store, senderId, agentId, input.threadId);
+  if (!threadId.ok) return threadId;
   const inboxItemId = mintAgentInboxItemId(agentId, clientMessageId) as string;
   const built = buildAcceptance(clock, {
     senderId,
     recipients: [agentPersonId(agentId)],
-    threadId: input.threadId,
+    threadId: threadId.value,
     text: input.text,
     clientMessageId,
     inboxFor: {
