@@ -107,6 +107,28 @@ interface NodePtyProcess {
  * `node-pty` is loaded lazily so every non-PTY consumer — the contract suite,
  * the CLIs, a second host — runs without a native module present.
  */
+/**
+ * The environment a managed process actually starts with.
+ *
+ * An authority that supplies an environment supplies the WHOLE environment. A
+ * provider adapter already builds one from the host's plus what the spawned
+ * Agent needs to authenticate as itself (DEC-B3V4-05), so merging the host's
+ * back underneath it is not a safety net — it is a second writer, and it is
+ * invisible until the adapter needs a variable to be ABSENT. Then absence in a
+ * patch means "inherit", and the variable comes straight back. That is exactly
+ * how a claude Run kept reporting "Transcript saving is off — inherited
+ * CLAUDE_CODE_CHILD_SESSION marker" after the adapter had removed the marker.
+ *
+ * An authority with NO environment — the plain shell, the mock managed session
+ * — inherits the host's, which is what those two want.
+ */
+function launchEnvironment(
+  host: NodeJS.ProcessEnv, authority: LaunchAuthority, spec: PtyLaunchSpec,
+): Record<string, string> {
+  const base = authority.environment ?? host;
+  return mergedEnvironment(base, spec.environment ?? {});
+}
+
 export async function createNodePtyHost(options: NodePtyHostOptions = {}): Promise<PtyHost> {
   const authorities = asSource(options.authorities ?? defaultLaunchAuthorities(options.environment));
   const loaded = await import('node-pty') as unknown as NodePtyModule;
@@ -126,10 +148,7 @@ export async function createNodePtyHost(options: NodePtyHostOptions = {}): Promi
           cwd: spec.workingDirectory,
           cols: spec.columns,
           rows: spec.rows,
-          env: mergedEnvironment(
-            options.environment ?? process.env,
-            { ...authority.environment, ...spec.environment },
-          ),
+          env: launchEnvironment(options.environment ?? process.env, authority, spec),
         });
         const handle = new NodePtyHandle(child);
         alive.set(handle.processRef, () => handle.isAlive());
