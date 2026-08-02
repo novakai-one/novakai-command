@@ -120,6 +120,18 @@ export function composeAgentMessaging(options: AgentMessagingOptions): AgentMess
     // --- §12.5 send ---------------------------------------------------------
     async sendAgentMessage(context: CommandContext, input: SendAgentMessageInput) {
       const sent = await sendAgentMessage({ store, clock }, context, input);
+      // The inbox item is committed INSIDE the acceptance transaction, not
+      // through a later transition — so without this the durable inbox would
+      // change with no `agent-inbox.changed` event to say so, and a consumer
+      // watching the stream would see a Message arrive for an Agent whose
+      // inbox never appeared to move.
+      if (sent.ok && sent.value.inboxItemId !== undefined && !sent.value.duplicate) {
+        emit("messaging.agent-inbox.changed", {
+          inboxItemId: sent.value.inboxItemId,
+          messageId: sent.value.messageId,
+          state: "queued",
+        });
+      }
       return announce(sent, "messaging.agent-message.committed", (acceptance) => ({
         messageId: acceptance.messageId,
         threadId: acceptance.threadId,
@@ -160,7 +172,24 @@ export function composeAgentMessaging(options: AgentMessagingOptions): AgentMess
     async transferAgentEndpointClaim(
       _context: SystemCommandContext<"sys_agent_runtime">, input: TransferAgentEndpointInput,
     ) {
-      return announce(await transferAgentEndpointClaim(store, input), endpointEvent, claimPayload);
+      const moved = await transferAgentEndpointClaim(store, input);
+      // Every item that followed the endpoint changed, and each one is a fact
+      // a consumer tracking "where is my Message" needs (§13.6).
+      if (moved.ok) {
+        const inbox = await store.listAgentInbox(input.agentId);
+        if (inbox.kind === "ok") {
+          for (const item of inbox.value) {
+            if (item.endpointClaimId !== moved.value.id) continue;
+            emit("messaging.agent-inbox.changed", {
+              inboxItemId: item.id,
+              messageId: item.messageId,
+              state: item.state,
+              endpointClaimId: item.endpointClaimId,
+            });
+          }
+        }
+      }
+      return announce(moved, endpointEvent, claimPayload);
     },
 
     // --- §12.5 send ---------------------------------------------------------
