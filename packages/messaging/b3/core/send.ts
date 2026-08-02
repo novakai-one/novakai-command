@@ -95,6 +95,27 @@ async function threadFor(
 }
 
 /**
+ * Where an already-accepted Message has actually got to, in the four words
+ * `MessageAcceptance` is allowed to say (§12.5).
+ *
+ * §8.1's inbox item has six states and the acceptance vocabulary has four, so
+ * only the two that appear in both are reported by name. `claimed` is still
+ * queued as far as the sender is concerned — nothing has been typed yet — and
+ * `transcript-observed` and `failed` have no acceptance word at all; the
+ * capability does not invent one for them here.
+ */
+async function acceptanceStateOf(
+  store: MessagingStore, agentId: AgentId, messageId: string,
+): Promise<MessageAcceptance["state"]> {
+  const inbox = await store.listAgentInbox(agentId);
+  if (inbox.kind !== "ok") return "queued-for-agent";
+  const item = inbox.value.find((entry) => entry.messageId === messageId);
+  if (item?.state === "submitted-confirmed") return "submitted-confirmed";
+  if (item?.state === "submitted-unconfirmed") return "submitted-unconfirmed";
+  return "queued-for-agent";
+}
+
+/**
  * One Agent-addressed acceptance. DEC-B3V4-32: no endpoint is consulted, so an
  * Agent with no live Run — or one halfway through a continuation — still
  * accepts Messages into its durable inbox.
@@ -134,7 +155,11 @@ async function acceptanceFor(
       messageId: committed.original.messageId,
       inboxItemId,
       acceptedAt: committed.original.createdAt,
-      state: "queued-for-agent",
+      // §12.5's idempotent replay returns the SAME Message — and the state it
+      // has reached since, not the word it was born with. `queued-for-agent`
+      // on a Message already typed into the terminal is how `nvk agent message`
+      // came to have three unreachable branches in its own state table.
+      state: await acceptanceStateOf(store, agentId, committed.original.messageId),
       threadId: committed.original.threadId,
       duplicate: true,
     });

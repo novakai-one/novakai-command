@@ -117,7 +117,17 @@ export interface AgentCommunicationItem {
   readonly senderPrincipalId: MessagingPrincipalId;
   readonly recipientAgentIds: readonly AgentId[];
   readonly relatedRunIds: readonly AgentRunId[];
+  /**
+   * How far this Message actually got. For Agent-addressed mail that is §8.1's
+   * inbox item — the `Delivery` entity is a stub the Agent path never
+   * transitions, so this field read `pending` next to an item that said
+   * `submitted-confirmed`, forever. §19.2's whole job is answering "what has
+   * this Agent been sent, and did it arrive"; the free-form `string` the spec
+   * gives this field is what lets it carry the honest answer.
+   */
   readonly deliveryState: string;
+  /** The same fact in §8.1's typed vocabulary, when an inbox item exists. */
+  readonly inboxState?: AgentInboxItemState;
   readonly occurredAt: string;
   /** §19.2 inspection is useless if you cannot tell inbound from outbound. */
   readonly direction: AgentCommunicationDirection;

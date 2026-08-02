@@ -14,7 +14,7 @@ import type { MessagingStore } from "../../seams/store.js";
 import type { ListAgentCommunicationsInput } from "../contract/api.js";
 import type {
   AgentCommunicationDirection, AgentCommunicationItem, AgentEndpointClaimId, AgentId,
-  AgentInboxItem, AgentRunId,
+  AgentInboxItem, AgentInboxItemState, AgentRunId,
 } from "../contract/records.js";
 import { previewOf } from "../contract/records.js";
 import { agentIdOf, agentPersonId } from "./identity.js";
@@ -121,6 +121,7 @@ async function rowFor(
 
   const origin = message.body.fields?.[ORIGIN_BINDING_FIELD];
   const senderAgentId = agentIdOf(message.senderId);
+  const inboxState = await inboxStateOf(store, message.id, agentIds);
   return {
     messageId: message.id,
     threadId: message.threadId,
@@ -129,9 +130,14 @@ async function rowFor(
       .map(agentIdOf)
       .filter((agentId): agentId is AgentId => agentId !== null),
     relatedRunIds: await relatedRunsOf(store, message.id, agentIds),
-    deliveryState: deliveries.kind === "ok"
-      ? (deliveries.value[0]?.state ?? "unknown")
-      : "unknown",
+    // The inbox item first: it is the only one of the two that moves for an
+    // Agent. The `Delivery` entity stays behind it for a human recipient,
+    // where no inbox item exists and it IS the delivery record.
+    deliveryState: inboxState
+      ?? (deliveries.kind === "ok"
+        ? (deliveries.value[0]?.state ?? "unknown")
+        : "unknown"),
+    ...(inboxState === undefined ? {} : { inboxState }),
     occurredAt: message.createdAt,
     direction: directionOf(message, subjects),
     ...(senderAgentId === null ? {} : { senderAgentId }),
@@ -139,6 +145,45 @@ async function rowFor(
     ...(typeof origin === "string" ? { originBindingId: origin as never } : {}),
   };
 }
+
+/**
+ * How far this Message got for the Agents being asked about, or undefined when
+ * none of them was ever given an inbox item for it (a Message between people,
+ * or one mirrored OUT of a terminal — neither is delivered to an Agent).
+ *
+ * More than one of the named Agents can hold an item for the same Message. The
+ * furthest-along one is the honest single answer to "did it arrive": a row that
+ * reported `queued` because one of three recipients has not been typed into yet
+ * would hide a delivery that demonstrably happened.
+ */
+async function inboxStateOf(
+  store: MessagingStore, messageId: string, agentIds: readonly AgentId[],
+): Promise<AgentInboxItemState | undefined> {
+  let furthest: AgentInboxItemState | undefined;
+  for (const agentId of agentIds) {
+    const inbox = await store.listAgentInbox(agentId);
+    if (inbox.kind !== "ok") continue;
+    for (const item of inbox.value) {
+      if (item.messageId !== messageId) continue;
+      if (furthest === undefined || rankOf(item.state) > rankOf(furthest)) {
+        furthest = item.state;
+      }
+    }
+  }
+  return furthest;
+}
+
+/**
+ * §8.1's six states in the order an item passes through them. `failed` sits at
+ * the end deliberately: it is a terminal outcome a reader must see rather than
+ * one a still-queued sibling item is allowed to mask.
+ */
+const INBOX_PROGRESS: readonly AgentInboxItemState[] = [
+  "queued", "claimed", "submitted-unconfirmed", "submitted-confirmed",
+  "transcript-observed", "failed",
+];
+
+const rankOf = (state: AgentInboxItemState): number => INBOX_PROGRESS.indexOf(state);
 
 /**
  * The Runs a Message touched, read back from the inbox rather than remembered.
