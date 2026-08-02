@@ -22,8 +22,9 @@ import path from "node:path";
 
 import {
   checkMessagingStoreRoute, listMigratedOperations, normaliseLegacyOp,
-  readLegacyStoreOp, readMessagingCutoverReceipt, runMessagingCutover,
+  readMessagingCutoverReceipt, runMessagingCutover,
 } from "../adapters/cutover.js";
+import { readLegacyStoreOp } from "../adapters/cutover-validate.js";
 import { mintMessagingStoreOpId } from "@novakai/foundation/contract";
 import { openFoundationMessagingStore } from "../adapters/store-foundation.js";
 import { createSeededClock } from "../../adapters/clock-seeded.js";
