@@ -16,6 +16,9 @@ export type NotificationId = B3Brand<string, 'NotificationId'>;
 /** One deterministic activity-drift episode identity (§4.1, §9.2). */
 export type DriftEpisodeId = B3Brand<string, 'DriftEpisodeId'>;
 
+/** Agents-owned authoritative provider measurement evidence (§4.1, §5.5). */
+export type ProviderUsageEvidenceId = B3Brand<string, 'ProviderUsageEvidenceId'>;
+
 /** Mint a new WatchRule identity using the mandated lowercase UUIDv7 body. */
 export const mintWatchRuleId = (): WatchRuleId =>
   `watchRule_${uuidv7()}` as WatchRuleId;
@@ -35,3 +38,9 @@ export const isNotificationId = (value: unknown): value is NotificationId =>
 /** Runtime guard for DriftEpisode identities. */
 export const isDriftEpisodeId = (value: unknown): value is DriftEpisodeId =>
   isValidId(value, 'driftEpisode', 'base32sha256');
+
+/** Runtime guard for ProviderUsageEvidence identities crossing into Supervision. */
+export const isProviderUsageEvidenceId = (
+  value: unknown,
+): value is ProviderUsageEvidenceId =>
+  isValidId(value, 'providerUsage', 'base32sha256');
