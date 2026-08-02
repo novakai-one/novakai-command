@@ -132,7 +132,11 @@ export async function bootServer(options: BootOptions): Promise<BootResult> {
       ok: false,
       error: {
         code: 'NoHumanPrincipal',
-        message: `no principal with role "${HUMAN_ROLE}" in ${path.join(options.root, 'config.jsonl')} — ${MINT_RUNBOOK}`,
+        // §18.1's inventory puts config.jsonl in `.novakai/stores/` with every
+        // other registered kind. Naming the old root-level path here would send
+        // an operator to a file the product no longer writes.
+        message: `no principal with role "${HUMAN_ROLE}" in `
+          + `${path.join(options.root, 'stores', 'config.jsonl')} — ${MINT_RUNBOOK}`,
       },
     };
   }
