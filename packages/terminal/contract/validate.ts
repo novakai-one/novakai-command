@@ -135,9 +135,9 @@ function readSequenceClaim(field: FieldReader): number | undefined {
   const given = field.given('expectedNextInputSequence');
   if (given === undefined) return undefined;
   if (typeof given !== 'number' || !Number.isInteger(given)
-    || given < 1 || given > SEQUENCE_LIMIT) {
+    || given < 0 || given > SEQUENCE_LIMIT) {
     field.reject('expectedNextInputSequence',
-      `must be a whole number between 1 and ${String(SEQUENCE_LIMIT)} `
+      `must be a whole number between 0 and ${String(SEQUENCE_LIMIT)} `
       + `(received ${JSON.stringify(given) ?? 'undefined'}) — or omit it to append `
       + 'at the current position');
     return undefined;

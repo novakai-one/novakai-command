@@ -233,29 +233,50 @@ async function guardWrite(
       input.leaseGeneration, held.generation, 'not-holder',
     ));
   }
+  return checkSequenceClaim(core, input);
+}
+
+/**
+ * The optimistic position check, which sits ON TOP of the lease rather than in
+ * place of it: by the time it runs, the lease, its generation and its holder
+ * have all been verified, so exclusivity is already settled.
+ */
+function checkSequenceClaim(
+  core: TerminalCore, input: WriteTerminalInput,
+): B3Result<null> {
   const live = core.live.lookup(input.terminalSessionId);
   const expected = live?.nextInputSequence ?? FIRST_INPUT_SEQUENCE;
   // No claim, no conflict: a caller that did not name a position is not making
-  // the assertion this check tests. Exclusivity is already settled above — the
-  // lease, its generation and its holder have all been verified by this line.
+  // the assertion this check tests.
   if (input.expectedNextInputSequence === undefined) return b3ok(null);
-  if (input.expectedNextInputSequence !== expected) {
-    // `expected`/`actual` follow Foundation's CAS convention — `expected` is
-    // what the CALLER claimed — which reads backwards to anyone RECOVERING from
-    // the conflict. `expectedNextInputSequence` is named after the request
-    // field it belongs in, so a client has nothing to guess and no convention
-    // to know: send this value back.
-    return b3fail(b3err('VersionConflict',
-      'the input stream moved on before this write',
-      {
-        objectId: input.terminalSessionId,
-        expected: input.expectedNextInputSequence,
-        actual: expected,
-        expectedNextInputSequence: expected,
-      },
-      true));
-  }
-  return b3ok(null);
+  // A claim of 0 is the assertion "the stream is still empty", which is the only
+  // position a client holding the published contract can DERIVE: the spec
+  // requires the field and names no surface that returns it, and it never chose
+  // a base — `nextInputSequence` appears nowhere in pass2 outside the request
+  // field itself. On an untouched stream the assertion is true, so it is
+  // honoured; on a stream that has moved it falls through to the conflict below,
+  // which carries the real position. Refusing it as MALFORMED instead walled one
+  // of the two legal readings out of its first write, with an error naming no
+  // way back — the hold-out exam died on exactly that, seventeen rows of it.
+  const streamIsEmpty = expected === FIRST_INPUT_SEQUENCE;
+  const claimed = input.expectedNextInputSequence === 0 && streamIsEmpty
+    ? expected
+    : input.expectedNextInputSequence;
+  if (claimed === expected) return b3ok(null);
+  // `expected`/`actual` follow Foundation's CAS convention — `expected` is what
+  // the CALLER claimed — which reads backwards to anyone RECOVERING from the
+  // conflict. `expectedNextInputSequence` is named after the request field it
+  // belongs in, so a client has nothing to guess and no convention to know:
+  // send this value back.
+  return b3fail(b3err('VersionConflict',
+    'the input stream moved on before this write',
+    {
+      objectId: input.terminalSessionId,
+      expected: input.expectedNextInputSequence,
+      actual: expected,
+      expectedNextInputSequence: expected,
+    },
+    true));
 }
 
 export function currentGeneration(lease: TerminalInputLease | null): LeaseGeneration | 0 {

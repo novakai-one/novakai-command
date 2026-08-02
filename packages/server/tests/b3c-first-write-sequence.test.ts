@@ -143,25 +143,29 @@ test('a claimed sequence is still checked, and a wrong one still conflicts', asy
 test('an out-of-range sequence is refused with the value it was sent', async () => {
   const rig = await createRig();
   try {
-    // `0` is the value NVK-KIMI-025's conflict used to advertise, so it is the
-    // guess a recovering client is most likely to make. Refusing it is right —
-    // but the refusal has to be actionable, and "must be a whole number between
-    // 1 and 9007199254740991" is the identical message an OMITTED field gets.
-    // A client cannot tell which mistake it made, which is the difference
-    // between a recoverable error and a wall.
+    // This test used to send `0`, on the reasoning that refusing it was right so
+    // long as the refusal was actionable. The hold-out exam disagreed, and it
+    // was right to: `0` is the position a contract-conformant client DERIVES for
+    // its first write, and the spec never chose a base. `0` is now honoured on
+    // an empty stream — see `b3c-first-write-zero.test.ts`.
+    //
+    // What this test was really pinning survives unchanged: a genuinely
+    // malformed claim is refused, and the refusal says what it received and how
+    // to proceed rather than sharing one message with an OMITTED field, which
+    // told a client nothing about which of the two mistakes it had made.
     const refused = await rig.chris.call('b3.terminal.write', {
       terminalSessionId: rig.terminalSessionId, attachmentId: rig.attachmentId,
       inputLeaseId: rig.leaseId, leaseGeneration: rig.leaseGeneration,
-      expectedNextInputSequence: 0, kindOfInput: 'text', utf8Text: 'zero\r',
+      expectedNextInputSequence: 0.5, kindOfInput: 'text', utf8Text: 'half\r',
     });
-    assert.equal(refused.ok, false, 'sequence 0 was accepted');
+    assert.equal(refused.ok, false, 'a fractional sequence was accepted');
     if (refused.ok) return;
     assert.equal(refused.error.code, 'ValidationFailed');
     const issues = (refused.error.details as { issues?: { path: string; message: string }[] })
       .issues ?? [];
     const issue = issues.find((entry) => entry.path === 'expectedNextInputSequence');
     assert.notEqual(issue, undefined, 'no issue named the field that was wrong');
-    assert.match(issue!.message, /received 0/,
+    assert.match(issue!.message, /received 0\.5/,
       `the refusal does not say what it received: "${issue!.message}"`);
     assert.match(issue!.message, /omit/,
       `the refusal does not name the way out: "${issue!.message}"`);
