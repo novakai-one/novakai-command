@@ -11,18 +11,21 @@ import type { SafeBoundaryStatusTurnRequest } from '../contract/testkit/index.js
 /** Frozen usage event fixture shared by the usage seam pair. */
 export function usageEvidenceEvent(
   measurement: ProviderUsageMeasurement,
+  revision = 1,
 ): ProviderUsageEvidenceCommittedEvent {
+  const identityBody = revision === 1 ? 'a'.repeat(52) : 'c'.repeat(52);
+  const second = String(revision - 1).padStart(2, '0');
   return {
-    eventId: 'event_usage-100k',
+    eventId: `event_usage-100k-${revision}`,
     kind: 'agent.provider-usage-evidence.committed',
     schemaVersion: 1,
-    occurredAt: '2026-08-02T00:00:00.000Z' as never,
-    committedAt: '2026-08-02T00:00:00.100Z' as never,
+    occurredAt: `2026-08-02T00:00:${second}.000Z` as never,
+    committedAt: `2026-08-02T00:00:${second}.100Z` as never,
     sourceOwner: 'agents',
     traceId: 'trace_123e4567-e89b-42d3-a456-426614174000' as never,
-    cursor: 'cursor-usage-1' as never,
+    cursor: `cursor-usage-${revision}` as never,
     payload: {
-      id: `providerUsage_${'a'.repeat(52)}`,
+      id: `providerUsage_${identityBody}`,
       kind: 'providerUsageEvidence',
       schemaVersion: 1,
       recordVersion: 1,
@@ -32,7 +35,7 @@ export function usageEvidenceEvent(
       lastMutation: { state: 'legacy-no-trace' },
       providerSessionId: 'sess_123e4567-e89b-42d3-a456-426614174000',
       providerConversationId: 'conversation-1',
-      observedAt: '2026-08-02T00:00:00.000Z',
+      observedAt: `2026-08-02T00:00:${second}.000Z`,
       source: 'provider-meter',
       sourceCursor: 'usage-cursor-1',
       measurement,

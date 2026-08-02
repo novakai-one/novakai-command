@@ -6,6 +6,7 @@ import type {
 } from '@novakai/foundation/contract';
 import type {
   InstallRunWatchersInput,
+  VersionedRef,
   WatchRule,
   WatchRuleId,
 } from '../index.js';
@@ -22,6 +23,7 @@ export interface RunWatcherInstallerProviderHarness {
 export interface SpawnWatcherInstallObservation {
   readonly ready: boolean;
   readonly installedRuleIds: readonly WatchRuleId[];
+  readonly installedTemplateRefs: readonly VersionedRef[];
 }
 
 /** Runtime consumer half of spawn → installRunWatchers. */
@@ -53,6 +55,17 @@ const INSTALL_INPUT: InstallRunWatchersInput = {
   ],
 };
 
+/** Resolve the known fixture catalogue by semantic condition identity. */
+export function fixtureTemplateRefForRule(rule: WatchRule): VersionedRef | undefined {
+  if (rule.condition.kind === 'turn-count-at-least' && rule.condition.value === 100) {
+    return INSTALL_INPUT.requiredTemplateRefs[0];
+  }
+  if (rule.condition.kind === 'output-tokens-at-least' && rule.condition.value === 100_000) {
+    return INSTALL_INPUT.requiredTemplateRefs[1];
+  }
+  return undefined;
+}
+
 /** Verify the provider returns one unique, correctly targeted rule per required template. */
 export async function assertInstallRunWatchersProviderContract(
   provider: RunWatcherInstallerProviderHarness,
@@ -68,6 +81,10 @@ export async function assertInstallRunWatchersProviderContract(
       agentRunId: INSTALL_INPUT.agentRunId,
     });
   }
+  assert.deepEqual(
+    installed.value.map(fixtureTemplateRefForRule),
+    INSTALL_INPUT.requiredTemplateRefs,
+  );
 }
 
 /** Verify Runtime blocks `ready` when the provider omits any required rule. */
@@ -78,6 +95,7 @@ export async function assertSpawnWatcherConsumerContract(
   const complete = await consumer.completeWatcherStage(CONTEXT, INSTALL_INPUT, provider);
   assert.equal(complete.ready, true);
   assert.equal(complete.installedRuleIds.length, INSTALL_INPUT.requiredTemplateRefs.length);
+  assert.deepEqual(complete.installedTemplateRefs, INSTALL_INPUT.requiredTemplateRefs);
   const partial: RunWatcherInstallerProviderHarness = {
     installRunWatchers: async (context, input) => {
       const installed = await provider.installRunWatchers(context, input);
@@ -89,4 +107,24 @@ export async function assertSpawnWatcherConsumerContract(
   const blocked = await consumer.completeWatcherStage(CONTEXT, INSTALL_INPUT, partial);
   assert.equal(blocked.ready, false);
   assert.equal(blocked.installedRuleIds.length, 1);
+
+  const wrongTemplates: RunWatcherInstallerProviderHarness = {
+    installRunWatchers: async (context, input) => {
+      const installed = await provider.installRunWatchers(context, input);
+      return installed.ok
+        ? b3ok(installed.value.map((rule) => ({
+            ...rule,
+            condition: { kind: 'operation-failed' as const },
+          })))
+        : installed;
+    },
+  };
+  const wrongIdentity = await consumer.completeWatcherStage(
+    CONTEXT,
+    INSTALL_INPUT,
+    wrongTemplates,
+  );
+  assert.equal(wrongIdentity.installedRuleIds.length, INSTALL_INPUT.requiredTemplateRefs.length);
+  assert.equal(wrongIdentity.ready, false);
+  assert.deepEqual(wrongIdentity.installedTemplateRefs, []);
 }

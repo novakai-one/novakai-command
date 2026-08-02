@@ -19,7 +19,10 @@ test('notification consumer preserves queue-first delivery and non-starting mode
   const consumer: NotificationDeliveryConsumerHarness = {
     acceptQueuedNotification: async (event) => ({
       acceptedNotificationId: event.payload.id,
-      queueCommittedBeforeDeliveryEffect: event.payload.state === 'queued',
+      effectOrder: [
+        { kind: 'queue-commit-observed', notificationId: event.payload.id },
+        { kind: 'delivery-effect-started', notificationId: event.payload.id },
+      ],
       providerTurnsStartedSynchronously: 0,
       resultingState: 'queued',
     }),

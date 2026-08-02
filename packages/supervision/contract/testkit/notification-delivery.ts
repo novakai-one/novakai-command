@@ -16,7 +16,10 @@ export interface NotificationEmitterProviderHarness {
 /** Observable delivery acceptance before any Runtime safe-boundary work. */
 export interface NotificationDeliveryObservation {
   readonly acceptedNotificationId: NotificationId;
-  readonly queueCommittedBeforeDeliveryEffect: boolean;
+  readonly effectOrder: readonly {
+    readonly kind: 'queue-commit-observed' | 'delivery-effect-started';
+    readonly notificationId: NotificationId;
+  }[];
   readonly providerTurnsStartedSynchronously: number;
   readonly resultingState: Notification['state'];
 }
@@ -59,7 +62,10 @@ export async function assertNotificationDeliveryConsumerContract(
     const event = await provider.emitQueuedNotification(deliveryMode);
     const observed = await consumer.acceptQueuedNotification(event);
     assert.equal(observed.acceptedNotificationId, event.payload.id);
-    assert.equal(observed.queueCommittedBeforeDeliveryEffect, true);
+    assert.deepEqual(observed.effectOrder, [
+      { kind: 'queue-commit-observed', notificationId: event.payload.id },
+      { kind: 'delivery-effect-started', notificationId: event.payload.id },
+    ]);
     assert.equal(observed.providerTurnsStartedSynchronously, 0);
     assert.equal(observed.resultingState, 'queued');
   }
