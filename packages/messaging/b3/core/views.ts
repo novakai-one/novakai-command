@@ -221,12 +221,21 @@ async function threadIdsFor(
     for (const thread of listed.value) seen.add(thread.id);
   }
   for (const agentId of agentIds) {
-    const inbox = await store.listAgentInbox(agentId);
-    if (inbox.kind !== "ok") continue;
-    for (const item of inbox.value) {
-      const message = await store.getMessage(item.messageId);
-      if (message.kind === "ok") seen.add(message.value.threadId);
-    }
+    for (const threadId of await threadsInInboxOf(store, agentId)) seen.add(threadId);
   }
   return [...seen];
+}
+
+/** Where the Messages this Agent was ACCEPTED for actually live. */
+async function threadsInInboxOf(
+  store: MessagingStore, agentId: AgentId,
+): Promise<readonly ThreadId[]> {
+  const inbox = await store.listAgentInbox(agentId);
+  if (inbox.kind !== "ok") return [];
+  const threads: ThreadId[] = [];
+  for (const item of inbox.value) {
+    const message = await store.getMessage(item.messageId);
+    if (message.kind === "ok") threads.push(message.value.threadId);
+  }
+  return threads;
 }

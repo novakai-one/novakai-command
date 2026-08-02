@@ -316,7 +316,7 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
     ...(options.mirrorIntervalMs === undefined
       ? {} : { mirrorIntervalMs: options.mirrorIntervalMs }),
   });
-  transcript = composedTranscript.api;
+  transcript = composedTranscript.capability;
 
   // §13.9 is a pipeline, not a verb. The ladder bound this Run's transcript at
   // spawn so the mirror COULD run; starting it here is what makes it run — and

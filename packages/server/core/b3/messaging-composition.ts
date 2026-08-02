@@ -93,7 +93,7 @@ export interface B3TranscriptCompositionOptions {
  * turn stranded in a provider file.
  */
 export interface ComposedTranscript {
-  readonly api: B3TranscriptContract;
+  readonly capability: B3TranscriptContract;
   readonly mirror: MirrorPump;
 }
 
@@ -137,7 +137,7 @@ export function composeB3TranscriptFor(
     },
   };
 
-  const api = composeB3Transcript({
+  const capability = composeB3Transcript({
     store,
     source: options.source,
     messaging: mirror,
@@ -145,7 +145,7 @@ export function composeB3TranscriptFor(
   });
 
   return {
-    api,
+    capability,
     mirror: createMirrorPump({
       ...(options.mirrorIntervalMs === undefined
         ? {} : { intervalMs: options.mirrorIntervalMs }),
@@ -154,7 +154,7 @@ export function composeB3TranscriptFor(
         // Through the capability's own contract, so the pump gets the same
         // watermark law, ledger and `transcript.line.committed` event a human
         // driving `b3.transcript.ingest` gets. There is one mirror, not two.
-        ingest: (input) => api.ingestTranscriptSource({
+        ingest: (input) => capability.ingestTranscriptSource({
           principal: { id: 'sys_transcript', kind: 'system', verifiedScopes: [] },
           clientOpId: `op_pump_${input.bindingId.slice(-24)}` as never,
           traceId: 'trace_00000000-0000-4000-8000-000000000000' as never,
