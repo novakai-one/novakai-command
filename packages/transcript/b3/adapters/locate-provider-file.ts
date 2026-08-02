@@ -7,8 +7,14 @@
  * — and turns it into a path, by looking where each provider actually writes:
  *
  *   claude  ~/.claude/projects/<project>/<native>.jsonl
- *   codex   ~/.codex/**\/<...native...>.jsonl
- *   kimi    ~/.kimi-code/**\/<...native...>.jsonl
+ *   codex   ~/.codex/**\/rollout-<iso>-<native>.jsonl
+ *   kimi    ~/.kimi-code/sessions/wd_<workspace>/session_<native>/agents/main/wire.jsonl
+ *
+ * Two of the three name the FILE after the session. kimi names a DIRECTORY
+ * after it — the same id `kimiSessionIdFrom` extracts at discovery — and calls
+ * the transcript inside it `wire.jsonl`. A basename match can never see that,
+ * which is why every kimi binding stayed `waiting` and exam rows C1/C3-kimi
+ * read back a mirror that had nothing to read.
  *
  * It only ever READS, and only ever below the provider's own home (§27:
  * "provider transcript originals remain untouched"). Nothing here writes,
@@ -58,10 +64,78 @@ export interface ProviderFileLocatorOptions {
 const DEFAULT_MAX_DEPTH = 5;
 
 /**
- * A file whose NAME carries the session id. Every provider names its transcript
- * after the session, which is why an id match on the basename is a real match
- * rather than a guess — and why an id that appears only in file CONTENT is
- * deliberately not accepted: two sessions can mention each other.
+ * How one provider's own directory layout names a session's transcript.
+ *
+ * `file` — the transcript's own basename carries the id (claude, codex).
+ * `session-directory` — a DIRECTORY carries the id and the transcript sits at
+ * a fixed relative path inside it (kimi).
+ *
+ * Either way the FILESYSTEM does the naming. An id that appears only in file
+ * CONTENT is still deliberately not accepted: two sessions can mention each
+ * other, and a directory named after one of them cannot.
+ */
+type ProviderLayout =
+  | { readonly kind: 'file' }
+  | {
+    readonly kind: 'session-directory';
+    readonly prefix: string;
+    /** The transcript's path inside the session directory, as segments. */
+    readonly transcript: readonly string[];
+  };
+
+const LAYOUTS: Record<ProviderKind, ProviderLayout> = {
+  claude: { kind: 'file' },
+  codex: { kind: 'file' },
+  // `agents/main`, explicitly: kimi gives every native subagent its own
+  // `agents/<id>/wire.jsonl`, and mirroring one of those into the Run's thread
+  // would put somebody else's conversation in this Agent's transcript.
+  kimi: { kind: 'session-directory', prefix: 'session_', transcript: ['agents', 'main', 'wire.jsonl'] },
+};
+
+/** The sub-folders of one directory. An unreadable one has none, not an error. */
+function foldersIn(folder: string): readonly { name: string; path: string }[] {
+  let entries: readonly string[];
+  try {
+    entries = readdirSync(folder);
+  } catch {
+    return [];
+  }
+  const found: { name: string; path: string }[] = [];
+  for (const entry of entries) {
+    const full = path.join(folder, entry);
+    try {
+      if (statSync(full).isDirectory()) found.push({ name: entry, path: full });
+    } catch {
+      continue; // an entry that vanished mid-scan is not an answer
+    }
+  }
+  return found;
+}
+
+/** The transcript inside the session directory this provider names for `needle`. */
+function findInSessionDirectory(
+  folder: string, needle: string, layout: Extract<ProviderLayout, { kind: 'session-directory' }>,
+  depth: number, maxDepth: number,
+): string | null {
+  if (depth > maxDepth || !existsSync(folder)) return null;
+  const wanted = `${layout.prefix}${needle}`;
+  for (const child of foldersIn(folder)) {
+    if (child.name === wanted) {
+      const transcript = path.join(child.path, ...layout.transcript);
+      // A session directory that exists with no transcript in it yet is
+      // `waiting`, not wrong — kimi creates the directory before the first turn.
+      return existsSync(transcript) ? transcript : null;
+    }
+    const found = findInSessionDirectory(child.path, needle, layout, depth + 1, maxDepth);
+    if (found !== null) return found;
+  }
+  return null;
+}
+
+/**
+ * A file whose NAME carries the session id. claude and codex name their
+ * transcript after the session, which is why an id match on the basename is a
+ * real match rather than a guess.
  */
 function findByName(
   folder: string, needle: string, depth: number, maxDepth: number,
@@ -124,9 +198,13 @@ export function createProviderFileLocator(
     const native = await options.nativeSessionIdOf(binding);
     if (native === null || native.trim() === '') return null;
 
-    const home = homes[binding.provider as ProviderKind];
-    if (home === undefined) return null;
-    const found = findByName(home, native, 0, maxDepth);
+    const provider = binding.provider as ProviderKind;
+    const home = homes[provider];
+    const layout = LAYOUTS[provider] as ProviderLayout | undefined;
+    if (home === undefined || layout === undefined) return null;
+    const found = layout.kind === 'file'
+      ? findByName(home, native, 0, maxDepth)
+      : findInSessionDirectory(home, native, layout, 0, maxDepth);
     if (found !== null) resolved.set(binding.id, found);
     return found;
   };

@@ -30,7 +30,8 @@ export type FilterReason =
   | "empty-after-control-strip"
   | "progress-frame"
   | "usage-line"
-  | "slash-command-frame";
+  | "slash-command-frame"
+  | "serialised-content-parts";
 
 export type TurnClassification =
   | { readonly kind: "message"; readonly role: "human" | "assistant"; readonly text: string }
@@ -94,6 +95,35 @@ const isUsageLine = (text: string): boolean =>
 const SLASH_FRAME = /^\s*(\/[a-z][\w-]*)(\s+\/[a-z][\w-]*)+\s*$/i;
 
 /**
+ * A provider's own content-part array, serialised — `[{"type":"text",…}]`.
+ *
+ * kimi writes a typed turn TWICE: `turn.prompt`, holding the input array it was
+ * handed, and `context.append_message`, holding the message it appended. Both
+ * normalise to `user`, so one thing a person typed reached the mirror as two
+ * conversation turns at two source positions — exam row C1-kimi's "exactly one
+ * committed Novakai Message", missed by one — and the first of the pair
+ * committed a data structure where the words should be.
+ *
+ * Shape, not provider: a turn whose entire text is a JSON array of `{type: …}`
+ * parts is a serialisation of a payload, never something a person typed. The
+ * words are not lost — they arrive at the next position, as prose. Filtering is
+ * not deleting: the position keeps a durable outcome naming this reason.
+ */
+function isSerialisedContentParts(text: string): boolean {
+  if (!text.startsWith("[") || !text.endsWith("]")) return false;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return false;
+  }
+  return Array.isArray(parsed)
+    && parsed.length > 0
+    && parsed.every((part) => typeof part === "object" && part !== null
+      && typeof (part as { type?: unknown }).type === "string");
+}
+
+/**
  * Decide what one normalised turn becomes.
  *
  * Order matters: the role gate runs first because a tool result that happens to
@@ -108,6 +138,9 @@ export function classifyTurn(turn: RawTurn): TurnClassification {
 
   const text = stripTerminalControl(turn.text).trim();
   if (text === "") return { kind: "filtered", reason: "empty-after-control-strip" };
+  if (isSerialisedContentParts(text)) {
+    return { kind: "filtered", reason: "serialised-content-parts" };
+  }
   if (SLASH_FRAME.test(text)) return { kind: "filtered", reason: "slash-command-frame" };
   if (PROGRESS.test(text)) return { kind: "filtered", reason: "progress-frame" };
   if (isUsageLine(text)) return { kind: "filtered", reason: "usage-line" };

@@ -106,6 +106,30 @@ test("a slash-command UI frame is filtered; a message about one is not", () => {
   assert.equal(about.kind, "message");
 });
 
+test("a serialised content-part array is filtered; prose about JSON is not", () => {
+  // kimi's `turn.prompt` row carries the input array it was handed, and the
+  // same words arrive one position later as prose (`context.append_message`).
+  // Committing both made one typed turn two Messages — exam row C1-kimi.
+  const parts = classifyTurn({
+    role: "user",
+    text: JSON.stringify([{ type: "text", text: "add the retry budget" }]),
+  });
+  assert.equal(parts.kind, "filtered");
+  assert.equal(parts.kind === "filtered" && parts.reason, "serialised-content-parts");
+
+  // The eager-filter guard this file exists for. None of these is a payload.
+  for (const text of [
+    'The payload is [{"type":"text"}] — note the shape.',
+    "[1, 2, 3]",
+    '["just", "strings"]",',
+    "[]",
+    "[not json at all]",
+  ]) {
+    assert.equal(classifyTurn({ role: "user", text }).kind, "message",
+      `a human turn was filtered as a serialised payload: ${text}`);
+  }
+});
+
 test("whitespace-only and zero-length turns are filtered as empty", () => {
   assert.equal(classifyTurn({ role: "user", text: "   \n\t " }).kind, "filtered");
   assert.equal(classifyTurn({ role: "user", text: "" }).kind, "filtered");
