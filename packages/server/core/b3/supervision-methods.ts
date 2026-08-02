@@ -16,8 +16,9 @@ import {
   b3err, b3fail, b3ok,
   type AuthenticatedPrincipal, type B3Result,
 } from '@novakai/foundation/contract';
-import type {
-  Notification, NotificationFilter, WatchDeadline, WatchRule,
+import {
+  parseNotificationFilter,
+  type Notification, type WatchDeadline, type WatchRule,
 } from '../../../supervision/contract/index.js';
 import type { SupervisionCore } from '../../../supervision/public/index.js';
 import type { CallerSession, MethodTable } from '../../contract/protocol.js';
@@ -47,15 +48,6 @@ function readParams(candidate: unknown): B3Result<WireParams> {
       { received: params.contractVersion, supported: [1] }, false));
   }
   return b3ok(params as WireParams);
-}
-
-/** §12.4's bounded filter, read off the wire rather than trusted. */
-function readNotificationFilter(payload: Readonly<Record<string, unknown>>): NotificationFilter {
-  const limit = payload['limit'];
-  return {
-    limit: typeof limit === 'number' && Number.isInteger(limit) && limit > 0
-      ? Math.min(limit, 200) : 50,
-  };
 }
 
 export interface WatcherListing {
@@ -88,9 +80,11 @@ export function buildB3SupervisionMethods(options: B3SupervisionMethodOptions): 
     ): Promise<B3Result<{ readonly items: readonly Notification[] }>> => {
       const parsed = readParams(params);
       if (!parsed.ok) return parsed;
-      return supervision.listNotifications(
-        options.principalFor(session), readNotificationFilter(parsed.value.payload),
-      );
+      // The FROZEN filter parser, at the boundary the freeze wrote it for —
+      // not a second, laxer opinion about the same payload.
+      const filter = parseNotificationFilter(parsed.value.payload);
+      if (!filter.ok) return filter;
+      return supervision.listNotifications(options.principalFor(session), filter.value);
     },
   };
 }
