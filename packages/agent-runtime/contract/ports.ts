@@ -21,6 +21,7 @@ import type {
   AgentControlFacts, AgentControlOutcomeFacts, ControlCapabilityFacts,
 } from './controls.js';
 import type { AgentRelationshipFacts } from './family.js';
+import type { LaunchPlanFacts } from './launch-facts.js';
 
 export type {
   AgentControlFacts, AgentControlOutcomeFacts, AgentRelationshipFacts,
@@ -29,37 +30,9 @@ export type {
 
 // ── What Agents must answer ─────────────────────────────────────────────────
 
-/** The launch facts a Run is pinned to. Runtime reads these; it never edits them. */
-export interface LaunchPlanFacts {
-  readonly id: ResolvedLaunchPlanId;
-  readonly agentId: AgentId;
-  readonly provider: 'claude' | 'codex' | 'kimi';
-  readonly modelId: string;
-  readonly effort: string;
-  readonly workingDirectory: string;
-  readonly skills: readonly { readonly id: string; readonly version: number; readonly digest: string }[];
-  readonly skillsConfirmationGate:
-    | { readonly mode: 'disabled' }
-    | {
-        readonly mode: 'required-two-turn';
-        readonly confirmationMarker: string;
-        readonly onFailure: 'terminate-run-and-record-drift';
-      };
-  readonly lifecyclePolicy: {
-    readonly onSupervisorFinal:
-      | 'assign-human' | 'assign-nearest-live-ancestor' | 'remain-orphaned';
-    readonly allowedContinuationModes: readonly ContinuationMode[];
-  };
-  readonly spawnPolicy: {
-    /**
-     * The child roles this Run may spawn. The Runtime asks for exactly these
-     * when it issues the Run's own grant — Agents then intersects them down to
-     * what the CALLER actually held, so the grant can only ever shrink.
-     */
-    readonly allowedChildRoleIds: readonly AgentRoleProfileId[];
-    readonly maxLiveChildren?: number;
-  };
-}
+// `LaunchPlanFacts` is in `launch-facts.ts` — the one fact both the Agents seam
+// and the provider seam speak about. Re-exported so consumers see one contract.
+export type { LaunchPlanFacts };
 
 export interface AgentFacts {
   readonly id: AgentId;

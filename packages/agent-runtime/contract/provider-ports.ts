@@ -11,7 +11,7 @@ import type {
 } from '@novakai/foundation/contract';
 import type { ContinuationMode } from './runs.js';
 import type { TurnDeliveryStep } from './types.js';
-import type { LaunchPlanFacts } from './ports.js';
+import type { LaunchPlanFacts } from './launch-facts.js';
 
 export interface ProviderLaunchFacts {
   /** Opaque: the Runtime registered it and Terminal resolves it. */
