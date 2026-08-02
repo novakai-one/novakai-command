@@ -12,13 +12,14 @@ import {
 import type { ResolveLaunchPlanInput } from '../contract/api.js';
 import { readResolveLaunchPlanInput } from '../contract/validate.js';
 import type {
-  Agent, AgentRoleProfile, ControlReplacementPlan, ResolvedExecutionPolicy,
-  ResolvedLaunchPlan,
+  Agent, AgentRoleProfile, ControlReplacementPlan, ResolvedLaunchPlan,
 } from '../contract/records.js';
 import { fingerprint, type GovernedAgentsCore } from './context.js';
 import { launchPlanInvalid, type Persisted } from './store.js';
 import { requireAgent } from './agents.js';
 import { getRoleProfile } from './roles.js';
+import { compatiblePlan } from './compat.js';
+import { resolveSupervisionPlan, type SupervisionPlanFacts } from './supervision-plan.js';
 
 export async function resolveLaunchPlan(
   core: GovernedAgentsCore, context: CommandContext, input: ResolveLaunchPlanInput,
@@ -60,14 +61,15 @@ async function inheritPlan(
       { path: 'inheritedPlanId', message: 'names no launch plan' },
     ]));
   }
+  const inherited = compatiblePlan(plan.value);
   const issues: FieldIssue[] = [];
-  if (plan.value.agentId !== request.agentId) {
+  if (inherited.agentId !== request.agentId) {
     issues.push({ path: 'inheritedPlanId', message: 'belongs to a different Agent' });
   }
-  if (plan.value.workingDirectory !== request.workingDirectory) {
+  if (inherited.workingDirectory !== request.workingDirectory) {
     issues.push({
       path: 'workingDirectory',
-      message: `is not the inherited plan's directory (${plan.value.workingDirectory})`,
+      message: `is not the inherited plan's directory (${inherited.workingDirectory})`,
     });
   }
   if (requestedAnyOverride(request)) {
@@ -76,10 +78,10 @@ async function inheritPlan(
       message: 'inherit-plan cannot carry provider/model/effort overrides; use refresh-role',
     });
   }
-  const supervision = supervisionIssues(plan.value, request.supervised);
+  const supervision = supervisionIssues(inherited, request.supervised);
   issues.push(...supervision);
   if (issues.length > 0) return b3fail(launchPlanInvalid(issues));
-  return b3ok(plan.value);
+  return b3ok(inherited);
 }
 
 /**
@@ -125,9 +127,10 @@ async function replacementPlan(
       { path: 'replacementPlanId', message: 'names a launch plan that no longer exists' },
     ]));
   }
-  const supervision = supervisionIssues(plan.value, request.supervised);
+  const replacementLaunch = compatiblePlan(plan.value);
+  const supervision = supervisionIssues(replacementLaunch, request.supervised);
   if (supervision.length > 0) return b3fail(launchPlanInvalid(supervision));
-  return b3ok(plan.value);
+  return b3ok(replacementLaunch);
 }
 
 async function freshPlan(
@@ -144,8 +147,12 @@ async function freshPlan(
 
   const chosen = chooseWithinPolicy(role.value, request);
   if (!chosen.ok) return chosen;
+  const supervisionPlan = resolveSupervisionPlan(role.value, core.watcherTemplates);
+  if (!supervisionPlan.ok) return supervisionPlan;
 
-  const content = planContent(agent, role.value, request, chosen.value);
+  const content = planContent(
+    agent, role.value, request, chosen.value, supervisionPlan.value,
+  );
   const supervision = supervisionIssues(content, request.supervised);
   if (supervision.length > 0) return b3fail(launchPlanInvalid(supervision));
 
@@ -214,6 +221,7 @@ function planContent(
   role: AgentRoleProfile,
   request: ResolveLaunchPlanInput,
   chosen: ChosenLaunch,
+  supervision: SupervisionPlanFacts,
 ): PlanContent {
   return {
     agentId: agent.id,
@@ -236,31 +244,11 @@ function planContent(
     hooks: role.hookRefs,
     instructions: role.instructionRefs,
     skillsConfirmationGate: role.skillsConfirmationGate,
-    executionPolicy: executionPolicyOf(role),
+    executionPolicy: supervision.executionPolicy,
     spawnPolicy: role.spawnPolicy,
     lifecyclePolicy: role.lifecyclePolicy,
-    supervisionPolicy: role.supervisionPolicy,
+    supervisionPolicy: supervision.policy,
     budgetPolicy: role.budgetPolicy,
-  };
-}
-
-/**
- * DEC-B3V4-13 and red gate 21: a role may REQUEST command restrictions, but
- * Novakai has no sandbox adapter, so what it reports is `advisory` — never
- * `enforced`. The limitation is stated in the record, not left to a reader to
- * infer from silence.
- */
-function executionPolicyOf(role: AgentRoleProfile): ResolvedExecutionPolicy {
-  return {
-    policyRef: role.executionPolicyRef,
-    commandScopes: [],
-    filesystemScopes: [],
-    networkScopes: [],
-    enforcement: 'advisory',
-    limitations: [
-      'Novakai enforces its own capability scopes; OS and provider command '
-      + 'restriction is advisory until a sandbox adapter exists',
-    ],
   };
 }
 
@@ -329,5 +317,5 @@ export async function getLaunchPlan(
       { path: 'launchPlanId', message: 'names no launch plan' },
     ]));
   }
-  return b3ok(found.value);
+  return b3ok(compatiblePlan(found.value));
 }

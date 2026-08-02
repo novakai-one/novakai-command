@@ -15,6 +15,7 @@ import type {
   IssueDelegationGrantInput, ApplyAgentControlInput, RegisterProviderSessionInput,
 } from '../contract/api.js';
 import type { ProviderAdapterRegistry } from '../contract/providers.js';
+import type { WatcherTemplateRefCatalogue } from '../contract/records.js';
 import {
   createGovernedAgentsStore, type GovernedAgentsStoreOptions,
 } from './store.js';
@@ -36,6 +37,7 @@ import type { HumanPrincipalId } from '@novakai/foundation/contract';
 
 export interface ComposeGovernedAgentsOptions extends GovernedAgentsStoreOptions {
   readonly providers: ProviderAdapterRegistry;
+  readonly watcherTemplates?: WatcherTemplateRefCatalogue;
   /** Whose tree a human/script/Operations spawn lands in. */
   readonly rootHumanPrincipalId?: HumanPrincipalId;
   readonly receipts?: ReceiptStore;
@@ -48,6 +50,9 @@ export function composeGovernedAgents(
   const core: GovernedAgentsCore = {
     store: createGovernedAgentsStore(options),
     providers: options.providers,
+    watcherTemplates: options.watcherTemplates ?? {
+      inspect: () => null, activityDriftRef: () => null,
+    },
     rootHumanPrincipalId: options.rootHumanPrincipalId ?? ('person_chris' as HumanPrincipalId),
     clock: options.clock ?? (() => new Date().toISOString()),
   };
@@ -116,6 +121,7 @@ export function composeGovernedAgents(
     getRoleProfile: (principal, roleProfileId) => getRoleProfile(core, principal, roleProfileId),
     listRoleProfiles: (principal) => listRoleProfiles(core, principal),
     getLaunchPlan: (principal, launchPlanId) => getLaunchPlan(core, principal, launchPlanId),
+    getResolvedLaunchPlan: (principal, launchPlanId) => getLaunchPlan(core, principal, launchPlanId),
     getAgentTree: (principal, input) => getAgentTree(core, principal, input),
     listChildren: (principal, parentAgentId) => listChildren(core, principal, parentAgentId),
     getProviderSession: (principal, id) => getProviderSession(core, principal, id),

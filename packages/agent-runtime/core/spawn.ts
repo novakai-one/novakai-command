@@ -22,7 +22,7 @@ import { advance, compensate, openOperation, unresolvedUncertainty } from './jou
 import { insideClosingTree, treeClosing } from './stop-tree.js';
 import { runSkillsGate } from './gate.js';
 import {
-  bindProviderSession, finishRun, recordDeferredStages, reserveRun, startTerminal,
+  bindProviderSession, finishRun, installWatchers, reserveRun, startTerminal,
 } from './spawn-stages.js';
 import { activateEndpoint, bindTranscript, reserveEndpoint } from './spawn-b3c.js';
 
@@ -242,6 +242,15 @@ async function buildRun(
   });
 }
 
+type WatcherRecipient = Parameters<typeof installWatchers>[1]['recipient'];
+
+/** Freeze the intended supervision assignment before watcher installation. */
+function watcherRecipient(authority: SpawnAuthorityFacts): WatcherRecipient {
+  return authority.parentAgentId === undefined
+    ? { kind: 'human', principalId: authority.rootHumanPrincipalId }
+    : { kind: 'agent', agentId: authority.parentAgentId };
+}
+
 /** The Run record, its PTY, its provider session, and its skills gate. */
 async function provisionRun(
   core: RunsCore, context: CommandContext, build: BuildInput, governed: Governed,
@@ -299,7 +308,15 @@ async function provisionRun(
   });
   if (!gated.ok) return gated;
 
-  const watched = await recordDeferredStages(core, gated.value.operation, ['watchers-installed']);
+  const watched = await installWatchers(core, {
+    agentRun: gated.value.agentRun, plan: governed.plan, operation: gated.value.operation,
+    recipient: watcherRecipient(build.authority),
+    requestProvenance: {
+      requestedBy: context.principal.id,
+      traceId: context.traceId,
+      clientOpId: context.clientOpId,
+    },
+  });
   if (!watched.ok) return watched;
   return b3ok({ agentRun: gated.value.agentRun, operation: watched.value });
 }

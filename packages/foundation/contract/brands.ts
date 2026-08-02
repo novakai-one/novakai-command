@@ -10,7 +10,9 @@ export type ProjectId = Brand<string, 'projectId'>;
 export type ArtifactId = Brand<string, 'artifactId'>;
 export type ConversationId = Brand<string, 'conversationId'>;
 
-export type ClientOpId = Brand<string, 'clientOpId'>; // "op_<uuidv4>" — REQUIRED on all mutating ops (R3-10)
+// §3.2 has two lawful sources: caller-minted UUIDv4 command keys and
+// name-derived UUIDv5 saga-effect keys. Both retain the same `op_` authority.
+export type ClientOpId = Brand<string, 'clientOpId'>; // "op_<uuidv4|uuidv5>" — REQUIRED on all mutating ops (R3-10)
 export type ServerOpId = Brand<string, 'serverOpId'>; // "srv_<uuidv4>"
 
 // B3a (B3V4-P2 §4.4): each capability that mutates on its own behalf — rather
@@ -69,6 +71,12 @@ export const OBJECT_KINDS = [
   'transcriptBinding',  // DEC-B3V4-24: transcript-owned Run↔source custody
   'observedSubagent',   // DEC-B3V4-18: transcript-owned observed native subagent
   'storeRouteCutover',  // DEC-B3V4-25: foundation-bootstrap-only cutover receipt
+  // B3d (B3V4-P2 §§9.1, 9.2, 18.1): supervision's standing rules, the durable
+  // deadlines they wait on, and the alerts they queue. Supervision is the sole
+  // writer of all three (§3.3); Agent Runtime asks through its contract.
+  'watchRule',          // DEC-B3V4-07: supervision-owned standing watcher rule
+  'watchDeadline',      // supervision-owned generation-fenced durable deadline
+  'notification',       // supervision-owned queued/delivered alert
   'quarantine',
   'token',
   'trace',
@@ -118,5 +126,12 @@ export const deriveClientOpId = (effectKey: string): ClientOpId => {
   const variant = `${'89ab'[parseInt(digest[16]!, 16) & 0b11]!}${digest.slice(17, 20)}`;
   return `op_${digest.slice(0, 8)}-${digest.slice(8, 12)}-${version}-${variant}-${digest.slice(20, 32)}` as ClientOpId;
 };
+
+const CLIENT_OP_ID = /^op_[0-9a-f]{8}-[0-9a-f]{4}-[45][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+/** Accept the two §3.2 ClientOpId forms without weakening prefix/version/variant checks. */
+export const isValidClientOpId = (value: unknown): value is ClientOpId =>
+  typeof value === 'string' && CLIENT_OP_ID.test(value);
+
 export const mintServerOpId = (): ServerOpId => `srv_${randomUUID()}` as ServerOpId;
 export const mintObjectId = (kind: string): ObjectId => `${kind}_${randomUUID()}` as ObjectId;

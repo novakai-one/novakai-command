@@ -14,10 +14,14 @@ import {
 import type {
   CreateRoleProfileInput, GovernedAgentsContract,
 } from '../contract/api.js';
+import type { WatcherTemplateRefCatalogue } from '../contract/records.js';
 import { composeGovernedAgents } from '../core/compose.js';
 import { createFakeProviderAdapters } from '../adapters/providers/fake.js';
 
 export const CHRIS = 'person_chris' as HumanPrincipalId;
+export const ACTIVITY_DRIFT_REF = {
+  id: 'watch-template/activity-drift', version: 1, digest: 'activity-drift-test-digest',
+};
 
 export interface Rig {
   readonly agents: GovernedAgentsContract;
@@ -29,12 +33,17 @@ export interface Rig {
   close(): void;
 }
 
-export function createRig(): Rig {
+export function createRig(
+  watcherTemplates: WatcherTemplateRefCatalogue = {
+    inspect: () => null, activityDriftRef: () => ACTIVITY_DRIFT_REF,
+  },
+): Rig {
   const root = mkdtempSync(path.join(tmpdir(), 'nvk-b3b-agents-'));
   const agents = composeGovernedAgents({
     root,
     dataRoot: path.join(root, 'stores'),
     providers: createFakeProviderAdapters(),
+    watcherTemplates,
   });
 
   const envelope = (principal: AuthenticatedPrincipal): CommandContext => ({
@@ -109,7 +118,11 @@ export function roleInput(
       onSupervisorFinal: 'assign-nearest-live-ancestor',
       allowedContinuationModes: ['resume', 'fresh', 'compact', 'handover'],
     },
-    supervisionPolicy: { requiredWatcherTemplates: [], parentNotificationMode: 'queue-only' },
+    supervisionPolicy: {
+      activityDrift: 'disabled-explicitly',
+      requiredWatcherTemplates: [],
+      parentNotificationMode: 'queue-only',
+    },
     budgetPolicy: { hardStopEnabled: false },
     ...overrides,
   };

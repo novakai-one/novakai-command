@@ -36,6 +36,15 @@ import {
   createProviderFileLocator, createProviderFileSource, defaultProviderHomes,
   type B3TranscriptContract, type MirrorPump, type TranscriptSourcePort,
 } from '../../../transcript/b3/contract/index.js';
+import {
+  composeSupervision, createTemplateCatalogue, type SupervisionCore,
+} from '../../../supervision/public/index.js';
+import {
+  ACTIVITY_DRIFT_TEMPLATE_REF, type WatcherTemplate,
+} from '../../../supervision/contract/index.js';
+import {
+  followEventsIntoSupervision, supervisionWatcherPort, watcherInstallAuthority, watchRuleAccess,
+} from './supervision-ports.js';
 
 export interface B3RuntimeOptions {
   /** `.novakai/` root. Domain records live in `<root>/stores`. */
@@ -77,6 +86,12 @@ export interface B3RuntimeOptions {
   readonly mirrorIntervalMs?: number;
   /** How often the inbox delivery loop looks. Same reason as the mirror's. */
   readonly inboxDeliveryIntervalMs?: number;
+  /**
+   * B3d: extra pinned watcher templates this host's role catalogue offers, on
+   * top of the ones Supervision ships. The frozen catalogue seam is owned by
+   * role-profile data; this composition root supplies its concrete entries.
+   */
+  readonly watcherTemplates?: readonly WatcherTemplate[];
 }
 
 export interface B3Runtime {
@@ -89,6 +104,7 @@ export interface B3Runtime {
   readonly transcript: B3TranscriptContract;
   /** The live pipeline behind §13.9. Exposed so a host can pump on demand. */
   readonly mirror: MirrorPump;
+  readonly supervision: SupervisionCore;
   readonly dataRoot: string;
   close(): Promise<void>;
 }
@@ -211,10 +227,23 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
 
   // Agents owns roles, family and grants; Agent Runtime owns Runs. They meet
   // ONLY through the narrow ports in `run-ports.ts` — neither imports the other.
+  const watcherTemplates = createTemplateCatalogue(options.watcherTemplates ?? []);
   const agents = composeGovernedAgents({
     root: options.root,
     dataRoot,
     providers: options.providers ?? createProviderAdapters(),
+    watcherTemplates: {
+      inspect: (templateRef) => {
+        const template = watcherTemplates.resolve(templateRef);
+        if (template === null) return null;
+        return {
+          requiresStartTurn: template.payload.condition.kind === 'activity-drift'
+            || template.payload.deliveryBinding === 'start-turn',
+        };
+      },
+      activityDriftRef: () => watcherTemplates.resolve(ACTIVITY_DRIFT_TEMPLATE_REF)?.templateRef
+        ?? null,
+    },
   });
   const credentials = createRunCredentials(options.root);
   // Late-bound on purpose: Transcript is composed AFTER Runs (it needs the
@@ -227,6 +256,17 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
   // stream the Runtime already owns (§15, §24.4). They do not write each
   // other's stores and neither writes the Runtime's — the only thing crossing
   // here is an event and a typed request.
+  // Supervision is composed BEFORE Runs, because the Runs spawn ladder now
+  // genuinely depends on it: §13.5's watcher rung installs through this port.
+  // It writes only its own three kinds and holds no way to reach a PTY.
+  const supervision = composeSupervision({
+    root: options.root,
+    dataRoot,
+    installAuthority: watcherInstallAuthority(agents, () => runs ?? undefined),
+    watchRuleAccess: watchRuleAccess(() => runs ?? undefined),
+    templates: watcherTemplates,
+  });
+
   const emit = (owner: 'messaging' | 'transcript') =>
     (kind: string, payload: Readonly<Record<string, unknown>>): void => {
       runs?.publishCapabilityEvent(kind, payload, owner);
@@ -272,6 +312,7 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
     messagingInbox: messagingInboxPort(messaging),
     ...(options.inboxDeliveryIntervalMs === undefined
       ? {} : { inboxDeliveryIntervalMs: options.inboxDeliveryIntervalMs }),
+    watchers: supervisionWatcherPort(supervision),
     transcriptCustody: transcriptCustodyPort(() => transcript),
     async transcriptBinding(agentRunId) {
       if (transcript === null) return null;
@@ -307,6 +348,11 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
     }),
   });
 
+  // §9.2/§24.4: Supervision reads the ONE published event stream the Runtime
+  // already owns. It is the whole watcher clock — no timer, no poll, and no
+  // second event identity invented on the side.
+  const following = followEventsIntoSupervision(runs, supervision);
+
   const composedTranscript = composeB3TranscriptFor({
     root: options.root,
     dataRoot,
@@ -335,6 +381,7 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
     messaging,
     transcript,
     mirror: composedTranscript.mirror,
+    supervision,
     dataRoot,
     async close() {
       // First, and awaited: a pass in flight holds durable Messaging and
@@ -344,6 +391,7 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
       await runs?.inboxDelivery.stop();
       await terminal?.dispose();
       await runtime.shutdown();
+      following.stop();
       await messaging.store.close();
     },
   };

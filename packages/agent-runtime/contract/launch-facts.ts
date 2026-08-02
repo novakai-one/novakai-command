@@ -27,6 +27,22 @@ export interface LaunchPlanFacts {
         readonly confirmationMarker: string;
         readonly onFailure: 'terminate-run-and-record-drift';
       };
+  /**
+   * B3d §13.5: the role's watcher policy, pinned into the immutable plan at
+   * resolution. Optional in the FACTS because a host composed without
+   * Supervision genuinely has none to read — a Runtime that invented one would
+   * be installing watchers no role ever asked for.
+   */
+  readonly supervisionPolicy?: {
+    readonly activityDrift: 'required' | 'disabled-explicitly';
+    readonly activityDriftTemplateRef?: {
+      readonly id: string; readonly version: number; readonly digest: string;
+    };
+    readonly requiredWatcherTemplates: readonly {
+      readonly id: string; readonly version: number; readonly digest: string;
+    }[];
+    readonly parentNotificationMode: 'queue-only' | 'next-turn-context' | 'start-turn';
+  };
   readonly lifecyclePolicy: {
     readonly onSupervisorFinal:
       | 'assign-human' | 'assign-nearest-live-ancestor' | 'remain-orphaned';

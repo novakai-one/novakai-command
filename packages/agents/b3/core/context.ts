@@ -5,6 +5,7 @@ import {
 } from '@novakai/foundation/contract';
 import { createHash } from 'node:crypto';
 import type { ProviderAdapterRegistry } from '../contract/providers.js';
+import type { WatcherTemplateRefCatalogue } from '../contract/records.js';
 import type { GovernedAgentsStore } from './store.js';
 
 /**
@@ -21,6 +22,8 @@ export const SCOPE = {
   adopt: 'agent.adopt' as AuthorityScope,
   continueRun: 'agent.continue' as AuthorityScope,
   control: 'agent.control' as AuthorityScope,
+  /** Q5: durable authority for watcher-originated provider turns. */
+  watchStartTurn: 'supervision:watch:start-turn' as AuthorityScope,
 } as const;
 
 export const RUN_OPERATION_SCOPE: Readonly<Record<string, AuthorityScope>> = {
@@ -38,6 +41,7 @@ export const HUMAN_SCOPES: readonly AuthorityScope[] = Object.values(SCOPE);
 export interface GovernedAgentsCore {
   readonly store: GovernedAgentsStore;
   readonly providers: ProviderAdapterRegistry;
+  readonly watcherTemplates: WatcherTemplateRefCatalogue;
   /** Whose tree a human/script/operations spawn lands in. */
   readonly rootHumanPrincipalId: HumanPrincipalId;
   readonly clock: () => string;

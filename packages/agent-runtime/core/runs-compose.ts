@@ -22,7 +22,7 @@ import type {
 } from '../contract/runs-api.js';
 import type {
   AgentsPort, MessagingEndpointPort, MessagingInboxPort, ProviderPort, RunCredentialPort,
-  TerminalPort, TranscriptCustodyPort,
+  RunWatcherPort, TerminalPort, TranscriptCustodyPort,
 } from '../contract/ports.js';
 import type { RuntimeHostContract } from '../contract/types.js';
 import { createRunsStore, type RunsStore, type RunsStoreOptions } from './runs-store.js';
@@ -93,6 +93,8 @@ export interface ComposeAgentRunsOptions extends RunsStoreOptions {
   readonly messagingInbox?: MessagingInboxPort;
   /** How often the delivery loop looks. Tests shorten it. */
   readonly inboxDeliveryIntervalMs?: number;
+  /** B3d §13.5's watcher rung, through Supervision's frozen contract. */
+  readonly watchers?: RunWatcherPort;
 }
 
 /**
@@ -153,6 +155,7 @@ export function composeAgentRuns(options: ComposeAgentRunsOptions): ComposedAgen
       ? {} : { messagingEndpoint: options.messagingEndpoint }),
     ...(options.transcriptCustody === undefined
       ? {} : { transcriptCustody: options.transcriptCustody }),
+    ...(options.watchers === undefined ? {} : { watchers: options.watchers }),
   };
 
   // A host with no Messaging gets a pump over an inbox that answers "nothing",

@@ -8,7 +8,7 @@ import {
 import type { RuntimeHostContract } from '../contract/types.js';
 import type {
   AgentsPort, MessagingEndpointPort, ProviderPort, RunCredentialPort, TerminalPort,
-  TranscriptCustodyPort,
+  RunWatcherPort, TranscriptCustodyPort,
 } from '../contract/ports.js';
 import {
   FINAL_LIFECYCLES, type AgentRun, type SupervisionAssignment,
@@ -50,6 +50,8 @@ export interface RunsCore {
   readonly messagingEndpoint?: MessagingEndpointPort;
   /** §13.5 row 9 and §13.6's final watermark. Optional for the same reason. */
   readonly transcriptCustody?: TranscriptCustodyPort;
+  /** B3d §13.5's watcher rung. Optional for the same reason as the two above. */
+  readonly watchers?: RunWatcherPort;
   /** Emitted after a commit, never before it (§15). */
   readonly publish: (
     kind: string,

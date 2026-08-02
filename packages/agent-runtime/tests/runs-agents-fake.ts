@@ -16,6 +16,7 @@ export const CHRIS = 'person_chris' as HumanPrincipalId;
 export const EVERY_SCOPE = [
   'agent.spawn', 'agent.interrupt', 'agent.stop-one', 'agent.stop-tree',
   'agent.adopt', 'agent.continue', 'agent.control',
+  'supervision:watch:start-turn',
 ] as AuthorityScope[];
 
 // ── A fake Agents that behaves like the real one where it matters ───────────
@@ -42,6 +43,7 @@ export interface FakeAgentsOptions {
   readonly allowedContinuationModes?: LaunchPlanFacts['lifecyclePolicy']['allowedContinuationModes'];
   readonly onSupervisorFinal?: LaunchPlanFacts['lifecyclePolicy']['onSupervisorFinal'];
   readonly skills?: LaunchPlanFacts['skills'];
+  readonly supervisionPolicy?: LaunchPlanFacts['supervisionPolicy'];
 }
 
 export function createFakeAgents(options: FakeAgentsOptions = {}): FakeAgents {
@@ -73,6 +75,8 @@ export function createFakeAgents(options: FakeAgentsOptions = {}): FakeAgents {
         confirmationMarker: 'SKILLS-CONFIRMED:',
         onFailure: 'terminate-run-and-record-drift',
       },
+    ...(options.supervisionPolicy === undefined
+      ? {} : { supervisionPolicy: options.supervisionPolicy }),
     lifecyclePolicy: {
       onSupervisorFinal: options.onSupervisorFinal ?? 'assign-nearest-live-ancestor',
       allowedContinuationModes: options.allowedContinuationModes
@@ -325,4 +329,3 @@ function refusal(
   port.refuseNext = null;
   return b3fail(error);
 }
-

@@ -51,6 +51,122 @@ test('a supervised spawn reaches ready with its whole ladder recorded', async ()
   });
 });
 
+test('a partial watcher install cannot advance a supervised Run to ready', async () => {
+  await withRig(async (rig) => {
+    const role = rig.agents.defineRole('builder');
+    const spawned = await rig.runtime.spawnAgent(rig.human(), supervisedSpawn(rig, role));
+    assert.equal(spawned.ok, false, 'Runtime accepted an empty watcher result as not-needed');
+    if (!spawned.ok) assert.equal(spawned.error.code, 'WatchRuleInvalid');
+  }, {
+    supervisionPolicy: {
+      activityDrift: 'disabled-explicitly',
+      requiredWatcherTemplates: [
+        { id: 'watch-template/required', version: 1, digest: 'required-digest' },
+      ],
+      parentNotificationMode: 'queue-only',
+    },
+    watchers: { installRunWatchers: async () => ({ ok: true, value: [] }) },
+  });
+});
+
+test('a wrong-template watcher response cannot advance a supervised Run to ready', async () => {
+  await withRig(async (rig) => {
+    const role = rig.agents.defineRole('builder');
+    const spawned = await rig.runtime.spawnAgent(rig.human(), supervisedSpawn(rig, role));
+    assert.equal(spawned.ok, false);
+    if (!spawned.ok) assert.equal(spawned.error.code, 'WatchRuleInvalid');
+  }, {
+    supervisionPolicy: {
+      activityDrift: 'disabled-explicitly',
+      requiredWatcherTemplates: [
+        { id: 'watch-template/required', version: 1, digest: 'required-digest' },
+      ],
+      parentNotificationMode: 'queue-only',
+    },
+    watchers: {
+      installRunWatchers: async () => ({
+        ok: true,
+        value: [{
+          id: 'wrong-rule',
+          templateRef: { id: 'watch-template/wrong', version: 1, digest: 'wrong' },
+          source: 'explicit',
+        }],
+      }),
+    },
+  });
+});
+
+test('omitting the implicit activity-drift watcher blocks ready', async () => {
+  await withRig(async (rig) => {
+    const role = rig.agents.defineRole('builder');
+    const spawned = await rig.runtime.spawnAgent(rig.human(), supervisedSpawn(rig, role));
+    assert.equal(spawned.ok, false);
+    if (!spawned.ok) assert.equal(spawned.error.code, 'WatchRuleInvalid');
+  }, {
+    supervisionPolicy: {
+      activityDrift: 'required', requiredWatcherTemplates: [],
+      activityDriftTemplateRef: {
+        id: 'watch-template/activity-drift', version: 1, digest: 'drift-digest',
+      },
+      parentNotificationMode: 'queue-only',
+    },
+    watchers: { installRunWatchers: async () => ({ ok: true, value: [] }) },
+  });
+});
+
+test('a mislabeled implicit activity-drift watcher blocks ready', async () => {
+  await withRig(async (rig) => {
+    const role = rig.agents.defineRole('builder');
+    const spawned = await rig.runtime.spawnAgent(rig.human(), supervisedSpawn(rig, role));
+    assert.equal(spawned.ok, false, 'Runtime trusted an implicit source label over its identity');
+    if (!spawned.ok) assert.equal(spawned.error.code, 'WatchRuleInvalid');
+  }, {
+    supervisionPolicy: {
+      activityDrift: 'required', requiredWatcherTemplates: [],
+      activityDriftTemplateRef: {
+        id: 'watch-template/activity-drift', version: 1, digest: 'drift-digest',
+      },
+      parentNotificationMode: 'queue-only',
+    },
+    watchers: {
+      installRunWatchers: async () => ({
+        ok: true,
+        value: [{
+          id: 'wrong-implicit-rule',
+          templateRef: { id: 'watch-template/not-activity-drift', version: 99, digest: 'wrong' },
+          source: 'implicit-activity-drift',
+        }],
+      }),
+    },
+  });
+});
+
+test('the exact pinned implicit activity-drift watcher permits ready', async () => {
+  const driftRef = {
+    id: 'watch-template/activity-drift', version: 1, digest: 'drift-digest',
+  };
+  await withRig(async (rig) => {
+    const role = rig.agents.defineRole('builder');
+    const spawned = await rig.runtime.spawnAgent(rig.human(), supervisedSpawn(rig, role));
+    assert.equal(spawned.ok, true, spawned.ok ? '' : spawned.error.message);
+  }, {
+    supervisionPolicy: {
+      activityDrift: 'required', requiredWatcherTemplates: [],
+      activityDriftTemplateRef: driftRef,
+      parentNotificationMode: 'queue-only',
+    },
+    watchers: {
+      installRunWatchers: async () => ({
+        ok: true,
+        value: [{
+          id: 'activity-drift-rule', templateRef: driftRef,
+          source: 'implicit-activity-drift',
+        }],
+      }),
+    },
+  });
+});
+
 test('every stage is journalled with a stable effect key, in the ladder order', async () => {
   await withRig(async (rig) => {
     const role = rig.agents.defineRole('builder');

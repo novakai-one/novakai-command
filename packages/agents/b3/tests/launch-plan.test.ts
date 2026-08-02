@@ -6,7 +6,7 @@
 // a refusal with no effects to undo.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createRig, roleInput, chatRoleInput, CHRIS } from './harness.js';
+import { ACTIVITY_DRIFT_REF, createRig, roleInput, chatRoleInput, CHRIS } from './harness.js';
 import type { AgentRoleProfileId, RecordVersion } from '@novakai/foundation/contract';
 
 async function withRig<T>(work: (rig: ReturnType<typeof createRig>) => Promise<T>): Promise<T> {
@@ -60,6 +60,122 @@ test('a role resolves to a plan pinned with its defaults', async () => {
     assert.equal(resolved.value.roleProfile.version, roleVersion);
     assert.equal(resolved.value.executionPolicy.enforcement, 'advisory',
       'Novakai cannot enforce OS command restriction and must not claim it (red gate 21)');
+  });
+});
+
+test('activity drift pins durable start-turn authority in the resolved plan', async () => {
+  await withRig(async (rig) => {
+    const role = roleInput({
+      supervisionPolicy: {
+        activityDrift: 'required',
+        requiredWatcherTemplates: [],
+        parentNotificationMode: 'queue-only',
+      },
+    });
+    const created = await rig.agents.createRoleProfile(
+      rig.human(['supervision:watch:start-turn']), role,
+    );
+    assert.equal(created.ok, true);
+    if (!created.ok) return;
+    const agent = await rig.agents.createAgentFromRole(rig.human(), {
+      roleProfileId: created.value.id,
+      displayName: 'Drift Builder',
+      rootHumanPrincipalId: CHRIS,
+    });
+    assert.equal(agent.ok, true);
+    if (!agent.ok) return;
+    const resolved = await rig.agents.resolveLaunchPlan(rig.human(), {
+      agentId: agent.value.agent.id,
+      configurationMode: 'refresh-role',
+      workingDirectory: '/tmp/work',
+      supervised: true,
+    });
+    assert.equal(resolved.ok, true);
+    if (!resolved.ok) return;
+    assert.deepEqual(resolved.value.executionPolicy.commandScopes, [
+      'supervision:watch:start-turn',
+    ]);
+    assert.deepEqual(
+      resolved.value.supervisionPolicy.activityDriftTemplateRef, ACTIVITY_DRIFT_REF,
+    );
+    const reread = await rig.agents.getResolvedLaunchPlan(rig.principal(), resolved.value.id);
+    assert.equal(reread.ok, true);
+    if (reread.ok) assert.equal(reread.value.supervisionPolicy.activityDrift, 'required');
+  });
+});
+
+test('a role cannot authorize watcher start-turns without the trusted scope', async () => {
+  await withRig(async (rig) => {
+    const refused = await rig.agents.createRoleProfile(rig.human(), roleInput({
+      supervisionPolicy: {
+        activityDrift: 'required',
+        requiredWatcherTemplates: [],
+        parentNotificationMode: 'queue-only',
+      },
+    }));
+    assert.equal(refused.ok, false);
+    if (!refused.ok) assert.equal(refused.error.code, 'PermissionDenied');
+  });
+});
+
+test('an explicit start-turn watcher also requires trusted authority and pins it', async () => {
+  const templateRef = {
+    id: 'watch-template/start-turn-explicit', version: 1, digest: 'a'.repeat(64),
+  };
+  const rig = createRig({
+    inspect: (wanted) => wanted.id === templateRef.id ? { requiresStartTurn: true } : null,
+    activityDriftRef: () => null,
+  });
+  try {
+    const role = roleInput({
+      supervisionPolicy: {
+        activityDrift: 'disabled-explicitly',
+        requiredWatcherTemplates: [templateRef],
+        parentNotificationMode: 'queue-only',
+      },
+    });
+    const refused = await rig.agents.createRoleProfile(rig.human(), role);
+    assert.equal(refused.ok, false, 'catalogue start-turn effects bypassed role authority');
+    if (!refused.ok) assert.equal(refused.error.code, 'PermissionDenied');
+
+    const created = await rig.agents.createRoleProfile(
+      rig.human(['supervision:watch:start-turn']), role,
+    );
+    assert.equal(created.ok, true);
+    if (!created.ok) return;
+    const agent = await rig.agents.createAgentFromRole(rig.human(), {
+      roleProfileId: created.value.id,
+      displayName: 'Explicit Watcher Builder',
+      rootHumanPrincipalId: CHRIS,
+    });
+    assert.equal(agent.ok, true);
+    if (!agent.ok) return;
+    const plan = await rig.agents.resolveLaunchPlan(rig.human(), {
+      agentId: agent.value.agent.id,
+      configurationMode: 'refresh-role',
+      workingDirectory: '/tmp/work',
+      supervised: true,
+    });
+    assert.equal(plan.ok, true);
+    if (plan.ok) assert.deepEqual(
+      plan.value.executionPolicy.commandScopes, ['supervision:watch:start-turn'],
+    );
+  } finally {
+    rig.close();
+  }
+});
+
+test('a role cannot pin a watcher template absent from the Agents catalogue', async () => {
+  await withRig(async (rig) => {
+    const refused = await rig.agents.createRoleProfile(rig.human(), roleInput({
+      supervisionPolicy: {
+        activityDrift: 'disabled-explicitly',
+        requiredWatcherTemplates: [{ id: 'watch-template/missing', version: 1, digest: 'f'.repeat(64) }],
+        parentNotificationMode: 'queue-only',
+      },
+    }));
+    assert.equal(refused.ok, false);
+    if (!refused.ok) assert.equal(refused.error.code, 'WatchRuleInvalid');
   });
 });
 

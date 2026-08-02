@@ -316,5 +316,5 @@ export interface RuntimeSurfaceHints {
 // Both live in `custody-ports.ts`; re-exported here so the contract's public
 // surface is one import for every consumer.
 export type {
-  MessagingEndpointPort, MessagingInboxPort, TranscriptCustodyPort,
+  MessagingEndpointPort, MessagingInboxPort, RunWatcherPort, TranscriptCustodyPort,
 } from './custody-ports.js';

@@ -19,6 +19,8 @@ const adapters = new Map([
   ['agent', path.join(repoRoot, 'packages/server/cli/nvk-agent.ts')],
   ['runtime', path.join(repoRoot, 'packages/server/cli/nvk-runtime.ts')],
   ['terminal', path.join(repoRoot, 'packages/server/cli/nvk-terminal.ts')],
+  // B3d §17.1: what is watching, and what it has queued.
+  ['watch', path.join(repoRoot, 'packages/server/cli/nvk-watch.ts')],
 ]);
 
 const [group, ...args] = process.argv.slice(2);

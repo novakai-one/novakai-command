@@ -53,7 +53,11 @@ export function governedRole(
       onSupervisorFinal: 'assign-nearest-live-ancestor',
       allowedContinuationModes: ['fresh', 'resume'],
     },
-    supervisionPolicy: { requiredWatcherTemplates: [], parentNotificationMode: 'queue-only' },
+    supervisionPolicy: {
+      activityDrift: 'disabled-explicitly',
+      requiredWatcherTemplates: [],
+      parentNotificationMode: 'queue-only',
+    },
     budgetPolicy: { hardStopEnabled: false },
   };
 }

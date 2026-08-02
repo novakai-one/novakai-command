@@ -1,0 +1,26 @@
+{
+  "name": "@novakai/supervision",
+  "version": "0.1.0",
+  "description": "Frozen B3d supervision contract: usage truth, watchers, deadlines, notifications, and cross-lane seam suites.",
+  "type": "module",
+  "private": true,
+  "engines": { "node": ">=20" },
+  "exports": {
+    "./contract": "./contract/index.ts",
+    "./contract/testkit": "./contract/testkit/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test:runtime": "tsx --test \"tests/**/*.test.ts\"",
+    "test": "npm run typecheck && npm run test:runtime"
+  },
+  "dependencies": {
+    "@novakai/foundation": "file:../foundation"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.9",
+    "tsx": "^4.15.7",
+    "typescript": "^5.5.2"
+  },
+  "license": "UNLICENSED"
+}

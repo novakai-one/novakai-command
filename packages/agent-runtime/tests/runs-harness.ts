@@ -26,6 +26,7 @@ import {
 } from './runs-fakes.js';
 import type { AgentRunsContract } from '../contract/runs-api.js';
 import type { RuntimeHostContract } from '../contract/types.js';
+import type { RunWatcherPort } from '../contract/custody-ports.js';
 import { composeAgentRuns } from '../core/runs-compose.js';
 import {
   createFakeMessagingEndpoints, createFakeTranscriptCustody,
@@ -86,6 +87,7 @@ export interface RunsRig {
 }
 
 export interface RunsRigOptions extends FakeAgentsOptions {
+  readonly watchers?: RunWatcherPort;
   readonly gateTimeoutMs?: number;
   /**
    * Stop accepting durable writes after N of them — a crash, modelled as what a
@@ -155,6 +157,7 @@ export function createRunsRig(options: RunsRigOptions = {}): RunsRig {
     gateTimeoutMs: options.gateTimeoutMs ?? 2_000,
     ...(options.withoutB3cCapabilities === true
       ? {} : { messagingEndpoint, transcriptCustody }),
+    ...(options.watchers === undefined ? {} : { watchers: options.watchers }),
   });
 
   const envelope = (principal: AuthenticatedPrincipal): CommandContext => ({

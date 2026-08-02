@@ -59,6 +59,10 @@ const EXPECTED: ReadonlyArray<readonly [ObjectKind, string, CapabilityId]> = [
   ['transcriptBinding', 'transcriptBindings.jsonl', 'transcript'],
   ['observedSubagent', 'observedSubagents.jsonl', 'transcript'],
   ['storeRouteCutover', 'storeRouteCutovers.jsonl', 'foundation'],
+  // ── B3d additions ──────────────────────────────────────────────────────
+  ['watchRule', 'watchRules.jsonl', 'supervision'],
+  ['watchDeadline', 'watchDeadlines.jsonl', 'supervision'],
+  ['notification', 'notifications.jsonl', 'supervision'],
 ];
 
 /** The three named special cases §18.1 allows to sit outside the ordinary path. */
@@ -104,7 +108,7 @@ test('every B3a/B3c kind round-trips through its owning scoped handle', async ()
   const root = mkdtempSync(path.join(tmpdir(), 'nvk-b3a-registry-'));
   try {
     const b3a = EXPECTED.filter(
-      ([kind]) => B3A_KINDS.has(kind) || B3C_KINDS.has(kind),
+      ([kind]) => B3A_KINDS.has(kind) || B3C_KINDS.has(kind) || B3D_KINDS.has(kind),
     );
     for (const [kind, file, capability] of b3a) {
       const handle = composeHandle({
@@ -139,6 +143,12 @@ test('a B3a kind is refused through every foreign handle', async () => {
       ['messaging', 'messagingStoreOp', 'observedSubagent'],
       // The cutover receipt is Foundation-bootstrap-only (§18.1).
       ['messaging', 'messagingStoreOp', 'storeRouteCutover'],
+      // B3d: Supervision owns watchers, deadlines and notifications, and no
+      // other capability may write one — the seam lanes B and C both cross.
+      ['supervision', 'watchRule', 'agentRun'],
+      ['agent-runtime', 'agentRun', 'watchRule'],
+      ['agent-runtime', 'agentRun', 'notification'],
+      ['messaging', 'messagingStoreOp', 'watchDeadline'],
     ];
     for (const [capability, granted, forbidden] of cases) {
       const handle = composeHandle({
@@ -161,6 +171,8 @@ const B3A_KINDS = new Set<string>([
   'runtimeEpoch', 'commandReceipt', 'terminalSession',
   'controllerAttachment', 'terminalInputLease', 'terminalInputAttempt',
 ]);
+
+const B3D_KINDS = new Set<string>(['watchRule', 'watchDeadline', 'notification']);
 
 const B3C_KINDS = new Set<string>([
   'messagingStoreOp', 'transcriptBinding', 'observedSubagent', 'storeRouteCutover',
