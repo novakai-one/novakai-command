@@ -26,7 +26,8 @@ import { createTranscriptStore } from '../core/store.js';
 import { mirrorLedgerId } from '../core/mirror.js';
 import type { MessagingMirrorPort } from '../core/mirror.js';
 import type {
-  B3TranscriptContract, SourceLine, SourceReadOutcome, TranscriptSourcePort,
+  B3TranscriptContract, SourceLine, SourcePrefixOutcome, SourceReadOutcome,
+  TranscriptSourcePort,
 } from '../contract/api.js';
 import type { AgentId, AgentRunId, ProviderSessionId } from '../contract/records.js';
 import type { SystemCommandContext } from '@novakai/foundation/contract';
@@ -62,6 +63,18 @@ class FixtureSource implements TranscriptSourcePort {
     const start = found === -1 ? 0 : found;
     const window = this.lines.slice(start, start + maxLines);
     return { kind: 'lines', lines: window, more: start + maxLines < this.lines.length };
+  }
+
+  /** Q9's revalidation horizon, over the same lines `read` serves. */
+  async readPrefixDigests(
+    _binding: unknown, throughPosition: string,
+  ): Promise<SourcePrefixOutcome> {
+    return {
+      kind: 'digests',
+      digests: this.lines
+        .filter((entry) => entry.position <= throughPosition)
+        .map((entry) => ({ position: entry.position, digest: entry.digest })),
+    };
   }
 }
 

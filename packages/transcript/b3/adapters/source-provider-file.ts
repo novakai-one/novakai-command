@@ -18,7 +18,8 @@ import { createHash } from 'node:crypto';
 import { normalizeProviderLine } from '../../adapters/provider-normalizers.js';
 import type { ProviderName } from '../../contract/schemas.js';
 import type {
-  SourceLine, SourceReadOutcome, TranscriptSourcePort,
+  SourceLine, SourcePositionDigest, SourcePrefixOutcome, SourceReadOutcome,
+  TranscriptSourcePort,
 } from '../contract/api.js';
 import type { TranscriptBinding } from '../contract/records.js';
 
@@ -50,20 +51,50 @@ const digestOf = (content: string): string =>
 export function createProviderFileSource(
   options: ProviderFileSourceOptions,
 ): TranscriptSourcePort {
+  /**
+   * One read of the provider original, or the typed reason there wasn't one.
+   * The two absence shapes are the ones `read` and `readPrefixDigests` share,
+   * so either caller can return the answer unchanged.
+   */
+  async function contentsOf(
+    binding: TranscriptBinding,
+  ): Promise<
+    | { kind: 'contents'; contents: string }
+    | { kind: 'missing' }
+    | { kind: 'unavailable'; reason: string }
+  > {
+    const filePath = await options.locate(binding);
+    if (filePath === null || !existsSync(filePath)) return { kind: 'missing' };
+    try {
+      return { kind: 'contents', contents: readFileSync(filePath, 'utf8') };
+    } catch (cause) {
+      return {
+        kind: 'unavailable',
+        reason: cause instanceof Error ? cause.message : String(cause),
+      };
+    }
+  }
+
   return {
     async read(binding, fromPosition, maxLines): Promise<SourceReadOutcome> {
-      const filePath = await options.locate(binding);
-      if (filePath === null || !existsSync(filePath)) return { kind: 'missing' };
-      let contents: string;
-      try {
-        contents = readFileSync(filePath, 'utf8');
-      } catch (cause) {
-        return {
-          kind: 'unavailable',
-          reason: cause instanceof Error ? cause.message : String(cause),
-        };
+      const opened = await contentsOf(binding);
+      if (opened.kind !== 'contents') return opened;
+      return readWindow(binding.provider as ProviderName, opened.contents, fromPosition, maxLines);
+    },
+
+    // Q9's revalidation horizon. The file is read whole either way — the saving
+    // over `read` is that a prefix line is never handed to the normaliser, so
+    // this costs one sha256 per committed row and nothing else.
+    async readPrefixDigests(binding, throughPosition): Promise<SourcePrefixOutcome> {
+      const opened = await contentsOf(binding);
+      if (opened.kind !== 'contents') return opened;
+      const digests: SourcePositionDigest[] = [];
+      for (const extent of extentsOf(opened.contents)) {
+        if (extent.text.trim() === '') continue;
+        if (extent.position > throughPosition) break;
+        digests.push({ position: extent.position, digest: digestOf(extent.text) });
       }
-      return readWindow(binding.provider as ProviderName, contents, fromPosition, maxLines);
+      return { kind: 'digests', digests };
     },
   };
 }

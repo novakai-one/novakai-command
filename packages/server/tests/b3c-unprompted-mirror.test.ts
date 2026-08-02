@@ -20,7 +20,7 @@ import path from 'node:path';
 import { createFakePtyHost } from '../../terminal/adapters/pty-host/fake.js';
 import { createFakeProviderAdapters } from '../../agents/b3/contract/index.js';
 import type {
-  SourceReadOutcome, TranscriptSourcePort,
+  SourcePrefixOutcome, SourceReadOutcome, TranscriptSourcePort,
 } from '../../transcript/b3/contract/index.js';
 import { startRuntimeHost } from '../core/b3/host.js';
 import { connectRuntime } from '../core/b3/client.js';
@@ -35,23 +35,26 @@ const HUMAN_TURN = 'what did you change in the runtime?';
  */
 function scriptedSource(): TranscriptSourcePort & { produce(): void } {
   let live = false;
+  const position = '0000000000';
+  const digest = createHash('sha256').update(HUMAN_TURN, 'utf8').digest('hex');
   return {
     produce() { live = true; },
     async read(_binding, fromPosition, maxLines): Promise<SourceReadOutcome> {
       if (!live) return { kind: 'missing' };
-      const position = '0000000000';
       if (fromPosition !== undefined && position < fromPosition) {
         return { kind: 'lines', lines: [], more: false };
       }
       return {
         kind: 'lines',
         more: false,
-        lines: maxLines < 1 ? [] : [{
-          position,
-          role: 'user',
-          text: HUMAN_TURN,
-          digest: createHash('sha256').update(HUMAN_TURN, 'utf8').digest('hex'),
-        }],
+        lines: maxLines < 1 ? [] : [{ position, role: 'user', text: HUMAN_TURN, digest }],
+      };
+    },
+    async readPrefixDigests(_binding, throughPosition): Promise<SourcePrefixOutcome> {
+      if (!live) return { kind: 'missing' };
+      return {
+        kind: 'digests',
+        digests: position <= throughPosition ? [{ position, digest }] : [],
       };
     },
   };

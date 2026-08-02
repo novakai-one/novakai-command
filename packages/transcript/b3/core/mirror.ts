@@ -38,6 +38,7 @@ import {
   type MirrorLedgerEntry,
 } from './ledger.js';
 import { classifyTurn } from './noise.js';
+import { verifyCommittedPrefix } from './prefix-guard.js';
 import type { TranscriptStore } from './store.js';
 
 /** What Messaging is asked to do with a conversation turn. Transcript never writes it. */
@@ -119,7 +120,43 @@ export async function ingestTranscriptSource(
     return b3ok(empty(binding, 'stage-pause'));
   }
 
+  // Q9, in the order the ruling writes it: BEFORE processing or committing
+  // anything beyond the watermark, revalidate the committed prefix. A pass with
+  // nothing new in it is not an advancement, so it costs nothing — the guard
+  // runs only when this read actually carries a position past the watermark.
+  const guarded = await guardPrefix(deps, binding, read.lines);
+  if (guarded !== null) return guarded;
+
   return runPass(deps, binding, read.lines, read.more);
+}
+
+/**
+ * The prefix check, and the pass it ends when the source disagrees with the
+ * ledger: quarantine at the earliest divergence, watermark untouched, nothing
+ * from this batch committed.
+ *
+ * Returns null when the pass should carry on.
+ */
+async function guardPrefix(
+  deps: MirrorDeps, binding: TranscriptBinding, lines: readonly SourceLine[],
+): Promise<B3Result<TranscriptIngestOutcome> | null> {
+  const watermark = binding.mirrorWatermark;
+  if (watermark === undefined) return null;
+  if (!lines.some((line) => line.position > watermark)) return null;
+
+  const verdict = await verifyCommittedPrefix(deps, binding, watermark);
+  if (verdict.kind === 'intact') return null;
+  if (verdict.kind === 'failed') return verdict.error;
+  // The source stopped answering between the two reads. Nothing is proved, so
+  // nothing is quarantined and — the part that matters — nothing advances.
+  if (verdict.kind === 'unreadable') return b3ok(empty(binding, 'source-unavailable'));
+
+  const stopped = await quarantineAt(deps, binding, verdict.position, verdict.ledgerId);
+  if (!stopped.ok) return stopped;
+  return b3ok(outcome(
+    binding, { discovered: 0, filtered: 0, mirrored: 0, quarantined: 1 },
+    binding.mirrorWatermark, 'quarantine',
+  ));
 }
 
 /**
@@ -224,7 +261,7 @@ async function checkLedger(
   if (existing.value === null) return null;
   if (existing.value.sourceDigest === line.digest) return { kind: 'already-done' };
 
-  const stopped = await quarantineAt(deps, binding, line, ledgerId);
+  const stopped = await quarantineAt(deps, binding, line.position, ledgerId);
   if (!stopped.ok) return { kind: 'failed', error: stopped };
   return { kind: 'quarantined' };
 }
@@ -314,7 +351,7 @@ async function persistProgress(
 }
 
 async function quarantineAt(
-  deps: MirrorDeps, binding: TranscriptBinding, line: SourceLine, ledgerId: TranscriptLineId,
+  deps: MirrorDeps, binding: TranscriptBinding, position: string, ledgerId: string,
 ): Promise<B3Result<null>> {
   const tombstoned = await deps.store.quarantine(
     'transcriptLine', ledgerId, keyFor(`quarantine:${ledgerId}`),
@@ -322,11 +359,11 @@ async function quarantineAt(
   if (!tombstoned.ok) return tombstoned;
   const frozen = await setState(deps.store, binding, {
     sourceDiscoveryState: 'corrupt',
-    quarantinedPosition: line.position,
+    quarantinedPosition: position,
     watcherState: 'recovery-required',
   });
   if (!frozen.ok) return b3fail(frozen.error);
-  await halted(deps, 'after-quarantine', { position: line.position });
+  await halted(deps, 'after-quarantine', { position });
   return b3ok(null);
 }
 

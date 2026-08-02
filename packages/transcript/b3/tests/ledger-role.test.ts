@@ -21,7 +21,9 @@ import { b3ok, type SystemCommandContext } from '@novakai/foundation/contract';
 import { composeB3Transcript } from '../core/compose.js';
 import { createTranscriptStore } from '../core/store.js';
 import type { MessagingMirrorPort, MirrorLedgerEntry } from '../core/mirror.js';
-import type { SourceReadOutcome, TranscriptSourcePort } from '../contract/api.js';
+import type {
+  SourceLine, SourcePrefixOutcome, SourceReadOutcome, TranscriptSourcePort,
+} from '../contract/api.js';
 import type { AgentId, AgentRunId, ProviderSessionId } from '../contract/records.js';
 
 const AGENT = 'agent_aaaaaaaa-0000-4000-8000-000000000009' as AgentId;
@@ -43,16 +45,22 @@ const transcriptCtx = (): SystemCommandContext<'sys_transcript'> => ({
   contractVersion: 1,
 });
 
+const LINES: readonly SourceLine[] = [
+  { position: '0000000000', role: 'user', text: 'what changed?', digest: 'd0' },
+  { position: '0000000001', role: 'assistant', text: 'the ladder did', digest: 'd1' },
+  { position: '0000000002', role: 'tool_result', text: 'exit 0', digest: 'd2' },
+];
+
 const SOURCE: TranscriptSourcePort = {
   async read(): Promise<SourceReadOutcome> {
+    return { kind: 'lines', more: false, lines: LINES };
+  },
+  async readPrefixDigests(_binding, throughPosition): Promise<SourcePrefixOutcome> {
     return {
-      kind: 'lines',
-      more: false,
-      lines: [
-        { position: '0000000000', role: 'user', text: 'what changed?', digest: 'd0' },
-        { position: '0000000001', role: 'assistant', text: 'the ladder did', digest: 'd1' },
-        { position: '0000000002', role: 'tool_result', text: 'exit 0', digest: 'd2' },
-      ],
+      kind: 'digests',
+      digests: LINES
+        .filter((line) => line.position <= throughPosition)
+        .map((line) => ({ position: line.position, digest: line.digest })),
     };
   },
 };

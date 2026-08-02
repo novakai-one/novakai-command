@@ -142,6 +142,17 @@ export type SourceReadOutcome =
   | { readonly kind: 'missing' }
   | { readonly kind: 'unavailable'; readonly reason: string };
 
+/** One already-committed position, reduced to the only thing §8.2 compares. */
+export interface SourcePositionDigest {
+  readonly position: string;
+  readonly digest: string;
+}
+
+export type SourcePrefixOutcome =
+  | { readonly kind: 'digests'; readonly digests: readonly SourcePositionDigest[] }
+  | { readonly kind: 'missing' }
+  | { readonly kind: 'unavailable'; readonly reason: string };
+
 /**
  * Where transcript bytes come from. A seam because it genuinely varies: a
  * provider file on disk in production, a fixture in a test. It also makes the
@@ -163,6 +174,30 @@ export interface TranscriptSourcePort {
   read(
     binding: TranscriptBinding, fromPosition: string | undefined, maxLines: number,
   ): Promise<SourceReadOutcome>;
+
+  /**
+   * Every source position at or below `throughPosition`, reduced to its
+   * digest — the committed prefix, as the source holds it RIGHT NOW.
+   *
+   * Spec ruling Q9: §8.2 makes a different digest at the same source position
+   * corruption with no watermark qualification, so a rewrite BELOW the
+   * watermark is corruption too. Watermark-inclusive forward resumption
+   * re-reads exactly one line, which cannot see it. This is the horizon the
+   * ruling requires: the mirror revalidates its whole committed prefix against
+   * the durable ledger before it processes or commits anything beyond the
+   * watermark.
+   *
+   * Digests only, and never normalised: §8.2 compares content, and the roles,
+   * subagent ids and text of a line the mirror has already decided about are
+   * work nobody needs done twice.
+   *
+   * Positions the source itself skips (blank rows) are omitted, exactly as
+   * `read` omits them — the two must agree on what a position IS, or the
+   * comparison manufactures conflicts out of formatting.
+   */
+  readPrefixDigests(
+    binding: TranscriptBinding, throughPosition: string,
+  ): Promise<SourcePrefixOutcome>;
 }
 
 /**

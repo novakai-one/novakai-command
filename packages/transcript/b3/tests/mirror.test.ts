@@ -19,7 +19,8 @@ import { composeB3Transcript, recordObservedSubagent } from '../core/compose.js'
 import { createTranscriptStore } from '../core/store.js';
 import type { MessagingMirrorPort } from '../core/mirror.js';
 import type {
-  B3TranscriptContract, MirrorStage, SourceLine, SourceReadOutcome, TranscriptSourcePort,
+  B3TranscriptContract, MirrorStage, SourceLine, SourcePrefixOutcome, SourceReadOutcome,
+  TranscriptSourcePort,
 } from '../contract/api.js';
 import type { AgentId, AgentRunId, ProviderSessionId } from '../contract/records.js';
 import type { SystemCommandContext } from '@novakai/foundation/contract';
@@ -62,6 +63,22 @@ class FixtureSource implements TranscriptSourcePort {
     const start = found === -1 ? 0 : found;
     const window = this.lines.slice(start, start + maxLines);
     return { kind: 'lines', lines: window, more: start + maxLines < this.lines.length };
+  }
+
+  /** Q9's revalidation horizon, over the same lines `read` serves. */
+  async readPrefixDigests(
+    _binding: unknown, throughPosition: string,
+  ): Promise<SourcePrefixOutcome> {
+    if (this.outcome === 'missing') return { kind: 'missing' };
+    if (this.outcome === 'unavailable') {
+      return { kind: 'unavailable', reason: 'permission denied' };
+    }
+    return {
+      kind: 'digests',
+      digests: this.lines
+        .filter((line) => line.position <= throughPosition)
+        .map((line) => ({ position: line.position, digest: line.digest })),
+    };
   }
 }
 
@@ -254,6 +271,70 @@ test('a changed digest at a mirrored position quarantines and freezes the waterm
     // The watermark did NOT reach position 3, and the turn after the
     // corruption was never committed.
     assert.equal(messaging.committed.length, 2);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('a rewrite BELOW the watermark quarantines before anything past it commits', async () => {
+  // Spec ruling Q9 (NVK-KIMI-038-B3D-SPEC-RULINGS.md), binding for the B3c
+  // seal: §8.2's "different digest at the same source position is corruption"
+  // carries no watermark qualification, so historical-position mutation is
+  // inside the quarantine contract and MUST be detected BEFORE the mirror
+  // commits any later outcome or advances the watermark.
+  //
+  // Watermark-inclusive forward resumption buys exactly ONE re-read line — the
+  // watermark itself. Exam rows F2/F3 rewrote source position 6 with the
+  // watermark at 19: below the read horizon, so the conflict was never seen,
+  // no quarantine was written, the watermark advanced 19 → 21, and one turn
+  // past the conflict committed as a Message.
+  const { api, source, messaging, root } = rig();
+  const human = { id: 'human_chris' as never, kind: 'human' as const, verifiedScopes: [] };
+  try {
+    const bindingId = await bind(api);
+    source.lines = [
+      line('1', 'user', 'first'),
+      line('2', 'assistant', 'second'),
+      line('3', 'user', 'third'),
+      line('4', 'assistant', 'fourth'),
+      line('5', 'user', 'fifth'),
+    ];
+    const first = await api.ingestTranscriptSource(transcriptCtx(), {
+      bindingId: bindingId as never, maxLines: 100,
+    });
+    assert.equal(first.ok && first.value.nextWatermark, '5');
+    assert.equal(messaging.committed.length, 5);
+
+    // The exam's mutation, in miniature: rewrite a position WELL below the
+    // watermark, and append a turn beyond it. A forward-only mirror sees only
+    // the append.
+    source.lines = [
+      line('1', 'user', 'first'),
+      { ...line('2', 'assistant', 'REWRITTEN'), digest: 'd-tampered' },
+      line('3', 'user', 'third'),
+      line('4', 'assistant', 'fourth'),
+      line('5', 'user', 'fifth'),
+      line('6', 'assistant', 'after the corruption'),
+    ];
+    const ingested = await api.ingestTranscriptSource(transcriptCtx(), {
+      bindingId: bindingId as never, maxLines: 100,
+    });
+    assert.equal(ingested.ok, true);
+    if (!ingested.ok) return;
+    assert.equal(ingested.value.quarantined, 1,
+      'a rewrite below the watermark was not treated as corruption');
+    assert.equal(ingested.value.haltedBy, 'quarantine');
+
+    const binding = await api.getTranscriptBinding(human, RUN);
+    assert.equal(binding.ok && binding.value.sourceDiscoveryState, 'corrupt');
+    assert.equal(binding.ok && binding.value.quarantinedPosition, '2');
+    assert.equal(binding.ok && binding.value.watcherState, 'recovery-required');
+    // Q9's two consequences, and the two the exam reads: the watermark is left
+    // where it was, and no later turn from that batch commits.
+    assert.equal(binding.ok && binding.value.mirrorWatermark, '5',
+      'the watermark advanced over a conflict it had not looked at');
+    assert.equal(messaging.committed.length, 5,
+      'a turn beyond the conflicting line was committed as a Message');
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
