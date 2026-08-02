@@ -78,6 +78,43 @@ export interface MessagingEndpointPort {
   ): Promise<B3Result<{ readonly claimId: string; readonly endpointGeneration: number }>>;
 }
 
+/**
+ * The delivery half of §8.1, seen through the two operations §12.5 already
+ * types to `sys_agent_runtime`.
+ *
+ * As narrow as `MessagingEndpointPort` and for the same reason: a Runtime
+ * holding this cannot send a Message, cannot read another Agent's inbox and
+ * cannot choose what an item says. It can take the next item Messaging is
+ * willing to hand over for an Agent's live endpoint, and report what the
+ * terminal did with it.
+ */
+export interface MessagingInboxPort {
+  /**
+   * The Agent's next queued item, already moved to `claimed`, or null when
+   * there is nothing to deliver or no active endpoint to deliver through.
+   *
+   * The TEXT rides on the answer because the Runtime has no other way to read a
+   * Message and must not acquire one — a port that returned only an id would
+   * force the composition root to hand the Runtime the whole Messaging
+   * contract.
+   */
+  claimNext(agentId: AgentId): Promise<B3Result<{
+    readonly inboxItemId: string;
+    readonly messageId: string;
+    readonly text: string;
+  } | null>>;
+
+  /** What the terminal did. Never inferred, never optimistic (§20). */
+  recordSubmission(
+    input: {
+      readonly inboxItemId: string;
+      readonly outcome: 'submitted-confirmed' | 'submitted-unconfirmed' | 'failed';
+      readonly terminalInputAttemptId?: string;
+      readonly failureReason?: string;
+    },
+  ): Promise<B3Result<{ readonly state: string }>>;
+}
+
 // ── What Transcript must answer ─────────────────────────────────────────────
 
 /**

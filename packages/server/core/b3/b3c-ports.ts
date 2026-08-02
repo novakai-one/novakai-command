@@ -17,13 +17,16 @@ import {
   type HumanPrincipalId, type SystemCommandContext,
 } from '@novakai/foundation/contract';
 import type {
-  MessagingEndpointPort, TranscriptCustodyPort,
+  MessagingEndpointPort, MessagingInboxPort, TranscriptCustodyPort,
 } from '../../../agent-runtime/contract/index.js';
 import type {
   AgentEndpointClaimId, AgentMessagingContract,
   AgentId as MessagingAgentId, AgentRunId as MessagingAgentRunId,
-  TerminalSessionId as MessagingTerminalSessionId,
+  MessagingStore, TerminalSessionId as MessagingTerminalSessionId,
 } from '../../../messaging/b3/contract/index.js';
+
+/** The one read the delivery port makes: what did this Message say. */
+type MessagingReadPort = Pick<MessagingStore, 'getMessage'>;
 import type { B3TranscriptContract } from '../../../transcript/b3/contract/index.js';
 
 const runtimeSystem = (): SystemCommandContext<'sys_agent_runtime'> => ({
@@ -124,6 +127,62 @@ export function messagingEndpointPort(
         claimId: String(moved.value.id),
         endpointGeneration: moved.value.endpointGeneration,
       });
+    },
+  };
+}
+
+/**
+ * Messaging, narrowed to delivery: take the next item for this Agent, and say
+ * what the terminal did with it.
+ *
+ * The Message text is read here rather than in the Runtime, which is the whole
+ * point of the port: the Runtime types what it is handed and has no way to read
+ * a Message it was not handed.
+ */
+export function messagingInboxPort(
+  messaging: AgentMessagingContract & { readonly store: MessagingReadPort },
+): MessagingInboxPort {
+  return {
+    async claimNext(agentId: AgentId) {
+      const claimed = await messaging.claimNextInboxItem(
+        runtimeSystem(), agentId as string as MessagingAgentId,
+      );
+      if (!claimed.ok) return claimed;
+      if (claimed.value === null) return b3ok(null);
+      const message = await messaging.store.getMessage(claimed.value.messageId);
+      if (message.kind !== 'ok') {
+        // The item is already `claimed` and there is nothing to type. Saying so
+        // is what keeps it off the queue and in front of a human, rather than
+        // silently re-offered on the next pass for ever.
+        await messaging.recordInboxSubmission(runtimeSystem(), {
+          inboxItemId: claimed.value.id,
+          outcome: 'failed',
+          failureReason: `the accepted Message ${claimed.value.messageId} could not be read back`,
+        });
+        return b3fail({
+          code: 'StoreUnavailable',
+          message: `no Message ${claimed.value.messageId} for a claimed inbox item`,
+          details: { owner: 'messaging', cause: 'message-unreadable' },
+          retryable: true,
+        });
+      }
+      return b3ok({
+        inboxItemId: String(claimed.value.id),
+        messageId: String(claimed.value.messageId),
+        text: message.value.body.text,
+      });
+    },
+
+    async recordSubmission(input) {
+      const recorded = await messaging.recordInboxSubmission(runtimeSystem(), {
+        inboxItemId: input.inboxItemId as never,
+        outcome: input.outcome,
+        ...(input.terminalInputAttemptId === undefined
+          ? {} : { terminalInputAttemptId: input.terminalInputAttemptId as never }),
+        ...(input.failureReason === undefined ? {} : { failureReason: input.failureReason }),
+      });
+      if (!recorded.ok) return recorded;
+      return b3ok({ state: recorded.value.state });
     },
   };
 }

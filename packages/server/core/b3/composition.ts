@@ -10,8 +10,8 @@ import {
 } from '@novakai/foundation/contract';
 import {
   composeAgentRuns, composeRuntimeHost, createFileInstanceLease,
-  type AgentRunsContract, type RecoverableCapability, type RuntimeCensus,
-  type RuntimeHostContract,
+  type AgentRunsContract, type ComposedAgentRuns, type RecoverableCapability,
+  type RuntimeCensus, type RuntimeHostContract,
 } from '../../../agent-runtime/contract/index.js';
 import {
   composeTerminal, type PtyHost, type TerminalContract,
@@ -27,7 +27,9 @@ import {
 import { agentsPort, createRunCredentials, terminalPort } from './run-ports.js';
 import { createProviderPort } from './provider-port.js';
 import { composeB3Messaging, composeB3TranscriptFor } from './messaging-composition.js';
-import { messagingEndpointPort, transcriptCustodyPort } from './b3c-ports.js';
+import {
+  messagingEndpointPort, messagingInboxPort, transcriptCustodyPort,
+} from './b3c-ports.js';
 import { gateStoreRoute } from '../store-route.js';
 import type { AgentMessagingContract } from '../../../messaging/b3/contract/index.js';
 import {
@@ -73,6 +75,8 @@ export interface B3RuntimeOptions {
    * the pipeline runs unprompted should not have to wait a production tick.
    */
   readonly mirrorIntervalMs?: number;
+  /** How often the inbox delivery loop looks. Same reason as the mirror's. */
+  readonly inboxDeliveryIntervalMs?: number;
 }
 
 export interface B3Runtime {
@@ -160,7 +164,7 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
   // "startup reconciles all non-final RunOperation records" simply never ran:
   // a SIGKILLed spawn left its Run `provisioning` and its operation `running`
   // forever, under a Runtime reporting `recoveryRequiredCount: 0`.
-  let runs: AgentRunsContract | null = null;
+  let runs: ComposedAgentRuns | null = null;
   const runsCapability: RecoverableCapability = {
     name: 'agent-runs',
     async reconcile() {
@@ -262,6 +266,12 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
     ...(options.publish === undefined ? {} : { publish: options.publish }),
     ...(options.gateTimeoutMs === undefined ? {} : { gateTimeoutMs: options.gateTimeoutMs }),
     messagingEndpoint: messagingEndpointPort(messaging),
+    // §8.1's delivery half. Composed here for the same reason the endpoint port
+    // is: the Runtime owns the terminal, Messaging owns the inbox, and this is
+    // the only place the two are allowed to meet.
+    messagingInbox: messagingInboxPort(messaging),
+    ...(options.inboxDeliveryIntervalMs === undefined
+      ? {} : { inboxDeliveryIntervalMs: options.inboxDeliveryIntervalMs }),
     transcriptCustody: transcriptCustodyPort(() => transcript),
     async transcriptBinding(agentRunId) {
       if (transcript === null) return null;
@@ -312,6 +322,9 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
   // spawn so the mirror COULD run; starting it here is what makes it run — and
   // it starts last, after every capability it reads is composed.
   composedTranscript.mirror.start();
+  // The other direction of the same promise: an accepted Message becomes
+  // keystrokes in the Agent's own terminal, with nobody asking.
+  runs.inboxDelivery.start();
 
   return {
     runtime,
@@ -328,6 +341,7 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
       // Transcript writes, and closing the stores under it is the one way to
       // manufacture the torn outcome §13.9's watermark law exists to survive.
       await composedTranscript.mirror.stop();
+      await runs?.inboxDelivery.stop();
       await terminal?.dispose();
       await runtime.shutdown();
       await messaging.store.close();

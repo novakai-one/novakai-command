@@ -10,7 +10,7 @@
 // happened and queries them by key instead of repeating them (§13.5). Refusing
 // at the receipt layer would put that recovery permanently out of reach.
 import {
-  b3ok, composeReceiptStore, mintClientOpId, mintTraceCorrelationId,
+  b3err, b3fail, b3ok, composeReceiptStore, mintClientOpId, mintTraceCorrelationId,
   type AuthenticatedPrincipal, type B3Result, type CommandContext,
   type PublicOperationName, type ReceiptStore, type RunOperationId,
 } from '@novakai/foundation/contract';
@@ -21,8 +21,8 @@ import type {
   SpawnAgentInput, StopAgentInput, StopAgentTreeInput,
 } from '../contract/runs-api.js';
 import type {
-  AgentsPort, MessagingEndpointPort, ProviderPort, RunCredentialPort, TerminalPort,
-  TranscriptCustodyPort,
+  AgentsPort, MessagingEndpointPort, MessagingInboxPort, ProviderPort, RunCredentialPort,
+  TerminalPort, TranscriptCustodyPort,
 } from '../contract/ports.js';
 import type { RuntimeHostContract } from '../contract/types.js';
 import { createRunsStore, type RunsStore, type RunsStoreOptions } from './runs-store.js';
@@ -44,6 +44,23 @@ import {
 import { getAgentRunTree } from './tree.js';
 import { repairRunOperation } from './repair.js';
 import { createRunEventLog } from './events.js';
+import { createInboxDeliveryPump, type InboxDeliveryPump } from './inbox-delivery.js';
+
+/**
+ * What a host with no Messaging answers: there is nothing to deliver.
+ *
+ * Not a no-op that pretends success — `claimNext` returning null is the honest
+ * statement "this host holds no inbox", and `recordSubmission` can only be
+ * reached by an item this same object never handed out.
+ */
+const NO_INBOX: MessagingInboxPort = {
+  async claimNext() { return b3ok(null); },
+  async recordSubmission() {
+    return b3fail(b3err('RuntimeUnavailable',
+      'no Messaging capability is composed in this host',
+      { reason: 'messaging-not-composed' }, false));
+  },
+};
 
 export interface ComposeAgentRunsOptions extends RunsStoreOptions {
   /**
@@ -68,7 +85,27 @@ export interface ComposeAgentRunsOptions extends RunsStoreOptions {
   readonly messagingEndpoint?: MessagingEndpointPort;
   /** §13.5 row 9 and §13.6's watermark, through Transcript's contract. */
   readonly transcriptCustody?: TranscriptCustodyPort;
+  /**
+   * §8.1's delivery half. Absent means this host composes no Messaging, and the
+   * pump this composition returns is one that finds nothing to do — never one
+   * that silently marks items delivered.
+   */
+  readonly messagingInbox?: MessagingInboxPort;
+  /** How often the delivery loop looks. Tests shorten it. */
+  readonly inboxDeliveryIntervalMs?: number;
 }
+
+/**
+ * The Runtime, and the loop that keeps §8.1's promise.
+ *
+ * The pump is returned beside the contract rather than on it: delivering an
+ * inbox item is not something a CLIENT asks for, it is something the host runs.
+ * A host that composes Messaging and never starts it has an Agent that accepts
+ * Messages and is never told about them.
+ */
+export type ComposedAgentRuns = AgentRunsContract & {
+  readonly inboxDelivery: InboxDeliveryPump;
+};
 
 /** Generous, because a real model reading its skills is not instant. */
 const DEFAULT_GATE_TIMEOUT_MS = 120_000;
@@ -88,7 +125,7 @@ const DEFAULT_GATE_TIMEOUT_MS = 120_000;
  */
 const MANAGED_VIEWPORT = { columns: 400, rows: 40 } as const;
 
-export function composeAgentRuns(options: ComposeAgentRunsOptions): AgentRunsContract {
+export function composeAgentRuns(options: ComposeAgentRunsOptions): ComposedAgentRuns {
   // Every published event lands here first, so the stream a consumer reads and
   // the frames a controller is pushed are the same events with the same
   // cursors — not two views of "something happened" that can disagree.
@@ -118,6 +155,15 @@ export function composeAgentRuns(options: ComposeAgentRunsOptions): AgentRunsCon
       ? {} : { transcriptCustody: options.transcriptCustody }),
   };
 
+  // A host with no Messaging gets a pump over an inbox that answers "nothing",
+  // so `inboxDelivery` is always present and a caller never branches on it.
+  const inboxDelivery = createInboxDeliveryPump({
+    core,
+    inbox: options.messagingInbox ?? NO_INBOX,
+    ...(options.inboxDeliveryIntervalMs === undefined
+      ? {} : { intervalMs: options.inboxDeliveryIntervalMs }),
+  });
+
   const named = (name: string): PublicOperationName => name as PublicOperationName;
 
   function guarded<Input, Value>(
@@ -139,6 +185,8 @@ export function composeAgentRuns(options: ComposeAgentRunsOptions): AgentRunsCon
   ): Promise<B3Result<AgentRunView>> => viewOfRun(core, context.principal, agentRun);
 
   return {
+    inboxDelivery,
+
     spawnAgent: guarded(OPERATION.spawn, async (context, input: SpawnAgentInput) => {
       const spawned = await spawnAgent(core, context, input);
       if (!spawned.ok) return spawned;

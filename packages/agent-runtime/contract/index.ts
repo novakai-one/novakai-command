@@ -13,7 +13,10 @@ export * from './validate.js';
 export * from './runs.js';
 export * from './runs-api.js';
 export * from './ports.js';
-export { composeAgentRuns, type ComposeAgentRunsOptions } from '../core/runs-compose.js';
+export {
+  composeAgentRuns, type ComposeAgentRunsOptions, type ComposedAgentRuns,
+} from '../core/runs-compose.js';
+export type { InboxDeliveryPass, InboxDeliveryPump } from '../core/inbox-delivery.js';
 export { RUNTIME_KINDS } from '../core/runs-store.js';
 export { canonicalTokens, confirmationPrompt, judge, workPrompt } from '../core/gate.js';
 export { effectKeyFor } from '../core/journal.js';
