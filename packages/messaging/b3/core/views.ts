@@ -50,7 +50,9 @@ export async function listAgentCommunications(
   context: CommunicationContext, input: ListAgentCommunicationsInput,
 ): Promise<B3Result<Page<AgentCommunicationItem>>> {
   const subjects = new Set(input.agentIds.map(agentPersonId));
-  const threads = await threadIdsFor(context.store, subjects, input.threadId);
+  const threads = await threadIdsFor(
+    context.store, subjects, input.agentIds, input.threadId,
+  );
   const items: AgentCommunicationItem[] = [];
 
   for (const threadId of threads) {
@@ -191,8 +193,25 @@ async function queuedAgainst(
   return endpoint.value.state === "active" ? endpoint.value.id : undefined;
 }
 
+/**
+ * Which conversations to look in.
+ *
+ * Membership is not the whole answer, and believing it was is what exam row J4
+ * caught. §12.5 takes `threadId` and `target` as two separate arguments, so a
+ * Message may be addressed to Agent B and committed into Agent A's Thread —
+ * legitimately, and the CLI's `--thread` does it. `listThreadsForPerson` never
+ * offers A's Thread when asked about B, so involvement — which IS decided by
+ * delivery — never got to run, and "what has this Agent been sent" answered
+ * "nothing" while the Agent's own durable inbox held the Message.
+ *
+ * The inbox is the second source, and it is the RIGHT one: §8.1 makes an inbox
+ * item the durable record that this Message was accepted FOR this Agent. The
+ * involvement rule below is unchanged, so widening where we look cannot widen
+ * what is returned.
+ */
 async function threadIdsFor(
-  store: MessagingStore, subjects: ReadonlySet<PersonId>, only?: ThreadId,
+  store: MessagingStore, subjects: ReadonlySet<PersonId>,
+  agentIds: readonly AgentId[], only?: ThreadId,
 ): Promise<readonly ThreadId[]> {
   if (only !== undefined) return [only];
   const seen = new Set<ThreadId>();
@@ -200,6 +219,14 @@ async function threadIdsFor(
     const listed = await store.listThreadsForPerson(person);
     if (listed.kind !== "ok") continue;
     for (const thread of listed.value) seen.add(thread.id);
+  }
+  for (const agentId of agentIds) {
+    const inbox = await store.listAgentInbox(agentId);
+    if (inbox.kind !== "ok") continue;
+    for (const item of inbox.value) {
+      const message = await store.getMessage(item.messageId);
+      if (message.kind === "ok") seen.add(message.value.threadId);
+    }
   }
   return [...seen];
 }
