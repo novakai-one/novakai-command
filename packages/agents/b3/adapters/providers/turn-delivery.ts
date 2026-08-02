@@ -76,9 +76,22 @@ export function deliverTurn(text: string): readonly TurnDeliveryStep[] {
  * right after the marker the line ends where that array ends. A reply that is
  * not an array is still returned in full, because an agent that answers WRONG
  * must be judged and recorded as drift rather than left to time out.
+ *
+ * And a row ends at a bare CARRIAGE RETURN, not only at a line feed. `\r?\n`
+ * consumes a CR only when a LF follows it, and kimi streams a reply by
+ * repainting ONE row — spinner frame, part of the answer, spinner frame, more of
+ * the answer — ending every paint with a bare CR. LF-split, all of that is a
+ * single line whose FIRST marker is a half-painted `SKILLS-CONFIRMED:` with a
+ * spinner after it; `indexOf` finds that one, no array follows it, and the
+ * complete answer sitting later in the same string is never looked at. A
+ * governed kimi Run answered correctly four times and died at the gate for 120
+ * seconds of silence (NVK-KIMI-034; kimi's own wire log, and
+ * `tests/fixtures/kimi-gate-screen.txt`, which is that screen). A CR returns the
+ * cursor to column 0, so what follows it is a new paint of the row and a new
+ * line to judge — which also restores "last occurrence wins" inside a repaint.
  */
 export function findMarkerLine(text: string, marker: string): string | null {
-  const lines = text.split(/\r?\n/).map((line) => line.trim());
+  const lines = text.split(/\r\n|\r|\n/u).map((line) => line.trim());
   for (let index = lines.length - 1; index >= 0; index -= 1) {
     const line = lines[index]!;
     const from = line.indexOf(marker);
