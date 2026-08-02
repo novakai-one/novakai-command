@@ -97,7 +97,7 @@ test('nvk rejects inherited object names through the typed Usage path', () => {
     assert.equal(inherited.status, 2);
     assert.deepEqual(JSON.parse(inherited.stderr), {
       code: 'Usage',
-      message: 'usage: nvk project|artifact|spine|transcript|agent|runtime|terminal '
+      message: 'usage: nvk project|artifact|spine|transcript|agent|runtime|terminal|watch '
         + '<verb> [options]',
     });
     assert.doesNotMatch(inherited.stderr, /TypeError|ERR_INVALID_ARG_TYPE|\n\s+at /);
