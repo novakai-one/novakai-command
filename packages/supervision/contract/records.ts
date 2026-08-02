@@ -182,9 +182,9 @@ const NOTIFICATION_TRANSITIONS: Readonly<Record<NotificationState, readonly Noti
 /** One authority for legal Notification lifecycle movement. */
 export function canTransitionNotificationState(
   from: NotificationState,
-  to: NotificationState,
+  target: NotificationState,
 ): boolean {
-  return NOTIFICATION_TRANSITIONS[from].includes(to);
+  return NOTIFICATION_TRANSITIONS[from].includes(target);
 }
 
 /** Durable Q7 delivery-attempt truth, persisted before and after provider effects. */

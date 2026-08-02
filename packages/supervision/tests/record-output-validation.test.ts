@@ -110,4 +110,26 @@ test('DriftCheckOutcome and AgentUsageSummary outputs reject contradictory shape
       final: true,
     },
   }).ok, true);
+
+  const emptyMetric = {
+    quality: 'unavailable', source: 'aggregate:runs', limitations: ['no-runs'],
+  };
+  const emptySummary = {
+    agentId: 'agent_123e4567-e89b-42d3-a456-426614174000',
+    runs: [],
+    aggregate: {
+      inputTokens: emptyMetric,
+      outputTokens: emptyMetric,
+      cachedInputTokens: emptyMetric,
+      costMicros: emptyMetric,
+      providerTurns: emptyMetric,
+      observedAt: '2026-08-02T00:01:00.000Z',
+      final: true,
+    },
+  };
+  assert.equal(parseAgentUsageSummary(emptySummary).ok, true);
+  assert.equal(parseAgentUsageSummary({
+    ...emptySummary,
+    aggregate: { ...emptySummary.aggregate, agentRunId: RUN_ID },
+  }).ok, false);
 });

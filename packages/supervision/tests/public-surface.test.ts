@@ -7,6 +7,7 @@ import {
   SUPERVISION_NOTIFICATION_SUBSCRIBE_METHOD,
   SUPERVISION_NOTIFICATION_PUSH_EVENT,
   ACTIVITY_DRIFT_TEMPLATE_REF,
+  ACTIVITY_DRIFT_TEMPLATE,
   SUPERVISION_WATCH_START_TURN_SCOPE,
   requiresWatchStartTurnAuthority,
   roleRequiresWatchStartTurnAuthority,
@@ -31,6 +32,9 @@ test('activity drift is the sole implicit template and pins scoped start-turn au
     digest: '0670a8e2dad3c381bf6cf845da23287f568eb105209b391d59a637d1cd0022d4',
   });
   assert.equal(SUPERVISION_WATCH_START_TURN_SCOPE, 'supervision:watch:start-turn');
+  assert.equal(ACTIVITY_DRIFT_TEMPLATE.subjectBinding, 'current-run');
+  assert.equal(ACTIVITY_DRIFT_TEMPLATE.driftPolicy.statusRecipient, 'subject-agent');
+  assert.equal(ACTIVITY_DRIFT_TEMPLATE.driftPolicy.statusDeliveryMode, 'start-turn');
   assert.equal(roleRequiresWatchStartTurnAuthority({
     activityDrift: 'required',
     requiredWatcherTemplates: [],

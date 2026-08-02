@@ -43,10 +43,10 @@ function canonicalJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
   if (typeof value !== 'object') throw new TypeError('canonical JSON rejects unsupported values');
   const record = value as Readonly<Record<string, unknown>>;
-  return `{${Object.keys(record).sort().map((key) => {
-    const item = record[key];
+  return `{${Object.keys(record).sort().map((propertyName) => {
+    const item = record[propertyName];
     if (item === undefined) throw new TypeError('canonical JSON rejects undefined values');
-    return `${JSON.stringify(key)}:${canonicalJson(item)}`;
+    return `${JSON.stringify(propertyName)}:${canonicalJson(item)}`;
   }).join(',')}}`;
 }
 

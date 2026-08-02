@@ -24,8 +24,8 @@ import type {
   RecordDriftStatusSubmissionInput,
   NotificationTurnSubmission,
   UpdateWatchRuleInput,
-  VersionedRef,
 } from './api.js';
+import type { VersionedRef } from './policy.js';
 import type {
   DriftEpisodeId,
   NotificationId,

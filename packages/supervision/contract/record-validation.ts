@@ -144,22 +144,23 @@ function expectedAggregateValue(
   if (runs.length === 0) {
     return { quality: 'unavailable', source: 'aggregate:runs', limitations: ['no-runs'] };
   }
-  const values = runs.flatMap((run) => {
-    const usage = run[metric];
+  const values = runs.flatMap((runUsage) => {
+    const usage = runUsage[metric];
     return usage.value === undefined ? [] : [usage.value];
   });
-  const limitations = [...new Set(runs.flatMap((run) => [
-    ...run[metric].limitations,
-    ...(run[metric].value === undefined ? [String(run.agentRunId)] : []),
+  const limitations = [...new Set(runs.flatMap((runUsage) => [
+    ...runUsage[metric].limitations,
+    ...(runUsage[metric].value === undefined ? [String(runUsage.agentRunId)] : []),
   ]))].sort();
   if (values.length === 0) {
     return { quality: 'unavailable', source: 'aggregate:runs', limitations };
   }
   const everySupplies = values.length === runs.length;
   const somePartialOrUnavailable = runs.some(
-    (run) => run[metric].quality === 'partial' || run[metric].quality === 'unavailable',
+    (runUsage) => runUsage[metric].quality === 'partial'
+      || runUsage[metric].quality === 'unavailable',
   );
-  const quality = runs.every((run) => run[metric].quality === 'measured')
+  const quality = runs.every((runUsage) => runUsage[metric].quality === 'measured')
     ? 'measured'
     : everySupplies && !somePartialOrUnavailable
       ? 'estimated'
@@ -168,7 +169,9 @@ function expectedAggregateValue(
         : 'unavailable';
   return {
     quality,
-    ...(quality === 'unavailable' ? {} : { value: values.reduce((sum, value) => sum + value, 0) }),
+    ...(quality === 'unavailable'
+      ? {}
+      : { value: values.reduce((total, value) => total + value, 0) }),
     source: 'aggregate:runs',
     limitations,
   };
@@ -188,7 +191,8 @@ function validateAggregateSemantics(
   issues: ValidationIssue[],
 ): void {
   const ordered = runs.every(
-    (run, index) => index === 0 || String(runs[index - 1]!.agentRunId) < String(run.agentRunId),
+    (runUsage, index) => index === 0
+      || String(runs[index - 1]!.agentRunId) < String(runUsage.agentRunId),
   );
   if (!ordered) issues.push({ path: 'runs', message: 'must be ordered by agentRunId' });
   for (const metric of USAGE_METRICS) {
@@ -196,12 +200,14 @@ function validateAggregateSemantics(
       issues.push({ path: `aggregate.${metric}`, message: 'does not match the ruled runs aggregate' });
     }
   }
-  if (aggregate.final !== runs.every((run) => run.final)) {
+  if (aggregate.final !== runs.every((runUsage) => runUsage.final)) {
     issues.push({ path: 'aggregate.final', message: 'must be true exactly when every run is final' });
   }
   if (runs.length > 0) {
     const latest = runs.reduce(
-      (value, run) => String(run.observedAt) > String(value) ? run.observedAt : value,
+      (value, runUsage) => String(runUsage.observedAt) > String(value)
+        ? runUsage.observedAt
+        : value,
       runs[0]!.observedAt,
     );
     if (aggregate.observedAt !== latest) {

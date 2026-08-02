@@ -1,7 +1,6 @@
 import {
   b3fail,
   b3ok,
-  isValidId,
   validationFailed,
   type B3Result,
 } from '@novakai/foundation/contract';
@@ -11,90 +10,27 @@ import type {
   PublicEvent,
 } from './events.js';
 import type { Notification, ProviderUsageEvidence } from './records.js';
+import { notificationDeliveryEffectKey } from './identity-derivation.js';
+import type { DriftEpisodeId, NotificationId } from './identifiers.js';
 import {
   finish,
   recordEnvelope as validateRecordEnvelope,
 } from './validation-support.js';
+import {
+  eventEnvelope,
+  eventId as id,
+  eventObject as objectValue,
+  exact,
+  isoUtc,
+  isUrlSafeEventCursor,
+  nonEmpty,
+  stringArray,
+  wholeNumber,
+  type EventObject as ObjectValue,
+  type EventValidationIssue as Issue,
+} from './event-validation-support.js';
 
-interface Issue {
-  readonly path: string;
-  readonly message: string;
-}
-
-type ObjectValue = Readonly<Record<string, unknown>>;
-
-function objectValue(value: unknown, path: string, issues: Issue[]): ObjectValue {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    issues.push({ path, message: 'must be an object' });
-    return {};
-  }
-  return value as ObjectValue;
-}
-
-function exact(value: unknown, expected: unknown, path: string, issues: Issue[]): void {
-  if (value !== expected) issues.push({ path, message: `must be ${String(expected)}` });
-}
-
-function nonEmpty(value: unknown, path: string, issues: Issue[]): void {
-  if (typeof value !== 'string' || value.trim() === '') {
-    issues.push({ path, message: 'must be a non-empty string' });
-  }
-}
-
-function isoUtc(value: unknown, path: string, issues: Issue[]): void {
-  if (typeof value !== 'string' || !value.endsWith('Z') || Number.isNaN(Date.parse(value))) {
-    issues.push({ path, message: 'must be an ISO-8601 UTC timestamp' });
-  }
-}
-
-function wholeNumber(value: unknown, path: string, issues: Issue[]): void {
-  if (!Number.isInteger(value) || (value as number) < 0) {
-    issues.push({ path, message: 'must be a non-negative whole number' });
-  }
-}
-
-function stringArray(value: unknown, path: string, issues: Issue[]): void {
-  if (!Array.isArray(value) || value.some((item) => typeof item !== 'string')) {
-    issues.push({ path, message: 'must be an array of strings' });
-  }
-}
-
-/** Runtime predicate for §4.1 opaque URL-safe event cursors. */
-export function isUrlSafeEventCursor(value: unknown): value is string {
-  return typeof value === 'string' && /^[A-Za-z0-9._~-]+$/.test(value);
-}
-
-function id(
-  value: unknown,
-  prefix: string,
-  format: 'uuidv4' | 'uuidv7' | 'base32sha256',
-  path: string,
-  issues: Issue[],
-): void {
-  if (!isValidId(value, prefix, format)) {
-    issues.push({ path, message: `must be a ${prefix} identifier` });
-  }
-}
-
-function eventEnvelope(
-  candidate: unknown,
-  kind: string,
-  owner: string,
-  issues: Issue[],
-): ObjectValue {
-  const event = objectValue(candidate, 'event', issues);
-  nonEmpty(event.eventId, 'eventId', issues);
-  exact(event.kind, kind, 'kind', issues);
-  exact(event.schemaVersion, 1, 'schemaVersion', issues);
-  isoUtc(event.occurredAt, 'occurredAt', issues);
-  isoUtc(event.committedAt, 'committedAt', issues);
-  exact(event.sourceOwner, owner, 'sourceOwner', issues);
-  id(event.traceId, 'trace', 'uuidv4', 'traceId', issues);
-  if (!isUrlSafeEventCursor(event.cursor)) {
-    issues.push({ path: 'cursor', message: 'must be a non-empty URL-safe string' });
-  }
-  return event;
-}
+export { isUrlSafeEventCursor } from './event-validation-support.js';
 
 function providerMeasurement(value: unknown, issues: Issue[]): void {
   const measurement = objectValue(value, 'payload.measurement', issues);
@@ -162,19 +98,59 @@ function recipient(value: unknown, issues: Issue[]): void {
   if (target.kind === 'agent') {
     id(target.agentId, 'agent', 'uuidv4', 'payload.recipient.agentId', issues);
   } else if (target.kind === 'human') {
-    nonEmpty(target.principalId, 'payload.recipient.principalId', issues);
+    const principalId = nonEmpty(target.principalId, 'payload.recipient.principalId', issues);
+    if (!/^person_[A-Za-z0-9-]+$/.test(principalId)) {
+      issues.push({
+        path: 'payload.recipient.principalId',
+        message: 'must be a Messaging PersonId',
+      });
+    }
   } else {
     issues.push({ path: 'payload.recipient.kind', message: 'is not a recipient kind' });
   }
 }
 
-function notificationPayload(value: unknown, issues: Issue[]): void {
-  const payload = objectValue(value, 'payload', issues);
-  validateRecordEnvelope(payload, 'notification', 'notification', 'base32sha256', issues);
-  nonEmpty(payload.deliveryEffectKey, 'payload.deliveryEffectKey', issues);
-  const attempt = objectValue(payload.deliveryAttempt, 'payload.deliveryAttempt', issues);
+function notificationPhase(payload: ObjectValue, issues: Issue[]): DriftEpisodeId | undefined {
+  if (payload.phase === 'condition') {
+    if (payload.driftEpisodeId !== undefined) {
+      issues.push({ path: 'payload.driftEpisodeId', message: 'is forbidden for condition phase' });
+    }
+    return undefined;
+  }
+  if (payload.phase === 'drift-status-request' || payload.phase === 'drift-human-escalation') {
+    id(payload.driftEpisodeId, 'driftEpisode', 'base32sha256', 'payload.driftEpisodeId', issues);
+    return payload.driftEpisodeId as DriftEpisodeId;
+  }
+  issues.push({ path: 'payload.phase', message: 'is not a notification phase' });
+  return undefined;
+}
+
+function notificationEffectKey(
+  payload: ObjectValue,
+  driftEpisodeId: DriftEpisodeId | undefined,
+  issues: Issue[],
+): void {
+  if (typeof payload.id !== 'string') return;
+  const expectedEffectKey = notificationDeliveryEffectKey(
+    payload.id as NotificationId,
+    driftEpisodeId,
+  );
+  if (payload.deliveryEffectKey !== expectedEffectKey) {
+    issues.push({
+      path: 'payload.deliveryEffectKey',
+      message: 'must match the exact Notification/episode delivery key',
+    });
+  }
+}
+
+function notificationDeliveryAttempt(
+  value: unknown,
+  deliveryEffectKey: unknown,
+  issues: Issue[],
+): void {
+  const attempt = objectValue(value, 'payload.deliveryAttempt', issues);
   nonEmpty(attempt.effectKey, 'payload.deliveryAttempt.effectKey', issues);
-  if (attempt.effectKey !== payload.deliveryEffectKey) {
+  if (attempt.effectKey !== deliveryEffectKey) {
     issues.push({
       path: 'payload.deliveryAttempt.effectKey',
       message: 'must match payload.deliveryEffectKey',
@@ -214,6 +190,13 @@ function notificationPayload(value: unknown, issues: Issue[]): void {
   } else if (attempt.state !== 'queued') {
     issues.push({ path: 'payload.deliveryAttempt.state', message: 'is not a delivery-attempt state' });
   }
+}
+
+function notificationPayload(value: unknown, issues: Issue[]): void {
+  const payload = objectValue(value, 'payload', issues);
+  validateRecordEnvelope(payload, 'notification', 'notification', 'base32sha256', issues);
+  nonEmpty(payload.deliveryEffectKey, 'payload.deliveryEffectKey', issues);
+  notificationDeliveryAttempt(payload.deliveryAttempt, payload.deliveryEffectKey, issues);
   id(payload.watchRuleId, 'watchRule', 'uuidv7', 'payload.watchRuleId', issues);
   subject(payload.subject, issues);
   recipient(payload.recipient, issues);
@@ -229,16 +212,7 @@ function notificationPayload(value: unknown, issues: Issue[]): void {
   if (!['queue-only', 'next-turn-context', 'start-turn'].includes(payload.deliveryMode as string)) {
     issues.push({ path: 'payload.deliveryMode', message: 'is not a delivery mode' });
   }
-  if (payload.phase === 'condition') {
-    if (payload.driftEpisodeId !== undefined) {
-      issues.push({ path: 'payload.driftEpisodeId', message: 'is forbidden for condition phase' });
-    }
-  } else if (payload.phase === 'drift-status-request'
-    || payload.phase === 'drift-human-escalation') {
-    id(payload.driftEpisodeId, 'driftEpisode', 'base32sha256', 'payload.driftEpisodeId', issues);
-  } else {
-    issues.push({ path: 'payload.phase', message: 'is not a notification phase' });
-  }
+  notificationEffectKey(payload, notificationPhase(payload, issues), issues);
 }
 
 /** Parse the one §15 supervision event with a fully specified payload. */

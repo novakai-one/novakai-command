@@ -14,7 +14,6 @@ import type {
   TerminalInputAttemptId,
   SystemCommandContext,
   CommandContext,
-  AuthorityScope,
 } from '@novakai/foundation/contract';
 import type { NotificationEvent, PublicEvent } from './events.js';
 import type {
@@ -32,48 +31,13 @@ import type {
   WatchDeadline,
   WatchRule,
 } from './records.js';
+import type { VersionedRef } from './policy.js';
 
 /** Public input for WatchRule creation; authoritative envelope fields are omitted. */
 export type CreateWatchRuleInput = Omit<
   WatchRule,
   keyof RecordEnvelope<string, string> | 'id' | 'kind' | 'schemaVersion'
 >;
-
-/** Immutable reference to one pinned role watcher template. */
-export interface VersionedRef {
-  readonly id: string;
-  readonly version: number;
-  readonly digest: string;
-}
-
-/** The sole implicit Build 3 watcher-template reference. */
-export const ACTIVITY_DRIFT_TEMPLATE_REF: VersionedRef = {
-  id: 'watch-template/activity-drift',
-  version: 1,
-  digest: '0670a8e2dad3c381bf6cf845da23287f568eb105209b391d59a637d1cd0022d4',
-};
-
-/** Durable role policy resolved into an immutable launch plan before spawn. */
-export interface RoleSupervisionPolicy {
-  readonly activityDrift: 'required' | 'disabled-explicitly';
-  readonly requiredWatcherTemplates: readonly VersionedRef[];
-  readonly parentNotificationMode: 'queue-only' | 'next-turn-context' | 'start-turn';
-}
-
-/** Scope required to durably authorize watcher-originated start turns. */
-export const SUPERVISION_WATCH_START_TURN_SCOPE =
-  'supervision:watch:start-turn' as AuthorityScope;
-
-/** Whether a non-retired WatchRule requires the durable start-turn scope. */
-export function requiresWatchStartTurnAuthority(rule: CreateWatchRuleInput): boolean {
-  return rule.status !== 'retired'
-    && (rule.deliveryMode === 'start-turn' || rule.condition.kind === 'activity-drift');
-}
-
-/** Whether a role policy pins any watcher-originated start-turn authority. */
-export function roleRequiresWatchStartTurnAuthority(policy: RoleSupervisionPolicy): boolean {
-  return policy.activityDrift === 'required' || policy.parentNotificationMode === 'start-turn';
-}
 
 /** Spawn-stage input that materialises every watcher pinned by a launch plan. */
 export interface InstallRunWatchersInput {

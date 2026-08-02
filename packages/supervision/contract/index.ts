@@ -1,6 +1,7 @@
 /** The only public import door for the frozen B3d supervision contract. */
 export * from './identifiers.js';
 export * from './identity-derivation.js';
+export * from './policy.js';
 export * from './shared.js';
 export * from './drift.js';
 export * from './records.js';

@@ -30,6 +30,19 @@ test('notification event parser enforces the concrete §12.7 payload', () => {
     },
   });
   assert.equal(mismatchedAttempt.ok, false);
+
+  const wrongDeliveryKey = parseNotificationEvent({
+    ...event,
+    payload: {
+      ...event.payload,
+      deliveryEffectKey: 'b3v4:notification-delivery:wrong:condition',
+      deliveryAttempt: {
+        state: 'queued',
+        effectKey: 'b3v4:notification-delivery:wrong:condition',
+      },
+    },
+  });
+  assert.equal(wrongDeliveryKey.ok, false);
 });
 
 test('notification Page output validates every item and omission', () => {
