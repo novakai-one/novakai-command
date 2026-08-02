@@ -66,6 +66,22 @@ export const TraceLine = z.object({
 });
 export type TraceLine = z.infer<typeof TraceLine>;
 
+/**
+ * Who ASKED Foundation to write a tombstone (spec ruling Q10).
+ *
+ * `createdBy` records the authoritative writer; this records who caused that
+ * writer to act. Collapsing the two into one field falsely granted the
+ * requester a write it does not hold (§8.2's grant boundary), and changing the
+ * writer without keeping this would have lost the causal audit truth instead.
+ */
+export const QuarantineRequestProvenance = z.object({
+  capability: z.string().min(1),
+  principalId: z.string().min(1),
+  clientOpId: z.string().min(1),
+  traceId: z.string().min(1),
+});
+export type QuarantineRequestProvenance = z.infer<typeof QuarantineRequestProvenance>;
+
 // quarantine.jsonl tombstone (R3-4: tombstone append; original lines NEVER move/rewrite)
 export const QuarantineTombstone = z.object({
   kind: z.literal('quarantine'),
@@ -80,8 +96,20 @@ export const QuarantineTombstone = z.object({
   resolution: z.enum(['reconcile', 'dismiss']).optional(),
   resolvedAt: z.string().datetime().optional(),
   resolvedBy: z.string().optional(),
+  /**
+   * Q10: optional at the PARSE boundary solely so tombstones written before the
+   * ruling stay valid. Absence means `legacy-requester-unknown` and must not be
+   * inferred from `createdBy`. New request-path writes may not omit it.
+   */
+  requestedBy: QuarantineRequestProvenance.optional(),
 });
 export type QuarantineTombstone = z.infer<typeof QuarantineTombstone>;
+
+/** Q10's narrowed view: what every NEW `requestQuarantine` write must satisfy. */
+export type RequestedQuarantineTombstone = QuarantineTombstone & {
+  readonly createdBy: 'sys_foundation';
+  readonly requestedBy: QuarantineRequestProvenance;
+};
 
 export const LayoutRecord = z.object({
   kind: z.literal('layout'),

@@ -59,6 +59,12 @@ export interface MirrorDeps {
   readonly source: TranscriptSourcePort;
   readonly messaging: MessagingMirrorPort;
   readonly hooks?: MirrorStageHooks;
+  /**
+   * The requester's trace correlation for this ingest (§4.4 trusted context).
+   * Q10 records it on any tombstone this pass asks Foundation to write, so a
+   * quarantine can be traced back to the pass that found the corruption.
+   */
+  readonly traceId?: string;
   /** Records a native subagent seen on a line. Injected to avoid a cycle. */
   readonly observeSubagent?: (input: {
     readonly bindingId: string;
@@ -354,7 +360,7 @@ async function quarantineAt(
   deps: MirrorDeps, binding: TranscriptBinding, position: string, ledgerId: string,
 ): Promise<B3Result<null>> {
   const tombstoned = await deps.store.quarantine(
-    'transcriptLine', ledgerId, keyFor(`quarantine:${ledgerId}`),
+    'transcriptLine', ledgerId, keyFor(`quarantine:${ledgerId}`), deps.traceId,
   );
   if (!tombstoned.ok) return tombstoned;
   const frozen = await setState(deps.store, binding, {

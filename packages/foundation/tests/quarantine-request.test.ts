@@ -34,7 +34,9 @@ test('Foundation requestQuarantine is scoped, stamped, and idempotent', async ()
     assert.equal(first.ok, true);
     if (!first.ok) return;
     assert.equal(first.value.outcome, 'created');
-    assert.equal(first.value.tombstone.createdBy, 'sys_ingester');
+    // Q10: Foundation is the writer; the requester moved to `requestedBy`.
+    assert.equal(first.value.tombstone.createdBy, 'sys_foundation');
+    assert.equal(first.value.tombstone.requestedBy?.principalId, 'sys_ingester');
     assert.deepEqual(first.value.tombstone.quarantinedRef, target);
     assert.equal(first.value.tombstone.reason, 'corrupt_record');
 
@@ -62,7 +64,7 @@ test('Foundation requestQuarantine is scoped, stamped, and idempotent', async ()
       stored.ok && !isAbsent(stored.value)
         ? stored.value.object.createdBy
         : null,
-      'sys_ingester',
+      'sys_foundation',
     );
 
     const wrongScope = composeHandle({

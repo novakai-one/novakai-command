@@ -122,15 +122,19 @@ test('TRN-004 rejected raw rows request Foundation quarantine and later valid ro
     assert.equal(quarantined.ok, true);
     assert.deepEqual(
       quarantined.ok
+        // Q10: Foundation CONSTRUCTS the tombstone; Transcript is recorded as
+        // the requester, never as the writer.
         ? quarantined.value.items.map(({ object }) => ({
             createdBy: object.createdBy,
+            requestedByPrincipal: object.requestedBy?.principalId,
             targetKind: object.quarantinedRef.kind,
             reason: object.reason,
           }))
         : null,
       [
         {
-          createdBy: 'sys_ingester',
+          createdBy: 'sys_foundation',
+          requestedByPrincipal: 'sys_ingester',
           targetKind: 'transcriptLine',
           reason: 'corrupt_record',
         },

@@ -12,7 +12,7 @@ import path from 'node:path';
 import { z } from 'zod';
 import type { ClientOpId, ObjectId, ObjectKind, ServerOpId } from '../../contract/brands.js';
 import { mintServerOpId } from '../../contract/brands.js';
-import { Envelope, QuarantineTombstone, Ref, TraceLine } from '../../contract/schemas.js';
+import { Envelope, QuarantineRequestProvenance, QuarantineTombstone, Ref, TraceLine } from '../../contract/schemas.js';
 import type { Envelope as EnvelopeT, RecordLine as RecordLineT, QuarantineTombstone as TombstoneT, TraceLine as TraceLineT } from '../../contract/schemas.js';
 import { err, type StoreError } from '../../contract/errors.js';
 import { acquireLock, releaseLock, LockTimeout } from './lock.js';
@@ -922,8 +922,11 @@ export class StoreEngine {
   requestQuarantine(opts: {
     tombstoneId: string;
     target: z.infer<typeof Ref>;
+    /** The REQUESTER — it stamps the lifecycle trace, never the tombstone. */
     actor: string;
     clientOpId: ClientOpId;
+    /** Q10: who asked. Foundation is the writer either way. */
+    requestedBy?: z.infer<typeof QuarantineRequestProvenance>;
   }): EngineResult<{
     outcome: 'created' | 'already_requested';
     tombstone: TombstoneT;
@@ -1003,16 +1006,21 @@ export class StoreEngine {
         };
       }
 
+      // Q10: Foundation CONSTRUCTS, the capability only REQUESTED. `createdBy`
+      // names the writer — `opts.actor` here would grant the requester a
+      // quarantine write it does not hold — and `requestedBy` keeps the causal
+      // fact that would otherwise be lost by fixing the writer.
       const tombstone = QuarantineTombstone.parse({
         kind: 'quarantine',
         id: opts.tombstoneId,
         schemaVersion: 1,
         createdAt: nowIso(),
         permissionLevel: 'private',
-        createdBy: opts.actor,
+        createdBy: 'sys_foundation',
         quarantinedRef: opts.target,
         reason: 'corrupt_record',
         status: 'open',
+        ...(opts.requestedBy === undefined ? {} : { requestedBy: opts.requestedBy }),
       });
       const opId = mintServerOpId();
       try {

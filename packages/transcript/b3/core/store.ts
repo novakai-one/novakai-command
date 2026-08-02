@@ -49,8 +49,16 @@ export interface TranscriptStore {
     kind: ObjectKind, filter?: Record<string, unknown>,
   ): Promise<B3Result<readonly T[]>>;
 
-  /** Ask Foundation to tombstone a corrupt record. Never a direct write. */
-  quarantine(kind: ObjectKind, id: string, clientOpId: ClientOpId): Promise<B3Result<null>>;
+  /**
+   * Ask Foundation to tombstone a corrupt record. Never a direct write.
+   *
+   * `traceId` is the REQUESTER's correlation (Q10): Foundation writes the
+   * tombstone as `sys_foundation` and records who asked next to it, so the
+   * §8 grant boundary and the causal audit trail survive together.
+   */
+  quarantine(
+    kind: ObjectKind, id: string, clientOpId: ClientOpId, traceId?: string,
+  ): Promise<B3Result<null>>;
 }
 
 export function createTranscriptStore(options: TranscriptStoreOptions): TranscriptStore {
@@ -93,8 +101,11 @@ export function createTranscriptStore(options: TranscriptStoreOptions): Transcri
       return b3ok(page.value.items.map((item) => viewOf(item)));
     },
 
-    async quarantine(kind, id, clientOpId) {
-      const requested = await requestQuarantine(handle, { target: { kind, id }, clientOpId });
+    async quarantine(kind, id, clientOpId, traceId) {
+      const requested = await requestQuarantine(handle, {
+        target: { kind, id }, clientOpId,
+        ...(traceId === undefined ? {} : { traceId }),
+      });
       if (!requested.ok) return b3fail(storeFailure('transcript', requested.error));
       return b3ok(null);
     },

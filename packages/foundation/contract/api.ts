@@ -1,6 +1,6 @@
 // §3 Foundation contract functions. Free functions; the engine rides on the
 // scoped handle (composed by composeHandle). Absence is typed data, never a throw.
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
@@ -383,6 +383,14 @@ export async function requestQuarantine(
   input: {
     target: z.infer<typeof Ref>;
     clientOpId: ClientOpId;
+    /**
+     * The requester's trace correlation (§4.4 trusted context, never request
+     * JSON). Callers holding a `CommandContext` pass `ctx.traceId`; the B2
+     * ingest path has no context, so Foundation mints the correlation rather
+     * than writing a half-provenance (Q10: `requestedBy` is REQUIRED on every
+     * new request-path write).
+     */
+    traceId?: string;
   },
 ): Promise<Result<QuarantineRequestOutcome, StoreError>> {
   const engine = engineOf(handle);
@@ -408,11 +416,19 @@ export async function requestQuarantine(
   const digest = createHash('sha256')
     .update(`quarantine-request:${input.clientOpId}`)
     .digest('hex');
+  // Q10: derived from the authenticated handle and the caller's context —
+  // never from anything a request body could carry.
   return engine.requestQuarantine({
     tombstoneId: `quarantine_${digest}`,
     target: parsedTarget.data,
     actor: principalOf(handle),
     clientOpId: input.clientOpId,
+    requestedBy: {
+      capability: String(handle.capability),
+      principalId: principalOf(handle),
+      clientOpId: String(input.clientOpId),
+      traceId: input.traceId ?? `trace_${randomUUID()}`,
+    },
   });
 }
 
