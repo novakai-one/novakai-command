@@ -171,6 +171,49 @@ function recipient(value: unknown, issues: Issue[]): void {
 function notificationPayload(value: unknown, issues: Issue[]): void {
   const payload = objectValue(value, 'payload', issues);
   validateRecordEnvelope(payload, 'notification', 'notification', 'base32sha256', issues);
+  nonEmpty(payload.deliveryEffectKey, 'payload.deliveryEffectKey', issues);
+  const attempt = objectValue(payload.deliveryAttempt, 'payload.deliveryAttempt', issues);
+  nonEmpty(attempt.effectKey, 'payload.deliveryAttempt.effectKey', issues);
+  if (attempt.effectKey !== payload.deliveryEffectKey) {
+    issues.push({
+      path: 'payload.deliveryAttempt.effectKey',
+      message: 'must match payload.deliveryEffectKey',
+    });
+  }
+  if (attempt.state === 'delivery-claimed') {
+    isoUtc(attempt.claimedAt, 'payload.deliveryAttempt.claimedAt', issues);
+    id(
+      attempt.notificationInputReservationId,
+      'notificationInput',
+      'base32sha256',
+      'payload.deliveryAttempt.notificationInputReservationId',
+      issues,
+    );
+  } else if (attempt.state === 'submitted-confirmed'
+    || attempt.state === 'submitted-unconfirmed') {
+    isoUtc(attempt.submittedAt, 'payload.deliveryAttempt.submittedAt', issues);
+    id(
+      attempt.notificationInputReservationId,
+      'notificationInput',
+      'base32sha256',
+      'payload.deliveryAttempt.notificationInputReservationId',
+      issues,
+    );
+    id(
+      attempt.terminalInputAttemptId,
+      'terminalInput',
+      'uuidv7',
+      'payload.deliveryAttempt.terminalInputAttemptId',
+      issues,
+    );
+    if (attempt.state === 'submitted-confirmed') {
+      id(attempt.providerTurnId, 'providerTurn', 'uuidv7', 'payload.deliveryAttempt.providerTurnId', issues);
+    } else if (attempt.providerTurnId !== undefined) {
+      id(attempt.providerTurnId, 'providerTurn', 'uuidv7', 'payload.deliveryAttempt.providerTurnId', issues);
+    }
+  } else if (attempt.state !== 'queued') {
+    issues.push({ path: 'payload.deliveryAttempt.state', message: 'is not a delivery-attempt state' });
+  }
   id(payload.watchRuleId, 'watchRule', 'uuidv7', 'payload.watchRuleId', issues);
   subject(payload.subject, issues);
   recipient(payload.recipient, issues);

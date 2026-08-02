@@ -19,6 +19,9 @@ export type DriftEpisodeId = B3Brand<string, 'DriftEpisodeId'>;
 /** Agents-owned authoritative provider measurement evidence (§4.1, §5.5). */
 export type ProviderUsageEvidenceId = B3Brand<string, 'ProviderUsageEvidenceId'>;
 
+/** Terminal-owned deterministic reservation for one Notification delivery effect. */
+export type NotificationInputReservationId = B3Brand<string, 'NotificationInputReservationId'>;
+
 /** Mint a new WatchRule identity using the mandated lowercase UUIDv7 body. */
 export const mintWatchRuleId = (): WatchRuleId =>
   `watchRule_${uuidv7()}` as WatchRuleId;
@@ -44,3 +47,9 @@ export const isProviderUsageEvidenceId = (
   value: unknown,
 ): value is ProviderUsageEvidenceId =>
   isValidId(value, 'providerUsage', 'base32sha256');
+
+/** Runtime guard for Terminal's deterministic Notification input reservation. */
+export const isNotificationInputReservationId = (
+  value: unknown,
+): value is NotificationInputReservationId =>
+  isValidId(value, 'notificationInput', 'base32sha256');

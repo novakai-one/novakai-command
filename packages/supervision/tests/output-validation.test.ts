@@ -21,6 +21,15 @@ test('notification event parser enforces the concrete §12.7 payload', () => {
     payload: { ...event.payload, phase: 'drift-status-request' },
   });
   assert.equal(invalid.ok, false);
+
+  const mismatchedAttempt = parseNotificationEvent({
+    ...event,
+    payload: {
+      ...event.payload,
+      deliveryAttempt: { state: 'queued', effectKey: 'different-effect' },
+    },
+  });
+  assert.equal(mismatchedAttempt.ok, false);
 });
 
 test('notification Page output validates every item and omission', () => {

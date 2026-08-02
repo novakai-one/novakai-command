@@ -1,4 +1,6 @@
 import type { ContractError } from './errors.js';
+import type { UpdateWatchRuleInput } from './api.js';
+import type { WatchRule } from './records.js';
 
 /** The seven canonical supervision CLI verbs from §17.1. */
 export const SUPERVISION_CLI_COMMANDS = [
@@ -31,3 +33,21 @@ export type CliOutput<Value> =
 
 /** Stable process exit codes from §17.2. */
 export type CliExitCode = 0 | 2 | 3 | 4 | 5 | 6;
+
+/** Compile `nvk watch remove` into the existing CAS update; no delete path exists. */
+export function watchRemoveRetirement(rule: WatchRule): UpdateWatchRuleInput {
+  return {
+    watchRuleId: rule.id,
+    expectedRecordVersion: rule.recordVersion,
+    replacement: {
+      subject: rule.subject,
+      condition: rule.condition,
+      recipient: rule.recipient,
+      deliveryMode: rule.deliveryMode,
+      cooldownMs: rule.cooldownMs,
+      status: 'retired',
+      ...(rule.driftPolicy === undefined ? {} : { driftPolicy: rule.driftPolicy }),
+      ...(rule.action === undefined ? {} : { action: rule.action }),
+    },
+  };
+}

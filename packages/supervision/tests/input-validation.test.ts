@@ -5,6 +5,7 @@ import {
   parseEvaluateSupervisionEventInput,
   parseInstallRunWatchersInput,
   parseNotificationFilter,
+  parseRecordDriftStatusSubmissionInput,
 } from '../contract/index.js';
 
 test('installRunWatchers boundary validates both Run and launch-plan identities', () => {
@@ -23,6 +24,23 @@ test('installRunWatchers boundary validates both Run and launch-plan identities'
     requiredTemplateRefs: [],
   });
   assert.equal(crossed.ok, false);
+});
+
+test('Runtime drift submission boundary carries the complete owner/CAS tuple', () => {
+  const parsed = parseRecordDriftStatusSubmissionInput({
+    watchDeadlineId: `watchDeadline_${'a'.repeat(52)}`,
+    expectedRecordVersion: 4,
+    expectedEpisodeId: `driftEpisode_${'b'.repeat(52)}`,
+    expectedEffectKey: 'b3v4:notification-delivery:notification:test',
+    expectedNotificationId: `notification_${'c'.repeat(52)}`,
+    expectedNotificationInputReservationId: `notificationInput_${'d'.repeat(52)}`,
+    expectedTerminalInputAttemptId: 'terminalInput_018f0f8a-4f7b-7abc-8def-0123456789ab',
+    submission: {
+      state: 'submitted-unconfirmed',
+      submittedAt: '2026-08-03T00:00:00.000Z',
+    },
+  });
+  assert.equal(parsed.ok, true, parsed.ok ? '' : parsed.error.message);
 });
 
 test('evaluateEvent boundary validates the complete committed event envelope', () => {

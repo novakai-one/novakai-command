@@ -61,7 +61,7 @@ function closedStatus(value: unknown, issues: ValidationIssue[]): void {
   );
   oneOf(
     status.state,
-    ['replied', 'cancelled-before-delivery'],
+    ['replied', 'cancelled-before-delivery', 'activity-observed-after-submission'],
     'lastClosedStatus.state',
     issues,
   );
@@ -97,6 +97,26 @@ function outstandingStatus(
     );
     return;
   }
+  if (status.state === 'delivery-claimed') {
+    if (!queuedAllowed) {
+      issues.push({ path: 'outstandingStatus.state', message: 'cannot satisfy a reply window' });
+    }
+    isoUtc(status.claimedAt, 'outstandingStatus.claimedAt', issues);
+    identifier(
+      status.notificationInputReservationId,
+      'notificationInput',
+      'base32sha256',
+      'outstandingStatus.notificationInputReservationId',
+      issues,
+    );
+    forbid(
+      status,
+      ['submittedAt', 'replyDueAt', 'providerTurnId', 'replyEvidenceRef'],
+      'outstandingStatus',
+      issues,
+    );
+    return;
+  }
   oneOf(
     status.state,
     ['submitted-confirmed', 'submitted-unconfirmed'],
@@ -105,6 +125,20 @@ function outstandingStatus(
   );
   isoUtc(status.submittedAt, 'outstandingStatus.submittedAt', issues);
   isoUtc(status.replyDueAt, 'outstandingStatus.replyDueAt', issues);
+  identifier(
+    status.notificationInputReservationId,
+    'notificationInput',
+    'base32sha256',
+    'outstandingStatus.notificationInputReservationId',
+    issues,
+  );
+  identifier(
+    status.terminalInputAttemptId,
+    'terminalInput',
+    'uuidv7',
+    'outstandingStatus.terminalInputAttemptId',
+    issues,
+  );
   forbid(status, ['replyEvidenceRef'], 'outstandingStatus', issues);
   if (status.state === 'submitted-confirmed') {
     identifier(

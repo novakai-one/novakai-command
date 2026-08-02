@@ -19,9 +19,9 @@ export interface SafeBoundaryStatusTurnRequest {
 }
 
 /** Submission facts Runtime may record after the safe-boundary attempt. */
-export type SubmittedDriftStatus = Exclude<
+export type SubmittedDriftStatus = Extract<
   OutstandingDriftStatus,
-  { readonly state: 'queued' }
+  { readonly state: 'submitted-confirmed' | 'submitted-unconfirmed' }
 >;
 
 /** Runtime-side provider half of the safe-boundary status-turn seam. */

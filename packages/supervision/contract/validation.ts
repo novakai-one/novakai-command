@@ -7,9 +7,9 @@ import {
   type AgentId,
   type AgentRunId,
   type B3Result,
-  type HumanPrincipalId,
   type IsoUtc,
 } from '@novakai/foundation/contract';
+import type { HumanPrincipalId } from './shared.js';
 import {
   DRIFT_FREE_EVIDENCE,
   DRIFT_STATUS_PROMPT,
@@ -18,6 +18,7 @@ import type { CreateWatchRuleInput } from './api.js';
 import type {
   DriftCheckPolicy,
   FutureOperationAction,
+  AgentUsageAggregate,
   AgentRunUsage,
   MeasurementQuality,
   NotificationRecipient,
@@ -124,9 +125,13 @@ function readRecipient(value: unknown, issues: Issue[]): NotificationRecipient {
     }
     return { kind, agentId: recipient.agentId as AgentId };
   }
+  const principalId = nonEmpty(recipient.principalId, 'recipient.principalId', issues);
+  if (!/^person_[A-Za-z0-9-]+$/.test(principalId)) {
+    issues.push({ path: 'recipient.principalId', message: 'must be a Messaging PersonId' });
+  }
   return {
     kind,
-    principalId: nonEmpty(recipient.principalId, 'recipient.principalId', issues) as HumanPrincipalId,
+    principalId: principalId as HumanPrincipalId,
   };
 }
 
@@ -143,6 +148,12 @@ function readDriftPolicy(value: unknown, issues: Issue[]): DriftCheckPolicy {
     statusTurn: choice(policy.statusTurn, [
       'queue-runtime-status-request-only-after-free-evidence-suspicious',
     ], 'driftPolicy.statusTurn', issues),
+    statusRecipient: choice(
+      policy.statusRecipient, ['subject-agent'], 'driftPolicy.statusRecipient', issues,
+    ),
+    statusDeliveryMode: choice(
+      policy.statusDeliveryMode, ['start-turn'], 'driftPolicy.statusDeliveryMode', issues,
+    ),
     replyWindowMs: integer(
       policy.replyWindowMs, 300_000, 600_000, 'driftPolicy.replyWindowMs', issues,
     ),
@@ -265,4 +276,28 @@ export function parseAgentRunUsage(candidate: unknown): B3Result<AgentRunUsage> 
   return issues.length === 0
     ? b3ok(parsed)
     : b3fail(validationFailed(issues));
+}
+
+/** Runtime parser for an Agent aggregate, which deliberately has no Run identity. */
+export function parseAgentUsageAggregate(candidate: unknown): B3Result<AgentUsageAggregate> {
+  const issues: Issue[] = [];
+  const usage = objectValue(candidate, 'aggregate', issues);
+  if (usage.agentRunId !== undefined) {
+    issues.push({ path: 'aggregate.agentRunId', message: 'must be absent on an Agent aggregate' });
+  }
+  if (typeof usage.final !== 'boolean') {
+    issues.push({ path: 'aggregate.final', message: 'must be a boolean' });
+  }
+  const parsed: AgentUsageAggregate = {
+    inputTokens: readUsageValue(usage.inputTokens, 'aggregate.inputTokens', issues),
+    outputTokens: readUsageValue(usage.outputTokens, 'aggregate.outputTokens', issues),
+    cachedInputTokens: readUsageValue(
+      usage.cachedInputTokens, 'aggregate.cachedInputTokens', issues,
+    ),
+    costMicros: readUsageValue(usage.costMicros, 'aggregate.costMicros', issues),
+    providerTurns: readUsageValue(usage.providerTurns, 'aggregate.providerTurns', issues),
+    observedAt: readIsoUtc(usage.observedAt, 'aggregate.observedAt', issues),
+    final: usage.final as boolean,
+  };
+  return issues.length === 0 ? b3ok(parsed) : b3fail(validationFailed(issues));
 }

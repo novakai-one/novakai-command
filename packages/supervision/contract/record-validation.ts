@@ -8,11 +8,18 @@ import type {
 } from './api.js';
 import { validateDurableDriftState } from './drift-state-validation.js';
 import type {
+  AgentRunUsage,
+  AgentUsageAggregate,
+  UsageValue,
   WatchCondition,
   WatchDeadline,
   WatchRule,
 } from './records.js';
-import { parseAgentRunUsage, parseCreateWatchRuleInput } from './validation.js';
+import {
+  parseAgentRunUsage,
+  parseAgentUsageAggregate,
+  parseCreateWatchRuleInput,
+} from './validation.js';
 import {
   exact,
   finish,
@@ -124,18 +131,102 @@ function validateRunUsage(value: unknown, path: string, issues: ValidationIssue[
   if (!parsed.ok) issues.push({ path, message: parsed.error.message });
 }
 
+const USAGE_METRICS = [
+  'inputTokens', 'outputTokens', 'cachedInputTokens', 'costMicros', 'providerTurns',
+] as const satisfies readonly (keyof AgentUsageAggregate)[];
+
+type UsageMetric = typeof USAGE_METRICS[number];
+
+function expectedAggregateValue(
+  runs: readonly AgentRunUsage[],
+  metric: UsageMetric,
+): UsageValue {
+  if (runs.length === 0) {
+    return { quality: 'unavailable', source: 'aggregate:runs', limitations: ['no-runs'] };
+  }
+  const values = runs.flatMap((run) => {
+    const usage = run[metric];
+    return usage.value === undefined ? [] : [usage.value];
+  });
+  const limitations = [...new Set(runs.flatMap((run) => [
+    ...run[metric].limitations,
+    ...(run[metric].value === undefined ? [String(run.agentRunId)] : []),
+  ]))].sort();
+  if (values.length === 0) {
+    return { quality: 'unavailable', source: 'aggregate:runs', limitations };
+  }
+  const everySupplies = values.length === runs.length;
+  const somePartialOrUnavailable = runs.some(
+    (run) => run[metric].quality === 'partial' || run[metric].quality === 'unavailable',
+  );
+  const quality = runs.every((run) => run[metric].quality === 'measured')
+    ? 'measured'
+    : everySupplies && !somePartialOrUnavailable
+      ? 'estimated'
+      : somePartialOrUnavailable
+        ? 'partial'
+        : 'unavailable';
+  return {
+    quality,
+    ...(quality === 'unavailable' ? {} : { value: values.reduce((sum, value) => sum + value, 0) }),
+    source: 'aggregate:runs',
+    limitations,
+  };
+}
+
+function sameUsageValue(left: UsageValue, right: UsageValue): boolean {
+  return left.quality === right.quality
+    && left.value === right.value
+    && left.source === right.source
+    && left.limitations.length === right.limitations.length
+    && left.limitations.every((value, index) => value === right.limitations[index]);
+}
+
+function validateAggregateSemantics(
+  runs: readonly AgentRunUsage[],
+  aggregate: AgentUsageAggregate,
+  issues: ValidationIssue[],
+): void {
+  const ordered = runs.every(
+    (run, index) => index === 0 || String(runs[index - 1]!.agentRunId) < String(run.agentRunId),
+  );
+  if (!ordered) issues.push({ path: 'runs', message: 'must be ordered by agentRunId' });
+  for (const metric of USAGE_METRICS) {
+    if (!sameUsageValue(aggregate[metric], expectedAggregateValue(runs, metric))) {
+      issues.push({ path: `aggregate.${metric}`, message: 'does not match the ruled runs aggregate' });
+    }
+  }
+  if (aggregate.final !== runs.every((run) => run.final)) {
+    issues.push({ path: 'aggregate.final', message: 'must be true exactly when every run is final' });
+  }
+  if (runs.length > 0) {
+    const latest = runs.reduce(
+      (value, run) => String(run.observedAt) > String(value) ? run.observedAt : value,
+      runs[0]!.observedAt,
+    );
+    if (aggregate.observedAt !== latest) {
+      issues.push({ path: 'aggregate.observedAt', message: 'must be the latest run observation' });
+    }
+  }
+}
+
 /** Runtime parser for the exact §12.7 AgentUsageSummary output shape. */
 export function parseAgentUsageSummary(candidate: unknown): B3Result<AgentUsageSummary> {
   const issues: ValidationIssue[] = [];
   const summary = objectValue(candidate, 'agentUsageSummary', issues);
   identifier(summary.agentId, 'agent', 'uuidv4', 'agentId', issues);
+  const runs: AgentRunUsage[] = [];
   if (!Array.isArray(summary.runs)) {
     issues.push({ path: 'runs', message: 'must be an array' });
   } else {
     summary.runs.forEach((runUsage, index) => {
-      validateRunUsage(runUsage, `runs.${index}`, issues);
+      const parsed = parseAgentRunUsage(runUsage);
+      if (parsed.ok) runs.push(parsed.value);
+      else issues.push({ path: `runs.${index}`, message: parsed.error.message });
     });
   }
-  validateRunUsage(summary.aggregate, 'aggregate', issues);
+  const aggregate = parseAgentUsageAggregate(summary.aggregate);
+  if (aggregate.ok) validateAggregateSemantics(runs, aggregate.value, issues);
+  else issues.push({ path: 'aggregate', message: aggregate.error.message });
   return finish<AgentUsageSummary>(candidate, issues);
 }

@@ -10,12 +10,22 @@ import type {
   RecordEnvelope,
   RecordVersion,
   ResolvedLaunchPlanId,
+  ProviderTurnId,
+  TerminalInputAttemptId,
   SystemCommandContext,
   CommandContext,
+  AuthorityScope,
 } from '@novakai/foundation/contract';
 import type { NotificationEvent, PublicEvent } from './events.js';
-import type { DriftEpisodeId, NotificationId, WatchDeadlineId, WatchRuleId } from './identifiers.js';
 import type {
+  DriftEpisodeId,
+  NotificationId,
+  NotificationInputReservationId,
+  WatchDeadlineId,
+  WatchRuleId,
+} from './identifiers.js';
+import type {
+  AgentUsageAggregate,
   AgentRunUsage,
   Notification,
   NotificationRecipient,
@@ -34,6 +44,35 @@ export interface VersionedRef {
   readonly id: string;
   readonly version: number;
   readonly digest: string;
+}
+
+/** The sole implicit Build 3 watcher-template reference. */
+export const ACTIVITY_DRIFT_TEMPLATE_REF: VersionedRef = {
+  id: 'watch-template/activity-drift',
+  version: 1,
+  digest: '0670a8e2dad3c381bf6cf845da23287f568eb105209b391d59a637d1cd0022d4',
+};
+
+/** Durable role policy resolved into an immutable launch plan before spawn. */
+export interface RoleSupervisionPolicy {
+  readonly activityDrift: 'required' | 'disabled-explicitly';
+  readonly requiredWatcherTemplates: readonly VersionedRef[];
+  readonly parentNotificationMode: 'queue-only' | 'next-turn-context' | 'start-turn';
+}
+
+/** Scope required to durably authorize watcher-originated start turns. */
+export const SUPERVISION_WATCH_START_TURN_SCOPE =
+  'supervision:watch:start-turn' as AuthorityScope;
+
+/** Whether a non-retired WatchRule requires the durable start-turn scope. */
+export function requiresWatchStartTurnAuthority(rule: CreateWatchRuleInput): boolean {
+  return rule.status !== 'retired'
+    && (rule.deliveryMode === 'start-turn' || rule.condition.kind === 'activity-drift');
+}
+
+/** Whether a role policy pins any watcher-originated start-turn authority. */
+export function roleRequiresWatchStartTurnAuthority(policy: RoleSupervisionPolicy): boolean {
+  return policy.activityDrift === 'required' || policy.parentNotificationMode === 'start-turn';
 }
 
 /** Spawn-stage input that materialises every watcher pinned by a launch plan. */
@@ -77,6 +116,71 @@ export interface ResetDriftEpisodeInput {
   readonly expectedRecordVersion: RecordVersion;
   readonly expectedEpisodeId: DriftEpisodeId;
   readonly reason: string;
+}
+
+/** Terminal-observed outcome of one safe-boundary Notification input attempt. */
+export type NotificationTurnSubmission =
+  | {
+      readonly state: 'submitted-confirmed';
+      readonly submittedAt: IsoUtc;
+      readonly providerTurnId: ProviderTurnId;
+    }
+  | {
+      readonly state: 'submitted-unconfirmed';
+      readonly submittedAt: IsoUtc;
+      readonly providerTurnId?: ProviderTurnId;
+    };
+
+/** Q2's complete Runtime→Supervision CAS command input. */
+export interface RecordDriftStatusSubmissionInput {
+  readonly watchDeadlineId: WatchDeadlineId;
+  readonly expectedRecordVersion: RecordVersion;
+  readonly expectedEpisodeId: DriftEpisodeId;
+  readonly expectedEffectKey: string;
+  readonly expectedNotificationId: NotificationId;
+  readonly expectedNotificationInputReservationId: NotificationInputReservationId;
+  readonly expectedTerminalInputAttemptId: TerminalInputAttemptId;
+  readonly submission: NotificationTurnSubmission;
+}
+
+/** Durable authorization resolved from the owning WatchRule or launch plan. */
+export interface NotificationDeliveryAuthority {
+  readonly notificationId: NotificationId;
+  readonly notificationRecordVersion: RecordVersion;
+  readonly watchRuleId: WatchRuleId;
+  readonly agentRunId: AgentRunId;
+  readonly deliveryEffectKey: string;
+  readonly activityGeneration: ActivityGeneration;
+  readonly deliveryMode: 'start-turn';
+  readonly inputText: string;
+  readonly authoritySource:
+    | { readonly kind: 'watch-rule'; readonly watchRuleId: WatchRuleId }
+    | { readonly kind: 'launch-plan'; readonly launchPlanId: ResolvedLaunchPlanId };
+}
+
+/** CAS claim binding one queued Notification to one Terminal reservation. */
+export interface ClaimNotificationDeliveryInput {
+  readonly notificationId: NotificationId;
+  readonly expectedNotificationRecordVersion: RecordVersion;
+  readonly expectedEffectKey: string;
+  readonly notificationInputReservationId: NotificationInputReservationId;
+  readonly expectedActivityGeneration: ActivityGeneration;
+}
+
+/** The records Supervision alone may advance during a successful claim. */
+export interface NotificationDeliveryClaim {
+  readonly notification: Notification;
+  readonly watchDeadline?: WatchDeadline;
+}
+
+/** Runtime's complete owner-reconciled outcome for a non-drift Notification. */
+export interface RecordNotificationDeliveryOutcomeInput {
+  readonly notificationId: NotificationId;
+  readonly expectedRecordVersion: RecordVersion;
+  readonly expectedEffectKey: string;
+  readonly notificationInputReservationId: NotificationInputReservationId;
+  readonly terminalInputAttemptId: TerminalInputAttemptId;
+  readonly outcome: NotificationTurnSubmission;
 }
 
 /** Exact observable outcomes from §12.7; every evaluation starts zero turns. */
@@ -124,11 +228,11 @@ export type DriftCheckOutcome =
       readonly state: 'escalated-waiting-human';
     };
 
-/** §12.7's per-Agent usage view; aggregate Run identity is spec-ambiguous. */
+/** §12.7's per-Agent usage view; its aggregate is not itself a Run. */
 export interface AgentUsageSummary {
   readonly agentId: AgentId;
   readonly runs: readonly AgentRunUsage[];
-  readonly aggregate: AgentRunUsage;
+  readonly aggregate: AgentUsageAggregate;
 }
 
 /** Durable notification query filter. */
@@ -138,6 +242,23 @@ export interface NotificationFilter {
   readonly cursor?: EventCursor;
   readonly limit: number;
 }
+
+/** Existing v1 bounded-page method reused by the amended Q8 wire mapping. */
+export const SUPERVISION_NOTIFICATION_SUBSCRIBE_METHOD =
+  'b3.supervision.subscribeNotifications' as const;
+
+/** Existing generic `EventFrame.name` for unsolicited Notification pushes. */
+export const SUPERVISION_NOTIFICATION_PUSH_EVENT =
+  'b3.supervision.notification.changed' as const;
+
+/** Cursor-resumable, bounded request input; stopping requests is cancellation. */
+export interface NotificationEventPageInput {
+  readonly after?: EventCursor;
+  readonly limit: number;
+}
+
+/** The page payload carried by the existing request/response frame. */
+export type NotificationEventPage = B3Page<NotificationEvent>;
 
 /** Frozen B3d Supervision mutation surface (§12.4). */
 export interface SupervisionCommands {
@@ -175,10 +296,26 @@ export interface SupervisionCommands {
     context: CommandContext,
     input: ResetDriftEpisodeInput,
   ): Promise<B3Result<WatchDeadline>>;
+  recordDriftStatusSubmission(
+    context: SystemCommandContext<'sys_agent_runtime'>,
+    input: RecordDriftStatusSubmissionInput,
+  ): Promise<B3Result<WatchDeadline>>;
+  claimNotificationDelivery(
+    context: SystemCommandContext<'sys_agent_runtime'>,
+    input: ClaimNotificationDeliveryInput,
+  ): Promise<B3Result<NotificationDeliveryClaim>>;
+  recordNotificationDeliveryOutcome(
+    context: SystemCommandContext<'sys_agent_runtime'>,
+    input: RecordNotificationDeliveryOutcomeInput,
+  ): Promise<B3Result<Notification>>;
 }
 
 /** Frozen B3d Supervision read/stream surface (§12.4). */
 export interface SupervisionQueries {
+  getNotificationDeliveryAuthority(
+    principal: AuthenticatedPrincipal,
+    notificationId: NotificationId,
+  ): Promise<B3Result<NotificationDeliveryAuthority>>;
   getRunUsage(
     principal: AuthenticatedPrincipal,
     agentRunId: AgentRunId,

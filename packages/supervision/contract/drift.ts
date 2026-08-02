@@ -2,10 +2,12 @@ import type {
   ActivityGeneration,
   IsoUtc,
   ProviderTurnId,
+  TerminalInputAttemptId,
 } from '@novakai/foundation/contract';
 import type {
   DriftEpisodeId,
   NotificationId,
+  NotificationInputReservationId,
 } from './identifiers.js';
 
 /** The exact prompt carried forward by §9.2; adapters must not paraphrase it. */
@@ -40,7 +42,23 @@ export interface DriftEvidenceCheckpoint {
   readonly checkedAt: IsoUtc;
 }
 
-/** A queued or submitted status request whose episode remains open. */
+/** Claimed delivery has a durable reservation but no reply clock yet. */
+export interface ClaimedDriftStatus {
+  readonly episodeId: DriftEpisodeId;
+  readonly effectKey: string;
+  readonly notificationId: NotificationId;
+  readonly state: 'delivery-claimed';
+  readonly requestedAt: IsoUtc;
+  readonly claimedAt: IsoUtc;
+  readonly notificationInputReservationId: NotificationInputReservationId;
+  readonly pendingMovementEvidenceRef?: string;
+  readonly submittedAt?: never;
+  readonly replyDueAt?: never;
+  readonly providerTurnId?: never;
+  readonly replyEvidenceRef?: never;
+}
+
+/** A queued, claimed, or submitted status request whose episode remains open. */
 export type OutstandingDriftStatus =
   | {
       readonly episodeId: DriftEpisodeId;
@@ -53,6 +71,7 @@ export type OutstandingDriftStatus =
       readonly providerTurnId?: never;
       readonly replyEvidenceRef?: never;
     }
+  | ClaimedDriftStatus
   | {
       readonly episodeId: DriftEpisodeId;
       readonly effectKey: string;
@@ -62,6 +81,8 @@ export type OutstandingDriftStatus =
       readonly submittedAt: IsoUtc;
       readonly replyDueAt: IsoUtc;
       readonly providerTurnId: ProviderTurnId;
+      readonly notificationInputReservationId: NotificationInputReservationId;
+      readonly terminalInputAttemptId: TerminalInputAttemptId;
       readonly replyEvidenceRef?: never;
     }
   | {
@@ -73,6 +94,8 @@ export type OutstandingDriftStatus =
       readonly submittedAt: IsoUtc;
       readonly replyDueAt: IsoUtc;
       readonly providerTurnId?: ProviderTurnId;
+      readonly notificationInputReservationId: NotificationInputReservationId;
+      readonly terminalInputAttemptId: TerminalInputAttemptId;
       readonly replyEvidenceRef?: never;
     };
 
@@ -83,6 +106,14 @@ export type ClosedDriftStatus =
       readonly effectKey: string;
       readonly notificationId: NotificationId;
       readonly state: 'replied';
+      readonly closedAt: IsoUtc;
+      readonly closureEvidenceRef: string;
+    }
+  | {
+      readonly episodeId: DriftEpisodeId;
+      readonly effectKey: string;
+      readonly notificationId: NotificationId;
+      readonly state: 'activity-observed-after-submission';
       readonly closedAt: IsoUtc;
       readonly closureEvidenceRef: string;
     }
@@ -136,7 +167,10 @@ export type DurableDriftState = DurableDriftStateBase & (
       readonly quietIntervals: 2;
       readonly episodeId: DriftEpisodeId;
       readonly consecutiveUnansweredChecks: 3;
-      readonly outstandingStatus: Exclude<OutstandingDriftStatus, { readonly state: 'queued' }>;
+      readonly outstandingStatus: Extract<
+        OutstandingDriftStatus,
+        { readonly state: 'submitted-confirmed' | 'submitted-unconfirmed' }
+      >;
       readonly escalationNotificationId: NotificationId;
       readonly lastClosedStatus?: never;
     }

@@ -10,10 +10,10 @@ import {
   type EventCursor,
   type FieldReader,
   type IsoUtc,
-  type HumanPrincipalId,
   type RecordVersion,
   type ResolvedLaunchPlanId,
 } from '@novakai/foundation/contract';
+import type { HumanPrincipalId } from './shared.js';
 import type {
   CheckRunDriftInput,
   ClaimDueDeadlinesInput,
@@ -21,10 +21,19 @@ import type {
   InstallRunWatchersInput,
   NotificationFilter,
   ResetDriftEpisodeInput,
+  RecordDriftStatusSubmissionInput,
+  NotificationTurnSubmission,
   UpdateWatchRuleInput,
   VersionedRef,
 } from './api.js';
-import type { DriftEpisodeId, WatchDeadlineId, WatchRuleId } from './identifiers.js';
+import type {
+  DriftEpisodeId,
+  NotificationId,
+  NotificationInputReservationId,
+  WatchDeadlineId,
+  WatchRuleId,
+} from './identifiers.js';
+import type { ProviderTurnId, TerminalInputAttemptId } from '@novakai/foundation/contract';
 import type { NotificationRecipient } from './records.js';
 import { isUrlSafeEventCursor, parsePublicEvent } from './event-validation.js';
 import { parseCreateWatchRuleInput } from './validation.js';
@@ -144,6 +153,59 @@ export const parseResetDriftEpisodeInput = (
   reason: field.text('reason'),
 }));
 
+/** Runtime parser for Q2's complete Runtime→Supervision submission CAS tuple. */
+export function parseRecordDriftStatusSubmissionInput(candidate: unknown) {
+  const envelope = readBoundary<Omit<RecordDriftStatusSubmissionInput, 'submission'>>(
+    candidate,
+    (field) => ({
+      watchDeadlineId: field.id<WatchDeadlineId>(
+        'watchDeadlineId', 'watchDeadline', 'base32sha256',
+      ),
+      expectedRecordVersion: positiveBrand<RecordVersion>(field, 'expectedRecordVersion'),
+      expectedEpisodeId: field.id<DriftEpisodeId>(
+        'expectedEpisodeId', 'driftEpisode', 'base32sha256',
+      ),
+      expectedEffectKey: field.text('expectedEffectKey'),
+      expectedNotificationId: field.id<NotificationId>(
+        'expectedNotificationId', 'notification', 'base32sha256',
+      ),
+      expectedNotificationInputReservationId: field.id<NotificationInputReservationId>(
+        'expectedNotificationInputReservationId', 'notificationInput', 'base32sha256',
+      ),
+      expectedTerminalInputAttemptId: field.id<TerminalInputAttemptId>(
+        'expectedTerminalInputAttemptId', 'terminalInput', 'uuidv7',
+      ),
+    }),
+  );
+  if (!envelope.ok) return envelope;
+  const body = candidate as Readonly<Record<string, unknown>>;
+  const submission = readBoundary<NotificationTurnSubmission>(body.submission, (field) => {
+    const state = field.choice('state', ['submitted-confirmed', 'submitted-unconfirmed'] as const);
+    const rawProviderTurnId = field.given('providerTurnId');
+    if (state === 'submitted-confirmed') {
+      return {
+        state,
+        submittedAt: isoUtc(field, 'submittedAt'),
+        providerTurnId: field.id<ProviderTurnId>('providerTurnId', 'providerTurn'),
+      };
+    }
+    if (rawProviderTurnId !== undefined
+      && !isValidId(rawProviderTurnId, 'providerTurn', 'uuidv7')) {
+      field.reject('providerTurnId', 'must be a providerTurn identifier');
+    }
+    return {
+      state,
+      submittedAt: isoUtc(field, 'submittedAt'),
+      ...(rawProviderTurnId === undefined
+        ? {}
+        : { providerTurnId: rawProviderTurnId as ProviderTurnId }),
+    };
+  });
+  return submission.ok
+    ? b3ok({ ...envelope.value, submission: submission.value })
+    : submission;
+}
+
 const NOTIFICATION_STATES = [
   'queued', 'offered-to-endpoint', 'transcript-observed',
   'acknowledged', 'delivery-uncertain', 'expired',
@@ -196,8 +258,9 @@ function readRecipient(value: unknown, field: FieldReader): NotificationRecipien
     return { kind: 'agent', agentId: recipient.agentId as AgentId };
   }
   if (recipient.kind === 'human') {
-    if (typeof recipient.principalId !== 'string' || recipient.principalId.trim() === '') {
-      field.reject('recipient.principalId', 'must be a non-empty string');
+    if (typeof recipient.principalId !== 'string'
+      || !/^person_[A-Za-z0-9-]+$/.test(recipient.principalId)) {
+      field.reject('recipient.principalId', 'must be a Messaging PersonId');
     }
     return { kind: 'human', principalId: recipient.principalId as HumanPrincipalId };
   }

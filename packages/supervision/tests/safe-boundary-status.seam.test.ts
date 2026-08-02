@@ -18,6 +18,8 @@ const provider: RuntimeSafeBoundaryProviderHarness = {
     requestedAt: status.requestedAt,
     submittedAt: '2026-08-02T00:03:00.000Z' as never,
     replyDueAt: '2026-08-02T00:08:00.000Z' as never,
+    notificationInputReservationId: `notificationInput_${'f'.repeat(52)}` as never,
+    terminalInputAttemptId: 'terminalInput_018f0f8a-4f7b-7abc-8def-0123456789ab' as never,
     providerTurnId: 'providerTurn_018f0f8a-4f7b-7abc-8def-0123456789ab' as never,
   }),
 };

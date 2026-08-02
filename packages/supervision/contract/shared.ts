@@ -5,6 +5,10 @@ import type {
   B3Result,
   TraceCorrelationId,
 } from '@novakai/foundation/contract';
+import type { PersonId } from '../../messaging/public/contract/index.js';
+
+/** Existing Messaging person identity; Build 3 does not mint a second human brand. */
+export type HumanPrincipalId = PersonId;
 
 /** Pass2's shared `TraceId` name over Foundation's existing correlation brand. */
 export type TraceId = TraceCorrelationId;
@@ -35,7 +39,6 @@ export type {
   CapabilityOwner,
   CommandContext,
   EventCursor,
-  HumanPrincipalId,
   IsoUtc,
   ProviderSessionId,
   ProviderTurnId,
@@ -45,4 +48,5 @@ export type {
   RuntimeEpochId,
   ServerOpId,
   SystemCommandContext,
+  TerminalInputAttemptId,
 } from '@novakai/foundation/contract';

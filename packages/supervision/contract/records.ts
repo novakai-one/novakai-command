@@ -2,17 +2,20 @@ import type {
   ActivityGeneration,
   AgentId,
   AgentRunId,
-  HumanPrincipalId,
   IsoUtc,
   ProviderSessionId,
+  ProviderTurnId,
   RecordEnvelope,
   RuntimeEpochId,
+  TerminalInputAttemptId,
 } from '@novakai/foundation/contract';
+import type { HumanPrincipalId } from './shared.js';
 import type { DurableDriftState } from './drift.js';
 import type {
   DriftEpisodeId,
   NotificationId,
   ProviderUsageEvidenceId,
+  NotificationInputReservationId,
   WatchDeadlineId,
   WatchRuleId,
 } from './identifiers.js';
@@ -39,6 +42,9 @@ export interface AgentRunUsage {
   readonly observedAt: IsoUtc;
   readonly final: boolean;
 }
+
+/** Aggregate projection over the `runs` returned beside it; never a synthetic Run. */
+export type AgentUsageAggregate = Omit<AgentRunUsage, 'agentRunId'>;
 
 /** Provider-native totals retained by the Agents authority (§5.5). */
 export interface ProviderUsageMeasurement {
@@ -83,6 +89,25 @@ export type WatchCondition =
   | { readonly kind: 'child-needs-help' }
   | { readonly kind: 'operation-failed' };
 
+/** Runtime-owned facts used by the exact Q6 `run-disconnected` edge mapping. */
+export interface RunConnectionSnapshot {
+  readonly final: boolean;
+  readonly activityGeneration: ActivityGeneration;
+  readonly uncertaintyCodes: readonly string[];
+}
+
+/** True only for a new non-final provider-session reachability-loss generation. */
+export function isRunDisconnectedEdge(
+  previous: RunConnectionSnapshot,
+  current: RunConnectionSnapshot,
+): boolean {
+  const code = 'provider-liveness-unknown';
+  return !current.final
+    && !previous.uncertaintyCodes.includes(code)
+    && current.uncertaintyCodes.includes(code)
+    && Number(current.activityGeneration) > Number(previous.activityGeneration);
+}
+
 /** Stable watcher target. */
 export type WatchSubject =
   | { readonly kind: 'agent'; readonly agentId: AgentId }
@@ -103,6 +128,8 @@ export interface DriftCheckPolicy {
     'usage-delta',
   ];
   readonly statusTurn: 'queue-runtime-status-request-only-after-free-evidence-suspicious';
+  readonly statusRecipient: 'subject-agent';
+  readonly statusDeliveryMode: 'start-turn';
   readonly replyWindowMs: number;
   readonly statusPrompt: 'Status check: reply with one line — what are you working on right now?';
 }
@@ -138,17 +165,65 @@ export interface WatchDeadline extends RecordEnvelope<WatchDeadlineId, 'watchDea
   readonly driftState?: DurableDriftState;
 }
 
+/** Durable Notification lifecycle states. */
+export type NotificationState =
+  | 'queued' | 'offered-to-endpoint' | 'transcript-observed'
+  | 'acknowledged' | 'delivery-uncertain' | 'expired';
+
+const NOTIFICATION_TRANSITIONS: Readonly<Record<NotificationState, readonly NotificationState[]>> = {
+  queued: ['offered-to-endpoint', 'delivery-uncertain', 'expired'],
+  'offered-to-endpoint': ['transcript-observed', 'delivery-uncertain', 'expired'],
+  'delivery-uncertain': ['transcript-observed', 'expired'],
+  'transcript-observed': ['acknowledged', 'expired'],
+  acknowledged: [],
+  expired: [],
+};
+
+/** One authority for legal Notification lifecycle movement. */
+export function canTransitionNotificationState(
+  from: NotificationState,
+  to: NotificationState,
+): boolean {
+  return NOTIFICATION_TRANSITIONS[from].includes(to);
+}
+
+/** Durable Q7 delivery-attempt truth, persisted before and after provider effects. */
+export type NotificationDeliveryAttempt =
+  | { readonly state: 'queued'; readonly effectKey: string }
+  | {
+      readonly state: 'delivery-claimed';
+      readonly effectKey: string;
+      readonly claimedAt: IsoUtc;
+      readonly notificationInputReservationId: NotificationInputReservationId;
+    }
+  | {
+      readonly state: 'submitted-confirmed';
+      readonly effectKey: string;
+      readonly submittedAt: IsoUtc;
+      readonly notificationInputReservationId: NotificationInputReservationId;
+      readonly terminalInputAttemptId: TerminalInputAttemptId;
+      readonly providerTurnId: ProviderTurnId;
+    }
+  | {
+      readonly state: 'submitted-unconfirmed';
+      readonly effectKey: string;
+      readonly submittedAt: IsoUtc;
+      readonly notificationInputReservationId: NotificationInputReservationId;
+      readonly terminalInputAttemptId: TerminalInputAttemptId;
+      readonly providerTurnId?: ProviderTurnId;
+    };
+
 /** Notification fields shared by condition and drift phases. */
 export interface NotificationBase extends RecordEnvelope<NotificationId, 'notification'> {
+  readonly deliveryEffectKey: string;
+  readonly deliveryAttempt: NotificationDeliveryAttempt;
   readonly watchRuleId: WatchRuleId;
   readonly subject: WatchSubject;
   readonly recipient: NotificationRecipient;
   readonly conditionGeneration: number;
   readonly summary: string;
   readonly evidenceRefs: readonly string[];
-  readonly state:
-    | 'queued' | 'offered-to-endpoint' | 'transcript-observed'
-    | 'acknowledged' | 'delivery-uncertain' | 'expired';
+  readonly state: NotificationState;
   readonly deliveryMode: WatchRule['deliveryMode'];
 }
 

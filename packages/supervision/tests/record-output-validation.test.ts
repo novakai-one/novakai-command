@@ -84,22 +84,30 @@ test('DriftCheckOutcome and AgentUsageSummary outputs reject contradictory shape
     evidenceRefs: [42, null],
   }).ok, false);
 
-  const unavailable = {
-    quality: 'unavailable', source: 'none', limitations: [],
+  const measured = {
+    quality: 'measured', value: 7, source: 'provider', limitations: [],
   };
   const run = {
     agentRunId: RUN_ID,
-    inputTokens: unavailable,
-    outputTokens: unavailable,
-    cachedInputTokens: unavailable,
-    costMicros: unavailable,
-    providerTurns: unavailable,
+    inputTokens: measured,
+    outputTokens: measured,
+    cachedInputTokens: measured,
+    costMicros: measured,
+    providerTurns: measured,
     observedAt: '2026-08-02T00:00:00.000Z',
-    final: false,
+    final: true,
   };
   assert.equal(parseAgentUsageSummary({
     agentId: 'agent_123e4567-e89b-42d3-a456-426614174000',
     runs: [run],
-    aggregate: run,
+    aggregate: {
+      inputTokens: { ...measured, source: 'aggregate:runs' },
+      outputTokens: { ...measured, source: 'aggregate:runs' },
+      cachedInputTokens: { ...measured, source: 'aggregate:runs' },
+      costMicros: { ...measured, source: 'aggregate:runs' },
+      providerTurns: { ...measured, source: 'aggregate:runs' },
+      observedAt: run.observedAt,
+      final: true,
+    },
   }).ok, true);
 });

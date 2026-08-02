@@ -61,7 +61,7 @@ export function installedWatchRules(
     condition: index === 0
       ? { kind: 'turn-count-at-least' as const, value: 100 }
       : { kind: 'output-tokens-at-least' as const, value: 100_000 },
-    recipient: { kind: 'human' as const, principalId: 'human_chris' as never },
+    recipient: { kind: 'human' as const, principalId: 'person_chris' as never },
     deliveryMode: 'queue-only' as const,
     cooldownMs: 0,
     status: 'active' as const,
@@ -98,12 +98,17 @@ export function queuedNotificationEvent(
     permissionLevel: 'team',
     createdBy: 'sys_supervision',
     lastMutation: { state: 'legacy-no-trace' },
+    deliveryEffectKey: `b3v4:notification-delivery:notification_${'b'.repeat(52)}:condition`,
+    deliveryAttempt: {
+      state: 'queued',
+      effectKey: `b3v4:notification-delivery:notification_${'b'.repeat(52)}:condition`,
+    },
     watchRuleId: `watchRule_018f0f8a-4f7b-7abc-8def-0123456789ab` as never,
     subject: {
       kind: 'agent',
       agentId: 'agent_123e4567-e89b-42d3-a456-426614174000' as never,
     },
-    recipient: { kind: 'human', principalId: 'human_chris' as never },
+    recipient: { kind: 'human', principalId: 'person_chris' as never },
     conditionGeneration: 1,
     summary: 'Output token threshold reached',
     evidenceRefs: [`providerUsage_${'a'.repeat(52)}`],
