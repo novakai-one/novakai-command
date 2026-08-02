@@ -71,9 +71,17 @@ import type {
   Thread,
   ThreadId,
 } from "../public/contract/index.js";
+import type {
+  AgentEndpointClaim,
+  AgentId,
+  AgentInboxItem,
+} from "../b3/contract/records.js";
 import type { ClockIds } from "../seams/clock.js";
 import type {
   AcceptanceInput,
+  AgentEndpointClaimInput,
+  AgentEndpointTransferInput,
+  AgentEndpointTransferOutcome,
   AcceptanceOutcome,
   JournalEntry,
   MessagingStore,
@@ -102,10 +110,31 @@ export type StoreOp =
        * failure is a committed fact, journaled in the same transaction).
        */
       journal: JournalEntry[];
+      /** B3c §8.1: durable inbox truth, atomic with the acceptance itself. */
+      agentInboxItems?: readonly AgentInboxItem[];
     }
   | {
       op: "room-thread";
       thread: Thread;
+    }
+  // --- B3c §8.1 variants -----------------------------------------------------
+  | {
+      op: "agent-endpoint-claim";
+      claim: AgentEndpointClaim;
+      previousClaim?: AgentEndpointClaim;
+      journal: JournalEntry[];
+    }
+  | {
+      op: "agent-inbox-transition";
+      item: AgentInboxItem;
+      journal: JournalEntry;
+    }
+  | {
+      op: "agent-endpoint-transfer";
+      oldClaim: AgentEndpointClaim;
+      newClaim: AgentEndpointClaim;
+      inboxItems: readonly AgentInboxItem[];
+      journal: JournalEntry[];
     }
   | {
       op: "delivery-transition";
@@ -124,6 +153,25 @@ export type StoreOp =
   | { op: "settled"; messageId: MessageId };
 
 export const storeOpNames = [
+  "acceptance",
+  "room-thread",
+  "delivery-transition",
+  "attempt",
+  "policy",
+  "template",
+  "settled",
+  "agent-endpoint-claim",
+  "agent-inbox-transition",
+  "agent-endpoint-transfer",
+] as const;
+
+/**
+ * The seven variants that existed before B3c. The migration validator accepts
+ * exactly these from the legacy file (§18.1 step 1) — a legacy line claiming a
+ * B3c variant is not a legacy line, and reading it as one would smuggle
+ * endpoint truth in under the cutover fence.
+ */
+export const legacyStoreOpNames = [
   "acceptance",
   "room-thread",
   "delivery-transition",
@@ -163,6 +211,11 @@ export interface StoreState {
   templateOrder: Map<string, number>;
   journal: JournalEntry[];
   lastSequence: number;
+  // --- B3c §8.1 ---------------------------------------------------------------
+  /** AgentEndpointClaimId -> claim, every generation including closed ones. */
+  endpointClaims: Map<string, AgentEndpointClaim>;
+  /** AgentInboxItemId -> item. */
+  inboxItems: Map<string, AgentInboxItem>;
 }
 
 export function emptyStoreState(): StoreState {
@@ -181,6 +234,8 @@ export function emptyStoreState(): StoreState {
     templateOrder: new Map(),
     journal: [],
     lastSequence: 0,
+    endpointClaims: new Map(),
+    inboxItems: new Map(),
   };
 }
 
@@ -317,6 +372,13 @@ export class StoreCore implements MessagingStore {
           acceptanceKey(op.acceptance.senderId, op.acceptance.clientMessageId),
           op.acceptance,
         );
+        // B3c §8.1: the inbox item is part of the acceptance transaction, so
+        // replay restores it in the same step that restores the Message. A
+        // separate write would let a crash between the two leave a committed
+        // Message no Agent was ever told about.
+        for (const inboxItem of op.agentInboxItems ?? []) {
+          this.state.inboxItems.set(inboxItem.id, inboxItem);
+        }
         // Replay honesty: pre-§11.7 op logs carried a single journal entry
         // (MessageCommitted only); tolerate both shapes.
         const entries = Array.isArray(op.journal) ? op.journal : [op.journal];
@@ -372,6 +434,31 @@ export class StoreCore implements MessagingStore {
         }
         return;
       }
+      case "agent-endpoint-claim": {
+        if (op.previousClaim) this.state.endpointClaims.set(op.previousClaim.id, op.previousClaim);
+        this.state.endpointClaims.set(op.claim.id, op.claim);
+        this.pushJournal(op.journal);
+        return;
+      }
+      case "agent-inbox-transition": {
+        this.state.inboxItems.set(op.item.id, op.item);
+        this.pushJournal([op.journal]);
+        return;
+      }
+      case "agent-endpoint-transfer": {
+        this.state.endpointClaims.set(op.oldClaim.id, op.oldClaim);
+        this.state.endpointClaims.set(op.newClaim.id, op.newClaim);
+        for (const moved of op.inboxItems) this.state.inboxItems.set(moved.id, moved);
+        this.pushJournal(op.journal);
+        return;
+      }
+    }
+  }
+
+  private pushJournal(entries: readonly JournalEntry[]): void {
+    for (const entry of entries) {
+      this.state.journal.push(entry);
+      this.observeSequence(entry.sequence);
     }
   }
 
@@ -504,6 +591,21 @@ export class StoreCore implements MessagingStore {
       }
     }
 
+    // B3c §8.1: the durable Agent inbox. The store stamps the resolved
+    // messageId and the sequence it just assigned — a caller cannot know the
+    // sequence before the transaction, and an inbox item carrying a guess
+    // would order wrongly against the endpoint cutoff (§13.6).
+    const agentInboxItems: AgentInboxItem[] = (input.agentInboxItems ?? []).map(
+      (inboxItem) => ({ ...inboxItem, messageId: message.id, acceptedSequence: sequence }),
+    );
+    for (const inboxItem of agentInboxItems) {
+      journal.push({
+        sequence: this.nextSequence(),
+        kind: "AgentInboxChanged",
+        item: inboxItem,
+      });
+    }
+
     // 4–5. Single commit: thread + message + snapshot + deliveries + marker + journal.
     const opError = await this.persistAndApply({
       op: "acceptance",
@@ -513,6 +615,7 @@ export class StoreCore implements MessagingStore {
       deliveries,
       acceptance,
       journal,
+      ...(agentInboxItems.length > 0 ? { agentInboxItems } : {}),
     });
     if (opError) return { kind: "failed", error: opError };
 
@@ -909,5 +1012,172 @@ export class StoreCore implements MessagingStore {
     const since = sinceSequence ?? (0 as Sequence);
     const capped = Math.min(Math.max(limit ?? constants.pageLimitMax, 1), constants.pageLimitMax);
     return ok(this.state.journal.filter((entry) => entry.sequence > since).slice(0, capped));
+  }
+
+  // --- B3c §8.1: the durable Agent endpoint and inbox --------------------------
+
+  /**
+   * The Agent's current claim: the highest generation that is not closed.
+   * Reading "highest generation" alone would keep returning a closed claim
+   * after a stop, and callers would then send into a dead PTY.
+   */
+  private currentClaim(agentId: AgentId): AgentEndpointClaim | null {
+    let best: AgentEndpointClaim | null = null;
+    for (const claim of this.state.endpointClaims.values()) {
+      if (claim.agentId !== agentId) continue;
+      if (claim.state === "closed") continue;
+      if (best === null || claim.endpointGeneration > best.endpointGeneration) best = claim;
+    }
+    return best;
+  }
+
+  /** The generation an unclaimed Agent is at: -1, so generation 0 is claimable. */
+  private currentGeneration(agentId: AgentId): number {
+    let highest = -1;
+    for (const claim of this.state.endpointClaims.values()) {
+      if (claim.agentId !== agentId) continue;
+      if (claim.endpointGeneration > highest) highest = claim.endpointGeneration;
+    }
+    return highest;
+  }
+
+  async commitAgentEndpointClaim(
+    input: AgentEndpointClaimInput,
+  ): Promise<StoreResult<AgentEndpointClaim>> {
+    return this.runMutation(() => this.commitAgentEndpointClaimSerialized(input));
+  }
+
+  private async commitAgentEndpointClaimSerialized(
+    input: AgentEndpointClaimInput,
+  ): Promise<StoreResult<AgentEndpointClaim>> {
+    const { claim } = input;
+    const actual = this.currentGeneration(claim.agentId);
+    // A re-commit of the SAME generation is a state transition on the claim
+    // that already exists (reserved → active → draining); a commit of a NEW
+    // generation must be exactly one past the current one.
+    const expected = input.expectedEndpointGeneration;
+    if (actual !== expected) {
+      return failure({ name: "RevisionConflict", expected, actual });
+    }
+    if (claim.endpointGeneration !== actual && claim.endpointGeneration !== actual + 1) {
+      return failure({
+        name: "RevisionConflict",
+        expected: actual + 1,
+        actual: claim.endpointGeneration,
+      });
+    }
+    const previous = this.state.endpointClaims.get(claim.id);
+    const stamped: AgentEndpointClaim = {
+      ...claim,
+      entityRevision: (previous?.entityRevision ?? 0) + 1,
+    };
+    const journal: JournalEntry[] = [{
+      sequence: this.nextSequence(), kind: "AgentEndpointChanged", claim: stamped,
+    }];
+    const opError = await this.persistAndApply({
+      op: "agent-endpoint-claim",
+      claim: stamped,
+      ...(previous ? { previousClaim: previous } : {}),
+      journal,
+    });
+    if (opError) return failure(opError);
+    return ok(stamped);
+  }
+
+  async transferAgentEndpoint(
+    input: AgentEndpointTransferInput,
+  ): Promise<StoreResult<AgentEndpointTransferOutcome>> {
+    return this.runMutation(() => this.transferAgentEndpointSerialized(input));
+  }
+
+  private async transferAgentEndpointSerialized(
+    input: AgentEndpointTransferInput,
+  ): Promise<StoreResult<AgentEndpointTransferOutcome>> {
+    const actual = this.currentGeneration(input.newClaim.agentId);
+    if (actual !== input.expectedEndpointGeneration) {
+      return failure({
+        name: "RevisionConflict",
+        expected: input.expectedEndpointGeneration,
+        actual,
+      });
+    }
+    // §13.6, in one place: input that already reached the old PTY is never
+    // redirected. Checking BEFORE any write is what makes the refusal leave
+    // the whole transfer untouched rather than half-applied.
+    for (const moved of input.inboxItems) {
+      const existing = this.state.inboxItems.get(moved.id);
+      if (existing?.state === "submitted-unconfirmed") {
+        return failure({
+          name: "StateConflict",
+          deliveryId: moved.id as unknown as DeliveryId,
+          expected: "pending",
+          actual: "held",
+        });
+      }
+    }
+    const oldClaim: AgentEndpointClaim = {
+      ...input.oldClaim,
+      entityRevision: (this.state.endpointClaims.get(input.oldClaim.id)?.entityRevision ?? 0) + 1,
+    };
+    const newClaim: AgentEndpointClaim = {
+      ...input.newClaim,
+      entityRevision: (this.state.endpointClaims.get(input.newClaim.id)?.entityRevision ?? 0) + 1,
+    };
+    const inboxItems = input.inboxItems.map((moved) => ({
+      ...moved,
+      entityRevision: (this.state.inboxItems.get(moved.id)?.entityRevision ?? 0) + 1,
+    }));
+    const journal: JournalEntry[] = [
+      { sequence: this.nextSequence(), kind: "AgentEndpointChanged", claim: oldClaim },
+      { sequence: this.nextSequence(), kind: "AgentEndpointChanged", claim: newClaim },
+      ...inboxItems.map((moved): JournalEntry => ({
+        sequence: this.nextSequence(), kind: "AgentInboxChanged", item: moved,
+      })),
+    ];
+    const opError = await this.persistAndApply({
+      op: "agent-endpoint-transfer", oldClaim, newClaim, inboxItems, journal,
+    });
+    if (opError) return failure(opError);
+    return ok({ claim: newClaim, inboxItems });
+  }
+
+  async transitionAgentInboxItem(item: AgentInboxItem): Promise<StoreResult<AgentInboxItem>> {
+    return this.runMutation(() => this.transitionAgentInboxItemSerialized(item));
+  }
+
+  private async transitionAgentInboxItemSerialized(
+    item: AgentInboxItem,
+  ): Promise<StoreResult<AgentInboxItem>> {
+    const previous = this.state.inboxItems.get(item.id);
+    const stamped: AgentInboxItem = {
+      ...item,
+      entityRevision: (previous?.entityRevision ?? 0) + 1,
+    };
+    const journal: JournalEntry = {
+      sequence: this.nextSequence(), kind: "AgentInboxChanged", item: stamped,
+    };
+    const opError = await this.persistAndApply({
+      op: "agent-inbox-transition", item: stamped, journal,
+    });
+    if (opError) return failure(opError);
+    return ok(stamped);
+  }
+
+  async getAgentEndpoint(agentId: AgentId): Promise<StoreResult<AgentEndpointClaim | null>> {
+    return ok(this.currentClaim(agentId));
+  }
+
+  async listAgentEndpointClaims(agentId: AgentId): Promise<StoreResult<AgentEndpointClaim[]>> {
+    const claims = [...this.state.endpointClaims.values()]
+      .filter((claim) => claim.agentId === agentId)
+      .sort((a, b) => a.endpointGeneration - b.endpointGeneration);
+    return ok(claims);
+  }
+
+  async listAgentInbox(agentId: AgentId): Promise<StoreResult<AgentInboxItem[]>> {
+    const items = [...this.state.inboxItems.values()]
+      .filter((entry) => entry.agentId === agentId)
+      .sort((a, b) => a.acceptedSequence - b.acceptedSequence);
+    return ok(items);
   }
 }

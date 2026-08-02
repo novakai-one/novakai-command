@@ -60,6 +60,7 @@ import type {
   Sequence,
 } from "../public/contract/index.js";
 import type { MessagingStore } from "../seams/store.js";
+import { projectJournalEntry } from "./journalProjection.js";
 import { storeDependencyError } from "./storeErrors.js";
 
 /** One committed-fact event, journal-sourced, carrying its global sequence. */
@@ -116,25 +117,13 @@ export function createEventBus(store: MessagingStore, options?: EventBusOptions)
         return;
       }
       for (const entry of page.value) {
-        // TemplateWritten is skipped here — no public event exists for it.
-        if (entry.kind === "TemplateWritten") {
+        // Entries with no v1 public event (TemplateWritten; the B3c
+        // endpoint/inbox facts) advance the position and produce nothing.
+        const fact = projectJournalEntry(entry);
+        if (fact === null) {
           position = entry.sequence;
           continue;
         }
-        const fact: CommittedFact =
-          entry.kind === "MessageCommitted"
-            ? { kind: "MessageCommitted", event: { sequence: entry.sequence, message: entry.message } }
-            : entry.kind === "DeliveryUpdated"
-              ? { kind: "DeliveryUpdated", event: { sequence: entry.sequence, delivery: entry.delivery } }
-              : {
-                  kind: "PolicyChanged",
-                  event: {
-                    sequence: entry.sequence,
-                    personId: entry.personId,
-                    policy: entry.policy,
-                    revision: entry.revision,
-                  },
-                };
         for (const listener of factListeners) {
           try {
             await listener(fact);

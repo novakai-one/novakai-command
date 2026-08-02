@@ -97,6 +97,7 @@ import type { ClockIds } from "../seams/clock.js";
 import type { EffectReport, Scheduler } from "../seams/presenceTransport.js";
 import type { CommittedFact, EventBus } from "./eventBus.js";
 import type { PresenceRegistry } from "./presenceRegistry.js";
+import { projectJournalEntry } from "./journalProjection.js";
 import { storeDependencyError } from "./storeErrors.js";
 
 /**
@@ -561,21 +562,10 @@ export function createSubscriptionManager(deps: SubscriptionManagerDeps): Subscr
           if (page.kind === "error") throw storeDependencyError(page.error);
           for (const entry of page.value) {
             replayCursor = entry.sequence;
-            if (entry.kind === "TemplateWritten") continue; // no public event (store seam note)
-            const fact: CommittedFact =
-              entry.kind === "MessageCommitted"
-                ? { kind: "MessageCommitted", event: { sequence: entry.sequence, message: entry.message } }
-                : entry.kind === "DeliveryUpdated"
-                  ? { kind: "DeliveryUpdated", event: { sequence: entry.sequence, delivery: entry.delivery } }
-                  : {
-                      kind: "PolicyChanged",
-                      event: {
-                        sequence: entry.sequence,
-                        personId: entry.personId,
-                        policy: entry.policy,
-                        revision: entry.revision,
-                      },
-                    };
+            // No v1 public event (TemplateWritten; the B3c endpoint/inbox
+            // facts) — the cursor advances, nothing is delivered.
+            const fact = projectJournalEntry(entry);
+            if (fact === null) continue;
             if (entry.sequence <= sub.watermark) continue;
             if (!(await factPasses(sub, fact))) continue;
             sub.watermark = entry.sequence;
