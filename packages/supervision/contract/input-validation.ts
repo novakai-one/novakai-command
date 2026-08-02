@@ -87,6 +87,8 @@ export const parseInstallRunWatchersInput = (
   agentRunId: field.id<AgentRunId>('agentRunId', 'agentRun'),
   launchPlanId: field.id<ResolvedLaunchPlanId>('launchPlanId', 'launchPlan'),
   requiredTemplateRefs: versionedRefs(field),
+  recipient: readRecipient(field.given('recipient'), field),
+  activityGeneration: positiveBrand<ActivityGeneration>(field, 'activityGeneration'),
 }));
 
 /** Runtime parser for exact-CAS WatchRule replacement. */

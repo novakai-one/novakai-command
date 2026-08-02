@@ -1,5 +1,5 @@
 import type { AuthorityScope } from '@novakai/foundation/contract';
-import type { WatchRule } from './records.js';
+import type { DriftCheckPolicy, WatchCondition, WatchRule } from './records.js';
 
 /** Immutable reference to one pinned role watcher template. */
 export interface VersionedRef {
@@ -7,6 +7,23 @@ export interface VersionedRef {
   readonly version: number;
   readonly digest: string;
 }
+
+/** Resolved body of one immutable role-profile watcher-template ref. */
+export interface WatcherTemplate {
+  readonly templateRef: VersionedRef;
+  readonly condition: WatchCondition;
+  readonly deliveryMode: WatchRule['deliveryMode'];
+  readonly cooldownMs: number;
+  readonly driftPolicy?: DriftCheckPolicy;
+}
+
+/** Minimal Agents-owned role-profile catalogue seam consumed by Supervision. */
+export interface WatcherTemplateCatalogue {
+  resolve(wanted: VersionedRef): WatcherTemplate | null;
+}
+
+/** Authoritative constructor stamped on every new Supervision-owned record. */
+export const SUPERVISION_RECORD_WRITER = 'sys_supervision' as const;
 
 /** The sole implicit Build 3 watcher-template reference. */
 export const ACTIVITY_DRIFT_TEMPLATE_REF: VersionedRef = {

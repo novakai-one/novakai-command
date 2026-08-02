@@ -7,9 +7,8 @@
 //
 // It exists because the server's architecture law is right: a host may consume
 // another package through its public seam only, never through `core/`. The
-// frozen contract cannot grow a `composeSupervision` export without breaking
-// the freeze, so the composition seam gets its own door instead of the freeze
-// getting an amendment it does not need.
+// Composition stays outside the contract even when an orchestrator-sanctioned
+// amendment adds contract vocabulary; hosts still receive no private core path.
 export {
   ACTIVITY_DRIFT_WATCH_TEMPLATE,
   IDLE_WATCH_TEMPLATE,

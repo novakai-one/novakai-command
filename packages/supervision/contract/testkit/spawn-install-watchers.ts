@@ -53,6 +53,8 @@ const INSTALL_INPUT: InstallRunWatchersInput = {
     { id: 'template.turn-100', version: 1, digest: 'sha256:turn-100-v1' },
     { id: 'template.output-100k', version: 1, digest: 'sha256:output-100k-v1' },
   ],
+  recipient: { kind: 'human', principalId: 'person_chris' as never },
+  activityGeneration: 4 as never,
 };
 
 /** Resolve the known fixture catalogue by semantic condition identity. */

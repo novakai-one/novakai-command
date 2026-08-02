@@ -35,8 +35,9 @@ import {
   type B3TranscriptContract, type TranscriptSourcePort,
 } from '../../../transcript/b3/contract/index.js';
 import {
-  composeSupervision, type SupervisionCore, type WatcherTemplate,
+  composeSupervision, type SupervisionCore,
 } from '../../../supervision/public/index.js';
+import type { WatcherTemplate } from '../../../supervision/contract/index.js';
 import { followEventsIntoSupervision, supervisionWatcherPort } from './supervision-ports.js';
 
 export interface B3RuntimeOptions {
@@ -73,13 +74,10 @@ export interface B3RuntimeOptions {
   readonly providerHome?: string;
   /**
    * B3d: extra pinned watcher templates this host's role catalogue offers, on
-   * top of the ones Supervision ships. The catalogue is role-profile data, and
-   * the frozen contract publishes no resolver for it (tracer report,
-   * contract-forced choice 3).
+   * top of the ones Supervision ships. The frozen catalogue seam is owned by
+   * role-profile data; this composition root supplies its concrete entries.
    */
   readonly watcherTemplates?: readonly WatcherTemplate[];
-  /** Who a fired watcher tells when no supervisor lookup is wired yet. */
-  readonly supervisorPrincipalId?: string;
 }
 
 export interface B3Runtime {
@@ -235,7 +233,6 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
   const supervision = composeSupervision({
     root: options.root,
     dataRoot,
-    supervisorPrincipalId: (options.supervisorPrincipalId ?? 'person_chris') as never,
     ...(options.watcherTemplates === undefined
       ? {} : { extraTemplates: options.watcherTemplates }),
   });

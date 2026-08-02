@@ -10,6 +10,7 @@ import {
 } from '@novakai/foundation/contract';
 import {
   deriveNotificationId, notificationDeliveryEffectKey, parsePublicEvent,
+  SUPERVISION_RECORD_WRITER,
   type EvaluateSupervisionEventInput, type Notification, type NotificationFilter,
   type WatchDeadline, type WatchRule,
 } from '../contract/index.js';
@@ -162,7 +163,7 @@ async function settleOne(
  */
 export async function evaluateEvent(
   deps: EvaluateDependencies,
-  context: EvaluationContext,
+  _context: EvaluationContext,
   input: EvaluateSupervisionEventInput,
 ): Promise<B3Result<readonly Notification[]>> {
   const parsed = parsePublicEvent(input.event);
@@ -178,7 +179,7 @@ export async function evaluateEvent(
   };
   const queued: Notification[] = [];
   for (const deadline of armed.value) {
-    const settled = await settleOne(deps, context.principal.id, deadline, event);
+    const settled = await settleOne(deps, SUPERVISION_RECORD_WRITER, deadline, event);
     if (!settled.ok) return b3fail(settled.error);
     if (settled.value !== null) queued.push(settled.value);
   }

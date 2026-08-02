@@ -2,11 +2,9 @@
 //
 // The frozen contract publishes ONE implicit template body — activity-drift —
 // and rules that every other role watcher arrives as an explicit
-// `requiredWatcherTemplates` ref. It does not publish the catalogue those refs
-// resolve against, because the catalogue is role-profile data rather than
-// contract. So resolution is a SEAM: the tracer ships the smallest catalogue
-// that can carry current, and lane B replaces it with the real role catalogue
-// without the engine above it changing.
+// `requiredWatcherTemplates` ref. The frozen contract now publishes the
+// minimal Agents-owned catalogue seam. This module is its concrete tracer
+// catalogue; lane B can replace it without changing the installer.
 //
 // A ref is honoured only when its pinned digest matches the body this
 // catalogue holds. A launch plan pinned to a template body that has since
@@ -14,22 +12,13 @@
 import { createHash } from 'node:crypto';
 import {
   ACTIVITY_DRIFT_TEMPLATE, ACTIVITY_DRIFT_TEMPLATE_REF,
-  type DriftCheckPolicy, type VersionedRef, type WatchCondition, type WatchRule,
+  type VersionedRef, type WatcherTemplate, type WatcherTemplateCatalogue,
 } from '../contract/index.js';
 
-/** One resolvable watcher body. Bindings are resolved by the installer. */
-export interface WatcherTemplate {
-  readonly templateRef: VersionedRef;
-  readonly condition: WatchCondition;
-  readonly deliveryMode: WatchRule['deliveryMode'];
-  readonly cooldownMs: number;
-  readonly driftPolicy?: DriftCheckPolicy;
-}
+export type { WatcherTemplate } from '../contract/policy.js';
 
-/** The seam lane B replaces with the real role-profile catalogue. */
-export interface WatcherTemplatePort {
-  resolve(wanted: VersionedRef): WatcherTemplate | null;
-}
+/** Compatibility alias; the authoritative seam now lives in the frozen contract. */
+export type WatcherTemplatePort = WatcherTemplateCatalogue;
 
 /** RFC 8785-shaped canonical JSON — the encoding Q5 pins its digests over. */
 export function canonicalJson(value: unknown): string {
@@ -103,7 +92,7 @@ const keyOf = (pinned: VersionedRef): string => `${pinned.id}@${String(pinned.ve
 /** The catalogue the tracer composes with; extra entries override by ref key. */
 export function createTemplateCatalogue(
   extra: readonly WatcherTemplate[] = [],
-): WatcherTemplatePort {
+): WatcherTemplateCatalogue {
   const held = new Map<string, WatcherTemplate>();
   for (const template of [IDLE_WATCH_TEMPLATE, ACTIVITY_DRIFT_WATCH_TEMPLATE, ...extra]) {
     held.set(keyOf(template.templateRef), template);

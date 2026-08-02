@@ -15,8 +15,13 @@ test('installRunWatchers boundary validates both Run and launch-plan identities'
     requiredTemplateRefs: [
       { id: 'template.drift', version: 1, digest: 'sha256:drift-v1' },
     ],
+    recipient: { kind: 'human', principalId: 'person_chris' },
+    activityGeneration: 4,
   });
   assert.equal(parsed.ok, true, parsed.ok ? '' : parsed.error.message);
+  if (!parsed.ok) return;
+  assert.deepEqual(parsed.value.recipient, { kind: 'human', principalId: 'person_chris' });
+  assert.equal(parsed.value.activityGeneration, 4);
 
   const crossed = parseInstallRunWatchersInput({
     agentRunId: 'launchPlan_018f0f8a-4f7b-7abc-8def-0123456789ab',
@@ -41,6 +46,16 @@ test('Runtime drift submission boundary carries the complete owner/CAS tuple', (
     },
   });
   assert.equal(parsed.ok, true, parsed.ok ? '' : parsed.error.message);
+});
+
+test('installRunWatchers refuses an implicit recipient or activity generation', () => {
+  const missing = parseInstallRunWatchersInput({
+    agentRunId: 'agentRun_018f0f8a-4f7b-7abc-8def-0123456789ab',
+    launchPlanId: 'launchPlan_018f0f8a-4f7b-7abc-8def-0123456789ab',
+    requiredTemplateRefs: [],
+  });
+  assert.equal(missing.ok, false,
+    'install accepted host-defaulted recipient/activity generation');
 });
 
 test('evaluateEvent boundary validates the complete committed event envelope', () => {

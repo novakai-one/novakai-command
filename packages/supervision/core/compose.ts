@@ -5,17 +5,14 @@
 // that drifts from the freeze stops compiling here rather than passing a test
 // that agreed with itself. Lanes A/B/C fill in the members this tracer leaves
 // out; none of them has to change what is already wired.
-import type { ActivityGeneration, AuthenticatedPrincipal, B3Result } from '@novakai/foundation/contract';
+import type { AuthenticatedPrincipal, B3Result } from '@novakai/foundation/contract';
 import type {
-  HumanPrincipalId, InstallRunWatchersInput, NotificationRecipient,
-  SupervisionContract, WatchDeadline,
+  SupervisionContract, WatchDeadline, WatcherTemplate, WatcherTemplateCatalogue,
 } from '../contract/index.js';
 import {
   createSupervisionStore, type SupervisionStore, type SupervisionStoreOptions,
 } from './store.js';
-import {
-  createTemplateCatalogue, type WatcherTemplate, type WatcherTemplatePort,
-} from './templates.js';
+import { createTemplateCatalogue } from './templates.js';
 import { installRunWatchers, listWatchRules } from './watchers.js';
 import { evaluateEvent, listNotifications } from './notifications.js';
 
@@ -35,34 +32,24 @@ export interface SupervisionWatcherReads {
 export type SupervisionCore = SupervisionWireSlice & SupervisionWatcherReads;
 
 export interface SupervisionCoreOptions extends SupervisionStoreOptions {
-  /** Who a fired watcher tells when the host has no supervisor lookup wired. */
-  readonly supervisorPrincipalId: HumanPrincipalId;
   /**
    * @internal failure injection. §24.3 wants a crash before AND after every
    * durable step, and the honest way to produce one is a store that stops
    * accepting a write, exactly as a dying process would.
    */
   readonly store?: SupervisionStore;
-  readonly templates?: WatcherTemplatePort;
+  readonly templates?: WatcherTemplateCatalogue;
   readonly extraTemplates?: readonly WatcherTemplate[];
   readonly clock?: () => Date;
-  readonly recipientFor?: (input: InstallRunWatchersInput) => Promise<NotificationRecipient>;
-  readonly generationFor?: (input: InstallRunWatchersInput) => Promise<ActivityGeneration>;
 }
 
 export function composeSupervision(options: SupervisionCoreOptions): SupervisionCore {
   const store = options.store ?? createSupervisionStore(options);
   const templates = options.templates ?? createTemplateCatalogue(options.extraTemplates ?? []);
-  const escalateTo: NotificationRecipient = {
-    kind: 'human', principalId: options.supervisorPrincipalId,
-  };
   const install = {
     store,
     templates,
     clock: options.clock ?? ((): Date => new Date()),
-    recipientFor: options.recipientFor ?? (async (): Promise<NotificationRecipient> => escalateTo),
-    generationFor: options.generationFor
-      ?? (async (): Promise<ActivityGeneration> => 1 as ActivityGeneration),
   };
 
   return {

@@ -64,7 +64,7 @@ export function installedWatchRules(
     condition: index === 0
       ? { kind: 'turn-count-at-least' as const, value: 100 }
       : { kind: 'output-tokens-at-least' as const, value: 100_000 },
-    recipient: { kind: 'human' as const, principalId: 'person_chris' as never },
+    recipient: input.recipient,
     deliveryMode: 'queue-only' as const,
     cooldownMs: 0,
     status: 'active' as const,

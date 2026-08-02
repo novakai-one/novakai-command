@@ -28,6 +28,8 @@ test('listWatchRules is a bounded visibility-aware frozen query', async () => {
           agentRunId: RUN_ID as never,
           launchPlanId: 'launchPlan_018f0f8a-4f7b-7abc-8def-0123456789ab' as never,
           requiredTemplateRefs: [],
+          recipient: { kind: 'human', principalId: 'person_chris' as never },
+          activityGeneration: 1 as never,
         }).filter((rule) => filter.status?.includes(rule.status) ?? true),
         omissions: [],
       },

@@ -66,6 +66,8 @@ test('nvk watch remove compiles to the sole CAS update as retirement', () => {
     agentRunId: 'agentRun_018f0f8a-4f7b-7abc-8def-0123456789ab' as never,
     launchPlanId: 'launchPlan_018f0f8a-4f7b-7abc-8def-0123456789ab' as never,
     requiredTemplateRefs: [],
+    recipient: { kind: 'human', principalId: 'person_chris' as never },
+    activityGeneration: 1 as never,
   });
   assert.ok(rule);
   const update = watchRemoveRetirement(rule);

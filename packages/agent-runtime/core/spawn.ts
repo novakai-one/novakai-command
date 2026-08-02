@@ -301,6 +301,9 @@ async function provisionRun(
 
   const watched = await installWatchers(core, {
     agentRun: gated.value.agentRun, plan: governed.plan, operation: gated.value.operation,
+    recipient: build.authority.parentAgentId === undefined
+      ? { kind: 'human', principalId: build.authority.rootHumanPrincipalId }
+      : { kind: 'agent', agentId: build.authority.parentAgentId },
   });
   if (!watched.ok) return watched;
   return b3ok({ agentRun: gated.value.agentRun, operation: watched.value });

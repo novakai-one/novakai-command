@@ -24,6 +24,8 @@ test('records accept the ratified name-derived ClientOpId provenance', () => {
     agentRunId: RUN_ID as never,
     launchPlanId: 'launchPlan_018f0f8a-4f7b-7abc-8def-0123456789ab' as never,
     requiredTemplateRefs: [],
+    recipient: { kind: 'human', principalId: 'person_chris' as never },
+    activityGeneration: 1 as never,
   });
   const rule = { ...baseRule, lastMutation };
   const deadline = {
@@ -78,6 +80,8 @@ test('public WatchRule and WatchDeadline records cross runtime validation', () =
     agentRunId: RUN_ID as never,
     launchPlanId: 'launchPlan_018f0f8a-4f7b-7abc-8def-0123456789ab' as never,
     requiredTemplateRefs: [],
+    recipient: { kind: 'human', principalId: 'person_chris' as never },
+    activityGeneration: 1 as never,
   });
   assert.equal(parseWatchRule(rule).ok, true);
 

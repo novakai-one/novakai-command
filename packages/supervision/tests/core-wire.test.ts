@@ -72,7 +72,6 @@ function createRig(startedAt: string): Rig {
   const supervision = composeSupervision({
     root,
     dataRoot: path.join(root, 'stores'),
-    supervisorPrincipalId: 'person_chris' as never,
     clock: () => new Date(startedAt),
     store,
   });
@@ -132,6 +131,8 @@ const INSTALL = {
   agentRunId: RUN_ID,
   launchPlanId: PLAN_ID,
   requiredTemplateRefs: [IDLE_WATCH_TEMPLATE.templateRef],
+  recipient: { kind: 'human', principalId: 'person_chris' as never },
+  activityGeneration: 4 as never,
 } as const;
 
 test('installRunWatchers materialises the pinned role watcher and arms its deadline', async () => {
@@ -146,6 +147,8 @@ test('installRunWatchers materialises the pinned role watcher and arms its deadl
     assertContractShaped(parseWatchRule(rule), 'the installed WatchRule');
     assert.deepEqual(rule.subject, { kind: 'agent-run', agentRunId: RUN_ID });
     assert.deepEqual(rule.condition, IDLE_WATCH_TEMPLATE.condition);
+    assert.deepEqual(rule.recipient, INSTALL.recipient);
+    assert.equal(rule.createdBy, 'sys_supervision');
     assert.equal(rule.status, 'active');
 
     const deadlines = unwrap(await rig.supervision.listWatchDeadlines(human), 'listWatchDeadlines');
@@ -157,6 +160,8 @@ test('installRunWatchers materialises the pinned role watcher and arms its deadl
     );
     assert.equal(deadline.state, 'armed');
     assert.equal(deadline.watchRuleId, rule.id);
+    assert.equal(deadline.activityGeneration, INSTALL.activityGeneration);
+    assert.equal(deadline.createdBy, 'sys_supervision');
     assert.equal(deadline.subjectKey, subjectKeyOf(rule.subject));
     assert.equal(deadline.dueAt, '2026-08-03T00:05:00.000Z',
       'the deadline is armed one idle window after install');
@@ -215,6 +220,8 @@ test('an event past the deadline fires it and queues one Notification, starting 
     assert.equal(queued.length, 1, 'a due idle deadline queued no notification');
     const notification = queued[0]!;
     assertContractShaped(parseNotificationRecord(notification), 'the queued Notification');
+    assert.equal(notification.createdBy, 'sys_supervision',
+      'an autonomous Notification claimed the event source as its creator');
     assert.equal(notification.state, 'queued');
     assert.equal(notification.phase, 'condition');
     assert.equal(notification.deliveryAttempt.state, 'queued');
@@ -252,8 +259,7 @@ test('an unknown template ref is refused rather than silently skipped', async ()
   const rig = createRig('2026-08-03T00:00:00.000Z');
   try {
     const refused = await rig.supervision.installRunWatchers(runtimeContext(), {
-      agentRunId: RUN_ID,
-      launchPlanId: PLAN_ID,
+      ...INSTALL,
       requiredTemplateRefs: [{ id: 'watch-template/not-a-template', version: 1, digest: 'x' }],
     });
     assert.equal(refused.ok, false, 'a watcher nobody can resolve installed anyway');
@@ -267,8 +273,7 @@ test('a pinned ref whose digest does not match the catalogue is refused', async 
   const rig = createRig('2026-08-03T00:00:00.000Z');
   try {
     const refused = await rig.supervision.installRunWatchers(runtimeContext(), {
-      agentRunId: RUN_ID,
-      launchPlanId: PLAN_ID,
+      ...INSTALL,
       requiredTemplateRefs: [{ ...IDLE_WATCH_TEMPLATE.templateRef, digest: 'f'.repeat(64) }],
     });
     assert.equal(refused.ok, false, 'an unpinned template body installed under a pinned ref');
@@ -296,7 +301,6 @@ test('a Notification is durable before its deadline stops being armed', async ()
     const broken = composeSupervision({
       root: rig.root,
       dataRoot: path.join(rig.root, 'stores'),
-      supervisorPrincipalId: 'person_chris' as never,
       clock: () => new Date(rig.startedAt),
       store: refusingUpdatesTo(rig.store, armed[0]!.id),
     });

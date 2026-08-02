@@ -8,10 +8,10 @@
 // one file makes "what does the spawn ladder ask of its peers" a thing you can
 // read in one sitting — and it is exactly §13.5 rows 6/9/10 plus §13.6.
 //
-// Re-exported from `ports.ts`, so no consumer changes: the contract's public
-// surface is unchanged.
+// Re-exported from `ports.ts`; the patch amendment adds the two install facts
+// Runtime owns at this seam: recipient and activity generation.
 import type {
-  AgentId, AgentRunId, B3Result, HumanPrincipalId, ProviderSessionId,
+  ActivityGeneration, AgentId, AgentRunId, B3Result, HumanPrincipalId, ProviderSessionId,
   ResolvedLaunchPlanId, TerminalSessionId,
 } from '@novakai/foundation/contract';
 
@@ -136,6 +136,10 @@ export interface RunWatcherPort {
       readonly requiredTemplateRefs: readonly {
         readonly id: string; readonly version: number; readonly digest: string;
       }[];
+      readonly recipient:
+        | { readonly kind: 'agent'; readonly agentId: AgentId }
+        | { readonly kind: 'human'; readonly principalId: HumanPrincipalId };
+      readonly activityGeneration: ActivityGeneration;
     },
   ): Promise<B3Result<readonly { readonly id: string }[]>>;
 }

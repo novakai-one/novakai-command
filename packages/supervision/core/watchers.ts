@@ -9,24 +9,17 @@ import {
   type SystemCommandContext,
 } from '@novakai/foundation/contract';
 import {
-  deriveWatchDeadlineId, mintWatchRuleId, subjectKey,
+  deriveWatchDeadlineId, mintWatchRuleId, subjectKey, SUPERVISION_RECORD_WRITER,
   type InstallRunWatchersInput, type NotificationRecipient, type VersionedRef,
-  type WatchDeadline, type WatchRule, type WatchRuleFilter, type WatchSubject,
+  type WatchDeadline, type WatcherTemplate, type WatcherTemplateCatalogue,
+  type WatchRule, type WatchRuleFilter, type WatchSubject,
 } from '../contract/index.js';
 import type { Persisted, SupervisionStore } from './store.js';
-import type { WatcherTemplate, WatcherTemplatePort } from './templates.js';
 
 export interface InstallDependencies {
   readonly store: SupervisionStore;
-  readonly templates: WatcherTemplatePort;
+  readonly templates: WatcherTemplateCatalogue;
   readonly clock: () => Date;
-  /** Who a fired watcher tells. Resolved per Run; see `compose.ts`. */
-  readonly recipientFor: (input: InstallRunWatchersInput) => Promise<NotificationRecipient>;
-  /**
-   * The Run's activity generation. The frozen install input carries none and
-   * Supervision publishes no query for one, so the host answers it.
-   */
-  readonly generationFor: (input: InstallRunWatchersInput) => Promise<ActivityGeneration>;
 }
 
 const unresolvable = (templateRef: VersionedRef): ReturnType<typeof b3err> => b3err(
@@ -114,7 +107,9 @@ async function armDeadline(
   if (!existing.ok) return existing;
   if (existing.value !== null) return b3ok(null);
   const written = await deps.store.create<WatchDeadline>(
-    principal, record, deriveClientOpId(`b3v4:arm-deadline:${record.id}`),
+    SUPERVISION_RECORD_WRITER,
+    record,
+    deriveClientOpId(`b3v4:arm-deadline:${record.id}`),
   );
   return written.ok ? b3ok(null) : b3fail(written.error);
 }
@@ -128,7 +123,7 @@ async function armDeadline(
  */
 export async function installRunWatchers(
   deps: InstallDependencies,
-  context: SystemCommandContext<'sys_agent_runtime'>,
+  _context: SystemCommandContext<'sys_agent_runtime'>,
   input: InstallRunWatchersInput,
 ): Promise<B3Result<readonly WatchRule[]>> {
   const templates: WatcherTemplate[] = [];
@@ -137,18 +132,18 @@ export async function installRunWatchers(
     if (resolved === null) return b3fail(unresolvable(templateRef));
     templates.push(resolved);
   }
-  const recipient = await deps.recipientFor(input);
-  const generation = await deps.generationFor(input);
   const subject: WatchSubject = { kind: 'agent-run', agentRunId: input.agentRunId };
   const installed: WatchRule[] = [];
   for (const template of templates) {
     const written = await deps.store.create<WatchRule>(
-      context.principal.id,
-      ruleRecord(context.principal.id, template, subject, recipient),
+      SUPERVISION_RECORD_WRITER,
+      ruleRecord(SUPERVISION_RECORD_WRITER, template, subject, input.recipient),
       deriveClientOpId(installEffectKey(input, template.templateRef)),
     );
     if (!written.ok) return written;
-    const armed = await armDeadline(deps, context.principal.id, written.value, generation);
+    const armed = await armDeadline(
+      deps, SUPERVISION_RECORD_WRITER, written.value, input.activityGeneration,
+    );
     if (!armed.ok) return b3fail(armed.error);
     installed.push(written.value);
   }

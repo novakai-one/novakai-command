@@ -39,6 +39,8 @@ export function supervisionWatcherPort(supervision: SupervisionCore): RunWatcher
         agentRunId: input.agentRunId as AgentRunId,
         launchPlanId: input.launchPlanId as ResolvedLaunchPlanId,
         requiredTemplateRefs: input.requiredTemplateRefs as readonly VersionedRef[],
+        recipient: input.recipient,
+        activityGeneration: input.activityGeneration,
       });
       if (!installed.ok) return installed;
       return b3ok(installed.value.map((rule) => ({ id: String(rule.id) })));

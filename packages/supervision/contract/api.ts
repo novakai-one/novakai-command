@@ -45,6 +45,8 @@ export interface InstallRunWatchersInput {
   readonly agentRunId: AgentRunId;
   readonly launchPlanId: ResolvedLaunchPlanId;
   readonly requiredTemplateRefs: readonly VersionedRef[];
+  readonly recipient: NotificationRecipient;
+  readonly activityGeneration: ActivityGeneration;
 }
 
 /** Exact-CAS replacement of a WatchRule. */
