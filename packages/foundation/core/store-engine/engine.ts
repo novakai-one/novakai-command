@@ -56,6 +56,9 @@ export const KIND_FILES: Readonly<Record<Exclude<ObjectKind, 'token'>, string>> 
   transcriptBinding: 'transcriptBindings.jsonl',         // B3c DEC-B3V4-24
   observedSubagent: 'observedSubagents.jsonl',           // B3c DEC-B3V4-18
   storeRouteCutover: 'storeRouteCutovers.jsonl',         // B3c DEC-B3V4-25
+  watchRule: 'watchRules.jsonl',                         // B3d §9.2/§18.1
+  watchDeadline: 'watchDeadlines.jsonl',                 // B3d §9.2/§18.1
+  notification: 'notifications.jsonl',                   // B3d §9.2/§18.1
   quarantine: 'quarantine.jsonl',
   trace: 'traces.jsonl',
 });
@@ -74,6 +77,7 @@ export const RECORD_KINDS: readonly string[] = [
   'agentRun', 'runContinuation', 'supervisionAssignment',
   'treeMutationFence', 'runOperation',
   'messagingStoreOp', 'transcriptBinding', 'observedSubagent', 'storeRouteCutover',
+  'watchRule', 'watchDeadline', 'notification',
 ];
 
 // Lazy upgrade registry (DEC-F10): pure v_n → v_n+1 transforms per kind,

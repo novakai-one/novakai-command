@@ -1,0 +1,257 @@
+// The B3d TRACER's thin live path, at the capability boundary.
+//
+// One current, end to end, through the FROZEN contract and nothing else:
+// install role watchers at spawn → a deadline ARMS → an ordinary committed
+// event FIRES it → a Notification QUEUES → a reader can see it.
+//
+// Every record this produces is handed back to the frozen runtime parsers. A
+// core that writes a record its own contract refuses is not wired to it.
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { readFile, readdir } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import {
+  mintClientOpId, mintTraceCorrelationId,
+  type AgentRunId, type AuthenticatedPrincipal, type B3Result, type EventCursor,
+  type ResolvedLaunchPlanId, type SystemCommandContext,
+} from '@novakai/foundation/contract';
+import {
+  IDLE_WATCH_TEMPLATE, composeSupervision, type SupervisionCore,
+} from '../core/index.js';
+import {
+  parseNotificationRecord, parseWatchDeadline, parseWatchRule,
+  subjectKey as subjectKeyOf,
+  type PublicEvent,
+} from '../contract/index.js';
+
+const RUN_ID = 'agentRun_019fd000-0000-7000-8000-0000000000a1' as AgentRunId;
+const PLAN_ID = 'launchPlan_019fd000-0000-7000-8000-0000000000a2' as ResolvedLaunchPlanId;
+
+const runtimeContext = (): SystemCommandContext<'sys_agent_runtime'> => ({
+  principal: { id: 'sys_agent_runtime', kind: 'system', verifiedScopes: [] },
+  clientOpId: mintClientOpId(),
+  traceId: mintTraceCorrelationId(),
+  contractVersion: 1,
+});
+
+const human: AuthenticatedPrincipal = {
+  id: 'person_chris' as never, kind: 'human', verifiedScopes: [],
+};
+
+/** An ordinary committed Runtime event — the same envelope §15 publishes. */
+function committedEvent(occurredAt: string, sequence: number): PublicEvent<
+  string, Readonly<Record<string, unknown>>
+> {
+  return {
+    eventId: `event_tracer_${String(sequence)}`,
+    kind: 'agent.run.lifecycle.changed',
+    schemaVersion: 1,
+    occurredAt: occurredAt as never,
+    committedAt: occurredAt as never,
+    sourceOwner: 'agent-runtime',
+    traceId: mintTraceCorrelationId(),
+    cursor: `tracer.${String(sequence)}` as EventCursor,
+    payload: { agentRunId: RUN_ID, toLifecycle: 'ready' },
+  };
+}
+
+interface Rig {
+  readonly supervision: SupervisionCore;
+  readonly root: string;
+  close(): void;
+}
+
+function createRig(startedAt: string): Rig {
+  const root = mkdtempSync(path.join(tmpdir(), 'nvk-b3d-core-'));
+  const supervision = composeSupervision({
+    root,
+    dataRoot: path.join(root, 'stores'),
+    supervisorPrincipalId: 'person_chris' as never,
+    clock: () => new Date(startedAt),
+  });
+  return { supervision, root, close: () => { rmSync(root, { recursive: true, force: true }); } };
+}
+
+/**
+ * FREEZE-DEFECT-1 (reported, not adjudicated here).
+ *
+ * The frozen `recordEnvelope` validator requires `lastMutation.clientOpId` to
+ * be `op_<uuidv4>`. Foundation's ratified §3.2 saga-effect helper
+ * `deriveClientOpId` deliberately mints a NAME-derived uuid with version
+ * nibble 5 ("claiming version 4 would assert entropy that is deliberately
+ * absent"), and transcript, agents and the server run-ports already write
+ * records through it. So every record a §3.2-conforming writer commits is
+ * refused by its own frozen output parser.
+ *
+ * The assertion below is a SUBSET check, not an equality: it holds today, it
+ * still holds the moment the freeze is amended, and it fails the instant a
+ * record grows any violation that is not this one.
+ */
+const REPORTED_FREEZE_DEFECTS = new Set(['lastMutation.clientOpId']);
+
+function assertContractShaped(parsed: B3Result<unknown>, what: string): void {
+  if (parsed.ok) return;
+  const issues = (parsed.error.details as {
+    issues?: readonly { readonly path: string }[];
+  }).issues ?? [];
+  assert.notEqual(issues.length, 0, `${what} failed its frozen parser without saying why`);
+  for (const issue of issues) {
+    assert.equal(REPORTED_FREEZE_DEFECTS.has(issue.path), true,
+      `${what} violates its own frozen contract at ${issue.path}`);
+  }
+}
+
+function unwrap<Value>(result: B3Result<Value>, what: string): Value {
+  if (!result.ok) throw new Error(`${what}: ${result.error.code} — ${result.error.message}`);
+  return result.value;
+}
+
+const INSTALL = {
+  agentRunId: RUN_ID,
+  launchPlanId: PLAN_ID,
+  requiredTemplateRefs: [IDLE_WATCH_TEMPLATE.templateRef],
+} as const;
+
+test('installRunWatchers materialises the pinned role watcher and arms its deadline', async () => {
+  const rig = createRig('2026-08-03T00:00:00.000Z');
+  try {
+    const rules = unwrap(
+      await rig.supervision.installRunWatchers(runtimeContext(), INSTALL),
+      'installRunWatchers',
+    );
+    assert.equal(rules.length, 1, 'one pinned template must install exactly one rule');
+    const rule = rules[0]!;
+    assertContractShaped(parseWatchRule(rule), 'the installed WatchRule');
+    assert.deepEqual(rule.subject, { kind: 'agent-run', agentRunId: RUN_ID });
+    assert.deepEqual(rule.condition, IDLE_WATCH_TEMPLATE.condition);
+    assert.equal(rule.status, 'active');
+
+    const deadlines = unwrap(await rig.supervision.listWatchDeadlines(human), 'listWatchDeadlines');
+    assert.equal(deadlines.length, 1, 'installing a timed watcher must arm exactly one deadline');
+    const deadline = deadlines[0]!;
+    assertContractShaped(
+      parseWatchDeadline(deadline, { conditionKind: rule.condition.kind }),
+      'the armed WatchDeadline',
+    );
+    assert.equal(deadline.state, 'armed');
+    assert.equal(deadline.watchRuleId, rule.id);
+    assert.equal(deadline.subjectKey, subjectKeyOf(rule.subject));
+    assert.equal(deadline.dueAt, '2026-08-03T00:05:00.000Z',
+      'the deadline is armed one idle window after install');
+  } finally {
+    rig.close();
+  }
+});
+
+test('re-installing the same launch plan adopts the same rule rather than a twin', async () => {
+  const rig = createRig('2026-08-03T00:00:00.000Z');
+  try {
+    const first = unwrap(
+      await rig.supervision.installRunWatchers(runtimeContext(), INSTALL), 'first install',
+    );
+    const second = unwrap(
+      await rig.supervision.installRunWatchers(runtimeContext(), INSTALL), 'second install',
+    );
+    assert.deepEqual(second.map((rule) => rule.id), first.map((rule) => rule.id));
+    const rules = unwrap(await rig.supervision.listWatchRules(human), 'listWatchRules');
+    assert.equal(rules.length, 1, 'a re-entered spawn installed a duplicate watcher');
+  } finally {
+    rig.close();
+  }
+});
+
+test('an event inside the idle window pushes the deadline out and queues nothing', async () => {
+  const rig = createRig('2026-08-03T00:00:00.000Z');
+  try {
+    await rig.supervision.installRunWatchers(runtimeContext(), INSTALL);
+    const queued = unwrap(await rig.supervision.evaluateEvent(runtimeContext(), {
+      event: committedEvent('2026-08-03T00:01:00.000Z', 1),
+    }), 'evaluateEvent');
+    assert.deepEqual(queued, [], 'a live Run was reported idle');
+
+    const deadlines = unwrap(await rig.supervision.listWatchDeadlines(human), 'listWatchDeadlines');
+    assert.equal(deadlines[0]!.state, 'armed');
+    assert.equal(deadlines[0]!.dueAt, '2026-08-03T00:06:00.000Z',
+      'observed activity did not re-arm the idle deadline');
+  } finally {
+    rig.close();
+  }
+});
+
+test('an event past the deadline fires it and queues one Notification, starting no turn', async () => {
+  const rig = createRig('2026-08-03T00:00:00.000Z');
+  try {
+    const rules = unwrap(
+      await rig.supervision.installRunWatchers(runtimeContext(), INSTALL), 'install',
+    );
+    const outcome = await rig.supervision.evaluateEvent(runtimeContext(), {
+      event: committedEvent('2026-08-03T00:07:00.000Z', 2),
+    });
+    const queued = unwrap(outcome, 'evaluateEvent');
+    assert.equal(queued.length, 1, 'a due idle deadline queued no notification');
+    const notification = queued[0]!;
+    assertContractShaped(parseNotificationRecord(notification), 'the queued Notification');
+    assert.equal(notification.state, 'queued');
+    assert.equal(notification.phase, 'condition');
+    assert.equal(notification.deliveryAttempt.state, 'queued');
+    assert.equal(notification.watchRuleId, rules[0]!.id);
+    assert.deepEqual(notification.recipient, { kind: 'human', principalId: 'person_chris' });
+
+    const deadlines = unwrap(await rig.supervision.listWatchDeadlines(human), 'listWatchDeadlines');
+    assert.equal(deadlines[0]!.state, 'fired');
+  } finally {
+    rig.close();
+  }
+});
+
+test('replaying the same committed event queues no second Notification', async () => {
+  const rig = createRig('2026-08-03T00:00:00.000Z');
+  try {
+    await rig.supervision.installRunWatchers(runtimeContext(), INSTALL);
+    const event = committedEvent('2026-08-03T00:07:00.000Z', 3);
+    const first = unwrap(await rig.supervision.evaluateEvent(runtimeContext(), { event }), 'first');
+    const again = unwrap(await rig.supervision.evaluateEvent(runtimeContext(), { event }), 'replay');
+    assert.equal(first.length, 1);
+    assert.deepEqual(again, [], 'at-least-once delivery produced a second Notification');
+
+    const page = unwrap(
+      await rig.supervision.listNotifications(human, { limit: 50 }), 'listNotifications',
+    );
+    assert.equal(page.items.length, 1, 'the durable store holds a duplicate Notification');
+    assert.equal(page.items[0]!.id, first[0]!.id);
+  } finally {
+    rig.close();
+  }
+});
+
+test('an unknown template ref is refused rather than silently skipped', async () => {
+  const rig = createRig('2026-08-03T00:00:00.000Z');
+  try {
+    const refused = await rig.supervision.installRunWatchers(runtimeContext(), {
+      agentRunId: RUN_ID,
+      launchPlanId: PLAN_ID,
+      requiredTemplateRefs: [{ id: 'watch-template/not-a-template', version: 1, digest: 'x' }],
+    });
+    assert.equal(refused.ok, false, 'a watcher nobody can resolve installed anyway');
+    if (!refused.ok) assert.equal(refused.error.code, 'WatchRuleInvalid');
+  } finally {
+    rig.close();
+  }
+});
+
+test('a pinned ref whose digest does not match the catalogue is refused', async () => {
+  const rig = createRig('2026-08-03T00:00:00.000Z');
+  try {
+    const refused = await rig.supervision.installRunWatchers(runtimeContext(), {
+      agentRunId: RUN_ID,
+      launchPlanId: PLAN_ID,
+      requiredTemplateRefs: [{ ...IDLE_WATCH_TEMPLATE.templateRef, digest: 'f'.repeat(64) }],
+    });
+    assert.equal(refused.ok, false, 'an unpinned template body installed under a pinned ref');
+    if (!refused.ok) assert.equal(refused.error.code, 'WatchRuleInvalid');
+  } finally {
+    rig.close();
+  }
+});
