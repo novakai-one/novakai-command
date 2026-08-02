@@ -14,8 +14,24 @@
  * has to say it in one place.
  */
 
-import type { CommittedFact } from "./eventBus.js";
+import type {
+  DeliveryUpdatedEvent, MessageCommittedEvent, PolicyChangedEvent,
+} from "../public/contract/index.js";
 import type { JournalEntry } from "../seams/store.js";
+
+/**
+ * One committed-fact event, journal-sourced, carrying its global sequence.
+ *
+ * It lives HERE, with the function that produces it, rather than in the event
+ * bus that consumes it. The other way round is a dependency cycle — the bus
+ * needs the projection and the projection needs the type — and red gate 26
+ * says a new cycle is an architecture failure regardless of whether the
+ * compiler minds.
+ */
+export type CommittedFact =
+  | { kind: "MessageCommitted"; event: MessageCommittedEvent }
+  | { kind: "DeliveryUpdated"; event: DeliveryUpdatedEvent }
+  | { kind: "PolicyChanged"; event: PolicyChangedEvent };
 
 /**
  * The v1 public fact for a journal entry, or `null` when the entry has none.

@@ -53,21 +53,17 @@
 
 import { constants } from "../public/contract/index.js";
 import { MessagingError } from "../public/contract/index.js";
-import type {
-  DeliveryUpdatedEvent,
-  MessageCommittedEvent,
-  PolicyChangedEvent,
-  Sequence,
-} from "../public/contract/index.js";
+import type { Sequence } from "../public/contract/index.js";
 import type { MessagingStore } from "../seams/store.js";
 import { projectJournalEntry } from "./journalProjection.js";
+import type { CommittedFact } from "./journalProjection.js";
 import { storeDependencyError } from "./storeErrors.js";
 
-/** One committed-fact event, journal-sourced, carrying its global sequence. */
-export type CommittedFact =
-  | { kind: "MessageCommitted"; event: MessageCommittedEvent }
-  | { kind: "DeliveryUpdated"; event: DeliveryUpdatedEvent }
-  | { kind: "PolicyChanged"; event: PolicyChangedEvent };
+/**
+ * Re-exported from the projection that produces it, so consumers keep the
+ * import they have always used while the dependency runs one way only.
+ */
+export type { CommittedFact } from "./journalProjection.js";
 
 export type EventBusFactListener = (fact: CommittedFact) => Promise<void>;
 /** Journal/store failure mid-tail (R1: subscriptions end dependency-lost). */
