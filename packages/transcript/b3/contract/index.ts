@@ -16,3 +16,6 @@ export {
   mirrorLedgerId, type MessagingMirrorPort, type MirrorLedgerEntry,
 } from '../core/mirror.js';
 export { classifyTurn, stripTerminalControl, type TurnClassification } from '../core/noise.js';
+export {
+  createProviderFileSource, type ProviderFileSourceOptions,
+} from '../adapters/source-provider-file.js';
