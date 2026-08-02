@@ -118,8 +118,20 @@ export async function drainAgentEndpointClaim(
       `endpoint claim ${claimId} is already closed`, { claimId, state: found.state },
     ));
   }
+  // The cutoff belongs HERE, which is what `AgentEndpointClaim` has always
+  // said: "set when the claim starts draining — before that there is nothing to
+  // be after". Only `transferAgentEndpointClaim` was setting it, so a claim
+  // that drained without a transfer — every Run that simply stopped — stayed
+  // open to exact-Run mail addressed to a Run nobody can read for. Draining is
+  // the moment the endpoint stops accepting new work; the transfer is a
+  // separate promise about who takes the queue.
+  const inbox = await store.listAgentInbox(found.agentId);
+  if (inbox.kind === "error") return b3fail(storeError(inbox.error));
+  const cutoff = inbox.value.reduce(
+    (highest, item) => Math.max(highest, item.acceptedSequence), 0,
+  );
   const committed = await store.commitAgentEndpointClaim({
-    claim: { ...found, state: "draining" },
+    claim: { ...found, state: "draining", cutoffMessageSequence: cutoff },
     expectedEndpointGeneration: found.endpointGeneration,
   });
   if (committed.kind === "error") return b3fail(storeError(committed.error));

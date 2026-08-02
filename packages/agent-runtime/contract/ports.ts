@@ -440,6 +440,12 @@ export interface MessagingEndpointPort {
   ): Promise<B3Result<{
     readonly claimId: string | null;
     readonly endpointGeneration: number;
+    /**
+     * Which Run holds it. A caller closing ITS OWN endpoint has to be able to
+     * tell — draining a claim a successor already took would silence a live
+     * Agent, and the claim id alone does not say whose it is.
+     */
+    readonly agentRunId?: string;
   }>>;
 
   reserve(

@@ -290,8 +290,41 @@ export async function closeRun(
   if (!stopped.ok) return stopped;
   // `expiresWhenIssuerRunFinal`, made real.
   await expireAuthorityOf(core, agentRun);
+  await closeEndpointOf(core, agentRun);
   void context;
   return stopped;
+}
+
+/**
+ * §8.1's cutoff, for the Run that simply ended.
+ *
+ * §13.6 drains the endpoint on CONTINUATION, because that is where it is handed
+ * to a successor. A plain stop has no successor and had no such step, so the
+ * claim stayed `active` with no cutoff and an exact-Run Message aimed at a Run
+ * that no longer exists was accepted and queued for the Agent — the silent
+ * redirect §8.1 forbids, reached by never closing the endpoint at all.
+ *
+ * Only the claim belonging to THIS Run is touched: a continuation that already
+ * moved the endpoint on leaves the successor holding it, and draining that
+ * would silence a live Agent. Failure is logged into the Run's own trace rather
+ * than reversing the stop — the PTY is dead and the grants are expired by this
+ * point, so refusing to finish would leave a worse state than an endpoint that
+ * is one reconcile behind.
+ */
+async function closeEndpointOf(core: RunsCore, agentRun: AgentRun): Promise<void> {
+  const messaging = core.messagingEndpoint;
+  if (messaging === undefined) return;
+  const current = await messaging.currentEndpoint(agentRun.agentId);
+  if (!current.ok || current.value.claimId === null) return;
+  if (current.value.agentRunId !== undefined
+    && current.value.agentRunId !== String(agentRun.id)) return;
+  const drained = await messaging.drain(current.value.claimId);
+  if (!drained.ok) {
+    console.error(
+      `[agent-runtime] endpoint drain failed for run ${String(agentRun.id)} `
+      + `(${drained.error.code}): ${drained.error.message}`,
+    );
+  }
 }
 
 /**

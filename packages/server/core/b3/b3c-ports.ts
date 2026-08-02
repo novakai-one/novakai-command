@@ -75,6 +75,8 @@ export function messagingEndpointPort(
       return b3ok({
         claimId: endpoint.value.claim === null ? null : String(endpoint.value.claim.id),
         endpointGeneration: endpoint.value.endpointGeneration,
+        ...(endpoint.value.claim === null
+          ? {} : { agentRunId: String(endpoint.value.claim.agentRunId) }),
       });
     },
 
