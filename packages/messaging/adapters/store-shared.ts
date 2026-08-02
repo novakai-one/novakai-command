@@ -641,13 +641,6 @@ export class StoreCore implements MessagingStore {
     const agentInboxItems: AgentInboxItem[] = (input.agentInboxItems ?? []).map(
       (inboxItem) => ({ ...inboxItem, messageId: message.id, acceptedSequence: sequence }),
     );
-    for (const inboxItem of agentInboxItems) {
-      journal.push({
-        sequence: this.nextSequence(),
-        kind: "AgentInboxChanged",
-        item: inboxItem,
-      });
-    }
 
     // 4–5. Single commit: thread + message + snapshot + deliveries + marker + journal.
     const opError = await this.persistAndApply({
@@ -661,6 +654,36 @@ export class StoreCore implements MessagingStore {
       ...(agentInboxItems.length > 0 ? { agentInboxItems } : {}),
     });
     if (opError) return { kind: "failed", error: opError };
+
+    // 6. §13.6: "Agent-addressed Messages commit and queue throughout."
+    //
+    // The item is already durable — it rode the acceptance, which is what makes
+    // creation atomic with the Message. What did not exist was any record of
+    // `queued` in `agent-inbox-transition`, the operation that records every
+    // OTHER state the same item reaches. So an outside reader following one
+    // item through its own operation kind saw it appear at `claimed`; and for
+    // an Agent whose Run is gone, `claimed` never comes, so the item's own
+    // operation was never written at all and the log could not corroborate the
+    // inbox the acceptance had just promised.
+    //
+    // Written here rather than by the caller because this is inside the one
+    // serialised mutation (§1 rule 3): outside it, a delivery pass could claim
+    // the item between the two writes and the queued record would overwrite
+    // `claimed`. The record carries the SAME item the acceptance carried —
+    // same entityRevision — because nothing changed state; it is the same fact
+    // said in the place a reader of this item's lifecycle looks.
+    for (const inboxItem of agentInboxItems) {
+      const queuedError = await this.persistAndApply({
+        op: "agent-inbox-transition",
+        item: inboxItem,
+        journal: {
+          sequence: this.nextSequence(),
+          kind: "AgentInboxChanged",
+          item: inboxItem,
+        },
+      });
+      if (queuedError) return { kind: "failed", error: queuedError };
+    }
 
     return {
       kind: "accepted",
