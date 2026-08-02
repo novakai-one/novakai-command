@@ -212,7 +212,7 @@ export class StoreEngine {
     const filePath = this.storePath(kind);
     if (!existsSync(filePath)) return [];
     const text = readFileSync(filePath, 'utf8');
-    return text.split('\n').filter((l) => l.length > 0);
+    return text.split('\n').filter((candidate) => candidate.length > 0);
   }
 
   private fileStamp(filePath: string): FileStamp | null {
@@ -495,7 +495,7 @@ export class StoreEngine {
   readTombstones(): TombstoneT[] {
     return [...this.readTombstoneIndex().latest.values()]
       .map((tombstone) => QuarantineTombstone.parse(tombstone))
-      .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
   }
 
   quarantinedIds(): Set<string> {
@@ -1091,12 +1091,12 @@ export class StoreEngine {
         seq += 1;
       };
       if (opts.reconcile) {
-        const r = opts.reconcile;
+        const reconcile = opts.reconcile;
         appendTrace({
           kind: 'trace', id: `trace_${randomUUID()}`, schemaVersion: 1,
-          createdAt: nowIso(), permissionLevel: 'team', createdBy: r.flat.createdBy,
-          seq, opId: r.opId, clientOpId: r.clientOpId, action: 'create',
-          target: { kind: r.kind, id: r.flat.id },
+          createdAt: nowIso(), permissionLevel: 'team', createdBy: reconcile.flat.createdBy,
+          seq, opId: reconcile.opId, clientOpId: reconcile.clientOpId, action: 'create',
+          target: { kind: reconcile.kind, id: reconcile.flat.id },
         });
       }
       this.appendLineFsync(
@@ -1234,23 +1234,9 @@ export class StoreEngine {
       const copyFailure = this.copyLegacyStores(input.copy, copiedKinds, copiedPaths);
       if (copyFailure !== null) return cutoverFailure(copyFailure);
 
-      // Step 5: every copied target, plus the receipt and trace files, exist
-      // DURABLY before either append — so their directory entries are already
-      // on disk and the post-append barriers below have something to make
-      // durable. The directory fsync comes last and never substitutes for the
-      // per-file one.
-      try {
-        for (const copied of copiedPaths) this.prepareFile(copied);
-        this.prepareFile(receiptPath);
-        this.prepareFile(tracePath);
-        this.fsyncDirectory(path.dirname(receiptPath));
-      } catch (cause) {
-        return cutoverFailure(
-          err('ObjectWriteFailed',
-            `preparing the cutover target files failed: ${String(cause)}`,
-            { opId: mintServerOpId(), cause: String(cause) }, true),
-        );
-      }
+      const prepareFailure = this.prepareCutoverTargets(copiedPaths, receiptPath, tracePath);
+      if (prepareFailure !== null) return cutoverFailure(prepareFailure);
+
       // A copied store is on disk now, so every cached index built from the
       // absent-file state is stale. Reading one back would report the canonical
       // route as empty — which is exactly what a pre-cutover Message would look
@@ -1258,31 +1244,8 @@ export class StoreEngine {
       this.recordIndexes.clear();
       this.traceIndex = undefined;
 
-      // Step 4/5: every converted record, one source operation to one atomic
-      // persisted operation, all inside this single lock hold.
-      for (const record of input.records) {
-        const opId = mintServerOpId();
-        const trace: TraceLineT = {
-          kind: 'trace', id: `trace_${randomUUID()}`, schemaVersion: 1,
-          createdAt: nowIso(), permissionLevel: 'team', createdBy: record.flat.createdBy,
-          seq: this.nextSeq(this.readTraces()), opId, clientOpId: record.clientOpId,
-          action: 'create', target: { kind: record.kind, id: record.flat.id },
-        };
-        try {
-          const filePath = this.storePath(record.kind);
-          this.appendLineFsync(filePath, JSON.stringify(
-            this.wrapRecord(record.flat, { opId, clientOpId: record.clientOpId, version: 1 }),
-          ));
-          touched.add(filePath);
-          this.appendLineFsync(tracePath, JSON.stringify(trace));
-        } catch (cause) {
-          return cutoverFailure(
-            err('ObjectWriteFailed',
-              `migrating ${record.flat.id} failed: ${String(cause)}`,
-              { opId, cause: String(cause) }, true),
-          );
-        }
-      }
+      const migrateFailure = this.migrateCutoverRecords(input.records, tracePath, touched);
+      if (migrateFailure !== null) return cutoverFailure(migrateFailure);
 
       // Step 5's remainder: each copied target file is fsynced by the append
       // above; the DIRECTORY is fsynced here, once, and never as a substitute
@@ -1384,6 +1347,67 @@ export class StoreEngine {
       }
       kinds.push(kind);
       paths.push(target);
+    }
+    return null;
+  }
+
+  /**
+   * §18.1 step 5: every copied target, plus the receipt and trace files, exist
+   * DURABLY before either append — so their directory entries are already on
+   * disk and the post-append barriers have something to make durable. The
+   * directory fsync comes last and never substitutes for the per-file one.
+   */
+  private prepareCutoverTargets(
+    copiedPaths: readonly string[], receiptPath: string, tracePath: string,
+  ): StoreError | null {
+    try {
+      for (const copied of copiedPaths) this.prepareFile(copied);
+      this.prepareFile(receiptPath);
+      this.prepareFile(tracePath);
+      this.fsyncDirectory(path.dirname(receiptPath));
+    } catch (cause) {
+      return err('ObjectWriteFailed',
+        `preparing the cutover target files failed: ${String(cause)}`,
+        { opId: mintServerOpId(), cause: String(cause) }, true);
+    }
+    return null;
+  }
+
+  /**
+   * §18.1 step 4/5: every converted record, one source operation to one atomic
+   * persisted operation, all inside the caller's single lock hold. Each store
+   * path it writes is added to `touched` so the caller's directory barrier
+   * covers it.
+   */
+  private migrateCutoverRecords(
+    records: readonly {
+      readonly kind: string;
+      readonly flat: EnvelopeT & Record<string, unknown>;
+      readonly clientOpId: ClientOpId;
+    }[],
+    tracePath: string,
+    touched: Set<string>,
+  ): StoreError | null {
+    for (const record of records) {
+      const opId = mintServerOpId();
+      const trace: TraceLineT = {
+        kind: 'trace', id: `trace_${randomUUID()}`, schemaVersion: 1,
+        createdAt: nowIso(), permissionLevel: 'team', createdBy: record.flat.createdBy,
+        seq: this.nextSeq(this.readTraces()), opId, clientOpId: record.clientOpId,
+        action: 'create', target: { kind: record.kind, id: record.flat.id },
+      };
+      try {
+        const filePath = this.storePath(record.kind);
+        this.appendLineFsync(filePath, JSON.stringify(
+          this.wrapRecord(record.flat, { opId, clientOpId: record.clientOpId, version: 1 }),
+        ));
+        touched.add(filePath);
+        this.appendLineFsync(tracePath, JSON.stringify(trace));
+      } catch (cause) {
+        return err('ObjectWriteFailed',
+          `migrating ${String(record.flat.id)} failed: ${String(cause)}`,
+          { opId, cause: String(cause) }, true);
+      }
     }
     return null;
   }

@@ -21,9 +21,10 @@ export {
 export { agentIdOf, agentPersonId, isAgentPerson } from '../core/identity.js';
 export {
   checkMessagingStoreRoute, listMigratedOperations, normaliseLegacyOp,
-  readLegacyStoreOp, readMessagingCutoverReceipt, runMessagingCutover,
+  readMessagingCutoverReceipt, runMessagingCutover,
   type MessagingCutoverInput, type MessagingCutoverOutcome, type MessagingCutoverReceipt,
 } from '../adapters/cutover.js';
+export { readLegacyStoreOp } from '../adapters/cutover-validate.js';
 export type { MessagingStore } from '../../seams/store.js';
 export { createSystemClock } from '../../adapters/clock-system.js';
 export type { ClockIds } from '../../seams/clock.js';
