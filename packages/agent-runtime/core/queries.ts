@@ -15,7 +15,9 @@ import type {
 import {
   FINAL_LIFECYCLES, type AgentRun, type RunOperation,
 } from '../contract/runs.js';
-import { assignmentChain, expireAuthorityOf, requireRun, type RunsCore } from './runs-context.js';
+import {
+  assignmentChain, closeEndpointOf, expireAuthorityOf, requireRun, type RunsCore,
+} from './runs-context.js';
 import { recoveryRequired, unknownRun } from './runs-store.js';
 import { completed } from './journal.js';
 
@@ -76,6 +78,8 @@ async function settleIfTerminalGone(
     agentRunId: agentRun.id, toLifecycle: 'interrupted',
   });
   await expireAuthorityOf(core, settled.value);
+  // The shift is over, so the endpoint stops advertising it (§8.1's cutoff).
+  await closeEndpointOf(core, settled.value);
   return b3ok(settled.value);
 }
 
@@ -269,6 +273,10 @@ export async function reconcileAfterRestart(
     );
     if (!settled.ok) return settled;
     await expireAuthorityOf(core, agentRun);
+    // A Run whose Runtime died is as over as one somebody stopped, and exam
+    // row D2 is what an endpoint that disagrees costs: mail accepted into a
+    // durable inbox behind a claim with nobody behind it.
+    await closeEndpointOf(core, agentRun);
     reconciled.push(agentRun.id);
   }
   const operations2 = await settleAbandonedOperations(core, operations.value, activeEpochId);

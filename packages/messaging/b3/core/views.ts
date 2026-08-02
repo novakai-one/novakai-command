@@ -183,6 +183,15 @@ async function runsOfItem(
  * asking about. A queued item is queued for whoever holds the endpoint, so the
  * row says so. Claimed and transferred items keep their own claim and never
  * reach this, so a transfer still reads as two Runs rather than one.
+ *
+ * WHATEVER STATE that claim is in. Requiring `active` meant a Run that stopped
+ * — which drains its endpoint (§13.6 row 1) without any Message moving — took
+ * every still-queued Message out of its own shift's answer, and exam row E2
+ * read `acceptances: 0` for mail the store was holding in front of it. A
+ * draining claim still names the Run it belonged to, and that Run is still the
+ * honest answer to "what was this shift sent". `getAgentEndpoint` always
+ * returns the newest generation, so a completed transfer already reads as the
+ * NEW Run here rather than the closed one.
  */
 async function queuedAgainst(
   store: MessagingStore, item: AgentInboxItem, agentId: AgentId,
@@ -190,7 +199,7 @@ async function queuedAgainst(
   if (item.state !== "queued") return undefined;
   const endpoint = await store.getAgentEndpoint(agentId);
   if (endpoint.kind !== "ok" || endpoint.value === null) return undefined;
-  return endpoint.value.state === "active" ? endpoint.value.id : undefined;
+  return endpoint.value.id;
 }
 
 /**
