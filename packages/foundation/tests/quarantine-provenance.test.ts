@@ -9,7 +9,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
@@ -70,6 +70,47 @@ test('a requested tombstone is written by Foundation and names its requester', a
       clientOpId,
       traceId,
     });
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test('the lifecycle trace of a requested quarantine names Foundation too', async () => {
+  const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-q10-trace-'));
+  const root = path.join(workspace, '.novakai');
+  const clientOpId = 'op_q10_trace_attribution' as ClientOpId;
+
+  try {
+    const transcript = composeHandle({
+      root,
+      capability: 'transcript',
+      allowedKinds: ['transcriptLine'],
+      principal: 'sys_transcript',
+    });
+    const requested = await requestQuarantine(transcript, {
+      target: targetOf('f'), clientOpId,
+    });
+    assert.equal(requested.ok, true);
+    if (!requested.ok) return;
+
+    const traces = readFileSync(path.join(root, 'traces.jsonl'), 'utf8')
+      .trim().split('\n').filter(Boolean)
+      .map((line) => JSON.parse(line) as Record<string, unknown>)
+      .filter((line) => line['action'] === 'quarantine');
+    assert.equal(traces.length, 1);
+
+    // One write, one writer. The trace records the mutation Foundation
+    // PERFORMED; saying `sys_transcript` attributes to Transcript a
+    // quarantine write §8 never grants it — the same collapse of writer and
+    // requester Q10 removes from the tombstone, in the journal of that same
+    // operation.
+    assert.equal(traces[0]?.['createdBy'], 'sys_foundation');
+
+    // The requester is not lost: the trace and the tombstone's provenance
+    // carry the same clientOpId, so the two join without ambiguity.
+    assert.equal(traces[0]?.['clientOpId'], clientOpId);
+    assert.equal(requested.value.tombstone.requestedBy?.clientOpId, clientOpId);
+    assert.equal(requested.value.tombstone.requestedBy?.principalId, 'sys_transcript');
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }

@@ -922,7 +922,11 @@ export class StoreEngine {
   requestQuarantine(opts: {
     tombstoneId: string;
     target: z.infer<typeof Ref>;
-    /** The REQUESTER — it stamps the lifecycle trace, never the tombstone. */
+    /**
+     * The REQUESTER. Kept for the typed error surface and for callers of the
+     * pre-Q10 shape; it no longer stamps anything Foundation writes, because
+     * Foundation is what performs this write.
+     */
     actor: string;
     clientOpId: ClientOpId;
     /** Q10: who asked. Foundation is the writer either way. */
@@ -957,7 +961,7 @@ export class StoreEngine {
                 schemaVersion: 1,
                 createdAt: nowIso(),
                 permissionLevel: 'team',
-                createdBy: opts.actor,
+                createdBy: 'sys_foundation',
                 seq: this.nextSeq(this.readTraces()),
                 opId: prior.opId as ServerOpId,
                 clientOpId: opts.clientOpId,
@@ -1049,7 +1053,7 @@ export class StoreEngine {
           schemaVersion: 1,
           createdAt: nowIso(),
           permissionLevel: 'team',
-          createdBy: opts.actor,
+          createdBy: 'sys_foundation',
           seq: this.nextSeq(this.readTraces()),
           opId,
           clientOpId: opts.clientOpId,
