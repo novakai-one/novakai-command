@@ -11,7 +11,9 @@ import {
 } from '@novakai/foundation/contract';
 import type { AgentRunsContract, RunWatcherPort } from '../../../agent-runtime/contract/index.js';
 import type { SupervisionCore } from '../../../supervision/public/index.js';
-import type { VersionedRef } from '../../../supervision/contract/index.js';
+import type {
+  NotificationRecipient, VersionedRef,
+} from '../../../supervision/contract/index.js';
 
 const runtimeContext = (): SystemCommandContext<'sys_agent_runtime'> => ({
   principal: { id: 'sys_agent_runtime', kind: 'system', verifiedScopes: [] },
@@ -35,11 +37,14 @@ const streamReader: AuthenticatedPrincipal = {
 export function supervisionWatcherPort(supervision: SupervisionCore): RunWatcherPort {
   return {
     async installRunWatchers(input) {
+      const recipient: NotificationRecipient = input.recipient.kind === 'agent'
+        ? { kind: 'agent', agentId: input.recipient.agentId }
+        : { kind: 'human', principalId: input.recipient.principalId as never };
       const installed = await supervision.installRunWatchers(runtimeContext(), {
         agentRunId: input.agentRunId as AgentRunId,
         launchPlanId: input.launchPlanId as ResolvedLaunchPlanId,
         requiredTemplateRefs: input.requiredTemplateRefs as readonly VersionedRef[],
-        recipient: input.recipient,
+        recipient,
         activityGeneration: input.activityGeneration,
       });
       if (!installed.ok) return installed;

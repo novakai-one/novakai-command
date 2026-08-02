@@ -8,6 +8,7 @@ export * from './records.js';
 export * from './api.js';
 export * from './validation.js';
 export * from './input-validation.js';
+export * from './watch-rule-query-validation.js';
 export * from './event-validation.js';
 export * from './drift-state-validation.js';
 export * from './record-validation.js';

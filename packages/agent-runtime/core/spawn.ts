@@ -242,6 +242,15 @@ async function buildRun(
   });
 }
 
+type WatcherRecipient = Parameters<typeof installWatchers>[1]['recipient'];
+
+/** Freeze the intended supervision assignment before watcher installation. */
+function watcherRecipient(authority: SpawnAuthorityFacts): WatcherRecipient {
+  return authority.parentAgentId === undefined
+    ? { kind: 'human', principalId: authority.rootHumanPrincipalId }
+    : { kind: 'agent', agentId: authority.parentAgentId };
+}
+
 /** The Run record, its PTY, its provider session, and its skills gate. */
 async function provisionRun(
   core: RunsCore, context: CommandContext, build: BuildInput, governed: Governed,
@@ -301,9 +310,7 @@ async function provisionRun(
 
   const watched = await installWatchers(core, {
     agentRun: gated.value.agentRun, plan: governed.plan, operation: gated.value.operation,
-    recipient: build.authority.parentAgentId === undefined
-      ? { kind: 'human', principalId: build.authority.rootHumanPrincipalId }
-      : { kind: 'agent', agentId: build.authority.parentAgentId },
+    recipient: watcherRecipient(build.authority),
   });
   if (!watched.ok) return watched;
   return b3ok({ agentRun: gated.value.agentRun, operation: watched.value });
