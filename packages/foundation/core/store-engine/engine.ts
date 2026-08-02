@@ -1227,40 +1227,12 @@ export class StoreEngine {
       const receiptPath = this.storePath(input.receipt.kind);
       const tracePath = this.storePath('trace');
 
-      // Step 4, then step 5's verification: copy, then PROVE the copy — byte
-      // length, content digest, and every line still parsing as a record line.
-      // A copy that silently truncated would otherwise be sealed by a receipt
-      // saying the route moved successfully.
+      // Step 4, then step 5's verification, as one step because a copy that is
+      // not verified must never reach the prepare below.
       const copiedKinds: string[] = [];
       const copiedPaths: string[] = [];
-      if (input.copy !== undefined) {
-        for (const kind of input.copy.kinds) {
-          const source = this.storePath(kind, input.copy.legacyRoot);
-          const target = this.storePath(kind);
-          try {
-            mkdirSync(path.dirname(target), { recursive: true });
-            copyFileSync(source, target); // the source is never written
-          } catch (cause) {
-            return {
-              ok: false,
-              error: err('ObjectWriteFailed',
-                `copying the legacy ${kind} store failed: ${String(cause)}`,
-                { opId: mintServerOpId(), cause: String(cause) }, true),
-            };
-          }
-          const mismatch = verifyCopiedStore(source, target);
-          if (mismatch !== null) {
-            return {
-              ok: false,
-              error: err('StoreRouteConflict',
-                `the migrated ${kind} store does not match its legacy source: ${mismatch}`,
-                { kind, legacyPath: source, canonicalPath: target }, false),
-            };
-          }
-          copiedKinds.push(kind);
-          copiedPaths.push(target);
-        }
-      }
+      const copyFailure = this.copyLegacyStores(input.copy, copiedKinds, copiedPaths);
+      if (copyFailure !== null) return cutoverFailure(copyFailure);
 
       // Step 5: every copied target, plus the receipt and trace files, exist
       // DURABLY before either append — so their directory entries are already
@@ -1273,12 +1245,11 @@ export class StoreEngine {
         this.prepareFile(tracePath);
         this.fsyncDirectory(path.dirname(receiptPath));
       } catch (cause) {
-        return {
-          ok: false,
-          error: err('ObjectWriteFailed',
+        return cutoverFailure(
+          err('ObjectWriteFailed',
             `preparing the cutover target files failed: ${String(cause)}`,
             { opId: mintServerOpId(), cause: String(cause) }, true),
-        };
+        );
       }
       // A copied store is on disk now, so every cached index built from the
       // absent-file state is stale. Reading one back would report the canonical
@@ -1305,12 +1276,11 @@ export class StoreEngine {
           touched.add(filePath);
           this.appendLineFsync(tracePath, JSON.stringify(trace));
         } catch (cause) {
-          return {
-            ok: false,
-            error: err('ObjectWriteFailed',
+          return cutoverFailure(
+            err('ObjectWriteFailed',
               `migrating ${record.flat.id} failed: ${String(cause)}`,
               { opId, cause: String(cause) }, true),
-          };
+          );
         }
       }
 
@@ -1320,11 +1290,10 @@ export class StoreEngine {
       try {
         for (const filePath of touched) this.fsyncDirectory(path.dirname(filePath));
       } catch (cause) {
-        return {
-          ok: false,
-          error: err('ObjectWriteFailed', `directory barrier failed: ${String(cause)}`,
+        return cutoverFailure(
+          err('ObjectWriteFailed', `directory barrier failed: ${String(cause)}`,
             { opId: mintServerOpId(), cause: String(cause) }, true),
-        };
+        );
       }
 
       // Step 6: the receipt object, then its directory barrier.
@@ -1336,11 +1305,10 @@ export class StoreEngine {
         )));
         this.fsyncDirectory(path.dirname(receiptPath));
       } catch (cause) {
-        return {
-          ok: false,
-          error: err('ObjectWriteFailed', `the cutover receipt append failed: ${String(cause)}`,
+        return cutoverFailure(
+          err('ObjectWriteFailed', `the cutover receipt append failed: ${String(cause)}`,
             { opId: receiptOpId, cause: String(cause) }, true),
-        };
+        );
       }
 
       // Step 6's second half: the receipt trace, then ITS directory barrier.
@@ -1355,11 +1323,10 @@ export class StoreEngine {
         } satisfies TraceLineT));
         this.fsyncDirectory(path.dirname(tracePath));
       } catch (cause) {
-        return {
-          ok: false,
-          error: err('TraceWriteFailed', `the cutover receipt trace failed: ${String(cause)}`,
+        return cutoverFailure(
+          err('TraceWriteFailed', `the cutover receipt trace failed: ${String(cause)}`,
             { opId: receiptOpId, cause: String(cause) }, true),
-        };
+        );
       }
 
       // Step 7: reconcile, then PERSIST the reconciliation. Reading the trace
@@ -1374,26 +1341,61 @@ export class StoreEngine {
           )));
           this.fsyncDirectory(path.dirname(receiptPath));
         } catch (cause) {
-          return {
-            ok: false,
-            error: err('ObjectWriteFailed',
+          return cutoverFailure(
+            err('ObjectWriteFailed',
               `sealing the cutover receipt failed: ${String(cause)}`,
               { opId: receiptOpId, cause: String(cause) }, true),
-          };
+          );
         }
       }
       return { ok: true, value: { traceComplete, receiptOpId, copiedKinds } };
     });
   }
 
+  /**
+   * §18.1 step 4 + step 5's verification: copy each legacy store WHOLE, then
+   * prove the copy before anything is allowed to depend on it.
+   *
+   * A copy that silently truncated would otherwise be sealed by a receipt
+   * saying the route moved successfully, and the truncated half would simply
+   * never be read again.
+   */
+  private copyLegacyStores(
+    copy: { readonly legacyRoot: string; readonly kinds: readonly string[] } | undefined,
+    kinds: string[],
+    paths: string[],
+  ): StoreError | null {
+    for (const kind of copy?.kinds ?? []) {
+      const source = this.storePath(kind, copy!.legacyRoot);
+      const target = this.storePath(kind);
+      try {
+        mkdirSync(path.dirname(target), { recursive: true });
+        copyFileSync(source, target); // the source is never written
+      } catch (cause) {
+        return err('ObjectWriteFailed',
+          `copying the legacy ${kind} store failed: ${String(cause)}`,
+          { opId: mintServerOpId(), cause: String(cause) }, true);
+      }
+      const mismatch = verifyCopiedStore(source, target);
+      if (mismatch !== null) {
+        return err('StoreRouteConflict',
+          `the migrated ${kind} store does not match its legacy source: ${mismatch}`,
+          { kind, legacyPath: source, canonicalPath: target }, false);
+      }
+      kinds.push(kind);
+      paths.push(target);
+    }
+    return null;
+  }
+
   /** Create an empty target file if absent, and make its data durable. */
   private prepareFile(filePath: string): void {
     mkdirSync(path.dirname(filePath), { recursive: true });
-    const fd = openSync(filePath, 'a');
+    const handle = openSync(filePath, 'a');
     try {
-      fsyncSync(fd);
+      fsyncSync(handle);
     } finally {
-      closeSync(fd);
+      closeSync(handle);
     }
   }
 
@@ -1402,12 +1404,12 @@ export class StoreEngine {
    * other half — a file whose data is durable but whose directory entry is not
    * can still vanish across a power loss.
    */
-  private fsyncDirectory(dir: string): void {
-    const fd = openSync(dir, 'r');
+  private fsyncDirectory(folder: string): void {
+    const handle = openSync(folder, 'r');
     try {
-      fsyncSync(fd);
+      fsyncSync(handle);
     } finally {
-      closeSync(fd);
+      closeSync(handle);
     }
   }
 
@@ -1430,21 +1432,38 @@ export class StoreEngine {
  *
  * Returns the reason it failed, or null when the copy is sound.
  */
+/**
+ * One `{ ok: false }` for the cutover bootstrap, so its seven failure paths read
+ * as what they are — a reason and a code — rather than as seven copies of the
+ * result shape.
+ */
+function cutoverFailure<T>(error: StoreError): EngineResult<T> {
+  return { ok: false, error };
+}
+
 function verifyCopiedStore(source: string, target: string): string | null {
-  const from = readFileSync(source);
-  const to = readFileSync(target);
-  if (from.length !== to.length) {
-    return `byte length ${String(to.length)} != source ${String(from.length)}`;
+  const sourceBytes = readFileSync(source);
+  const targetBytes = readFileSync(target);
+  if (sourceBytes.length !== targetBytes.length) {
+    return `byte length ${String(targetBytes.length)} != source ${String(sourceBytes.length)}`;
   }
   const digest = (buffer: Buffer): string =>
     createHash('sha256').update(buffer).digest('hex');
-  const sourceDigest = digest(from);
-  const targetDigest = digest(to);
+  const sourceDigest = digest(sourceBytes);
+  const targetDigest = digest(targetBytes);
   if (sourceDigest !== targetDigest) {
     return `content digest ${targetDigest} != source ${sourceDigest}`;
   }
-  const lines = to.toString('utf8').split('\n');
-  for (const [index, line] of lines.entries()) {
+  return firstInvalidRecordLine(targetBytes.toString('utf8'));
+}
+
+/**
+ * The record-line half of the verification, named separately because "these
+ * bytes arrived intact" and "these bytes are a record journal" are two
+ * different claims and a caller reading a failure wants to know which one broke.
+ */
+function firstInvalidRecordLine(contents: string): string | null {
+  for (const [index, line] of contents.split('\n').entries()) {
     if (line.trim() === '') continue;
     let parsed: unknown;
     try {
@@ -1454,10 +1473,10 @@ function verifyCopiedStore(source: string, target: string): string | null {
     }
     // Both shapes the engine reads: a wrapped `{envelope,payload,meta}` record
     // line, and the v0 flat record the dual-read shim still upgrades lazily.
-    const record = parsed as { envelope?: unknown; kind?: unknown };
-    const valid = record.envelope !== undefined
-      ? Envelope.safeParse(record.envelope).success
-      : Envelope.safeParse(parsed).success;
+    const wrapped = (parsed as { envelope?: unknown }).envelope;
+    const valid = wrapped === undefined
+      ? Envelope.safeParse(parsed).success
+      : Envelope.safeParse(wrapped).success;
     if (!valid) return `line ${String(index + 1)} is not a record line`;
   }
   return null;

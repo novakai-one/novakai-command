@@ -12,7 +12,7 @@
 // no transcript custody, and the whole terminal-mirror direction had no
 // reachable surface.
 import {
-  b3ok, mintClientOpId, mintTraceCorrelationId,
+  b3fail, b3ok, mintClientOpId, mintTraceCorrelationId,
   type AgentId, type AgentRunId, type B3Result, type CommandContext,
   type HumanPrincipalId, type SystemCommandContext,
 } from '@novakai/foundation/contract';
@@ -130,21 +130,18 @@ export function messagingEndpointPort(
 export function transcriptCustodyPort(
   transcript: () => B3TranscriptContract | null,
 ): TranscriptCustodyPort {
-  const unavailable = (): B3Result<never> => ({
-    ok: false,
-    error: {
-      code: 'RuntimeUnavailable',
-      message: 'no Transcript capability is composed in this host',
-      details: { reason: 'transcript-not-composed' },
-      retryable: false,
-    },
+  const unavailable = (): B3Result<never> => b3fail({
+    code: 'RuntimeUnavailable',
+    message: 'no Transcript capability is composed in this host',
+    details: { reason: 'transcript-not-composed' },
+    retryable: false,
   });
 
   return {
     async bind(input) {
-      const api = transcript();
-      if (api === null) return unavailable();
-      const bound = await api.bindTranscriptToRun(runtimeSystem(), {
+      const custody = transcript();
+      if (custody === null) return unavailable();
+      const bound = await custody.bindTranscriptToRun(runtimeSystem(), {
         agentId: input.agentId,
         agentRunId: input.agentRunId as AgentRunId,
         provider: input.provider,
@@ -160,9 +157,9 @@ export function transcriptCustodyPort(
     },
 
     async finalWatermarkOf(agentRunId: AgentRunId) {
-      const api = transcript();
-      if (api === null) return unavailable();
-      const found = await api.getTranscriptBinding(
+      const custody = transcript();
+      if (custody === null) return unavailable();
+      const found = await custody.getTranscriptBinding(
         { id: 'sys_agent_runtime', kind: 'system', verifiedScopes: [] }, agentRunId,
       );
       // A Run with no binding is not a failure: it is a Run whose provider

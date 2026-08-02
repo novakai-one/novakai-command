@@ -57,35 +57,46 @@ export async function listAgentCommunications(
     if (page.kind === "error") continue;
     for (const message of page.value.messages) {
       const item = await rowFor(context.store, message, subjects, input.agentIds);
-      if (item === null) continue;
-      // Declared on the input and previously not read: a caller asking "what
-      // did THIS shift say" got every shift the Agent ever had, with nothing to
-      // say the question had been dropped.
-      if (input.runIds !== undefined
-        && !item.relatedRunIds.some((runId) => input.runIds!.includes(runId))) {
-        continue;
-      }
-      items.push(item);
+      if (item !== null && matchesRuns(item, input.runIds)) items.push(item);
     }
   }
 
-  // A conversation has an order, and it is the order it happened in. Sorting by
-  // `messageId` sorted by nothing: production ids are 128 bits of randomness
-  // (`createSystemClock`), so a two-Agent exchange read back in an order neither
-  // Agent spoke it in. `messageId` stays only as the tiebreak, so two Messages
-  // in the same millisecond still have ONE total order across pages.
+  return b3ok({ items: pageOf(items, input) });
+}
+
+/**
+ * `runIds` is declared on the input and was not read, so a caller asking "what
+ * did THIS shift say" got every shift the Agent ever had — with nothing to say
+ * the question had been dropped.
+ */
+function matchesRuns(
+  item: AgentCommunicationItem, runIds: readonly AgentRunId[] | undefined,
+): boolean {
+  if (runIds === undefined) return true;
+  return item.relatedRunIds.some((runId) => runIds.includes(runId));
+}
+
+/**
+ * The conversation's order, and the caller's place in it.
+ *
+ * Order was `messageId`, which is 128 bits of randomness in production
+ * (`createSystemClock`) — so a two-Agent exchange read back in an order neither
+ * Agent spoke it in. It is `occurredAt` now, with `messageId` only as the
+ * tiebreak so two Messages in the same millisecond still have ONE total order
+ * across pages. The cursor depends on exactly that: it names the last row the
+ * caller already has, and it too was accepted and ignored, so paging past the
+ * first page silently restarted it.
+ */
+function pageOf(
+  items: AgentCommunicationItem[], input: ListAgentCommunicationsInput,
+): AgentCommunicationItem[] {
   items.sort((left, right) =>
     left.occurredAt.localeCompare(right.occurredAt)
     || left.messageId.localeCompare(right.messageId));
-
-  // The cursor is a position IN that order — the messageId of the last row the
-  // caller already has. It was accepted and ignored, so paging past the first
-  // page silently restarted it and a client walking a long conversation would
-  // read page one forever.
   const from = input.cursor === undefined
     ? 0
     : items.findIndex((item) => item.messageId === String(input.cursor)) + 1;
-  return b3ok({ items: items.slice(from, from + Math.max(1, input.limit)) });
+  return items.slice(from, from + Math.max(1, input.limit));
 }
 
 /**

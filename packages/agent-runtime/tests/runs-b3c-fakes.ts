@@ -51,11 +51,11 @@ export function createFakeMessagingEndpoints(): FakeMessagingEndpoints {
     threads,
 
     async ensureAgentThread(input) {
-      const key = `${String(input.rootHumanPrincipalId)}::${String(input.agentId)}`;
-      const existing = threads.get(key);
+      const pair = `${String(input.rootHumanPrincipalId)}::${String(input.agentId)}`;
+      const existing = threads.get(pair);
       if (existing !== undefined) return b3ok({ threadId: existing });
       const threadId = `thread_fake_${String(threads.size + 1).padStart(4, '0')}`;
-      threads.set(key, threadId);
+      threads.set(pair, threadId);
       return b3ok({ threadId });
     },
 

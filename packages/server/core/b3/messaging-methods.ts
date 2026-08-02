@@ -160,9 +160,9 @@ export function buildB3MessagingMethods(options: B3MessagingMethodOptions): Meth
   ) {
     return method<Payload, Value>(validate, async (payload, context, principal) => {
       if (principal.kind !== 'agent-run') return perform(payload, context, principal);
-      const own = await options.agentOfRun(principal.agentRunId ?? '');
+      const mine = await options.agentOfRun(principal.agentRunId ?? '');
       const subjects = subjectsOf(payload);
-      if (own === null || !subjects.every((subject) => subject === own)) {
+      if (mine === null || !subjects.every((subject) => subject === mine)) {
         return denied('read another Agent');
       }
       return perform(payload, context, principal);

@@ -170,67 +170,72 @@ export function readLegacyStoreOp(line: string, ordinal: number): B3Result<Store
  * that variant. Nothing more is asserted, because anything more would reject a
  * legitimate historic line.
  */
-function payloadIssues(variant: string, line: Record<string, unknown>): string | null {
-  const isObject = (value: unknown): value is Record<string, unknown> =>
-    typeof value === "object" && value !== null && !Array.isArray(value);
-  const hasId = (value: unknown): boolean =>
-    isObject(value) && typeof value["id"] === "string" && value["id"] !== "";
-  const journalEntry = (value: unknown): boolean =>
-    isObject(value) && typeof value["sequence"] === "number";
-  // The historic acceptance journal is legitimately a singleton OR an array
-  // (§8.1, AMD-001 §7). Both are accepted here and normalised afterwards.
-  const journalShape = (value: unknown): boolean =>
-    value === undefined
-    || (Array.isArray(value) ? value.every(journalEntry) : journalEntry(value));
+const isObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
 
-  switch (variant) {
-    case "acceptance": {
-      if (!hasId(line["thread"])) return "thread.id";
-      if (!hasId(line["message"])) return "message.id";
-      if (!hasId(line["snapshot"])) return "snapshot.id";
-      // `deliveries` is iterated unconditionally by `applyOp`, so an absent one
-      // is a crash at replay rather than an empty result.
-      if (!(Array.isArray(line["deliveries"]) && line["deliveries"].every(hasId))) {
-        return "deliveries";
-      }
-      // The acceptance record IS the idempotency key: replay indexes it by
-      // (senderId, clientMessageId), and a line missing either would make one
-      // migrated Message unfindable by the send that already accepted it.
-      const acceptance = line["acceptance"];
-      if (!isObject(acceptance)) return "acceptance";
-      if (typeof acceptance["senderId"] !== "string") return "acceptance.senderId";
-      if (typeof acceptance["clientMessageId"] !== "string") {
-        return "acceptance.clientMessageId";
-      }
-      if (!journalShape(line["journal"])) return "journal";
-      return null;
-    }
-    case "room-thread":
-      return hasId(line["thread"]) ? null : "thread.id";
-    case "delivery-transition": {
-      if (!hasId(line["delivery"])) return "delivery.id";
-      if (!journalEntry(line["journal"])) return "journal.sequence";
-      if (line["attempt"] !== undefined && !hasId(line["attempt"])) return "attempt.id";
-      return null;
-    }
-    case "attempt":
-      return hasId(line["attempt"]) ? null : "attempt.id";
-    case "policy": {
-      if (!isObject(line["contact"]) && !isObject(line["dnd"])) return "contact|dnd";
-      if (!journalEntry(line["journal"])) return "journal.sequence";
-      return null;
-    }
-    case "template": {
-      if (!hasId(line["template"])) return "template.id";
-      if (!journalEntry(line["journal"])) return "journal.sequence";
-      return null;
-    }
-    case "settled":
-      return typeof line["messageId"] === "string" && line["messageId"] !== ""
-        ? null : "messageId";
-    default:
-      return "op";
+const hasId = (value: unknown): boolean =>
+  isObject(value) && typeof value["id"] === "string" && value["id"] !== "";
+
+const journalEntry = (value: unknown): boolean =>
+  isObject(value) && typeof value["sequence"] === "number";
+
+/**
+ * The historic acceptance journal is legitimately a singleton OR an array
+ * (§8.1, AMD-001 §7). Both are accepted here and normalised afterwards.
+ */
+const journalShape = (value: unknown): boolean =>
+  value === undefined
+  || (Array.isArray(value) ? value.every(journalEntry) : journalEntry(value));
+
+/** The acceptance variant, which is the only one with a compound shape. */
+function acceptanceIssues(line: Record<string, unknown>): string | null {
+  if (!hasId(line["thread"])) return "thread.id";
+  if (!hasId(line["message"])) return "message.id";
+  if (!hasId(line["snapshot"])) return "snapshot.id";
+  // `deliveries` is iterated unconditionally by `applyOp`, so an absent one
+  // is a crash at replay rather than an empty result.
+  if (!(Array.isArray(line["deliveries"]) && line["deliveries"].every(hasId))) {
+    return "deliveries";
   }
+  // The acceptance record IS the idempotency key: replay indexes it by
+  // (senderId, clientMessageId), and a line missing either would make one
+  // migrated Message unfindable by the send that already accepted it.
+  const acceptance = line["acceptance"];
+  if (!isObject(acceptance)) return "acceptance";
+  if (typeof acceptance["senderId"] !== "string") return "acceptance.senderId";
+  if (typeof acceptance["clientMessageId"] !== "string") return "acceptance.clientMessageId";
+  if (!journalShape(line["journal"])) return "journal";
+  return null;
+}
+
+/** One rule per variant, each the shape `StoreCore.applyOp` dereferences. */
+const VARIANT_RULES: Readonly<Record<string, (line: Record<string, unknown>) => string | null>> = {
+  acceptance: acceptanceIssues,
+  "room-thread": (line) => (hasId(line["thread"]) ? null : "thread.id"),
+  "delivery-transition": (line) => {
+    if (!hasId(line["delivery"])) return "delivery.id";
+    if (!journalEntry(line["journal"])) return "journal.sequence";
+    if (line["attempt"] !== undefined && !hasId(line["attempt"])) return "attempt.id";
+    return null;
+  },
+  attempt: (line) => (hasId(line["attempt"]) ? null : "attempt.id"),
+  policy: (line) => {
+    if (!isObject(line["contact"]) && !isObject(line["dnd"])) return "contact|dnd";
+    if (!journalEntry(line["journal"])) return "journal.sequence";
+    return null;
+  },
+  template: (line) => {
+    if (!hasId(line["template"])) return "template.id";
+    if (!journalEntry(line["journal"])) return "journal.sequence";
+    return null;
+  },
+  settled: (line) =>
+    (typeof line["messageId"] === "string" && line["messageId"] !== "" ? null : "messageId"),
+};
+
+function payloadIssues(variant: string, line: Record<string, unknown>): string | null {
+  const rule = VARIANT_RULES[variant];
+  return rule === undefined ? "op" : rule(line);
 }
 
 interface Normalised {

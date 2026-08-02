@@ -73,6 +73,21 @@ function readParticipant(candidate: unknown, path: string): ConversationParticip
   return null;
 }
 
+/** The tagged union §12.5 spells out, each arm carrying the id kind it names. */
+function readSendTarget(
+  target: Record<string, unknown>,
+): SendAgentMessageInput['target'] | null {
+  if (target['kind'] === 'agent') {
+    const agentId = readAgentId(target['agentId']);
+    return agentId === null ? null : { kind: 'agent', agentId };
+  }
+  if (target['kind'] === 'exact-run') {
+    const agentRunId = readAgentRunId(target['agentRunId']);
+    return agentRunId === null ? null : { kind: 'exact-run', agentRunId };
+  }
+  return null;
+}
+
 export function readSendAgentMessageInput(
   candidate: unknown,
 ): B3Result<SendAgentMessageInput> {
@@ -84,15 +99,8 @@ export function readSendAgentMessageInput(
   if (typeof target !== 'object' || target === null) {
     return invalid('target', 'must be {kind:"agent"|"exact-run", ...}');
   }
-  const targetBody = target as Record<string, unknown>;
-  let resolved: SendAgentMessageInput['target'];
-  const targetAgent = readAgentId(targetBody['agentId']);
-  const targetRun = readAgentRunId(targetBody['agentRunId']);
-  if (targetBody['kind'] === 'agent' && targetAgent !== null) {
-    resolved = { kind: 'agent', agentId: targetAgent };
-  } else if (targetBody['kind'] === 'exact-run' && targetRun !== null) {
-    resolved = { kind: 'exact-run', agentRunId: targetRun };
-  } else {
+  const resolved = readSendTarget(target as Record<string, unknown>);
+  if (resolved === null) {
     return invalid('target.kind', 'must be "agent" with agentId or "exact-run" with agentRunId');
   }
   // Absent means "the direct Thread with this Agent" — the capability resolves
@@ -191,6 +199,21 @@ export function readThreadIdInput(
   return b3ok({ threadId });
 }
 
+/**
+ * An optional list of ids of ONE kind: absent, the parsed list, or `'invalid'`.
+ * Three answers rather than two, because "you did not ask" and "you asked with
+ * the wrong kind of id" are different and only one of them is a refusal.
+ */
+function readOptionalIdList<Id extends string>(
+  given: unknown, readOne: (value: unknown) => Id | null,
+): readonly Id[] | undefined | 'invalid' {
+  if (given === undefined) return undefined;
+  const listed = asArray(given);
+  if (listed === null) return 'invalid';
+  const parsed = listed.map(readOne);
+  return parsed.every((entry): entry is Id => entry !== null) ? parsed : 'invalid';
+}
+
 export function readListAgentCommunicationsInput(
   candidate: unknown,
 ): B3Result<ListAgentCommunicationsInput> {
@@ -202,9 +225,8 @@ export function readListAgentCommunicationsInput(
   if (!agentIds.every((entry) => readAgentId(entry) !== null)) {
     return invalid('agentIds', 'must be a list of agent identifiers');
   }
-  const runIds = asArray(body?.['runIds']);
-  if (body?.['runIds'] !== undefined
-    && (runIds === null || !runIds.every((entry) => readAgentRunId(entry) !== null))) {
+  const runIds = readOptionalIdList(body?.['runIds'], readAgentRunId);
+  if (runIds === 'invalid') {
     return invalid('runIds', 'must be a list of agentRun identifiers');
   }
   const threadId = body?.['threadId'] === undefined ? null : readThreadId(body['threadId']);
@@ -219,7 +241,7 @@ export function readListAgentCommunicationsInput(
   return b3ok({
     agentIds: agentIds as AgentId[],
     limit: scalars.value.limit ?? 100,
-    ...(runIds === null ? {} : { runIds: runIds as AgentRunId[] }),
+    ...(runIds === undefined ? {} : { runIds }),
     ...(threadId === null ? {} : { threadId }),
     ...(scalars.value.cursor === undefined
       ? {} : { cursor: scalars.value.cursor as EventCursor }),

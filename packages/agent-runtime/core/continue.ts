@@ -222,17 +222,10 @@ async function performContinuation(
   // binding names the retired Run's file. The ladder drained, finalised and
   // transferred and never bound, so a continued Agent's LIVE Run had no
   // transcript binding at all while its RETIRED Run's read back perfectly.
-  // The Agent record is where the root human lives, which is what resolves the
-  // Thread. Read, never assumed from the caller: a continuation ordered by a
-  // supervising Agent must land in the same conversation as the spawn Chris
-  // ordered, not in a second one keyed on the supervisor.
-  const agentRecord = await core.agents.getAgent(context.principal, work.input.agentId);
-  if (!agentRecord.ok) return agentRecord;
-  const custody = await bindContinuedTranscript(core, {
+  const custody = await bindContinuedTranscript(core, context, {
     agentRun: started.value.agentRun,
     agentId: work.input.agentId,
     provider: plan.value.provider,
-    rootHumanPrincipalId: agentRecord.value.rootHumanPrincipalId,
     operation,
   });
   if (!custody.ok) return custody;

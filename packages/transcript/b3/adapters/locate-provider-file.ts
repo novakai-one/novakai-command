@@ -64,35 +64,48 @@ const DEFAULT_MAX_DEPTH = 5;
  * deliberately not accepted: two sessions can mention each other.
  */
 function findByName(
-  dir: string, needle: string, depth: number, maxDepth: number,
+  folder: string, needle: string, depth: number, maxDepth: number,
 ): string | null {
-  if (depth > maxDepth || !existsSync(dir)) return null;
+  if (depth > maxDepth || !existsSync(folder)) return null;
+  const scanned = scanFolder(folder, needle);
+  if (scanned.match !== null) return scanned.match;
+  for (const child of scanned.folders) {
+    const found = findByName(child, needle, depth + 1, maxDepth);
+    if (found !== null) return found;
+  }
+  return null;
+}
+
+/**
+ * One directory level: the matching transcript if it is here, and the
+ * sub-folders still to look in. Split out because the walk and the match are
+ * two different questions, and an entry that vanishes mid-scan is an answer to
+ * neither.
+ */
+function scanFolder(
+  folder: string, needle: string,
+): { readonly match: string | null; readonly folders: readonly string[] } {
   let entries: readonly string[];
   try {
-    entries = readdirSync(dir);
+    entries = readdirSync(folder);
   } catch {
-    return null;
+    return { match: null, folders: [] };
   }
-  const directories: string[] = [];
+  const folders: string[] = [];
   for (const entry of entries) {
-    const full = path.join(dir, entry);
+    const full = path.join(folder, entry);
     let stat;
     try {
       stat = statSync(full);
     } catch {
       continue; // a file that vanished mid-scan is not an error
     }
-    if (stat.isDirectory()) {
-      directories.push(full);
-      continue;
+    if (stat.isDirectory()) folders.push(full);
+    else if (entry.endsWith('.jsonl') && entry.includes(needle)) {
+      return { match: full, folders };
     }
-    if (entry.endsWith('.jsonl') && entry.includes(needle)) return full;
   }
-  for (const child of directories) {
-    const found = findByName(child, needle, depth + 1, maxDepth);
-    if (found !== null) return found;
-  }
-  return null;
+  return { match: null, folders };
 }
 
 export function createProviderFileLocator(

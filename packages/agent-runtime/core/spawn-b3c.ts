@@ -13,7 +13,8 @@
 // so a resumed command adopts the claim or binding its earlier attempt made
 // rather than minting a second one.
 import {
-  b3fail, b3ok, type AgentId, type B3Result, type HumanPrincipalId,
+  b3fail, b3ok,
+  type AgentId, type B3Result, type CommandContext, type HumanPrincipalId,
 } from '@novakai/foundation/contract';
 import type { AgentRun, RunOperation } from '../contract/runs.js';
 import type { RunsCore } from './runs-context.js';
@@ -190,11 +191,11 @@ export async function bindTranscript(
  */
 export async function bindContinuedTranscript(
   core: RunsCore,
+  context: CommandContext,
   input: {
     readonly agentRun: AgentRun;
     readonly agentId: AgentId;
     readonly provider: 'claude' | 'codex' | 'kimi';
-    readonly rootHumanPrincipalId: HumanPrincipalId;
     readonly operation: RunOperation;
   },
 ): Promise<B3Result<RunOperation>> {
@@ -202,8 +203,14 @@ export async function bindContinuedTranscript(
   if (messaging === undefined) {
     return absent(core, input.operation, 'transcript-bound', 'transcript');
   }
+  // The Agent record is where the root human lives, and the root human is what
+  // resolves the Thread. Read here rather than passed in: a continuation
+  // ordered by a supervising Agent must land in the conversation Chris's spawn
+  // created, not a second one keyed on whoever ordered the restart.
+  const agent = await core.agents.getAgent(context.principal, input.agentId);
+  if (!agent.ok) return agent;
   const thread = await messaging.ensureAgentThread({
-    agentId: input.agentId, rootHumanPrincipalId: input.rootHumanPrincipalId,
+    agentId: input.agentId, rootHumanPrincipalId: agent.value.rootHumanPrincipalId,
   });
   if (!thread.ok) return thread;
   return bindTranscript(core, {
@@ -254,73 +261,99 @@ export async function drainOldEndpoint(
     readonly operation: RunOperation;
   },
 ): Promise<B3Result<DrainedEndpoint>> {
-  let operation = input.operation;
-  const messaging = core.messagingEndpoint;
-
-  let oldClaimId: string | undefined;
-  let oldEndpointGeneration: number | undefined;
-  if (messaging === undefined) {
-    const recorded = await absent(core, operation, 'old-endpoint-drained', 'messaging');
-    if (!recorded.ok) return recorded;
-    operation = recorded.value;
-  } else {
-    const current = await messaging.currentEndpoint(input.agentId);
-    if (!current.ok) return current;
-    oldEndpointGeneration = current.value.endpointGeneration;
-    if (current.value.claimId === null) {
-      // Nothing to drain is a legitimate state, not a silent skip: an Agent
-      // continued before its first endpoint ever activated has no claim, and
-      // the transfer below will have nothing to move either.
-      const recorded = await advance(core, operation, {
-        stage: 'old-endpoint-drained',
-        owner: 'messaging',
-        outcome: 'not-needed',
-        notNeededBecause: 'this Agent held no endpoint claim to drain',
-      });
-      if (!recorded.ok) return recorded;
-      operation = recorded.value;
-    } else {
-      oldClaimId = current.value.claimId;
-      const drained = await messaging.drain(oldClaimId);
-      if (!drained.ok) return drained;
-      const recorded = await record(
-        core, operation, 'old-endpoint-drained', 'messaging', drained.value.claimId,
-      );
-      if (!recorded.ok) return recorded;
-      operation = recorded.value;
-    }
-  }
-
-  const transcript = core.transcriptCustody;
-  let finalWatermark = '';
-  if (transcript === undefined) {
-    const recorded = await absent(core, operation, 'old-transcript-finalised', 'transcript');
-    if (!recorded.ok) return recorded;
-    operation = recorded.value;
-  } else {
-    const watermark = await transcript.finalWatermarkOf(input.oldRunId);
-    if (!watermark.ok) return watermark;
-    finalWatermark = watermark.value.finalWatermark;
-    const recorded = watermark.value.bindingId === null
-      ? await advance(core, operation, {
-        stage: 'old-transcript-finalised',
-        owner: 'transcript',
-        outcome: 'not-needed',
-        notNeededBecause: 'this Run never had a transcript binding to finalise',
-      })
-      : await record(
-        core, operation, 'old-transcript-finalised', 'transcript', watermark.value.bindingId,
-      );
-    if (!recorded.ok) return recorded;
-    operation = recorded.value;
-  }
+  const endpoint = await drainClaim(core, input.agentId, input.operation);
+  if (!endpoint.ok) return endpoint;
+  const finalised = await finaliseOldWatermark(core, input.oldRunId, endpoint.value.operation);
+  if (!finalised.ok) return finalised;
 
   return b3ok({
-    operation,
-    ...(oldClaimId === undefined ? {} : { oldClaimId }),
-    ...(oldEndpointGeneration === undefined ? {} : { oldEndpointGeneration }),
-    finalWatermark,
+    operation: finalised.value.operation,
+    ...(endpoint.value.oldClaimId === undefined
+      ? {} : { oldClaimId: endpoint.value.oldClaimId }),
+    ...(endpoint.value.oldEndpointGeneration === undefined
+      ? {} : { oldEndpointGeneration: endpoint.value.oldEndpointGeneration }),
+    finalWatermark: finalised.value.finalWatermark,
   });
+}
+
+/**
+ * §13.6 row 1 — the old endpoint stops accepting new work.
+ *
+ * "Nothing to drain" is a legitimate state, not a silent skip: an Agent
+ * continued before its first endpoint ever activated has no claim, and the
+ * transfer will have nothing to move either.
+ */
+async function drainClaim(
+  core: RunsCore, agentId: AgentId, operation: RunOperation,
+): Promise<B3Result<{
+  readonly operation: RunOperation;
+  readonly oldClaimId?: string;
+  readonly oldEndpointGeneration?: number;
+}>> {
+  const messaging = core.messagingEndpoint;
+  if (messaging === undefined) {
+    const recorded = await absent(core, operation, 'old-endpoint-drained', 'messaging');
+    return recorded.ok ? b3ok({ operation: recorded.value }) : recorded;
+  }
+  const current = await messaging.currentEndpoint(agentId);
+  if (!current.ok) return current;
+  const oldEndpointGeneration = current.value.endpointGeneration;
+
+  if (current.value.claimId === null) {
+    const recorded = await advance(core, operation, {
+      stage: 'old-endpoint-drained',
+      owner: 'messaging',
+      outcome: 'not-needed',
+      notNeededBecause: 'this Agent held no endpoint claim to drain',
+    });
+    return recorded.ok
+      ? b3ok({ operation: recorded.value, oldEndpointGeneration })
+      : recorded;
+  }
+
+  const oldClaimId = current.value.claimId;
+  const drained = await messaging.drain(oldClaimId);
+  if (!drained.ok) return drained;
+  const recorded = await record(
+    core, operation, 'old-endpoint-drained', 'messaging', drained.value.claimId,
+  );
+  return recorded.ok
+    ? b3ok({ operation: recorded.value, oldClaimId, oldEndpointGeneration })
+    : recorded;
+}
+
+/**
+ * §13.6 row 2 — the position the mirror actually reached, never a value this
+ * function made up. The empty string is a real answer: a Run that produced no
+ * transcript position has no watermark.
+ */
+async function finaliseOldWatermark(
+  core: RunsCore, oldRunId: AgentRun['id'], operation: RunOperation,
+): Promise<B3Result<{
+  readonly operation: RunOperation; readonly finalWatermark: string;
+}>> {
+  const transcript = core.transcriptCustody;
+  if (transcript === undefined) {
+    const recorded = await absent(core, operation, 'old-transcript-finalised', 'transcript');
+    return recorded.ok
+      ? b3ok({ operation: recorded.value, finalWatermark: '' })
+      : recorded;
+  }
+  const watermark = await transcript.finalWatermarkOf(oldRunId);
+  if (!watermark.ok) return watermark;
+  const recorded = watermark.value.bindingId === null
+    ? await advance(core, operation, {
+      stage: 'old-transcript-finalised',
+      owner: 'transcript',
+      outcome: 'not-needed',
+      notNeededBecause: 'this Run never had a transcript binding to finalise',
+    })
+    : await record(
+      core, operation, 'old-transcript-finalised', 'transcript', watermark.value.bindingId,
+    );
+  return recorded.ok
+    ? b3ok({ operation: recorded.value, finalWatermark: watermark.value.finalWatermark })
+    : recorded;
 }
 
 /**
