@@ -20,10 +20,9 @@
  */
 
 import {
-  b3err, b3fail, b3ok, deriveClientOpId, nowIsoUtc,
-  type B3Result, type ClientOpId, type RecordEnvelope,
+  b3err, b3fail, b3ok, deriveClientOpId,
+  type B3Result, type ClientOpId,
 } from '@novakai/foundation/contract';
-import { createHash } from 'node:crypto';
 
 import type {
   IngestTranscriptSourceInput, MirrorStage, MirrorStageHooks, SourceLine,
@@ -32,6 +31,12 @@ import type {
 import type {
   NormalisedTranscriptTurn, TranscriptBinding, TranscriptLineId,
 } from '../contract/records.js';
+
+export { mirrorLedgerId, type MirrorLedgerEntry } from './ledger.js';
+import {
+  mirrorLedgerId, recordLedger,
+  type MirrorLedgerEntry,
+} from './ledger.js';
 import { classifyTurn } from './noise.js';
 import type { TranscriptStore } from './store.js';
 
@@ -47,33 +52,6 @@ export interface MessagingMirrorPort {
   /** The endpoint the Agent currently owns — the one a mirror must NOT return to. */
   currentEndpointClaimId(agentId: string): Promise<string | null>;
 }
-
-/**
- * One position's recorded outcome, so a replay recognises what it already did.
- *
- * It rides the existing `transcriptLine` kind rather than adding a sixth:
- * "what happened at this source position" is exactly what a transcript line
- * IS, and §18.1's inventory does not grow for a fact the registry already has
- * a home for.
- */
-export interface MirrorLedgerEntry
-  extends RecordEnvelope<TranscriptLineId, 'transcriptLine'> {
-  readonly bindingId: string;
-  readonly sourcePosition: string;
-  readonly sourceDigest: string;
-  readonly outcome: 'mirrored' | 'filtered';
-  readonly filterReason?: string;
-  readonly messageId?: string;
-}
-
-/**
- * The ledger id for one (binding, position). Deterministic, so a replay of the
- * same position finds its own entry rather than writing a second one.
- */
-export const mirrorLedgerId = (bindingId: string, position: string): TranscriptLineId =>
-  `transcriptLine_${createHash('sha256')
-    .update(`b3v4${bindingId}${position}`, 'utf8')
-    .digest('hex')}` as TranscriptLineId;
 
 export interface MirrorDeps {
   readonly store: TranscriptStore;
@@ -125,11 +103,8 @@ export async function ingestTranscriptSource(
   if (read.kind === 'missing') {
     // Explicit, not silent (§25-B3c). `waiting` while a Run is alive and its
     // file has not appeared yet; the caller decides when that becomes missing.
-    //
-    // Written only when it CHANGES. Under the pump this line runs once a second
-    // for every Run whose provider has not created its file yet, and an
-    // unconditional update would append a custody record per second per Run
-    // saying nothing new — a journal that grows without a fact in it.
+    // Written only when it CHANGES: under the pump an unconditional update
+    // would append a custody record per second per Run, saying nothing new.
     if (binding.sourceDiscoveryState !== 'waiting') {
       await setState(deps.store, binding, { sourceDiscoveryState: 'waiting' });
     }
@@ -308,7 +283,7 @@ async function mirrorOne(
 
   const recorded = await recordLedger(deps.store, {
     id: ledgerId, bindingId: binding.id, position: line.position, digest: line.digest,
-    outcome: 'mirrored', messageId: committed.value.messageId,
+    outcome: 'mirrored', role, messageId: committed.value.messageId,
   });
   if (!recorded.ok) return { kind: 'failed', error: recorded };
 
@@ -353,29 +328,6 @@ async function quarantineAt(
   if (!frozen.ok) return b3fail(frozen.error);
   await halted(deps, 'after-quarantine', { position: line.position });
   return b3ok(null);
-}
-
-async function recordLedger(
-  store: TranscriptStore,
-  entry: {
-    id: TranscriptLineId; bindingId: string; position: string; digest: string;
-    outcome: 'mirrored' | 'filtered'; filterReason?: string; messageId?: string;
-  },
-): Promise<B3Result<unknown>> {
-  return store.create({
-    kind: 'transcriptLine',
-    id: entry.id,
-    schemaVersion: 1,
-    createdAt: nowIsoUtc(),
-    permissionLevel: 'private',
-    createdBy: 'sys_transcript',
-    bindingId: entry.bindingId,
-    sourcePosition: entry.position,
-    sourceDigest: entry.digest,
-    outcome: entry.outcome,
-    ...(entry.filterReason === undefined ? {} : { filterReason: entry.filterReason }),
-    ...(entry.messageId === undefined ? {} : { messageId: entry.messageId }),
-  } as never, keyFor(`ledger:${entry.id}`));
 }
 
 async function setState(
