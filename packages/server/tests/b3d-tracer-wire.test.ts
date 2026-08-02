@@ -108,7 +108,9 @@ async function anUnrelatedRuntimeEvent(rig: Rig): Promise<void> {
 }
 
 /** A supervised Agent, launched exactly the way an operator launches one. */
-async function spawnSupervised(rig: Rig): Promise<{ agentId: string; agentRunId: string }> {
+async function spawnSupervised(
+  rig: Rig,
+): Promise<{ agentId: string; agentRunId: string; spawnClientOpId: string }> {
   const role = unwrap(await rig.chris.call<{ id: string }>('b3.agent.createRole', {
     ...governedRole('b3d-tracer-role'),
     supervisionPolicy: {
@@ -117,6 +119,7 @@ async function spawnSupervised(rig: Rig): Promise<{ agentId: string; agentRunId:
       parentNotificationMode: 'queue-only',
     },
   }, opId()), 'createRole');
+  const spawnClientOpId = opId();
   const spawned = unwrap(await rig.chris.call<{
     agent: { agentId: string }; run: { id: string; lifecycle: string };
   }>('b3.agent.spawn', {
@@ -124,9 +127,9 @@ async function spawnSupervised(rig: Rig): Promise<{ agentId: string; agentRunId:
     displayName: 'B3d Tracer',
     workingDirectory: tmpdir(),
     task: { kind: 'supervised', brief: 'Sit still.' },
-  }, opId()), 'spawn');
+  }, spawnClientOpId), 'spawn');
   assert.equal(spawned.run.lifecycle, 'ready');
-  return { agentId: spawned.agent.agentId, agentRunId: spawned.run.id };
+  return { agentId: spawned.agent.agentId, agentRunId: spawned.run.id, spawnClientOpId };
 }
 
 /** Wait for an event-driven fact to arrive, rather than assuming it already has. */
@@ -195,6 +198,9 @@ test('the B3d wire carries current from spawn to a queued Notification', async (
     assert.equal(watchers.deadlines.length, 1);
     assert.equal(watchers.deadlines[0]?.state, 'armed');
     assert.equal(watchers.deadlines[0]?.watchRuleId, watchers.rules[0]?.id);
+    assert.equal(watchers.rules[0]?.installation?.requestClientOpId, agent.spawnClientOpId,
+      'watcher provenance was detached from the initiating spawn command');
+    assert.equal(watchers.rules[0]?.installation?.requestedBy, 'person_chris');
 
     // 3. Let the idle window pass, then let something ordinary happen. The
     //    watcher is not polling: an event that was going to be published

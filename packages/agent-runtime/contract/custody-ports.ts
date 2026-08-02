@@ -11,8 +11,9 @@
 // Re-exported from `ports.ts`; the patch amendment adds the two install facts
 // Runtime owns at this seam: recipient and activity generation.
 import type {
-  ActivityGeneration, AgentId, AgentRunId, B3Result, HumanPrincipalId, ProviderSessionId,
-  ResolvedLaunchPlanId, TerminalSessionId,
+  ActivityGeneration, AgentId, AgentRunId, B3ClientOpId, B3PrincipalId, B3Result,
+  HumanPrincipalId, ProviderSessionId, ResolvedLaunchPlanId, TerminalSessionId,
+  TraceCorrelationId,
 } from '@novakai/foundation/contract';
 
 /**
@@ -140,6 +141,11 @@ export interface RunWatcherPort {
         | { readonly kind: 'agent'; readonly agentId: AgentId }
         | { readonly kind: 'human'; readonly principalId: HumanPrincipalId };
       readonly activityGeneration: ActivityGeneration;
+      readonly requestProvenance: {
+        readonly requestedBy: B3PrincipalId;
+        readonly traceId: TraceCorrelationId;
+        readonly clientOpId: B3ClientOpId;
+      };
     },
   ): Promise<B3Result<readonly { readonly id: string }[]>>;
 }

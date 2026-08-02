@@ -1,10 +1,13 @@
 import {
   b3fail,
   b3ok,
+  isValidClientOpId,
   isValidId,
   readBoundary,
   validationFailed,
   type ActivityGeneration,
+  type B3ClientOpId,
+  type B3PrincipalId,
   type AgentId,
   type AgentRunId,
   type EventCursor,
@@ -12,6 +15,7 @@ import {
   type IsoUtc,
   type RecordVersion,
   type ResolvedLaunchPlanId,
+  type TraceCorrelationId,
 } from '@novakai/foundation/contract';
 import type { HumanPrincipalId } from './shared.js';
 import type {
@@ -44,7 +48,7 @@ function versionedRefs(field: FieldReader): readonly VersionedRef[] {
     field.reject('requiredTemplateRefs', 'must be an array');
     return [];
   }
-  return value.map((candidate, index) => {
+  const refs = value.map((candidate, index) => {
     const path = `requiredTemplateRefs.${index}`;
     if (typeof candidate !== 'object' || candidate === null || Array.isArray(candidate)) {
       field.reject(path, 'must be an object');
@@ -61,6 +65,14 @@ function versionedRefs(field: FieldReader): readonly VersionedRef[] {
     }
     return { id, version: version as number, digest };
   });
+  const seen = new Set<string>();
+  for (const [index, templateRef] of refs.entries()) {
+    if (seen.has(templateRef.id)) {
+      field.reject(`requiredTemplateRefs.${String(index)}.id`, 'must be unique by template id');
+    }
+    seen.add(templateRef.id);
+  }
+  return refs;
 }
 
 function positiveBrand<Brand extends number>(
@@ -69,6 +81,22 @@ function positiveBrand<Brand extends number>(
   least = 1,
 ): Brand {
   return field.count(path, least, Number.MAX_SAFE_INTEGER) as Brand;
+}
+
+function requestProvenance(field: FieldReader): InstallRunWatchersInput['requestProvenance'] {
+  const nested = field.nested('requestProvenance');
+  const requestedBy = nested.text('requestedBy');
+  const traceId = nested.text('traceId');
+  const clientOpId = nested.text('clientOpId');
+  if (!/^trace_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(traceId)) {
+    nested.reject('traceId', 'must be a TraceId');
+  }
+  if (!isValidClientOpId(clientOpId)) nested.reject('clientOpId', 'must be a ClientOpId');
+  return {
+    requestedBy: requestedBy as B3PrincipalId,
+    traceId: traceId as TraceCorrelationId,
+    clientOpId: clientOpId as B3ClientOpId,
+  };
 }
 
 function isoUtc(field: FieldReader, path: string): IsoUtc {
@@ -88,6 +116,7 @@ export const parseInstallRunWatchersInput = (
   requiredTemplateRefs: versionedRefs(field),
   recipient: readRecipient(field.given('recipient'), field),
   activityGeneration: positiveBrand<ActivityGeneration>(field, 'activityGeneration'),
+  requestProvenance: requestProvenance(field),
 }));
 
 /** Runtime parser for exact-CAS WatchRule replacement. */

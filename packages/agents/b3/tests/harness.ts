@@ -14,6 +14,7 @@ import {
 import type {
   CreateRoleProfileInput, GovernedAgentsContract,
 } from '../contract/api.js';
+import type { VersionedRef } from '../contract/records.js';
 import { composeGovernedAgents } from '../core/compose.js';
 import { createFakeProviderAdapters } from '../adapters/providers/fake.js';
 
@@ -29,12 +30,15 @@ export interface Rig {
   close(): void;
 }
 
-export function createRig(): Rig {
+export function createRig(
+  watcherTemplates: { resolves(templateRef: VersionedRef): boolean } = { resolves: () => false },
+): Rig {
   const root = mkdtempSync(path.join(tmpdir(), 'nvk-b3b-agents-'));
   const agents = composeGovernedAgents({
     root,
     dataRoot: path.join(root, 'stores'),
     providers: createFakeProviderAdapters(),
+    watcherTemplates,
   });
 
   const envelope = (principal: AuthenticatedPrincipal): CommandContext => ({

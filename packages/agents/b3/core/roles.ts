@@ -3,7 +3,7 @@
 // A role is the reusable half of governance. The half that binds is the
 // resolved plan in `plans.ts` — editing a role never reaches a live Run.
 import {
-  b3fail, b3ok, mintAgentRoleProfileId, nowIsoUtc,
+  b3err, b3fail, b3ok, mintAgentRoleProfileId, nowIsoUtc,
   type AgentRoleProfileId, type AuthenticatedPrincipal, type B3Result,
   type CommandContext, type RecordVersion,
 } from '@novakai/foundation/contract';
@@ -14,6 +14,53 @@ import {
 import type { AgentRoleProfile } from '../contract/records.js';
 import type { GovernedAgentsCore } from './context.js';
 import { roleNotAllowed, type Persisted } from './store.js';
+import { compatibleRole } from './compat.js';
+
+const WATCH_START_TURN_SCOPE = 'supervision:watch:start-turn';
+
+function requiresWatcherStartTurn(input: CreateRoleProfileInput): boolean {
+  return input.supervisionPolicy.activityDrift === 'required'
+    || input.supervisionPolicy.parentNotificationMode === 'start-turn';
+}
+
+function requireWatcherAuthority(
+  context: CommandContext,
+  input: CreateRoleProfileInput,
+): B3Result<null> {
+  if (!requiresWatcherStartTurn(input)
+    || context.principal.verifiedScopes.includes(WATCH_START_TURN_SCOPE as never)) {
+    return b3ok(null);
+  }
+  return b3fail(b3err(
+    'PermissionDenied',
+    `role policy requires ${WATCH_START_TURN_SCOPE}`,
+    { requiredScope: WATCH_START_TURN_SCOPE },
+    false,
+  ));
+}
+
+function requireResolvableTemplates(
+  core: GovernedAgentsCore,
+  input: CreateRoleProfileInput,
+): B3Result<null> {
+  const seen = new Set<string>();
+  for (const templateRef of input.supervisionPolicy.requiredWatcherTemplates) {
+    if (seen.has(templateRef.id) || templateRef.id === 'watch-template/activity-drift') {
+      return b3fail(b3err(
+        'WatchRuleInvalid', 'explicit watcher template ids must be unique and non-implicit',
+        { templateId: templateRef.id }, false,
+      ));
+    }
+    seen.add(templateRef.id);
+    if (!core.watcherTemplates.resolves(templateRef)) {
+      return b3fail(b3err(
+        'WatchRuleInvalid', 'role references an unresolved watcher template',
+        { templateRef }, false,
+      ));
+    }
+  }
+  return b3ok(null);
+}
 
 export async function createRoleProfile(
   core: GovernedAgentsCore, context: CommandContext, input: CreateRoleProfileInput,
@@ -22,6 +69,10 @@ export async function createRoleProfile(
   // socket caller must travel the SAME policy path (red gate 23).
   const read = readCreateRoleProfileInput(input);
   if (!read.ok) return read;
+  const authorized = requireWatcherAuthority(context, read.value);
+  if (!authorized.ok) return authorized;
+  const resolved = requireResolvableTemplates(core, read.value);
+  if (!resolved.ok) return resolved;
 
   const record: Persisted<AgentRoleProfile> = {
     kind: 'agentRoleProfile',
@@ -47,6 +98,10 @@ export async function updateRoleProfile(
 ): Promise<B3Result<AgentRoleProfile>> {
   const read = readUpdateRoleProfileInput(input);
   if (!read.ok) return read;
+  const authorized = requireWatcherAuthority(context, read.value.replacement);
+  if (!authorized.ok) return authorized;
+  const resolved = requireResolvableTemplates(core, read.value.replacement);
+  if (!resolved.ok) return resolved;
   const existing = await core.store.read<AgentRoleProfile>(
     'agentRoleProfile', read.value.roleProfileId,
   );
@@ -67,7 +122,7 @@ export async function getRoleProfile(
   const found = await core.store.read<AgentRoleProfile>('agentRoleProfile', roleProfileId);
   if (!found.ok) return found;
   if (found.value === null) return b3fail(unknownRole(roleProfileId));
-  return b3ok(found.value);
+  return b3ok(compatibleRole(found.value));
 }
 
 /**
@@ -84,5 +139,6 @@ export const roleVersionOf = (role: AgentRoleProfile): RecordVersion => role.rec
 export async function listRoleProfiles(
   core: GovernedAgentsCore, _principal: AuthenticatedPrincipal,
 ): Promise<B3Result<readonly AgentRoleProfile[]>> {
-  return core.store.list<AgentRoleProfile>('agentRoleProfile');
+  const listed = await core.store.list<AgentRoleProfile>('agentRoleProfile');
+  return listed.ok ? b3ok(listed.value.map(compatibleRole)) : listed;
 }

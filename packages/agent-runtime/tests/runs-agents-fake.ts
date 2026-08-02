@@ -16,6 +16,7 @@ export const CHRIS = 'person_chris' as HumanPrincipalId;
 export const EVERY_SCOPE = [
   'agent.spawn', 'agent.interrupt', 'agent.stop-one', 'agent.stop-tree',
   'agent.adopt', 'agent.continue', 'agent.control',
+  'supervision:watch:start-turn',
 ] as AuthorityScope[];
 
 // ── A fake Agents that behaves like the real one where it matters ───────────
@@ -325,4 +326,3 @@ function refusal(
   port.refuseNext = null;
   return b3fail(error);
 }
-

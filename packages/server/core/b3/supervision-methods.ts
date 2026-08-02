@@ -32,6 +32,22 @@ interface WireParams {
   readonly payload: Readonly<Record<string, unknown>>;
 }
 
+export function currentDeadlines(
+  deadlines: readonly WatchDeadline[],
+  ruleIds: ReadonlySet<WatchRule['id']>,
+): readonly WatchDeadline[] {
+  const current = new Map<WatchRule['id'], WatchDeadline>();
+  for (const deadline of deadlines) {
+    if (!ruleIds.has(deadline.watchRuleId)) continue;
+    const prior = current.get(deadline.watchRuleId);
+    if (prior === undefined
+      || Number(deadline.activityGeneration) > Number(prior.activityGeneration)) {
+      current.set(deadline.watchRuleId, deadline);
+    }
+  }
+  return [...current.values()];
+}
+
 const malformed = (): B3Result<never> => b3fail(
   b3err('ValidationFailed', 'params must be {contractVersion, payload}',
     { issues: [{ path: 'params', message: 'missing contractVersion or payload' }] }, false),
@@ -75,7 +91,7 @@ export function buildB3SupervisionMethods(options: B3SupervisionMethodOptions): 
     const visibleRuleIds = new Set(rules.value.items.map((rule) => rule.id));
     return b3ok({
       rules: rules.value.items,
-      deadlines: deadlines.value.filter((deadline) => visibleRuleIds.has(deadline.watchRuleId)),
+      deadlines: currentDeadlines(deadlines.value, visibleRuleIds),
       ...(rules.value.nextCursor === undefined ? {} : { nextCursor: rules.value.nextCursor }),
       omissions: rules.value.omissions,
     });

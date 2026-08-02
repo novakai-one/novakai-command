@@ -5,6 +5,7 @@ import {
 } from '@novakai/foundation/contract';
 import { createHash } from 'node:crypto';
 import type { ProviderAdapterRegistry } from '../contract/providers.js';
+import type { WatcherTemplateRefCatalogue } from '../contract/records.js';
 import type { GovernedAgentsStore } from './store.js';
 
 /**
@@ -40,6 +41,7 @@ export const HUMAN_SCOPES: readonly AuthorityScope[] = Object.values(SCOPE);
 export interface GovernedAgentsCore {
   readonly store: GovernedAgentsStore;
   readonly providers: ProviderAdapterRegistry;
+  readonly watcherTemplates: WatcherTemplateRefCatalogue;
   /** Whose tree a human/script/operations spawn lands in. */
   readonly rootHumanPrincipalId: HumanPrincipalId;
   readonly clock: () => string;

@@ -55,7 +55,9 @@ interface WatcherListing {
 function describeWatchers(listing: WatcherListing): string {
   if (listing.rules.length === 0) return 'Nothing is being watched.';
   const dueOf = (rule: WatchRule): string => {
-    const deadline = listing.deadlines.find((item) => item.watchRuleId === rule.id);
+    const deadline = listing.deadlines
+      .filter((item) => item.watchRuleId === rule.id)
+      .sort((left, right) => Number(right.activityGeneration) - Number(left.activityGeneration))[0];
     return deadline === undefined ? 'no deadline' : `${deadline.state} until ${deadline.dueAt}`;
   };
   return listing.rules.map((rule) => `${rule.condition.kind}  ${rule.status}  ${rule.id}\n`

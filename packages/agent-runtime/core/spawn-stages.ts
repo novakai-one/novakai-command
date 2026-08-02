@@ -243,6 +243,11 @@ export async function installWatchers(
     readonly recipient:
       | { readonly kind: 'agent'; readonly agentId: AgentId }
       | { readonly kind: 'human'; readonly principalId: SpawnAuthorityFacts['rootHumanPrincipalId'] };
+    readonly requestProvenance: {
+      readonly requestedBy: CommandContext['principal']['id'];
+      readonly traceId: CommandContext['traceId'];
+      readonly clientOpId: CommandContext['clientOpId'];
+    };
   },
 ): Promise<B3Result<RunOperation>> {
   if (core.watchers === undefined) {
@@ -255,6 +260,7 @@ export async function installWatchers(
     requiredTemplateRefs: pinned,
     recipient: input.recipient,
     activityGeneration: input.agentRun.activityGeneration,
+    requestProvenance: input.requestProvenance,
   });
   if (!installed.ok) return installed;
   const first = installed.value[0];

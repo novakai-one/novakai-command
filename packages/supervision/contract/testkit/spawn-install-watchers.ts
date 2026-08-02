@@ -55,6 +55,11 @@ const INSTALL_INPUT: InstallRunWatchersInput = {
   ],
   recipient: { kind: 'human', principalId: 'person_chris' as never },
   activityGeneration: 4 as never,
+  requestProvenance: {
+    requestedBy: 'person_chris' as never,
+    traceId: 'trace_123e4567-e89b-42d3-a456-426614174000' as never,
+    clientOpId: 'op_123e4567-e89b-42d3-a456-426614174000' as never,
+  },
 };
 
 /** Resolve the known fixture catalogue by semantic condition identity. */

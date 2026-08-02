@@ -311,6 +311,11 @@ async function provisionRun(
   const watched = await installWatchers(core, {
     agentRun: gated.value.agentRun, plan: governed.plan, operation: gated.value.operation,
     recipient: watcherRecipient(build.authority),
+    requestProvenance: {
+      requestedBy: context.principal.id,
+      traceId: context.traceId,
+      clientOpId: context.clientOpId,
+    },
   });
   if (!watched.ok) return watched;
   return b3ok({ agentRun: gated.value.agentRun, operation: watched.value });

@@ -29,7 +29,7 @@ export interface WatcherTemplate {
   readonly payload: WatcherTemplatePayload;
 }
 
-/** Minimal Agents-owned role-profile catalogue query consumed by Supervision. */
+/** Supervision body-resolution seam backed by the Agents-owned role catalogue. */
 export interface WatcherTemplateCatalogue {
   resolve(wanted: VersionedRef): WatcherTemplate | null;
 }

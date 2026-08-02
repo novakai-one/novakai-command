@@ -3,7 +3,9 @@ import type {
   AgentId,
   AgentRunId,
   AuthenticatedPrincipal,
+  B3ClientOpId,
   B3Page,
+  B3PrincipalId,
   B3Result,
   EventCursor,
   IsoUtc,
@@ -12,6 +14,7 @@ import type {
   ResolvedLaunchPlanId,
   ProviderTurnId,
   TerminalInputAttemptId,
+  TraceCorrelationId,
   SystemCommandContext,
   CommandContext,
 } from '@novakai/foundation/contract';
@@ -47,6 +50,11 @@ export interface InstallRunWatchersInput {
   readonly requiredTemplateRefs: readonly VersionedRef[];
   readonly recipient: NotificationRecipient;
   readonly activityGeneration: ActivityGeneration;
+  readonly requestProvenance: {
+    readonly requestedBy: B3PrincipalId;
+    readonly traceId: TraceCorrelationId;
+    readonly clientOpId: B3ClientOpId;
+  };
 }
 
 /** Cross-owner facts re-read from Agents + Runtime before any watcher write. */
@@ -66,6 +74,11 @@ export interface WatcherInstallAuthority {
     principal: AuthenticatedPrincipal,
     input: Pick<InstallRunWatchersInput, 'agentRunId' | 'launchPlanId'>,
   ): Promise<B3Result<ResolvedWatcherInstall>>;
+}
+
+/** Host identity adapter used to authorize stable-Agent watcher reads. */
+export interface WatchRuleAccess {
+  agentIdFor(principal: AuthenticatedPrincipal): Promise<B3Result<AgentId | null>>;
 }
 
 /** Exact-CAS replacement of a WatchRule. */
@@ -229,7 +242,13 @@ export interface NotificationFilter {
   readonly limit: number;
 }
 
-/** Durable WatchRule query filter, parallel to NotificationFilter. */
+/**
+ * Durable WatchRule keyset page. `cursor` is an opaque `watchRules.*` position
+ * over stable `(createdAt,id)` order, applied before the current filter and
+ * visibility policy; changing either does not invalidate it. `omissions`
+ * counts matching rows hidden across the remaining continuation.
+ * This is a live continuation, not a historical snapshot.
+ */
 export interface WatchRuleFilter {
   readonly subject?: WatchSubject;
   readonly status?: readonly WatchRule['status'][];

@@ -13,13 +13,15 @@ import type { AgentRunsContract, RunWatcherPort } from '../../../agent-runtime/c
 import type { GovernedAgentsContract } from '../../../agents/b3/contract/index.js';
 import type { SupervisionCore } from '../../../supervision/public/index.js';
 import type {
-  NotificationRecipient, VersionedRef, WatcherInstallAuthority,
+  NotificationRecipient, VersionedRef, WatcherInstallAuthority, WatchRuleAccess,
 } from '../../../supervision/contract/index.js';
 
-const runtimeContext = (): SystemCommandContext<'sys_agent_runtime'> => ({
+const runtimeContext = (
+  provenance?: { readonly clientOpId: SystemCommandContext<'sys_agent_runtime'>['clientOpId']; readonly traceId: SystemCommandContext<'sys_agent_runtime'>['traceId'] },
+): SystemCommandContext<'sys_agent_runtime'> => ({
   principal: { id: 'sys_agent_runtime', kind: 'system', verifiedScopes: [] },
-  clientOpId: mintClientOpId(),
-  traceId: mintTraceCorrelationId(),
+  clientOpId: provenance?.clientOpId ?? mintClientOpId(),
+  traceId: provenance?.traceId ?? mintTraceCorrelationId(),
   contractVersion: 1,
 });
 
@@ -73,6 +75,26 @@ export function watcherInstallAuthority(
   };
 }
 
+/** Stable Agent identity behind an authenticated Run, for watcher visibility. */
+export function watchRuleAccess(
+  runs: () => AgentRunsContract | undefined,
+): WatchRuleAccess {
+  return {
+    async agentIdFor(principal) {
+      if (principal.kind !== 'agent-run') return b3ok(null);
+      if (principal.agentRunId === undefined) {
+        return b3fail(b3err('PermissionDenied', 'agent-run principal has no Run identity', {}, false));
+      }
+      const runtime = runs();
+      if (runtime === undefined) {
+        return b3fail(b3err('RuntimeUnavailable', 'Agent Runtime is not composed', {}, true));
+      }
+      const runView = await runtime.getAgentRun(principal, principal.agentRunId);
+      return runView.ok ? b3ok(runView.value.agent.agentId) : runView;
+    },
+  };
+}
+
 /**
  * §13.5's watcher rung, seen through the Runtime's own narrow seam.
  *
@@ -87,12 +109,13 @@ export function supervisionWatcherPort(supervision: SupervisionCore): RunWatcher
       const recipient: NotificationRecipient = input.recipient.kind === 'agent'
         ? { kind: 'agent', agentId: input.recipient.agentId }
         : { kind: 'human', principalId: input.recipient.principalId as never };
-      const installed = await supervision.installRunWatchers(runtimeContext(), {
+      const installed = await supervision.installRunWatchers(runtimeContext(input.requestProvenance), {
         agentRunId: input.agentRunId as AgentRunId,
         launchPlanId: input.launchPlanId as ResolvedLaunchPlanId,
         requiredTemplateRefs: input.requiredTemplateRefs as readonly VersionedRef[],
         recipient,
         activityGeneration: input.activityGeneration,
+        requestProvenance: input.requestProvenance,
       });
       if (!installed.ok) return installed;
       return b3ok(installed.value.map((rule) => ({ id: String(rule.id) })));

@@ -9,12 +9,14 @@ import type { AuthenticatedPrincipal, B3Result } from '@novakai/foundation/contr
 import type {
   SupervisionContract, WatchDeadline, WatcherTemplate, WatcherTemplateCatalogue,
   WatcherInstallAuthority,
+  WatchRuleAccess,
 } from '../contract/index.js';
 import {
   createSupervisionStore, type SupervisionStore, type SupervisionStoreOptions,
 } from './store.js';
 import { createTemplateCatalogue } from './templates.js';
-import { installRunWatchers, listWatchRules } from './watchers.js';
+import { installRunWatchers } from './watchers.js';
+import { listWatchRules } from './watch-rule-query.js';
 import { evaluateEvent, listNotifications } from './notifications.js';
 
 /** The frozen members the tracer's live wire actually carries current through. */
@@ -35,6 +37,7 @@ export type SupervisionCore = SupervisionWireSlice & SupervisionWatcherReads;
 export interface SupervisionCoreOptions extends SupervisionStoreOptions {
   /** Required: installs are refused unless Agents + Runtime facts can be re-read. */
   readonly installAuthority: WatcherInstallAuthority;
+  readonly watchRuleAccess: WatchRuleAccess;
   /**
    * @internal failure injection. §24.3 wants a crash before AND after every
    * durable step, and the honest way to produce one is a store that stops
@@ -60,7 +63,9 @@ export function composeSupervision(options: SupervisionCoreOptions): Supervision
     installRunWatchers: (context, input) => installRunWatchers(install, context, input),
     evaluateEvent: (context, input) => evaluateEvent({ store }, context, input),
     listNotifications: (_principal, filter) => listNotifications({ store }, filter),
-    listWatchRules: (principal, filter) => listWatchRules(store, principal, filter),
+    listWatchRules: (principal, filter) => listWatchRules(
+      store, options.watchRuleAccess, principal, filter,
+    ),
     listWatchDeadlines: () => store.list<WatchDeadline>('watchDeadline'),
   };
 }

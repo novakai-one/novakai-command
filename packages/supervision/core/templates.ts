@@ -96,10 +96,13 @@ export function createTemplateCatalogue(
     resolve(wanted) {
       const found = held.get(keyOf(wanted));
       if (found === undefined) return null;
+      const ownRefMatches = found.templateRef.id === wanted.id
+        && found.templateRef.version === wanted.version
+        && found.templateRef.digest === wanted.digest;
       const payloadMatchesRef = found.payload.id === wanted.id
         && found.payload.version === wanted.version
         && templateDigest(found.payload) === wanted.digest;
-      return payloadMatchesRef ? found : null;
+      return ownRefMatches && payloadMatchesRef ? found : null;
     },
   };
 }

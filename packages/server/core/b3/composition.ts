@@ -35,11 +35,11 @@ import {
   type B3TranscriptContract, type TranscriptSourcePort,
 } from '../../../transcript/b3/contract/index.js';
 import {
-  composeSupervision, type SupervisionCore,
+  composeSupervision, createTemplateCatalogue, type SupervisionCore,
 } from '../../../supervision/public/index.js';
 import type { WatcherTemplate } from '../../../supervision/contract/index.js';
 import {
-  followEventsIntoSupervision, supervisionWatcherPort, watcherInstallAuthority,
+  followEventsIntoSupervision, supervisionWatcherPort, watcherInstallAuthority, watchRuleAccess,
 } from './supervision-ports.js';
 
 export interface B3RuntimeOptions {
@@ -213,10 +213,14 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
 
   // Agents owns roles, family and grants; Agent Runtime owns Runs. They meet
   // ONLY through the narrow ports in `run-ports.ts` — neither imports the other.
+  const watcherTemplates = createTemplateCatalogue(options.watcherTemplates ?? []);
   const agents = composeGovernedAgents({
     root: options.root,
     dataRoot,
     providers: options.providers ?? createProviderAdapters(),
+    watcherTemplates: {
+      resolves: (templateRef) => watcherTemplates.resolve(templateRef) !== null,
+    },
   });
   const credentials = createRunCredentials(options.root);
   // Late-bound on purpose: Transcript is composed AFTER Runs (it needs the
@@ -235,9 +239,9 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
   const supervision = composeSupervision({
     root: options.root,
     dataRoot,
-    installAuthority: watcherInstallAuthority(agents, () => runs),
-    ...(options.watcherTemplates === undefined
-      ? {} : { extraTemplates: options.watcherTemplates }),
+    installAuthority: watcherInstallAuthority(agents, () => runs ?? undefined),
+    watchRuleAccess: watchRuleAccess(() => runs ?? undefined),
+    templates: watcherTemplates,
   });
 
   const emit = (owner: 'messaging' | 'transcript') =>

@@ -89,6 +89,7 @@ function createRig(
         activityGeneration: 4 as never,
       }),
     },
+    watchRuleAccess: { agentIdFor: async () => b3ok(null) },
   });
   return {
     supervision, store, root, startedAt,
@@ -148,6 +149,11 @@ const INSTALL = {
   requiredTemplateRefs: [IDLE_WATCH_TEMPLATE.templateRef],
   recipient: { kind: 'human', principalId: 'person_chris' as never },
   activityGeneration: 4 as never,
+  requestProvenance: {
+    requestedBy: 'person_chris' as never,
+    traceId: 'trace_123e4567-e89b-42d3-a456-426614174000' as never,
+    clientOpId: 'op_123e4567-e89b-42d3-a456-426614174000' as never,
+  },
 } as const;
 
 test('installRunWatchers materialises the pinned role watcher and arms its deadline', async () => {
@@ -167,7 +173,7 @@ test('installRunWatchers materialises the pinned role watcher and arms its deadl
     assert.equal(rule.installation?.launchPlanId, PLAN_ID);
     assert.deepEqual(rule.installation?.templateRef, IDLE_WATCH_TEMPLATE.templateRef);
     assert.equal(rule.installation?.activityGeneration, INSTALL.activityGeneration);
-    assert.equal(rule.installation?.requestedBy, 'sys_agent_runtime');
+    assert.equal(rule.installation?.requestedBy, 'person_chris');
     assert.equal(rule.status, 'active');
 
     const deadlines = unwrap(await rig.supervision.listWatchDeadlines(human), 'listWatchDeadlines');
@@ -358,6 +364,7 @@ test('a Notification is durable before its deadline stops being armed', async ()
           'RuntimeUnavailable', 'not used by this reducer proof', {}, true,
         )),
       },
+      watchRuleAccess: { agentIdFor: async () => b3ok(null) },
     });
     const outcome = await broken.evaluateEvent(runtimeContext(), {
       event: committedEvent('2026-08-03T00:07:00.000Z', 9),

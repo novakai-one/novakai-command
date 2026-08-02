@@ -31,3 +31,12 @@ test('catalogue rejects a changed executable body under a self-declared pinned r
   const catalogue = createTemplateCatalogue([tampered]);
   assert.equal(catalogue.resolve(IDLE_WATCH_TEMPLATE.templateRef), null);
 });
+
+test('catalogue refuses a payload whose returned ref contradicts the requested ref', () => {
+  const contradictory = {
+    ...IDLE_WATCH_TEMPLATE,
+    templateRef: { ...IDLE_WATCH_TEMPLATE.templateRef, digest: 'f'.repeat(64) },
+  };
+  const catalogue = createTemplateCatalogue([contradictory]);
+  assert.equal(catalogue.resolve(IDLE_WATCH_TEMPLATE.templateRef), null);
+});

@@ -19,6 +19,7 @@ import { fingerprint, SCOPE, type GovernedAgentsCore } from './context.js';
 import { launchPlanInvalid, type Persisted } from './store.js';
 import { requireAgent } from './agents.js';
 import { getRoleProfile } from './roles.js';
+import { compatiblePlan } from './compat.js';
 
 export async function resolveLaunchPlan(
   core: GovernedAgentsCore, context: CommandContext, input: ResolveLaunchPlanInput,
@@ -60,14 +61,15 @@ async function inheritPlan(
       { path: 'inheritedPlanId', message: 'names no launch plan' },
     ]));
   }
+  const inherited = compatiblePlan(plan.value);
   const issues: FieldIssue[] = [];
-  if (plan.value.agentId !== request.agentId) {
+  if (inherited.agentId !== request.agentId) {
     issues.push({ path: 'inheritedPlanId', message: 'belongs to a different Agent' });
   }
-  if (plan.value.workingDirectory !== request.workingDirectory) {
+  if (inherited.workingDirectory !== request.workingDirectory) {
     issues.push({
       path: 'workingDirectory',
-      message: `is not the inherited plan's directory (${plan.value.workingDirectory})`,
+      message: `is not the inherited plan's directory (${inherited.workingDirectory})`,
     });
   }
   if (requestedAnyOverride(request)) {
@@ -76,10 +78,10 @@ async function inheritPlan(
       message: 'inherit-plan cannot carry provider/model/effort overrides; use refresh-role',
     });
   }
-  const supervision = supervisionIssues(plan.value, request.supervised);
+  const supervision = supervisionIssues(inherited, request.supervised);
   issues.push(...supervision);
   if (issues.length > 0) return b3fail(launchPlanInvalid(issues));
-  return b3ok(plan.value);
+  return b3ok(inherited);
 }
 
 /**
@@ -125,9 +127,10 @@ async function replacementPlan(
       { path: 'replacementPlanId', message: 'names a launch plan that no longer exists' },
     ]));
   }
-  const supervision = supervisionIssues(plan.value, request.supervised);
+  const replacementLaunch = compatiblePlan(plan.value);
+  const supervision = supervisionIssues(replacementLaunch, request.supervised);
   if (supervision.length > 0) return b3fail(launchPlanInvalid(supervision));
-  return b3ok(plan.value);
+  return b3ok(replacementLaunch);
 }
 
 async function freshPlan(
@@ -331,5 +334,5 @@ export async function getLaunchPlan(
       { path: 'launchPlanId', message: 'names no launch plan' },
     ]));
   }
-  return b3ok(found.value);
+  return b3ok(compatiblePlan(found.value));
 }

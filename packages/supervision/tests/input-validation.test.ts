@@ -17,6 +17,11 @@ test('installRunWatchers boundary validates both Run and launch-plan identities'
     ],
     recipient: { kind: 'human', principalId: 'person_chris' },
     activityGeneration: 4,
+    requestProvenance: {
+      requestedBy: 'person_chris',
+      traceId: 'trace_123e4567-e89b-42d3-a456-426614174000',
+      clientOpId: 'op_123e4567-e89b-42d3-a456-426614174000',
+    },
   });
   assert.equal(parsed.ok, true, parsed.ok ? '' : parsed.error.message);
   if (!parsed.ok) return;
@@ -56,6 +61,25 @@ test('installRunWatchers refuses an implicit recipient or activity generation', 
   });
   assert.equal(missing.ok, false,
     'install accepted host-defaulted recipient/activity generation');
+});
+
+test('one install cannot ambiguously repeat a template id at another version', () => {
+  const refused = parseInstallRunWatchersInput({
+    agentRunId: 'agentRun_018f0f8a-4f7b-7abc-8def-0123456789ab',
+    launchPlanId: 'launchPlan_018f0f8a-4f7b-7abc-8def-0123456789ab',
+    requiredTemplateRefs: [
+      { id: 'watch-template/idle', version: 1, digest: 'a'.repeat(64) },
+      { id: 'watch-template/idle', version: 2, digest: 'b'.repeat(64) },
+    ],
+    recipient: { kind: 'human', principalId: 'person_chris' },
+    activityGeneration: 1,
+    requestProvenance: {
+      requestedBy: 'person_chris',
+      traceId: 'trace_123e4567-e89b-42d3-a456-426614174000',
+      clientOpId: 'op_123e4567-e89b-42d3-a456-426614174000',
+    },
+  });
+  assert.equal(refused.ok, false);
 });
 
 test('evaluateEvent boundary validates the complete committed event envelope', () => {

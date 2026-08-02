@@ -5,8 +5,7 @@
 // B3c failure mode was a stage recorded `not-needed` for ever.
 import {
   b3err, b3fail, b3ok, deriveClientOpId, nowIsoUtc,
-  type ActivityGeneration, type AuthenticatedPrincipal, type B3Page, type B3PrincipalId,
-  type B3Result, type EventCursor, type IsoUtc,
+  type ActivityGeneration, type B3PrincipalId, type B3Result, type IsoUtc,
   type SystemCommandContext,
 } from '@novakai/foundation/contract';
 import {
@@ -15,7 +14,7 @@ import {
   type InstallRunWatchersInput, type NotificationRecipient, type VersionedRef,
   type ResolvedWatcherInstall, type WatcherInstallAuthority,
   type WatchDeadline, type WatcherTemplate, type WatcherTemplateCatalogue,
-  type WatchRule, type WatchRuleFilter, type WatchSubject,
+  type WatchRule, type WatchSubject,
 } from '../contract/index.js';
 import type { Persisted, SupervisionStore } from './store.js';
 import { templateDigest } from './templates.js';
@@ -46,9 +45,9 @@ const installEffectKey = (input: InstallRunWatchersInput, templateRef: Versioned
 ].join(':');
 
 function ruleRecord(
-  context: SystemCommandContext<'sys_agent_runtime'>,
   template: WatcherTemplate,
   plan: ResolvedWatcherInstall,
+  request: InstallRunWatchersInput['requestProvenance'],
   subject: WatchSubject,
 ): Persisted<WatchRule> & Record<string, unknown> {
   const deliveryMode = template.payload.deliveryBinding === 'role.parentNotificationMode-for-escalation'
@@ -72,9 +71,9 @@ function ruleRecord(
       launchPlanId: plan.launchPlanId,
       templateRef: template.templateRef,
       activityGeneration: plan.activityGeneration,
-      requestedBy: context.principal.id,
-      requestTraceId: context.traceId,
-      requestClientOpId: context.clientOpId,
+      requestedBy: request.requestedBy,
+      requestTraceId: request.traceId,
+      requestClientOpId: request.clientOpId,
     },
   };
 }
@@ -106,7 +105,15 @@ function resolveTemplates(
   plan: ResolvedWatcherInstall,
 ): B3Result<readonly WatcherTemplate[]> {
   const templates: WatcherTemplate[] = [];
+  const seen = new Set<string>();
   for (const templateRef of requiredRefs(plan)) {
+    if (seen.has(templateRef.id)) {
+      return b3fail(b3err(
+        'WatchRuleInvalid', 'watcher template ids must be unique within one install',
+        { templateId: templateRef.id }, false,
+      ));
+    }
+    seen.add(templateRef.id);
     const resolved = catalogue.resolve(templateRef);
     const valid = resolved !== null
       && sameRef(resolved.templateRef, templateRef)
@@ -220,7 +227,7 @@ async function installTemplate(
   const written = prior === undefined
     ? await deps.store.create<WatchRule>(
       SUPERVISION_RECORD_WRITER,
-      ruleRecord(context, template, plan, subject),
+      ruleRecord(template, plan, input.requestProvenance, subject),
       deriveClientOpId(installEffectKey(input, template.templateRef)),
     )
     : b3ok(prior);
@@ -266,65 +273,4 @@ export async function installRunWatchers(
     installed.push(written.value);
   }
   return b3ok(installed);
-}
-
-function matchesWatchRuleFilter(rule: WatchRule, filter: WatchRuleFilter): boolean {
-  if (filter.status !== undefined && !filter.status.includes(rule.status)) return false;
-  return filter.subject === undefined
-    || subjectKey(rule.subject) === subjectKey(filter.subject);
-}
-
-function canReadWatchRule(principal: AuthenticatedPrincipal, rule: WatchRule): boolean {
-  if (principal.kind === 'system') return true;
-  if (principal.verifiedScopes.includes('supervision:watch:read-all' as never)) return true;
-  if (principal.kind === 'human') {
-    return rule.recipient.kind === 'human' && rule.recipient.principalId === principal.id;
-  }
-  return principal.kind === 'agent-run'
-    && rule.subject.kind === 'agent-run'
-    && rule.subject.agentRunId === principal.agentRunId;
-}
-
-function visibleRules(
-  principal: AuthenticatedPrincipal,
-  rules: readonly WatchRule[],
-): { readonly visible: readonly WatchRule[]; readonly omitted: number } {
-  const visible: WatchRule[] = [];
-  let omitted = 0;
-  for (const rule of rules) {
-    if (canReadWatchRule(principal, rule)) visible.push(rule);
-    else omitted += 1;
-  }
-  return { visible, omitted };
-}
-
-/** Visibility-aware bounded WatchRule read behind §17.1's canonical list verb. */
-export async function listWatchRules(
-  store: SupervisionStore,
-  principal: AuthenticatedPrincipal,
-  filter: WatchRuleFilter,
-): Promise<B3Result<B3Page<WatchRule>>> {
-  const stored = await store.list<WatchRule>('watchRule');
-  if (!stored.ok) return b3fail(stored.error);
-  const filtered = stored.value.filter((rule) => matchesWatchRuleFilter(rule, filter));
-  const ordered = [...filtered].sort((left, right) =>
-    left.createdAt.localeCompare(right.createdAt) || String(left.id).localeCompare(String(right.id)));
-  const access = visibleRules(principal, ordered);
-  const start = filter.cursor === undefined
-    ? 0
-    : access.visible.findIndex((rule) => String(rule.id) === String(filter.cursor)) + 1;
-  if (filter.cursor !== undefined && start === 0) {
-    return b3fail(b3err(
-      'ValidationFailed', 'watch-rule cursor does not name a visible prior item',
-      { issues: [{ path: 'cursor', message: 'is unknown or no longer visible' }] }, false,
-    ));
-  }
-  const items = access.visible.slice(start, start + filter.limit);
-  const hasMore = start + items.length < access.visible.length;
-  const nextCursor = hasMore ? String(items.at(-1)?.id) as EventCursor : undefined;
-  return b3ok({
-    items,
-    ...(nextCursor === undefined ? {} : { nextCursor }),
-    omissions: access.omitted === 0 ? [] : [{ reason: 'permission', count: access.omitted }],
-  });
 }

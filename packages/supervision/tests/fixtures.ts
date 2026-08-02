@@ -45,7 +45,7 @@ export function usageEvidenceEvent(
 
 /** Two installed rules for the two required spawn templates. */
 export function installedWatchRules(
-  input: InstallRunWatchersInput,
+  input: Omit<InstallRunWatchersInput, 'requestProvenance'>,
 ): readonly WatchRule[] {
   const identifiers = [
     'watchRule_018f0f8a-4f7b-7abc-8def-0123456789ab',

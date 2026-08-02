@@ -79,7 +79,6 @@ export const OPERATION = {
 /** The scopes a Run's own grant carries. Intersected upward, never widened. */
 export const RUN_SCOPES: readonly AuthorityScope[] = [
   'agent.spawn', 'agent.interrupt', 'agent.stop-one', 'agent.continue', 'agent.control',
-  'supervision:watch:start-turn',
 ] as AuthorityScope[];
 
 /** §3.5: an unknown newer contract version is refused, never guessed at. */

@@ -43,6 +43,11 @@ export interface VersionedRef {
   readonly digest: string;
 }
 
+/** Agents-owned role-profile catalogue query used to validate watcher refs. */
+export interface WatcherTemplateRefCatalogue {
+  resolves(templateRef: VersionedRef): boolean;
+}
+
 // ── The governed role (§5.2) ────────────────────────────────────────────────
 
 export interface ProviderPolicy {
