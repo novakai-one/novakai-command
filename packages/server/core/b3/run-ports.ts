@@ -244,7 +244,15 @@ export function terminalPort(
   };
 }
 
-const RUNTIME_VIEWPORT = { columns: 120, rows: 40 } as const;
+/**
+ * The viewport the Runtime declares when it attaches to type a turn.
+ *
+ * It must match what the session was OPENED with, or attaching would resize the
+ * PTY under the provider and re-wrap — or clip — the answer the gate is about
+ * to read. See `MANAGED_VIEWPORT` in agent-runtime/core/runs-compose.ts for why
+ * it is this wide.
+ */
+const RUNTIME_VIEWPORT = { columns: 400, rows: 40 } as const;
 
 /** The beat between two keystrokes of one turn. */
 async function pause(milliseconds: number): Promise<void> {

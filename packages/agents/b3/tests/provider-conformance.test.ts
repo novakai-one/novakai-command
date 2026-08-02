@@ -404,6 +404,90 @@ test('a carriage return inside a brief is a line break, never half a turn', asyn
   }
 });
 
+test('a confirmation is found through the furniture a real TUI paints around it', async () => {
+  // Read off a real codex 0.146.0 during the rebuilt public proof: the reply is
+  // decorated with a bullet, and the composer's placeholder is painted onto the
+  // same row after it. `startsWith(marker)` found nothing, and a governed Run
+  // died at the gate for two minutes of silence with the correct answer on the
+  // screen the whole time.
+  const marker = 'SKILLS-CONFIRMED:';
+  const tokens = '["elite-codebase-engineering@v3#a1b2c3d4","test-driven-development@v2#e5f6a7b8"]';
+  const screen = [
+    'Working (0s • esc to interrupt)',
+    `• ${marker} ${tokens}›Improve documentation in @filename  gpt-5.6-sol xhigh · ~/repo`,
+  ].join('\n');
+  for (const provider of PROVIDER_KINDS) {
+    const found = adapters[provider].findConfirmationLine({ text: screen }, marker);
+    assert.equal(found, `${marker} ${tokens}`,
+      `${provider} could not read a confirmation a human can see`);
+  }
+});
+
+test('a wrong answer is still judged, never left to time out', async () => {
+  // The other half of the same function. Tolerating decoration must not turn a
+  // refusal into silence: an agent that answers WRONG has to be recorded as
+  // drift, and only an agent that says NOTHING may time out.
+  const marker = 'SKILLS-CONFIRMED:';
+  for (const provider of PROVIDER_KINDS) {
+    const wrong = adapters[provider].findConfirmationLine(
+      { text: `${marker} not json at all` }, marker,
+    );
+    assert.equal(wrong, `${marker} not json at all`, `${provider} swallowed a wrong answer`);
+    const silent = adapters[provider].findConfirmationLine({ text: 'nothing here' }, marker);
+    assert.equal(silent, null, `${provider} found a confirmation in an empty screen`);
+  }
+});
+
+test('a confirmation still being painted is not a wrong one', async () => {
+  // A streaming reply reaches the screen a piece at a time, so for a moment a
+  // real kimi shows `SKILLS-CONFIRMED:` and nothing else. An empty body is not
+  // JSON, so judging that moment terminated the Run for skills drift a few
+  // hundred milliseconds before the agent's own answer arrived.
+  const marker = 'SKILLS-CONFIRMED:';
+  for (const provider of PROVIDER_KINDS) {
+    for (const half of [`● ${marker}`, marker, `${marker} ["elite-codebase-engineering@v3#a1b2c3d4",`]) {
+      assert.equal(adapters[provider].findConfirmationLine({ text: half }, marker), null,
+        `${provider} judged a confirmation that was still arriving: ${half}`);
+    }
+  }
+});
+
+test('a confirmation that WRAPPED is still one confirmation', async () => {
+  // A screen is not a transcript. The canonical reply for two pinned skills is
+  // about 100 characters after the marker, so a real kimi wraps it and the row
+  // the marker is on holds half an array. Judging that row alone reported "the
+  // confirmation was not a JSON array" over a correct confirmation that was on
+  // the screen, complete, one line lower.
+  const marker = 'SKILLS-CONFIRMED:';
+  const screen = [
+    'thinking...',
+    `${marker} ["elite-codebase-engineering@v3#a1b2c3d4",`,
+    '"test-driven-development@v2#e5f6a7b8"]',
+  ].join('\n');
+  const whole = `${marker} ["elite-codebase-engineering@v3#a1b2c3d4","test-driven-development@v2#e5f6a7b8"]`;
+  for (const provider of PROVIDER_KINDS) {
+    assert.equal(adapters[provider].findConfirmationLine({ text: screen }, marker), whole,
+      `${provider} judged half of a wrapped confirmation`);
+  }
+});
+
+test('the gate\'s OWN sentence about the marker is never mistaken for an answer', async () => {
+  // Turn 1 says "start it with SKILLS-CONFIRMED:" — marker at the end of the
+  // line, nothing after it. A real kimi repaints that row often enough to land
+  // it after the prompt's own fingerprint, where the gate's position anchor can
+  // no longer exclude it, and the Run was terminated for its supervisor's words
+  // while the agent was still composing its reply.
+  const marker = 'SKILLS-CONFIRMED:';
+  const echo = [
+    '    Reply with EXACTLY ONE line and no other content: start it with SKILLS-CONFIRMED:',
+    '    then one space, then a JSON array of the tokens above, quoted, in the order',
+  ].join('\n');
+  for (const provider of PROVIDER_KINDS) {
+    assert.equal(adapters[provider].findConfirmationLine({ text: echo }, marker), null,
+      `${provider} read the gate's own instruction back as a confirmation`);
+  }
+});
+
 test('the Enter that submits a turn is its own write, after a beat', async () => {
   // Measured against all THREE real binaries on 2026-08-02, driving raw PTYs
   // with no Novakai machinery in the way (tests/turn-delivery-probe.mts):

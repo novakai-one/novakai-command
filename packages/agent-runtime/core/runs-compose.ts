@@ -64,6 +64,21 @@ export interface ComposeAgentRunsOptions extends RunsStoreOptions {
 /** Generous, because a real model reading its skills is not instant. */
 const DEFAULT_GATE_TIMEOUT_MS = 120_000;
 
+/**
+ * How wide a managed agent's terminal is opened.
+ *
+ * Nobody is looking at it. Its width exists for one reason: the Runtime reads
+ * what the agent SAID off this screen, and a provider that clips a long line at
+ * the viewport edge destroys the evidence. At 120 columns a real kimi showed
+ * `● SKILLS-CONFIRMED: ["elite-codebase-engineering@v3#a1b2c3d4",` and cut the
+ * rest — a correct confirmation, unreadable, and a governed Run that timed out
+ * at its own gate (NVK-KIMI-032, rebuilt public proof).
+ *
+ * The named limit: a role pinning enough skills to exceed this width would clip
+ * again. 400 columns holds roughly eight `id@v1#digest` tokens.
+ */
+const MANAGED_VIEWPORT = { columns: 400, rows: 40 } as const;
+
 export function composeAgentRuns(options: ComposeAgentRunsOptions): AgentRunsContract {
   // Every published event lands here first, so the stream a consumer reads and
   // the frames a controller is pushed are the same events with the same
@@ -83,7 +98,7 @@ export function composeAgentRuns(options: ComposeAgentRunsOptions): AgentRunsCon
       const event = events.append(kind, payload, traceId);
       publish?.(kind, { ...payload, cursor: event.cursor, eventId: event.eventId });
     },
-    defaultViewport: options.defaultViewport ?? { columns: 120, rows: 40 },
+    defaultViewport: options.defaultViewport ?? MANAGED_VIEWPORT,
     gateTimeoutMs: options.gateTimeoutMs ?? DEFAULT_GATE_TIMEOUT_MS,
     clock: options.clock ?? (() => Date.now()),
   };

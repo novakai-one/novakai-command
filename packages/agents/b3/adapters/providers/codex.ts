@@ -36,6 +36,19 @@ import {
 
 const NO_MODEL_FLAG = new Set(['cli-default', 'codex-cli', '']);
 
+/**
+ * The efforts that mean "pass no effort override; let the CLI decide".
+ *
+ * `default` is Novakai's own sentinel for an unpinned control, and it is NOT a
+ * codex effort. Sending it produced an HTTP 400 from the model endpoint —
+ * `[reasoning.effort] [invalid_enum_value] Invalid value: 'default'. Supported
+ * values are: 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'` —
+ * after the session had launched and been asked its gate question, so the Run
+ * died at the gate with no confirmation and nothing anywhere said why. Found by
+ * the rebuilt public proof (NVK-KIMI-032), driving a real codex.
+ */
+const NO_EFFORT_FLAG = new Set(['default', 'cli-default', '']);
+
 const claims = (
   support: ProviderCapability['support'], evidence: string, limitations: string[] = [],
 ): ProviderCapability => ({ support, evidence, limitations });
@@ -109,7 +122,9 @@ export function createCodexAdapter(
       launchedAt.set(input.reservedProviderSessionId, Date.now() - 1_000);
       const argv: string[] = [];
       if (!NO_MODEL_FLAG.has(plan.modelId)) argv.push('--model', plan.modelId);
-      if (plan.effort !== '') argv.push('-c', `model_reasoning_effort=${JSON.stringify(plan.effort)}`);
+      if (!NO_EFFORT_FLAG.has(plan.effort)) {
+        argv.push('-c', `model_reasoning_effort=${JSON.stringify(plan.effort)}`);
+      }
       return b3ok({
         executable,
         argv,

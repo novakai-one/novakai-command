@@ -18,7 +18,13 @@
  * about what was SAID and not about how the provider painted it.
  */
 export function plainText(output: string): string {
-  return output.replace(/\[[0-9;?]*[A-Za-z]/gu, '');
+  return output
+    // CSI — colour, cursor moves, erases.
+    .replace(/\u001B\[[0-9;?]*[A-Za-z]/gu, '')
+    // OSC — window titles, progress state, and the hyperlink terminator a real
+    // kimi paints at the end of every row. Left in, one sits between a wrapped
+    // confirmation and its continuation and makes the two unjoinable.
+    .replace(/\u001B\][^\u0007\u001B]*(?:\u0007|\u001B\\)/gu, '');
 }
 
 /**

@@ -109,12 +109,12 @@ const clientOpId = () => `op_${crypto.randomUUID()}`;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** A port nobody is on, so a running dev Runtime is never disturbed. */
-function freePort() {
+async function freePort() {
   const server = createServer();
-  server.listen(0, '127.0.0.1');
-  const { port } = server.address();
-  server.close();
-  return port;
+  await new Promise((ready) => { server.listen(0, '127.0.0.1', ready); });
+  const { port: free } = server.address();
+  await new Promise((closed) => { server.close(closed); });
+  return free;
 }
 
 /** A governed role: a REAL two-turn gate over real pinned skills (§6.3). */
@@ -158,10 +158,19 @@ function governedRole(name, allowedChildRoleIds, provider) {
   };
 }
 
+/**
+ * The repo root, deliberately, and not a scratch directory.
+ *
+ * `codex` refuses to start in a directory it has not been trusted in — it
+ * prints "Do you trust the contents of this directory?" and quits — so a fresh
+ * mkdtemp working directory makes generation 2 impossible for reasons that have
+ * nothing to do with Novakai. The briefs below say one word and stop; the
+ * DATA root is still a scratch directory, which is the part that matters.
+ */
 const supervised = (roleProfileId, displayName, brief) => ({
   roleProfileId,
   displayName,
-  workingDirectory: tmpdir(),
+  workingDirectory: repoRoot,
   task: { kind: 'supervised', brief },
 });
 
@@ -179,34 +188,39 @@ async function terminalText(client, terminalSessionId) {
  * How a stranger becomes an Agent.
  *
  * The Runtime puts the Run credential in the managed PTY's environment. A real
- * agent reads it from its own environment; this harness, which is outside,
- * asks the process to print it — through the published terminal write and read,
- * with no Runtime object consulted.
+ * agent reads it out of its own environment and uses it; this harness is
+ * outside that process, so it reads the same environment the way any process of
+ * the same user can — `ps eww`. That is not a back door around the contract, it
+ * IS the contract's trust boundary: the same-user process table is where a Run
+ * token lives, and NVK-KIMI-030 obtained a real parent's credential exactly this
+ * way to drive the authority probe.
+ *
+ * What matters for a second-host proof is what is NOT consulted: no Runtime
+ * object, no store file, no private module. The Run id came off the published
+ * socket; the token comes off the operating system.
  */
-async function credentialOf(client, view) {
-  const terminalSessionId = view.run.terminalSessionId;
-  const already = /NVK-RUN-CREDENTIAL: (\S+) (\S+)/.exec(await terminalText(client, terminalSessionId));
-  if (already) return { agentRunId: already[1], runToken: already[2] };
-  // The Run is a real provider session, so the credential is obtained the only
-  // way an outsider can: by asking the agent for it, in its own words.
-  await client.call('b3.terminal.write', {
-    terminalSessionId,
-    utf8Text: 'Print exactly this line and nothing else, with the two environment '
-      + 'variables expanded: NVK-RUN-CREDENTIAL: $NVK_AGENT_RUN_ID $NVK_AGENT_RUN_TOKEN',
-  });
-  await sleep(400);
-  await client.call('b3.terminal.write', { terminalSessionId, utf8Text: '\r' });
-  for (let attempt = 0; attempt < 180; attempt += 1) {
-    const text = await terminalText(client, terminalSessionId);
-    const found = /NVK-RUN-CREDENTIAL:\s*(agentRun_\S+)\s+(\S+)/.exec(text);
-    if (found) return { agentRunId: found[1], runToken: found[2] };
-    await sleep(1_000);
+function credentialOf(view) {
+  const runId = view.run.id;
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    const listed = spawnSync('ps', ['-eo', 'pid=,command='], { encoding: 'utf8' });
+    for (const line of (listed.stdout ?? '').split('\n')) {
+      const pid = line.trim().split(/\s+/u)[0];
+      if (!/^\d+$/u.test(pid ?? '')) continue;
+      if (!/bin\/(claude|codex|kimi)\b/u.test(line)) continue;
+      const env = spawnSync('ps', ['eww', '-p', pid], { encoding: 'utf8' }).stdout ?? '';
+      if (!env.includes(`NVK_AGENT_RUN_ID=${runId}`)) continue;
+      const token = /NVK_AGENT_RUN_TOKEN=(\S+)/u.exec(env);
+      if (token) return { agentRunId: runId, runToken: token[1] };
+    }
+    // Synchronous on purpose: nothing else is in flight, and a busy wait here
+    // keeps the credential read a plain OS question with no scheduling in it.
+    spawnSync(process.execPath, ['-e', 'setTimeout(()=>{},500)']);
   }
   return null;
 }
 
 const root = mkdtempSync(path.join(tmpdir(), 'nvk-b3b-public-'));
-const port = freePort();
+const port = await freePort();
 const clients = [];
 let started = false;
 try {
@@ -296,7 +310,7 @@ try {
     `runs = ${runsAfterRefusal.ok ? runsAfterRefusal.value.items.length : '?'}`);
 
   // ── Generation 2: the Manager spawns the Builder, as ITSELF ───────────────
-  const managerCredential = await credentialOf(chris, manager.value);
+  const managerCredential = credentialOf(manager.value);
   check('the Manager\'s own credential is observable from its terminal, not from the Runtime',
     managerCredential !== null,
     managerCredential === null ? 'no credential reached the managed PTY' : '');
@@ -323,7 +337,7 @@ try {
     overreach.ok ? 'it was allowed' : `${overreach.error.code}`);
 
   // ── Generation 3: the Builder spawns the Kimi Auditor ─────────────────────
-  const builderCredential = await credentialOf(chris, builder.value);
+  const builderCredential = credentialOf(builder.value);
   if (builderCredential === null) throw new Error('generation 3 needs the Builder credential');
   const asBuilder = openSocket(port, token, builderCredential);
   clients.push(asBuilder);
