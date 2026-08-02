@@ -16,13 +16,11 @@ import path from 'node:path';
 import { createFakePtyHost } from '../../terminal/adapters/pty-host/fake.js';
 import { createFakeProviderAdapters } from '../../agents/b3/contract/index.js';
 import { startRuntimeHost } from '../core/b3/host.js';
+import { connectRuntime, type RuntimeClient } from '../core/b3/client.js';
+import { governedRole } from './governed-role.js';
 
-const AGENT = 'agent_aaaaaaaa-0000-4000-8000-000000000001';
-const OTHER = 'agent_bbbbbbbb-0000-4000-8000-000000000002';
-const RUN_1 = 'agentRun_01900000-0000-7000-8000-000000000001';
-const RUN_2 = 'agentRun_01900000-0000-7000-8000-000000000002';
-const TERMINAL_1 = 'terminal_01900000-0000-7000-8000-000000000001';
-const TERMINAL_2 = 'terminal_01900000-0000-7000-8000-000000000002';
+/** A Run id no spawn ever minted — a SECOND binding, on purpose (see below). */
+const UNMANAGED_RUN = 'agentRun_01900000-0000-7000-8000-000000000001';
 
 const human = {
   principal: { id: 'person_chris' as never, kind: 'human' as const, verifiedScopes: [] },
@@ -51,6 +49,33 @@ function jsonlFiles(root: string): string[] {
   return found.sort();
 }
 
+/**
+ * A real Agent, spawned through the published wire.
+ *
+ * These were two hardcoded ids that had never been created, which passed only
+ * while `sendAgentMessage` accepted a Message for an Agent nobody had spawned
+ * (the hole P0-5 closed). An inventory test is a claim about the files a REAL
+ * run writes, so it has to be a real run.
+ */
+async function spawnAgent(
+  client: RuntimeClient, name: string,
+): Promise<{ agentId: string; agentRunId: string }> {
+  const role = await client.call<{ id: string }>('b3.agent.createRole', {
+    ...governedRole(`${name}-role`),
+    skillsConfirmationGate: { mode: 'disabled', allowedFor: 'interactive-chat-only' },
+  });
+  assert.equal(role.ok, true, role.ok ? '' : role.error.message);
+  if (!role.ok) throw new Error('createRole failed');
+  const spawned = await client.call<{
+    agent: { agentId: string }; run: { id: string };
+  }>('b3.agent.spawn', {
+    roleProfileId: role.value.id, displayName: name, workingDirectory: tmpdir(),
+  });
+  assert.equal(spawned.ok, true, spawned.ok ? '' : spawned.error.message);
+  if (!spawned.ok) throw new Error('spawn failed');
+  return { agentId: spawned.value.agent.agentId, agentRunId: spawned.value.run.id };
+}
+
 test('every B3c record lands under .novakai/stores, and Messaging owns exactly one file', async () => {
   const root = mkdtempSync(path.join(tmpdir(), 'nvk-b3c-inventory-'));
   const host = await startRuntimeHost({
@@ -58,6 +83,13 @@ test('every B3c record lands under .novakai/stores, and Messaging owns exactly o
   });
   try {
     const { messaging, transcript } = host.runtime;
+    const continueClient = await connectRuntime({
+      root, port: host.port, token: host.token,
+    });
+    const first = await spawnAgent(continueClient, 'Inventory');
+    const AGENT = first.agentId;
+    const agentRunId = first.agentRunId;
+    const OTHER = (await spawnAgent(continueClient, 'InventoryOther')).agentId;
 
     // Exercise the whole B3c surface, so anything that would write a file has
     // a chance to. A test that writes nothing proves nothing.
@@ -78,28 +110,29 @@ test('every B3c record lands under .novakai/stores, and Messaging owns exactly o
     });
     assert.equal(group.ok, true);
 
-    const reserved = await messaging.reserveAgentEndpointClaim(runtimeCtx, {
-      agentId: AGENT as never, agentRunId: RUN_1 as never,
-      terminalSessionId: TERMINAL_1 as never, expectedEndpointGeneration: -1,
-    });
-    assert.equal(reserved.ok, true);
-    if (!reserved.ok) return;
-    await messaging.activateAgentEndpointClaim(runtimeCtx, reserved.value.id);
-
+    // The endpoint claim is NOT reserved by hand any more. The spawn above
+    // already performed §13.5 rows 6/9/10 for real, so a hand-driven
+    // `expectedEndpointGeneration: -1` now describes a state the product has
+    // already moved past — and a test that reserves its own claim is
+    // performing the very lifecycle it is supposed to be inspecting the files
+    // of (P1-13's rule, pointed at a test).
     for (const text of ['one', 'two']) {
       const sent = await messaging.sendAgentMessage(human, {
         target: { kind: 'agent', agentId: AGENT as never },
         threadId: thread.value.id, text, clientMessageId: `cmid-${text}`,
       });
-      assert.equal(sent.ok, true);
+      assert.equal(sent.ok, true, sent.ok ? '' : `${sent.error.code}: ${sent.error.message}`);
     }
 
-    const transferred = await messaging.transferAgentEndpointClaim(runtimeCtx, {
-      agentId: AGENT as never, expectedOldClaimId: reserved.value.id,
-      newRunId: RUN_2 as never, newTerminalSessionId: TERMINAL_2 as never,
-      oldFinalTranscriptWatermark: 'pos-3', expectedEndpointGeneration: 0,
+    // The endpoint transfer comes from the real continuation, which drains,
+    // finalises the watermark and transfers — the §13.6 ladder rather than a
+    // hand-made version of it.
+    const continued = await continueClient.call<{ run: { id: string } }>('b3.agent.continue', {
+      agentId: AGENT, expectedOldRunId: agentRunId,
+      mode: 'fresh', configurationMode: 'inherit-plan',
     });
-    assert.equal(transferred.ok, true);
+    assert.equal(continued.ok, true,
+      continued.ok ? '' : `${continued.error.code}: ${continued.error.message}`);
 
     await messaging.openConversationView(human, {
       threadId: group.ok ? group.value.id : thread.value.id,
@@ -107,7 +140,7 @@ test('every B3c record lands under .novakai/stores, and Messaging owns exactly o
     });
 
     const bound = await transcript.bindTranscriptToRun(runtimeCtx, {
-      agentId: AGENT as never, agentRunId: RUN_1 as never, provider: 'claude',
+      agentId: AGENT as never, agentRunId: UNMANAGED_RUN as never, provider: 'claude',
       providerSessionId: 'sess_11111111-0000-4000-8000-000000000001' as never,
       threadId: thread.value.id,
     });
@@ -118,6 +151,7 @@ test('every B3c record lands under .novakai/stores, and Messaging owns exactly o
       principal: { id: 'sys_transcript' as never, kind: 'system', verifiedScopes: [] },
     }, { bindingId: bound.value.id, maxLines: 50 });
 
+    continueClient.close();
     await host.close();
 
     // ── the inventory ────────────────────────────────────────────────────

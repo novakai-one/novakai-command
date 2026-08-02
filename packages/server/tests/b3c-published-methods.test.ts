@@ -14,6 +14,8 @@ import path from 'node:path';
 import { createFakePtyHost } from '../../terminal/adapters/pty-host/fake.js';
 import { createFakeProviderAdapters } from '../../agents/b3/contract/index.js';
 import { startRuntimeHost } from '../core/b3/host.js';
+import { connectRuntime, type RuntimeClient } from '../core/b3/client.js';
+import { governedRole } from './governed-role.js';
 import { buildB3MessagingMethods } from '../core/b3/messaging-methods.js';
 import type { MethodTable } from '../contract/protocol.js';
 
@@ -37,12 +39,36 @@ const REACHABILITY = [
   'b3.transcript.ingest',
 ] as const;
 
-const AGENT = 'agent_aaaaaaaa-0000-4000-8000-000000000001';
-
 interface Rig {
   readonly table: MethodTable;
   readonly root: string;
+  /** Two REAL Agents, spawned through the published wire. */
+  readonly agentId: string;
+  readonly otherAgentId: string;
   close(): Promise<void>;
+}
+
+/**
+ * These ids used to be two constants that had never been created. That passed
+ * only while `sendAgentMessage` accepted a Message for an Agent nobody had
+ * spawned — the hole P0-5 closed — so the tests were proving the wire could
+ * reach a state production now refuses. They spawn for real instead: a
+ * reachability test that starts from an Agent the product never made is not
+ * starting from nothing, it is starting from a fiction.
+ */
+async function spawnAgent(client: RuntimeClient, name: string): Promise<string> {
+  const role = await client.call<{ id: string }>('b3.agent.createRole', {
+    ...governedRole(`${name}-role`),
+    skillsConfirmationGate: { mode: 'disabled', allowedFor: 'interactive-chat-only' },
+  });
+  assert.equal(role.ok, true, role.ok ? '' : role.error.message);
+  if (!role.ok) throw new Error('createRole failed');
+  const spawned = await client.call<{ agent: { agentId: string } }>('b3.agent.spawn', {
+    roleProfileId: role.value.id, displayName: name, workingDirectory: tmpdir(),
+  });
+  assert.equal(spawned.ok, true, spawned.ok ? '' : spawned.error.message);
+  if (!spawned.ok) throw new Error('spawn failed');
+  return spawned.value.agent.agentId;
 }
 
 async function rig(): Promise<Rig> {
@@ -50,6 +76,10 @@ async function rig(): Promise<Rig> {
   const host = await startRuntimeHost({
     root, port: 0, ptyHost: createFakePtyHost(), providers: createFakeProviderAdapters(),
   });
+  const client = await connectRuntime({ root, port: host.port, token: host.token });
+  const agentId = await spawnAgent(client, 'Published');
+  const otherAgentId = await spawnAgent(client, 'PublishedOther');
+  client.close();
   const table = buildB3MessagingMethods({
     messaging: host.runtime.messaging,
     transcript: host.runtime.transcript,
@@ -63,7 +93,7 @@ async function rig(): Promise<Rig> {
     }),
   });
   return {
-    table, root,
+    table, root, agentId, otherAgentId,
     async close() {
       await host.close();
       rmSync(root, { recursive: true, force: true });
@@ -104,6 +134,7 @@ test('a caller starting from nothing can mint a Thread and send a Message', asyn
   // The hold-out blocker, end to end and over the wire: no Thread exists, and
   // the caller has only an AgentId.
   const harness = await rig();
+  const AGENT = harness.agentId;
   try {
     const thread = await call(harness.table, 'b3.messaging.ensureDirectThread', {
       between: [
@@ -136,7 +167,8 @@ test('a caller starting from nothing can mint a Thread and send a Message', asyn
 
 test('reading two Agents talk does not pin a conversation; opening one does', async () => {
   const harness = await rig();
-  const other = 'agent_bbbbbbbb-0000-4000-8000-000000000002';
+  const AGENT = harness.agentId;
+  const other = harness.otherAgentId;
   try {
     const thread = await call(harness.table, 'b3.messaging.ensureDirectThread', {
       between: [{ kind: 'agent', agentId: AGENT }, { kind: 'agent', agentId: other }],
@@ -178,7 +210,7 @@ test('a malformed payload is a typed ValidationFailed, never a throw', async () 
     assert.equal(noTarget.error?.code, 'ValidationFailed');
 
     const oneParticipant = await call(harness.table, 'b3.messaging.ensureDirectThread', {
-      between: [{ kind: 'agent', agentId: AGENT }],
+      between: [{ kind: 'agent', agentId: harness.agentId }],
     });
     assert.equal(oneParticipant.ok, false);
     assert.equal(oneParticipant.error?.code, 'ValidationFailed');
