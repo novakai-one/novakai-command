@@ -18,6 +18,11 @@ export {
   type FoundationMessagingStoreOptions, type MessagingStoreOpPayload,
 } from '../adapters/store-foundation.js';
 export { agentIdOf, agentPersonId, isAgentPerson } from '../core/identity.js';
+export {
+  checkMessagingStoreRoute, listMigratedOperations, normaliseLegacyOp,
+  readLegacyStoreOp, readMessagingCutoverReceipt, runMessagingCutover,
+  type MessagingCutoverInput, type MessagingCutoverOutcome, type MessagingCutoverReceipt,
+} from '../adapters/cutover.js';
 export type { MessagingStore } from '../../seams/store.js';
 export { createSystemClock } from '../../adapters/clock-system.js';
 export type { ClockIds } from '../../seams/clock.js';

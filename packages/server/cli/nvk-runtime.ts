@@ -4,7 +4,7 @@
 //   nvk-runtime serve  [--root .novakai] [--port 5190] [--static <dir>]
 //   nvk-runtime ensure [--start]
 //   nvk-runtime status
-//   nvk-runtime doctor
+//   nvk-runtime doctor [--cutover]
 //   nvk-runtime stop --live-runs refuse|stop-explicitly
 //
 // `ensure --start` is the point of the whole slice: it reaches the runtime, and
@@ -17,6 +17,7 @@ import type { RuntimeStatus, RuntimeDoctorReport, RuntimeStopOutcome } from '../
 import { startRuntimeHost } from '../core/b3/host.js';
 import { connectRuntime, type RuntimeClient } from '../core/b3/client.js';
 import { clientOpIdFrom, emit, fail, parseFlags, type Flags } from '../core/b3/cli-shared.js';
+import { buildCutoverReport, describeCutover } from '../core/b3/cutover-report.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '..', '..', '..');
@@ -161,6 +162,18 @@ const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
   },
 
   async doctor(argFlags) {
+    // `--cutover` answers a different question from the runtime health one:
+    // "did the store route actually move, and can I prove it?" It is a pure
+    // read of the local data root, so it works with no Runtime running — which
+    // is exactly when someone reaches for it (§17.1, surface #10).
+    if (argFlags.value('cutover') === 'true') {
+      const report = await buildCutoverReport({
+        root,
+        dataRoot: path.join(root, 'stores'),
+        legacySources: { messagingStoreOp: path.join(root, 'messaging-store.jsonl') },
+      });
+      emit('runtime doctor --cutover', argFlags, report, describeCutover);
+    }
     emit('runtime doctor', argFlags, await withClient<RuntimeDoctorReport>((client) =>
       client.call<RuntimeDoctorReport>('b3.runtime.doctor', {})), describeDoctor);
   },
