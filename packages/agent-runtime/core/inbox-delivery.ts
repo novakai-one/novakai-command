@@ -27,7 +27,7 @@ import {
 } from '@novakai/foundation/contract';
 
 import type { MessagingInboxPort } from '../contract/ports.js';
-import { FINAL_LIFECYCLES, type AgentRun } from '../contract/runs.js';
+import type { AgentRun } from '../contract/runs.js';
 import type { RunsCore } from './runs-context.js';
 
 export interface InboxDeliveryPass {
@@ -63,12 +63,11 @@ const deliveryContext = (): CommandContext => ({
  * A Run that can be typed into right now.
  *
  * `ready` and nothing else: `provisioning` is still climbing the §13.5 ladder
- * (its terminal is mid-gate), and every final lifecycle has no live PTY at all.
+ * with its terminal mid-gate, and every other lifecycle — final or recovering —
+ * has no PTY this Runtime may type into.
  */
 function deliverable(agentRun: AgentRun): boolean {
-  return agentRun.lifecycle === 'ready'
-    && !FINAL_LIFECYCLES.has(agentRun.lifecycle)
-    && agentRun.terminalSessionId !== undefined;
+  return agentRun.lifecycle === 'ready' && agentRun.terminalSessionId !== undefined;
 }
 
 export function createInboxDeliveryPump(options: InboxDeliveryOptions): InboxDeliveryPump {
