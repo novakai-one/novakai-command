@@ -46,7 +46,17 @@ export interface AgentMessagingOptions {
    * keeps red gate 12 trivially true.
    */
   readonly conversationViews?: ConversationViewPort;
+  /**
+   * Where §15's committed facts go. Messaging owns the facts; the composition
+   * root owns the stream, so a consumer holds ONE cursor across every
+   * capability (§24.4) instead of trying to order two.
+   */
+  readonly emit?: CapabilityEventEmitter;
 }
+
+export type CapabilityEventEmitter = (
+  kind: string, payload: Readonly<Record<string, unknown>>,
+) => void;
 
 /** The Shell-owned sidebar, seen through the narrowest possible door. */
 export interface ConversationViewPort {
@@ -54,6 +64,18 @@ export interface ConversationViewPort {
   close(threadId: ThreadId): Promise<void>;
   list(): Promise<readonly ConversationView[]>;
 }
+
+const endpointEvent = "messaging.agent-endpoint.changed";
+
+const claimPayload = (claim: AgentEndpointClaim): Record<string, unknown> => ({
+  claimId: claim.id,
+  agentId: claim.agentId,
+  agentRunId: claim.agentRunId,
+  endpointGeneration: claim.endpointGeneration,
+  state: claim.state,
+  ...(claim.cutoffMessageSequence === undefined
+    ? {} : { cutoffMessageSequence: claim.cutoffMessageSequence }),
+});
 
 /** The default: an in-memory port for hosts with no sidebar (CLI, harnesses). */
 export function createMemoryConversationViews(): ConversationViewPort {
@@ -71,35 +93,75 @@ export function createMemoryConversationViews(): ConversationViewPort {
 export function composeAgentMessaging(options: AgentMessagingOptions): AgentMessagingContract {
   const { store, clock } = options;
   const views = options.conversationViews ?? createMemoryConversationViews();
+  const emit = options.emit ?? (() => undefined);
+
+  /** Emit only after the operation is durable — never on the way in. */
+  function announce<T>(
+    result: B3Result<T>, kind: string, payload: (value: T) => Record<string, unknown>,
+  ): B3Result<T> {
+    if (result.ok) emit(kind, payload(result.value));
+    return result;
+  }
 
   async function writeItem(item: AgentInboxItem): Promise<B3Result<AgentInboxItem>> {
     const written = await store.transitionAgentInboxItem(item);
     if (written.kind === "error") return b3fail(storeError(written.error));
-    return b3ok(written.value);
+    return announce(b3ok(written.value), "messaging.agent-inbox.changed", (saved) => ({
+      inboxItemId: saved.id,
+      agentId: saved.agentId,
+      messageId: saved.messageId,
+      state: saved.state,
+      ...(saved.endpointClaimId === undefined
+        ? {} : { endpointClaimId: saved.endpointClaimId }),
+    }));
   }
 
   return {
     // --- §12.5 send ---------------------------------------------------------
-    sendAgentMessage: (context: CommandContext, input: SendAgentMessageInput) =>
-      sendAgentMessage({ store, clock }, context, input),
+    async sendAgentMessage(context: CommandContext, input: SendAgentMessageInput) {
+      const sent = await sendAgentMessage({ store, clock }, context, input);
+      return announce(sent, "messaging.agent-message.committed", (acceptance) => ({
+        messageId: acceptance.messageId,
+        threadId: acceptance.threadId,
+        state: acceptance.state,
+        duplicate: acceptance.duplicate,
+        ...(acceptance.inboxItemId === undefined
+          ? {} : { inboxItemId: acceptance.inboxItemId }),
+      }));
+    },
 
-    commitTerminalOriginatedMessage: (
+    async commitTerminalOriginatedMessage(
       _context: SystemCommandContext<"sys_transcript">,
       input: CommitTerminalOriginatedMessageInput,
-    ) => commitTerminalOriginatedMessage({ store, clock }, input),
+    ) {
+      const committed = await commitTerminalOriginatedMessage({ store, clock }, input);
+      return announce(committed, "messaging.agent-message.committed", (acceptance) => ({
+        messageId: acceptance.messageId,
+        threadId: acceptance.threadId,
+        state: acceptance.state,
+        duplicate: acceptance.duplicate,
+        originBindingId: input.bindingId,
+      }));
+    },
 
     // --- §12.5 endpoint lifecycle ------------------------------------------
-    reserveAgentEndpointClaim: (
+    async reserveAgentEndpointClaim(
       _context: SystemCommandContext<"sys_agent_runtime">, input: ReserveAgentEndpointInput,
-    ) => reserveAgentEndpointClaim(store, input),
+    ) {
+      return announce(await reserveAgentEndpointClaim(store, input), endpointEvent, claimPayload);
+    },
 
-    activateAgentEndpointClaim: (
+    async activateAgentEndpointClaim(
       _context: SystemCommandContext<"sys_agent_runtime">, claimId: AgentEndpointClaimId,
-    ) => activateAgentEndpointClaim(store, claimId),
+    ) {
+      return announce(await activateAgentEndpointClaim(store, claimId), endpointEvent, claimPayload);
+    },
 
-    transferAgentEndpointClaim: (
+    async transferAgentEndpointClaim(
       _context: SystemCommandContext<"sys_agent_runtime">, input: TransferAgentEndpointInput,
-    ) => transferAgentEndpointClaim(store, input),
+    ) {
+      return announce(await transferAgentEndpointClaim(store, input), endpointEvent, claimPayload);
+    },
 
     // --- §12.5 send ---------------------------------------------------------
     // --- §12.5 threads and conversation views -------------------------------

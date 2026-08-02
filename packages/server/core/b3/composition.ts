@@ -26,6 +26,11 @@ import {
 } from '../../../agents/b3/contract/index.js';
 import { agentsPort, createRunCredentials, terminalPort } from './run-ports.js';
 import { createProviderPort } from './provider-port.js';
+import { composeB3Messaging, composeB3TranscriptFor } from './messaging-composition.js';
+import type { AgentMessagingContract } from '../../../messaging/b3/contract/api.js';
+import type {
+  B3TranscriptContract, TranscriptSourcePort,
+} from '../../../transcript/b3/contract/api.js';
 
 export interface B3RuntimeOptions {
   /** `.novakai/` root. Domain records live in `<root>/stores`. */
@@ -45,6 +50,12 @@ export interface B3RuntimeOptions {
    * and a suite proving the gate's refusals needs far less than two minutes.
    */
   readonly gateTimeoutMs?: number;
+  /**
+   * Where transcript bytes come from. Absent means no source is wired, which
+   * is honest for a host that only sends Messages — a binding then stays
+   * `waiting` rather than pretending to mirror.
+   */
+  readonly transcriptSource?: TranscriptSourcePort;
 }
 
 export interface B3Runtime {
@@ -53,6 +64,8 @@ export interface B3Runtime {
   readonly agents: GovernedAgentsContract;
   readonly runs: AgentRunsContract;
   readonly credentials: ReturnType<typeof createRunCredentials>;
+  readonly messaging: AgentMessagingContract & { readonly store: { close(): Promise<void> } };
+  readonly transcript: B3TranscriptContract;
   readonly dataRoot: string;
   close(): Promise<void>;
 }
@@ -194,16 +207,40 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
     ...(options.gateTimeoutMs === undefined ? {} : { gateTimeoutMs: options.gateTimeoutMs }),
   });
 
+  // Messaging and Transcript publish their committed facts into the ONE event
+  // stream the Runtime already owns (§15, §24.4). They do not write each
+  // other's stores and neither writes the Runtime's — the only thing crossing
+  // here is an event and a typed request.
+  const emit = (owner: 'messaging' | 'transcript') =>
+    (kind: string, payload: Readonly<Record<string, unknown>>): void => {
+      runs?.publishCapabilityEvent(kind, payload, owner);
+    };
+
+  const messaging = await composeB3Messaging({
+    root: options.root, dataRoot, emit: emit('messaging'),
+  });
+  const transcript = composeB3TranscriptFor({
+    root: options.root,
+    dataRoot,
+    messaging,
+    emit: emit('transcript'),
+    ...(options.transcriptSource === undefined
+      ? {} : { source: options.transcriptSource }),
+  });
+
   return {
     runtime,
     terminal,
     agents,
     runs,
     credentials,
+    messaging,
+    transcript,
     dataRoot,
     async close() {
       await terminal?.dispose();
       await runtime.shutdown();
+      await messaging.store.close();
     },
   };
 }

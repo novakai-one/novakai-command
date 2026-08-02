@@ -5,7 +5,7 @@
 // callers use different policy paths" is red gate 23, and the cheapest way to
 // hold that gate is to have exactly one path.
 import type {
-  AgentId, AgentRunId, AuthenticatedPrincipal, B3Page, B3Result, CommandContext,
+  AgentId, AgentRunId, AuthenticatedPrincipal, B3Page, B3Result, CapabilityOwner, CommandContext,
   ControlReplacementPlanId, EventCursor, HumanPrincipalId, IsoUtc,
   ProviderSessionId, ProviderTurnId, ActivityGeneration, RecordVersion,
   AgentRoleProfileId, ResolvedLaunchPlanId, RunOperationId, TraceCorrelationId,
@@ -225,7 +225,13 @@ export interface RunEvent {
   readonly schemaVersion: 1;
   readonly occurredAt: IsoUtc;
   readonly committedAt: IsoUtc;
-  readonly sourceOwner: 'agent-runtime';
+  /**
+   * The capability that OWNS the fact. Was pinned to `agent-runtime` while
+   * the Runtime was the only publisher; B3c's messaging/transcript facts ride
+   * the same stream (§15, §24.4) and naming them agent-runtime would misstate
+   * who is authoritative for them.
+   */
+  readonly sourceOwner: CapabilityOwner;
   readonly traceId: TraceCorrelationId;
   readonly cursor: EventCursor;
   readonly payload: Readonly<Record<string, unknown>>;
@@ -347,6 +353,23 @@ export interface AgentRuntimeQueries {
   readRunEvents(
     principal: AuthenticatedPrincipal, input: ReadRunEventsInput,
   ): Promise<B3Result<RunEventPage>>;
+
+  /**
+   * Let another capability publish a committed fact into the ONE event stream
+   * (§15, §24.4).
+   *
+   * B3c's `messaging.*` and `transcript.*` events are Messaging's and
+   * Transcript's facts, not the Runtime's — but a consumer that had to hold a
+   * second cursor for them would have no way to order the two streams against
+   * each other, and §24.4's second-host proof subscribes to exactly one. So
+   * the stream is shared and the event names its real owner.
+   *
+   * This publishes; it does not make Agent Runtime the writer of anything.
+   * Events are not durable records (§18.1 registers no events file).
+   */
+  publishCapabilityEvent(
+    kind: string, payload: Readonly<Record<string, unknown>>, sourceOwner: CapabilityOwner,
+  ): void;
 
   /**
    * The tree-closing fence covering this Agent, or `null` when nothing is

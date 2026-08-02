@@ -80,6 +80,13 @@ export interface MirrorDeps {
   readonly source: TranscriptSourcePort;
   readonly messaging: MessagingMirrorPort;
   readonly hooks?: MirrorStageHooks;
+  /** Records a native subagent seen on a line. Injected to avoid a cycle. */
+  readonly observeSubagent?: (input: {
+    readonly bindingId: string;
+    readonly providerNativeId: string;
+    readonly observedParentNativeId?: string;
+    readonly evidenceLineIds: readonly string[];
+  }) => Promise<B3Result<unknown>>;
 }
 
 interface PassCounters {
@@ -196,6 +203,13 @@ async function handleLine(
   const seen = await checkLedger(deps, binding, line, ledgerId);
   if (seen !== null) return seen;
 
+  // A line carrying a provider-native subagent id is EVIDENCE that one exists.
+  // Recording it here — before any decision about the turn itself — is what
+  // makes "listed as observed work with evidence" true for tool lines too,
+  // which is where most native subagent activity actually shows up.
+  const observed = await noteSubagent(deps, binding, line, ledgerId);
+  if (observed !== null) return observed;
+
   const classified = classifyTurn({ role: line.role, text: line.text });
   if (await halted(deps, 'after-classify', { position: line.position })) {
     return { kind: 'halt' };
@@ -231,6 +245,25 @@ async function checkLedger(
   const stopped = await quarantineAt(deps, binding, line, ledgerId);
   if (!stopped.ok) return { kind: 'failed', error: stopped };
   return { kind: 'quarantined' };
+}
+
+/**
+ * Record a provider-native subagent seen on this line. Never promotes it:
+ * DEC-B3V4-18 keeps that an explicit, separate act.
+ */
+async function noteSubagent(
+  deps: MirrorDeps, binding: TranscriptBinding, line: SourceLine, ledgerId: TranscriptLineId,
+): Promise<LineOutcome | null> {
+  if (line.nativeSubagentId === undefined) return null;
+  const recorded = await deps.observeSubagent?.({
+    bindingId: binding.id,
+    providerNativeId: line.nativeSubagentId,
+    ...(line.parentNativeSubagentId === undefined
+      ? {} : { observedParentNativeId: line.parentNativeSubagentId }),
+    evidenceLineIds: [ledgerId],
+  });
+  if (recorded !== undefined && !recorded.ok) return { kind: 'failed', error: recorded };
+  return null;
 }
 
 async function mirrorOne(

@@ -12,13 +12,14 @@
 import { randomUUID } from 'node:crypto';
 import {
   b3err, b3fail, b3ok, mintTraceCorrelationId, nowIsoUtc,
-  type B3Result, type EventCursor, type TraceCorrelationId,
+  type B3Result, type CapabilityOwner, type EventCursor, type TraceCorrelationId,
 } from '@novakai/foundation/contract';
 import type { RunEvent, RunEventPage } from '../contract/runs-api.js';
 
 export interface RunEventLog {
   append(
     kind: string, payload: Readonly<Record<string, unknown>>, traceId?: TraceCorrelationId,
+    sourceOwner?: CapabilityOwner,
   ): RunEvent;
   read(after: string | undefined, limit: number): B3Result<RunEventPage>;
   subscribe(after: string | undefined): AsyncIterable<B3Result<RunEvent>>;
@@ -74,6 +75,7 @@ export function createRunEventLog(capacity = DEFAULT_CAPACITY): RunEventLog {
 
   function append(
     kind: string, payload: Readonly<Record<string, unknown>>, traceId?: TraceCorrelationId,
+    sourceOwner: CapabilityOwner = 'agent-runtime',
   ): RunEvent {
     newest += 1;
     const committedAt = nowIsoUtc();
@@ -83,7 +85,11 @@ export function createRunEventLog(capacity = DEFAULT_CAPACITY): RunEventLog {
       schemaVersion: 1,
       occurredAt: committedAt,
       committedAt,
-      sourceOwner: 'agent-runtime',
+      // §15: every event names the capability that OWNS the fact, not the
+      // process that happened to append it. B3c's messaging/transcript facts
+      // ride this one stream so a consumer keeps ONE cursor (§24.4), and
+      // saying they came from agent-runtime would be a lie about ownership.
+      sourceOwner,
       // The command's trace when the emitter had one to hand over; otherwise
       // this event's own. A correlation handle either way — never a claim that
       // some particular command caused it.

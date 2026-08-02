@@ -399,6 +399,67 @@ test('an ingest against a stale expected watermark is refused', async () => {
   }
 });
 
+test('a native subagent seen during ingest is recorded with the line as evidence', async () => {
+  // §7: "Observed provider-native subagents: listed as observed work with
+  // evidence." Most of that activity shows up on TOOL lines — the ones the
+  // noise filter drops — so discovery has to happen before classification or
+  // the evidence disappears with the noise.
+  const { api, source, root } = rig();
+  try {
+    const bindingId = await bind(api);
+    source.lines = [
+      { ...line('1', 'tool_call', 'Task(explore)'), nativeSubagentId: 'task-42' },
+      line('2', 'assistant', 'the subagent finished'),
+    ];
+    const ingested = await api.ingestTranscriptSource(transcriptCtx(), {
+      bindingId: bindingId as never, maxLines: 100,
+    });
+    assert.equal(ingested.ok, true);
+
+    const listed = await api.listObservedSubagents(
+      { id: 'human_chris' as never, kind: 'human', verifiedScopes: [] },
+      { bindingId: bindingId as never, limit: 10 },
+    );
+    assert.equal(listed.ok, true);
+    if (!listed.ok) return;
+    assert.equal(listed.value.items.length, 1);
+    assert.equal(listed.value.items[0]?.providerNativeId, 'task-42');
+    assert.equal(listed.value.items[0]?.status, 'observed');
+    assert.equal(listed.value.items[0]?.evidenceLineIds.length, 1,
+      'an observed subagent was recorded with no evidence');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('every B3c transcript fact reaches the event stream, once committed', async () => {
+  const emitted: string[] = [];
+  const root = mkdtempSync(path.join(tmpdir(), 'nvk-b3c-events-'));
+  try {
+    const store = createTranscriptStore({ root, dataRoot: path.join(root, 'stores') });
+    const source = new FixtureSource();
+    const api = composeB3Transcript({
+      store, source, messaging: new RecordingMessaging(),
+      emit: (kind) => { emitted.push(kind); },
+    });
+    const bindingId = await bind(api);
+    source.lines = [
+      { ...line('1', 'tool_call', 'Task(explore)'), nativeSubagentId: 'task-42' },
+      line('2', 'assistant', 'done'),
+    ];
+    await api.ingestTranscriptSource(transcriptCtx(), {
+      bindingId: bindingId as never, maxLines: 100,
+    });
+    assert.deepEqual([...new Set(emitted)].sort(), [
+      'transcript.binding.changed',
+      'transcript.line.committed',
+      'transcript.observed-subagent.changed',
+    ]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('an observed subagent is listed as observed work and is never auto-promoted', async () => {
   // Red gate 16: "a provider-native subagent becomes a managed Agent without an
   // explicit promotion operation".

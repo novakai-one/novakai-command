@@ -30,7 +30,16 @@ export interface B3TranscriptOptions {
   /** Optional promotion authority. Absent means no promotion is possible. */
   readonly promotion?: SubagentPromotionPort;
   readonly hooks?: MirrorStageHooks;
+  /**
+   * Where §15's committed facts go. Transcript owns the facts; the composition
+   * root owns the stream, so one cursor covers every capability (§24.4).
+   */
+  readonly emit?: CapabilityEventEmitter;
 }
+
+export type CapabilityEventEmitter = (
+  kind: string, payload: Readonly<Record<string, unknown>>,
+) => void;
 
 /**
  * Promotion crosses into Agents, which owns Agent identity. Transcript asks;
@@ -53,8 +62,40 @@ const unknownBinding = (id: string): ReturnType<typeof b3err> =>
 
 const keyFor = (effect: string): ClientOpId => deriveClientOpId(`transcript:${effect}`);
 
+const bindingEvent = 'transcript.binding.changed';
+const subagentEvent = 'transcript.observed-subagent.changed';
+
+const bindingPayload = (binding: TranscriptBinding): Record<string, unknown> => ({
+  bindingId: binding.id,
+  agentId: binding.agentId,
+  agentRunId: binding.agentRunId,
+  provider: binding.provider,
+  sourceDiscoveryState: binding.sourceDiscoveryState,
+  watcherState: binding.watcherState,
+  ...(binding.mirrorWatermark === undefined
+    ? {} : { mirrorWatermark: binding.mirrorWatermark }),
+});
+
+const subagentPayload = (subagent: ObservedSubagent): Record<string, unknown> => ({
+  observedSubagentId: subagent.id,
+  bindingId: subagent.bindingId,
+  providerNativeId: subagent.providerNativeId,
+  status: subagent.status,
+  ...(subagent.promotedAgentId === undefined
+    ? {} : { promotedAgentId: subagent.promotedAgentId }),
+});
+
 export function composeB3Transcript(options: B3TranscriptOptions): B3TranscriptContract {
   const { store } = options;
+  const emit = options.emit ?? (() => undefined);
+
+  /** Emit only after the fact is durable. */
+  function announce<T>(
+    result: B3Result<T>, kind: string, payload: (value: T) => Record<string, unknown>,
+  ): B3Result<T> {
+    if (result.ok) emit(kind, payload(result.value));
+    return result;
+  }
 
   async function bindingById(id: string): Promise<TranscriptBinding | null> {
     const found = await store.read<TranscriptBinding>('transcriptBinding', id);
@@ -76,7 +117,7 @@ export function composeB3Transcript(options: B3TranscriptOptions): B3TranscriptC
       // `waiting`, deliberately, and never absence: the provider file for a
       // just-spawned Run does not exist yet, and §25-B3c requires the first
       // bind to say which of bound/waiting/missing it is.
-      return store.create<TranscriptBinding>({
+      return announce(await store.create<TranscriptBinding>({
         kind: 'transcriptBinding',
         id,
         schemaVersion: 1,
@@ -93,7 +134,7 @@ export function composeB3Transcript(options: B3TranscriptOptions): B3TranscriptC
         sourceDiscoveryState: 'waiting',
         watcherState: 'live',
         threadId: input.threadId,
-      } as never, keyFor(`bind:${id}`));
+      } as never, keyFor(`bind:${id}`)), bindingEvent, bindingPayload);
     },
 
     async ingestTranscriptSource(
@@ -101,12 +142,31 @@ export function composeB3Transcript(options: B3TranscriptOptions): B3TranscriptC
     ): Promise<B3Result<TranscriptIngestOutcome>> {
       const binding = await bindingById(input.bindingId);
       if (binding === null) return b3fail(unknownBinding(input.bindingId));
-      return ingestTranscriptSource({
+      const ingested = await ingestTranscriptSource({
         store,
         source: options.source,
         messaging: options.messaging,
+        observeSubagent: (seen) => recordObservedSubagent(store, {
+          bindingId: seen.bindingId as TranscriptBindingId,
+          providerNativeId: seen.providerNativeId,
+          ...(seen.observedParentNativeId === undefined
+            ? {} : { observedParentNativeId: seen.observedParentNativeId }),
+          evidenceLineIds: seen.evidenceLineIds,
+        }, emit),
         ...(options.hooks === undefined ? {} : { hooks: options.hooks }),
       }, binding, input);
+      // One event per pass, carrying the counts. A per-line event would be
+      // truthful and useless: a thousand-line first ingest would evict the
+      // whole bounded stream and take everyone else's events with it.
+      return announce(ingested, 'transcript.line.committed', (value) => ({
+        bindingId: value.bindingId,
+        discovered: value.discovered,
+        filtered: value.filtered,
+        mirrored: value.mirrored,
+        quarantined: value.quarantined,
+        ...(value.nextWatermark === undefined ? {} : { nextWatermark: value.nextWatermark }),
+        ...(value.haltedBy === undefined ? {} : { haltedBy: value.haltedBy }),
+      }));
     },
 
     async promoteMirrorWatermark(
@@ -133,9 +193,10 @@ export function composeB3Transcript(options: B3TranscriptOptions): B3TranscriptC
             expectedDigest: '', actualDigest: '',
           }, false));
       }
-      return store.update<TranscriptBinding>(binding.id, {
+      return announce(await store.update<TranscriptBinding>(binding.id, {
         mirrorWatermark: input.nextWatermark,
-      }, binding.recordVersion, keyFor(`watermark:${binding.id}:${input.nextWatermark}`));
+      }, binding.recordVersion, keyFor(`watermark:${binding.id}:${input.nextWatermark}`)),
+      bindingEvent, bindingPayload);
     },
 
     async promoteObservedSubagent(
@@ -166,6 +227,7 @@ export function composeB3Transcript(options: B3TranscriptOptions): B3TranscriptC
           unsupportedReason: `insufficient evidence: ${missing.join(', ')}`,
         }, subagent.recordVersion, keyFor(`unsupported:${subagent.id}`));
         if (!marked.ok) return marked;
+        emit(subagentEvent, subagentPayload(marked.value));
         return b3ok({
           kind: 'observation-only',
           subagent: marked.value,
@@ -187,6 +249,7 @@ export function composeB3Transcript(options: B3TranscriptOptions): B3TranscriptC
         status: 'promoted', promotedAgentId: promoted.value.agentId,
       }, subagent.recordVersion, keyFor(`promote:${subagent.id}`));
       if (!updated.ok) return updated;
+      emit(subagentEvent, subagentPayload(updated.value));
       return b3ok({
         kind: 'promoted', subagent: updated.value, agentId: promoted.value.agentId,
       });
@@ -238,6 +301,7 @@ export async function recordObservedSubagent(
     readonly observedParentNativeId?: string;
     readonly evidenceLineIds: readonly string[];
   },
+  emit?: CapabilityEventEmitter,
 ): Promise<B3Result<ObservedSubagent>> {
   const id = mintObservedSubagentId(
     input.bindingId, input.providerNativeId,
@@ -245,7 +309,7 @@ export async function recordObservedSubagent(
   const existing = await store.read<ObservedSubagent>('observedSubagent', id);
   if (!existing.ok) return existing;
   if (existing.value !== null) return b3ok(existing.value);
-  return store.create<ObservedSubagent>({
+  const created = await store.create<ObservedSubagent>({
     kind: 'observedSubagent',
     id,
     schemaVersion: 1,
@@ -259,4 +323,6 @@ export async function recordObservedSubagent(
     evidenceLineIds: [...input.evidenceLineIds],
     status: 'observed',
   } as never, keyFor(`observe:${id}`));
+  if (created.ok) emit?.(subagentEvent, subagentPayload(created.value));
+  return created;
 }

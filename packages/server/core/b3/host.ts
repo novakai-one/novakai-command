@@ -16,6 +16,7 @@ import type { CallerIdentity, CallerSession } from '../../contract/protocol.js';
 import { composeB3Runtime, type B3Runtime, type B3RuntimeOptions } from './composition.js';
 import { buildB3Methods } from './methods.js';
 import { buildB3AgentMethods } from './agent-methods.js';
+import { buildB3MessagingMethods } from './messaging-methods.js';
 
 /** Comfortably inside the stale window, so a live window is never called gone. */
 const SIGHTING_INTERVAL_MS = Math.floor(DEFAULT_STALE_AFTER_MS / 3);
@@ -114,6 +115,17 @@ export async function startRuntimeHost(
     }),
     ...buildB3AgentMethods({
       runtime,
+      principalFor,
+      contextFor: (principal, _session, clientOpId) => ({
+        principal,
+        clientOpId,
+        traceId: mintTraceCorrelationId(),
+        contractVersion: 1,
+      }),
+    }),
+    ...buildB3MessagingMethods({
+      messaging: runtime.messaging,
+      transcript: runtime.transcript,
       principalFor,
       contextFor: (principal, _session, clientOpId) => ({
         principal,

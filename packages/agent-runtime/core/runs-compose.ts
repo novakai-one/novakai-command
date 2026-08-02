@@ -198,6 +198,10 @@ export function composeAgentRuns(options: ComposeAgentRunsOptions): AgentRunsCon
     discoverRunControls: (principal, input) => discoverRunControls(core, principal, input),
     getRunOperation: (principal, operationId) => getRunOperation(core, principal, operationId),
     subscribeRunEvents: (_principal, after) => events.subscribe(after),
+    publishCapabilityEvent: (kind, payload, sourceOwner) => {
+      const event = events.append(kind, payload, undefined, sourceOwner);
+      publish?.(kind, { ...payload, cursor: event.cursor, eventId: event.eventId });
+    },
     readRunEvents: async (_principal, input) => events.read(input.after, input.limit ?? 200),
 
     getTreeFence: (principal, input) => insideClosingTree(
