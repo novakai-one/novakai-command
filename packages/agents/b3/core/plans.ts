@@ -13,7 +13,7 @@ import type { ResolveLaunchPlanInput } from '../contract/api.js';
 import { readResolveLaunchPlanInput } from '../contract/validate.js';
 import type {
   Agent, AgentRoleProfile, ControlReplacementPlan, ResolvedExecutionPolicy,
-  ResolvedLaunchPlan,
+  ResolvedLaunchPlan, WatcherTemplateRefCatalogue,
 } from '../contract/records.js';
 import { fingerprint, SCOPE, type GovernedAgentsCore } from './context.js';
 import { launchPlanInvalid, type Persisted } from './store.js';
@@ -148,7 +148,7 @@ async function freshPlan(
   const chosen = chooseWithinPolicy(role.value, request);
   if (!chosen.ok) return chosen;
 
-  const content = planContent(agent, role.value, request, chosen.value);
+  const content = planContent(agent, role.value, request, chosen.value, core.watcherTemplates);
   const supervision = supervisionIssues(content, request.supervised);
   if (supervision.length > 0) return b3fail(launchPlanInvalid(supervision));
 
@@ -217,6 +217,7 @@ function planContent(
   role: AgentRoleProfile,
   request: ResolveLaunchPlanInput,
   chosen: ChosenLaunch,
+  watcherTemplates: WatcherTemplateRefCatalogue,
 ): PlanContent {
   return {
     agentId: agent.id,
@@ -239,7 +240,7 @@ function planContent(
     hooks: role.hookRefs,
     instructions: role.instructionRefs,
     skillsConfirmationGate: role.skillsConfirmationGate,
-    executionPolicy: executionPolicyOf(role),
+    executionPolicy: executionPolicyOf(role, watcherTemplates),
     spawnPolicy: role.spawnPolicy,
     lifecyclePolicy: role.lifecyclePolicy,
     supervisionPolicy: role.supervisionPolicy,
@@ -253,9 +254,14 @@ function planContent(
  * `enforced`. The limitation is stated in the record, not left to a reader to
  * infer from silence.
  */
-function executionPolicyOf(role: AgentRoleProfile): ResolvedExecutionPolicy {
+function executionPolicyOf(
+  role: AgentRoleProfile, watcherTemplates: WatcherTemplateRefCatalogue,
+): ResolvedExecutionPolicy {
   const watcherNeedsStartTurn = role.supervisionPolicy.activityDrift === 'required'
-    || role.supervisionPolicy.parentNotificationMode === 'start-turn';
+    || role.supervisionPolicy.parentNotificationMode === 'start-turn'
+    || role.supervisionPolicy.requiredWatcherTemplates.some(
+      (templateRef) => watcherTemplates.inspect(templateRef)?.requiresStartTurn === true,
+    );
   return {
     policyRef: role.executionPolicyRef,
     commandScopes: watcherNeedsStartTurn ? [SCOPE.watchStartTurn] : [],

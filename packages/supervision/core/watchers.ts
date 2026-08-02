@@ -18,6 +18,9 @@ import {
 } from '../contract/index.js';
 import type { Persisted, SupervisionStore } from './store.js';
 import { templateDigest } from './templates.js';
+import {
+  recipientKey, sameRecipient, sameVersionedRef, validateInstallAuthority,
+} from './install-authority.js';
 
 export interface InstallDependencies {
   readonly store: SupervisionStore;
@@ -34,10 +37,6 @@ const unresolvable = (templateRef: VersionedRef): ReturnType<typeof b3err> => b3
 );
 
 /** The one effect key an install repeats under, so a retry adopts its rule. */
-const recipientKey = (recipient: NotificationRecipient): string => recipient.kind === 'agent'
-  ? `agent:${String(recipient.agentId)}`
-  : `human:${String(recipient.principalId)}`;
-
 const installEffectKey = (input: InstallRunWatchersInput, templateRef: VersionedRef): string => [
   'b3v4:install-run-watchers', String(input.agentRunId), String(input.launchPlanId),
   `${templateRef.id}@${String(templateRef.version)}#${templateRef.digest}`,
@@ -78,22 +77,6 @@ function ruleRecord(
   };
 }
 
-const sameRef = (left: VersionedRef, right: VersionedRef): boolean =>
-  left.id === right.id && left.version === right.version && left.digest === right.digest;
-
-const sameRecipient = (left: NotificationRecipient, right: NotificationRecipient): boolean =>
-  recipientKey(left) === recipientKey(right);
-
-function installMatches(input: InstallRunWatchersInput, plan: ResolvedWatcherInstall): boolean {
-  return input.agentRunId === plan.agentRunId
-    && input.launchPlanId === plan.launchPlanId
-    && input.activityGeneration === plan.activityGeneration
-    && sameRecipient(input.recipient, plan.recipient)
-    && input.requiredTemplateRefs.length === plan.requiredTemplateRefs.length
-    && input.requiredTemplateRefs.every((templateRef, index) =>
-      sameRef(templateRef, plan.requiredTemplateRefs[index]!));
-}
-
 function requiredRefs(plan: ResolvedWatcherInstall): readonly VersionedRef[] {
   return plan.activityDrift === 'required'
     ? [ACTIVITY_DRIFT_TEMPLATE_REF, ...plan.requiredTemplateRefs]
@@ -116,7 +99,7 @@ function resolveTemplates(
     seen.add(templateRef.id);
     const resolved = catalogue.resolve(templateRef);
     const valid = resolved !== null
-      && sameRef(resolved.templateRef, templateRef)
+      && sameVersionedRef(resolved.templateRef, templateRef)
       && resolved.payload.id === templateRef.id
       && resolved.payload.version === templateRef.version
       && templateDigest(resolved.payload) === templateRef.digest;
@@ -200,10 +183,38 @@ function priorMatches(
   template: WatcherTemplate,
 ): boolean {
   return prior.installation !== undefined
-    && sameRef(prior.installation.templateRef, template.templateRef)
+    && sameVersionedRef(prior.installation.templateRef, template.templateRef)
     && prior.installation.launchPlanId === input.launchPlanId
     && prior.installation.activityGeneration === input.activityGeneration
+    && prior.installation.requestedBy === input.requestProvenance.requestedBy
+    && prior.installation.requestTraceId === input.requestProvenance.traceId
+    && prior.installation.requestClientOpId === input.requestProvenance.clientOpId
     && sameRecipient(prior.recipient, input.recipient);
+}
+
+function adoptInstalled(
+  existing: readonly WatchRule[],
+  input: InstallRunWatchersInput,
+  templates: readonly WatcherTemplate[],
+): readonly WatchRule[] | null {
+  const adopted: WatchRule[] = [];
+  for (const template of templates) {
+    const prior = matchingInstalledRule(existing, input, template);
+    if (prior === undefined || !priorMatches(prior, input, template)) return null;
+    adopted.push(prior);
+  }
+  return adopted;
+}
+
+function hasMatchingPrior(
+  existing: readonly WatchRule[],
+  input: InstallRunWatchersInput,
+  templates: readonly WatcherTemplate[],
+): boolean {
+  return templates.some((template) => {
+    const prior = matchingInstalledRule(existing, input, template);
+    return prior !== undefined && priorMatches(prior, input, template);
+  });
 }
 
 async function installTemplate(
@@ -252,19 +263,29 @@ export async function installRunWatchers(
 ): Promise<B3Result<readonly WatchRule[]>> {
   const authority = await deps.authority.resolve(context.principal, input);
   if (!authority.ok) return authority;
-  if (!installMatches(input, authority.value)) {
+  const templates = resolveTemplates(deps.templates, authority.value);
+  if (!templates.ok) return templates;
+  const authorized = validateInstallAuthority(
+    context, input, authority.value, templates.value,
+  );
+  if (!authorized.ok) return authorized;
+  const existing = await deps.store.list<WatchRule>('watchRule');
+  if (!existing.ok) return existing;
+  const adopted = adoptInstalled(existing.value, input, templates.value);
+  if (adopted !== null) return b3ok(adopted);
+  if (input.activityGeneration !== authority.value.activityGeneration
+    && !hasMatchingPrior(existing.value, input, templates.value)) {
     return b3fail(b3err(
       'IdempotencyConflict',
-      'watcher install facts do not match the authoritative launch plan and Run',
-      { agentRunId: input.agentRunId, launchPlanId: input.launchPlanId },
+      'watcher install generation is stale and no complete prior effect can be adopted',
+      {
+        requestedGeneration: input.activityGeneration,
+        currentGeneration: authority.value.activityGeneration,
+      },
       false,
     ));
   }
-  const templates = resolveTemplates(deps.templates, authority.value);
-  if (!templates.ok) return templates;
   const installed: WatchRule[] = [];
-  const existing = await deps.store.list<WatchRule>('watchRule');
-  if (!existing.ok) return existing;
   for (const template of templates.value) {
     const written = await installTemplate(
       deps, context, input, authority.value, existing.value, template,

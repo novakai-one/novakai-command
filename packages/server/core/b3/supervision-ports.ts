@@ -15,6 +15,7 @@ import type { SupervisionCore } from '../../../supervision/public/index.js';
 import type {
   NotificationRecipient, VersionedRef, WatcherInstallAuthority, WatchRuleAccess,
 } from '../../../supervision/contract/index.js';
+import { ACTIVITY_DRIFT_TEMPLATE_REF } from '../../../supervision/contract/index.js';
 
 const runtimeContext = (
   provenance?: { readonly clientOpId: SystemCommandContext<'sys_agent_runtime'>['clientOpId']; readonly traceId: SystemCommandContext<'sys_agent_runtime'>['traceId'] },
@@ -70,6 +71,12 @@ export function watcherInstallAuthority(
         parentNotificationMode: plan.value.supervisionPolicy.parentNotificationMode,
         recipient,
         activityGeneration: runView.value.run.activityGeneration,
+        watchStartTurnAuthorized: plan.value.executionPolicy.commandScopes
+          .includes('supervision:watch:start-turn' as never),
+        requestProvenance: {
+          requestedBy: runView.value.run.requestedBy,
+          traceId: runView.value.run.rootTraceId,
+        },
       });
     },
   };
@@ -118,7 +125,13 @@ export function supervisionWatcherPort(supervision: SupervisionCore): RunWatcher
         requestProvenance: input.requestProvenance,
       });
       if (!installed.ok) return installed;
-      return b3ok(installed.value.map((rule) => ({ id: String(rule.id) })));
+      return b3ok(installed.value.map((rule) => ({
+        id: String(rule.id),
+        templateRef: rule.installation!.templateRef,
+        source: rule.installation!.templateRef.id === ACTIVITY_DRIFT_TEMPLATE_REF.id
+          ? 'implicit-activity-drift' as const
+          : 'explicit' as const,
+      })));
     },
   };
 }

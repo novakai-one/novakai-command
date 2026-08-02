@@ -219,7 +219,14 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
     dataRoot,
     providers: options.providers ?? createProviderAdapters(),
     watcherTemplates: {
-      resolves: (templateRef) => watcherTemplates.resolve(templateRef) !== null,
+      inspect: (templateRef) => {
+        const template = watcherTemplates.resolve(templateRef);
+        if (template === null) return null;
+        return {
+          requiresStartTurn: template.payload.condition.kind === 'activity-drift'
+            || template.payload.deliveryBinding === 'start-turn',
+        };
+      },
     },
   });
   const credentials = createRunCredentials(options.root);

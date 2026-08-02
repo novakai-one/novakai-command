@@ -18,16 +18,22 @@ import { compatibleRole } from './compat.js';
 
 const WATCH_START_TURN_SCOPE = 'supervision:watch:start-turn';
 
-function requiresWatcherStartTurn(input: CreateRoleProfileInput): boolean {
+function requiresWatcherStartTurn(
+  core: GovernedAgentsCore, input: CreateRoleProfileInput,
+): boolean {
   return input.supervisionPolicy.activityDrift === 'required'
-    || input.supervisionPolicy.parentNotificationMode === 'start-turn';
+    || input.supervisionPolicy.parentNotificationMode === 'start-turn'
+    || input.supervisionPolicy.requiredWatcherTemplates.some(
+      (templateRef) => core.watcherTemplates.inspect(templateRef)?.requiresStartTurn === true,
+    );
 }
 
 function requireWatcherAuthority(
+  core: GovernedAgentsCore,
   context: CommandContext,
   input: CreateRoleProfileInput,
 ): B3Result<null> {
-  if (!requiresWatcherStartTurn(input)
+  if (!requiresWatcherStartTurn(core, input)
     || context.principal.verifiedScopes.includes(WATCH_START_TURN_SCOPE as never)) {
     return b3ok(null);
   }
@@ -52,7 +58,7 @@ function requireResolvableTemplates(
       ));
     }
     seen.add(templateRef.id);
-    if (!core.watcherTemplates.resolves(templateRef)) {
+    if (core.watcherTemplates.inspect(templateRef) === null) {
       return b3fail(b3err(
         'WatchRuleInvalid', 'role references an unresolved watcher template',
         { templateRef }, false,
@@ -69,7 +75,7 @@ export async function createRoleProfile(
   // socket caller must travel the SAME policy path (red gate 23).
   const read = readCreateRoleProfileInput(input);
   if (!read.ok) return read;
-  const authorized = requireWatcherAuthority(context, read.value);
+  const authorized = requireWatcherAuthority(core, context, read.value);
   if (!authorized.ok) return authorized;
   const resolved = requireResolvableTemplates(core, read.value);
   if (!resolved.ok) return resolved;
@@ -98,7 +104,7 @@ export async function updateRoleProfile(
 ): Promise<B3Result<AgentRoleProfile>> {
   const read = readUpdateRoleProfileInput(input);
   if (!read.ok) return read;
-  const authorized = requireWatcherAuthority(context, read.value.replacement);
+  const authorized = requireWatcherAuthority(core, context, read.value.replacement);
   if (!authorized.ok) return authorized;
   const resolved = requireResolvableTemplates(core, read.value.replacement);
   if (!resolved.ok) return resolved;

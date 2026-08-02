@@ -129,6 +129,12 @@ export interface TranscriptCustodyPort {
  * without Supervision records the rung `not-needed` naming the absent
  * capability, which is a true statement about that host.
  */
+export interface InstalledWatcherFacts {
+  readonly id: string;
+  readonly templateRef: { readonly id: string; readonly version: number; readonly digest: string };
+  readonly source: 'implicit-activity-drift' | 'explicit';
+}
+
 export interface RunWatcherPort {
   installRunWatchers(
     input: {
@@ -147,5 +153,5 @@ export interface RunWatcherPort {
         readonly clientOpId: B3ClientOpId;
       };
     },
-  ): Promise<B3Result<readonly { readonly id: string }[]>>;
+  ): Promise<B3Result<readonly InstalledWatcherFacts[]>>;
 }

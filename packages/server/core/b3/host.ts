@@ -145,7 +145,16 @@ export async function startRuntimeHost(
         contractVersion: 1,
       }),
     }),
-    ...buildB3SupervisionMethods({ supervision: runtime.supervision, principalFor }),
+    ...buildB3SupervisionMethods({
+      supervision: runtime.supervision,
+      principalFor,
+      activityGenerationFor: async (agentRunId) => {
+        const view = await runtime.runs.getAgentRun(
+          { id: 'sys_agent_runtime', kind: 'system', verifiedScopes: [] }, agentRunId,
+        );
+        return view.ok ? view.value.run.activityGeneration : null;
+      },
+    }),
   };
   const following = new Set<string>();
   /** Which windows each connection opened — the host's own fact (§13.4). */

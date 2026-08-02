@@ -15,6 +15,7 @@ import {
 } from './runs-context.js';
 import { liveRunConflict, recoveryRequired, type Persisted } from './runs-store.js';
 import { advance, completed, effectKeyFor } from './journal.js';
+import { verifyInstalledWatchers } from './watcher-install.js';
 
 /**
  * Write the Run, pinned to the reservation minted before it existed. This is
@@ -263,6 +264,8 @@ export async function installWatchers(
     requestProvenance: input.requestProvenance,
   });
   if (!installed.ok) return installed;
+  const verified = verifyInstalledWatchers(input.plan, installed.value);
+  if (!verified.ok) return verified;
   const first = installed.value[0];
   if (first === undefined) {
     return advance(core, input.operation, {

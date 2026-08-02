@@ -12,7 +12,7 @@
 // the tracer's additive read until a public deadline query is required.
 import {
   b3err, b3fail, b3ok,
-  type AuthenticatedPrincipal, type B3Result,
+  type ActivityGeneration, type AgentRunId, type AuthenticatedPrincipal, type B3Result,
 } from '@novakai/foundation/contract';
 import {
   parseNotificationFilter,
@@ -25,6 +25,7 @@ import type { CallerSession, MethodTable } from '../../contract/protocol.js';
 export interface B3SupervisionMethodOptions {
   readonly supervision: SupervisionCore;
   readonly principalFor: (session: CallerSession | undefined) => AuthenticatedPrincipal;
+  readonly activityGenerationFor: (agentRunId: AgentRunId) => Promise<ActivityGeneration | null>;
 }
 
 interface WireParams {
@@ -34,18 +35,10 @@ interface WireParams {
 
 export function currentDeadlines(
   deadlines: readonly WatchDeadline[],
-  ruleIds: ReadonlySet<WatchRule['id']>,
+  currentGenerationByRule: ReadonlyMap<WatchRule['id'], ActivityGeneration>,
 ): readonly WatchDeadline[] {
-  const current = new Map<WatchRule['id'], WatchDeadline>();
-  for (const deadline of deadlines) {
-    if (!ruleIds.has(deadline.watchRuleId)) continue;
-    const prior = current.get(deadline.watchRuleId);
-    if (prior === undefined
-      || Number(deadline.activityGeneration) > Number(prior.activityGeneration)) {
-      current.set(deadline.watchRuleId, deadline);
-    }
-  }
-  return [...current.values()];
+  return deadlines.filter((deadline) => deadline.state !== 'superseded'
+    && deadline.activityGeneration === currentGenerationByRule.get(deadline.watchRuleId));
 }
 
 const malformed = (): B3Result<never> => b3fail(
@@ -88,10 +81,15 @@ export function buildB3SupervisionMethods(options: B3SupervisionMethodOptions): 
     if (!rules.ok) return rules;
     const deadlines = await supervision.listWatchDeadlines(principal);
     if (!deadlines.ok) return deadlines;
-    const visibleRuleIds = new Set(rules.value.items.map((rule) => rule.id));
+    const generations = new Map<WatchRule['id'], ActivityGeneration>();
+    await Promise.all(rules.value.items.map(async (rule) => {
+      if (rule.subject.kind !== 'agent-run') return;
+      const generation = await options.activityGenerationFor(rule.subject.agentRunId);
+      if (generation !== null) generations.set(rule.id, generation);
+    }));
     return b3ok({
       rules: rules.value.items,
-      deadlines: currentDeadlines(deadlines.value, visibleRuleIds),
+      deadlines: currentDeadlines(deadlines.value, generations),
       ...(rules.value.nextCursor === undefined ? {} : { nextCursor: rules.value.nextCursor }),
       omissions: rules.value.omissions,
     });

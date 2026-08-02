@@ -115,6 +115,52 @@ test('a role cannot authorize watcher start-turns without the trusted scope', as
   });
 });
 
+test('an explicit start-turn watcher also requires trusted authority and pins it', async () => {
+  const templateRef = {
+    id: 'watch-template/start-turn-explicit', version: 1, digest: 'a'.repeat(64),
+  };
+  const rig = createRig({
+    inspect: (wanted) => wanted.id === templateRef.id ? { requiresStartTurn: true } : null,
+  });
+  try {
+    const role = roleInput({
+      supervisionPolicy: {
+        activityDrift: 'disabled-explicitly',
+        requiredWatcherTemplates: [templateRef],
+        parentNotificationMode: 'queue-only',
+      },
+    });
+    const refused = await rig.agents.createRoleProfile(rig.human(), role);
+    assert.equal(refused.ok, false, 'catalogue start-turn effects bypassed role authority');
+    if (!refused.ok) assert.equal(refused.error.code, 'PermissionDenied');
+
+    const created = await rig.agents.createRoleProfile(
+      rig.human(['supervision:watch:start-turn']), role,
+    );
+    assert.equal(created.ok, true);
+    if (!created.ok) return;
+    const agent = await rig.agents.createAgentFromRole(rig.human(), {
+      roleProfileId: created.value.id,
+      displayName: 'Explicit Watcher Builder',
+      rootHumanPrincipalId: CHRIS,
+    });
+    assert.equal(agent.ok, true);
+    if (!agent.ok) return;
+    const plan = await rig.agents.resolveLaunchPlan(rig.human(), {
+      agentId: agent.value.agent.id,
+      configurationMode: 'refresh-role',
+      workingDirectory: '/tmp/work',
+      supervised: true,
+    });
+    assert.equal(plan.ok, true);
+    if (plan.ok) assert.deepEqual(
+      plan.value.executionPolicy.commandScopes, ['supervision:watch:start-turn'],
+    );
+  } finally {
+    rig.close();
+  }
+});
+
 test('a role cannot pin a watcher template absent from the Agents catalogue', async () => {
   await withRig(async (rig) => {
     const refused = await rig.agents.createRoleProfile(rig.human(), roleInput({

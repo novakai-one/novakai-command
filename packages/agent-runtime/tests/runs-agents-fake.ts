@@ -43,6 +43,7 @@ export interface FakeAgentsOptions {
   readonly allowedContinuationModes?: LaunchPlanFacts['lifecyclePolicy']['allowedContinuationModes'];
   readonly onSupervisorFinal?: LaunchPlanFacts['lifecyclePolicy']['onSupervisorFinal'];
   readonly skills?: LaunchPlanFacts['skills'];
+  readonly supervisionPolicy?: LaunchPlanFacts['supervisionPolicy'];
 }
 
 export function createFakeAgents(options: FakeAgentsOptions = {}): FakeAgents {
@@ -74,6 +75,8 @@ export function createFakeAgents(options: FakeAgentsOptions = {}): FakeAgents {
         confirmationMarker: 'SKILLS-CONFIRMED:',
         onFailure: 'terminate-run-and-record-drift',
       },
+    ...(options.supervisionPolicy === undefined
+      ? {} : { supervisionPolicy: options.supervisionPolicy }),
     lifecyclePolicy: {
       onSupervisorFinal: options.onSupervisorFinal ?? 'assign-nearest-live-ancestor',
       allowedContinuationModes: options.allowedContinuationModes

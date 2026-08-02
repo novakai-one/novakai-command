@@ -16,6 +16,7 @@ import {
 } from './store.js';
 import { createTemplateCatalogue } from './templates.js';
 import { installRunWatchers } from './watchers.js';
+import { parseInstallRunWatchersInput } from '../contract/input-validation.js';
 import { listWatchRules } from './watch-rule-query.js';
 import { evaluateEvent, listNotifications } from './notifications.js';
 
@@ -60,7 +61,10 @@ export function composeSupervision(options: SupervisionCoreOptions): Supervision
   };
 
   return {
-    installRunWatchers: (context, input) => installRunWatchers(install, context, input),
+    installRunWatchers: (context, input) => {
+      const parsed = parseInstallRunWatchersInput(input);
+      return parsed.ok ? installRunWatchers(install, context, parsed.value) : Promise.resolve(parsed);
+    },
     evaluateEvent: (context, input) => evaluateEvent({ store }, context, input),
     listNotifications: (_principal, filter) => listNotifications({ store }, filter),
     listWatchRules: (principal, filter) => listWatchRules(

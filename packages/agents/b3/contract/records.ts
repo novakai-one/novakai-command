@@ -43,9 +43,14 @@ export interface VersionedRef {
   readonly digest: string;
 }
 
+/** Authority-relevant facts Agents owns beside each exact watcher ref. */
+export interface WatcherTemplateRefFacts {
+  readonly requiresStartTurn: boolean;
+}
+
 /** Agents-owned role-profile catalogue query used to validate watcher refs. */
 export interface WatcherTemplateRefCatalogue {
-  resolves(templateRef: VersionedRef): boolean;
+  inspect(templateRef: VersionedRef): WatcherTemplateRefFacts | null;
 }
 
 // ── The governed role (§5.2) ────────────────────────────────────────────────

@@ -50,7 +50,7 @@ export function composeGovernedAgents(
   const core: GovernedAgentsCore = {
     store: createGovernedAgentsStore(options),
     providers: options.providers,
-    watcherTemplates: options.watcherTemplates ?? { resolves: () => false },
+    watcherTemplates: options.watcherTemplates ?? { inspect: () => null },
     rootHumanPrincipalId: options.rootHumanPrincipalId ?? ('person_chris' as HumanPrincipalId),
     clock: options.clock ?? (() => new Date().toISOString()),
   };

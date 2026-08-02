@@ -66,6 +66,13 @@ export interface ResolvedWatcherInstall {
   readonly parentNotificationMode: WatchRule['deliveryMode'];
   readonly recipient: NotificationRecipient;
   readonly activityGeneration: ActivityGeneration;
+  /** Scope pinned by Agents when the immutable plan was resolved. */
+  readonly watchStartTurnAuthorized: boolean;
+  /** Runtime-owned launch attribution, re-read rather than accepted from the install caller. */
+  readonly requestProvenance: {
+    readonly requestedBy: B3PrincipalId;
+    readonly traceId: TraceCorrelationId;
+  };
 }
 
 /** Host adapter that gives Supervision authoritative Agents/Runtime truth. */

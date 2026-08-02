@@ -13,27 +13,29 @@ import { readFile, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
-  b3err, b3fail, b3ok, mintClientOpId, mintTraceCorrelationId,
+  b3err, b3fail, b3ok, mintTraceCorrelationId,
   type AgentRunId, type AuthenticatedPrincipal, type B3Result, type EventCursor,
   type ResolvedLaunchPlanId, type SystemCommandContext,
 } from '@novakai/foundation/contract';
 import {
-  IDLE_WATCH_TEMPLATE, composeSupervision, createSupervisionStore,
+  IDLE_WATCH_TEMPLATE, composeSupervision, createSupervisionStore, templateDigest,
   type SupervisionCore, type SupervisionStore,
 } from '../core/index.js';
 import {
   parseNotificationRecord, parseWatchDeadline, parseWatchRule,
   subjectKey as subjectKeyOf,
-  type PublicEvent,
+  type PublicEvent, type WatcherTemplate,
 } from '../contract/index.js';
 
 const RUN_ID = 'agentRun_019fd000-0000-7000-8000-0000000000a1' as AgentRunId;
 const PLAN_ID = 'launchPlan_019fd000-0000-7000-8000-0000000000a2' as ResolvedLaunchPlanId;
+const INSTALL_TRACE_ID = 'trace_123e4567-e89b-42d3-a456-426614174000' as never;
+const INSTALL_CLIENT_OP_ID = 'op_123e4567-e89b-42d3-a456-426614174000' as never;
 
 const runtimeContext = (): SystemCommandContext<'sys_agent_runtime'> => ({
   principal: { id: 'sys_agent_runtime', kind: 'system', verifiedScopes: [] },
-  clientOpId: mintClientOpId(),
-  traceId: mintTraceCorrelationId(),
+  clientOpId: INSTALL_CLIENT_OP_ID,
+  traceId: INSTALL_TRACE_ID,
   contractVersion: 1,
 });
 
@@ -70,6 +72,11 @@ function createRig(
   startedAt: string,
   activityDrift: 'required' | 'disabled-explicitly' = 'disabled-explicitly',
   requiredTemplateRefs = [IDLE_WATCH_TEMPLATE.templateRef],
+  options: {
+    readonly extraTemplates?: readonly WatcherTemplate[];
+    readonly activityGeneration?: () => number;
+    readonly watchStartTurnAuthorized?: boolean;
+  } = {},
 ): Rig {
   const root = mkdtempSync(path.join(tmpdir(), 'nvk-b3d-core-'));
   const store = createSupervisionStore({ root, dataRoot: path.join(root, 'stores') });
@@ -86,10 +93,17 @@ function createRig(
         requiredTemplateRefs,
         parentNotificationMode: 'queue-only',
         recipient: { kind: 'human', principalId: 'person_chris' as never },
-        activityGeneration: 4 as never,
+        activityGeneration: (options.activityGeneration?.() ?? 4) as never,
+        watchStartTurnAuthorized: options.watchStartTurnAuthorized
+          ?? activityDrift === 'required',
+        requestProvenance: {
+          requestedBy: 'person_chris' as never,
+          traceId: INSTALL.requestProvenance.traceId,
+        },
       }),
     },
     watchRuleAccess: { agentIdFor: async () => b3ok(null) },
+    ...(options.extraTemplates === undefined ? {} : { extraTemplates: options.extraTemplates }),
   });
   return {
     supervision, store, root, startedAt,
@@ -151,10 +165,29 @@ const INSTALL = {
   activityGeneration: 4 as never,
   requestProvenance: {
     requestedBy: 'person_chris' as never,
-    traceId: 'trace_123e4567-e89b-42d3-a456-426614174000' as never,
-    clientOpId: 'op_123e4567-e89b-42d3-a456-426614174000' as never,
+    traceId: INSTALL_TRACE_ID,
+    clientOpId: INSTALL_CLIENT_OP_ID,
   },
 } as const;
+
+const START_TURN_PAYLOAD = {
+  id: 'watch-template/start-turn-explicit',
+  version: 1,
+  status: 'active',
+  subjectBinding: 'current-run',
+  condition: { kind: 'idle-for-ms', value: 300_000 },
+  recipientBinding: 'current-supervision-assignment-for-escalation',
+  deliveryBinding: 'start-turn',
+  cooldownMs: 0,
+} as const;
+const START_TURN_TEMPLATE: WatcherTemplate = {
+  templateRef: {
+    id: START_TURN_PAYLOAD.id,
+    version: START_TURN_PAYLOAD.version,
+    digest: templateDigest(START_TURN_PAYLOAD),
+  },
+  payload: START_TURN_PAYLOAD,
+};
 
 test('installRunWatchers materialises the pinned role watcher and arms its deadline', async () => {
   const rig = createRig('2026-08-03T00:00:00.000Z');
@@ -202,6 +235,74 @@ test('required activity drift is injected beside explicit launch-plan refs', asy
       await rig.supervision.installRunWatchers(runtimeContext(), INSTALL), 'install with drift',
     );
     assert.deepEqual(rules.map((rule) => rule.condition.kind), ['activity-drift', 'idle-for-ms']);
+  } finally {
+    rig.close();
+  }
+});
+
+test('an explicit start-turn template is refused without launch-plan authority', async () => {
+  const rig = createRig(
+    '2026-08-03T00:00:00.000Z',
+    'disabled-explicitly',
+    [START_TURN_TEMPLATE.templateRef],
+    { extraTemplates: [START_TURN_TEMPLATE], watchStartTurnAuthorized: false },
+  );
+  try {
+    const refused = await rig.supervision.installRunWatchers(runtimeContext(), {
+      ...INSTALL, requiredTemplateRefs: [START_TURN_TEMPLATE.templateRef],
+    });
+    assert.equal(refused.ok, false);
+    if (!refused.ok) assert.equal(refused.error.code, 'PermissionDenied');
+    assert.deepEqual(unwrap(await rig.store.list('watchRule'), 'stored rules'), []);
+  } finally {
+    rig.close();
+  }
+});
+
+test('install provenance must match Runtime-owned launch attribution', async () => {
+  const rig = createRig('2026-08-03T00:00:00.000Z');
+  try {
+    const refused = await rig.supervision.installRunWatchers(runtimeContext(), {
+      ...INSTALL,
+      requestProvenance: { ...INSTALL.requestProvenance, requestedBy: 'person_eve' as never },
+    });
+    assert.equal(refused.ok, false);
+    if (!refused.ok) assert.equal(refused.error.code, 'PermissionDenied');
+  } finally {
+    rig.close();
+  }
+});
+
+test('the composed install boundary rejects malformed provenance before effects', async () => {
+  const rig = createRig('2026-08-03T00:00:00.000Z');
+  try {
+    const refused = await rig.supervision.installRunWatchers(runtimeContext(), {
+      ...INSTALL,
+      requestProvenance: { ...INSTALL.requestProvenance, clientOpId: 'op_not-a-uuid' as never },
+    });
+    assert.equal(refused.ok, false);
+    if (!refused.ok) assert.equal(refused.error.code, 'ValidationFailed');
+    assert.deepEqual(unwrap(await rig.store.list('watchRule'), 'stored rules'), []);
+  } finally {
+    rig.close();
+  }
+});
+
+test('a lost install response adopts the complete prior effect after generation advances', async () => {
+  let generation = 4;
+  const rig = createRig(
+    '2026-08-03T00:00:00.000Z', 'disabled-explicitly',
+    [IDLE_WATCH_TEMPLATE.templateRef], { activityGeneration: () => generation },
+  );
+  try {
+    const first = unwrap(
+      await rig.supervision.installRunWatchers(runtimeContext(), INSTALL), 'first install',
+    );
+    generation = 5;
+    const replay = unwrap(
+      await rig.supervision.installRunWatchers(runtimeContext(), INSTALL), 'lost-response replay',
+    );
+    assert.deepEqual(replay.map((rule) => rule.id), first.map((rule) => rule.id));
   } finally {
     rig.close();
   }
