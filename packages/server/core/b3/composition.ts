@@ -32,7 +32,7 @@ import { gateStoreRoute } from '../store-route.js';
 import type { AgentMessagingContract } from '../../../messaging/b3/contract/index.js';
 import {
   createProviderFileLocator, createProviderFileSource, defaultProviderHomes,
-  type B3TranscriptContract, type TranscriptSourcePort,
+  type B3TranscriptContract, type MirrorPump, type TranscriptSourcePort,
 } from '../../../transcript/b3/contract/index.js';
 
 export interface B3RuntimeOptions {
@@ -67,6 +67,12 @@ export interface B3RuntimeOptions {
   readonly transcriptSource?: TranscriptSourcePort;
   /** Where the provider CLIs keep their transcripts. Overridable for tests. */
   readonly providerHome?: string;
+  /**
+   * How often the mirror pump looks for new transcript lines. An operator
+   * tunable for the same reason `gateTimeoutMs` is one — and a suite proving
+   * the pipeline runs unprompted should not have to wait a production tick.
+   */
+  readonly mirrorIntervalMs?: number;
 }
 
 export interface B3Runtime {
@@ -77,6 +83,8 @@ export interface B3Runtime {
   readonly credentials: ReturnType<typeof createRunCredentials>;
   readonly messaging: AgentMessagingContract & { readonly store: { close(): Promise<void> } };
   readonly transcript: B3TranscriptContract;
+  /** The live pipeline behind §13.9. Exposed so a host can pump on demand. */
+  readonly mirror: MirrorPump;
   readonly dataRoot: string;
   close(): Promise<void>;
 }
@@ -289,13 +297,21 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
     }),
   });
 
-  transcript = composeB3TranscriptFor({
+  const composedTranscript = composeB3TranscriptFor({
     root: options.root,
     dataRoot,
     messaging,
     emit: emit('transcript'),
     source,
+    ...(options.mirrorIntervalMs === undefined
+      ? {} : { mirrorIntervalMs: options.mirrorIntervalMs }),
   });
+  transcript = composedTranscript.api;
+
+  // §13.9 is a pipeline, not a verb. The ladder bound this Run's transcript at
+  // spawn so the mirror COULD run; starting it here is what makes it run — and
+  // it starts last, after every capability it reads is composed.
+  composedTranscript.mirror.start();
 
   return {
     runtime,
@@ -305,8 +321,13 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
     credentials,
     messaging,
     transcript,
+    mirror: composedTranscript.mirror,
     dataRoot,
     async close() {
+      // First, and awaited: a pass in flight holds durable Messaging and
+      // Transcript writes, and closing the stores under it is the one way to
+      // manufacture the torn outcome §13.9's watermark law exists to survive.
+      await composedTranscript.mirror.stop();
       await terminal?.dispose();
       await runtime.shutdown();
       await messaging.store.close();

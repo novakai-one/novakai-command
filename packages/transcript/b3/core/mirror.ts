@@ -125,7 +125,14 @@ export async function ingestTranscriptSource(
   if (read.kind === 'missing') {
     // Explicit, not silent (§25-B3c). `waiting` while a Run is alive and its
     // file has not appeared yet; the caller decides when that becomes missing.
-    await setState(deps.store, binding, { sourceDiscoveryState: 'waiting' });
+    //
+    // Written only when it CHANGES. Under the pump this line runs once a second
+    // for every Run whose provider has not created its file yet, and an
+    // unconditional update would append a custody record per second per Run
+    // saying nothing new — a journal that grows without a fact in it.
+    if (binding.sourceDiscoveryState !== 'waiting') {
+      await setState(deps.store, binding, { sourceDiscoveryState: 'waiting' });
+    }
     return b3ok(empty(binding, 'source-unavailable'));
   }
   if (read.kind === 'unavailable') {

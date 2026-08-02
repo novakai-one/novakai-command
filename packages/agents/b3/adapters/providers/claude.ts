@@ -40,6 +40,32 @@ export interface ClaudeAdapterOptions {
   readonly environment?: NodeJS.ProcessEnv;
 }
 
+/**
+ * The host's own session, told to the launched CLI by accident.
+ *
+ * Claude Code sets this in every process it spawns so that a NESTED invocation
+ * does not persist a second transcript. The Runtime inherits it when it is
+ * started from inside a Claude Code session, and `mergedEnvironment` then
+ * copies it into every managed PTY — at which point the provider writes no
+ * transcript file at all, and §8.2 custody is reading a file the provider
+ * deliberately declined to create. The exam's own terminal said so:
+ * "Transcript saving is off — inherited CLAUDE_CODE_CHILD_SESSION marker".
+ *
+ * A Novakai-managed Run is not a child of whoever started the Runtime: it has
+ * its own reserved session id, its own custody record and its own Thread. So
+ * the marker is dropped rather than forwarded. Nothing else in the environment
+ * is touched — a spawned Agent still authenticates as itself (DEC-B3V4-05).
+ */
+const INHERITED_HOST_SESSION_MARKER = 'CLAUDE_CODE_CHILD_SESSION';
+
+function launchEnvironment(
+  base: NodeJS.ProcessEnv, runtime: Readonly<Record<string, string>>,
+): Record<string, string> {
+  const merged = mergedEnvironment(base, runtime);
+  delete merged[INHERITED_HOST_SESSION_MARKER];
+  return merged;
+}
+
 export function createClaudeAdapter(
   options: ClaudeAdapterOptions = {},
 ): InteractiveProviderAdapter {
@@ -100,7 +126,7 @@ export function createClaudeAdapter(
       return b3ok({
         executable,
         argv,
-        environment: mergedEnvironment(options.environment ?? process.env, input.runtimeEnvironment),
+        environment: launchEnvironment(options.environment ?? process.env, input.runtimeEnvironment),
         workingDirectory: input.workingDirectory,
         launchFingerprint: fingerprintOf(plan, input.workingDirectory),
       });
@@ -143,7 +169,7 @@ export function createClaudeAdapter(
       return b3ok({
         executable,
         argv,
-        environment: mergedEnvironment(options.environment ?? process.env, input.runtimeEnvironment),
+        environment: launchEnvironment(options.environment ?? process.env, input.runtimeEnvironment),
         workingDirectory: input.workingDirectory,
         launchFingerprint: `claude:${input.mode}:${input.workingDirectory}`,
         ...(argv.includes('--resume')

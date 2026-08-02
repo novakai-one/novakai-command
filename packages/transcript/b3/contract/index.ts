@@ -17,6 +17,10 @@ export {
 } from '../core/mirror.js';
 export { classifyTurn, stripTerminalControl, type TurnClassification } from '../core/noise.js';
 export {
+  createMirrorPump,
+  type MirrorPump, type MirrorPumpOptions, type MirrorPumpPass, type MirrorPumpPorts,
+} from '../core/pump.js';
+export {
   createProviderFileSource, type ProviderFileSourceOptions,
 } from '../adapters/source-provider-file.js';
 export {

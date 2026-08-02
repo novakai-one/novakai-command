@@ -11,9 +11,9 @@ import {
 } from '../../../messaging/b3/contract/index.js';
 import { createFoundationConversationViews } from './conversation-views.js';
 import {
-  composeB3Transcript, createTranscriptStore,
-  type B3TranscriptContract, type MessagingMirrorPort,
-  type TranscriptSourcePort,
+  composeB3Transcript, createMirrorPump, createTranscriptStore,
+  type B3TranscriptContract, type MessagingMirrorPort, type MirrorPump,
+  type TranscriptBinding, type TranscriptSourcePort,
 } from '../../../transcript/b3/contract/index.js';
 
 export type CapabilityEmit = (
@@ -80,11 +80,26 @@ export interface B3TranscriptCompositionOptions {
    * neither choice can be made by forgetting.
    */
   readonly source: TranscriptSourcePort;
+  /** How often the mirror looks. Tests shorten it; production takes the default. */
+  readonly mirrorIntervalMs?: number;
+}
+
+/**
+ * The capability, plus the thing that DRIVES it.
+ *
+ * They are returned together because a host that composes Transcript and never
+ * starts the pump has a mirror that only a human can run — which is the state
+ * the exam caught: seven of §15's eight kinds on the stream, and every terminal
+ * turn stranded in a provider file.
+ */
+export interface ComposedTranscript {
+  readonly api: B3TranscriptContract;
+  readonly mirror: MirrorPump;
 }
 
 export function composeB3TranscriptFor(
   options: B3TranscriptCompositionOptions,
-): B3TranscriptContract {
+): ComposedTranscript {
   const store = createTranscriptStore({
     root: options.root, dataRoot: options.dataRoot,
   });
@@ -122,10 +137,30 @@ export function composeB3TranscriptFor(
     },
   };
 
-  return composeB3Transcript({
+  const api = composeB3Transcript({
     store,
     source: options.source,
     messaging: mirror,
     emit: options.emit,
   });
+
+  return {
+    api,
+    mirror: createMirrorPump({
+      ...(options.mirrorIntervalMs === undefined
+        ? {} : { intervalMs: options.mirrorIntervalMs }),
+      ports: {
+        listBindings: () => store.list<TranscriptBinding>('transcriptBinding'),
+        // Through the capability's own contract, so the pump gets the same
+        // watermark law, ledger and `transcript.line.committed` event a human
+        // driving `b3.transcript.ingest` gets. There is one mirror, not two.
+        ingest: (input) => api.ingestTranscriptSource({
+          principal: { id: 'sys_transcript', kind: 'system', verifiedScopes: [] },
+          clientOpId: `op_pump_${input.bindingId.slice(-24)}` as never,
+          traceId: 'trace_00000000-0000-4000-8000-000000000000' as never,
+          contractVersion: 1,
+        }, input),
+      },
+    }),
+  };
 }
