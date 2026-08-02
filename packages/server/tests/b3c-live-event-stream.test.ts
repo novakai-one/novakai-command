@@ -14,18 +14,55 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createFakePtyHost } from '../../terminal/adapters/pty-host/fake.js';
 import { createFakeProviderAdapters } from '../../agents/b3/contract/index.js';
+import type {
+  SourcePrefixOutcome, SourceReadOutcome, TranscriptSourcePort,
+} from '../../transcript/b3/contract/index.js';
 import { startRuntimeHost } from '../core/b3/host.js';
 import { connectRuntime } from '../core/b3/client.js';
 import { governedRole } from './governed-role.js';
+
+const TURN = 'a turn worth committing';
+const POSITION = '0000000000';
+const DIGEST = createHash('sha256').update(TURN, 'utf8').digest('hex');
+
+/**
+ * One human turn, the shape a provider file has.
+ *
+ * The test used to run on the default production source, which finds no file
+ * for a fake provider — so its `transcript.line.committed` assertion was
+ * satisfied by a pass that committed nothing (`discovered: 0`). That vacuous
+ * announcement is the L1 defect this suite now forbids, so the exchange has to
+ * be a real one.
+ */
+const oneTurnSource = (): TranscriptSourcePort => ({
+  async read(_binding, fromPosition, maxLines): Promise<SourceReadOutcome> {
+    if (fromPosition !== undefined && POSITION < fromPosition) {
+      return { kind: 'lines', lines: [], more: false };
+    }
+    return {
+      kind: 'lines',
+      more: false,
+      lines: maxLines < 1 ? [] : [{ position: POSITION, role: 'user', text: TURN, digest: DIGEST }],
+    };
+  },
+  async readPrefixDigests(_binding, throughPosition): Promise<SourcePrefixOutcome> {
+    return {
+      kind: 'digests',
+      digests: POSITION <= throughPosition ? [{ position: POSITION, digest: DIGEST }] : [],
+    };
+  },
+});
 
 test('a real exchange puts every §15 messaging and transcript kind on the stream', async () => {
   const root = mkdtempSync(path.join(tmpdir(), 'nvk-b3c-live-events-'));
   const host = await startRuntimeHost({
     root, port: 0, ptyHost: createFakePtyHost(), providers: createFakeProviderAdapters(),
+    transcriptSource: oneTurnSource(),
   });
   const chris = await connectRuntime({ root, port: host.port, token: host.token });
   try {

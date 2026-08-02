@@ -66,6 +66,15 @@ const keyFor = (effect: string): ClientOpId => deriveClientOpId(`transcript:${ef
 const bindingEvent = 'transcript.binding.changed';
 const subagentEvent = 'transcript.observed-subagent.changed';
 
+/**
+ * Did this pass write a durable outcome anyone can act on?
+ *
+ * `discovered` alone is not enough: a pass whose only line was the re-read
+ * watermark line recognises its own ledger entry and writes nothing.
+ */
+const committedSomething = (outcome: TranscriptIngestOutcome): boolean =>
+  outcome.filtered > 0 || outcome.mirrored > 0 || outcome.quarantined > 0;
+
 const bindingPayload = (binding: TranscriptBinding): Record<string, unknown> => ({
   bindingId: binding.id,
   agentId: binding.agentId,
@@ -159,6 +168,16 @@ export function composeB3Transcript(options: B3TranscriptOptions): B3TranscriptC
       // One event per pass, carrying the counts. A per-line event would be
       // truthful and useless: a thousand-line first ingest would evict the
       // whole bounded stream and take everyone else's events with it.
+      //
+      // And a pass that produced no durable outcome says nothing, so it says
+      // nothing. The pump looks once a second per binding forever; announcing
+      // `transcript.line.committed` for `discovered: 0` filled §15's bounded
+      // ring with three sentences a second about nothing having happened and
+      // pushed every other kind off it — which is exactly what exam row L1
+      // read back as "the endpoint, inbox and binding kinds are missing".
+      // Emitting only on a real outcome is not a quota: it is the event kind
+      // meaning what its name says.
+      if (!ingested.ok || !committedSomething(ingested.value)) return ingested;
       return announce(ingested, 'transcript.line.committed', (value) => ({
         bindingId: value.bindingId,
         discovered: value.discovered,
