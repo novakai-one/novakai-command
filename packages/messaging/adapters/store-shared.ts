@@ -673,15 +673,7 @@ export class StoreCore implements MessagingStore {
     // same entityRevision — because nothing changed state; it is the same fact
     // said in the place a reader of this item's lifecycle looks.
     for (const inboxItem of agentInboxItems) {
-      const queuedError = await this.persistAndApply({
-        op: "agent-inbox-transition",
-        item: inboxItem,
-        journal: {
-          sequence: this.nextSequence(),
-          kind: "AgentInboxChanged",
-          item: inboxItem,
-        },
-      });
+      const queuedError = await this.persistInboxState(inboxItem);
       if (queuedError) return { kind: "failed", error: queuedError };
     }
 
@@ -1260,14 +1252,24 @@ export class StoreCore implements MessagingStore {
       ...item,
       entityRevision: (previous?.entityRevision ?? 0) + 1,
     };
-    const journal: JournalEntry = {
-      sequence: this.nextSequence(), kind: "AgentInboxChanged", item: stamped,
-    };
-    const opError = await this.persistAndApply({
-      op: "agent-inbox-transition", item: stamped, journal,
-    });
+    const opError = await this.persistInboxState(stamped);
     if (opError) return failure(opError);
     return ok(stamped);
+  }
+
+  /**
+   * One state of one inbox item, recorded where a reader of that item's
+   * lifecycle looks (§8.1).
+   *
+   * Shared by the acceptance — which records `queued` — and by every later
+   * transition, so the log says a state the same way wherever it was reached.
+   */
+  private async persistInboxState(item: AgentInboxItem): Promise<StoreError | undefined> {
+    return this.persistAndApply({
+      op: "agent-inbox-transition",
+      item,
+      journal: { sequence: this.nextSequence(), kind: "AgentInboxChanged", item },
+    });
   }
 
   async getAgentEndpointClaim(
