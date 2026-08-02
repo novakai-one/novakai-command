@@ -60,10 +60,15 @@ test('every stage is journalled with a stable effect key, in the ladder order', 
 
     const operation = await onlyOperation(rig);
     const stages = operation.completedStages.map((done) => done.stage);
-    // §13.5's order, including the rungs later slices own.
+    // §13.5's order, with ONE surfaced departure. Pass 1 line 503 puts
+    // `endpoint-reserved` before the terminal rows, but §12.5 and §8.1 both
+    // require a `terminalSessionId` on the claim and no Terminal surface mints
+    // one before `openManagedTerminal`. The reservation therefore happens the
+    // moment a session id exists — still strictly before any provider input,
+    // which is what line 503 is protecting.
     assert.deepEqual(stages, [
       'agent-lease-acquired', 'launch-plan-recorded', 'relationship-recorded',
-      'run-reserved', 'endpoint-reserved', 'terminal-reserved', 'terminal-live',
+      'run-reserved', 'terminal-reserved', 'terminal-live', 'endpoint-reserved',
       'provider-session-recorded', 'transcript-bound', 'endpoint-active',
       'skills-gate-prompt-sent', 'skills-gate-confirmed', 'supervised-work-released',
       'watchers-installed', 'run-ready',
@@ -72,14 +77,31 @@ test('every stage is journalled with a stable effect key, in the ladder order', 
       assert.equal(done.effectKey, `${operation.id}:${done.stage}`,
         'an effect key must be derivable from the operation and the stage');
     }
+    // The three B3c rungs COMPLETED, each naming the object its owner made.
+    for (const stage of ['endpoint-reserved', 'transcript-bound', 'endpoint-active'] as const) {
+      const done = operation.completedStages.find((item) => item.stage === stage);
+      assert.notEqual(done?.outcome, 'not-needed', `${stage} was recorded as deferred`);
+      assert.notEqual(done?.ownerObjectId, undefined,
+        `${stage} completed without naming the object its owner created`);
+    }
+    // And the effects are real, not just journalled: one active claim, on this
+    // Run, and one binding into the Agent's own Thread.
+    assert.equal(rig.messagingEndpoint.claims.length, 1);
+    assert.equal(rig.messagingEndpoint.claims[0]?.state, 'active');
+    assert.equal(rig.messagingEndpoint.claims[0]?.agentRunId, spawned.value.run.id);
+    assert.equal(rig.transcriptCustody.bindings.length, 1);
+    assert.equal(rig.transcriptCustody.bindings[0]?.agentRunId, spawned.value.run.id);
+    assert.equal(
+      rig.transcriptCustody.bindings[0]?.threadId,
+      [...rig.messagingEndpoint.threads.values()][0],
+      'the binding mirrors into a Thread nobody else has heard of',
+    );
+
     // A rung whose owner arrives later is NAMED as deferred, never silent.
     const deferred = operation.completedStages.filter((done) => done.outcome === 'not-needed');
     assert.deepEqual(
       deferred.map((done) => done.stage),
-      [
-        'relationship-recorded', 'endpoint-reserved', 'transcript-bound',
-        'endpoint-active', 'watchers-installed',
-      ],
+      ['relationship-recorded', 'watchers-installed'],
       'every rung that did not apply must still appear, marked and reasoned');
     for (const done of deferred) {
       assert.notEqual(done.notNeededBecause, undefined,
@@ -90,6 +112,32 @@ test('every stage is journalled with a stable effect key, in the ladder order', 
       'this Agent is a root: it has no spawn parent',
     );
   });
+});
+
+test('a host with no Messaging or Transcript says so, naming the absent capability', async () => {
+  // The honest form of the deferral this slice failed on. "B3c" was a lie once
+  // B3c shipped; a statement about the HOST is checkable, and the production
+  // composition — which composes both — can never produce it.
+  await withRig(async (rig) => {
+    const role = rig.agents.defineRole('builder');
+    const spawned = await rig.runtime.spawnAgent(rig.human(), supervisedSpawn(rig, role));
+    assert.equal(spawned.ok, true, spawned.ok ? '' : spawned.error.message);
+
+    const operation = await onlyOperation(rig);
+    const reasons = new Map(operation.completedStages
+      .filter((done) => done.outcome === 'not-needed')
+      .map((done) => [done.stage, done.notNeededBecause]));
+    assert.equal(reasons.get('endpoint-reserved'),
+      'no Messaging capability is composed in this host');
+    assert.equal(reasons.get('transcript-bound'),
+      'no Transcript capability is composed in this host');
+    assert.equal(reasons.get('endpoint-active'),
+      'no Messaging capability is composed in this host');
+    for (const reason of reasons.values()) {
+      assert.equal(String(reason).includes('B3c'), false,
+        'a rung may not defer to the slice that already delivered it');
+    }
+  }, { withoutB3cCapabilities: true });
 });
 
 test('the provider session is reserved BEFORE any effect and never rebound', async () => {

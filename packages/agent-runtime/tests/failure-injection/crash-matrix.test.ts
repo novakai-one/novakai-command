@@ -74,6 +74,8 @@ async function crashAndRetry(writes: number): Promise<CrashRun> {
       agents: dying.agents,
       terminal: dying.terminal,
       providers: dying.providers,
+      messagingEndpoint: dying.messagingEndpoint,
+      transcriptCustody: dying.transcriptCustody,
     });
 
     const second = await restarted.runtime.spawnAgent(command, spawnInput(role));

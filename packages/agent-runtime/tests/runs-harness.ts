@@ -27,6 +27,10 @@ import {
 import type { AgentRunsContract } from '../contract/runs-api.js';
 import type { RuntimeHostContract } from '../contract/types.js';
 import { composeAgentRuns } from '../core/runs-compose.js';
+import {
+  createFakeMessagingEndpoints, createFakeTranscriptCustody,
+  type FakeMessagingEndpoints, type FakeTranscriptCustody,
+} from './runs-b3c-fakes.js';
 import { createRunsStore, type RunsStore } from '../core/runs-store.js';
 
 
@@ -71,6 +75,8 @@ export interface RunsRig {
   readonly terminal: FakeTerminal;
   readonly providers: FakeProviders;
   readonly fence: FakeFence;
+  readonly messagingEndpoint: FakeMessagingEndpoints;
+  readonly transcriptCustody: FakeTranscriptCustody;
   readonly events: { kind: string; payload: Readonly<Record<string, unknown>> }[];
   readonly root: string;
   human(scopes?: readonly AuthorityScope[]): CommandContext;
@@ -102,6 +108,21 @@ export interface RunsRigOptions extends FakeAgentsOptions {
   readonly agents?: FakeAgents;
   readonly terminal?: FakeTerminal;
   readonly providers?: FakeProviders;
+  /**
+   * Compose WITHOUT the B3c capability ports, to prove the honest branch: a
+   * host with no Messaging or Transcript records those rungs `not-needed` with
+   * a reason naming the absent capability, rather than pretending.
+   */
+  readonly withoutB3cCapabilities?: boolean;
+  /**
+   * Shared across a crash/restart for the same reason `agents` and `terminal`
+   * are: Messaging's claims and Transcript's bindings live on disk in
+   * production, so a restarted Runtime finds the claim its dying attempt
+   * reserved. A fresh fake per restart would model a capability that forgets,
+   * which no real one does.
+   */
+  readonly messagingEndpoint?: FakeMessagingEndpoints;
+  readonly transcriptCustody?: FakeTranscriptCustody;
 }
 
 export function createRunsRig(options: RunsRigOptions = {}): RunsRig {
@@ -114,6 +135,8 @@ export function createRunsRig(options: RunsRigOptions = {}): RunsRig {
     .map((skill) => `${skill.id}@v${String(skill.version)}#${skill.digest}`)
     .sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
   const providers = options.providers ?? createFakeProviders();
+  const messagingEndpoint = options.messagingEndpoint ?? createFakeMessagingEndpoints();
+  const transcriptCustody = options.transcriptCustody ?? createFakeTranscriptCustody();
   const fence = createFakeFence();
   const events: RunsRig['events'] = [];
 
@@ -130,6 +153,8 @@ export function createRunsRig(options: RunsRigOptions = {}): RunsRig {
     fence,
     publish: (kind, payload) => { events.push({ kind, payload }); },
     gateTimeoutMs: options.gateTimeoutMs ?? 2_000,
+    ...(options.withoutB3cCapabilities === true
+      ? {} : { messagingEndpoint, transcriptCustody }),
   });
 
   const envelope = (principal: AuthenticatedPrincipal): CommandContext => ({
@@ -141,6 +166,7 @@ export function createRunsRig(options: RunsRigOptions = {}): RunsRig {
 
   return {
     runtime, agents, terminal, providers, fence, events, root,
+    messagingEndpoint, transcriptCustody,
     human: (scopes = EVERY_SCOPE) => envelope({
       id: CHRIS, kind: 'human', verifiedScopes: scopes,
     }),
