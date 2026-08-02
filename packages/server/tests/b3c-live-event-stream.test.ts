@@ -65,12 +65,13 @@ test('a real exchange puts every §15 messaging and transcript kind on the strea
       ingested.ok ? '' : `the published ingest failed on a production binding: `
         + `${ingested.error.code} — ${ingested.error.message}`);
 
-    const page = await chris.call<{ events: readonly { kind: string }[] }>(
-      'b3.agent.subscribeEvents', { limit: 500 },
-    );
+    const page = await chris.call<{
+      events: readonly { kind: string; eventId: string; sourceOwner: string; cursor: string }[];
+    }>('b3.agent.subscribeEvents', { limit: 500 });
     assert.equal(page.ok, true, page.ok ? '' : `${page.error.code}: ${page.error.message}`);
     if (!page.ok) return;
-    const kinds = new Set(page.value.events.map((event) => event.kind));
+    const events = page.value.events;
+    const kinds = new Set(events.map((event) => event.kind));
 
     for (const required of [
       'messaging.agent-message.committed',
@@ -83,6 +84,26 @@ test('a real exchange puts every §15 messaging and transcript kind on the strea
         `${required} never reached the stream after a real exchange; `
         + `saw ${[...kinds].sort().join(', ')}`);
     }
+
+    // §15: the event names the capability that OWNS the fact, not whoever
+    // happened to publish it onto the shared stream.
+    const owners = new Map(events.map((event) => [event.kind, event.sourceOwner]));
+    assert.equal(owners.get('messaging.agent-message.committed'), 'messaging');
+    assert.equal(owners.get('transcript.binding.changed'), 'transcript');
+
+    // One stream means one cursor. Resuming from an event's own cursor yields
+    // only what came after it — the property a second host depends on.
+    const mid = events[Math.floor(events.length / 2)];
+    assert.notEqual(mid, undefined);
+    const resumed = await chris.call<{ events: readonly { eventId: string }[] }>(
+      'b3.agent.subscribeEvents', { after: mid!.cursor, limit: 500 },
+    );
+    assert.equal(resumed.ok, true);
+    if (!resumed.ok) return;
+    const resumedIds = resumed.value.events.map((event) => event.eventId);
+    assert.equal(resumedIds.includes(mid!.eventId), false,
+      'resuming from a cursor replayed the event it named');
+    assert.equal(resumedIds.length < events.length, true);
   } finally {
     chris.close();
     await host.close();
