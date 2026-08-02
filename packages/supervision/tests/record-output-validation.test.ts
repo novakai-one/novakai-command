@@ -78,6 +78,11 @@ test('DriftCheckOutcome and AgentUsageSummary outputs reject contradictory shape
     providerTurnsStartedThisEvaluation: 1,
     staleIntervals: 1,
   }).ok, false);
+  assert.equal(parseDriftCheckOutcome({
+    kind: 'healthy-free-evidence',
+    providerTurnsStartedThisEvaluation: 0,
+    evidenceRefs: [42, null],
+  }).ok, false);
 
   const unavailable = {
     quality: 'unavailable', source: 'none', limitations: [],

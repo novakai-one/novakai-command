@@ -22,6 +22,7 @@ import {
   objectValue,
   oneOf,
   recordEnvelope,
+  stringArray,
   wholeNumber,
   type ValidationIssue,
 } from './validation-support.js';
@@ -87,9 +88,7 @@ export function parseDriftCheckOutcome(candidate: unknown): B3Result<DriftCheckO
   const outcome = objectValue(candidate, 'driftCheckOutcome', issues);
   zeroTurns(outcome.providerTurnsStartedThisEvaluation, issues);
   if (outcome.kind === 'healthy-free-evidence') {
-    if (!Array.isArray(outcome.evidenceRefs)) {
-      issues.push({ path: 'evidenceRefs', message: 'must be an array' });
-    }
+    stringArray(outcome.evidenceRefs, 'evidenceRefs', issues);
   } else if (outcome.kind === 'first-quiet-interval') {
     exact(outcome.staleIntervals, 1, 'staleIntervals', issues);
   } else if (outcome.kind === 'status-turn-queued') {

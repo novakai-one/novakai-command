@@ -43,6 +43,23 @@ test('notification Page output validates every item and omission', () => {
     },
   }, parseNotificationPage);
   assert.equal(cli.ok, true, cli.ok ? '' : cli.error.message);
+
+  assert.equal(parseNotificationPage({
+    items: [event.payload],
+    omissions: [{ reason: 'hidden', count: 1 }],
+  }).ok, false);
+
+  assert.equal(parseCliOutput({
+    schemaVersion: 1,
+    ok: false,
+    command: 'nvk watch notifications',
+    error: {
+      code: 'WatchRuleInvalid',
+      message: 'bad rule',
+      details: { issues: [] },
+      retryable: 'no',
+    },
+  }, parseNotificationPage).ok, false);
 });
 
 test('usage-evidence event parser rejects a non-numeric provider total', () => {

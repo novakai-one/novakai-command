@@ -31,6 +31,10 @@ test('drift episode identity is deterministic over the exact §9.2 tuple', () =>
   };
   const first = deriveDriftEpisodeId(input);
   assert.equal(isDriftEpisodeId(first), true);
+  assert.equal(
+    first,
+    'driftEpisode_q3qsf2auxl67o2s5chz66y3e4jpsdj4pm2avu5bsfjcibjen34aq',
+  );
   assert.equal(deriveDriftEpisodeId(input), first);
   assert.notEqual(deriveDriftEpisodeId({ ...input, episodeOrdinal: 3 }), first);
 });
