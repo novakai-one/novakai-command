@@ -73,8 +73,10 @@ import type {
 } from "../public/contract/index.js";
 import type {
   AgentEndpointClaim,
+  AgentEndpointClaimId,
   AgentId,
   AgentInboxItem,
+  AgentInboxItemId,
 } from "../b3/contract/records.js";
 import type { ClockIds } from "../seams/clock.js";
 import type {
@@ -119,6 +121,17 @@ export type StoreOp =
     }
   // --- B3c §8.1 variants -----------------------------------------------------
   | {
+      /**
+       * A direct Thread materialised BEFORE its first Message (§12.5 requires a
+       * threadId on send, so a caller has to be able to obtain one first).
+       * Deliberately a separate variant rather than reusing "room-thread": the
+       * two index differently, and one op name covering both would make replay
+       * depend on inspecting the payload to know what it meant.
+       */
+      op: "direct-thread";
+      thread: Thread;
+    }
+  | {
       op: "agent-endpoint-claim";
       claim: AgentEndpointClaim;
       previousClaim?: AgentEndpointClaim;
@@ -160,6 +173,7 @@ export const storeOpNames = [
   "policy",
   "template",
   "settled",
+  "direct-thread",
   "agent-endpoint-claim",
   "agent-inbox-transition",
   "agent-endpoint-transfer",
@@ -455,6 +469,14 @@ export class StoreCore implements MessagingStore {
         }
         return;
       }
+      case "direct-thread": {
+        this.state.threads.set(op.thread.id, op.thread);
+        if (op.thread.direct) {
+          const [personA, personB] = op.thread.direct.pair;
+          this.state.directThreads.set(canonicalPairKey(personA, personB), op.thread.id);
+        }
+        return;
+      }
       case "agent-endpoint-claim": {
         if (op.previousClaim) this.state.endpointClaims.set(op.previousClaim.id, op.previousClaim);
         this.state.endpointClaims.set(op.claim.id, op.claim);
@@ -684,6 +706,39 @@ export class StoreCore implements MessagingStore {
   }
 
   // --- §4 reads -----------------------------------------------------------------
+
+  /**
+   * §12.5 needs a Thread to exist before its first Message. Get-or-create on
+   * the canonical sorted pair, inside the mutation queue, so two racing callers
+   * converge on one Thread exactly as `commitAcceptance` already does.
+   */
+  async createDirectThread(pair: [PersonId, PersonId]): Promise<StoreResult<Thread>> {
+    return this.runMutation(() => this.createDirectThreadSerialized(pair));
+  }
+
+  private async createDirectThreadSerialized(
+    pair: [PersonId, PersonId],
+  ): Promise<StoreResult<Thread>> {
+    const [personA, personB] = pair;
+    const key = canonicalPairKey(personA, personB);
+    const existingId = this.state.directThreads.get(key);
+    if (existingId !== undefined) {
+      const existing = this.state.threads.get(existingId);
+      if (existing) return ok(existing);
+    }
+    const sorted = [personA, personB].sort() as [PersonId, PersonId];
+    const thread: Thread = {
+      id: this.clock.newId("thread"),
+      kind: "thread",
+      schemaVersion,
+      createdAt: this.clock.now(),
+      threadKind: "direct",
+      direct: { pair: sorted },
+    };
+    const opError = await this.persistAndApply({ op: "direct-thread", thread });
+    if (opError) return failure(opError);
+    return ok(thread);
+  }
 
   async getThread(threadId: ThreadId): Promise<StoreResult<Thread>> {
     const thread = this.state.threads.get(threadId);
@@ -1192,6 +1247,18 @@ export class StoreCore implements MessagingStore {
     return ok(stamped);
   }
 
+  async getAgentEndpointClaim(
+    claimId: AgentEndpointClaimId,
+  ): Promise<StoreResult<AgentEndpointClaim | null>> {
+    return ok(this.state.endpointClaims.get(claimId) ?? null);
+  }
+
+  async getAgentInboxItem(
+    itemId: AgentInboxItemId,
+  ): Promise<StoreResult<AgentInboxItem | null>> {
+    return ok(this.state.inboxItems.get(itemId) ?? null);
+  }
+
   async getAgentEndpoint(agentId: AgentId): Promise<StoreResult<AgentEndpointClaim | null>> {
     return ok(this.currentClaim(agentId));
   }
@@ -1201,6 +1268,10 @@ export class StoreCore implements MessagingStore {
       .filter((claim) => claim.agentId === agentId)
       .sort((left, right) => left.endpointGeneration - right.endpointGeneration);
     return ok(claims);
+  }
+
+  async listAllAgentEndpointClaims(): Promise<StoreResult<AgentEndpointClaim[]>> {
+    return ok([...this.state.endpointClaims.values()]);
   }
 
   async listAgentInbox(agentId: AgentId): Promise<StoreResult<AgentInboxItem[]>> {

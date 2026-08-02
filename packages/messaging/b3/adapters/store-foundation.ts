@@ -65,22 +65,22 @@ export interface MessagingStoreOpPayload {
  * once for the same entity (a Delivery moving pending → delivered → failed),
  * the key includes the journal sequence that made it distinct.
  */
-export function operationKeyOf(op: StoreOp): string {
-  switch (op.op) {
+export function operationKeyOf(operation: StoreOp): string {
+  switch (operation.op) {
     case "acceptance":
-      return `acceptance:${op.message.id}`;
+      return `acceptance:${operation.message.id}`;
     case "room-thread":
-      return `room-thread:${op.thread.id}`;
+      return `room-thread:${operation.thread.id}`;
     case "delivery-transition":
-      return `delivery-transition:${op.delivery.id}:${op.journal.sequence}`;
+      return `delivery-transition:${operation.delivery.id}:${operation.journal.sequence}`;
     case "attempt":
-      return `attempt:${op.attempt.id}`;
+      return `attempt:${operation.attempt.id}`;
     case "policy":
-      return `policy:${op.contact?.personId ?? op.dnd?.personId ?? "?"}:${op.journal.sequence}`;
+      return `policy:${operation.contact?.personId ?? operation.dnd?.personId ?? "?"}:${operation.journal.sequence}`;
     case "template":
-      return `template:${op.template.id}:${op.journal.sequence}`;
+      return `template:${operation.template.id}:${operation.journal.sequence}`;
     case "settled":
-      return `settled:${op.messageId}`;
+      return `settled:${operation.messageId}`;
     // B3c: the TARGET STATE is what makes reserved → active → draining three
     // operations rather than one overwritten three times. The entity revision
     // would have looked like the same thing and been wrong: a revision is
@@ -89,16 +89,18 @@ export function operationKeyOf(op: StoreOp): string {
     // state each transition moves to makes the retry land on its own record,
     // which is the whole point of an idempotency key.
     case "agent-endpoint-claim":
-      return `agent-endpoint-claim:${op.claim.id}:${op.claim.state}`;
+      return `agent-endpoint-claim:${operation.claim.id}:${operation.claim.state}`;
     case "agent-inbox-transition":
-      return `agent-inbox-transition:${op.item.id}:${op.item.state}`;
+      return `agent-inbox-transition:${operation.item.id}:${operation.item.state}`;
     case "agent-endpoint-transfer":
-      return `agent-endpoint-transfer:${op.oldClaim.id}->${op.newClaim.id}`;
+      return `agent-endpoint-transfer:${operation.oldClaim.id}->${operation.newClaim.id}`;
+    case "direct-thread":
+      return `direct-thread:${operation.thread.id}`;
   }
 }
 
-export const digestOf = (op: StoreOp): string =>
-  createHash("sha256").update(canonicalJson(op), "utf8").digest("hex");
+export const digestOf = (operation: StoreOp): string =>
+  createHash("sha256").update(canonicalJson(operation), "utf8").digest("hex");
 
 /**
  * Open Messaging's production store.
@@ -146,9 +148,9 @@ export async function openFoundationMessagingStore(
     if (record.storeSequence > storeSequence) storeSequence = record.storeSequence;
   }
 
-  core.attachPersistence(async (op: StoreOp) => {
-    const operationKey = operationKeyOf(op);
-    const payloadDigest = digestOf(op);
+  core.attachPersistence(async (operation: StoreOp) => {
+    const operationKey = operationKeyOf(operation);
+    const payloadDigest = digestOf(operation);
     // The one place the two identity vocabularies meet. Messaging's core is
     // deliberately free of `@novakai/foundation` types (requirement 1), so its
     // MessagingStoreOpId is its own brand over the same string Foundation
@@ -186,7 +188,7 @@ export async function openFoundationMessagingStore(
       storeSequence,
       operationKey,
       payloadDigest,
-      storeOp: op,
+      storeOp: operation,
     };
     const written = await createObject(
       handle, payload as unknown as Record<string, unknown> & {

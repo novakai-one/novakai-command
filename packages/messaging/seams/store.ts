@@ -43,8 +43,10 @@ import type {
 } from "../public/contract/index.js";
 import type {
   AgentEndpointClaim,
+  AgentEndpointClaimId,
   AgentId,
   AgentInboxItem,
+  AgentInboxItemId,
 } from "../b3/contract/records.js";
 
 // --- §6 failure vocabulary ---------------------------------------------------
@@ -252,6 +254,18 @@ export interface MessagingStore {
    */
   createRoomThread(room: RoomThreadSpec): Promise<StoreResult<Thread>>;
 
+  /**
+   * B3c §12.5 — materialise a direct Thread BEFORE its first Message.
+   *
+   * Direct Threads have always been created implicitly inside
+   * `commitAcceptance`, which is fine while every Thread starts with a send.
+   * B3c's contract requires a `threadId` on the send itself, so a caller needs
+   * a way to obtain one first. Get-or-create on the canonical sorted pair —
+   * the same identity `commitAcceptance` uses, so the two paths converge on
+   * one Thread rather than racing to create two.
+   */
+  createDirectThread(pair: [PersonId, PersonId]): Promise<StoreResult<Thread>>;
+
   // §4 reads (committed state only; ordered results by sequence ascending)
   getThread(threadId: ThreadId): Promise<StoreResult<Thread>>;
   getDirectThread(personA: PersonId, personB: PersonId): Promise<StoreResult<Thread>>;
@@ -349,11 +363,31 @@ export interface MessagingStore {
   /** Write one inbox item state (accept, claim, submit, fail). Journaled. */
   transitionAgentInboxItem(item: AgentInboxItem): Promise<StoreResult<AgentInboxItem>>;
 
+  /**
+   * One claim by id. The id is a digest of (agentId, generation) and so cannot
+   * be reversed into an Agent — a caller holding only a claim id (which is all
+   * `activateAgentEndpointClaim` receives) has no other way to reach it. The
+   * alternative, remembering the mapping in process memory, would not survive
+   * the hard restart §25-B3c requires queued Messages to survive.
+   */
+  getAgentEndpointClaim(
+    claimId: AgentEndpointClaimId,
+  ): Promise<StoreResult<AgentEndpointClaim | null>>;
+
   /** The Agent's current (non-closed) endpoint claim, or null. */
   getAgentEndpoint(agentId: AgentId): Promise<StoreResult<AgentEndpointClaim | null>>;
   /** Every claim for the Agent, oldest generation first — closed ones included. */
   listAgentEndpointClaims(agentId: AgentId): Promise<StoreResult<AgentEndpointClaim[]>>;
+  /**
+   * Every claim, for the one question that has no Agent to scope it: "which
+   * Agent does this Run belong to?" An exact-run send names a Run and nothing
+   * else, and the endpoint claim is the durable join between the two.
+   */
+  listAllAgentEndpointClaims(): Promise<StoreResult<AgentEndpointClaim[]>>;
   listAgentInbox(agentId: AgentId): Promise<StoreResult<AgentInboxItem[]>>;
+  getAgentInboxItem(
+    itemId: AgentInboxItemId,
+  ): Promise<StoreResult<AgentInboxItem | null>>;
 
   /** Release adapter resources (file handles). In-memory: no-op. */
   close(): Promise<void>;

@@ -1,0 +1,148 @@
+/**
+ * The inspection surfaces — §19.2, red gate 12, DEC-B3V4-16.
+ *
+ * "An Agent and its communications exist even when no Conversation is pinned
+ * in Chris's Messages sidebar." That sentence is only true if reading is a
+ * pure read. Everything here reads; nothing here creates a conversationView,
+ * and the capability test asserts the count stays at zero across a whole
+ * two-Agent exchange.
+ */
+
+import { b3ok, type B3Result, type Page } from "@novakai/foundation/contract";
+import type { Message, PersonId, ThreadId } from "../../public/contract/index.js";
+import type { MessagingStore } from "../../seams/store.js";
+import type { ListAgentCommunicationsInput } from "../contract/api.js";
+import type {
+  AgentCommunicationDirection, AgentCommunicationItem, AgentId, AgentInboxItem, AgentRunId,
+} from "../contract/records.js";
+import { previewOf } from "../contract/records.js";
+import { agentIdOf, agentPersonId } from "./identity.js";
+import { ORIGIN_BINDING_FIELD } from "./mirror-fields.js";
+
+/**
+ * Both derived facts on a communication row — where a Message was mirrored
+ * from, and which Runs it touched — come from DURABLE state, never from a
+ * process-memory index. An in-memory map would look identical until the first
+ * restart, at which point loopback protection and Run attribution would
+ * silently disappear from every historical Message.
+ */
+export interface CommunicationContext {
+  readonly store: MessagingStore;
+}
+
+function directionOf(
+  message: Message, subjects: ReadonlySet<PersonId>,
+): AgentCommunicationDirection {
+  const senderIsSubject = subjects.has(message.senderId);
+  const senderIsAgent = agentIdOf(message.senderId) !== null;
+  if (senderIsSubject && senderIsAgent) return "from-agent";
+  if (senderIsAgent) return "between-agents";
+  return "to-agent";
+}
+
+/**
+ * Every Message involving the named Agents, newest last, with enough on each
+ * row to be read without a second fetch: who sent it, which way it went, and
+ * what it said.
+ */
+export async function listAgentCommunications(
+  context: CommunicationContext, input: ListAgentCommunicationsInput,
+): Promise<B3Result<Page<AgentCommunicationItem>>> {
+  const subjects = new Set(input.agentIds.map(agentPersonId));
+  const threads = await threadIdsFor(context.store, subjects, input.threadId);
+  const items: AgentCommunicationItem[] = [];
+
+  for (const threadId of threads) {
+    const page = await context.store.getMessages(threadId, { limit: 1_000 });
+    if (page.kind === "error") continue;
+    for (const message of page.value.messages) {
+      const item = await rowFor(context.store, message, subjects, input.agentIds);
+      if (item !== null) items.push(item);
+    }
+  }
+
+  items.sort((left, right) => left.messageId.localeCompare(right.messageId));
+  return b3ok({ items: items.slice(0, Math.max(1, input.limit)) });
+}
+
+/**
+ * One communication row, or null when the Message does not involve any of the
+ * Agents asked about. Everything a reader needs is on the row: who sent it,
+ * which way it went, what it said, and — when it was mirrored — where from.
+ */
+async function rowFor(
+  store: MessagingStore, message: Message, subjects: ReadonlySet<PersonId>,
+  agentIds: readonly AgentId[],
+): Promise<AgentCommunicationItem | null> {
+  const deliveries = await store.getDeliveries(message.id);
+  const recipients = deliveries.kind === "ok"
+    ? deliveries.value.map((delivery) => delivery.recipientId)
+    : [];
+  const involved = subjects.has(message.senderId)
+    || recipients.some((recipient) => subjects.has(recipient));
+  if (!involved) return null;
+
+  const origin = message.body.fields?.[ORIGIN_BINDING_FIELD];
+  const senderAgentId = agentIdOf(message.senderId);
+  return {
+    messageId: message.id,
+    threadId: message.threadId,
+    senderPrincipalId: message.senderId,
+    recipientAgentIds: recipients
+      .map(agentIdOf)
+      .filter((agentId): agentId is AgentId => agentId !== null),
+    relatedRunIds: await relatedRunsOf(store, message.id, agentIds),
+    deliveryState: deliveries.kind === "ok"
+      ? (deliveries.value[0]?.state ?? "unknown")
+      : "unknown",
+    occurredAt: message.createdAt,
+    direction: directionOf(message, subjects),
+    ...(senderAgentId === null ? {} : { senderAgentId }),
+    textPreview: previewOf(message.body.text),
+    ...(typeof origin === "string" ? { originBindingId: origin as never } : {}),
+  };
+}
+
+/**
+ * The Runs a Message touched, read back from the inbox rather than remembered.
+ * An item that followed an endpoint transfer names the NEW Run; the closed
+ * claim still names the old one, so both stay visible.
+ */
+async function relatedRunsOf(
+  store: MessagingStore, messageId: string, agentIds: readonly AgentId[],
+): Promise<readonly AgentRunId[]> {
+  const runs = new Set<AgentRunId>();
+  for (const agentId of agentIds) {
+    const inbox = await store.listAgentInbox(agentId);
+    if (inbox.kind !== "ok") continue;
+    const forMessage = inbox.value.filter((item) => item.messageId === messageId);
+    for (const item of forMessage) {
+      for (const runId of await runsOfItem(store, item)) runs.add(runId);
+    }
+  }
+  return [...runs];
+}
+
+async function runsOfItem(
+  store: MessagingStore, item: AgentInboxItem,
+): Promise<readonly AgentRunId[]> {
+  const runs: AgentRunId[] = [];
+  if (item.requestedRunId !== undefined) runs.push(item.requestedRunId);
+  if (item.endpointClaimId === undefined) return runs;
+  const claim = await store.getAgentEndpointClaim(item.endpointClaimId);
+  if (claim.kind === "ok" && claim.value !== null) runs.push(claim.value.agentRunId);
+  return runs;
+}
+
+async function threadIdsFor(
+  store: MessagingStore, subjects: ReadonlySet<PersonId>, only?: ThreadId,
+): Promise<readonly ThreadId[]> {
+  if (only !== undefined) return [only];
+  const seen = new Set<ThreadId>();
+  for (const person of subjects) {
+    const listed = await store.listThreadsForPerson(person);
+    if (listed.kind !== "ok") continue;
+    for (const thread of listed.value) seen.add(thread.id);
+  }
+  return [...seen];
+}
