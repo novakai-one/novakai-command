@@ -727,7 +727,7 @@ export class StoreCore implements MessagingStore {
     }
     const messages = [...this.state.messages.values()]
       .filter((message) => message.threadId === threadId)
-      .sort((a, b) => a.sequence - b.sequence);
+      .sort((left, right) => left.sequence - right.sequence);
     const result = paginate(messages, (message) => message.sequence, options);
     if (result.kind === "error") return result;
     const { page, nextCursor } = result.value;
@@ -747,7 +747,7 @@ export class StoreCore implements MessagingStore {
       )
       .map((delivery) => this.state.messages.get(delivery.messageId))
       .filter((message): message is Message => message !== undefined)
-      .sort((a, b) => a.sequence - b.sequence);
+      .sort((left, right) => left.sequence - right.sequence);
     const result = paginate(messages, (message) => message.sequence, options);
     if (result.kind === "error") return result;
     const { page, nextCursor } = result.value;
@@ -787,7 +787,9 @@ export class StoreCore implements MessagingStore {
 
   async listTemplates(options?: PageOptions): Promise<StoreResult<TemplatePageOut>> {
     const templates = [...this.state.templates.values()].sort(
-      (a, b) => (this.state.templateOrder.get(a.id) ?? 0) - (this.state.templateOrder.get(b.id) ?? 0),
+      (left, right) =>
+        (this.state.templateOrder.get(left.id) ?? 0)
+        - (this.state.templateOrder.get(right.id) ?? 0),
     );
     const result = paginate(
       templates,
@@ -1170,14 +1172,14 @@ export class StoreCore implements MessagingStore {
   async listAgentEndpointClaims(agentId: AgentId): Promise<StoreResult<AgentEndpointClaim[]>> {
     const claims = [...this.state.endpointClaims.values()]
       .filter((claim) => claim.agentId === agentId)
-      .sort((a, b) => a.endpointGeneration - b.endpointGeneration);
+      .sort((left, right) => left.endpointGeneration - right.endpointGeneration);
     return ok(claims);
   }
 
   async listAgentInbox(agentId: AgentId): Promise<StoreResult<AgentInboxItem[]>> {
     const items = [...this.state.inboxItems.values()]
       .filter((entry) => entry.agentId === agentId)
-      .sort((a, b) => a.acceptedSequence - b.acceptedSequence);
+      .sort((left, right) => left.acceptedSequence - right.acceptedSequence);
     return ok(items);
   }
 }
