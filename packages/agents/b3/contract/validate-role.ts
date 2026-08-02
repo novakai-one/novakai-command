@@ -172,6 +172,7 @@ export function lifecyclePolicy(field: FieldReader): LifecyclePolicy {
 export function supervisionPolicy(field: FieldReader): RoleSupervisionPolicy {
   const nested = field.nested('supervisionPolicy');
   return {
+    activityDrift: nested.choice('activityDrift', ['required', 'disabled-explicitly'] as const),
     requiredWatcherTemplates: refList(nested, 'requiredWatcherTemplates'),
     parentNotificationMode: nested.choice('parentNotificationMode',
       ['queue-only', 'next-turn-context', 'start-turn'] as const),
@@ -192,4 +193,3 @@ export function budgetPolicy(field: FieldReader): BudgetPolicy {
     hardStopEnabled: flag(nested, 'hardStopEnabled'),
   };
 }
-

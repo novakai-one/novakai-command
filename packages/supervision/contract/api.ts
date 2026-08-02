@@ -37,7 +37,7 @@ import type { VersionedRef } from './policy.js';
 /** Public input for WatchRule creation; authoritative envelope fields are omitted. */
 export type CreateWatchRuleInput = Omit<
   WatchRule,
-  keyof RecordEnvelope<string, string> | 'id' | 'kind' | 'schemaVersion'
+  keyof RecordEnvelope<string, string> | 'id' | 'kind' | 'schemaVersion' | 'installation'
 >;
 
 /** Spawn-stage input that materialises every watcher pinned by a launch plan. */
@@ -47,6 +47,25 @@ export interface InstallRunWatchersInput {
   readonly requiredTemplateRefs: readonly VersionedRef[];
   readonly recipient: NotificationRecipient;
   readonly activityGeneration: ActivityGeneration;
+}
+
+/** Cross-owner facts re-read from Agents + Runtime before any watcher write. */
+export interface ResolvedWatcherInstall {
+  readonly agentRunId: AgentRunId;
+  readonly launchPlanId: ResolvedLaunchPlanId;
+  readonly activityDrift: 'required' | 'disabled-explicitly';
+  readonly requiredTemplateRefs: readonly VersionedRef[];
+  readonly parentNotificationMode: WatchRule['deliveryMode'];
+  readonly recipient: NotificationRecipient;
+  readonly activityGeneration: ActivityGeneration;
+}
+
+/** Host adapter that gives Supervision authoritative Agents/Runtime truth. */
+export interface WatcherInstallAuthority {
+  resolve(
+    principal: AuthenticatedPrincipal,
+    input: Pick<InstallRunWatchersInput, 'agentRunId' | 'launchPlanId'>,
+  ): Promise<B3Result<ResolvedWatcherInstall>>;
 }
 
 /** Exact-CAS replacement of a WatchRule. */

@@ -8,16 +8,28 @@ export interface VersionedRef {
   readonly digest: string;
 }
 
-/** Resolved body of one immutable role-profile watcher-template ref. */
-export interface WatcherTemplate {
-  readonly templateRef: VersionedRef;
+/** Canonical digest payload owned by the role-profile template catalogue. */
+export interface WatcherTemplatePayload {
+  readonly id: string;
+  readonly version: number;
+  readonly status: 'active';
+  readonly subjectBinding: 'current-run';
   readonly condition: WatchCondition;
-  readonly deliveryMode: WatchRule['deliveryMode'];
+  readonly recipientBinding: 'current-supervision-assignment-for-escalation';
+  readonly deliveryBinding:
+    | WatchRule['deliveryMode']
+    | 'role.parentNotificationMode-for-escalation';
   readonly cooldownMs: number;
   readonly driftPolicy?: DriftCheckPolicy;
 }
 
-/** Minimal Agents-owned role-profile catalogue seam consumed by Supervision. */
+/** Resolved body plus the exact bytes-as-data whose digest the ref pins. */
+export interface WatcherTemplate {
+  readonly templateRef: VersionedRef;
+  readonly payload: WatcherTemplatePayload;
+}
+
+/** Minimal Agents-owned role-profile catalogue query consumed by Supervision. */
 export interface WatcherTemplateCatalogue {
   resolve(wanted: VersionedRef): WatcherTemplate | null;
 }
@@ -58,13 +70,6 @@ export const ACTIVITY_DRIFT_TEMPLATE = {
   },
 } as const;
 
-/** Durable role policy resolved into an immutable launch plan before spawn. */
-export interface RoleSupervisionPolicy {
-  readonly activityDrift: 'required' | 'disabled-explicitly';
-  readonly requiredWatcherTemplates: readonly VersionedRef[];
-  readonly parentNotificationMode: 'queue-only' | 'next-turn-context' | 'start-turn';
-}
-
 /** Scope required to durably authorize watcher-originated start turns. */
 export const SUPERVISION_WATCH_START_TURN_SCOPE =
   'supervision:watch:start-turn' as AuthorityScope;
@@ -77,9 +82,4 @@ export function requiresWatchStartTurnAuthority<Rule extends WatchStartTurnPolic
 ): boolean {
   return rule.status !== 'retired'
     && (rule.deliveryMode === 'start-turn' || rule.condition.kind === 'activity-drift');
-}
-
-/** Whether a role policy pins any watcher-originated start-turn authority. */
-export function roleRequiresWatchStartTurnAuthority(policy: RoleSupervisionPolicy): boolean {
-  return policy.activityDrift === 'required' || policy.parentNotificationMode === 'start-turn';
 }

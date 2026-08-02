@@ -21,6 +21,8 @@ export const SCOPE = {
   adopt: 'agent.adopt' as AuthorityScope,
   continueRun: 'agent.continue' as AuthorityScope,
   control: 'agent.control' as AuthorityScope,
+  /** Q5: durable authority for watcher-originated provider turns. */
+  watchStartTurn: 'supervision:watch:start-turn' as AuthorityScope,
 } as const;
 
 export const RUN_OPERATION_SCOPE: Readonly<Record<string, AuthorityScope>> = {

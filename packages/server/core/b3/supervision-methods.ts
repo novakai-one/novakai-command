@@ -52,6 +52,8 @@ function readParams(candidate: unknown): B3Result<WireParams> {
 export interface WatcherListing {
   readonly rules: readonly WatchRule[];
   readonly deadlines: readonly WatchDeadline[];
+  readonly nextCursor?: string;
+  readonly omissions: readonly { readonly reason: 'permission' | 'unsupported-version'; readonly count: number }[];
 }
 
 export function buildB3SupervisionMethods(options: B3SupervisionMethodOptions): MethodTable {
@@ -70,7 +72,13 @@ export function buildB3SupervisionMethods(options: B3SupervisionMethodOptions): 
     if (!rules.ok) return rules;
     const deadlines = await supervision.listWatchDeadlines(principal);
     if (!deadlines.ok) return deadlines;
-    return b3ok({ rules: rules.value.items, deadlines: deadlines.value });
+    const visibleRuleIds = new Set(rules.value.items.map((rule) => rule.id));
+    return b3ok({
+      rules: rules.value.items,
+      deadlines: deadlines.value.filter((deadline) => visibleRuleIds.has(deadline.watchRuleId)),
+      ...(rules.value.nextCursor === undefined ? {} : { nextCursor: rules.value.nextCursor }),
+      omissions: rules.value.omissions,
+    });
   }
 
   return {

@@ -8,6 +8,7 @@
 import type { AuthenticatedPrincipal, B3Result } from '@novakai/foundation/contract';
 import type {
   SupervisionContract, WatchDeadline, WatcherTemplate, WatcherTemplateCatalogue,
+  WatcherInstallAuthority,
 } from '../contract/index.js';
 import {
   createSupervisionStore, type SupervisionStore, type SupervisionStoreOptions,
@@ -32,6 +33,8 @@ export interface SupervisionWatcherReads {
 export type SupervisionCore = SupervisionWireSlice & SupervisionWatcherReads;
 
 export interface SupervisionCoreOptions extends SupervisionStoreOptions {
+  /** Required: installs are refused unless Agents + Runtime facts can be re-read. */
+  readonly installAuthority: WatcherInstallAuthority;
   /**
    * @internal failure injection. §24.3 wants a crash before AND after every
    * durable step, and the honest way to produce one is a store that stops
@@ -49,6 +52,7 @@ export function composeSupervision(options: SupervisionCoreOptions): Supervision
   const install = {
     store,
     templates,
+    authority: options.installAuthority,
     clock: options.clock ?? ((): Date => new Date()),
   };
 
@@ -56,7 +60,7 @@ export function composeSupervision(options: SupervisionCoreOptions): Supervision
     installRunWatchers: (context, input) => installRunWatchers(install, context, input),
     evaluateEvent: (context, input) => evaluateEvent({ store }, context, input),
     listNotifications: (_principal, filter) => listNotifications({ store }, filter),
-    listWatchRules: (_principal, filter) => listWatchRules(store, filter),
+    listWatchRules: (principal, filter) => listWatchRules(store, principal, filter),
     listWatchDeadlines: () => store.list<WatchDeadline>('watchDeadline'),
   };
 }

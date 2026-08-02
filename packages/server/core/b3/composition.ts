@@ -38,7 +38,9 @@ import {
   composeSupervision, type SupervisionCore,
 } from '../../../supervision/public/index.js';
 import type { WatcherTemplate } from '../../../supervision/contract/index.js';
-import { followEventsIntoSupervision, supervisionWatcherPort } from './supervision-ports.js';
+import {
+  followEventsIntoSupervision, supervisionWatcherPort, watcherInstallAuthority,
+} from './supervision-ports.js';
 
 export interface B3RuntimeOptions {
   /** `.novakai/` root. Domain records live in `<root>/stores`. */
@@ -233,6 +235,7 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
   const supervision = composeSupervision({
     root: options.root,
     dataRoot,
+    installAuthority: watcherInstallAuthority(agents, () => runs),
     ...(options.watcherTemplates === undefined
       ? {} : { extraTemplates: options.watcherTemplates }),
   });

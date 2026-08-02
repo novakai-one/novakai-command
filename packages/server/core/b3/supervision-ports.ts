@@ -5,14 +5,15 @@
 // asks one question through a narrow port; Supervision answers it through its
 // FROZEN contract, and this file is the translation between the two.
 import {
-  b3ok, mintClientOpId, mintTraceCorrelationId,
+  b3err, b3fail, b3ok, mintClientOpId, mintTraceCorrelationId,
   type AgentRunId, type AuthenticatedPrincipal, type ResolvedLaunchPlanId,
   type SystemCommandContext,
 } from '@novakai/foundation/contract';
 import type { AgentRunsContract, RunWatcherPort } from '../../../agent-runtime/contract/index.js';
+import type { GovernedAgentsContract } from '../../../agents/b3/contract/index.js';
 import type { SupervisionCore } from '../../../supervision/public/index.js';
 import type {
-  NotificationRecipient, VersionedRef,
+  NotificationRecipient, VersionedRef, WatcherInstallAuthority,
 } from '../../../supervision/contract/index.js';
 
 const runtimeContext = (): SystemCommandContext<'sys_agent_runtime'> => ({
@@ -25,6 +26,52 @@ const runtimeContext = (): SystemCommandContext<'sys_agent_runtime'> => ({
 const streamReader: AuthenticatedPrincipal = {
   id: 'sys_supervision', kind: 'system', verifiedScopes: [],
 };
+
+/** Agents + Runtime truth Supervision re-reads before accepting install facts. */
+export function watcherInstallAuthority(
+  agents: GovernedAgentsContract,
+  runs: () => AgentRunsContract | undefined,
+): WatcherInstallAuthority {
+  return {
+    async resolve(principal, input) {
+      const runtime = runs();
+      if (runtime === undefined) {
+        return b3fail(b3err('RuntimeUnavailable', 'Agent Runtime is not composed', {}, true));
+      }
+      const [plan, runView] = await Promise.all([
+        agents.getResolvedLaunchPlan(principal, input.launchPlanId),
+        runtime.getAgentRun(principal, input.agentRunId),
+      ]);
+      if (!plan.ok) return plan;
+      if (!runView.ok) return runView;
+      if (runView.value.run.launchPlanId !== plan.value.id) {
+        return b3fail(b3err(
+          'IdempotencyConflict', 'Run is not pinned to the supplied launch plan', {}, false,
+        ));
+      }
+      const parentRunId = runView.value.run.parentRequestingRunId;
+      let recipient: NotificationRecipient;
+      if (parentRunId !== undefined) {
+        const parent = await runtime.getAgentRun(principal, parentRunId);
+        if (!parent.ok) return parent;
+        recipient = { kind: 'agent', agentId: parent.value.agent.agentId };
+      } else {
+        const agent = await agents.getAgent(principal, runView.value.agent.agentId);
+        if (!agent.ok) return agent;
+        recipient = { kind: 'human', principalId: agent.value.rootHumanPrincipalId as never };
+      }
+      return b3ok({
+        agentRunId: runView.value.run.id,
+        launchPlanId: plan.value.id,
+        activityDrift: plan.value.supervisionPolicy.activityDrift,
+        requiredTemplateRefs: plan.value.supervisionPolicy.requiredWatcherTemplates,
+        parentNotificationMode: plan.value.supervisionPolicy.parentNotificationMode,
+        recipient,
+        activityGeneration: runView.value.run.activityGeneration,
+      });
+    },
+  };
+}
 
 /**
  * §13.5's watcher rung, seen through the Runtime's own narrow seam.

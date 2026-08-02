@@ -13,7 +13,7 @@ import { readFile, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
-  b3err, b3fail, mintClientOpId, mintTraceCorrelationId,
+  b3err, b3fail, b3ok, mintClientOpId, mintTraceCorrelationId,
   type AgentRunId, type AuthenticatedPrincipal, type B3Result, type EventCursor,
   type ResolvedLaunchPlanId, type SystemCommandContext,
 } from '@novakai/foundation/contract';
@@ -66,7 +66,11 @@ interface Rig {
   close(): void;
 }
 
-function createRig(startedAt: string): Rig {
+function createRig(
+  startedAt: string,
+  activityDrift: 'required' | 'disabled-explicitly' = 'disabled-explicitly',
+  requiredTemplateRefs = [IDLE_WATCH_TEMPLATE.templateRef],
+): Rig {
   const root = mkdtempSync(path.join(tmpdir(), 'nvk-b3d-core-'));
   const store = createSupervisionStore({ root, dataRoot: path.join(root, 'stores') });
   const supervision = composeSupervision({
@@ -74,6 +78,17 @@ function createRig(startedAt: string): Rig {
     dataRoot: path.join(root, 'stores'),
     clock: () => new Date(startedAt),
     store,
+    installAuthority: {
+      resolve: async () => b3ok({
+        agentRunId: RUN_ID,
+        launchPlanId: PLAN_ID,
+        activityDrift,
+        requiredTemplateRefs,
+        parentNotificationMode: 'queue-only',
+        recipient: { kind: 'human', principalId: 'person_chris' as never },
+        activityGeneration: 4 as never,
+      }),
+    },
   });
   return {
     supervision, store, root, startedAt,
@@ -146,9 +161,13 @@ test('installRunWatchers materialises the pinned role watcher and arms its deadl
     const rule = rules[0]!;
     assertContractShaped(parseWatchRule(rule), 'the installed WatchRule');
     assert.deepEqual(rule.subject, { kind: 'agent-run', agentRunId: RUN_ID });
-    assert.deepEqual(rule.condition, IDLE_WATCH_TEMPLATE.condition);
+    assert.deepEqual(rule.condition, IDLE_WATCH_TEMPLATE.payload.condition);
     assert.deepEqual(rule.recipient, INSTALL.recipient);
     assert.equal(rule.createdBy, 'sys_supervision');
+    assert.equal(rule.installation?.launchPlanId, PLAN_ID);
+    assert.deepEqual(rule.installation?.templateRef, IDLE_WATCH_TEMPLATE.templateRef);
+    assert.equal(rule.installation?.activityGeneration, INSTALL.activityGeneration);
+    assert.equal(rule.installation?.requestedBy, 'sys_agent_runtime');
     assert.equal(rule.status, 'active');
 
     const deadlines = unwrap(await rig.supervision.listWatchDeadlines(human), 'listWatchDeadlines');
@@ -170,6 +189,18 @@ test('installRunWatchers materialises the pinned role watcher and arms its deadl
   }
 });
 
+test('required activity drift is injected beside explicit launch-plan refs', async () => {
+  const rig = createRig('2026-08-03T00:00:00.000Z', 'required');
+  try {
+    const rules = unwrap(
+      await rig.supervision.installRunWatchers(runtimeContext(), INSTALL), 'install with drift',
+    );
+    assert.deepEqual(rules.map((rule) => rule.condition.kind), ['activity-drift', 'idle-for-ms']);
+  } finally {
+    rig.close();
+  }
+});
+
 test('re-installing the same launch plan adopts the same rule rather than a twin', async () => {
   const rig = createRig('2026-08-03T00:00:00.000Z');
   try {
@@ -184,6 +215,23 @@ test('re-installing the same launch plan adopts the same rule rather than a twin
       await rig.supervision.listWatchRules(human, { limit: 50 }), 'listWatchRules',
     );
     assert.equal(rules.items.length, 1, 'a re-entered spawn installed a duplicate watcher');
+  } finally {
+    rig.close();
+  }
+});
+
+test('install rejects caller facts that differ from authoritative plan or generation', async () => {
+  const rig = createRig('2026-08-03T00:00:00.000Z');
+  try {
+    const mismatched = await rig.supervision.installRunWatchers(runtimeContext(), {
+      ...INSTALL,
+      activityGeneration: 5 as never,
+    });
+    assert.equal(mismatched.ok, false);
+    if (!mismatched.ok) assert.equal(mismatched.error.code, 'IdempotencyConflict');
+    assert.equal((await rig.store.list('watchRule')).ok, true);
+    const rules = unwrap(await rig.store.list('watchRule'), 'stored rules');
+    assert.equal(rules.length, 0, 'mismatch wrote a WatchRule before it was refused');
   } finally {
     rig.close();
   }
@@ -256,11 +304,12 @@ test('replaying the same committed event queues no second Notification', async (
 });
 
 test('an unknown template ref is refused rather than silently skipped', async () => {
-  const rig = createRig('2026-08-03T00:00:00.000Z');
+  const unknown = { id: 'watch-template/not-a-template', version: 1, digest: 'x' };
+  const rig = createRig('2026-08-03T00:00:00.000Z', 'disabled-explicitly', [unknown]);
   try {
     const refused = await rig.supervision.installRunWatchers(runtimeContext(), {
       ...INSTALL,
-      requiredTemplateRefs: [{ id: 'watch-template/not-a-template', version: 1, digest: 'x' }],
+      requiredTemplateRefs: [unknown],
     });
     assert.equal(refused.ok, false, 'a watcher nobody can resolve installed anyway');
     if (!refused.ok) assert.equal(refused.error.code, 'WatchRuleInvalid');
@@ -270,11 +319,12 @@ test('an unknown template ref is refused rather than silently skipped', async ()
 });
 
 test('a pinned ref whose digest does not match the catalogue is refused', async () => {
-  const rig = createRig('2026-08-03T00:00:00.000Z');
+  const mismatched = { ...IDLE_WATCH_TEMPLATE.templateRef, digest: 'f'.repeat(64) };
+  const rig = createRig('2026-08-03T00:00:00.000Z', 'disabled-explicitly', [mismatched]);
   try {
     const refused = await rig.supervision.installRunWatchers(runtimeContext(), {
       ...INSTALL,
-      requiredTemplateRefs: [{ ...IDLE_WATCH_TEMPLATE.templateRef, digest: 'f'.repeat(64) }],
+      requiredTemplateRefs: [mismatched],
     });
     assert.equal(refused.ok, false, 'an unpinned template body installed under a pinned ref');
     if (!refused.ok) assert.equal(refused.error.code, 'WatchRuleInvalid');
@@ -303,6 +353,11 @@ test('a Notification is durable before its deadline stops being armed', async ()
       dataRoot: path.join(rig.root, 'stores'),
       clock: () => new Date(rig.startedAt),
       store: refusingUpdatesTo(rig.store, armed[0]!.id),
+      installAuthority: {
+        resolve: async () => b3fail(b3err(
+          'RuntimeUnavailable', 'not used by this reducer proof', {}, true,
+        )),
+      },
     });
     const outcome = await broken.evaluateEvent(runtimeContext(), {
       event: committedEvent('2026-08-03T00:07:00.000Z', 9),

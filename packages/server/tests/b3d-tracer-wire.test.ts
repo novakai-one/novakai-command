@@ -112,6 +112,7 @@ async function spawnSupervised(rig: Rig): Promise<{ agentId: string; agentRunId:
   const role = unwrap(await rig.chris.call<{ id: string }>('b3.agent.createRole', {
     ...governedRole('b3d-tracer-role'),
     supervisionPolicy: {
+      activityDrift: 'disabled-explicitly',
       requiredWatcherTemplates: [{ ...FAST_IDLE.templateRef }],
       parentNotificationMode: 'queue-only',
     },

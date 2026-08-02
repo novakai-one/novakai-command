@@ -109,7 +109,11 @@ export function roleInput(
       onSupervisorFinal: 'assign-nearest-live-ancestor',
       allowedContinuationModes: ['resume', 'fresh', 'compact', 'handover'],
     },
-    supervisionPolicy: { requiredWatcherTemplates: [], parentNotificationMode: 'queue-only' },
+    supervisionPolicy: {
+      activityDrift: 'disabled-explicitly',
+      requiredWatcherTemplates: [],
+      parentNotificationMode: 'queue-only',
+    },
     budgetPolicy: { hardStopEnabled: false },
     ...overrides,
   };

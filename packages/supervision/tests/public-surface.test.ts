@@ -10,7 +10,6 @@ import {
   ACTIVITY_DRIFT_TEMPLATE,
   SUPERVISION_WATCH_START_TURN_SCOPE,
   requiresWatchStartTurnAuthority,
-  roleRequiresWatchStartTurnAuthority,
 } from '../contract/index.js';
 import { installedWatchRules } from './fixtures.js';
 
@@ -35,11 +34,6 @@ test('activity drift is the sole implicit template and pins scoped start-turn au
   assert.equal(ACTIVITY_DRIFT_TEMPLATE.subjectBinding, 'current-run');
   assert.equal(ACTIVITY_DRIFT_TEMPLATE.driftPolicy.statusRecipient, 'subject-agent');
   assert.equal(ACTIVITY_DRIFT_TEMPLATE.driftPolicy.statusDeliveryMode, 'start-turn');
-  assert.equal(roleRequiresWatchStartTurnAuthority({
-    activityDrift: 'required',
-    requiredWatcherTemplates: [],
-    parentNotificationMode: 'queue-only',
-  }), true);
   assert.equal(requiresWatchStartTurnAuthority({
     subject: { kind: 'agent-run', agentRunId: 'agentRun_018f0f8a-4f7b-7abc-8def-0123456789ab' as never },
     condition: { kind: 'run-final' },

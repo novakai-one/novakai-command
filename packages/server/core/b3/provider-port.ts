@@ -63,7 +63,11 @@ function planFor(
       onSupervisorFinal: facts.lifecyclePolicy.onSupervisorFinal,
       allowedContinuationModes: facts.lifecyclePolicy.allowedContinuationModes,
     },
-    supervisionPolicy: { requiredWatcherTemplates: [], parentNotificationMode: 'queue-only' },
+    supervisionPolicy: {
+      activityDrift: 'disabled-explicitly',
+      requiredWatcherTemplates: [],
+      parentNotificationMode: 'queue-only',
+    },
     budgetPolicy: { hardStopEnabled: false },
     resolutionFingerprint: '',
   };

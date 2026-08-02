@@ -63,6 +63,33 @@ test('a role resolves to a plan pinned with its defaults', async () => {
   });
 });
 
+test('activity drift pins durable start-turn authority in the resolved plan', async () => {
+  await withRig(async (rig) => {
+    const role = roleInput({
+      supervisionPolicy: {
+        activityDrift: 'required',
+        requiredWatcherTemplates: [],
+        parentNotificationMode: 'queue-only',
+      },
+    });
+    const { agentId } = await seed(rig, role);
+    const resolved = await rig.agents.resolveLaunchPlan(rig.human(), {
+      agentId: agentId as never,
+      configurationMode: 'refresh-role',
+      workingDirectory: '/tmp/work',
+      supervised: true,
+    });
+    assert.equal(resolved.ok, true);
+    if (!resolved.ok) return;
+    assert.deepEqual(resolved.value.executionPolicy.commandScopes, [
+      'supervision:watch:start-turn',
+    ]);
+    const reread = await rig.agents.getResolvedLaunchPlan(rig.principal(), resolved.value.id);
+    assert.equal(reread.ok, true);
+    if (reread.ok) assert.equal(reread.value.supervisionPolicy.activityDrift, 'required');
+  });
+});
+
 test('an allowed override is honoured; a forbidden one is refused', async () => {
   await withRig(async (rig) => {
     const { agentId } = await seed(rig);

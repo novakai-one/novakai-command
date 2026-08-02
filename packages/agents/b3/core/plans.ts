@@ -15,7 +15,7 @@ import type {
   Agent, AgentRoleProfile, ControlReplacementPlan, ResolvedExecutionPolicy,
   ResolvedLaunchPlan,
 } from '../contract/records.js';
-import { fingerprint, type GovernedAgentsCore } from './context.js';
+import { fingerprint, SCOPE, type GovernedAgentsCore } from './context.js';
 import { launchPlanInvalid, type Persisted } from './store.js';
 import { requireAgent } from './agents.js';
 import { getRoleProfile } from './roles.js';
@@ -251,9 +251,11 @@ function planContent(
  * infer from silence.
  */
 function executionPolicyOf(role: AgentRoleProfile): ResolvedExecutionPolicy {
+  const watcherNeedsStartTurn = role.supervisionPolicy.activityDrift === 'required'
+    || role.supervisionPolicy.parentNotificationMode === 'start-turn';
   return {
     policyRef: role.executionPolicyRef,
-    commandScopes: [],
+    commandScopes: watcherNeedsStartTurn ? [SCOPE.watchStartTurn] : [],
     filesystemScopes: [],
     networkScopes: [],
     enforcement: 'advisory',

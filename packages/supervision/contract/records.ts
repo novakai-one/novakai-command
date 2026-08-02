@@ -2,12 +2,16 @@ import type {
   ActivityGeneration,
   AgentId,
   AgentRunId,
+  B3ClientOpId,
+  B3PrincipalId,
   IsoUtc,
   ProviderSessionId,
   ProviderTurnId,
   RecordEnvelope,
+  ResolvedLaunchPlanId,
   RuntimeEpochId,
   TerminalInputAttemptId,
+  TraceCorrelationId,
 } from '@novakai/foundation/contract';
 import type { HumanPrincipalId } from './shared.js';
 import type { DurableDriftState } from './drift.js';
@@ -151,6 +155,15 @@ export interface WatchRule extends RecordEnvelope<WatchRuleId, 'watchRule'> {
   readonly status: 'active' | 'paused' | 'retired';
   readonly driftPolicy?: DriftCheckPolicy;
   readonly action?: FutureOperationAction;
+  /** Immutable cause of an automatically installed role watcher (Q10). */
+  readonly installation?: {
+    readonly launchPlanId: ResolvedLaunchPlanId;
+    readonly templateRef: { readonly id: string; readonly version: number; readonly digest: string };
+    readonly activityGeneration: ActivityGeneration;
+    readonly requestedBy: B3PrincipalId;
+    readonly requestTraceId: TraceCorrelationId;
+    readonly requestClientOpId: B3ClientOpId;
+  };
 }
 
 /** Durable generation-fenced deadline and optional drift episode state. */

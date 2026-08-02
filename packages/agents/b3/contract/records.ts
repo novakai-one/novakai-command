@@ -98,6 +98,8 @@ export interface LifecyclePolicy {
 }
 
 export interface RoleSupervisionPolicy {
+  /** Q5's sole implicit watcher; every other watcher remains an explicit ref. */
+  readonly activityDrift: 'required' | 'disabled-explicitly';
   readonly requiredWatcherTemplates: readonly VersionedRef[];
   readonly parentNotificationMode: 'queue-only' | 'next-turn-context' | 'start-turn';
 }

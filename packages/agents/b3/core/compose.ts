@@ -116,6 +116,7 @@ export function composeGovernedAgents(
     getRoleProfile: (principal, roleProfileId) => getRoleProfile(core, principal, roleProfileId),
     listRoleProfiles: (principal) => listRoleProfiles(core, principal),
     getLaunchPlan: (principal, launchPlanId) => getLaunchPlan(core, principal, launchPlanId),
+    getResolvedLaunchPlan: (principal, launchPlanId) => getLaunchPlan(core, principal, launchPlanId),
     getAgentTree: (principal, input) => getAgentTree(core, principal, input),
     listChildren: (principal, parentAgentId) => listChildren(core, principal, parentAgentId),
     getProviderSession: (principal, id) => getProviderSession(core, principal, id),

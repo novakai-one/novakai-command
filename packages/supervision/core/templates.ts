@@ -59,14 +59,12 @@ export function createIdleWatchTemplate(
     recipientBinding: 'current-supervision-assignment-for-escalation',
     deliveryBinding: 'queue-only',
     cooldownMs: 0,
-  };
+  } as const;
   return {
     templateRef: {
       id: payload.id, version: payload.version, digest: templateDigest(payload),
     },
-    condition: { kind: 'idle-for-ms', value: input.idleMs },
-    deliveryMode: 'queue-only',
-    cooldownMs: payload.cooldownMs,
+    payload,
   };
 }
 
@@ -81,10 +79,7 @@ export const IDLE_WATCH_TEMPLATE_REF: VersionedRef = IDLE_WATCH_TEMPLATE.templat
 /** The frozen implicit template, resolved through the same one path. */
 export const ACTIVITY_DRIFT_WATCH_TEMPLATE: WatcherTemplate = {
   templateRef: ACTIVITY_DRIFT_TEMPLATE_REF,
-  condition: ACTIVITY_DRIFT_TEMPLATE.condition,
-  deliveryMode: 'queue-only',
-  cooldownMs: ACTIVITY_DRIFT_TEMPLATE.cooldownMs,
-  driftPolicy: ACTIVITY_DRIFT_TEMPLATE.driftPolicy,
+  payload: ACTIVITY_DRIFT_TEMPLATE,
 };
 
 const keyOf = (pinned: VersionedRef): string => `${pinned.id}@${String(pinned.version)}`;
@@ -101,7 +96,10 @@ export function createTemplateCatalogue(
     resolve(wanted) {
       const found = held.get(keyOf(wanted));
       if (found === undefined) return null;
-      return found.templateRef.digest === wanted.digest ? found : null;
+      const payloadMatchesRef = found.payload.id === wanted.id
+        && found.payload.version === wanted.version
+        && templateDigest(found.payload) === wanted.digest;
+      return payloadMatchesRef ? found : null;
     },
   };
 }

@@ -34,6 +34,7 @@ export interface LaunchPlanFacts {
    * be installing watchers no role ever asked for.
    */
   readonly supervisionPolicy?: {
+    readonly activityDrift: 'required' | 'disabled-explicitly';
     readonly requiredWatcherTemplates: readonly {
       readonly id: string; readonly version: number; readonly digest: string;
     }[];

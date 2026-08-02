@@ -1,5 +1,6 @@
 import {
   b3fail,
+  isValidClientOpId,
   type B3Result,
 } from '@novakai/foundation/contract';
 import type {
@@ -46,6 +47,27 @@ export function parseWatchRule(candidate: unknown): B3Result<WatchRule> {
   const issues: ValidationIssue[] = [];
   const rule = objectValue(candidate, 'watchRule', issues);
   recordEnvelope(rule, 'watchRule', 'watchRule', 'uuidv7', issues);
+  if (rule.installation !== undefined) {
+    const install = objectValue(rule.installation, 'installation', issues);
+    identifier(install.launchPlanId, 'launchPlan', 'uuidv7', 'installation.launchPlanId', issues);
+    const templateRef = objectValue(install.templateRef, 'installation.templateRef', issues);
+    nonEmpty(templateRef.id, 'installation.templateRef.id', issues);
+    wholeNumber(templateRef.version, 1, 'installation.templateRef.version', issues);
+    nonEmpty(templateRef.digest, 'installation.templateRef.digest', issues);
+    if (typeof templateRef.digest !== 'string' || !/^[a-f0-9]{64}$/.test(templateRef.digest)) {
+      issues.push({ path: 'installation.templateRef.digest', message: 'must be lowercase SHA-256' });
+    }
+    wholeNumber(install.activityGeneration, 1, 'installation.activityGeneration', issues);
+    nonEmpty(install.requestedBy, 'installation.requestedBy', issues);
+    nonEmpty(install.requestTraceId, 'installation.requestTraceId', issues);
+    if (typeof install.requestTraceId !== 'string'
+      || !/^trace_[0-9a-f-]{36}$/.test(install.requestTraceId)) {
+      issues.push({ path: 'installation.requestTraceId', message: 'must be a TraceId' });
+    }
+    if (!isValidClientOpId(install.requestClientOpId)) {
+      issues.push({ path: 'installation.requestClientOpId', message: 'must be a ClientOpId' });
+    }
+  }
   return finish<WatchRule>(candidate, issues);
 }
 

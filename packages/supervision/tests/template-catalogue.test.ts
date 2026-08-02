@@ -19,3 +19,15 @@ test('explicit watcher refs resolve through the published minimal catalogue', ()
   assert.notEqual(catalogue.resolve(ACTIVITY_DRIFT_TEMPLATE_REF), null,
     'the sole implicit template did not use the same catalogue path');
 });
+
+test('catalogue rejects a changed executable body under a self-declared pinned ref', () => {
+  const tampered = {
+    ...IDLE_WATCH_TEMPLATE,
+    payload: {
+      ...IDLE_WATCH_TEMPLATE.payload,
+      condition: { kind: 'idle-for-ms' as const, value: 1 },
+    },
+  };
+  const catalogue = createTemplateCatalogue([tampered]);
+  assert.equal(catalogue.resolve(IDLE_WATCH_TEMPLATE.templateRef), null);
+});

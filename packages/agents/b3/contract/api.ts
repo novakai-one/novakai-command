@@ -229,6 +229,11 @@ export interface GovernedAgentsQueries {
     principal: AuthenticatedPrincipal, launchPlanId: ResolvedLaunchPlanId,
   ): Promise<B3Result<ResolvedLaunchPlan>>;
 
+  /** Q5's named read of the immutable plan Supervision must verify at install. */
+  getResolvedLaunchPlan(
+    principal: AuthenticatedPrincipal, launchPlanId: ResolvedLaunchPlanId,
+  ): Promise<B3Result<ResolvedLaunchPlan>>;
+
   getAgentTree(
     principal: AuthenticatedPrincipal, input: GetAgentTreeInput,
   ): Promise<B3Result<B3Page<AgentTreeNode>>>;

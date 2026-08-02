@@ -5,20 +5,25 @@
 // B3c failure mode was a stage recorded `not-needed` for ever.
 import {
   b3err, b3fail, b3ok, deriveClientOpId, nowIsoUtc,
-  type ActivityGeneration, type B3Page, type B3PrincipalId, type B3Result, type IsoUtc,
+  type ActivityGeneration, type AuthenticatedPrincipal, type B3Page, type B3PrincipalId,
+  type B3Result, type EventCursor, type IsoUtc,
   type SystemCommandContext,
 } from '@novakai/foundation/contract';
 import {
   deriveWatchDeadlineId, mintWatchRuleId, subjectKey, SUPERVISION_RECORD_WRITER,
+  ACTIVITY_DRIFT_TEMPLATE_REF,
   type InstallRunWatchersInput, type NotificationRecipient, type VersionedRef,
+  type ResolvedWatcherInstall, type WatcherInstallAuthority,
   type WatchDeadline, type WatcherTemplate, type WatcherTemplateCatalogue,
   type WatchRule, type WatchRuleFilter, type WatchSubject,
 } from '../contract/index.js';
 import type { Persisted, SupervisionStore } from './store.js';
+import { templateDigest } from './templates.js';
 
 export interface InstallDependencies {
   readonly store: SupervisionStore;
   readonly templates: WatcherTemplateCatalogue;
+  readonly authority: WatcherInstallAuthority;
   readonly clock: () => Date;
 }
 
@@ -30,30 +35,88 @@ const unresolvable = (templateRef: VersionedRef): ReturnType<typeof b3err> => b3
 );
 
 /** The one effect key an install repeats under, so a retry adopts its rule. */
-const installEffectKey = (input: InstallRunWatchersInput, templateRef: VersionedRef): string =>
-  `b3v4:install-run-watchers:${String(input.agentRunId)}:${templateRef.id}@${String(templateRef.version)}`;
+const recipientKey = (recipient: NotificationRecipient): string => recipient.kind === 'agent'
+  ? `agent:${String(recipient.agentId)}`
+  : `human:${String(recipient.principalId)}`;
+
+const installEffectKey = (input: InstallRunWatchersInput, templateRef: VersionedRef): string => [
+  'b3v4:install-run-watchers', String(input.agentRunId), String(input.launchPlanId),
+  `${templateRef.id}@${String(templateRef.version)}#${templateRef.digest}`,
+  recipientKey(input.recipient), String(input.activityGeneration),
+].join(':');
 
 function ruleRecord(
-  principal: B3PrincipalId,
+  context: SystemCommandContext<'sys_agent_runtime'>,
   template: WatcherTemplate,
+  plan: ResolvedWatcherInstall,
   subject: WatchSubject,
-  recipient: NotificationRecipient,
 ): Persisted<WatchRule> & Record<string, unknown> {
+  const deliveryMode = template.payload.deliveryBinding === 'role.parentNotificationMode-for-escalation'
+    ? plan.parentNotificationMode
+    : template.payload.deliveryBinding;
   return {
     kind: 'watchRule',
     id: mintWatchRuleId(),
     schemaVersion: 1,
     createdAt: nowIsoUtc(),
     permissionLevel: 'private',
-    createdBy: principal,
+    createdBy: SUPERVISION_RECORD_WRITER,
     subject,
-    condition: template.condition,
-    recipient,
-    deliveryMode: template.deliveryMode,
-    cooldownMs: template.cooldownMs,
+    condition: template.payload.condition,
+    recipient: plan.recipient,
+    deliveryMode,
+    cooldownMs: template.payload.cooldownMs,
     status: 'active',
-    ...(template.driftPolicy === undefined ? {} : { driftPolicy: template.driftPolicy }),
+    ...(template.payload.driftPolicy === undefined ? {} : { driftPolicy: template.payload.driftPolicy }),
+    installation: {
+      launchPlanId: plan.launchPlanId,
+      templateRef: template.templateRef,
+      activityGeneration: plan.activityGeneration,
+      requestedBy: context.principal.id,
+      requestTraceId: context.traceId,
+      requestClientOpId: context.clientOpId,
+    },
   };
+}
+
+const sameRef = (left: VersionedRef, right: VersionedRef): boolean =>
+  left.id === right.id && left.version === right.version && left.digest === right.digest;
+
+const sameRecipient = (left: NotificationRecipient, right: NotificationRecipient): boolean =>
+  recipientKey(left) === recipientKey(right);
+
+function installMatches(input: InstallRunWatchersInput, plan: ResolvedWatcherInstall): boolean {
+  return input.agentRunId === plan.agentRunId
+    && input.launchPlanId === plan.launchPlanId
+    && input.activityGeneration === plan.activityGeneration
+    && sameRecipient(input.recipient, plan.recipient)
+    && input.requiredTemplateRefs.length === plan.requiredTemplateRefs.length
+    && input.requiredTemplateRefs.every((templateRef, index) =>
+      sameRef(templateRef, plan.requiredTemplateRefs[index]!));
+}
+
+function requiredRefs(plan: ResolvedWatcherInstall): readonly VersionedRef[] {
+  return plan.activityDrift === 'required'
+    ? [ACTIVITY_DRIFT_TEMPLATE_REF, ...plan.requiredTemplateRefs]
+    : plan.requiredTemplateRefs;
+}
+
+function resolveTemplates(
+  catalogue: WatcherTemplateCatalogue,
+  plan: ResolvedWatcherInstall,
+): B3Result<readonly WatcherTemplate[]> {
+  const templates: WatcherTemplate[] = [];
+  for (const templateRef of requiredRefs(plan)) {
+    const resolved = catalogue.resolve(templateRef);
+    const valid = resolved !== null
+      && sameRef(resolved.templateRef, templateRef)
+      && resolved.payload.id === templateRef.id
+      && resolved.payload.version === templateRef.version
+      && templateDigest(resolved.payload) === templateRef.digest;
+    if (!valid || resolved === null) return b3fail(unresolvable(templateRef));
+    templates.push(resolved);
+  }
+  return b3ok(templates);
 }
 
 /**
@@ -114,6 +177,60 @@ async function armDeadline(
   return written.ok ? b3ok(null) : b3fail(written.error);
 }
 
+function matchingInstalledRule(
+  rules: readonly WatchRule[],
+  input: InstallRunWatchersInput,
+  template: WatcherTemplate,
+): WatchRule | undefined {
+  return rules.find((rule) => rule.subject.kind === 'agent-run'
+    && rule.subject.agentRunId === input.agentRunId
+    && rule.installation?.templateRef.id === template.templateRef.id);
+}
+
+function priorMatches(
+  prior: WatchRule,
+  input: InstallRunWatchersInput,
+  template: WatcherTemplate,
+): boolean {
+  return prior.installation !== undefined
+    && sameRef(prior.installation.templateRef, template.templateRef)
+    && prior.installation.launchPlanId === input.launchPlanId
+    && prior.installation.activityGeneration === input.activityGeneration
+    && sameRecipient(prior.recipient, input.recipient);
+}
+
+async function installTemplate(
+  deps: InstallDependencies,
+  context: SystemCommandContext<'sys_agent_runtime'>,
+  input: InstallRunWatchersInput,
+  plan: ResolvedWatcherInstall,
+  existing: readonly WatchRule[],
+  template: WatcherTemplate,
+): Promise<B3Result<WatchRule>> {
+  const prior = matchingInstalledRule(existing, input, template);
+  if (prior !== undefined && !priorMatches(prior, input, template)) {
+    return b3fail(b3err(
+      'IdempotencyConflict',
+      'this Run already has a watcher installed from different pinned facts',
+      { watchRuleId: prior.id, templateId: template.templateRef.id },
+      false,
+    ));
+  }
+  const subject: WatchSubject = { kind: 'agent-run', agentRunId: input.agentRunId };
+  const written = prior === undefined
+    ? await deps.store.create<WatchRule>(
+      SUPERVISION_RECORD_WRITER,
+      ruleRecord(context, template, plan, subject),
+      deriveClientOpId(installEffectKey(input, template.templateRef)),
+    )
+    : b3ok(prior);
+  if (!written.ok) return written;
+  const armed = await armDeadline(
+    deps, SUPERVISION_RECORD_WRITER, written.value, input.activityGeneration,
+  );
+  return armed.ok ? b3ok(written.value) : b3fail(armed.error);
+}
+
 /**
  * §13.5's watcher rung, for real.
  *
@@ -123,44 +240,91 @@ async function armDeadline(
  */
 export async function installRunWatchers(
   deps: InstallDependencies,
-  _context: SystemCommandContext<'sys_agent_runtime'>,
+  context: SystemCommandContext<'sys_agent_runtime'>,
   input: InstallRunWatchersInput,
 ): Promise<B3Result<readonly WatchRule[]>> {
-  const templates: WatcherTemplate[] = [];
-  for (const templateRef of input.requiredTemplateRefs) {
-    const resolved = deps.templates.resolve(templateRef);
-    if (resolved === null) return b3fail(unresolvable(templateRef));
-    templates.push(resolved);
+  const authority = await deps.authority.resolve(context.principal, input);
+  if (!authority.ok) return authority;
+  if (!installMatches(input, authority.value)) {
+    return b3fail(b3err(
+      'IdempotencyConflict',
+      'watcher install facts do not match the authoritative launch plan and Run',
+      { agentRunId: input.agentRunId, launchPlanId: input.launchPlanId },
+      false,
+    ));
   }
-  const subject: WatchSubject = { kind: 'agent-run', agentRunId: input.agentRunId };
+  const templates = resolveTemplates(deps.templates, authority.value);
+  if (!templates.ok) return templates;
   const installed: WatchRule[] = [];
-  for (const template of templates) {
-    const written = await deps.store.create<WatchRule>(
-      SUPERVISION_RECORD_WRITER,
-      ruleRecord(SUPERVISION_RECORD_WRITER, template, subject, input.recipient),
-      deriveClientOpId(installEffectKey(input, template.templateRef)),
+  const existing = await deps.store.list<WatchRule>('watchRule');
+  if (!existing.ok) return existing;
+  for (const template of templates.value) {
+    const written = await installTemplate(
+      deps, context, input, authority.value, existing.value, template,
     );
     if (!written.ok) return written;
-    const armed = await armDeadline(
-      deps, SUPERVISION_RECORD_WRITER, written.value, input.activityGeneration,
-    );
-    if (!armed.ok) return b3fail(armed.error);
     installed.push(written.value);
   }
   return b3ok(installed);
 }
 
+function matchesWatchRuleFilter(rule: WatchRule, filter: WatchRuleFilter): boolean {
+  if (filter.status !== undefined && !filter.status.includes(rule.status)) return false;
+  return filter.subject === undefined
+    || subjectKey(rule.subject) === subjectKey(filter.subject);
+}
+
+function canReadWatchRule(principal: AuthenticatedPrincipal, rule: WatchRule): boolean {
+  if (principal.kind === 'system') return true;
+  if (principal.verifiedScopes.includes('supervision:watch:read-all' as never)) return true;
+  if (principal.kind === 'human') {
+    return rule.recipient.kind === 'human' && rule.recipient.principalId === principal.id;
+  }
+  return principal.kind === 'agent-run'
+    && rule.subject.kind === 'agent-run'
+    && rule.subject.agentRunId === principal.agentRunId;
+}
+
+function visibleRules(
+  principal: AuthenticatedPrincipal,
+  rules: readonly WatchRule[],
+): { readonly visible: readonly WatchRule[]; readonly omitted: number } {
+  const visible: WatchRule[] = [];
+  let omitted = 0;
+  for (const rule of rules) {
+    if (canReadWatchRule(principal, rule)) visible.push(rule);
+    else omitted += 1;
+  }
+  return { visible, omitted };
+}
+
 /** Visibility-aware bounded WatchRule read behind §17.1's canonical list verb. */
 export async function listWatchRules(
   store: SupervisionStore,
+  principal: AuthenticatedPrincipal,
   filter: WatchRuleFilter,
 ): Promise<B3Result<B3Page<WatchRule>>> {
   const stored = await store.list<WatchRule>('watchRule');
   if (!stored.ok) return b3fail(stored.error);
-  const wanted = stored.value.filter((rule) => {
-    if (filter.status !== undefined && !filter.status.includes(rule.status)) return false;
-    if (filter.subject === undefined) return true;
-    return subjectKey(rule.subject) === subjectKey(filter.subject);
+  const filtered = stored.value.filter((rule) => matchesWatchRuleFilter(rule, filter));
+  const ordered = [...filtered].sort((left, right) =>
+    left.createdAt.localeCompare(right.createdAt) || String(left.id).localeCompare(String(right.id)));
+  const access = visibleRules(principal, ordered);
+  const start = filter.cursor === undefined
+    ? 0
+    : access.visible.findIndex((rule) => String(rule.id) === String(filter.cursor)) + 1;
+  if (filter.cursor !== undefined && start === 0) {
+    return b3fail(b3err(
+      'ValidationFailed', 'watch-rule cursor does not name a visible prior item',
+      { issues: [{ path: 'cursor', message: 'is unknown or no longer visible' }] }, false,
+    ));
+  }
+  const items = access.visible.slice(start, start + filter.limit);
+  const hasMore = start + items.length < access.visible.length;
+  const nextCursor = hasMore ? String(items.at(-1)?.id) as EventCursor : undefined;
+  return b3ok({
+    items,
+    ...(nextCursor === undefined ? {} : { nextCursor }),
+    omissions: access.omitted === 0 ? [] : [{ reason: 'permission', count: access.omitted }],
   });
-  return b3ok({ items: wanted.slice(0, filter.limit), omissions: [] });
 }
