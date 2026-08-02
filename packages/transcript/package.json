@@ -1,14 +1,16 @@
 {
   "name": "@novakai/transcript",
   "version": "0.1.0",
-  "description": "Novakai Transcript capability — copy custody plus authoritative deduplicated transcript ingestion and read-only queries.",
+  "description": "Novakai Transcript capability \u2014 copy custody plus authoritative deduplicated transcript ingestion and read-only queries.",
   "type": "module",
   "engines": {
     "node": ">=20"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "npm run build && node --test \"dist/tests/**/*.test.js\""
+    "test": "npm run build && node --test \"dist/tests/**/*.test.js\" && npm run test:b3",
+    "typecheck:b3": "tsc -p tsconfig.b3.json",
+    "test:b3": "npm run typecheck:b3 && tsx --test \"b3/tests/**/*.test.ts\""
   },
   "license": "UNLICENSED",
   "private": true,
