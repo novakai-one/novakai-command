@@ -19,6 +19,15 @@ export const DRIFT_FREE_EVIDENCE = [
   'usage-delta',
 ] as const;
 
+/** Exact activity-drift timing/counter constraints from §9.2. */
+export const ACTIVITY_DRIFT_CONSTRAINTS = {
+  minimumIntervalMs: 300_000,
+  maximumIntervalMs: 600_000,
+  defaultIntervalMs: 300_000,
+  staleAfterIntervals: 2,
+  escalateAfterConsecutive: 3,
+} as const;
+
 /** One canonical free-evidence sample persisted on the deadline (§9.2 step 1). */
 export interface DriftEvidenceCheckpoint {
   readonly fingerprint: string;

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { b3ok } from '@novakai/foundation/contract';
 import type {
   B3Result,
   SystemCommandContext,
@@ -81,7 +82,7 @@ export async function assertSpawnWatcherConsumerContract(
     installRunWatchers: async (context, input) => {
       const installed = await provider.installRunWatchers(context, input);
       return installed.ok
-        ? { ok: true, value: installed.value.slice(0, -1) }
+        ? b3ok(installed.value.slice(0, -1))
         : installed;
     },
   };

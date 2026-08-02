@@ -4,6 +4,7 @@ import type {
   ProviderUsageEvidenceCommittedEvent,
   ProviderUsageMeasurement,
 } from '../index.js';
+import { parseProviderUsageEvidenceCommittedEvent } from '../event-validation.js';
 
 /** Provider half of the Agents usage-evidence → Supervision watcher seam. */
 export interface UsageEvidenceProviderHarness {
@@ -42,6 +43,8 @@ export async function assertUsageEvidenceProviderContract(
   provider: UsageEvidenceProviderHarness,
 ): Promise<void> {
   const event = await provider.emitUsageEvidence(THRESHOLD_MEASUREMENT);
+  const parsed = parseProviderUsageEvidenceCommittedEvent(event);
+  assert.equal(parsed.ok, true, parsed.ok ? '' : parsed.error.message);
   assert.equal(event.kind, 'agent.provider-usage-evidence.committed');
   assert.equal(event.sourceOwner, 'agents');
   assert.equal(event.schemaVersion, 1);

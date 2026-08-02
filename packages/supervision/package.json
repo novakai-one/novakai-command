@@ -5,6 +5,10 @@
   "type": "module",
   "private": true,
   "engines": { "node": ">=20" },
+  "exports": {
+    "./contract": "./contract/index.ts",
+    "./contract/testkit": "./contract/testkit/index.ts"
+  },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test:runtime": "tsx --test \"tests/**/*.test.ts\"",

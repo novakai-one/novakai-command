@@ -4,6 +4,7 @@ import type {
   NotificationEvent,
   NotificationId,
 } from '../index.js';
+import { parseNotificationEvent } from '../event-validation.js';
 
 /** Watcher-side provider half of the Notification emit/deliver seam. */
 export interface NotificationEmitterProviderHarness {
@@ -39,6 +40,8 @@ export async function assertNotificationEmitterProviderContract(
 ): Promise<void> {
   for (const deliveryMode of DELIVERY_MODES) {
     const event = await provider.emitQueuedNotification(deliveryMode);
+    const parsed = parseNotificationEvent(event);
+    assert.equal(parsed.ok, true, parsed.ok ? '' : parsed.error.message);
     assert.equal(event.kind, 'supervision.notification.changed');
     assert.equal(event.sourceOwner, 'supervision');
     assert.equal(event.payload.kind, 'notification');
