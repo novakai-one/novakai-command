@@ -1,4 +1,6 @@
 import type {
+  NotificationEvent,
+  Notification,
   ProviderUsageEvidenceCommittedEvent,
   ProviderUsageMeasurement,
 } from '../contract/index.js';
@@ -32,5 +34,44 @@ export function usageEvidenceEvent(
       sourceCursor: 'usage-cursor-1',
       measurement,
     },
+  };
+}
+
+/** Frozen queued notification fixture shared by the emit/deliver seam pair. */
+export function queuedNotificationEvent(
+  deliveryMode: Notification['deliveryMode'],
+): NotificationEvent {
+  const notification: Notification = {
+    id: `notification_${'b'.repeat(52)}` as never,
+    kind: 'notification',
+    schemaVersion: 1,
+    recordVersion: 1 as never,
+    createdAt: '2026-08-02T00:01:00.000Z' as never,
+    permissionLevel: 'team',
+    createdBy: 'sys_supervision',
+    lastMutation: { state: 'legacy-no-trace' },
+    watchRuleId: `watchRule_018f0f8a-4f7b-7abc-8def-0123456789ab` as never,
+    subject: {
+      kind: 'agent',
+      agentId: 'agent_123e4567-e89b-42d3-a456-426614174000' as never,
+    },
+    recipient: { kind: 'human', principalId: 'human_chris' as never },
+    conditionGeneration: 1,
+    summary: 'Output token threshold reached',
+    evidenceRefs: [`providerUsage_${'a'.repeat(52)}`],
+    state: 'queued',
+    deliveryMode,
+    phase: 'condition',
+  };
+  return {
+    eventId: `event_notification-${deliveryMode}`,
+    kind: 'supervision.notification.changed',
+    schemaVersion: 1,
+    occurredAt: '2026-08-02T00:01:00.000Z' as never,
+    committedAt: '2026-08-02T00:01:00.100Z' as never,
+    sourceOwner: 'supervision',
+    traceId: 'trace_123e4567-e89b-42d3-a456-426614174000' as never,
+    cursor: `cursor-notification-${deliveryMode}` as never,
+    payload: notification,
   };
 }
