@@ -26,10 +26,19 @@ export function verifyInstalledWatchers(
   const implicitCount = installed.filter(
     (item) => item.source === 'implicit-activity-drift',
   ).length;
+  const expectedDriftRef = policy?.activityDriftTemplateRef;
+  const exactImplicit = expectedImplicit === 0
+    ? implicitCount === 0
+    : expectedDriftRef !== undefined && installed.some((item) =>
+      item.source === 'implicit-activity-drift'
+        && item.templateRef.id === expectedDriftRef.id
+        && item.templateRef.version === expectedDriftRef.version
+        && item.templateRef.digest === expectedDriftRef.digest);
   if (installed.length === expectedCount
     && installedIds.size === installed.length
     && exactExplicit
-    && implicitCount === expectedImplicit) {
+    && implicitCount === expectedImplicit
+    && exactImplicit) {
     return b3ok(null);
   }
   return b3fail(b3err(

@@ -12,14 +12,14 @@ import {
 import type { ResolveLaunchPlanInput } from '../contract/api.js';
 import { readResolveLaunchPlanInput } from '../contract/validate.js';
 import type {
-  Agent, AgentRoleProfile, ControlReplacementPlan, ResolvedExecutionPolicy,
-  ResolvedLaunchPlan, WatcherTemplateRefCatalogue,
+  Agent, AgentRoleProfile, ControlReplacementPlan, ResolvedLaunchPlan,
 } from '../contract/records.js';
-import { fingerprint, SCOPE, type GovernedAgentsCore } from './context.js';
+import { fingerprint, type GovernedAgentsCore } from './context.js';
 import { launchPlanInvalid, type Persisted } from './store.js';
 import { requireAgent } from './agents.js';
 import { getRoleProfile } from './roles.js';
 import { compatiblePlan } from './compat.js';
+import { resolveSupervisionPlan, type SupervisionPlanFacts } from './supervision-plan.js';
 
 export async function resolveLaunchPlan(
   core: GovernedAgentsCore, context: CommandContext, input: ResolveLaunchPlanInput,
@@ -147,8 +147,12 @@ async function freshPlan(
 
   const chosen = chooseWithinPolicy(role.value, request);
   if (!chosen.ok) return chosen;
+  const supervisionPlan = resolveSupervisionPlan(role.value, core.watcherTemplates);
+  if (!supervisionPlan.ok) return supervisionPlan;
 
-  const content = planContent(agent, role.value, request, chosen.value, core.watcherTemplates);
+  const content = planContent(
+    agent, role.value, request, chosen.value, supervisionPlan.value,
+  );
   const supervision = supervisionIssues(content, request.supervised);
   if (supervision.length > 0) return b3fail(launchPlanInvalid(supervision));
 
@@ -217,7 +221,7 @@ function planContent(
   role: AgentRoleProfile,
   request: ResolveLaunchPlanInput,
   chosen: ChosenLaunch,
-  watcherTemplates: WatcherTemplateRefCatalogue,
+  supervision: SupervisionPlanFacts,
 ): PlanContent {
   return {
     agentId: agent.id,
@@ -240,38 +244,11 @@ function planContent(
     hooks: role.hookRefs,
     instructions: role.instructionRefs,
     skillsConfirmationGate: role.skillsConfirmationGate,
-    executionPolicy: executionPolicyOf(role, watcherTemplates),
+    executionPolicy: supervision.executionPolicy,
     spawnPolicy: role.spawnPolicy,
     lifecyclePolicy: role.lifecyclePolicy,
-    supervisionPolicy: role.supervisionPolicy,
+    supervisionPolicy: supervision.policy,
     budgetPolicy: role.budgetPolicy,
-  };
-}
-
-/**
- * DEC-B3V4-13 and red gate 21: a role may REQUEST command restrictions, but
- * Novakai has no sandbox adapter, so what it reports is `advisory` — never
- * `enforced`. The limitation is stated in the record, not left to a reader to
- * infer from silence.
- */
-function executionPolicyOf(
-  role: AgentRoleProfile, watcherTemplates: WatcherTemplateRefCatalogue,
-): ResolvedExecutionPolicy {
-  const watcherNeedsStartTurn = role.supervisionPolicy.activityDrift === 'required'
-    || role.supervisionPolicy.parentNotificationMode === 'start-turn'
-    || role.supervisionPolicy.requiredWatcherTemplates.some(
-      (templateRef) => watcherTemplates.inspect(templateRef)?.requiresStartTurn === true,
-    );
-  return {
-    policyRef: role.executionPolicyRef,
-    commandScopes: watcherNeedsStartTurn ? [SCOPE.watchStartTurn] : [],
-    filesystemScopes: [],
-    networkScopes: [],
-    enforcement: 'advisory',
-    limitations: [
-      'Novakai enforces its own capability scopes; OS and provider command '
-      + 'restriction is advisory until a sandbox adapter exists',
-    ],
   };
 }
 

@@ -37,7 +37,9 @@ import {
 import {
   composeSupervision, createTemplateCatalogue, type SupervisionCore,
 } from '../../../supervision/public/index.js';
-import type { WatcherTemplate } from '../../../supervision/contract/index.js';
+import {
+  ACTIVITY_DRIFT_TEMPLATE_REF, type WatcherTemplate,
+} from '../../../supervision/contract/index.js';
 import {
   followEventsIntoSupervision, supervisionWatcherPort, watcherInstallAuthority, watchRuleAccess,
 } from './supervision-ports.js';
@@ -227,6 +229,8 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
             || template.payload.deliveryBinding === 'start-turn',
         };
       },
+      activityDriftRef: () => watcherTemplates.resolve(ACTIVITY_DRIFT_TEMPLATE_REF)?.templateRef
+        ?? null,
     },
   });
   const credentials = createRunCredentials(options.root);

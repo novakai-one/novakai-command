@@ -35,6 +35,9 @@ export interface LaunchPlanFacts {
    */
   readonly supervisionPolicy?: {
     readonly activityDrift: 'required' | 'disabled-explicitly';
+    readonly activityDriftTemplateRef?: {
+      readonly id: string; readonly version: number; readonly digest: string;
+    };
     readonly requiredWatcherTemplates: readonly {
       readonly id: string; readonly version: number; readonly digest: string;
     }[];

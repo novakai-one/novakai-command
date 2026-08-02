@@ -19,6 +19,9 @@ import { composeGovernedAgents } from '../core/compose.js';
 import { createFakeProviderAdapters } from '../adapters/providers/fake.js';
 
 export const CHRIS = 'person_chris' as HumanPrincipalId;
+export const ACTIVITY_DRIFT_REF = {
+  id: 'watch-template/activity-drift', version: 1, digest: 'activity-drift-test-digest',
+};
 
 export interface Rig {
   readonly agents: GovernedAgentsContract;
@@ -31,7 +34,9 @@ export interface Rig {
 }
 
 export function createRig(
-  watcherTemplates: WatcherTemplateRefCatalogue = { inspect: () => null },
+  watcherTemplates: WatcherTemplateRefCatalogue = {
+    inspect: () => null, activityDriftRef: () => ACTIVITY_DRIFT_REF,
+  },
 ): Rig {
   const root = mkdtempSync(path.join(tmpdir(), 'nvk-b3b-agents-'));
   const agents = composeGovernedAgents({

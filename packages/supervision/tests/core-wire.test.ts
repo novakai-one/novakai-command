@@ -188,6 +188,19 @@ const START_TURN_TEMPLATE: WatcherTemplate = {
   },
   payload: START_TURN_PAYLOAD,
 };
+const SECOND_IDLE_PAYLOAD = {
+  ...START_TURN_PAYLOAD,
+  id: 'watch-template/second-idle',
+  deliveryBinding: 'queue-only',
+} as const;
+const SECOND_IDLE_TEMPLATE: WatcherTemplate = {
+  templateRef: {
+    id: SECOND_IDLE_PAYLOAD.id,
+    version: SECOND_IDLE_PAYLOAD.version,
+    digest: templateDigest(SECOND_IDLE_PAYLOAD),
+  },
+  payload: SECOND_IDLE_PAYLOAD,
+};
 
 test('installRunWatchers materialises the pinned role watcher and arms its deadline', async () => {
   const rig = createRig('2026-08-03T00:00:00.000Z');
@@ -303,6 +316,49 @@ test('a lost install response adopts the complete prior effect after generation 
       await rig.supervision.installRunWatchers(runtimeContext(), INSTALL), 'lost-response replay',
     );
     assert.deepEqual(replay.map((rule) => rule.id), first.map((rule) => rule.id));
+  } finally {
+    rig.close();
+  }
+});
+
+test('a partial install at a stale generation fails closed instead of mixing generations', async () => {
+  const rig = createRig(
+    '2026-08-03T00:00:00.000Z', 'disabled-explicitly',
+    [IDLE_WATCH_TEMPLATE.templateRef], { extraTemplates: [SECOND_IDLE_TEMPLATE] },
+  );
+  try {
+    unwrap(await rig.supervision.installRunWatchers(runtimeContext(), INSTALL), 'first partial');
+    const current = composeSupervision({
+      root: rig.root,
+      dataRoot: path.join(rig.root, 'stores'),
+      store: rig.store,
+      extraTemplates: [SECOND_IDLE_TEMPLATE],
+      installAuthority: {
+        resolve: async () => b3ok({
+          agentRunId: RUN_ID,
+          launchPlanId: PLAN_ID,
+          activityDrift: 'disabled-explicitly',
+          requiredTemplateRefs: [IDLE_WATCH_TEMPLATE.templateRef, SECOND_IDLE_TEMPLATE.templateRef],
+          parentNotificationMode: 'queue-only',
+          recipient: INSTALL.recipient,
+          activityGeneration: 5 as never,
+          watchStartTurnAuthorized: false,
+          requestProvenance: {
+            requestedBy: INSTALL.requestProvenance.requestedBy,
+            traceId: INSTALL.requestProvenance.traceId,
+          },
+        }),
+      },
+      watchRuleAccess: { agentIdFor: async () => b3ok(null) },
+    });
+    const retried = await current.installRunWatchers(runtimeContext(), {
+      ...INSTALL,
+      requiredTemplateRefs: [IDLE_WATCH_TEMPLATE.templateRef, SECOND_IDLE_TEMPLATE.templateRef],
+    });
+    assert.equal(retried.ok, false, 'stale retry created a mixed-generation watcher set');
+    if (!retried.ok) assert.equal(retried.error.code, 'IdempotencyConflict');
+    const rules = unwrap(await rig.store.list('watchRule'), 'stored rules');
+    assert.equal(rules.length, 1, 'stale recovery wrote a missing rule at another generation');
   } finally {
     rig.close();
   }

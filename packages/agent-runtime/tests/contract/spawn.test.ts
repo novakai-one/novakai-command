@@ -105,9 +105,65 @@ test('omitting the implicit activity-drift watcher blocks ready', async () => {
   }, {
     supervisionPolicy: {
       activityDrift: 'required', requiredWatcherTemplates: [],
+      activityDriftTemplateRef: {
+        id: 'watch-template/activity-drift', version: 1, digest: 'drift-digest',
+      },
       parentNotificationMode: 'queue-only',
     },
     watchers: { installRunWatchers: async () => ({ ok: true, value: [] }) },
+  });
+});
+
+test('a mislabeled implicit activity-drift watcher blocks ready', async () => {
+  await withRig(async (rig) => {
+    const role = rig.agents.defineRole('builder');
+    const spawned = await rig.runtime.spawnAgent(rig.human(), supervisedSpawn(rig, role));
+    assert.equal(spawned.ok, false, 'Runtime trusted an implicit source label over its identity');
+    if (!spawned.ok) assert.equal(spawned.error.code, 'WatchRuleInvalid');
+  }, {
+    supervisionPolicy: {
+      activityDrift: 'required', requiredWatcherTemplates: [],
+      activityDriftTemplateRef: {
+        id: 'watch-template/activity-drift', version: 1, digest: 'drift-digest',
+      },
+      parentNotificationMode: 'queue-only',
+    },
+    watchers: {
+      installRunWatchers: async () => ({
+        ok: true,
+        value: [{
+          id: 'wrong-implicit-rule',
+          templateRef: { id: 'watch-template/not-activity-drift', version: 99, digest: 'wrong' },
+          source: 'implicit-activity-drift',
+        }],
+      }),
+    },
+  });
+});
+
+test('the exact pinned implicit activity-drift watcher permits ready', async () => {
+  const driftRef = {
+    id: 'watch-template/activity-drift', version: 1, digest: 'drift-digest',
+  };
+  await withRig(async (rig) => {
+    const role = rig.agents.defineRole('builder');
+    const spawned = await rig.runtime.spawnAgent(rig.human(), supervisedSpawn(rig, role));
+    assert.equal(spawned.ok, true, spawned.ok ? '' : spawned.error.message);
+  }, {
+    supervisionPolicy: {
+      activityDrift: 'required', requiredWatcherTemplates: [],
+      activityDriftTemplateRef: driftRef,
+      parentNotificationMode: 'queue-only',
+    },
+    watchers: {
+      installRunWatchers: async () => ({
+        ok: true,
+        value: [{
+          id: 'activity-drift-rule', templateRef: driftRef,
+          source: 'implicit-activity-drift',
+        }],
+      }),
+    },
   });
 });
 

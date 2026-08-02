@@ -206,17 +206,6 @@ function adoptInstalled(
   return adopted;
 }
 
-function hasMatchingPrior(
-  existing: readonly WatchRule[],
-  input: InstallRunWatchersInput,
-  templates: readonly WatcherTemplate[],
-): boolean {
-  return templates.some((template) => {
-    const prior = matchingInstalledRule(existing, input, template);
-    return prior !== undefined && priorMatches(prior, input, template);
-  });
-}
-
 async function installTemplate(
   deps: InstallDependencies,
   context: SystemCommandContext<'sys_agent_runtime'>,
@@ -273,8 +262,7 @@ export async function installRunWatchers(
   if (!existing.ok) return existing;
   const adopted = adoptInstalled(existing.value, input, templates.value);
   if (adopted !== null) return b3ok(adopted);
-  if (input.activityGeneration !== authority.value.activityGeneration
-    && !hasMatchingPrior(existing.value, input, templates.value)) {
+  if (input.activityGeneration !== authority.value.activityGeneration) {
     return b3fail(b3err(
       'IdempotencyConflict',
       'watcher install generation is stale and no complete prior effect can be adopted',

@@ -51,6 +51,8 @@ export interface WatcherTemplateRefFacts {
 /** Agents-owned role-profile catalogue query used to validate watcher refs. */
 export interface WatcherTemplateRefCatalogue {
   inspect(templateRef: VersionedRef): WatcherTemplateRefFacts | null;
+  /** Exact ref for Q5's sole implicit template, from the same catalogue. */
+  activityDriftRef(): VersionedRef | null;
 }
 
 // ── The governed role (§5.2) ────────────────────────────────────────────────
@@ -112,6 +114,11 @@ export interface RoleSupervisionPolicy {
   readonly activityDrift: 'required' | 'disabled-explicitly';
   readonly requiredWatcherTemplates: readonly VersionedRef[];
   readonly parentNotificationMode: 'queue-only' | 'next-turn-context' | 'start-turn';
+}
+
+export interface ResolvedSupervisionPolicy extends RoleSupervisionPolicy {
+  /** Required exactly when activityDrift is required. */
+  readonly activityDriftTemplateRef?: VersionedRef;
 }
 
 export interface BudgetPolicy {
@@ -197,7 +204,7 @@ export interface ResolvedLaunchPlan
   readonly executionPolicy: ResolvedExecutionPolicy;
   readonly spawnPolicy: SpawnPolicy;
   readonly lifecyclePolicy: LifecyclePolicy;
-  readonly supervisionPolicy: RoleSupervisionPolicy;
+  readonly supervisionPolicy: ResolvedSupervisionPolicy;
   readonly budgetPolicy: BudgetPolicy;
   /** Proof that two callers resolving the same inputs got the same plan. */
   readonly resolutionFingerprint: string;

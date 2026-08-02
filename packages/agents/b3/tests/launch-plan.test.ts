@@ -6,7 +6,7 @@
 // a refusal with no effects to undo.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createRig, roleInput, chatRoleInput, CHRIS } from './harness.js';
+import { ACTIVITY_DRIFT_REF, createRig, roleInput, chatRoleInput, CHRIS } from './harness.js';
 import type { AgentRoleProfileId, RecordVersion } from '@novakai/foundation/contract';
 
 async function withRig<T>(work: (rig: ReturnType<typeof createRig>) => Promise<T>): Promise<T> {
@@ -95,6 +95,9 @@ test('activity drift pins durable start-turn authority in the resolved plan', as
     assert.deepEqual(resolved.value.executionPolicy.commandScopes, [
       'supervision:watch:start-turn',
     ]);
+    assert.deepEqual(
+      resolved.value.supervisionPolicy.activityDriftTemplateRef, ACTIVITY_DRIFT_REF,
+    );
     const reread = await rig.agents.getResolvedLaunchPlan(rig.principal(), resolved.value.id);
     assert.equal(reread.ok, true);
     if (reread.ok) assert.equal(reread.value.supervisionPolicy.activityDrift, 'required');
@@ -121,6 +124,7 @@ test('an explicit start-turn watcher also requires trusted authority and pins it
   };
   const rig = createRig({
     inspect: (wanted) => wanted.id === templateRef.id ? { requiresStartTurn: true } : null,
+    activityDriftRef: () => null,
   });
   try {
     const role = roleInput({
