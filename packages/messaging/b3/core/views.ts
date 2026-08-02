@@ -159,18 +159,26 @@ async function rowFor(
 async function inboxStateOf(
   store: MessagingStore, messageId: string, agentIds: readonly AgentId[],
 ): Promise<AgentInboxItemState | undefined> {
-  let furthest: AgentInboxItemState | undefined;
+  const states: AgentInboxItemState[] = [];
   for (const agentId of agentIds) {
-    const inbox = await store.listAgentInbox(agentId);
-    if (inbox.kind !== "ok") continue;
-    for (const item of inbox.value) {
-      if (item.messageId !== messageId) continue;
-      if (furthest === undefined || rankOf(item.state) > rankOf(furthest)) {
-        furthest = item.state;
-      }
-    }
+    states.push(...await statesFor(store, agentId, messageId));
   }
-  return furthest;
+  return states.reduce<AgentInboxItemState | undefined>(
+    (furthest, state) =>
+      furthest === undefined || rankOf(state) > rankOf(furthest) ? state : furthest,
+    undefined,
+  );
+}
+
+/** One Agent's inbox states for one Message — usually none, rarely one. */
+async function statesFor(
+  store: MessagingStore, agentId: AgentId, messageId: string,
+): Promise<readonly AgentInboxItemState[]> {
+  const inbox = await store.listAgentInbox(agentId);
+  if (inbox.kind !== "ok") return [];
+  return inbox.value
+    .filter((item) => item.messageId === messageId)
+    .map((item) => item.state);
 }
 
 /**

@@ -148,7 +148,7 @@ export function composeB3Transcript(options: B3TranscriptOptions): B3TranscriptC
     },
 
     async ingestTranscriptSource(
-      ctx: SystemCommandContext<'sys_transcript'>, input: IngestTranscriptSourceInput,
+      context: SystemCommandContext<'sys_transcript'>, input: IngestTranscriptSourceInput,
     ): Promise<B3Result<TranscriptIngestOutcome>> {
       const binding = await bindingById(input.bindingId);
       if (binding === null) return b3fail(unknownBinding(input.bindingId));
@@ -158,7 +158,7 @@ export function composeB3Transcript(options: B3TranscriptOptions): B3TranscriptC
         messaging: options.messaging,
         // Q10: the requester's correlation, carried to any tombstone this pass
         // asks Foundation for. It is trusted context, never request JSON.
-        traceId: ctx.traceId,
+        traceId: context.traceId,
         observeSubagent: (seen) => recordObservedSubagent(store, {
           bindingId: seen.bindingId as TranscriptBindingId,
           providerNativeId: seen.providerNativeId,
