@@ -1,14 +1,77 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { deriveClientOpId } from '@novakai/foundation/contract';
 import {
   parseAgentUsageSummary,
   parseDriftCheckOutcome,
+  parseNotificationRecord,
   parseWatchDeadline,
   parseWatchRule,
 } from '../contract/index.js';
-import { installedWatchRules } from './fixtures.js';
+import { installedWatchRules, queuedNotificationEvent } from './fixtures.js';
 
 const RUN_ID = 'agentRun_018f0f8a-4f7b-7abc-8def-0123456789ab';
+
+test('records accept the ratified name-derived ClientOpId provenance', () => {
+  const lastMutation = {
+    state: 'trace-complete' as const,
+    serverOpId: 'srv_123e4567-e89b-42d3-a456-426614174000',
+    clientOpId: deriveClientOpId('b3d-freeze-defect-1'),
+    traceId: 'trace_123e4567-e89b-42d3-a456-426614174000',
+    committedAt: '2026-08-03T00:00:00.000Z',
+  };
+  const [baseRule] = installedWatchRules({
+    agentRunId: RUN_ID as never,
+    launchPlanId: 'launchPlan_018f0f8a-4f7b-7abc-8def-0123456789ab' as never,
+    requiredTemplateRefs: [],
+  });
+  const rule = { ...baseRule, lastMutation };
+  const deadline = {
+    id: `watchDeadline_${'a'.repeat(52)}`,
+    kind: 'watchDeadline',
+    schemaVersion: 1,
+    recordVersion: 2,
+    createdAt: '2026-08-03T00:00:00.000Z',
+    permissionLevel: 'team',
+    createdBy: 'sys_supervision',
+    lastMutation,
+    watchRuleId: rule.id,
+    subjectKey: RUN_ID,
+    activityGeneration: 3,
+    dueAt: '2026-08-03T00:10:00.000Z',
+    state: 'armed',
+  };
+  const notification = {
+    ...queuedNotificationEvent('queue-only').payload,
+    lastMutation,
+  };
+
+  assert.equal(parseWatchRule(rule).ok, true, 'WatchRule refused derived ClientOpId');
+  assert.equal(parseWatchDeadline(deadline).ok, true, 'WatchDeadline refused derived ClientOpId');
+  assert.equal(parseNotificationRecord(notification).ok, true,
+    'Notification refused derived ClientOpId');
+  assert.equal(parseWatchRule({
+    ...rule,
+    lastMutation: {
+      ...lastMutation,
+      clientOpId: 'op_123e4567-e89b-42d3-a456-426614174000',
+    },
+  }).ok, true, 'WatchRule refused caller-minted ClientOpId');
+  assert.equal(parseWatchRule({
+    ...rule,
+    lastMutation: {
+      ...lastMutation,
+      clientOpId: 'op_123e4567-e89b-72d3-a456-426614174000',
+    },
+  }).ok, false, 'WatchRule accepted a UUID version outside the §3.2 forms');
+  assert.equal(parseWatchRule({
+    ...rule,
+    lastMutation: {
+      ...lastMutation,
+      clientOpId: 'op_123e4567-e89b-52d3-7456-426614174000',
+    },
+  }).ok, false, 'WatchRule accepted a UUID with a non-RFC variant');
+});
 
 test('public WatchRule and WatchDeadline records cross runtime validation', () => {
   const [rule] = installedWatchRules({

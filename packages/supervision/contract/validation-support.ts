@@ -1,6 +1,7 @@
 import {
   b3fail,
   b3ok,
+  isValidClientOpId,
   isValidId,
   validationFailed,
   type B3Result,
@@ -130,14 +131,18 @@ function mutationProvenance(
   const mutation = objectValue(value, path, issues);
   if (mutation.state === 'trace-complete') {
     identifier(mutation.serverOpId, 'srv', 'uuidv4', `${path}.serverOpId`, issues);
-    identifier(mutation.clientOpId, 'op', 'uuidv4', `${path}.clientOpId`, issues);
+    if (!isValidClientOpId(mutation.clientOpId)) {
+      issues.push({ path: `${path}.clientOpId`, message: 'must be an op identifier' });
+    }
     identifier(mutation.traceId, 'trace', 'uuidv4', `${path}.traceId`, issues);
     isoUtc(mutation.committedAt, `${path}.committedAt`, issues);
     return;
   }
   if (mutation.state === 'object-appended-trace-missing') {
     identifier(mutation.serverOpId, 'srv', 'uuidv4', `${path}.serverOpId`, issues);
-    identifier(mutation.clientOpId, 'op', 'uuidv4', `${path}.clientOpId`, issues);
+    if (!isValidClientOpId(mutation.clientOpId)) {
+      issues.push({ path: `${path}.clientOpId`, message: 'must be an op identifier' });
+    }
     forbidden(mutation, ['traceId', 'committedAt'], path, issues);
     return;
   }
