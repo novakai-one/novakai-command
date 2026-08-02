@@ -11,7 +11,8 @@
 // Re-exported from `ports.ts`, so no consumer changes: the contract's public
 // surface is unchanged.
 import type {
-  AgentId, AgentRunId, B3Result, HumanPrincipalId, ProviderSessionId, TerminalSessionId,
+  AgentId, AgentRunId, B3Result, HumanPrincipalId, ProviderSessionId,
+  ResolvedLaunchPlanId, TerminalSessionId,
 } from '@novakai/foundation/contract';
 
 /**
@@ -112,4 +113,29 @@ export interface TranscriptCustodyPort {
     readonly bindingId: string | null;
     readonly finalWatermark: string;
   }>>;
+}
+
+/**
+ * What Supervision must answer at §13.5's watcher rung (B3d).
+ *
+ * As narrow as its neighbours above, and for the same reason: the Runtime
+ * cannot create a watcher of its own, cannot read one, and cannot fire one. It
+ * can ask ONE question — "materialise the watchers this Run's immutable launch
+ * plan pinned" — and Supervision remains the sole writer of every record that
+ * answer touches (§3.3).
+ *
+ * Optional on the Runtime, exactly like the two ports above: a host composed
+ * without Supervision records the rung `not-needed` naming the absent
+ * capability, which is a true statement about that host.
+ */
+export interface RunWatcherPort {
+  installRunWatchers(
+    input: {
+      readonly agentRunId: AgentRunId;
+      readonly launchPlanId: ResolvedLaunchPlanId;
+      readonly requiredTemplateRefs: readonly {
+        readonly id: string; readonly version: number; readonly digest: string;
+      }[];
+    },
+  ): Promise<B3Result<readonly { readonly id: string }[]>>;
 }

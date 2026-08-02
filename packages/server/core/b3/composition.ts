@@ -34,6 +34,10 @@ import {
   createProviderFileLocator, createProviderFileSource, defaultProviderHomes,
   type B3TranscriptContract, type TranscriptSourcePort,
 } from '../../../transcript/b3/contract/index.js';
+import {
+  composeSupervision, type SupervisionCore, type WatcherTemplate,
+} from '../../../supervision/core/index.js';
+import { followEventsIntoSupervision, supervisionWatcherPort } from './supervision-ports.js';
 
 export interface B3RuntimeOptions {
   /** `.novakai/` root. Domain records live in `<root>/stores`. */
@@ -67,6 +71,15 @@ export interface B3RuntimeOptions {
   readonly transcriptSource?: TranscriptSourcePort;
   /** Where the provider CLIs keep their transcripts. Overridable for tests. */
   readonly providerHome?: string;
+  /**
+   * B3d: extra pinned watcher templates this host's role catalogue offers, on
+   * top of the ones Supervision ships. The catalogue is role-profile data, and
+   * the frozen contract publishes no resolver for it (tracer report,
+   * contract-forced choice 3).
+   */
+  readonly watcherTemplates?: readonly WatcherTemplate[];
+  /** Who a fired watcher tells when no supervisor lookup is wired yet. */
+  readonly supervisorPrincipalId?: string;
 }
 
 export interface B3Runtime {
@@ -77,6 +90,7 @@ export interface B3Runtime {
   readonly credentials: ReturnType<typeof createRunCredentials>;
   readonly messaging: AgentMessagingContract & { readonly store: { close(): Promise<void> } };
   readonly transcript: B3TranscriptContract;
+  readonly supervision: SupervisionCore;
   readonly dataRoot: string;
   close(): Promise<void>;
 }
@@ -215,6 +229,17 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
   // stream the Runtime already owns (§15, §24.4). They do not write each
   // other's stores and neither writes the Runtime's — the only thing crossing
   // here is an event and a typed request.
+  // Supervision is composed BEFORE Runs, because the Runs spawn ladder now
+  // genuinely depends on it: §13.5's watcher rung installs through this port.
+  // It writes only its own three kinds and holds no way to reach a PTY.
+  const supervision = composeSupervision({
+    root: options.root,
+    dataRoot,
+    supervisorPrincipalId: (options.supervisorPrincipalId ?? 'person_chris') as never,
+    ...(options.watcherTemplates === undefined
+      ? {} : { extraTemplates: options.watcherTemplates }),
+  });
+
   const emit = (owner: 'messaging' | 'transcript') =>
     (kind: string, payload: Readonly<Record<string, unknown>>): void => {
       runs?.publishCapabilityEvent(kind, payload, owner);
@@ -254,6 +279,7 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
     ...(options.publish === undefined ? {} : { publish: options.publish }),
     ...(options.gateTimeoutMs === undefined ? {} : { gateTimeoutMs: options.gateTimeoutMs }),
     messagingEndpoint: messagingEndpointPort(messaging),
+    watchers: supervisionWatcherPort(supervision),
     transcriptCustody: transcriptCustodyPort(() => transcript),
     async transcriptBinding(agentRunId) {
       if (transcript === null) return null;
@@ -289,6 +315,11 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
     }),
   });
 
+  // §9.2/§24.4: Supervision reads the ONE published event stream the Runtime
+  // already owns. It is the whole watcher clock — no timer, no poll, and no
+  // second event identity invented on the side.
+  const following = followEventsIntoSupervision(runs, supervision);
+
   transcript = composeB3TranscriptFor({
     root: options.root,
     dataRoot,
@@ -305,10 +336,12 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
     credentials,
     messaging,
     transcript,
+    supervision,
     dataRoot,
     async close() {
       await terminal?.dispose();
       await runtime.shutdown();
+      following.stop();
       await messaging.store.close();
     },
   };

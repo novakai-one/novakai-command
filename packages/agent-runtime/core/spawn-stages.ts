@@ -226,6 +226,45 @@ export async function recordDeferredStages(
 }
 
 /**
+ * §13.5's watcher rung, for real (B3d).
+ *
+ * A host with no Supervision composed records the rung `not-needed` naming the
+ * absent capability, exactly as the Messaging and Transcript rungs did before
+ * B3c wired them. A host that HAS Supervision installs, and a failure to
+ * install fails the spawn: a Run that reaches `ready` believing it is watched
+ * and is not is the state §25-B3d exists to end.
+ */
+export async function installWatchers(
+  core: RunsCore,
+  input: {
+    readonly agentRun: AgentRun;
+    readonly plan: LaunchPlanFacts;
+    readonly operation: RunOperation;
+  },
+): Promise<B3Result<RunOperation>> {
+  if (core.watchers === undefined) {
+    return recordDeferredStages(core, input.operation, ['watchers-installed']);
+  }
+  const pinned = input.plan.supervisionPolicy?.requiredWatcherTemplates ?? [];
+  const installed = await core.watchers.installRunWatchers({
+    agentRunId: input.agentRun.id,
+    launchPlanId: input.plan.id,
+    requiredTemplateRefs: pinned,
+  });
+  if (!installed.ok) return installed;
+  const first = installed.value[0];
+  if (first === undefined) {
+    return advance(core, input.operation, {
+      stage: 'watchers-installed', owner: 'supervision', outcome: 'not-needed',
+      notNeededBecause: 'this role pins no watcher templates',
+    });
+  }
+  return advance(core, input.operation, {
+    stage: 'watchers-installed', owner: 'supervision', ownerObjectId: first.id,
+  });
+}
+
+/**
  * The two grants one spawn writes: the new Run's OWN authority, and — when a
  * parent asked for it — that parent's authority OVER the child it just gained.
  *

@@ -58,30 +58,36 @@ export function templateDigest(payload: unknown): string {
  * algorithm is lane B's, and shallow-faking it here would freeze a guess in
  * front of the lane that owns it.
  */
-const IDLE_TEMPLATE_PAYLOAD = {
-  id: 'watch-template/idle-for-ms',
-  version: 1,
-  status: 'active',
-  subjectBinding: 'current-run',
-  condition: { kind: 'idle-for-ms', value: 300_000 },
-  recipientBinding: 'current-supervision-assignment-for-escalation',
-  deliveryBinding: 'queue-only',
-  cooldownMs: 0,
-} as const;
+export function createIdleWatchTemplate(
+  input: { readonly version: number; readonly idleMs: number },
+): WatcherTemplate {
+  const payload = {
+    id: 'watch-template/idle-for-ms',
+    version: input.version,
+    status: 'active',
+    subjectBinding: 'current-run',
+    condition: { kind: 'idle-for-ms', value: input.idleMs },
+    recipientBinding: 'current-supervision-assignment-for-escalation',
+    deliveryBinding: 'queue-only',
+    cooldownMs: 0,
+  };
+  return {
+    templateRef: {
+      id: payload.id, version: payload.version, digest: templateDigest(payload),
+    },
+    condition: { kind: 'idle-for-ms', value: input.idleMs },
+    deliveryMode: 'queue-only',
+    cooldownMs: payload.cooldownMs,
+  };
+}
+
+/** The shipped idle watcher: §9.2's default interval, in the smallest form. */
+export const IDLE_WATCH_TEMPLATE: WatcherTemplate = createIdleWatchTemplate({
+  version: 1, idleMs: 300_000,
+});
 
 /** The pinned reference an explicit `requiredWatcherTemplates` entry carries. */
-export const IDLE_WATCH_TEMPLATE_REF: VersionedRef = {
-  id: IDLE_TEMPLATE_PAYLOAD.id,
-  version: IDLE_TEMPLATE_PAYLOAD.version,
-  digest: templateDigest(IDLE_TEMPLATE_PAYLOAD),
-};
-
-export const IDLE_WATCH_TEMPLATE: WatcherTemplate = {
-  templateRef: IDLE_WATCH_TEMPLATE_REF,
-  condition: IDLE_TEMPLATE_PAYLOAD.condition,
-  deliveryMode: 'queue-only',
-  cooldownMs: IDLE_TEMPLATE_PAYLOAD.cooldownMs,
-};
+export const IDLE_WATCH_TEMPLATE_REF: VersionedRef = IDLE_WATCH_TEMPLATE.templateRef;
 
 /** The frozen implicit template, resolved through the same one path. */
 export const ACTIVITY_DRIFT_WATCH_TEMPLATE: WatcherTemplate = {

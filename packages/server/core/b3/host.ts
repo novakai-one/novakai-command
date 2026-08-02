@@ -17,6 +17,7 @@ import { composeB3Runtime, type B3Runtime, type B3RuntimeOptions } from './compo
 import { buildB3Methods } from './methods.js';
 import { buildB3AgentMethods } from './agent-methods.js';
 import { buildB3MessagingMethods } from './messaging-methods.js';
+import { buildB3SupervisionMethods } from './supervision-methods.js';
 
 /** Comfortably inside the stale window, so a live window is never called gone. */
 const SIGHTING_INTERVAL_MS = Math.floor(DEFAULT_STALE_AFTER_MS / 3);
@@ -144,6 +145,7 @@ export async function startRuntimeHost(
         contractVersion: 1,
       }),
     }),
+    ...buildB3SupervisionMethods({ supervision: runtime.supervision, principalFor }),
   };
   const following = new Set<string>();
   /** Which windows each connection opened — the host's own fact (§13.4). */

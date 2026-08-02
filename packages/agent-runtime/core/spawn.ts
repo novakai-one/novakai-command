@@ -22,7 +22,7 @@ import { advance, compensate, openOperation, unresolvedUncertainty } from './jou
 import { insideClosingTree, treeClosing } from './stop-tree.js';
 import { runSkillsGate } from './gate.js';
 import {
-  bindProviderSession, finishRun, recordDeferredStages, reserveRun, startTerminal,
+  bindProviderSession, finishRun, installWatchers, reserveRun, startTerminal,
 } from './spawn-stages.js';
 import { activateEndpoint, bindTranscript, reserveEndpoint } from './spawn-b3c.js';
 
@@ -299,7 +299,9 @@ async function provisionRun(
   });
   if (!gated.ok) return gated;
 
-  const watched = await recordDeferredStages(core, gated.value.operation, ['watchers-installed']);
+  const watched = await installWatchers(core, {
+    agentRun: gated.value.agentRun, plan: governed.plan, operation: gated.value.operation,
+  });
   if (!watched.ok) return watched;
   return b3ok({ agentRun: gated.value.agentRun, operation: watched.value });
 }
