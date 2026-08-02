@@ -871,12 +871,17 @@ test('booting twice never duplicates the agent definition (G4 lesson, promoted)'
   await second.close();
 });
 
-test('config.jsonl is created under the real root and never holds a bearer', async () => {
+test('config.jsonl is created under the canonical dataRoot and never holds a bearer', async () => {
   const dir = root();
   await mintChris(dir);
   const server = await boot(dir);
-  assert.ok(existsSync(path.join(dir, 'config.jsonl')));
-  const raw = readFileSync(path.join(dir, 'config.jsonl'), 'utf8');
+  // §18.1's inventory puts `config.jsonl` in `.novakai/stores/` with every
+  // other registered kind. It was written at the root, which put two record
+  // journals (`config.jsonl` and its engine's `traces.jsonl`) on a route no B3
+  // handle reads — and outside §25-B3c's "no Novakai JSONL file outside
+  // `.novakai/stores/`".
+  assert.ok(existsSync(path.join(dir, 'stores', 'config.jsonl')));
+  const raw = readFileSync(path.join(dir, 'stores', 'config.jsonl'), 'utf8');
   for (const principal of server.config.principals) {
     assert.equal(raw.includes(principal.token), false);
   }

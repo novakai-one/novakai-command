@@ -5,7 +5,7 @@
 // shape they validate is the WIRE's — §12.5 spells several of these operations
 // out as separate arguments, and a request body has to name them.
 import {
-  b3err, b3fail, b3ok, readBoundary,
+  b3err, b3fail, b3ok, isValidId, readBoundary,
   type AgentRunId as FoundationAgentRunId, type B3Result, type EventCursor,
 } from '@novakai/foundation/contract';
 // The MESSAGING vocabulary, deliberately. A validator's job is to turn
@@ -42,12 +42,29 @@ function readThreadId(value: unknown): ThreadId | null {
   return typeof value === 'string' && THREAD_ID.test(value) ? value as ThreadId : null;
 }
 
+/**
+ * §4.1's wrong-kind rule, at the boundaries B3c added.
+ *
+ * `b3.agent.*` has enforced this since B3a (the exam proves an
+ * AgentRoleProfileId is refused where an AgentRunId belongs). Every
+ * `b3.messaging.*` validator below tested `typeof x === 'string'` and cast, so
+ * an `agentRole_…` reached the capability, resolved against nothing, and came
+ * back `UnknownAgent`: a plausible answer to a question that was never legal,
+ * and one that blames the store instead of the caller.
+ */
+const readAgentId = (value: unknown): AgentId | null =>
+  isValidId(value, 'agent', 'uuidv4') ? value as AgentId : null;
+
+const readAgentRunId = (value: unknown): AgentRunId | null =>
+  isValidId(value, 'agentRun', 'uuidv7') ? value as AgentRunId : null;
+
 /** A participant is a tagged union, which `readBoundary` cannot express alone. */
 function readParticipant(candidate: unknown, path: string): ConversationParticipant | null {
   if (typeof candidate !== 'object' || candidate === null) return null;
   const body = candidate as Record<string, unknown>;
-  if (body['kind'] === 'agent' && typeof body['agentId'] === 'string') {
-    return { kind: 'agent', agentId: body['agentId'] as AgentId };
+  if (body['kind'] === 'agent') {
+    const agentId = readAgentId(body['agentId']);
+    return agentId === null ? null : { kind: 'agent', agentId };
   }
   if (body['kind'] === 'human' && typeof body['personId'] === 'string') {
     return { kind: 'human', personId: body['personId'] };
@@ -69,10 +86,12 @@ export function readSendAgentMessageInput(
   }
   const targetBody = target as Record<string, unknown>;
   let resolved: SendAgentMessageInput['target'];
-  if (targetBody['kind'] === 'agent' && typeof targetBody['agentId'] === 'string') {
-    resolved = { kind: 'agent', agentId: targetBody['agentId'] as AgentId };
-  } else if (targetBody['kind'] === 'exact-run' && typeof targetBody['agentRunId'] === 'string') {
-    resolved = { kind: 'exact-run', agentRunId: targetBody['agentRunId'] as AgentRunId };
+  const targetAgent = readAgentId(targetBody['agentId']);
+  const targetRun = readAgentRunId(targetBody['agentRunId']);
+  if (targetBody['kind'] === 'agent' && targetAgent !== null) {
+    resolved = { kind: 'agent', agentId: targetAgent };
+  } else if (targetBody['kind'] === 'exact-run' && targetRun !== null) {
+    resolved = { kind: 'exact-run', agentRunId: targetRun };
   } else {
     return invalid('target.kind', 'must be "agent" with agentId or "exact-run" with agentRunId');
   }
@@ -144,16 +163,17 @@ export function readOpenConversationInput(
     return invalid('membership', 'must be {kind:"direct"|"group", ...}');
   }
   const membershipBody = membership as Record<string, unknown>;
-  if (membershipBody['kind'] === 'direct' && typeof membershipBody['agentId'] === 'string') {
+  const directAgent = readAgentId(membershipBody['agentId']);
+  if (membershipBody['kind'] === 'direct' && directAgent !== null) {
     return b3ok({
       threadId: threadId as ThreadId,
-      membership: { kind: 'direct', agentId: membershipBody['agentId'] as AgentId },
+      membership: { kind: 'direct', agentId: directAgent },
     });
   }
   const agentIds = asArray(membershipBody['agentIds']);
   if (membershipBody['kind'] === 'group' && agentIds !== null) {
-    if (!agentIds.every((entry): entry is string => typeof entry === 'string')) {
-      return invalid('membership.agentIds', 'must be a list of agent ids');
+    if (!agentIds.every((entry) => readAgentId(entry) !== null)) {
+      return invalid('membership.agentIds', 'must be a list of agent identifiers');
     }
     return b3ok({
       threadId: threadId as ThreadId,
@@ -179,8 +199,13 @@ export function readListAgentCommunicationsInput(
   if (agentIds === null || agentIds.length === 0) {
     return invalid('agentIds', 'must name at least one Agent');
   }
-  if (!agentIds.every((entry): entry is string => typeof entry === 'string')) {
-    return invalid('agentIds', 'must be a list of agent ids');
+  if (!agentIds.every((entry) => readAgentId(entry) !== null)) {
+    return invalid('agentIds', 'must be a list of agent identifiers');
+  }
+  const runIds = asArray(body?.['runIds']);
+  if (body?.['runIds'] !== undefined
+    && (runIds === null || !runIds.every((entry) => readAgentRunId(entry) !== null))) {
+    return invalid('runIds', 'must be a list of agentRun identifiers');
   }
   const threadId = body?.['threadId'] === undefined ? null : readThreadId(body['threadId']);
   if (body?.['threadId'] !== undefined && threadId === null) {
@@ -194,6 +219,7 @@ export function readListAgentCommunicationsInput(
   return b3ok({
     agentIds: agentIds as AgentId[],
     limit: scalars.value.limit ?? 100,
+    ...(runIds === null ? {} : { runIds: runIds as AgentRunId[] }),
     ...(threadId === null ? {} : { threadId }),
     ...(scalars.value.cursor === undefined
       ? {} : { cursor: scalars.value.cursor as EventCursor }),
