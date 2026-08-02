@@ -235,6 +235,10 @@ async function guardWrite(
   }
   const live = core.live.lookup(input.terminalSessionId);
   const expected = live?.nextInputSequence ?? FIRST_INPUT_SEQUENCE;
+  // No claim, no conflict: a caller that did not name a position is not making
+  // the assertion this check tests. Exclusivity is already settled above — the
+  // lease, its generation and its holder have all been verified by this line.
+  if (input.expectedNextInputSequence === undefined) return b3ok(null);
   if (input.expectedNextInputSequence !== expected) {
     // `expected`/`actual` follow Foundation's CAS convention — `expected` is
     // what the CALLER claimed — which reads backwards to anyone RECOVERING from

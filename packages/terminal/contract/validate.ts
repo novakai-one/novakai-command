@@ -103,12 +103,46 @@ export function readWriteTerminalInput(payload: unknown): B3Result<WriteTerminal
     attachmentId: field.id('attachmentId', 'controller'),
     inputLeaseId: field.id('inputLeaseId', 'terminalInputLease'),
     leaseGeneration: field.count('leaseGeneration', 1, SEQUENCE_LIMIT) as LeaseGeneration,
-    expectedNextInputSequence: field.count('expectedNextInputSequence', 1, SEQUENCE_LIMIT),
+    ...optional('expectedNextInputSequence', readSequenceClaim(field)),
     kindOfInput: field.choice('kindOfInput', TERMINAL_INPUT_KINDS),
     // Bytes are not validated for content — a terminal accepts what you type.
     ...optional('utf8Text', typeof field.given('utf8Text') === 'string'
       ? field.given('utf8Text') as string : undefined),
   }));
+}
+
+/**
+ * The position this write claims, if it claims one.
+ *
+ * The claim is OPTIONAL because the published contract gives a client no way to
+ * learn the position: `WriteTerminalInput` requires the field and nothing in
+ * the spec's terminal surface returns it — not the session view, not the
+ * attachment, not the lease. (`nextInputSequence` on the view is this
+ * repository's own addition.) Requiring a number nobody can obtain made every
+ * conformant client's FIRST write impossible, which is the same unwinnable
+ * shape the conflict branch was repaired for.
+ *
+ * Absent means "append where the stream is". That is not a hole in the ordering
+ * rule: the INPUT LEASE is what makes a writer exclusive, and this check sits
+ * on top of it for callers that are tracking the position themselves. Those
+ * callers keep it, exactly as before.
+ *
+ * A malformed claim is still a refusal, and it says both what it received and
+ * how to proceed — the message it used to share with an omitted field told a
+ * client nothing about which of the two mistakes it had made.
+ */
+function readSequenceClaim(field: FieldReader): number | undefined {
+  const given = field.given('expectedNextInputSequence');
+  if (given === undefined) return undefined;
+  if (typeof given !== 'number' || !Number.isInteger(given)
+    || given < 1 || given > SEQUENCE_LIMIT) {
+    field.reject('expectedNextInputSequence',
+      `must be a whole number between 1 and ${String(SEQUENCE_LIMIT)} `
+      + `(received ${JSON.stringify(given) ?? 'undefined'}) — or omit it to append `
+      + 'at the current position');
+    return undefined;
+  }
+  return given;
 }
 
 export function readResizeTerminalInput(payload: unknown): B3Result<ResizeTerminalInput> {

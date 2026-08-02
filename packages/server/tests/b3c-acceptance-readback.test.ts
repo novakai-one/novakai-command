@@ -190,6 +190,67 @@ test('a client holding only the published send contract can send a Message', asy
   }
 });
 
+// The combination the suite above never crosses: a client that does not know a
+// Thread sends, and then asks what happened. Each half is covered — the
+// threadless send, and the read-back after a send that named a Thread — and the
+// exam still failed E2, because the defect lives only where they meet.
+test('the read-back after a THREADLESS send shows the Message it accepted', async () => {
+  const rig = await createRig();
+  try {
+    const agent = await rig.spawn('ThreadlessReadback');
+
+    const sent = await rig.chris.call<{ messageId: string; threadId: string; state: string }>(
+      'b3.messaging.sendAgent', {
+        target: { kind: 'agent', agentId: agent.agentId },
+        text: 'status please', clientMessageId: 'cmid-threadless-readback-1',
+      },
+    );
+    assert.equal(sent.ok, true,
+      sent.ok ? '' : `${sent.error.code}: ${sent.error.message}`);
+    if (!sent.ok) return;
+
+    const seen = await rig.chris.call<{ items: readonly CommunicationRow[] }>(
+      'b3.messaging.listAgentCommunications', { agentIds: [agent.agentId] },
+    );
+    assert.equal(seen.ok, true, seen.ok ? '' : `${seen.error.code}: ${seen.error.message}`);
+    if (!seen.ok) return;
+    assert.notEqual(
+      seen.value.items.find((item) => item.messageId === sent.value.messageId), undefined,
+      `a threadless send reported ${sent.value.state} on thread ${sent.value.threadId}, and `
+      + `listAgentCommunications returned ${String(seen.value.items.length)} row(s) for the Agent`,
+    );
+
+    const inbox = await rig.chris.call<{
+      items: readonly { messageId: string; state: string }[];
+    }>('b3.messaging.listAgentInbox', { agentId: agent.agentId });
+    assert.equal(inbox.ok, true, inbox.ok ? '' : `${inbox.error.code}: ${inbox.error.message}`);
+    if (!inbox.ok) return;
+    assert.notEqual(
+      inbox.value.items.find((entry) => entry.messageId === sent.value.messageId), undefined,
+      `the acceptance reported state "${sent.value.state}" and the Agent's inbox holds `
+      + `${String(inbox.value.items.length)} item(s)`,
+    );
+
+    // §19.2's other question: "what has THIS shift been sent". The acceptance
+    // named a live Run as the delivery target, so the Message it committed is
+    // related to that Run — a caller who narrows to it must not be told the
+    // Agent received nothing.
+    const forRun = await rig.chris.call<{ items: readonly CommunicationRow[] }>(
+      'b3.messaging.listAgentCommunications',
+      { agentIds: [agent.agentId], runIds: [agent.agentRunId] },
+    );
+    assert.equal(forRun.ok, true, forRun.ok ? '' : `${forRun.error.code}: ${forRun.error.message}`);
+    if (!forRun.ok) return;
+    assert.notEqual(
+      forRun.value.items.find((item) => item.messageId === sent.value.messageId), undefined,
+      `narrowing the same read to the Run the Message was queued for returned `
+      + `${String(forRun.value.items.length)} row(s)`,
+    );
+  } finally {
+    await rig.close();
+  }
+});
+
 test('an acceptance survives a Runtime restart, inbox state and all', async () => {
   let rig = await createRig();
   try {

@@ -13,7 +13,8 @@ import type { Message, PersonId, ThreadId } from "../../public/contract/index.js
 import type { MessagingStore } from "../../seams/store.js";
 import type { ListAgentCommunicationsInput } from "../contract/api.js";
 import type {
-  AgentCommunicationDirection, AgentCommunicationItem, AgentId, AgentInboxItem, AgentRunId,
+  AgentCommunicationDirection, AgentCommunicationItem, AgentEndpointClaimId, AgentId,
+  AgentInboxItem, AgentRunId,
 } from "../contract/records.js";
 import { previewOf } from "../contract/records.js";
 import { agentIdOf, agentPersonId } from "./identity.js";
@@ -151,21 +152,43 @@ async function relatedRunsOf(
     if (inbox.kind !== "ok") continue;
     const forMessage = inbox.value.filter((item) => item.messageId === messageId);
     for (const item of forMessage) {
-      for (const runId of await runsOfItem(store, item)) runs.add(runId);
+      for (const runId of await runsOfItem(store, agentId, item)) runs.add(runId);
     }
   }
   return [...runs];
 }
 
 async function runsOfItem(
-  store: MessagingStore, item: AgentInboxItem,
+  store: MessagingStore, agentId: AgentId, item: AgentInboxItem,
 ): Promise<readonly AgentRunId[]> {
   const runs: AgentRunId[] = [];
   if (item.requestedRunId !== undefined) runs.push(item.requestedRunId);
-  if (item.endpointClaimId === undefined) return runs;
-  const claim = await store.getAgentEndpointClaim(item.endpointClaimId);
+  const claimId = item.endpointClaimId ?? await queuedAgainst(store, item, agentId);
+  if (claimId === undefined) return runs;
+  const claim = await store.getAgentEndpointClaim(claimId);
   if (claim.kind === "ok" && claim.value !== null) runs.push(claim.value.agentRunId);
   return runs;
+}
+
+/**
+ * The claim a still-queued item is waiting on.
+ *
+ * `endpointClaimId` is stamped when the Runtime CLAIMS an item for delivery, so
+ * an item that has only been ACCEPTED carries none — and until B3c wired the
+ * `runIds` filter that cost nothing, because nobody read the field. It costs a
+ * lot now: §19.2's "what has this shift been sent" answered "nothing" for every
+ * Message still waiting to be typed, which is precisely the set a reader is
+ * asking about. A queued item is queued for whoever holds the endpoint, so the
+ * row says so. Claimed and transferred items keep their own claim and never
+ * reach this, so a transfer still reads as two Runs rather than one.
+ */
+async function queuedAgainst(
+  store: MessagingStore, item: AgentInboxItem, agentId: AgentId,
+): Promise<AgentEndpointClaimId | undefined> {
+  if (item.state !== "queued") return undefined;
+  const endpoint = await store.getAgentEndpoint(agentId);
+  if (endpoint.kind !== "ok" || endpoint.value === null) return undefined;
+  return endpoint.value.state === "active" ? endpoint.value.id : undefined;
 }
 
 async function threadIdsFor(

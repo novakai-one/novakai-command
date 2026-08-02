@@ -74,7 +74,13 @@ export interface WriteTerminalInput {
   readonly attachmentId: ControllerAttachmentId;
   readonly inputLeaseId: TerminalInputLeaseId;
   readonly leaseGeneration: LeaseGeneration;
-  readonly expectedNextInputSequence: number;
+  /**
+   * The input position this write claims — optional, because the published
+   * contract publishes no way to learn it. Omitted means "append where the
+   * stream is"; the input lease is what makes the writer exclusive. A caller
+   * that IS tracking the position keeps the optimistic check by sending it.
+   */
+  readonly expectedNextInputSequence?: number;
   readonly kindOfInput: TerminalInputKind;
   readonly utf8Text?: string;
 }
