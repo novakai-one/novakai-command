@@ -175,8 +175,10 @@ test('re-installing the same launch plan adopts the same rule rather than a twin
       await rig.supervision.installRunWatchers(runtimeContext(), INSTALL), 'second install',
     );
     assert.deepEqual(second.map((rule) => rule.id), first.map((rule) => rule.id));
-    const rules = unwrap(await rig.supervision.listWatchRules(human), 'listWatchRules');
-    assert.equal(rules.length, 1, 'a re-entered spawn installed a duplicate watcher');
+    const rules = unwrap(
+      await rig.supervision.listWatchRules(human, { limit: 50 }), 'listWatchRules',
+    );
+    assert.equal(rules.items.length, 1, 'a re-entered spawn installed a duplicate watcher');
   } finally {
     rig.close();
   }

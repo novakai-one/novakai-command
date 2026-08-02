@@ -30,6 +30,7 @@ import type {
   NotificationRecipient,
   WatchDeadline,
   WatchRule,
+  WatchSubject,
 } from './records.js';
 import type { VersionedRef } from './policy.js';
 
@@ -207,6 +208,14 @@ export interface NotificationFilter {
   readonly limit: number;
 }
 
+/** Durable WatchRule query filter, parallel to NotificationFilter. */
+export interface WatchRuleFilter {
+  readonly subject?: WatchSubject;
+  readonly status?: readonly WatchRule['status'][];
+  readonly cursor?: EventCursor;
+  readonly limit: number;
+}
+
 /** Existing v1 bounded-page method reused by the amended Q8 wire mapping. */
 export const SUPERVISION_NOTIFICATION_SUBSCRIBE_METHOD =
   'b3.supervision.subscribeNotifications' as const;
@@ -288,6 +297,10 @@ export interface SupervisionQueries {
     principal: AuthenticatedPrincipal,
     agentId: AgentId,
   ): Promise<B3Result<AgentUsageSummary>>;
+  listWatchRules(
+    principal: AuthenticatedPrincipal,
+    filter: WatchRuleFilter,
+  ): Promise<B3Result<B3Page<WatchRule>>>;
   listNotifications(
     principal: AuthenticatedPrincipal,
     filter: NotificationFilter,

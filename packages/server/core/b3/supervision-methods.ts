@@ -7,17 +7,16 @@
 // `nvk watch notifications` need, and nothing else. The rest of §12.4's
 // Supervision surface belongs to lanes A, B and C.
 //
-// `listWatchers` is deliberately NOT claimed as contract: the frozen
-// `SupervisionQueries` publishes no watcher read at all, while §17.1 makes
-// `nvk watch list` canonical. That gap is reported to the orchestrator
-// (FREEZE-GAP-1); until it is disposed, this method is a host extension over
-// frozen RECORD types rather than a frozen query.
+// The combined `listWatchers` transport response remains a host convenience:
+// its rules now come through frozen `listWatchRules`; deadline detail remains
+// the tracer's additive read until a public deadline query is required.
 import {
   b3err, b3fail, b3ok,
   type AuthenticatedPrincipal, type B3Result,
 } from '@novakai/foundation/contract';
 import {
   parseNotificationFilter,
+  parseWatchRuleFilter,
   type Notification, type WatchDeadline, type WatchRule,
 } from '../../../supervision/contract/index.js';
 import type { SupervisionCore } from '../../../supervision/public/index.js';
@@ -60,19 +59,25 @@ export function buildB3SupervisionMethods(options: B3SupervisionMethodOptions): 
 
   async function listWatchers(
     principal: AuthenticatedPrincipal,
+    payload: Readonly<Record<string, unknown>>,
   ): Promise<B3Result<WatcherListing>> {
-    const rules = await supervision.listWatchRules(principal);
+    const filter = parseWatchRuleFilter({
+      ...payload,
+      limit: payload.limit ?? 50,
+    });
+    if (!filter.ok) return filter;
+    const rules = await supervision.listWatchRules(principal, filter.value);
     if (!rules.ok) return rules;
     const deadlines = await supervision.listWatchDeadlines(principal);
     if (!deadlines.ok) return deadlines;
-    return b3ok({ rules: rules.value, deadlines: deadlines.value });
+    return b3ok({ rules: rules.value.items, deadlines: deadlines.value });
   }
 
   return {
     'b3.supervision.listWatchers': async (params, session) => {
       const parsed = readParams(params);
       if (!parsed.ok) return parsed;
-      return listWatchers(options.principalFor(session));
+      return listWatchers(options.principalFor(session), parsed.value.payload);
     },
 
     'b3.supervision.listNotifications': async (

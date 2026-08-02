@@ -19,13 +19,25 @@ import {
 
 /** Runtime parser for the visibility-aware Notification page output. */
 export function parseNotificationPage(candidate: unknown): B3Result<B3Page<Notification>> {
+  return parseRecordPage(candidate, parseNotificationRecord);
+}
+
+/** Runtime parser for the visibility-aware WatchRule page output. */
+export function parseWatchRulePage(candidate: unknown): B3Result<B3Page<WatchRule>> {
+  return parseRecordPage(candidate, parseWatchRule);
+}
+
+function parseRecordPage<Value>(
+  candidate: unknown,
+  parser: (value: unknown) => B3Result<Value>,
+): B3Result<B3Page<Value>> {
   const issues: ValidationIssue[] = [];
   const page = objectValue(candidate, 'page', issues);
   if (!Array.isArray(page.items)) {
     issues.push({ path: 'items', message: 'must be an array' });
   } else {
     page.items.forEach((item, index) => {
-      const parsed = parseNotificationRecord(item);
+      const parsed = parser(item);
       if (!parsed.ok) issues.push({ path: `items.${index}`, message: parsed.error.message });
     });
   }
@@ -37,7 +49,7 @@ export function parseNotificationPage(candidate: unknown): B3Result<B3Page<Notif
   } else {
     page.omissions.forEach((item, index) => validateOmission(item, index, issues));
   }
-  return finish<B3Page<Notification>>(candidate, issues);
+  return finish<B3Page<Value>>(candidate, issues);
 }
 
 function validateOmission(

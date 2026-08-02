@@ -70,8 +70,9 @@ function describeNotifications(page: { readonly items: readonly Notification[] }
 
 const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
   async list(argFlags) {
+    const limit = Number(argFlags.value('limit') ?? 50);
     emit('watch list', argFlags, await withClient<WatcherListing>(
-      (client) => client.call('b3.supervision.listWatchers', {}),
+      (client) => client.call('b3.supervision.listWatchers', { limit }),
     ), describeWatchers);
   },
 

@@ -5,13 +5,13 @@
 // B3c failure mode was a stage recorded `not-needed` for ever.
 import {
   b3err, b3fail, b3ok, deriveClientOpId, nowIsoUtc,
-  type ActivityGeneration, type B3PrincipalId, type B3Result, type IsoUtc,
+  type ActivityGeneration, type B3Page, type B3PrincipalId, type B3Result, type IsoUtc,
   type SystemCommandContext,
 } from '@novakai/foundation/contract';
 import {
   deriveWatchDeadlineId, mintWatchRuleId, subjectKey,
   type InstallRunWatchersInput, type NotificationRecipient, type VersionedRef,
-  type WatchDeadline, type WatchRule, type WatchSubject,
+  type WatchDeadline, type WatchRule, type WatchRuleFilter, type WatchSubject,
 } from '../contract/index.js';
 import type { Persisted, SupervisionStore } from './store.js';
 import type { WatcherTemplate, WatcherTemplatePort } from './templates.js';
@@ -153,4 +153,19 @@ export async function installRunWatchers(
     installed.push(written.value);
   }
   return b3ok(installed);
+}
+
+/** Visibility-aware bounded WatchRule read behind §17.1's canonical list verb. */
+export async function listWatchRules(
+  store: SupervisionStore,
+  filter: WatchRuleFilter,
+): Promise<B3Result<B3Page<WatchRule>>> {
+  const stored = await store.list<WatchRule>('watchRule');
+  if (!stored.ok) return b3fail(stored.error);
+  const wanted = stored.value.filter((rule) => {
+    if (filter.status !== undefined && !filter.status.includes(rule.status)) return false;
+    if (filter.subject === undefined) return true;
+    return subjectKey(rule.subject) === subjectKey(filter.subject);
+  });
+  return b3ok({ items: wanted.slice(0, filter.limit), omissions: [] });
 }

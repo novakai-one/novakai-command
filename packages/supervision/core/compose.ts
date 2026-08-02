@@ -5,12 +5,10 @@
 // that drifts from the freeze stops compiling here rather than passing a test
 // that agreed with itself. Lanes A/B/C fill in the members this tracer leaves
 // out; none of them has to change what is already wired.
-import type {
-  ActivityGeneration, AuthenticatedPrincipal, B3Result,
-} from '@novakai/foundation/contract';
+import type { ActivityGeneration, AuthenticatedPrincipal, B3Result } from '@novakai/foundation/contract';
 import type {
   HumanPrincipalId, InstallRunWatchersInput, NotificationRecipient,
-  SupervisionContract, WatchDeadline, WatchRule,
+  SupervisionContract, WatchDeadline,
 } from '../contract/index.js';
 import {
   createSupervisionStore, type SupervisionStore, type SupervisionStoreOptions,
@@ -18,22 +16,17 @@ import {
 import {
   createTemplateCatalogue, type WatcherTemplate, type WatcherTemplatePort,
 } from './templates.js';
-import { installRunWatchers } from './watchers.js';
+import { installRunWatchers, listWatchRules } from './watchers.js';
 import { evaluateEvent, listNotifications } from './notifications.js';
 
 /** The frozen members the tracer's live wire actually carries current through. */
 export type SupervisionWireSlice = Pick<
-  SupervisionContract, 'installRunWatchers' | 'evaluateEvent' | 'listNotifications'
+  SupervisionContract,
+  'installRunWatchers' | 'evaluateEvent' | 'listNotifications' | 'listWatchRules'
 >;
 
-/**
- * `nvk watch list` is a frozen §17.1 verb, and the frozen `SupervisionQueries`
- * publishes no watcher read for it to call. These two reads are therefore an
- * EXTENSION POINT, not contract: they are typed in terms of frozen records and
- * are reported to the orchestrator as a freeze gap (tracer report FREEZE-GAP-1).
- */
+/** Deadline detail remains a tracer host read; WatchRule listing is now frozen. */
 export interface SupervisionWatcherReads {
-  listWatchRules(principal: AuthenticatedPrincipal): Promise<B3Result<readonly WatchRule[]>>;
   listWatchDeadlines(
     principal: AuthenticatedPrincipal,
   ): Promise<B3Result<readonly WatchDeadline[]>>;
@@ -76,7 +69,7 @@ export function composeSupervision(options: SupervisionCoreOptions): Supervision
     installRunWatchers: (context, input) => installRunWatchers(install, context, input),
     evaluateEvent: (context, input) => evaluateEvent({ store }, context, input),
     listNotifications: (_principal, filter) => listNotifications({ store }, filter),
-    listWatchRules: () => store.list<WatchRule>('watchRule'),
+    listWatchRules: (_principal, filter) => listWatchRules(store, filter),
     listWatchDeadlines: () => store.list<WatchDeadline>('watchDeadline'),
   };
 }
