@@ -206,10 +206,11 @@ export async function bindProviderSession(
 export async function recordDeferredStages(
   core: RunsCore, operation: RunOperation, stages: readonly RunOperation['currentStage'][],
 ): Promise<B3Result<RunOperation>> {
+  // Only stages whose owning capability genuinely does not exist yet. The three
+  // Messaging/Transcript rungs left this table when B3c shipped them: a
+  // deferral naming the slice that already delivered is how a wire that was
+  // never connected reads as deliberate (`spawn-b3c.ts`).
   const owners: Readonly<Record<string, { owner: string; slice: string }>> = {
-    'endpoint-reserved': { owner: 'messaging', slice: 'B3c' },
-    'transcript-bound': { owner: 'transcript', slice: 'B3c' },
-    'endpoint-active': { owner: 'messaging', slice: 'B3c' },
     'watchers-installed': { owner: 'supervision', slice: 'B3d' },
   };
   let current = operation;

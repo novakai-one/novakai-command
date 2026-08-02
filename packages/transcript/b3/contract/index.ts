@@ -19,3 +19,7 @@ export { classifyTurn, stripTerminalControl, type TurnClassification } from '../
 export {
   createProviderFileSource, type ProviderFileSourceOptions,
 } from '../adapters/source-provider-file.js';
+export {
+  createProviderFileLocator, defaultProviderHomes,
+  type ProviderFileLocatorOptions, type ProviderHomes,
+} from '../adapters/locate-provider-file.js';

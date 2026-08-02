@@ -7,7 +7,8 @@ import {
 } from '@novakai/foundation/contract';
 import type { RuntimeHostContract } from '../contract/types.js';
 import type {
-  AgentsPort, ProviderPort, RunCredentialPort, TerminalPort,
+  AgentsPort, MessagingEndpointPort, ProviderPort, RunCredentialPort, TerminalPort,
+  TranscriptCustodyPort,
 } from '../contract/ports.js';
 import {
   FINAL_LIFECYCLES, type AgentRun, type SupervisionAssignment,
@@ -36,6 +37,19 @@ export interface RunsCore {
   readonly fence: RuntimeHostContract['fence'];
   /** §19.1's transcript section. Absent means no Transcript is composed. */
   readonly transcriptBinding?: TranscriptBindingLookup;
+  /**
+   * §13.5 rows 6/10 and §13.6's endpoint cutover.
+   *
+   * Optional because a host composed without Messaging is a legitimate
+   * configuration — the B3a Runtime and every Runs-only test suite is one. What
+   * is NOT legitimate is a host that HAS Messaging and skips the stage anyway:
+   * the ladder then records `not-needed` naming the absent capability, which is
+   * a true statement about that host, and the production composition never
+   * takes that branch (see `b3c-production-lifecycle.test.ts`).
+   */
+  readonly messagingEndpoint?: MessagingEndpointPort;
+  /** §13.5 row 9 and §13.6's final watermark. Optional for the same reason. */
+  readonly transcriptCustody?: TranscriptCustodyPort;
   /** Emitted after a commit, never before it (§15). */
   readonly publish: (
     kind: string,

@@ -27,9 +27,11 @@ import {
 import { agentsPort, createRunCredentials, terminalPort } from './run-ports.js';
 import { createProviderPort } from './provider-port.js';
 import { composeB3Messaging, composeB3TranscriptFor } from './messaging-composition.js';
+import { messagingEndpointPort, transcriptCustodyPort } from './b3c-ports.js';
 import type { AgentMessagingContract } from '../../../messaging/b3/contract/index.js';
-import type {
-  B3TranscriptContract, TranscriptSourcePort,
+import {
+  createProviderFileLocator, createProviderFileSource, defaultProviderHomes,
+  type B3TranscriptContract, type TranscriptSourcePort,
 } from '../../../transcript/b3/contract/index.js';
 
 export interface B3RuntimeOptions {
@@ -51,11 +53,19 @@ export interface B3RuntimeOptions {
    */
   readonly gateTimeoutMs?: number;
   /**
-   * Where transcript bytes come from. Absent means no source is wired, which
-   * is honest for a host that only sends Messages — a binding then stays
-   * `waiting` rather than pretending to mirror.
+   * Where transcript bytes come from. Absent means the real provider-file
+   * reader, pointed at each provider's own home — the production wire.
+   *
+   * It shipped the other way round: absent meant a `NO_SOURCE` port that
+   * reported every binding `missing`, and nothing ever passed one, so no
+   * managed Run could mirror a single turn.
+   *
+   * Overridden by tests and by the quarantine suite, which needs a fixture it
+   * can corrupt without touching a provider original (§27).
    */
   readonly transcriptSource?: TranscriptSourcePort;
+  /** Where the provider CLIs keep their transcripts. Overridable for tests. */
+  readonly providerHome?: string;
 }
 
 export interface B3Runtime {
@@ -198,6 +208,24 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
   // reads whatever is wired by the time somebody asks, and answers `null`
   // before that — which the view renders as `unbound`, not as a lie.
   let transcript: B3TranscriptContract | null = null;
+
+  // Messaging and Transcript publish their committed facts into the ONE event
+  // stream the Runtime already owns (§15, §24.4). They do not write each
+  // other's stores and neither writes the Runtime's — the only thing crossing
+  // here is an event and a typed request.
+  const emit = (owner: 'messaging' | 'transcript') =>
+    (kind: string, payload: Readonly<Record<string, unknown>>): void => {
+      runs?.publishCapabilityEvent(kind, payload, owner);
+    };
+
+  // Messaging is composed BEFORE Runs now, because the Runs lifecycle genuinely
+  // depends on it: §13.5 rows 6 and 10 reserve and activate an endpoint claim,
+  // and §13.6 transfers one. It shipped composed after, so those rungs could
+  // only ever be recorded `not-needed` — which is exactly what they were.
+  const messaging = await composeB3Messaging({
+    root: options.root, dataRoot, emit: emit('messaging'),
+  });
+
   runs = composeAgentRuns({
     root: options.root,
     dataRoot,
@@ -210,6 +238,8 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
     fence: runtime.fence,
     ...(options.publish === undefined ? {} : { publish: options.publish }),
     ...(options.gateTimeoutMs === undefined ? {} : { gateTimeoutMs: options.gateTimeoutMs }),
+    messagingEndpoint: messagingEndpointPort(messaging),
+    transcriptCustody: transcriptCustodyPort(() => transcript),
     async transcriptBinding(agentRunId) {
       if (transcript === null) return null;
       const found = await transcript.getTranscriptBinding(
@@ -225,25 +255,31 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
     },
   });
 
-  // Messaging and Transcript publish their committed facts into the ONE event
-  // stream the Runtime already owns (§15, §24.4). They do not write each
-  // other's stores and neither writes the Runtime's — the only thing crossing
-  // here is an event and a typed request.
-  const emit = (owner: 'messaging' | 'transcript') =>
-    (kind: string, payload: Readonly<Record<string, unknown>>): void => {
-      runs?.publishCapabilityEvent(kind, payload, owner);
-    };
-
-  const messaging = await composeB3Messaging({
-    root: options.root, dataRoot, emit: emit('messaging'),
+  // The production source: each provider's own file, read-only, found through
+  // the NATIVE session id that Agents recorded at discovery. A binding whose
+  // provider has not written anything yet locates nothing and stays `waiting`,
+  // which is §25-B3c's honest first state.
+  const source = options.transcriptSource ?? createProviderFileSource({
+    locate: createProviderFileLocator({
+      ...(options.providerHome === undefined
+        ? {} : { homes: defaultProviderHomes(options.providerHome) }),
+      async nativeSessionIdOf(binding) {
+        const session = await agents.getProviderSession(
+          { id: 'sys_transcript', kind: 'system', verifiedScopes: [] },
+          binding.providerSessionId,
+        );
+        if (!session.ok) return null;
+        return session.value.providerConversationId ?? null;
+      },
+    }),
   });
+
   transcript = composeB3TranscriptFor({
     root: options.root,
     dataRoot,
     messaging,
     emit: emit('transcript'),
-    ...(options.transcriptSource === undefined
-      ? {} : { source: options.transcriptSource }),
+    source,
   });
 
   return {

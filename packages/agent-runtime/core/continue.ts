@@ -24,6 +24,7 @@ import { recoveryRequired, runFinal, type Persisted } from './runs-store.js';
 import { advance, compensate, openOperation } from './journal.js';
 import { runSkillsGate } from './gate.js';
 import { startReplacement, type ContinuationWork } from './continue-launch.js';
+import { drainOldEndpoint, transferEndpoint, type DrainedEndpoint } from './spawn-b3c.js';
 import { closeRun } from './lifecycle.js';
 import { insideClosingTree, treeClosing } from './stop-tree.js';
 
@@ -202,8 +203,14 @@ async function performContinuation(
   });
   if (!linked.ok) return linked;
 
-  const transferred = await advance(core, operation, {
-    stage: 'endpoint-transferred', owner: 'messaging', outcome: 'not-needed', notNeededBecause: 'B3c',
+  // §13.6: the claim moves in ONE store operation, carrying every queued inbox
+  // item with it. This is where a Message accepted mid-continuation stops being
+  // the old Run's and becomes the new one's, with no instant belonging to both.
+  const transferred = await transferEndpoint(core, {
+    agentId: work.input.agentId,
+    newRun: started.value.agentRun,
+    drained: drained.value.drained,
+    operation,
   });
   if (!transferred.ok) return transferred;
   operation = transferred.value;
@@ -233,26 +240,33 @@ async function performContinuation(
  */
 async function fenceAndDrainOldRun(
   core: RunsCore, work: ContinuationWork,
-): Promise<B3Result<{ oldRun: AgentRun; operation: RunOperation }>> {
+): Promise<B3Result<{
+  oldRun: AgentRun; operation: RunOperation; drained: DrainedEndpoint;
+}>> {
   const fencedOld = await patchRun(core, work.oldRun, { lifecycle: 'continuation-pending' });
   if (!fencedOld.ok) return fencedOld;
-  let operation = await advance(core, work.operation, {
+  const fenced = await advance(core, work.operation, {
     stage: 'old-run-fenced', owner: 'agent-runtime', ownerObjectId: work.oldRun.id,
   }, { state: 'continuation-pending' });
-  if (!operation.ok) return operation;
+  if (!fenced.ok) return fenced;
 
-  const deferred = [
-    { stage: 'old-endpoint-drained', owner: 'messaging', slice: 'B3c' },
-    { stage: 'old-transcript-finalised', owner: 'transcript', slice: 'B3c' },
-    { stage: 'old-usage-finalised', owner: 'messaging', slice: 'B3d' },
-  ] as const;
-  for (const step of deferred) {
-    operation = await advance(core, operation.value, {
-      stage: step.stage, owner: step.owner, outcome: 'not-needed', notNeededBecause: step.slice,
-    });
-    if (!operation.ok) return operation;
-  }
-  return b3ok({ oldRun: fencedOld.value, operation: operation.value });
+  // The real drain and the real final watermark (§13.6). What is handed to the
+  // transfer below is the position the mirror actually reached, never a value
+  // this function made up.
+  const drained = await drainOldEndpoint(core, {
+    agentId: work.input.agentId, oldRunId: work.oldRun.id, operation: fenced.value,
+  });
+  if (!drained.ok) return drained;
+
+  // Usage genuinely belongs to B3d; it is the only rung here still deferred.
+  const settled = await advance(core, drained.value.operation, {
+    stage: 'old-usage-finalised', owner: 'supervision',
+    outcome: 'not-needed', notNeededBecause: 'B3d',
+  });
+  if (!settled.ok) return settled;
+  return b3ok({
+    oldRun: fencedOld.value, operation: settled.value, drained: drained.value,
+  });
 }
 
 /**

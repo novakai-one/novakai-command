@@ -24,6 +24,7 @@ import { runSkillsGate } from './gate.js';
 import {
   bindProviderSession, finishRun, recordDeferredStages, reserveRun, startTerminal,
 } from './spawn-stages.js';
+import { activateEndpoint, bindTranscript, reserveEndpoint } from './spawn-b3c.js';
 
 export interface SpawnOutcome {
   readonly agentRun: AgentRun;
@@ -251,32 +252,48 @@ async function provisionRun(
   });
   if (!reservedRun.ok) return reservedRun;
 
-  const deferred = await recordDeferredStages(
-    core, reservedRun.value.operation, ['endpoint-reserved'],
-  );
-  if (!deferred.ok) return deferred;
-
   const live = await startTerminal(core, context, {
     agentRun: reservedRun.value.agentRun, plan: governed.plan,
-    reserved: build.reserved, operation: deferred.value, epochId: build.epochId,
+    reserved: build.reserved, operation: reservedRun.value.operation, epochId: build.epochId,
   });
   if (!live.ok) return live;
 
+  // §13.5 row 6, as soon as there is a terminal session to claim — and still
+  // strictly before any provider input exists. See `reserveEndpoint` for why
+  // this rung sits here rather than one rung earlier.
+  const endpoint = await reserveEndpoint(core, {
+    agentRun: live.value.agentRun,
+    agentId: governed.agentId,
+    rootHumanPrincipalId: build.authority.rootHumanPrincipalId,
+    operation: live.value.operation,
+  });
+  if (!endpoint.ok) return endpoint;
+
   const bound = await bindProviderSession(core, {
     agentRun: live.value.agentRun, plan: governed.plan,
-    reserved: build.reserved, operation: live.value.operation,
+    reserved: build.reserved, operation: endpoint.value.operation,
   });
   if (!bound.ok) return bound;
 
-  const afterTranscript = await recordDeferredStages(
-    core, bound.value, ['transcript-bound', 'endpoint-active'],
-  );
-  if (!afterTranscript.ok) return afterTranscript;
+  const custody = await bindTranscript(core, {
+    agentRun: live.value.agentRun,
+    agentId: governed.agentId,
+    provider: governed.plan.provider,
+    ...(endpoint.value.threadId === undefined ? {} : { threadId: endpoint.value.threadId }),
+    operation: bound.value,
+  });
+  if (!custody.ok) return custody;
+
+  const activated = await activateEndpoint(core, {
+    ...(endpoint.value.claimId === undefined ? {} : { claimId: endpoint.value.claimId }),
+    operation: custody.value,
+  });
+  if (!activated.ok) return activated;
 
   const gated = await runSkillsGate(core, context, {
     agentRun: live.value.agentRun,
     plan: governed.plan,
-    operation: afterTranscript.value,
+    operation: activated.value,
     brief: build.input.task?.brief ?? '',
     supervised: governed.supervised,
   });

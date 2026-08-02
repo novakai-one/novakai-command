@@ -10,7 +10,7 @@ import {
 } from '../../../messaging/b3/contract/index.js';
 import {
   composeB3Transcript, createTranscriptStore,
-  type B3TranscriptContract, type MessagingMirrorPort, type SourceReadOutcome,
+  type B3TranscriptContract, type MessagingMirrorPort,
   type TranscriptSourcePort,
 } from '../../../transcript/b3/contract/index.js';
 
@@ -53,19 +53,15 @@ export interface B3TranscriptCompositionOptions {
   readonly dataRoot: string;
   readonly messaging: AgentMessagingContract;
   readonly emit: CapabilityEmit;
-  readonly source?: TranscriptSourcePort;
+  /**
+   * Required, not optional. It was optional, defaulting to a port that reported
+   * every binding `missing`, and the production composition never passed one —
+   * so no managed Run could mirror a single turn. The composition root now
+   * chooses between the real provider-file reader and a test fixture, and
+   * neither choice can be made by forgetting.
+   */
+  readonly source: TranscriptSourcePort;
 }
-
-/**
- * A source that reports every binding as `missing`.
- *
- * Used when no provider-file reader is wired. It is deliberately explicit
- * rather than a no-op success: §25-B3c wants bound/waiting/missing and never
- * silence, and a host with no reader genuinely cannot see the source.
- */
-const NO_SOURCE: TranscriptSourcePort = {
-  async read(): Promise<SourceReadOutcome> { return { kind: 'missing' }; },
-};
 
 export function composeB3TranscriptFor(
   options: B3TranscriptCompositionOptions,
@@ -109,7 +105,7 @@ export function composeB3TranscriptFor(
 
   return composeB3Transcript({
     store,
-    source: options.source ?? NO_SOURCE,
+    source: options.source,
     messaging: mirror,
     emit: options.emit,
   });

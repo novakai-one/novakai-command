@@ -21,7 +21,8 @@ import type {
   SpawnAgentInput, StopAgentInput, StopAgentTreeInput,
 } from '../contract/runs-api.js';
 import type {
-  AgentsPort, ProviderPort, RunCredentialPort, TerminalPort,
+  AgentsPort, MessagingEndpointPort, ProviderPort, RunCredentialPort, TerminalPort,
+  TranscriptCustodyPort,
 } from '../contract/ports.js';
 import type { RuntimeHostContract } from '../contract/types.js';
 import { createRunsStore, type RunsStore, type RunsStoreOptions } from './runs-store.js';
@@ -63,6 +64,10 @@ export interface ComposeAgentRunsOptions extends RunsStoreOptions {
   readonly clock?: () => number;
   /** §19.1's transcript section, read through Transcript's contract. */
   readonly transcriptBinding?: TranscriptBindingLookup;
+  /** §13.5 rows 6/10 and §13.6's cutover, through Messaging's contract. */
+  readonly messagingEndpoint?: MessagingEndpointPort;
+  /** §13.5 row 9 and §13.6's watermark, through Transcript's contract. */
+  readonly transcriptCustody?: TranscriptCustodyPort;
 }
 
 /** Generous, because a real model reading its skills is not instant. */
@@ -107,6 +112,10 @@ export function composeAgentRuns(options: ComposeAgentRunsOptions): AgentRunsCon
     clock: options.clock ?? (() => Date.now()),
     ...(options.transcriptBinding === undefined
       ? {} : { transcriptBinding: options.transcriptBinding }),
+    ...(options.messagingEndpoint === undefined
+      ? {} : { messagingEndpoint: options.messagingEndpoint }),
+    ...(options.transcriptCustody === undefined
+      ? {} : { transcriptCustody: options.transcriptCustody }),
   };
 
   const named = (name: string): PublicOperationName => name as PublicOperationName;

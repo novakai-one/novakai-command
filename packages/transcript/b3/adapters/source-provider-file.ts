@@ -27,8 +27,14 @@ export interface ProviderFileSourceOptions {
    * Where a binding's provider file is. A function rather than a map because
    * the answer depends on provider AND session, and a Run bound before its
    * file exists must be able to ask again later.
+   *
+   * May answer asynchronously: production has to ask Agents for the
+   * provider-NATIVE session id before it can name a file, and that is a
+   * contract call, not a lookup table.
    */
-  readonly locate: (binding: TranscriptBinding) => string | null;
+  readonly locate: (
+    binding: TranscriptBinding,
+  ) => string | null | Promise<string | null>;
 }
 
 /**
@@ -46,7 +52,7 @@ export function createProviderFileSource(
 ): TranscriptSourcePort {
   return {
     async read(binding, fromPosition, maxLines): Promise<SourceReadOutcome> {
-      const filePath = options.locate(binding);
+      const filePath = await options.locate(binding);
       if (filePath === null || !existsSync(filePath)) return { kind: 'missing' };
       let contents: string;
       try {

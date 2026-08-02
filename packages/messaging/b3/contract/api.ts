@@ -178,6 +178,18 @@ export interface AgentMessagingCommands {
     ctx: SystemCommandContext<"sys_agent_runtime">, claimId: AgentEndpointClaimId,
   ): Promise<B3Result<AgentEndpointClaim>>;
 
+  /**
+   * §13.6 row 2 — "old endpoint draining", its own step.
+   *
+   * The continuation ladder fences the old endpoint before the replacement is
+   * provisioned, and that gap is real: a failed continuation never reaches the
+   * transfer, so a claim that could only be drained as part of a successful
+   * transfer would leave nothing fenced at all.
+   */
+  drainAgentEndpointClaim(
+    ctx: SystemCommandContext<"sys_agent_runtime">, claimId: AgentEndpointClaimId,
+  ): Promise<B3Result<AgentEndpointClaim>>;
+
   transferAgentEndpointClaim(
     ctx: SystemCommandContext<"sys_agent_runtime">, input: TransferAgentEndpointInput,
   ): Promise<B3Result<AgentEndpointClaim>>;

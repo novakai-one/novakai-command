@@ -27,8 +27,8 @@ import type {
   AgentInboxItem, AgentInboxItemId,
 } from "../contract/records.js";
 import {
-  activateAgentEndpointClaim, findClaim, reserveAgentEndpointClaim,
-  transferAgentEndpointClaim,
+  activateAgentEndpointClaim, drainAgentEndpointClaim, findClaim,
+  reserveAgentEndpointClaim, transferAgentEndpointClaim,
 } from "./endpoints.js";
 import {
   commitTerminalOriginatedMessage, sendAgentMessage,
@@ -167,6 +167,12 @@ export function composeAgentMessaging(options: AgentMessagingOptions): AgentMess
       _context: SystemCommandContext<"sys_agent_runtime">, claimId: AgentEndpointClaimId,
     ) {
       return announce(await activateAgentEndpointClaim(store, claimId), endpointEvent, claimPayload);
+    },
+
+    async drainAgentEndpointClaim(
+      _context: SystemCommandContext<"sys_agent_runtime">, claimId: AgentEndpointClaimId,
+    ) {
+      return announce(await drainAgentEndpointClaim(store, claimId), endpointEvent, claimPayload);
     },
 
     async transferAgentEndpointClaim(

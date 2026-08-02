@@ -94,6 +94,39 @@ export async function activateAgentEndpointClaim(
 }
 
 /**
+ * §13.6 row 2 — "old endpoint draining".
+ *
+ * A separate operation from the transfer because §13.6 makes it a separate
+ * step: the old endpoint stops accepting new work while the replacement is
+ * still being provisioned, and the transfer that follows may be seconds later
+ * or (on a failed continuation) never. A claim that could only ever be drained
+ * as part of a successful transfer would leave nothing fenced in between.
+ *
+ * Idempotent: draining an already-draining claim returns it unchanged, because
+ * a resumed continuation must not be blocked by its own earlier progress.
+ */
+export async function drainAgentEndpointClaim(
+  store: MessagingStore, claimId: AgentEndpointClaimId,
+): Promise<B3Result<AgentEndpointClaim>> {
+  const found = await findClaim(store, claimId);
+  if (found === null) {
+    return b3fail(claimConflict(`no endpoint claim ${claimId}`, { claimId }));
+  }
+  if (found.state === "draining") return b3ok(found);
+  if (found.state === "closed") {
+    return b3fail(claimConflict(
+      `endpoint claim ${claimId} is already closed`, { claimId, state: found.state },
+    ));
+  }
+  const committed = await store.commitAgentEndpointClaim({
+    claim: { ...found, state: "draining" },
+    expectedEndpointGeneration: found.endpointGeneration,
+  });
+  if (committed.kind === "error") return b3fail(storeError(committed.error));
+  return b3ok(committed.value);
+}
+
+/**
  * §13.6, in the order the spec writes it: drain the old endpoint with a cutoff,
  * then hand every queued item to the new one, atomically.
  *
