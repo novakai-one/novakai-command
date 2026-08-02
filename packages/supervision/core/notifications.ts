@@ -64,7 +64,16 @@ function queuedNotification(
   };
 }
 
-/** Fire one due deadline and queue its Notification, exactly once. */
+/**
+ * Fire one due deadline and queue its Notification, exactly once.
+ *
+ * QUEUE FIRST, then stop being armed. The two orders are indistinguishable
+ * when nothing goes wrong and differ exactly once — a crash between them.
+ * Firing first loses the alert for ever: the deadline is no longer armed, so
+ * no replay will ever queue it. Queueing first can at worst re-fire a deadline
+ * whose Notification already exists, and its deterministic identity absorbs
+ * that. Same reason the freeze pins queue-before-delivery at the C seam.
+ */
 async function fireDeadline(
   deps: EvaluateDependencies,
   principal: B3PrincipalId,
@@ -72,6 +81,17 @@ async function fireDeadline(
   observedAt: IsoUtc,
   evidenceRef: string,
 ): Promise<B3Result<Notification | null>> {
+  const record = queuedNotification(principal, input.rule, input.deadline, evidenceRef);
+  const existing = await deps.store.read<Notification>('notification', record.id);
+  if (!existing.ok) return b3fail(existing.error);
+  let queued: Notification | null = null;
+  if (existing.value === null) {
+    const written = await deps.store.create<Notification>(
+      principal, record, deriveClientOpId(`b3v4:queue-notification:${record.id}`),
+    );
+    if (!written.ok) return b3fail(written.error);
+    queued = written.value;
+  }
   const lateByMs = Math.max(
     0, new Date(observedAt).getTime() - new Date(input.deadline.dueAt).getTime(),
   );
@@ -80,14 +100,7 @@ async function fireDeadline(
     input.deadline.recordVersion, deriveClientOpId(`b3v4:fire-deadline:${input.deadline.id}`),
   );
   if (!fired.ok) return b3fail(fired.error);
-  const record = queuedNotification(principal, input.rule, input.deadline, evidenceRef);
-  const existing = await deps.store.read<Notification>('notification', record.id);
-  if (!existing.ok) return b3fail(existing.error);
-  if (existing.value !== null) return b3ok(null);
-  const written = await deps.store.create<Notification>(
-    principal, record, deriveClientOpId(`b3v4:queue-notification:${record.id}`),
-  );
-  return written.ok ? b3ok(written.value) : b3fail(written.error);
+  return b3ok(queued);
 }
 
 /** Push an idle deadline out; observed activity is why it has not fired. */

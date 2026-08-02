@@ -12,7 +12,9 @@ import type {
   HumanPrincipalId, InstallRunWatchersInput, NotificationRecipient,
   SupervisionContract, WatchDeadline, WatchRule,
 } from '../contract/index.js';
-import { createSupervisionStore, type SupervisionStoreOptions } from './store.js';
+import {
+  createSupervisionStore, type SupervisionStore, type SupervisionStoreOptions,
+} from './store.js';
 import {
   createTemplateCatalogue, type WatcherTemplate, type WatcherTemplatePort,
 } from './templates.js';
@@ -42,6 +44,12 @@ export type SupervisionCore = SupervisionWireSlice & SupervisionWatcherReads;
 export interface SupervisionCoreOptions extends SupervisionStoreOptions {
   /** Who a fired watcher tells when the host has no supervisor lookup wired. */
   readonly supervisorPrincipalId: HumanPrincipalId;
+  /**
+   * @internal failure injection. §24.3 wants a crash before AND after every
+   * durable step, and the honest way to produce one is a store that stops
+   * accepting a write, exactly as a dying process would.
+   */
+  readonly store?: SupervisionStore;
   readonly templates?: WatcherTemplatePort;
   readonly extraTemplates?: readonly WatcherTemplate[];
   readonly clock?: () => Date;
@@ -50,7 +58,7 @@ export interface SupervisionCoreOptions extends SupervisionStoreOptions {
 }
 
 export function composeSupervision(options: SupervisionCoreOptions): SupervisionCore {
-  const store = createSupervisionStore(options);
+  const store = options.store ?? createSupervisionStore(options);
   const templates = options.templates ?? createTemplateCatalogue(options.extraTemplates ?? []);
   const escalateTo: NotificationRecipient = {
     kind: 'human', principalId: options.supervisorPrincipalId,

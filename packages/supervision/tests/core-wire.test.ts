@@ -13,12 +13,13 @@ import { readFile, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
-  mintClientOpId, mintTraceCorrelationId,
+  b3err, b3fail, mintClientOpId, mintTraceCorrelationId,
   type AgentRunId, type AuthenticatedPrincipal, type B3Result, type EventCursor,
   type ResolvedLaunchPlanId, type SystemCommandContext,
 } from '@novakai/foundation/contract';
 import {
-  IDLE_WATCH_TEMPLATE, composeSupervision, type SupervisionCore,
+  IDLE_WATCH_TEMPLATE, composeSupervision, createSupervisionStore,
+  type SupervisionCore, type SupervisionStore,
 } from '../core/index.js';
 import {
   parseNotificationRecord, parseWatchDeadline, parseWatchRule,
@@ -59,19 +60,26 @@ function committedEvent(occurredAt: string, sequence: number): PublicEvent<
 
 interface Rig {
   readonly supervision: SupervisionCore;
+  readonly store: SupervisionStore;
   readonly root: string;
+  readonly startedAt: string;
   close(): void;
 }
 
 function createRig(startedAt: string): Rig {
   const root = mkdtempSync(path.join(tmpdir(), 'nvk-b3d-core-'));
+  const store = createSupervisionStore({ root, dataRoot: path.join(root, 'stores') });
   const supervision = composeSupervision({
     root,
     dataRoot: path.join(root, 'stores'),
     supervisorPrincipalId: 'person_chris' as never,
     clock: () => new Date(startedAt),
+    store,
   });
-  return { supervision, root, close: () => { rmSync(root, { recursive: true, force: true }); } };
+  return {
+    supervision, store, root, startedAt,
+    close: () => { rmSync(root, { recursive: true, force: true }); },
+  };
 }
 
 /**
@@ -101,6 +109,18 @@ function assertContractShaped(parsed: B3Result<unknown>, what: string): void {
     assert.equal(REPORTED_FREEZE_DEFECTS.has(issue.path), true,
       `${what} violates its own frozen contract at ${issue.path}`);
   }
+}
+
+/** The same store, with one record's update broken — a crash a reducer cannot see. */
+function refusingUpdatesTo(store: SupervisionStore, objectId: string): SupervisionStore {
+  return {
+    ...store,
+    update: async (principal, targetId, patch, expectedVersion, clientOpId) => (
+      targetId === objectId
+        ? b3fail(b3err('StoreUnavailable', 'the process died mid-write', {}, true))
+        : store.update(principal, targetId, patch, expectedVersion, clientOpId)
+    ),
+  };
 }
 
 function unwrap<Value>(result: B3Result<Value>, what: string): Value {
@@ -251,6 +271,47 @@ test('a pinned ref whose digest does not match the catalogue is refused', async 
     });
     assert.equal(refused.ok, false, 'an unpinned template body installed under a pinned ref');
     if (!refused.ok) assert.equal(refused.error.code, 'WatchRuleInvalid');
+  } finally {
+    rig.close();
+  }
+});
+
+test('a Notification is durable before its deadline stops being armed', async () => {
+  // Ordering, proved by breaking the second write.
+  //
+  // Queue-then-fire and fire-then-queue both look identical when nothing goes
+  // wrong. They differ exactly once: a crash between the two. Fire-first loses
+  // the alert for ever — the deadline is no longer armed, so no replay will
+  // ever queue it. Queue-first at worst re-fires a deadline whose Notification
+  // already exists, and the deterministic id absorbs that.
+  const rig = createRig('2026-08-03T00:00:00.000Z');
+  try {
+    await rig.supervision.installRunWatchers(runtimeContext(), INSTALL);
+    const armed = unwrap(await rig.supervision.listWatchDeadlines(human), 'armed');
+
+    // The same store, with the deadline's own update broken — the crash a
+    // reducer cannot distinguish from a dead process.
+    const broken = composeSupervision({
+      root: rig.root,
+      dataRoot: path.join(rig.root, 'stores'),
+      supervisorPrincipalId: 'person_chris' as never,
+      clock: () => new Date(rig.startedAt),
+      store: refusingUpdatesTo(rig.store, armed[0]!.id),
+    });
+    const outcome = await broken.evaluateEvent(runtimeContext(), {
+      event: committedEvent('2026-08-03T00:07:00.000Z', 9),
+    });
+    assert.equal(outcome.ok, false, 'a failed deadline write was reported as success');
+
+    // The alert survived the crash, and the deadline is still armed, so a
+    // replay finishes the job rather than dropping it.
+    const page = unwrap(
+      await rig.supervision.listNotifications(human, { limit: 50 }), 'listNotifications',
+    );
+    assert.equal(page.items.length, 1, 'the Notification was lost with the deadline write');
+    const after = unwrap(await rig.supervision.listWatchDeadlines(human), 'after');
+    assert.equal(after[0]!.state, 'armed',
+      'the deadline stopped being armed even though its own write failed');
   } finally {
     rig.close();
   }
