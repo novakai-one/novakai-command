@@ -247,6 +247,27 @@ const recordNotFound = (record: string, id: string): StoreError => ({
   id,
 });
 
+/**
+ * Everything about a claim a caller controls. `entityRevision`, `createdAt` and
+ * `lastStoreOpId` are excluded deliberately: they are what the STORE stamps, so
+ * comparing them would make every retry look like a change.
+ */
+const sameClaimFacts = (
+  stored: AgentEndpointClaim, incoming: AgentEndpointClaim,
+): boolean =>
+  stored.state === incoming.state
+  && stored.agentRunId === incoming.agentRunId
+  && stored.terminalSessionId === incoming.terminalSessionId
+  && stored.endpointGeneration === incoming.endpointGeneration
+  && stored.cutoffMessageSequence === incoming.cutoffMessageSequence
+  && stored.finalTranscriptWatermark === incoming.finalTranscriptWatermark;
+
+const sameInboxFacts = (stored: AgentInboxItem, incoming: AgentInboxItem): boolean =>
+  stored.state === incoming.state
+  && stored.endpointClaimId === incoming.endpointClaimId
+  && stored.terminalInputAttemptId === incoming.terminalInputAttemptId
+  && stored.failureReason === incoming.failureReason;
+
 const canonicalPairKey = (a: string, b: string): string => [a, b].sort().join("\n");
 const acceptanceKey = (senderId: string, clientMessageId: string): string =>
   `${senderId}\n${clientMessageId}`;
@@ -1069,6 +1090,11 @@ export class StoreCore implements MessagingStore {
       });
     }
     const previous = this.state.endpointClaims.get(claim.id);
+    // Transitions are idempotent BY TARGET STATE. A retry after a crash asks
+    // for the state it already reached; bumping the revision anyway would make
+    // the retry a second durable operation with a different identity, which is
+    // exactly what an idempotency key exists to prevent.
+    if (previous !== undefined && sameClaimFacts(previous, claim)) return ok(previous);
     const stamped: AgentEndpointClaim = {
       ...claim,
       entityRevision: (previous?.entityRevision ?? 0) + 1,
@@ -1151,6 +1177,7 @@ export class StoreCore implements MessagingStore {
     item: AgentInboxItem,
   ): Promise<StoreResult<AgentInboxItem>> {
     const previous = this.state.inboxItems.get(item.id);
+    if (previous !== undefined && sameInboxFacts(previous, item)) return ok(previous);
     const stamped: AgentInboxItem = {
       ...item,
       entityRevision: (previous?.entityRevision ?? 0) + 1,
