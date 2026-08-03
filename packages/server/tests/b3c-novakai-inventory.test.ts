@@ -189,6 +189,7 @@ test('every B3c record lands under .novakai/stores, and Messaging owns exactly o
       'messagingStoreOps.jsonl', 'transcriptLines.jsonl', 'transcriptJournal.jsonl',
       'transcriptCheckpoints.jsonl', 'transcriptBindings.jsonl', 'observedSubagents.jsonl',
       'watchRules.jsonl', 'watchDeadlines.jsonl', 'notifications.jsonl',
+      'watchEvaluations.jsonl', 'notificationDeliveryFenceOperations.jsonl',
       'terminalTabs.jsonl', 'commandReceipts.jsonl', 'storeRouteCutovers.jsonl',
       'runtimeEpochs.jsonl', 'quarantine.jsonl', 'traces.jsonl',
     ]);

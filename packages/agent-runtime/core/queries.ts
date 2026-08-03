@@ -119,6 +119,7 @@ async function settleIfTerminalGone(
   let disconnected = agentRun;
   if (!agentRun.uncertainty.some((item) => item.code === livenessCode)) {
     const generation = (Number(agentRun.activityGeneration) + 1) as ActivityGeneration;
+    const observedAt = nowIsoUtc();
     const observed = await core.store.update<AgentRun>(
       'sys_agent_runtime', agentRun.id,
       {
@@ -135,18 +136,20 @@ async function settleIfTerminalGone(
     );
     if (!observed.ok) return b3ok(agentRun);
     disconnected = observed.value;
-    core.publish('agent.run.connection.changed', {
+    core.publish('agent.run.activity.changed', {
       agentRunId: agentRun.id,
       activityGeneration: generation,
       previous: {
-        final: false,
+        activity: agentRun.activity,
         activityGeneration: agentRun.activityGeneration,
         uncertaintyCodes: agentRun.uncertainty.map((item) => item.code),
+        observedAt,
       },
       current: {
-        final: false,
+        activity: disconnected.activity,
         activityGeneration: generation,
         uncertaintyCodes: disconnected.uncertainty.map((item) => item.code),
+        observedAt,
       },
     });
   }
