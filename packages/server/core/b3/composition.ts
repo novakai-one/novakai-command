@@ -49,6 +49,7 @@ import {
   followEventsIntoSupervision, supervisionWatcherPort, watcherInstallAuthority, watchRuleAccess,
   watchRuleGeneration,
 } from './supervision-ports.js';
+import { notificationTranscriptObserver } from './notification-transcript-port.js';
 import { createUsageReader } from '../supervision/usage.js';
 import { createTranscriptUsagePort } from './usage-transcript-port.js';
 import { startWatcherScheduler } from './watcher-scheduler.js';
@@ -415,7 +416,15 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
   // §9.2/§24.4: Supervision reads the ONE published event stream the Runtime
   // already owns. It is the whole watcher clock — no timer, no poll, and no
   // second event identity invented on the side.
-  const following = followEventsIntoSupervision(runs, supervision);
+  //
+  // B3d/Q11: the same stream, the same pass, now also carries a delivered
+  // Notification past `offered-to-endpoint` when the provider's own transcript
+  // records the turn that delivery caused. Composed here because this is the
+  // only place Transcript and Supervision are allowed to meet, and the observer
+  // itself holds no state and decides nothing the frozen command does not.
+  const following = followEventsIntoSupervision(
+    runs, supervision, notificationTranscriptObserver(supervision),
+  );
   const watcherScheduler = startWatcherScheduler(supervision, {
     ...(options.watcherIntervalMs === undefined
       ? {} : { intervalMs: options.watcherIntervalMs }),

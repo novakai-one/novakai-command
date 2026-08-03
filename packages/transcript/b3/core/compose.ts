@@ -181,14 +181,23 @@ export function composeB3Transcript(options: B3TranscriptOptions): B3TranscriptC
       // Emitting only on a real outcome is not a quota: it is the event kind
       // meaning what its name says.
       if (!ingested.ok || !committedSomething(ingested.value)) return ingested;
+      // B3d, additively on the SAME kind: which Run and session the pass was
+      // for, and the human turns it committed. The counts said a turn arrived
+      // without saying which, so no consumer could recognise a turn it had
+      // itself caused — Q11's observation is exactly that recognition. Still
+      // one event per pass, still this one channel.
       return announce(ingested, 'transcript.line.committed', (value) => ({
         bindingId: value.bindingId,
+        agentRunId: binding.agentRunId,
+        providerSessionId: binding.providerSessionId,
         discovered: value.discovered,
         filtered: value.filtered,
         mirrored: value.mirrored,
         quarantined: value.quarantined,
         ...(value.nextWatermark === undefined ? {} : { nextWatermark: value.nextWatermark }),
         ...(value.haltedBy === undefined ? {} : { haltedBy: value.haltedBy }),
+        ...(value.committedInputLines === undefined
+          ? {} : { committedInputLines: value.committedInputLines }),
       }));
     },
 
