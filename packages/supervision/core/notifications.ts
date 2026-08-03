@@ -350,6 +350,23 @@ export async function evaluateEvent(
             deps, _context.principal, rule, lifecycleEvent,
           );
         }
+        const fencedRule = await deps.store.read<WatchRule>('watchRule', rule.id);
+        if (!fencedRule.ok) return fencedRule;
+        if (fencedRule.value === null
+          || Number(fencedRule.value.recordVersion) !== Number(rule.recordVersion)) {
+          candidate = b3fail(b3err(
+            'VersionConflict',
+            'WatchRule changed before its evaluation outcome could commit',
+            {
+              operationId: progress.id,
+              stage: 'rule-version-fence',
+              watchRuleId: rule.id,
+              expectedRecordVersion: rule.recordVersion,
+              actualRecordVersion: fencedRule.value?.recordVersion ?? null,
+            },
+            true,
+          ));
+        }
         if (!candidate.ok) {
           if (!candidate.error.retryable) {
             outcome = {

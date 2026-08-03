@@ -222,6 +222,7 @@ export async function usageThresholdCandidateForEvent(
         'RuntimeUnavailable', 'usage evidence authority is not composed', {}, true,
       )),
     },
+    ...(deps.relationships === undefined ? {} : { relationships: deps.relationships }),
   }, principal, rule, parsed.value.payload as unknown as ProviderUsageEvidence);
 }
 
