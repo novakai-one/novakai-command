@@ -129,7 +129,7 @@ test('a safe-boundary delivery excludes a concurrent provider turn start', async
       activityGeneration: input.expectedActivityGeneration,
       inputText: 'Do not race the normal turn',
     });
-    rig.terminal.duringNextNotificationReservation = async () => {
+    rig.terminal.duringNextProviderTurnPrepare = async () => {
       reservationEntered.open();
       await releaseReservation.promise;
     };
@@ -152,18 +152,21 @@ test('a safe-boundary delivery excludes a concurrent provider turn start', async
 
     const [submitted, begun] = await Promise.all([delivery, normalTurn]);
     assert.equal(submitted.ok, true, submitted.ok ? '' : submitted.error.message);
-    assert.equal(begun.ok, true, begun.ok ? '' : begun.error.message);
     assert.equal(concurrentResult, 'blocked',
       'a normal provider turn entered while Notification delivery held the Run boundary');
+    assert.equal(begun.ok, false,
+      'the stale normal-turn command survived the semantic submission mutation');
+    if (!begun.ok) assert.equal(begun.error.code, 'VersionConflict');
   } finally {
     releaseReservation.open();
     rig.close();
   }
 });
 
-test('the query adopts a Supervision claim whose Runtime stage write crashed', async () => {
+test('the query and retry adopt semantic delivery progress after a Runtime write crash', async () => {
   const healthy = createRunsRig();
   let crashed: ReturnType<typeof createRunsRig> | null = null;
+  let resumedRig: ReturnType<typeof createRunsRig> | null = null;
   try {
     const roleProfileId = healthy.agents.defineRole('claim-recovery-target');
     const spawned = await healthy.runtime.spawnAgent(healthy.human(), {
@@ -190,20 +193,19 @@ test('the query adopts a Supervision claim whose Runtime stage write crashed', a
       notifications: healthy.notifications,
       messagingEndpoint: healthy.messagingEndpoint,
       transcriptCustody: healthy.transcriptCustody,
-      // Open operation, journal intent + its retained occurrence event, then
-      // journal Terminal reservation + its retained event. Die on the write
-      // that would journal Supervision's already-durable claim.
+      // Die after the semantic submission is durable but before it reaches a
+      // terminal delivery outcome; restart must adopt and resume that record.
       crashAfterWrites: 5,
     });
 
+    const input = {
+      notificationId,
+      agentRunId: spawned.value.run.id,
+      effectKey,
+      expectedActivityGeneration: spawned.value.run.activityGeneration,
+    };
     const interrupted = await crashed.runtime.startNotificationTurnAtSafeBoundary(
-      supervisionContext(),
-      {
-        notificationId,
-        agentRunId: spawned.value.run.id,
-        effectKey,
-        expectedActivityGeneration: spawned.value.run.activityGeneration,
-      },
+      supervisionContext(), input,
     );
     assert.equal(interrupted.ok, false, 'fault injection did not interrupt the operation');
     if (!interrupted.ok) assert.equal(interrupted.error.code, 'StoreUnavailable');
@@ -214,12 +216,29 @@ test('the query adopts a Supervision claim whose Runtime stage write crashed', a
     assert.equal(recovered.ok, true, recovered.ok ? '' : recovered.error.message);
     if (recovered.ok) {
       assert.deepEqual(recovered.value, {
-        state: 'claimed-pending-submission',
+        state: 'reserved-not-claimed',
         notificationInputReservationId: notificationInputReservationId(effectKey),
-        notificationId,
       });
     }
+    resumedRig = createRunsRig({
+      root: healthy.root,
+      agents: healthy.agents,
+      terminal: healthy.terminal,
+      providers: healthy.providers,
+      notifications: healthy.notifications,
+      messagingEndpoint: healthy.messagingEndpoint,
+      transcriptCustody: healthy.transcriptCustody,
+    });
+    const repaired = await resumedRig.runtime.reconcileProviderTurns();
+    assert.equal(repaired.ok, true, repaired.ok ? '' : repaired.error.message);
+    const resumed = await resumedRig.runtime.startNotificationTurnAtSafeBoundary(
+      supervisionContext(), input,
+    );
+    assert.equal(resumed.ok, true, resumed.ok ? '' : resumed.error.message);
+    assert.equal(healthy.notifications.claims.length, 1);
+    assert.equal(healthy.notifications.submissions.length, 1);
   } finally {
+    resumedRig?.close();
     crashed?.close();
     healthy.close();
   }
@@ -314,9 +333,8 @@ test('restart records Supervision outcome after Terminal committed before a cras
       notifications: healthy.notifications,
       messagingEndpoint: healthy.messagingEndpoint,
       transcriptCustody: healthy.transcriptCustody,
-      // Each Runtime stage now durably retains its exact event. The sixth
-      // write journals Supervision's claim and the seventh retains that event;
-      // Terminal then commits, and terminal-input-submitted crashes.
+      // Die after the semantic provider effect commits but before Supervision
+      // records its delivery outcome; replay must finish owner bookkeeping.
       crashAfterWrites: 7,
     });
     const interrupted = await crashed.runtime.startNotificationTurnAtSafeBoundary(

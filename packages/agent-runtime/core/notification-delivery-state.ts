@@ -19,6 +19,27 @@ const reader: AuthenticatedPrincipal = {
   id: 'sys_agent_runtime', kind: 'system', verifiedScopes: [],
 };
 
+/** The one AMD-002 semantic submission correlated to a Notification effect. */
+export async function semanticNotificationSubmission(
+  core: RunsCore,
+  effectKey: string,
+): Promise<B3Result<ProviderTurnSubmission | null>> {
+  const listed = await core.store.list<ProviderTurnSubmission>('providerTurnSubmission');
+  if (!listed.ok) return listed;
+  const correlated = listed.value.filter((submission) =>
+    submission.submissionEffectKey === effectKey
+    && submission.origin.kind === 'runtime-effect'
+    && (submission.origin.source === 'watcher-status-request'
+      || submission.origin.source === 'notification-start-turn'));
+  if (correlated.length > 1) {
+    return b3fail(b3err(
+      'RecoveryRequired', 'one Notification effect has multiple provider-turn submissions',
+      { effectKey, providerTurnSubmissionIds: correlated.map((item) => item.id).sort() }, true,
+    ));
+  }
+  return b3ok(correlated[0] ?? null);
+}
+
 export async function notificationOperationFor(
   core: RunsCore, effectKey: string,
 ): Promise<B3Result<RunOperation | null>> {
@@ -122,14 +143,10 @@ async function committedState(
 export async function getNotificationTurnSubmission(
   core: RunsCore, effectKey: string,
 ): Promise<B3Result<NotificationTurnSubmission>> {
-  const semantic = await core.store.list<ProviderTurnSubmission>('providerTurnSubmission');
+  const semantic = await semanticNotificationSubmission(core, effectKey);
   if (!semantic.ok) return semantic;
-  const correlated = semantic.value.find((submission) =>
-    submission.submissionEffectKey === effectKey
-    && submission.origin.kind === 'runtime-effect'
-    && (submission.origin.source === 'watcher-status-request'
-      || submission.origin.source === 'notification-start-turn'));
-  if (correlated !== undefined) {
+  const correlated = semantic.value;
+  if (correlated !== null) {
     if (correlated.state.kind === 'submitted-confirmed') {
       return b3ok({
         state: 'submitted-confirmed', submittedAt: correlated.state.submittedAt,
