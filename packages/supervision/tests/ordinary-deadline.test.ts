@@ -4,8 +4,9 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import {
-  b3ok, deriveClientOpId, mintClientOpId, mintTraceCorrelationId,
-  type ActivityGeneration, type AgentRunId, type IsoUtc, type SystemCommandContext,
+  b3ok, commandReceiptId, deriveClientOpId, mintClientOpId, mintTraceCorrelationId,
+  type ActivityGeneration, type AgentRunId, type IsoUtc, type PublicOperationName,
+  type SystemCommandContext,
 } from '@novakai/foundation/contract';
 import {
   deriveDeadlineWatchEvaluationId,
@@ -256,7 +257,7 @@ test('ordinary deadline arming cycles keep immutable identity and isolated progr
   }
 });
 
-test('pre-amendment ordinary deadline fails closed before progress or claim mutation', async () => {
+test('AMD-003 #15: a pre-amendment deadline breach is record-scoped within its claim batch', async () => {
   const root = mkdtempSync(path.join(tmpdir(), 'nvk-legacy-deadline-'));
   try {
     const store = createSupervisionStore({ root, dataRoot: path.join(root, 'stores') });
@@ -272,10 +273,18 @@ test('pre-amendment ordinary deadline fails closed before progress or claim muta
     const rule = await supervision.createWatchRule(humanContext(), idleRule(300_000));
     assert.equal(rule.ok, true);
     if (!rule.ok) return;
+    const healthyRule = await supervision.createWatchRule(humanContext(), idleRule(300_000));
+    assert.equal(healthyRule.ok, true);
+    if (!healthyRule.ok) return;
     const deadlines = await supervision.listWatchDeadlines(operator);
     assert.equal(deadlines.ok, true);
     if (!deadlines.ok) return;
-    const deadline: WatchDeadline = deadlines.value[0]!;
+    const deadline: WatchDeadline = deadlines.value.find(
+      (candidate) => candidate.watchRuleId === rule.value.id,
+    )!;
+    const healthyDeadline: WatchDeadline = deadlines.value.find(
+      (candidate) => candidate.watchRuleId === healthyRule.value.id,
+    )!;
     assert.equal(deadline.creationRecordVersion, 1);
     assert.equal(deadline.armingOrdinal, 0);
     const madeLegacy = await store.update<WatchDeadline>(
@@ -288,7 +297,8 @@ test('pre-amendment ordinary deadline fails closed before progress or claim muta
     assert.equal(madeLegacy.ok, true);
     if (!madeLegacy.ok) return;
 
-    const claim = await supervision.claimDueDeadlines(schedulerContext(), {
+    const claimContext = schedulerContext();
+    const claim = await supervision.claimDueDeadlines(claimContext, {
       dueBefore: '2026-08-04T00:20:00.000Z' as IsoUtc,
       limit: 10,
       schedulerLeaseMs: 30_000,
@@ -297,16 +307,40 @@ test('pre-amendment ordinary deadline fails closed before progress or claim muta
     if (claim.ok) return;
     assert.equal(claim.error.code, 'RecoveryRequired');
     assert.match(claim.error.message, /missing immutable arming identity fields/);
+    assert.equal(
+      claim.error.details['operationId'],
+      commandReceiptId(
+        claimContext.principal.id,
+        'supervision.claimDueDeadlines' as PublicOperationName,
+        claimContext.clientOpId,
+      ),
+    );
+    assert.match(String(claim.error.details['reason']), new RegExp(String(deadline.id)));
     const unchanged = await store.read<WatchDeadline>('watchDeadline', deadline.id);
     assert.equal(unchanged.ok, true);
     if (!unchanged.ok) return;
     assert.equal(unchanged.value?.state, 'armed');
+    const healthy = await store.read<WatchDeadline>('watchDeadline', healthyDeadline.id);
+    assert.equal(healthy.ok, true);
+    if (!healthy.ok) return;
+    assert.equal(healthy.value?.state, 'claimed');
     const progress = await supervision.listWatchEvaluationProgress(operator, {
       triggerKind: 'deadline', limit: 20,
     });
     assert.equal(progress.ok, true);
     if (!progress.ok) return;
-    assert.equal(progress.value.items.length, 0);
+    assert.equal(progress.value.items.length, 1);
+    assert.equal(progress.value.items[0]!.trigger.kind, 'deadline');
+    if (progress.value.items[0]!.trigger.kind === 'deadline') {
+      assert.equal(progress.value.items[0]!.trigger.watchDeadlineId, healthyDeadline.id);
+    }
+    assert.notEqual(
+      progress.value.items[0]!.id,
+      deriveDeadlineWatchEvaluationId(deadline.id, 1 as never),
+    );
+    const notifications = await supervision.listNotifications(human, { limit: 20 });
+    assert.equal(notifications.ok, true);
+    if (notifications.ok) assert.equal(notifications.value.items.length, 0);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
