@@ -25,6 +25,23 @@ function unwrap<Value>(result: B3Result<Value>, what: string): Value {
   return result.value;
 }
 
+async function waitForThresholdNotification(
+  host: Awaited<ReturnType<typeof startRuntimeHost>>,
+) {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const page = unwrap(
+      await host.runtime.supervision.listNotifications(PRINCIPAL, { limit: 50 }),
+      'threshold notifications',
+    );
+    if (page.items.length > 0) return page;
+    await new Promise<void>((resolve) => { setImmediate(resolve); });
+  }
+  return unwrap(
+    await host.runtime.supervision.listNotifications(PRINCIPAL, { limit: 50 }),
+    'threshold notifications after event drain',
+  );
+}
+
 function runNvk(args: readonly string[]): Promise<{ code: number | null; out: string }> {
   const child = spawn(process.execPath, [path.join(repoRoot, 'scripts', 'nvk.mjs'), ...args], {
     cwd: repoRoot,
@@ -143,6 +160,74 @@ test('the live composition projects durable Agents evidence into Run views after
     assert.equal(rebuilt.usage.final, true);
   } finally {
     await restarted.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('the live composition turns satisfied output-token evidence into a Notification', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'nvk-b3d-usage-threshold-'));
+  const host = await startRuntimeHost({
+    root, port: 0, ptyHost: createFakePtyHost(), providers: createFakeProviderAdapters(),
+  });
+  try {
+    const client = await connectRuntime({ root, port: host.port, token: host.token });
+    try {
+      const role = unwrap(await client.call<{ id: string }>(
+        'b3.agent.createRole', chatRole('usage-threshold-wire'), mintClientOpId(),
+      ), 'create role');
+      const spawned = unwrap(await client.call<AgentRunView>('b3.agent.spawn', {
+        roleProfileId: role.id,
+        displayName: 'Usage Threshold Wire',
+        workingDirectory: root,
+      }, mintClientOpId()), 'spawn');
+      const rule = unwrap(await host.runtime.supervision.createWatchRule({
+        principal: PRINCIPAL,
+        clientOpId: mintClientOpId(),
+        traceId: mintTraceCorrelationId(),
+        contractVersion: 1,
+      }, {
+        subject: { kind: 'agent-run', agentRunId: spawned.run.id },
+        condition: { kind: 'output-tokens-at-least', value: 1 },
+        recipient: { kind: 'human', principalId: PRINCIPAL.id },
+        deliveryMode: 'queue-only',
+        cooldownMs: 0,
+        status: 'active',
+      }), 'create output-token watcher');
+
+      const recorded = await host.runtime.usageEvidence.recordProviderUsageEvidence({
+        principal: { id: 'sys_agents', kind: 'system', verifiedScopes: [] },
+        clientOpId: mintClientOpId(),
+        traceId: mintTraceCorrelationId(),
+        contractVersion: 1,
+      }, {
+        providerSessionId: spawned.provider.providerSessionId,
+        providerConversationId: null,
+        observedAt: '2026-08-03T04:00:00.000Z' as never,
+        source: 'transcript-derived:provider-total',
+        sourceCursor: 'line:threshold-1',
+        measurement: {
+          quality: 'measured',
+          inputTokens: 10,
+          outputTokens: 2,
+          cachedInputTokens: 0,
+          costMicros: 1,
+          providerTurns: 1,
+          limitations: [],
+          evidenceDigest: 'sha256:live-wire-threshold',
+        },
+      });
+      assert.equal(recorded.ok, true, recorded.ok ? '' : recorded.error.message);
+
+      const notifications = await waitForThresholdNotification(host);
+      assert.equal(notifications.items.length, 1,
+        'satisfied output-token evidence queued no Notification');
+      assert.equal(notifications.items[0]!.watchRuleId, rule.id);
+      assert.deepEqual(notifications.items[0]!.evidenceRefs, [recorded.value.id]);
+    } finally {
+      client.close();
+    }
+  } finally {
+    await host.close();
     rmSync(root, { recursive: true, force: true });
   }
 });
