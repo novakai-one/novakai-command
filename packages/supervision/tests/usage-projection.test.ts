@@ -4,6 +4,7 @@ import { b3ok } from '@novakai/foundation/contract';
 import {
   createUsageProjection,
   type UsageEvidenceReader,
+  type UsageRunFacts,
   type UsageRunReader,
 } from '../core/index.js';
 import type { ProviderUsageEvidence } from '../contract/index.js';
@@ -61,6 +62,28 @@ const MEASURED_EVIDENCE: ProviderUsageEvidence = {
   },
 };
 
+const TURN_A = 'providerTurn_019fd000-0000-7000-8000-0000000000b1' as never;
+const TURN_B = 'providerTurn_019fd000-0000-7000-8000-0000000000b2' as never;
+
+function turnEvidence(turn: typeof TURN_A, suffix: string): ProviderUsageEvidence {
+  return {
+    ...MEASURED_EVIDENCE,
+    id: `providerUsage_${suffix.repeat(52)}` as never,
+    scope: {
+      kind: 'runtime-turn-completion', agentRunId: RUN_ID, providerTurnId: turn,
+      transcriptTurnCompletionId: `transcriptTurnCompletion_${suffix.repeat(52)}` as never,
+    },
+    source: 'transcript-turn-completion',
+    measurement: {
+      quality: 'partial', providerTurns: 1,
+      limitations: [
+        'provider turn completion is measured; per-turn token and cost attribution is unavailable',
+      ],
+      evidenceDigest: `sha256:turn-${suffix}`,
+    },
+  };
+}
+
 test('every known Run has a complete unavailable usage row before evidence arrives', async () => {
   const usage = createUsageProjection({
     runs: runReader(),
@@ -113,6 +136,82 @@ test('one committed provider measurement moves the live Run projection', async (
   assert.equal(result.value.cachedInputTokens.value, 10);
   assert.equal(result.value.costMicros.value, 42_000);
   assert.equal(result.value.providerTurns.value, 1);
+});
+
+test('enumerable submissions count only exact canonical completion rows', async () => {
+  const usage = createUsageProjection({
+    runs: {
+      getUsageRun: async () => b3ok({
+        ...run,
+        providerTurnSubmissions: [
+          { providerTurnId: TURN_A, state: 'completed' as const },
+          { providerTurnId: TURN_B, state: 'submitted-confirmed' as const },
+          {
+            providerTurnId: 'providerTurn_019fd000-0000-7000-8000-0000000000b3' as never,
+            state: 'queued' as const,
+          },
+        ],
+      }),
+      listUsageRuns: async () => b3ok([]),
+    },
+    evidence: {
+      listProviderUsageEvidence: async () => b3ok({
+        items: [turnEvidence(TURN_A, 'b')], omissions: [],
+      }),
+    },
+  });
+  const result = await usage.getRunUsage(PRINCIPAL, RUN_ID);
+  assert.equal(result.ok, true, result.ok ? '' : result.error.message);
+  if (!result.ok) return;
+  assert.deepEqual(result.value.providerTurns, {
+    quality: 'partial', value: 1, source: 'runtime:provider-turn-submissions',
+    limitations: ['in-flight-provider-turn-completion-evidence-pending'],
+  });
+});
+
+test('full canonical coverage is measured while recovery and cumulative overlap stay partial', async () => {
+  const states = [
+    { providerTurnId: TURN_A, state: 'completed' as const },
+    { providerTurnId: TURN_B, state: 'submitted-unconfirmed' as const },
+  ];
+  let providerTurnSubmissions: NonNullable<UsageRunFacts['providerTurnSubmissions']> = states;
+  let items: ProviderUsageEvidence[] = [turnEvidence(TURN_A, 'b'), turnEvidence(TURN_B, 'c')];
+  const usage = createUsageProjection({
+    runs: {
+      getUsageRun: async () => b3ok({ ...run, providerTurnSubmissions }),
+      listUsageRuns: async () => b3ok([]),
+    },
+    evidence: { listProviderUsageEvidence: async () => b3ok({ items, omissions: [] }) },
+  });
+
+  const measured = await usage.getRunUsage(PRINCIPAL, RUN_ID);
+  assert.equal(measured.ok, true);
+  if (measured.ok) assert.deepEqual(measured.value.providerTurns, {
+    quality: 'measured', value: 2, source: 'runtime:provider-turn-submissions', limitations: [],
+  });
+
+  items = [...items, MEASURED_EVIDENCE];
+  const overlap = await usage.getRunUsage(PRINCIPAL, RUN_ID);
+  assert.equal(overlap.ok, true);
+  if (overlap.ok) assert.deepEqual(overlap.value.providerTurns, {
+    quality: 'partial', value: 2, source: 'runtime:provider-turn-submissions',
+    limitations: ['cumulative-provider-turn-overlap-unproven'],
+  });
+
+  providerTurnSubmissions = [
+    ...states,
+    {
+      providerTurnId: 'providerTurn_019fd000-0000-7000-8000-0000000000b4' as never,
+      state: 'completion-unproven-final' as const,
+    },
+  ];
+  items = items.slice(0, 2);
+  const unproven = await usage.getRunUsage(PRINCIPAL, RUN_ID);
+  assert.equal(unproven.ok, true);
+  if (unproven.ok) assert.deepEqual(unproven.value.providerTurns, {
+    quality: 'partial', value: 2, source: 'runtime:provider-turn-submissions',
+    limitations: ['provider-turn-completion-unproven'],
+  });
 });
 
 test('sourced transcript totals fill token usage when Agents has no provider measurement', async () => {

@@ -1,4 +1,4 @@
-import { b3ok, type AgentRunId, type AuthenticatedPrincipal } from '@novakai/foundation/contract';
+import { b3ok, type AuthenticatedPrincipal } from '@novakai/foundation/contract';
 import type {
   AgentRunUsage,
   AgentUsageAggregate,
@@ -41,7 +41,7 @@ export function createUsageProjection(options: UsageProjectionOptions): UsagePro
       runFacts.providerSessionId,
     );
     if (!evidence.ok) return evidence;
-    const latest = latestEvidence(evidence.value.items);
+    const latest = latestCumulativeEvidence(evidence.value.items);
     const needsTranscript = latest === undefined
       || latest.measurement.quality === 'unavailable'
       || latest.measurement.inputTokens === undefined
@@ -52,8 +52,7 @@ export function createUsageProjection(options: UsageProjectionOptions): UsagePro
       : undefined;
     if (transcript !== undefined && !transcript.ok) return transcript;
     return b3ok(projectRunUsage(
-      runFacts.agentRunId,
-      runFacts.final,
+      runFacts,
       evidence.value.items,
       transcript?.value,
       clock,
@@ -85,13 +84,12 @@ export function createUsageProjection(options: UsageProjectionOptions): UsagePro
 }
 
 function projectRunUsage(
-  agentRunId: AgentRunId,
-  final: boolean,
+  runFacts: UsageRunFacts,
   evidence: readonly ProviderUsageEvidence[],
   transcript: TranscriptUsageSample | undefined,
   clock: () => Date,
 ): AgentRunUsage {
-  const latest = latestEvidence(evidence);
+  const latest = latestCumulativeEvidence(evidence);
   const availableTranscript = transcript?.quality === 'unavailable' ? undefined : transcript;
   const unavailable = (): UsageValue => ({
     quality: 'unavailable',
@@ -100,19 +98,21 @@ function projectRunUsage(
   });
   const metrics = Object.fromEntries(METRICS.map((metric) => [
     metric,
-    latest === undefined
-      ? transcriptUsageValue(transcript, metric) ?? unavailable()
-      : preferEvidence(latest, transcript, metric),
+    metric === 'providerTurns' && runFacts.providerTurnSubmissions !== undefined
+      ? providerTurnUsage(runFacts, evidence)
+      : latest === undefined
+        ? transcriptUsageValue(transcript, metric) ?? unavailable()
+        : preferEvidence(latest, transcript, metric),
   ])) as Pick<
     AgentRunUsage,
     typeof METRICS[number]
   >;
   return {
-    agentRunId,
+    agentRunId: runFacts.agentRunId,
     ...metrics,
-    observedAt: newestObservedAt(latest?.observedAt, availableTranscript?.observedAt)
+    observedAt: newestObservedAt(latestEvidence(evidence)?.observedAt, availableTranscript?.observedAt)
       ?? clock().toISOString() as never,
-    final,
+    final: runFacts.final,
   };
 }
 
@@ -124,6 +124,55 @@ function latestEvidence(
   return [...evidence].sort((left, right) =>
     String(left.observedAt).localeCompare(String(right.observedAt))
       || String(left.id).localeCompare(String(right.id)))[evidence.length - 1];
+}
+
+function latestCumulativeEvidence(
+  evidence: readonly ProviderUsageEvidence[],
+): ProviderUsageEvidence | undefined {
+  return latestEvidence(evidence.filter((item) =>
+    item.scope === undefined || item.scope.kind === 'provider-session-cumulative'));
+}
+
+function providerTurnUsage(
+  runFacts: UsageRunFacts,
+  evidence: readonly ProviderUsageEvidence[],
+): UsageValue {
+  const submissions = runFacts.providerTurnSubmissions ?? [];
+  const countable = submissions.filter((submission) =>
+    submission.state === 'submitted-confirmed'
+      || submission.state === 'submitted-unconfirmed'
+      || submission.state === 'completed');
+  const canonicalIds = new Set(evidence.flatMap((item) =>
+    item.scope?.kind === 'runtime-turn-completion'
+      && item.scope.agentRunId === runFacts.agentRunId
+      ? [String(item.scope.providerTurnId)] : []));
+  const completedCount = new Set(countable.flatMap((submission) =>
+    canonicalIds.has(String(submission.providerTurnId))
+      ? [String(submission.providerTurnId)] : [])).size;
+  const missing = countable.filter((submission) =>
+    !canonicalIds.has(String(submission.providerTurnId)));
+  const inFlightMissing = missing.some((submission) =>
+    submission.state === 'submitted-confirmed' || submission.state === 'submitted-unconfirmed');
+  const forcedPartial = submissions.some((submission) =>
+    submission.state === 'recovery-required'
+      || submission.state === 'completion-unproven-final');
+  const cumulativeOverlap = evidence.some((item) =>
+    (item.scope === undefined || item.scope.kind === 'provider-session-cumulative')
+      && item.measurement.quality !== 'unavailable'
+      && item.measurement.providerTurns !== undefined);
+  const limitations = [
+    ...(inFlightMissing ? ['in-flight-provider-turn-completion-evidence-pending'] : []),
+    ...(missing.length > 0 && !inFlightMissing
+      ? ['provider-turn-completion-evidence-missing'] : []),
+    ...(forcedPartial ? ['provider-turn-completion-unproven'] : []),
+    ...(cumulativeOverlap ? ['cumulative-provider-turn-overlap-unproven'] : []),
+  ];
+  return {
+    quality: limitations.length === 0 ? 'measured' : 'partial',
+    value: completedCount,
+    source: 'runtime:provider-turn-submissions',
+    limitations,
+  };
 }
 
 function newestObservedAt(

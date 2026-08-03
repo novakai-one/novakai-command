@@ -180,6 +180,7 @@ export async function bindProviderSession(
         ? null : discovered.value.providerNativeSessionId,
       providerResumeHandle: discovered.value.providerNativeSessionId === ''
         ? null : discovered.value.providerNativeSessionId,
+      providerVersion: discovered.value.providerVersion,
       discovery: { state: 'discovered' },
     })
     : await core.agents.registerProviderSession({
@@ -188,6 +189,7 @@ export async function bindProviderSession(
       provider: input.plan.provider,
       providerConversationId: null,
       providerResumeHandle: null,
+      providerVersion: 'unknown',
       discovery: { state: 'failed-before-discovery', reason: discovered.error.message },
     });
   if (!registration.ok) return registration;
@@ -362,7 +364,7 @@ export async function finishRun(
   if (!granted.ok) return granted;
 
   const agentRun = await patchRun(core, input.agentRun, {
-    lifecycle: 'ready', activity: 'idle', startedAt: nowIsoUtc(),
+    lifecycle: 'ready', startedAt: nowIsoUtc(),
   });
   if (!agentRun.ok) return agentRun;
   const operation = await advance(core, input.operation, {

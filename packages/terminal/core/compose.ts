@@ -1,3 +1,5 @@
+/* eslint-disable max-lines -- Terminal composition exposes one cohesive authority boundary. */
+
 // The Terminal composition root.
 //
 // Every public mutation goes through the same three guards, in the same order:
@@ -12,10 +14,14 @@ import {
 } from '@novakai/foundation/contract';
 import type {
   AcquireInputLeaseInput, AttachControllerInput, DetachControllerInput,
-  CancelReservedNotificationInput, CommitReservedNotificationInput,
+  CancelPreparedProviderTurnInput, CancelReservedNotificationInput,
+  CloseTerminalProviderTurnUnprovenInput, CommitReservedNotificationInput,
+  ExecuteProviderTurnInputInput,
   InterruptTerminalTurnInput, ListTerminalSessionsFilter, OpenManagedTerminalInput,
   NotificationInputCommitOutcome, ReserveNotificationInput,
+  PrepareProviderTurnInputInput, PrepareProviderTurnInputOutcome,
   ReadTerminalStreamInput, ReleaseInputLeaseInput, ResizeTerminalInput,
+  SettleTerminalProviderTurnCompletionInput, SettleTerminalProviderTurnCompletionOutcome,
   SetControllerDraftStateInput,
   TerminalContract, TerminateTerminalInput, WriteTerminalInput,
   InterruptTerminalTurnOutcome,
@@ -39,13 +45,20 @@ import { acquireInputLease, releaseInputLease, writeInput } from './input.js';
 import { interruptTerminalTurn } from './interrupt.js';
 import { readTerminalStream } from './stream.js';
 import type {
-  ControllerAttachment, NotificationInputReservation, TerminalInputAttempt, TerminalSession,
+  ControllerAttachment, NotificationInputReservation, ProviderTurnTerminalInputAttempt,
+  TerminalInputAttempt, TerminalSession,
 } from '../contract/records.js';
 import {
   cancelReservedNotificationInput, commitReservedNotificationInput,
   getNotificationInputReservation, getTerminalInputAttempt,
   reserveNotificationInput, setControllerDraftState,
 } from './notification-input.js';
+import {
+  cancelPreparedProviderTurnInput, closeProviderTurnBarrierUnproven,
+  executeProviderTurnInput, getProviderTurnInputAttempt,
+  listIncompleteProviderTurnInputAttempts, prepareProviderTurnInput,
+  settleProviderTurnCompletion,
+} from './provider-turn-input.js';
 
 export interface ComposeTerminalOptions extends TerminalStoreOptions {
   readonly ptyHost: PtyHost;
@@ -58,6 +71,8 @@ export interface ComposeTerminalOptions extends TerminalStoreOptions {
   readonly onUnexpectedExit?: (terminalSessionId: TerminalSessionId) => void;
   /** How long a controller may go unseen before it is `stale` (§13.4). */
   readonly staleAfterMs?: number;
+  readonly providerTurnDelivery?: TerminalCore['providerTurnDelivery'];
+  readonly publish?: TerminalCore['publish'];
 }
 
 export function composeTerminal(options: ComposeTerminalOptions): TerminalContract {
@@ -74,6 +89,12 @@ export function composeTerminal(options: ComposeTerminalOptions): TerminalContra
       ? {}
       : { onUnexpectedExit: options.onUnexpectedExit }),
     staleAfterMs: options.staleAfterMs ?? DEFAULT_STALE_AFTER_MS,
+    providerTurnDelivery: options.providerTurnDelivery
+      ?? (async (_providerSessionId, utf8Text) => [
+        { utf8Text, pauseMsAfter: 250 },
+        { utf8Text: '\r', pauseMsAfter: 0 },
+      ]),
+    ...(options.publish === undefined ? {} : { publish: options.publish }),
   };
 
   /**
@@ -188,6 +209,93 @@ export function composeTerminal(options: ComposeTerminalOptions): TerminalContra
       OPERATION.write, (input) => input.terminalSessionId, false,
       (context, input: WriteTerminalInput) => writeInput(core, context, input),
     ),
+    async prepareProviderTurnInput(context, input: PrepareProviderTurnInputInput) {
+      const version = versionGuard<PrepareProviderTurnInputOutcome>(context);
+      if (version) return version;
+      const authorised = requireSystemAuthority(
+        context, 'sys_agent_runtime', OPERATION.prepareProviderTurn,
+      );
+      if (!authorised.ok) return authorised;
+      return core.queue.enqueue(input.terminalSessionId, () => core.receipts.runCommand(
+        context,
+        { operation: OPERATION.prepareProviderTurn, request: input, replaySafe: true },
+        () => prepareProviderTurnInput(core, context, input),
+      ));
+    },
+    async executeProviderTurnInput(context, input: ExecuteProviderTurnInputInput) {
+      const version = versionGuard<ProviderTurnTerminalInputAttempt>(context);
+      if (version) return version;
+      const authorised = requireSystemAuthority(
+        context, 'sys_agent_runtime', OPERATION.executeProviderTurn,
+      );
+      if (!authorised.ok) return authorised;
+      const attempt = await core.store.read<ProviderTurnTerminalInputAttempt>(
+        'terminalInputAttempt', input.terminalInputAttemptId,
+      );
+      if (!attempt.ok) return attempt;
+      const lane = attempt.value?.terminalSessionId ?? input.terminalInputAttemptId;
+      return core.queue.enqueue(lane, () => core.receipts.runCommand(
+        context,
+        { operation: OPERATION.executeProviderTurn, request: input, replaySafe: true },
+        () => executeProviderTurnInput(core, input),
+      ));
+    },
+    async cancelPreparedProviderTurnInput(context, input: CancelPreparedProviderTurnInput) {
+      const version = versionGuard<ProviderTurnTerminalInputAttempt>(context);
+      if (version) return version;
+      const authorised = requireSystemAuthority(
+        context, 'sys_agent_runtime', OPERATION.cancelProviderTurn,
+      );
+      if (!authorised.ok) return authorised;
+      const attempt = await core.store.read<ProviderTurnTerminalInputAttempt>(
+        'terminalInputAttempt', input.terminalInputAttemptId,
+      );
+      if (!attempt.ok) return attempt;
+      const lane = attempt.value?.terminalSessionId ?? input.terminalInputAttemptId;
+      return core.queue.enqueue(lane, () => core.receipts.runCommand(
+        context,
+        { operation: OPERATION.cancelProviderTurn, request: input, replaySafe: true },
+        () => cancelPreparedProviderTurnInput(core, input),
+      ));
+    },
+    async settleProviderTurnCompletion(context, input: SettleTerminalProviderTurnCompletionInput) {
+      const version = versionGuard<SettleTerminalProviderTurnCompletionOutcome>(context);
+      if (version) return version;
+      const authorised = requireSystemAuthority(
+        context, 'sys_agent_runtime', OPERATION.settleProviderTurn,
+      );
+      if (!authorised.ok) return authorised;
+      const attempt = await core.store.read<ProviderTurnTerminalInputAttempt>(
+        'terminalInputAttempt', input.terminalInputAttemptId,
+      );
+      if (!attempt.ok) return attempt;
+      const lane = attempt.value?.terminalSessionId ?? input.terminalInputAttemptId;
+      return core.queue.enqueue(lane, () => core.receipts.runCommand(
+        context,
+        { operation: OPERATION.settleProviderTurn, request: input, replaySafe: true },
+        () => settleProviderTurnCompletion(core, input),
+      ));
+    },
+    async closeProviderTurnBarrierUnproven(
+      context, input: CloseTerminalProviderTurnUnprovenInput,
+    ) {
+      const version = versionGuard<ProviderTurnTerminalInputAttempt>(context);
+      if (version) return version;
+      const authorised = requireSystemAuthority(
+        context, 'sys_agent_runtime', OPERATION.closeProviderTurn,
+      );
+      if (!authorised.ok) return authorised;
+      const attempt = await core.store.read<ProviderTurnTerminalInputAttempt>(
+        'terminalInputAttempt', input.terminalInputAttemptId,
+      );
+      if (!attempt.ok) return attempt;
+      const lane = attempt.value?.terminalSessionId ?? input.terminalInputAttemptId;
+      return core.queue.enqueue(lane, () => core.receipts.runCommand(
+        context,
+        { operation: OPERATION.closeProviderTurn, request: input, replaySafe: true },
+        () => closeProviderTurnBarrierUnproven(core, input),
+      ));
+    },
     resizeTerminal: guarded(
       OPERATION.resize, (input) => input.terminalSessionId, true,
       (context, input: ResizeTerminalInput) => resizeTerminal(core, context, input),
@@ -235,6 +343,12 @@ export function composeTerminal(options: ComposeTerminalOptions): TerminalContra
     getTerminalInputAttempt: (_principal, terminalInputAttemptId) =>
       getTerminalInputAttempt(core, terminalInputAttemptId),
 
+    getProviderTurnInputAttempt: (_principal, input) =>
+      getProviderTurnInputAttempt(core, input),
+
+    listIncompleteProviderTurnInputAttempts: (_principal, filter) =>
+      listIncompleteProviderTurnInputAttempts(core, filter),
+
     getNotificationInputReservation: (_principal, notificationInputReservationId) =>
       getNotificationInputReservation(core, notificationInputReservationId),
 
@@ -242,6 +356,17 @@ export function composeTerminal(options: ComposeTerminalOptions): TerminalContra
       readTerminalStream(core, principal, input),
 
     system: {
+      async quarantineProviderTurnInputAttempt(context, input) {
+        const authorised = requireSystemAuthority(
+          context, 'sys_agent_runtime', OPERATION.reconcile,
+        );
+        if (!authorised.ok) return authorised;
+        void input.evidenceRefs;
+        return core.store.quarantine(
+          'sys_terminal', 'terminalInputAttempt', input.terminalInputAttemptId,
+          context.clientOpId, context.traceId,
+        );
+      },
       async beginProviderTurn(context, input) {
         void context;
         const live = core.live.lookup(input.terminalSessionId);

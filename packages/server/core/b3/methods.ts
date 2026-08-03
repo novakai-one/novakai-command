@@ -12,6 +12,7 @@ import {
   readAcquireInputLeaseInput, readAttachControllerInput, readDetachControllerInput,
   readListTerminalSessionsFilter, readOpenManagedTerminalInput,
   readReadTerminalStreamInput, readReleaseInputLeaseInput, readResizeTerminalInput,
+  readGetProviderTurnInputAttemptInput, readIncompleteProviderTurnInputAttemptFilter,
   readTerminalSessionIdInput, readWriteTerminalInput,
 } from '../../../terminal/contract/index.js';
 import { readRequestRuntimeStopInput } from '../../../agent-runtime/contract/index.js';
@@ -127,6 +128,14 @@ export function buildB3Methods(options: B3MethodOptions): MethodTable {
       (payload, context) => terminal.releaseInputLease(context, payload)),
     'b3.terminal.write': method(readWriteTerminalInput,
       (payload, context) => terminal.writeInput(context, payload)),
+    'b3.terminal.getProviderTurnInputAttempt': method(
+      readGetProviderTurnInputAttemptInput,
+      (payload) => terminal.getProviderTurnInputAttempt(principal, payload),
+    ),
+    'b3.terminal.listIncompleteProviderTurnInputAttempts': method(
+      readIncompleteProviderTurnInputAttemptFilter,
+      (payload) => terminal.listIncompleteProviderTurnInputAttempts(principal, payload),
+    ),
     'b3.terminal.resize': method(readResizeTerminalInput,
       (payload, context) => terminal.resizeTerminal(context, payload)),
     /** Bounded replay pull. Live following rides the event frame, not a method. */

@@ -309,6 +309,9 @@ export async function getNotificationDeliveryAuthority(
     activityGeneration: notification.conditionGeneration as unknown as ActivityGeneration,
     deliveryMode: 'start-turn',
     inputText: notification.summary,
+    semanticSource: notification.phase === 'drift-status-request'
+      ? 'watcher-status-request'
+      : 'notification-start-turn',
     authoritySource: installation === undefined
       ? { kind: 'watch-rule', watchRuleId: notification.watchRuleId }
       : { kind: 'launch-plan', launchPlanId: installation.launchPlanId },

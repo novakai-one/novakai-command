@@ -1,3 +1,5 @@
+/* eslint-disable max-lines -- Canonical usage custody and normalization remain one owner module. */
+
 import {
   b3fail,
   b3err,
@@ -5,12 +7,17 @@ import {
   composeHandle,
   composeReceiptStore,
   createObject,
+  deriveClientOpId,
   deterministicId,
   getObject,
   isAbsent,
+  keysetPage,
   listObjects,
+  mintClientOpId,
+  requestQuarantine,
   storeFailure,
   type B3PrincipalId,
+  type B3Result,
   type EventCursor,
   type ObjectId,
   type PublicOperationName,
@@ -18,12 +25,14 @@ import {
   type ReceiptStore,
   type ScopedStoreHandle,
   type StoredObject,
+  type TranscriptTurnCompletionId,
 } from '@novakai/foundation/contract';
 import type {
   ProviderUsageEvidence,
   ProviderUsageEvidenceContract,
   ProviderUsageEvidenceId,
   ProviderUsageEvidencePublisher,
+  ProviderUsageEvidenceScope,
   RecordProviderUsageEvidenceInput,
 } from '../contract/provider-usage-evidence.js';
 import {
@@ -39,7 +48,28 @@ export interface ComposeProviderUsageEvidenceOptions {
   readonly clock?: () => string;
   readonly publish?: ProviderUsageEvidencePublisher;
   readonly receipts?: ReceiptStore;
+  /** Late-bound exact owner reads; required only by the reconciler ensure path. */
+  readonly turnCompletion?: {
+    get(transcriptTurnCompletionId: TranscriptTurnCompletionId): Promise<B3Result<{
+      readonly id: TranscriptTurnCompletionId;
+      readonly providerTurnId: import('@novakai/foundation/contract').ProviderTurnId;
+      readonly agentRunId: import('@novakai/foundation/contract').AgentRunId;
+      readonly providerSessionId: import('@novakai/foundation/contract').ProviderSessionId;
+      readonly providerConversationId: string | null;
+      readonly completionTranscriptWatermark: string;
+      readonly completionEvidenceDigest: string;
+      readonly observedAt: import('@novakai/foundation/contract').IsoUtc;
+    }>>;
+    getProviderSession(providerSessionId: import('@novakai/foundation/contract').ProviderSessionId): Promise<B3Result<{
+      readonly id: import('@novakai/foundation/contract').ProviderSessionId;
+      readonly providerConversationId: string | null;
+    }>>;
+  };
 }
+
+type CanonicalEvidenceInput = Omit<RecordProviderUsageEvidenceInput, 'scope'> & {
+  readonly scope: ProviderUsageEvidenceScope;
+};
 
 /** Compose the Agents-owned evidence store behind its public contract. */
 export function composeProviderUsageEvidence(
@@ -55,8 +85,47 @@ export function composeProviderUsageEvidence(
     principal,
   });
   const reader = handleFor('sys_agents');
-  const clock = options.clock ?? (() => new Date().toISOString());
   const receipts = options.receipts ?? composeReceiptStore(options);
+  const clock = options.clock ?? (() => new Date().toISOString());
+
+  const commit = async (
+    context: { readonly principal: { readonly id: B3PrincipalId }; readonly clientOpId: import('@novakai/foundation/contract').ClientOpId; readonly traceId: import('@novakai/foundation/contract').TraceCorrelationId },
+    input: CanonicalEvidenceInput,
+    id: ProviderUsageEvidenceId,
+    createdAt: string,
+  ): Promise<B3Result<ProviderUsageEvidence>> => {
+    const handle = handleFor('sys_agents');
+    const existing = await getObject<ProviderUsageEvidence>(
+      handle, 'providerUsageEvidence', id as unknown as ObjectId,
+    );
+    if (!existing.ok) return b3fail(storeFailure('agents', existing.error));
+    if (!isAbsent(existing.value)) {
+      const evidence = publicView(existing.value);
+      if (sameEvidence(evidence, input)) return b3ok(evidence);
+      const quarantined = await requestQuarantine(handle, {
+        target: { kind: 'providerUsageEvidence', id: id as unknown as ObjectId },
+        clientOpId: mintClientOpId(),
+        traceId: context.traceId,
+      });
+      if (!quarantined.ok) return b3fail(storeFailure('agents', quarantined.error));
+      return b3fail(b3err('IdempotencyConflict',
+        `provider usage evidence "${String(id)}" already names different facts`,
+        { providerUsageEvidenceId: id }, false));
+    }
+    const written = await createObject(handle, {
+      id,
+      kind: 'providerUsageEvidence',
+      schemaVersion: 1,
+      createdAt,
+      permissionLevel: 'private',
+      createdBy: 'sys_agents',
+      ...input,
+    }, context.clientOpId);
+    if (!written.ok) return b3fail(storeFailure('agents', written.error));
+    const evidence = publicView(written.value);
+    options.publish?.(PROVIDER_USAGE_EVIDENCE_COMMITTED_EVENT, evidence, context.traceId);
+    return b3ok(evidence);
+  };
 
   return {
     async recordProviderUsageEvidence(context, input) {
@@ -86,42 +155,87 @@ export function composeProviderUsageEvidence(
           replaySafe: true,
         },
         async () => {
-          const id = providerUsageEvidenceId(parsed.value);
-          const handle = handleFor(context.principal.id);
-          const existing = await getObject<ProviderUsageEvidence>(
-            handle, 'providerUsageEvidence', id as unknown as ObjectId,
-          );
-          if (!existing.ok) return b3fail(storeFailure('agents', existing.error));
-          if (!isAbsent(existing.value)) {
-            const evidence = publicView(existing.value);
-            return sameEvidence(evidence, parsed.value)
-              ? b3ok(evidence)
-              : b3fail(b3err(
-                  'IdempotencyConflict',
-                  `provider usage evidence "${String(id)}" already names different facts`,
-                  { providerUsageEvidenceId: id },
-                  false,
-                ));
-          }
-          const written = await createObject(handle, {
-            id,
-            kind: 'providerUsageEvidence',
-            schemaVersion: 1,
-            createdAt: clock(),
-            permissionLevel: 'private',
-            createdBy: 'sys_agents',
+          const normalised = {
             ...parsed.value,
-          }, context.clientOpId);
-          if (!written.ok) return b3fail(storeFailure('agents', written.error));
-          const evidence = publicView(written.value);
-          options.publish?.(
-            PROVIDER_USAGE_EVIDENCE_COMMITTED_EVENT,
-            evidence,
-            context.traceId,
-          );
-          return b3ok(evidence);
+            scope: { kind: 'provider-session-cumulative' as const },
+          };
+          return commit(context, normalised, providerUsageEvidenceId(normalised), clock());
         },
       );
+    },
+
+    async ensureProviderTurnCompletionEvidence(context, input) {
+      if (context.principal.id !== 'sys_reconciler' || options.turnCompletion === undefined) {
+        return b3fail(b3err('PermissionDenied',
+          'turn-completion evidence requires sys_reconciler and exact owner reads', {
+            principalId: context.principal.id,
+          }, false));
+      }
+      const completion = await options.turnCompletion.get(input.transcriptTurnCompletionId);
+      if (!completion.ok) return completion;
+      const session = await options.turnCompletion.getProviderSession(
+        completion.value.providerSessionId,
+      );
+      if (!session.ok) return session;
+      if (session.value.id !== completion.value.providerSessionId
+        || session.value.providerConversationId !== completion.value.providerConversationId) {
+        return b3fail(b3err('UsageUnavailable', 'provider-session lineage differs from Transcript', {
+          providerSessionId: completion.value.providerSessionId,
+          reason: 'provider-conversation-lineage-mismatch',
+        }, false));
+      }
+      const scope = {
+        kind: 'runtime-turn-completion' as const,
+        agentRunId: completion.value.agentRunId,
+        providerTurnId: completion.value.providerTurnId,
+        transcriptTurnCompletionId: completion.value.id,
+      };
+      const canonical = {
+        providerSessionId: completion.value.providerSessionId,
+        providerConversationId: completion.value.providerConversationId,
+        scope,
+        observedAt: completion.value.observedAt,
+        source: 'transcript-turn-completion',
+        sourceCursor: completion.value.completionTranscriptWatermark,
+        measurement: {
+          quality: 'partial' as const,
+          providerTurns: 1,
+          limitations: [
+            'provider turn completion is measured; per-turn token and cost attribution is unavailable',
+          ],
+          evidenceDigest: completion.value.completionEvidenceDigest,
+        },
+      };
+      const ownerContext = {
+        principal: { id: 'sys_agents' as const, kind: 'system' as const, verifiedScopes: [] },
+        clientOpId: deriveClientOpId(
+          `agents.ensureProviderTurnCompletionEvidence:${completion.value.id}`,
+        ),
+        traceId: context.traceId,
+        contractVersion: 1 as const,
+      };
+      return receipts.runCommand(ownerContext, {
+        operation: 'agent.ensureProviderTurnCompletionEvidence' as PublicOperationName,
+        request: { transcriptTurnCompletionId: completion.value.id },
+        replaySafe: true,
+      }, () => commit(
+        ownerContext,
+        canonical,
+        providerTurnCompletionEvidenceId(canonical),
+        completion.value.observedAt,
+      ));
+    },
+
+    async getProviderUsageEvidence(_principal, id) {
+      const found = await getObject<ProviderUsageEvidence>(
+        reader, 'providerUsageEvidence', id as unknown as ObjectId,
+      );
+      if (!found.ok) return b3fail(storeFailure('agents', found.error));
+      return isAbsent(found.value)
+        ? b3fail(b3err('UsageUnavailable', 'provider usage evidence is not available', {
+            providerUsageEvidenceId: id,
+          }, true))
+        : b3ok(publicView(found.value));
     },
 
     async listProviderUsageEvidence(_principal, providerSessionId) {
@@ -140,16 +254,34 @@ export function composeProviderUsageEvidence(
         omissions: [],
       });
     },
+
+    async listProviderTurnCompletionEvidence(_principal, filter) {
+      const listed = await listObjects(
+        reader, 'providerUsageEvidence', {}, { limit: 100_000 },
+      );
+      if (!listed.ok) return b3fail(storeFailure('agents', listed.error));
+      const items = listed.value.items.map((item) => publicView(item))
+        .filter((item) => item.scope.kind === 'runtime-turn-completion')
+        .filter((item) => filter.providerSessionId === undefined
+          || item.providerSessionId === filter.providerSessionId)
+        .filter((item) => item.scope.kind === 'runtime-turn-completion'
+          && (filter.agentRunId === undefined || item.scope.agentRunId === filter.agentRunId)
+          && (filter.providerTurnId === undefined || item.scope.providerTurnId === filter.providerTurnId)
+          && (filter.transcriptTurnCompletionId === undefined
+            || item.scope.transcriptTurnCompletionId === filter.transcriptTurnCompletionId));
+      return keysetPage(items, filter);
+    },
   };
 }
 
 function sameEvidence(
   existing: ProviderUsageEvidence,
-  input: RecordProviderUsageEvidenceInput,
+  input: CanonicalEvidenceInput,
 ): boolean {
-  const content = (value: ProviderUsageEvidence | RecordProviderUsageEvidenceInput) => ({
+  const content = (value: ProviderUsageEvidence | CanonicalEvidenceInput) => ({
     providerSessionId: value.providerSessionId,
     providerConversationId: value.providerConversationId,
+    scope: value.scope,
     observedAt: value.observedAt,
     source: value.source,
     sourceCursor: value.sourceCursor ?? null,
@@ -171,9 +303,23 @@ export function providerUsageEvidenceId(
   ]) as ProviderUsageEvidenceId;
 }
 
+export function providerTurnCompletionEvidenceId(
+  input: { readonly providerSessionId: ProviderUsageEvidence['providerSessionId']; readonly scope: Extract<ProviderUsageEvidenceScope, { readonly kind: 'runtime-turn-completion' }> },
+): ProviderUsageEvidenceId {
+  return deterministicId('providerUsage', [
+    String(input.providerSessionId),
+    'runtime-turn-completion',
+    String(input.scope.agentRunId),
+    String(input.scope.providerTurnId),
+    String(input.scope.transcriptTurnCompletionId),
+  ]) as ProviderUsageEvidenceId;
+}
+
 function publicView(stored: StoredObject<unknown>): ProviderUsageEvidence {
+  const object = stored.object as Omit<ProviderUsageEvidence, 'recordVersion' | 'lastMutation'>;
   return {
-    ...(stored.object as Omit<ProviderUsageEvidence, 'recordVersion' | 'lastMutation'>),
+    ...object,
+    scope: object.scope ?? { kind: 'provider-session-cumulative' },
     recordVersion: stored.version as RecordVersion,
     lastMutation: stored.lastMutation,
   };

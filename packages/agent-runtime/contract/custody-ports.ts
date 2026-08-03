@@ -91,6 +91,20 @@ export interface MessagingEndpointPort {
  * terminal did with it.
  */
 export interface MessagingInboxPort {
+  /** Exact durable source fact, including after it has been claimed/submitted. */
+  getSource(inboxItemId: string): Promise<B3Result<{
+    readonly inboxItemId: string;
+    readonly messageId: string;
+    readonly text: string;
+  } | null>>;
+
+  /** Read the next queued source fact without claiming it at an unsafe boundary. */
+  peekNext(agentId: AgentId): Promise<B3Result<{
+    readonly inboxItemId: string;
+    readonly messageId: string;
+    readonly text: string;
+  } | null>>;
+
   /**
    * The Agent's next queued item, already moved to `claimed`, or null when
    * there is nothing to deliver or no active endpoint to deliver through.

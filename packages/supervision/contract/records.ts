@@ -12,6 +12,7 @@ import type {
   RuntimeEpochId,
   TerminalInputAttemptId,
   TraceCorrelationId,
+  TranscriptTurnCompletionId,
 } from '@novakai/foundation/contract';
 import type { HumanPrincipalId } from './shared.js';
 import type { DurableDriftState } from './drift.js';
@@ -69,6 +70,15 @@ export interface ProviderUsageEvidence extends RecordEnvelope<
 > {
   readonly providerSessionId: ProviderSessionId;
   readonly providerConversationId: string | null;
+  /** Omitted on pre-amendment rows and therefore interpreted as cumulative. */
+  readonly scope?:
+    | { readonly kind: 'provider-session-cumulative' }
+    | {
+        readonly kind: 'runtime-turn-completion';
+        readonly agentRunId: AgentRunId;
+        readonly providerTurnId: ProviderTurnId;
+        readonly transcriptTurnCompletionId: TranscriptTurnCompletionId;
+      };
   readonly observedAt: IsoUtc;
   readonly source: string;
   readonly sourceCursor?: string;

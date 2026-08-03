@@ -16,6 +16,8 @@
 // What this adapter does NOT claim: a mid-session model switch (`--model` is a
 // launch flag, and B1's OD-C3 spike found no verified live mechanism), an
 // effort control (no such flag exists at this version), or an observed compact.
+import { homedir } from 'node:os';
+import path from 'node:path';
 import { b3err, b3fail, b3ok, type B3Result } from '@novakai/foundation/contract';
 import type {
   InteractiveProviderAdapter, PrivateProviderLaunch, ProviderCapability,
@@ -27,6 +29,9 @@ import type {
 import type { ResolvedLaunchPlan } from '../../contract/records.js';
 import { deliverTurn, findMarkerLine } from './turn-delivery.js';
 import { mergedEnvironment, probeVersion, resolveCli, uuidOf } from './cli-probe.js';
+import {
+  observeProviderBoundaryFile, productionBoundaryProfile,
+} from './turn-boundary.js';
 
 /** Values that mean "pass no --model flag; let the CLI decide" (carried from B1). */
 const NO_MODEL_FLAG = new Set(['cli-default', 'claude-cli', '']);
@@ -38,6 +43,7 @@ const claims = (
 export interface ClaudeAdapterOptions {
   readonly cliPath?: string;
   readonly environment?: NodeJS.ProcessEnv;
+  readonly sessionRoot?: string;
 }
 
 /**
@@ -70,6 +76,7 @@ export function createClaudeAdapter(
   options: ClaudeAdapterOptions = {},
 ): InteractiveProviderAdapter {
   const executable = options.cliPath ?? resolveCli('claude');
+  const sessionRoot = options.sessionRoot ?? path.join(homedir(), '.claude', 'projects');
   let version: string | null = null;
   const versionOf = (): string => {
     version ??= probeVersion(executable);
@@ -86,6 +93,10 @@ export function createClaudeAdapter(
       if (!installed) {
         return everyCapability('claude', tested, absent);
       }
+      const profile = productionBoundaryProfile('claude', tested);
+      const boundary = profile === null
+        ? claims('unavailable', `claude ${tested} has no conformance-tested boundary profile`)
+        : claims('native', `exact-version boundary profile ${profile.id}; source-schema ${profile.sourceFormatSchemaDigest}; terminal-semantics ${profile.completionFrame.terminalSemanticsEvidenceDigest}`);
       return {
         provider: 'claude',
         testedProviderVersion: tested,
@@ -112,7 +123,23 @@ export function createClaudeAdapter(
         screenContext: claims('unsupported', 'no screen-context channel at this version'),
         nativeSubagentObservation: claims('unavailable',
           'native subagent observation is B3c'),
+        turnBoundary: boundary,
+        turnBoundaryProfile: profile,
       };
+    },
+
+    async observeProviderTurnBoundary(input) {
+      const profile = productionBoundaryProfile('claude', versionOf());
+      if (profile === null) {
+        return b3ok({
+          kind: 'uncertain' as const,
+          reason: 'provider-version-unsupported' as const,
+          evidenceRefs: [`claude ${versionOf()}`],
+        });
+      }
+      return b3ok(observeProviderBoundaryFile(
+        profile, sessionRoot, input,
+      ));
     },
 
     async buildLaunch(
@@ -239,5 +266,7 @@ export function everyCapability(
     usage: answer,
     screenContext: answer,
     nativeSubagentObservation: answer,
+    turnBoundary: answer,
+    turnBoundaryProfile: null,
   };
 }

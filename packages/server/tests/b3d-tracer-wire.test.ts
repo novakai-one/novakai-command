@@ -21,12 +21,13 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { mintClientOpId, type B3Result, type ClientOpId } from '@novakai/foundation/contract';
 import { createFakePtyHost, type FakePty, type FakePtyHost } from '../../terminal/adapters/pty-host/fake.js';
-import { createFakeProviderAdapters } from '../../agents/b3/contract/index.js';
 import { createIdleWatchTemplate } from '../../supervision/public/index.js';
 import type { Notification, WatchDeadline, WatchRule } from '../../supervision/contract/index.js';
 import { startRuntimeHost, type RunningRuntimeHost } from '../core/b3/host.js';
 import { connectRuntime, type RuntimeClient } from '../core/b3/client.js';
-import { chatRole, governedRole, governedTokens } from './governed-role.js';
+import {
+  chatRole, fakeProvidersWithCompletionLimit, governedRole, governedTokens,
+} from './governed-role.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '..', '..', '..');
@@ -74,9 +75,10 @@ async function createRig(): Promise<Rig> {
   const ptyHost = createFakePtyHost({ echoInput: false, composer: true });
   const host = await startRuntimeHost({
     root, port: 0, ptyHost,
-    providers: createFakeProviderAdapters(),
+    providers: fakeProvidersWithCompletionLimit(1),
     watcherTemplates: [FAST_IDLE],
     gateTimeoutMs: 5_000,
+    providerTurnReconciliationIntervalMs: 50,
   });
   answerWhenAsked(ptyHost, `SKILLS-CONFIRMED: ${JSON.stringify(governedTokens())}`);
   const chris = await connectRuntime({ root, port: host.port, token: host.token });
@@ -200,9 +202,13 @@ test('the B3d wire carries current from spawn to a queued Notification', async (
 
     // 2. The role's pinned watcher exists, aimed at THIS Run, with a deadline
     //    already armed — installed at spawn, not on first use.
-    const watchers = unwrap(await rig.chris.call<{
-      rules: readonly WatchRule[]; deadlines: readonly WatchDeadline[];
-    }>('b3.supervision.listWatchers', {}, opId()), 'listWatchers');
+    const watchers = await until('the completed work turn to arm its idle deadline', async () => {
+      const listed = await rig.chris.call<{
+        rules: readonly WatchRule[]; deadlines: readonly WatchDeadline[];
+      }>('b3.supervision.listWatchers', {}, opId());
+      if (!listed.ok || listed.value.deadlines.length === 0) return null;
+      return listed.value;
+    }, 12_000);
     assert.equal(watchers.rules.length, 1, 'the role pinned one watcher and got none');
     assert.deepEqual(watchers.rules[0]?.subject, {
       kind: 'agent-run', agentRunId: agent.agentRunId,

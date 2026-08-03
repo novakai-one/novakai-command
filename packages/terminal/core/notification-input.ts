@@ -24,6 +24,7 @@ import {
   activeNotificationReservation, notificationAttemptFor,
 } from './notification-reservation-state.js';
 import type { Persisted } from './store.js';
+import { activeProviderTurnAttempt } from './provider-turn-input.js';
 
 const SHA256 = /^[0-9a-f]{64}$/u;
 
@@ -76,6 +77,13 @@ async function requireAvailableBoundary(
     return b3fail(busy({
       reason: 'notification-input-reserved',
       notificationInputReservationId: prior.value.id,
+    }));
+  }
+  const providerTurn = await activeProviderTurnAttempt(core, input.terminalSessionId);
+  if (!providerTurn.ok) return providerTurn;
+  if (providerTurn.value !== null) {
+    return b3fail(busy({
+      reason: 'provider-turn-reserved', terminalInputAttemptId: providerTurn.value.id,
     }));
   }
   const live = core.live.lookup(input.terminalSessionId);
@@ -193,6 +201,7 @@ export async function cancelReservedNotificationInput(
   );
 }
 
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Draft/reservation refusal states are exhaustive.
 export async function setControllerDraftState(
   core: TerminalCore, context: CommandContext, input: SetControllerDraftStateInput,
 ): Promise<B3Result<ControllerAttachment>> {
@@ -222,6 +231,15 @@ export async function setControllerDraftState(
       return b3fail(busy({
         reason: 'notification-input-reserved',
         notificationInputReservationId: reserved.value.id,
+      }));
+    }
+    const providerTurn = await activeProviderTurnAttempt(
+      core, attachment.value.terminalSessionId,
+    );
+    if (!providerTurn.ok) return providerTurn;
+    if (providerTurn.value !== null) {
+      return b3fail(busy({
+        reason: 'provider-turn-reserved', terminalInputAttemptId: providerTurn.value.id,
       }));
     }
   }

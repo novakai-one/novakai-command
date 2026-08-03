@@ -186,20 +186,6 @@ async function performContinuation(
   if (!started.ok) return started;
   operation = started.value.operation;
 
-  // A replacement Run is a NEW provider context, so it confirms its skills the
-  // same way a fresh spawn does. Restarting is not a way around the gate: §6.3
-  // gives every managed launch its own, and a parent's earlier confirmation is
-  // never accepted on a successor's behalf.
-  const gated = await runSkillsGate(core, context, {
-    agentRun: started.value.agentRun,
-    plan: plan.value,
-    operation,
-    brief: continuationBrief(work.input.mode),
-    supervised: plan.value.skillsConfirmationGate.mode === 'required-two-turn',
-  });
-  if (!gated.ok) return gated;
-  operation = gated.value.operation;
-
   const linked = await linkContinuation(core, context, {
     ...work, newRun: started.value.agentRun, resumeHandleUsed: started.value.resumeHandleUsed,
   });
@@ -231,8 +217,24 @@ async function performContinuation(
   if (!custody.ok) return custody;
   operation = custody.value;
 
-  const ready = await patchRun(core, started.value.agentRun, {
-    lifecycle: 'ready', activity: 'idle', startedAt: nowIsoUtc(),
+  // A replacement Run is a NEW provider context, so it confirms its skills the
+  // same way a fresh spawn does. Its semantic turns require the replacement's
+  // own Transcript binding, so the custody rung must be committed first.
+  // Restarting is not a way around the gate: §6.3 gives every managed launch
+  // its own, and a parent's earlier confirmation is never accepted on a
+  // successor's behalf.
+  const gated = await runSkillsGate(core, context, {
+    agentRun: started.value.agentRun,
+    plan: plan.value,
+    operation,
+    brief: continuationBrief(work.input.mode),
+    supervised: plan.value.skillsConfirmationGate.mode === 'required-two-turn',
+  });
+  if (!gated.ok) return gated;
+  operation = gated.value.operation;
+
+  const ready = await patchRun(core, gated.value.agentRun, {
+    lifecycle: 'ready', startedAt: nowIsoUtc(),
   });
   if (!ready.ok) return ready;
 

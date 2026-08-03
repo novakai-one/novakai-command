@@ -18,7 +18,7 @@ import {
 /** §18.1's Transcript row: three carried forward, two additive. */
 export const TRANSCRIPT_KINDS: readonly ObjectKind[] = [
   'transcriptLine', 'transcriptJournal', 'transcriptCheckpoint',
-  'transcriptBinding', 'observedSubagent',
+  'transcriptBinding', 'observedSubagent', 'transcriptTurnCompletion',
 ];
 
 export interface TranscriptStoreOptions {

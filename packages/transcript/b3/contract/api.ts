@@ -10,12 +10,39 @@
  */
 
 import type {
-  AuthenticatedPrincipal, B3Result, EventCursor, Page, SystemCommandContext,
+  AuthenticatedPrincipal, B3Page, B3Result, EventCursor, Page, ProviderTurnId,
+  ProviderTurnSubmissionId, SystemCommandContext, TranscriptTurnCompletionId,
 } from '@novakai/foundation/contract';
 import type {
   AgentId, AgentRunId, ObservedSubagent, ObservedSubagentId, ProviderKind,
   ProviderSessionId, TranscriptBinding, TranscriptBindingId, TranscriptLineId,
+  TranscriptTurnCompletion,
 } from './records.js';
+
+export interface ReconcileTranscriptTurnCompletionInput {
+  readonly providerTurnId: ProviderTurnId;
+  readonly expectedProviderTurnSubmissionId: ProviderTurnSubmissionId;
+}
+
+export type TranscriptTurnCompletionStatus =
+  | { readonly kind: 'completed'; readonly completion: TranscriptTurnCompletion }
+  | { readonly kind: 'pending'; readonly reason: string; readonly retryable: true }
+  | {
+      readonly kind: 'uncertain'; readonly reason: string;
+      readonly evidenceRefs: readonly string[]; readonly retryable: false;
+    }
+  | {
+      readonly kind: 'unavailable'; readonly reason: string;
+      readonly evidenceRefs: readonly string[]; readonly retryable: boolean;
+    };
+
+export interface TranscriptTurnCompletionFilter {
+  readonly agentRunId?: AgentRunId;
+  readonly providerSessionId?: ProviderSessionId;
+  readonly providerTurnId?: ProviderTurnId;
+  readonly cursor?: EventCursor;
+  readonly limit: number;
+}
 
 export interface BindTranscriptToRunInput {
   readonly agentId: AgentId;
@@ -113,6 +140,10 @@ export type PromoteObservedSubagentOutcome =
     };
 
 export interface TranscriptCommands {
+  reconcileProviderTurnCompletion(
+    ctx: SystemCommandContext<'sys_reconciler'>,
+    input: ReconcileTranscriptTurnCompletionInput,
+  ): Promise<B3Result<TranscriptTurnCompletionStatus>>;
   bindTranscriptToRun(
     ctx: SystemCommandContext<'sys_agent_runtime'>, input: BindTranscriptToRunInput,
   ): Promise<B3Result<TranscriptBinding>>;
@@ -131,6 +162,20 @@ export interface TranscriptCommands {
 }
 
 export interface TranscriptQueries {
+  getTranscriptTurnCompletionStatus(
+    principal: AuthenticatedPrincipal,
+    providerTurnId: ProviderTurnId,
+  ): Promise<B3Result<TranscriptTurnCompletionStatus>>;
+
+  getTranscriptTurnCompletion(
+    principal: AuthenticatedPrincipal,
+    transcriptTurnCompletionId: TranscriptTurnCompletionId,
+  ): Promise<B3Result<TranscriptTurnCompletion>>;
+
+  listTranscriptTurnCompletions(
+    principal: AuthenticatedPrincipal,
+    filter: TranscriptTurnCompletionFilter,
+  ): Promise<B3Result<B3Page<TranscriptTurnCompletion>>>;
   getTranscriptBinding(
     principal: AuthenticatedPrincipal, agentRunId: AgentRunId,
   ): Promise<B3Result<TranscriptBinding>>;

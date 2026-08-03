@@ -9,12 +9,21 @@ import type {
 } from '@novakai/foundation/contract';
 import type { ProviderUsageEvidence } from '../../contract/index.js';
 
+export interface ProviderTurnSubmissionUsageFacts {
+  readonly providerTurnId: import('@novakai/foundation/contract').ProviderTurnId;
+  readonly state:
+    | 'queued' | 'prepared' | 'submitted-confirmed' | 'submitted-unconfirmed'
+    | 'completed' | 'rejected' | 'recovery-required' | 'completion-unproven-final';
+}
+
 /** Runtime-owned facts sufficient to project usage without assembling a Run view. */
 export interface UsageRunFacts {
   readonly agentRunId: AgentRunId;
   readonly agentId: AgentId;
   readonly providerSessionId: ProviderSessionId;
   readonly final: boolean;
+  /** Omitted means a legacy/no-submission Run; a present array is enumerable truth. */
+  readonly providerTurnSubmissions?: readonly ProviderTurnSubmissionUsageFacts[];
 }
 
 /** Composition adapter over Agent Runtime's authoritative Run records. */
