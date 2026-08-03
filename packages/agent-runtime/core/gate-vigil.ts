@@ -7,7 +7,7 @@
 // differs is what happens NEXT: a session that received a question is busy, and
 // one that never did is perfectly still. Stillness, not a stopwatch, is what
 // earns a second ask.
-import { b3fail, b3ok, type B3Result, type CommandContext } from '@novakai/foundation/contract';
+import { b3ok, type B3Result, type CommandContext } from '@novakai/foundation/contract';
 import type { TurnDeliveryStep } from '../contract/types.js';
 import type { RunsCore } from './runs-context.js';
 
@@ -51,15 +51,14 @@ export async function maybeAskAgain(
   },
   vigil: Vigil,
 ): Promise<B3Result<null>> {
+  void context;
+  void turn;
   if (core.clock() - vigil.quietSince < UNANSWERED_TURN_MS) return b3ok(null);
   if (vigil.asked >= MAX_PROMPT_SENDS) return b3ok(null);
-  const submitted = await core.terminal.submitRuntimeInput(context, {
-    terminalSessionId: turn.terminalSessionId as never,
-    keystrokes: turn.keystrokes,
-    effectKey: `${turn.effectKey}:again-${String(vigil.asked)}`,
-  });
-  if (!submitted.ok) return b3fail(submitted.error);
-  vigil.asked += 1;
+  // A semantic submit that crossed the provider-effect boundary is never
+  // retried from screen stillness. PTY quiet cannot prove the provider missed
+  // it, and a second raw write would be a second uncorrelated provider turn.
+  vigil.asked = MAX_PROMPT_SENDS;
   vigil.quietSince = core.clock();
   return b3ok(null);
 }

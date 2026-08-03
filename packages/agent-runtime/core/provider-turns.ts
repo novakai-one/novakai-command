@@ -196,14 +196,6 @@ export async function submitProviderTurn(
   )) return operationConflict(submission, 'immutable resume fields differ');
 
   if (submission === null) {
-    if (run.providerTurnOperationFence !== undefined || run.activeProviderTurn !== undefined) {
-      return b3fail(b3err('ProviderTurnOperationInProgress',
-        'the Run already has an active provider-turn operation', {
-          agentRunId: run.id,
-          providerTurnId: run.activeProviderTurn?.providerTurnId
-            ?? run.providerTurnOperationFence?.providerTurnId,
-        }, true));
-    }
     const providerTurnId = mintProviderTurnId();
     const activationGeneration = (run.activityGeneration + 1) as ActivityGeneration;
     const created: Persisted<ProviderTurnSubmission> = {
@@ -255,6 +247,16 @@ export async function submitProviderTurn(
   const refreshedRun = await requireRun(core, input.agentRunId);
   if (!refreshedRun.ok) return refreshedRun;
   run = refreshedRun.value;
+  if (run.providerTurnOperationFence !== undefined || run.activeProviderTurn !== undefined) {
+    return b3ok({
+      kind: 'queued-not-yet-safe',
+      submissionEffectKey,
+      blocking: { kind: 'active-provider-turn' },
+      submission,
+      retryable: true,
+      providerEffectCreated: false,
+    });
+  }
   const queuedAt = submission.state.queuedAt;
   const ordinal = submission.state.deliveryAttemptOrdinal + 1;
   const activationTarget = {

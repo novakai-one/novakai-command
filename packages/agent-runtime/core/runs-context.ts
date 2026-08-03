@@ -13,7 +13,7 @@ import type { CompleteProviderTurnOutcome } from '../contract/provider-turns.js'
 import type { RuntimeHostContract } from '../contract/types.js';
 import type { RunUsageLookup } from '../contract/runs-api.js';
 import type {
-  AgentsPort, MessagingEndpointPort, ProviderPort, RunCredentialPort, TerminalPort,
+  AgentsPort, MessagingEndpointPort, MessagingInboxPort, ProviderPort, RunCredentialPort, TerminalPort,
   NotificationDeliveryPort, RunWatcherPort, TranscriptCustodyPort,
 } from '../contract/ports.js';
 import {
@@ -101,6 +101,8 @@ export interface RunsCore {
    * takes that branch (see `b3c-production-lifecycle.test.ts`).
    */
   readonly messagingEndpoint?: MessagingEndpointPort;
+  /** Messaging-owned inbox source facts used by the semantic delivery route. */
+  readonly messagingInbox?: MessagingInboxPort;
   /** §13.5 row 9 and §13.6's final watermark. Optional for the same reason. */
   readonly transcriptCustody?: TranscriptCustodyPort;
   /** B3d §13.5's watcher rung. Optional for the same reason as the two above. */

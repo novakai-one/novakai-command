@@ -73,6 +73,8 @@ import {
  * reached by an item this same object never handed out.
  */
 const NO_INBOX: MessagingInboxPort = {
+  async getSource() { return b3ok(null); },
+  async peekNext() { return b3ok(null); },
   async claimNext() { return b3ok(null); },
   async recordSubmission() {
     return b3fail(b3err('RuntimeUnavailable',
@@ -193,6 +195,8 @@ export function composeAgentRuns(options: ComposeAgentRunsOptions): ComposedAgen
       : { providerTurnCompletionCoordinator: options.providerTurnCompletionCoordinator }),
     ...(options.messagingEndpoint === undefined
       ? {} : { messagingEndpoint: options.messagingEndpoint }),
+    ...(options.messagingInbox === undefined
+      ? {} : { messagingInbox: options.messagingInbox }),
     ...(options.transcriptCustody === undefined
       ? {} : { transcriptCustody: options.transcriptCustody }),
     ...(options.watchers === undefined ? {} : { watchers: options.watchers }),

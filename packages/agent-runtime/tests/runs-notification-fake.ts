@@ -15,6 +15,7 @@ export interface FakeNotificationDelivery extends NotificationDeliveryPort {
     readonly effectKey: string;
     readonly activityGeneration: ActivityGeneration;
     readonly inputText: string;
+    readonly semanticSource?: 'watcher-status-request' | 'notification-start-turn';
   }): void;
 }
 
@@ -39,6 +40,7 @@ export function createFakeNotificationDelivery(): FakeNotificationDelivery {
         activityGeneration: input.activityGeneration,
         deliveryMode: 'start-turn',
         inputText: input.inputText,
+        semanticSource: input.semanticSource ?? 'notification-start-turn',
         authoritySource: {
           kind: 'watch-rule', watchRuleId: 'watchRule_fake-notification-delivery',
         },

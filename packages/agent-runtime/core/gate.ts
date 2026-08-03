@@ -257,21 +257,10 @@ async function sendConfirmationTurn(
   const paintedBefore = before.value.length;
   const binding = await core.transcriptBinding?.(input.agentRun.id);
   if (binding === undefined || binding === null) {
-    const legacy = await core.terminal.submitRuntimeInput(context, {
-      terminalSessionId,
-      keystrokes: core.providers.deliverTurn(
-        input.plan.provider,
-        confirmationPrompt(input.plan, input.brief, turnRefFor(effectKey)),
-      ),
-      effectKey,
-    });
-    if (!legacy.ok) return legacy;
-    const advanced = await advance(core, input.operation, {
-      stage: 'skills-gate-prompt-sent', owner: 'terminal', ownerObjectId: terminalSessionId,
-    });
-    return advanced.ok
-      ? b3ok({ operation: advanced.value, agentRun: input.agentRun, paintedBefore })
-      : advanced;
+    return b3fail(b3err('TranscriptSourceUnavailable',
+      'the skills-gate turn requires its exact transcript binding', {
+        agentRunId: input.agentRun.id, stage: 'skills-gate-prompt-sent',
+      }, true));
   }
   const submitted = await submitProviderTurn(core, {
     principal: { id: 'sys_agent_runtime', kind: 'system', verifiedScopes: [] },
@@ -429,8 +418,7 @@ async function releaseWorkTurn(
     return b3ok(input.operation);
   }
   const binding = await core.transcriptBinding?.(input.agentRun.id);
-  if (binding !== undefined && binding !== null
-    && core.providerTurnCompletionCoordinator !== undefined) {
+  if (binding !== undefined && binding !== null) {
     const effectKey = effectKeyFor(input.operation.id, 'supervised-work-released');
     const submitted = await submitProviderTurn(core, {
       principal: { id: 'sys_agent_runtime', kind: 'system', verifiedScopes: [] },
@@ -460,16 +448,10 @@ async function releaseWorkTurn(
       ownerObjectId: input.agentRun.terminalSessionId,
     });
   }
-  const submitted = await core.terminal.submitRuntimeInput(context, {
-    terminalSessionId: input.agentRun.terminalSessionId!,
-    keystrokes: core.providers.deliverTurn(input.plan.provider, workPrompt(input.brief)),
-    effectKey: effectKeyFor(input.operation.id, 'supervised-work-released'),
-  });
-  if (!submitted.ok) return submitted;
-  return advance(core, input.operation, {
-    stage: 'supervised-work-released', owner: 'terminal',
-    ownerObjectId: input.agentRun.terminalSessionId,
-  });
+  return b3fail(b3err('TranscriptSourceUnavailable',
+    'the supervised work turn requires its exact transcript binding', {
+      agentRunId: input.agentRun.id, stage: 'supervised-work-released',
+    }, true));
 }
 
 export function workPrompt(brief: string): string {
