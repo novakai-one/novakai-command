@@ -180,6 +180,19 @@ export function createProviderPort(
       return b3ok({ kind: outcome.value.kind });
     },
 
+    async probeSessionLiveness(input) {
+      // The supported interactive CLIs expose no second machine channel that
+      // can prove their process/session final independently of Terminal. Keep
+      // this honest: an Operations closure remains blocked until an adapter
+      // with such a probe is composed.
+      return b3ok({
+        liveness: 'unknown' as const,
+        evidenceRefs: [
+          `${input.provider}:${input.providerSessionId}:no-independent-finality-probe`,
+        ],
+      });
+    },
+
     deliverTurn: (provider, text) => adapterFor(provider).deliverTurn(text),
     findConfirmationLine: (provider, text, marker) =>
       adapterFor(provider).findConfirmationLine({ text }, marker),

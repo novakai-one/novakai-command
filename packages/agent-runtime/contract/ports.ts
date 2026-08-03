@@ -439,6 +439,14 @@ export interface TerminalPort {
     | { readonly kind: 'target-turn-not-active'; readonly inputLeaseChanged: false }
   >>;
 
+  closeProviderTurnBarrierUnproven(input: {
+    readonly terminalInputAttemptId: TerminalInputAttemptId;
+    readonly agentRunId: AgentRunId;
+    readonly providerTurnId: ProviderTurnId;
+    readonly activityGeneration: ActivityGeneration;
+    readonly terminalFinalEvidenceRefs: readonly [string, ...string[]];
+  }): Promise<B3Result<ProviderTurnInputAttemptFacts>>;
+
   /** Everything the session has printed, for the gate to read its reply from. */
   readOutputSoFar(
     principal: AuthenticatedPrincipal, terminalSessionId: TerminalSessionId,

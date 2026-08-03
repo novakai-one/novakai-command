@@ -489,6 +489,30 @@ export function createFakeTerminal(): FakeTerminal {
       });
     },
 
+    async closeProviderTurnBarrierUnproven(input) {
+      const attempt = providerTurnAttempts.get(input.terminalInputAttemptId);
+      if (attempt === undefined
+        || attempt.agentRunId !== input.agentRunId
+        || attempt.providerTurnId !== input.providerTurnId
+        || attempt.activityGeneration !== input.activityGeneration) {
+        return b3fail(b3err('ProviderTurnSubmissionConflict',
+          'fake unproven close tuple does not match', {}, false));
+      }
+      if (attempt.turnBarrier.kind === 'closed-unproven') return b3ok(attempt);
+      if (attempt.turnBarrier.kind !== 'active'
+        && attempt.turnBarrier.kind !== 'interrupt-committed') {
+        return b3fail(b3err('ProviderTurnSubmissionConflict',
+          'fake attempt is not eligible for unproven close', {}, false));
+      }
+      const closed: ProviderTurnInputAttemptFacts = {
+        ...attempt,
+        recordVersion: (attempt.recordVersion + 1) as RecordVersion,
+        turnBarrier: { kind: 'closed-unproven', closedAt: nowIsoUtc() },
+      };
+      providerTurnAttempts.set(closed.id, closed);
+      return b3ok(closed);
+    },
+
     async readOutputSoFar() { return b3ok(port.output); },
     async beginProviderTurn() { return b3ok(null); },
     async endProviderTurn() { return b3ok(null); },
@@ -533,6 +557,7 @@ export interface FakeProviders extends ProviderPort {
   substituteSessionId: ProviderSessionId | null;
   discoveryFails: ReturnType<typeof b3err> | null;
   nativeSessionId: string;
+  sessionLiveness: 'live' | 'unknown' | 'final';
 }
 
 export function createFakeProviders(): FakeProviders {
@@ -541,6 +566,7 @@ export function createFakeProviders(): FakeProviders {
     substituteSessionId: null,
     discoveryFails: null,
     nativeSessionId: 'native-session',
+    sessionLiveness: 'live',
 
     async turnBoundaryCapability() {
       return b3ok({
@@ -583,6 +609,12 @@ export function createFakeProviders(): FakeProviders {
     },
 
     async requestInterrupt() { return b3ok({ kind: 'interrupt-requested' }); },
+    async probeSessionLiveness(input) {
+      return b3ok({
+        liveness: port.sessionLiveness,
+        evidenceRefs: [`fake-provider:${input.providerSessionId}:${port.sessionLiveness}`],
+      });
+    },
     deliverTurn: (_provider, text) => [
       { utf8Text: text, pauseMsAfter: 0 },
       { utf8Text: '\r', pauseMsAfter: 0 },

@@ -79,6 +79,15 @@ export interface ProviderPort {
     },
   ): Promise<B3Result<{ readonly kind: 'interrupt-requested' | 'already-completed' | 'unsupported' }>>;
 
+  probeSessionLiveness(input: {
+    readonly provider: 'claude' | 'codex' | 'kimi';
+    readonly providerSessionId: ProviderSessionId;
+    readonly providerNativeSessionId: string;
+  }): Promise<B3Result<{
+    readonly liveness: 'live' | 'unknown' | 'final';
+    readonly evidenceRefs: readonly string[];
+  }>>;
+
   /**
    * How this provider's composer must be TYPED at to accept one turn. Never one
    * write: an Enter inside a big burst is absorbed as pasted text.

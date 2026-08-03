@@ -231,6 +231,10 @@ export function terminalPort(
       return terminal.settleProviderTurnCompletion(systemContext(), input);
     },
 
+    async closeProviderTurnBarrierUnproven(input) {
+      return terminal.closeProviderTurnBarrierUnproven(systemContext(), input);
+    },
+
     async readOutputSoFar(principal, terminalSessionId) {
       let text = '';
       for await (const frame of terminal.readTerminalStream(principal, {

@@ -61,7 +61,8 @@ import {
 } from './notification-delivery.js';
 import { RunActivityQueue } from './run-activity-queue.js';
 import {
-  completeProviderTurn, getProviderTurnSubmission, listProviderTurnSubmissions,
+  closeProviderTurnCompletionUnproven, completeProviderTurn,
+  getProviderTurnSubmission, listProviderTurnSubmissions,
   reconcileAllProviderTurnSubmissions, submitProviderTurn,
 } from './provider-turns.js';
 
@@ -324,12 +325,12 @@ export function composeAgentRuns(options: ComposeAgentRunsOptions): ComposedAgen
         ));
     },
 
-    closeProviderTurnCompletionUnproven: guarded('agent.closeProviderTurnCompletionUnproven', async (
-      _context, input: CloseProviderTurnCompletionUnprovenInput,
-    ) => b3fail(b3err('UnsupportedOperation',
-      'provider-turn repair composition is not installed yet', {
-        agentRunId: input.agentRunId, providerTurnId: input.providerTurnId,
-      }, true))),
+    closeProviderTurnCompletionUnproven: guarded(
+      'agent.closeProviderTurnCompletionUnproven',
+      (context, input: CloseProviderTurnCompletionUnprovenInput) =>
+        providerActivity.enqueue(String(input.agentRunId), () =>
+          closeProviderTurnCompletionUnproven(core, context, input)),
+    ),
 
     adoptAgent: guarded(OPERATION.adopt,
       (context, input: AdoptAgentInput) => adoptAgent(core, context, input)),

@@ -15,6 +15,8 @@ import {
   type ProviderTurnSubmissionId,
 } from '@novakai/foundation/contract';
 import type {
+  CloseProviderTurnCompletionUnprovenInput,
+  CloseProviderTurnCompletionUnprovenOutcome,
   CompleteProviderTurnInput,
   CompleteProviderTurnOutcome,
   CompletedProviderTurnOutcome,
@@ -944,6 +946,276 @@ export async function reconcileAllProviderTurnSubmissions(
     }
   }
   return b3ok([...new Set(reconciled)]);
+}
+
+const repairScope = 'agent.provider-turn.repair';
+
+const evidenceUnion = (
+  ...groups: readonly (readonly string[] | undefined)[]
+): readonly string[] => [...new Set(groups.flatMap((group) => group ?? []))];
+
+function terminalLiveness(status: Awaited<ReturnType<RunsCore['terminal']['getTerminal']>> extends
+  B3Result<infer Value> ? Value : never): 'live' | 'unknown' | 'final' {
+  if (status === null) return 'unknown';
+  if (status.status === 'live') return 'live';
+  return status.status === 'exited' || status.status === 'failed' ? 'final' : 'unknown';
+}
+
+/** Governed repair for a named unproven completion; it never invents completion. */
+export async function closeProviderTurnCompletionUnproven(
+  core: RunsCore,
+  context: CommandContext,
+  input: CloseProviderTurnCompletionUnprovenInput,
+): Promise<B3Result<CloseProviderTurnCompletionUnprovenOutcome>> {
+  if (context.principal.kind === 'system'
+    || !context.principal.verifiedScopes.some((scope) => String(scope) === repairScope)) {
+    return b3fail(b3err('PermissionDenied',
+      'provider-turn repair requires a human/Operations principal with agent.provider-turn.repair', {
+        principalId: context.principal.id, requiredScope: repairScope,
+      }, false));
+  }
+  const epoch = core.fence.assertActive(context.runtimeEpochId);
+  if (!epoch.ok) return epoch;
+  const found = await getProviderTurnSubmission(core, input.providerTurnId);
+  if (!found.ok) return found;
+  let submission = found.value;
+  if (submission.agentRunId !== input.agentRunId) {
+    return operationConflict(submission, 'repair Run does not match the submission');
+  }
+  let runResult = await requireRun(core, input.agentRunId);
+  if (!runResult.ok) return runResult;
+  let run = runResult.value;
+
+  if (submission.state.kind === 'completion-unproven-final') {
+    if (run.lifecycle !== 'failed' || run.finalReason !== 'unrecoverable-failure') {
+      return operationConflict(submission, 'unproven-final submission has no matching final Run');
+    }
+    return b3ok({
+      kind: 'run-finalised-completion-unproven', agentRunId: run.id,
+      providerTurnId: submission.providerTurnId, lifecycle: 'failed', activity: 'unknown',
+      finalReason: 'unrecoverable-failure', completionClaimed: false,
+    });
+  }
+  if (submission.state.kind === 'rejected') {
+    return b3ok({
+      kind: 'submission-rejected-no-effect', agentRunId: run.id,
+      providerTurnId: submission.providerTurnId, submission,
+      ...(submission.state.terminalInputAttemptId === undefined
+        ? {} : { terminalInputAttemptId: submission.state.terminalInputAttemptId }),
+      effectEscaped: false, terminalReservationCancelled: false,
+      runFenceCleared: false, runActivityChanged: false, completionClaimed: false,
+    });
+  }
+  if (submission.state.kind !== 'recovery-required') {
+    return operationConflict(submission, 'repair requires a recovery-required submission');
+  }
+  const priorRecovery = submission.state;
+  const expectedTuple = input.expectedActiveTuple;
+  const attemptId = input.terminalInputAttemptId;
+  const noEffectForm = expectedTuple === undefined;
+
+  if (noEffectForm) {
+    const attemptResult = await core.terminal.getProviderTurnInputAttempt({
+      terminalSessionId: submission.terminalSessionId,
+      providerTurnId: submission.providerTurnId,
+      submissionEffectKey: submission.submissionEffectKey,
+    });
+    if (!attemptResult.ok) return attemptResult;
+    const attempt = attemptResult.value;
+    if (attemptId === undefined) {
+      if (attempt !== null || priorRecovery.terminalInputAttemptId !== undefined
+        || run.activeProviderTurn?.providerTurnId === submission.providerTurnId
+        || run.providerTurnOperationFence?.providerTurnSubmissionId === submission.id) {
+        return operationConflict(submission,
+          'no-attempt repair could not prove the absence of an attempt, active tuple, and fence');
+      }
+      const rejected = await patchSubmission(core, submission, {
+        state: {
+          kind: 'rejected', rejectedAt: now(core), reason: input.reason,
+          effectEscaped: false,
+          evidenceRefs: evidenceUnion(priorRecovery.evidenceRefs, input.completionEvidenceRefs),
+        },
+      });
+      if (!rejected.ok) return rejected;
+      return b3ok({
+        kind: 'submission-rejected-no-effect', agentRunId: run.id,
+        providerTurnId: submission.providerTurnId, submission: rejected.value,
+        effectEscaped: false, terminalReservationCancelled: false,
+        runFenceCleared: false, runActivityChanged: false, completionClaimed: false,
+      });
+    }
+    if (attempt === null || attempt.id !== attemptId
+      || priorRecovery.terminalInputAttemptId !== attemptId
+      || !attemptMatchesSubmission(attempt, submission)
+      || run.activeProviderTurn?.providerTurnId === submission.providerTurnId) {
+      return operationConflict(submission, 'pre-effect repair tuple does not match owner facts');
+    }
+    const prepared = attempt.effectState.kind === 'prepared'
+      && attempt.turnBarrier.kind === 'reserved-pre-effect';
+    const alreadyRejected = attempt.effectState.kind === 'rejected'
+      && attempt.turnBarrier.kind === 'released-rejected';
+    if (!prepared && !alreadyRejected) {
+      return operationConflict(submission, 'attempt may have crossed the provider-effect boundary');
+    }
+    const fence = run.providerTurnOperationFence;
+    if (fence !== undefined && (fence.providerTurnSubmissionId !== submission.id
+      || fence.terminalInputAttemptId !== attempt.id
+      || !['terminal-prepared', 'submission-prepared', 'recovery-required'].includes(fence.phase))) {
+      return operationConflict(submission, 'pre-effect Run fence differs from the repair tuple');
+    }
+    let terminalReservationCancelled = false;
+    if (prepared) {
+      const cancelled = await core.terminal.cancelPreparedProviderTurnInput({
+        terminalInputAttemptId: attempt.id,
+        expectedAttemptRecordVersion: attempt.recordVersion,
+        reason: 'runtime-preparation-rejected',
+      });
+      if (!cancelled.ok) return cancelled;
+      terminalReservationCancelled = true;
+    }
+    let runFenceCleared = false;
+    if (fence !== undefined) {
+      const cleared = await patchRun(core, run, { providerTurnOperationFence: undefined });
+      if (!cleared.ok) return cleared;
+      run = cleared.value;
+      runFenceCleared = true;
+    }
+    const rejected = await patchSubmission(core, submission, {
+      state: {
+        kind: 'rejected', rejectedAt: now(core), terminalInputAttemptId: attempt.id,
+        reason: input.reason, effectEscaped: false,
+        evidenceRefs: evidenceUnion(priorRecovery.evidenceRefs,
+          input.completionEvidenceRefs, [attempt.id]),
+      },
+    });
+    if (!rejected.ok) return rejected;
+    return b3ok({
+      kind: 'submission-rejected-no-effect', agentRunId: run.id,
+      providerTurnId: submission.providerTurnId, submission: rejected.value,
+      terminalInputAttemptId: attempt.id, effectEscaped: false,
+      terminalReservationCancelled, runFenceCleared,
+      runActivityChanged: false, completionClaimed: false,
+    });
+  }
+
+  if (attemptId === undefined
+    || expectedTuple.providerTurnId !== submission.providerTurnId
+    || expectedTuple.activityGeneration !== submission.activationTarget.activityGeneration
+    || priorRecovery.terminalInputAttemptId !== attemptId
+    || (priorRecovery.lastSafeState !== 'submitted-confirmed'
+      && priorRecovery.lastSafeState !== 'submitted-unconfirmed')) {
+    return operationConflict(submission, 'activated repair requires the exact attempt and active tuple');
+  }
+  const attemptResult = await core.terminal.getProviderTurnInputAttempt({
+    terminalSessionId: submission.terminalSessionId,
+    providerTurnId: submission.providerTurnId,
+    submissionEffectKey: submission.submissionEffectKey,
+  });
+  if (!attemptResult.ok) return attemptResult;
+  const attempt = attemptResult.value;
+  if (attempt === null || attempt.id !== attemptId || !attemptMatchesSubmission(attempt, submission)) {
+    return operationConflict(submission, 'activated repair Terminal attempt differs');
+  }
+
+  // Resume after the Terminal barrier commit without advancing generation a
+  // second time: the still-active Run is the durable indication that step 2
+  // below has not committed yet.
+  const alreadyClosed = attempt.turnBarrier.kind === 'closed-unproven';
+  if (!alreadyClosed && attempt.turnBarrier.kind !== 'active'
+    && attempt.turnBarrier.kind !== 'interrupt-committed') {
+    return operationConflict(submission, 'Terminal barrier is not eligible for unproven closure');
+  }
+  if (run.lifecycle === 'failed' && run.finalReason === 'unrecoverable-failure'
+    && alreadyClosed) {
+    const closed = await patchSubmission(core, submission, {
+      state: {
+        kind: 'completion-unproven-final', terminalInputAttemptId: attempt.id,
+        closedAt: now(core), reason: input.reason,
+        evidenceRefs: evidenceUnion(priorRecovery.evidenceRefs,
+          input.completionEvidenceRefs, [attempt.id]),
+        runFinalReason: 'unrecoverable-failure',
+      },
+    });
+    if (!closed.ok) return closed;
+    return b3ok({
+      kind: 'run-finalised-completion-unproven', agentRunId: run.id,
+      providerTurnId: submission.providerTurnId, lifecycle: 'failed', activity: 'unknown',
+      finalReason: 'unrecoverable-failure', completionClaimed: false,
+    });
+  }
+  if (run.activeProviderTurn?.providerTurnId !== submission.providerTurnId
+    || run.activeProviderTurn.activityGeneration !== expectedTuple.activityGeneration
+    || run.activityGeneration !== expectedTuple.activityGeneration
+    || run.providerTurnOperationFence?.providerTurnSubmissionId !== submission.id
+    || run.providerTurnOperationFence.phase !== 'recovery-required') {
+    return operationConflict(submission, 'Run active tuple/fence differs from the repair tuple');
+  }
+
+  const terminal = await core.terminal.getTerminal(context.principal, submission.terminalSessionId);
+  if (!terminal.ok) return terminal;
+  const terminalState = terminalLiveness(terminal.value);
+  const providerSession = await core.agents.getProviderSession(
+    context.principal, submission.providerSessionId,
+  );
+  if (!providerSession.ok) return providerSession;
+  const provider = await core.providers.probeSessionLiveness({
+    provider: providerSession.value.provider,
+    providerSessionId: submission.providerSessionId,
+    providerNativeSessionId: providerSession.value.providerNativeSessionId,
+  });
+  if (!provider.ok) return provider;
+  if (terminalState !== 'final' || provider.value.liveness !== 'final') {
+    return b3ok({
+      kind: 'provider-still-live-or-unknown', terminalLiveness: terminalState,
+      providerLiveness: provider.value.liveness, bothFinal: false,
+      retryable: true, runChanged: false,
+    });
+  }
+  if (!alreadyClosed) {
+    const terminalClosed = await core.terminal.closeProviderTurnBarrierUnproven({
+      terminalInputAttemptId: attempt.id,
+      agentRunId: submission.agentRunId,
+      providerTurnId: submission.providerTurnId,
+      activityGeneration: expectedTuple.activityGeneration,
+      terminalFinalEvidenceRefs: [
+        `terminal:${submission.terminalSessionId}:final`,
+        ...input.completionEvidenceRefs,
+      ],
+    });
+    if (!terminalClosed.ok) return terminalClosed;
+  }
+  const finalAt = now(core);
+  const finalRun = await patchRun(core, run, {
+    lifecycle: 'failed', activity: 'unknown',
+    activityGeneration: (run.activityGeneration + 1) as ActivityGeneration,
+    activeProviderTurn: undefined, providerTurnOperationFence: undefined,
+    finalAt, finalReason: 'unrecoverable-failure',
+  });
+  if (!finalRun.ok) return finalRun;
+  run = finalRun.value;
+  const closed = await patchSubmission(core, submission, {
+    state: {
+      kind: 'completion-unproven-final', terminalInputAttemptId: attempt.id,
+      closedAt: finalAt, reason: input.reason,
+      evidenceRefs: evidenceUnion(priorRecovery.evidenceRefs,
+        input.completionEvidenceRefs, provider.value.evidenceRefs,
+        [attempt.id, `terminal:${submission.terminalSessionId}:final`]),
+      runFinalReason: 'unrecoverable-failure',
+    },
+  });
+  if (!closed.ok) return closed;
+  submission = closed.value;
+  core.publish('agent.run.provider-turn.completion-unproven', {
+    agentRunId: run.id, providerTurnId: submission.providerTurnId,
+    providerTurnSubmissionId: submission.id,
+    activityGeneration: run.activityGeneration,
+    completionClaimed: false,
+  }, context.traceId);
+  return b3ok({
+    kind: 'run-finalised-completion-unproven', agentRunId: run.id,
+    providerTurnId: submission.providerTurnId, lifecycle: 'failed', activity: 'unknown',
+    finalReason: 'unrecoverable-failure', completionClaimed: false,
+  });
 }
 
 const sameCompletion = (
