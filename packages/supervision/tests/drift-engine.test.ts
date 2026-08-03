@@ -53,6 +53,7 @@ test('identical free evidence establishes a baseline then opens one quiet episod
   const root = mkdtempSync(path.join(tmpdir(), 'nvk-b3d-drift-'));
   let now = new Date('2026-08-03T00:00:00.000Z');
   let sample = 0;
+  let transcriptWatermark = 'transcript.42';
   const store = createSupervisionStore({ root, dataRoot: path.join(root, 'stores') });
   const options = {
     root,
@@ -81,7 +82,7 @@ test('identical free evidence establishes a baseline then opens one quiet episod
         terminalLiveness: 'live' as const,
         terminalActivityGeneration: 4 as never,
         agentId: 'agent_123e4567-e89b-42d3-a456-426614174000' as never,
-        transcriptWatermark: 'transcript.42',
+        transcriptWatermark,
         usageActivityDigest: 'usage:in=10;out=20;turns=2',
         usageSourceCursor: 'usage.7',
         evidenceRefs: [`sample-${String(++sample)}`],
@@ -199,6 +200,35 @@ test('identical free evidence establishes a baseline then opens one quiet episod
       'a queued status request aged into an unanswered check');
     assert.equal(unwrap(await store.list('notification')).length, 1,
       'the same quiet episode queued another status turn');
+
+    transcriptWatermark = 'transcript.43';
+    now = new Date('2026-08-03T00:25:00.000Z');
+    const cancelled: DriftCheckOutcome = unwrap(
+      await supervision.checkRunDrift(supervisionContext(), input()),
+    );
+    assert.equal(cancelled.kind, 'status-cancelled-before-delivery');
+    assert.equal(cancelled.providerTurnsStartedThisEvaluation, 0);
+    if (cancelled.kind !== 'status-cancelled-before-delivery') {
+      throw new Error('queued status was not cancelled by movement');
+    }
+    assert.equal(cancelled.movementEvidenceRef, 'sample-5');
+    deadline = unwrap(await store.list<WatchDeadline>('watchDeadline'))[0]!;
+    assert.equal(deadline.dueAt, '2026-08-03T00:30:00.000Z');
+    assert.equal(deadline.driftState?.phase, 'observing');
+    assert.equal(deadline.driftState?.quietIntervals, 0);
+    assert.equal(deadline.driftState?.consecutiveUnansweredChecks, 0);
+    assert.deepEqual(deadline.driftState?.lastClosedStatus, {
+      episodeId: cancelled.episodeId,
+      effectKey: queued.effectKey,
+      notificationId: queued.notificationId,
+      state: 'cancelled-before-delivery',
+      closedAt: '2026-08-03T00:25:00.000Z',
+      closureEvidenceRef: 'sample-5',
+    });
+    const cancelledNotification = unwrap(
+      await store.list<Notification>('notification'),
+    )[0]!;
+    assert.equal(cancelledNotification.state, 'expired');
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

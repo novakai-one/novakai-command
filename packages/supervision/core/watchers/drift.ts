@@ -24,6 +24,7 @@ import {
   notificationDeliveryEffectKey,
   SUPERVISION_RECORD_WRITER,
   type CheckRunDriftInput,
+  type ClosedDriftStatus,
   type DriftCheckOutcome,
   type DriftEvidenceCheckpoint,
   type DurableDriftState,
@@ -246,6 +247,10 @@ async function recordMovement(
   now: Date,
 ): Promise<B3Result<DriftCheckOutcome>> {
   const previous = current.deadline.driftState!;
+  if (previous.phase === 'status-outstanding'
+    && previous.outstandingStatus.state === 'queued') {
+    return cancelQueuedStatus(deps, current, previous, observed, nextEvidence, now);
+  }
   const state: DurableDriftState = {
     kind: 'activity-drift',
     episodeOrdinal: previous.episodeOrdinal,
@@ -263,6 +268,96 @@ async function recordMovement(
     kind: 'healthy-free-evidence',
     providerTurnsStartedThisEvaluation: 0,
     evidenceRefs: observed.evidenceRefs,
+  });
+}
+
+function movementEvidenceRef(
+  observed: DriftEvidenceObservation,
+  nextEvidence: DriftEvidenceCheckpoint,
+): string {
+  return observed.replyEvidenceRef
+    ?? observed.evidenceRefs[0]
+    ?? `drift-fingerprint:${nextEvidence.fingerprint}`;
+}
+
+async function expireQueuedNotification(
+  deps: DriftDependencies,
+  outstanding: Extract<
+    Extract<DurableDriftState, { readonly phase: 'status-outstanding' }>['outstandingStatus'],
+    { readonly state: 'queued' }
+  >,
+): Promise<B3Result<Notification>> {
+  const stored = await deps.store.read<Notification>('notification', outstanding.notificationId);
+  if (!stored.ok) return b3fail(stored.error);
+  if (stored.value === null) {
+    return b3fail(watcherConflict('the queued drift status notification is missing', {
+      notificationId: outstanding.notificationId,
+      effectKey: outstanding.effectKey,
+    }));
+  }
+  if (stored.value.state === 'expired') return b3ok(stored.value);
+  const stillQueued = stored.value.deliveryEffectKey === outstanding.effectKey
+    && stored.value.deliveryAttempt.state === 'queued'
+    && stored.value.state === 'queued';
+  if (!stillQueued) {
+    return b3fail(watcherConflict(
+      'the status request was claimed while movement was being recorded',
+      {
+        notificationId: outstanding.notificationId,
+        notificationState: stored.value.state,
+        deliveryState: stored.value.deliveryAttempt.state,
+      },
+    ));
+  }
+  return deps.store.update<Notification>(
+    SUPERVISION_RECORD_WRITER,
+    stored.value.id,
+    { state: 'expired' },
+    stored.value.recordVersion,
+    deriveClientOpId(`b3v4:cancel-queued-drift-status:${stored.value.id}`),
+  );
+}
+
+async function cancelQueuedStatus(
+  deps: DriftDependencies,
+  current: { readonly rule: WatchRule; readonly deadline: WatchDeadline },
+  previous: Extract<DurableDriftState, { readonly phase: 'status-outstanding' }>,
+  observed: DriftEvidenceObservation,
+  nextEvidence: DriftEvidenceCheckpoint,
+  now: Date,
+): Promise<B3Result<DriftCheckOutcome>> {
+  const outstanding = previous.outstandingStatus;
+  if (outstanding.state !== 'queued') {
+    throw new TypeError('queued cancellation received a non-queued status');
+  }
+  // The effect is cancelled durably before the deadline says it is closed.
+  const expired = await expireQueuedNotification(deps, outstanding);
+  if (!expired.ok) return b3fail(expired.error);
+  const closureEvidenceRef = movementEvidenceRef(observed, nextEvidence);
+  const closed: ClosedDriftStatus = {
+    episodeId: outstanding.episodeId,
+    effectKey: outstanding.effectKey,
+    notificationId: outstanding.notificationId,
+    state: 'cancelled-before-delivery',
+    closedAt: now.toISOString() as IsoUtc,
+    closureEvidenceRef,
+  };
+  const state: DurableDriftState = {
+    kind: 'activity-drift',
+    episodeOrdinal: previous.episodeOrdinal,
+    phase: 'observing',
+    quietIntervals: 0,
+    consecutiveUnansweredChecks: 0,
+    lastEvidence: nextEvidence,
+    lastClosedStatus: closed,
+  };
+  const written = await persistDrift(deps, current, state, now);
+  if (!written.ok) return b3fail(written.error);
+  return b3ok({
+    kind: 'status-cancelled-before-delivery',
+    providerTurnsStartedThisEvaluation: 0,
+    episodeId: outstanding.episodeId,
+    movementEvidenceRef: closureEvidenceRef,
   });
 }
 
