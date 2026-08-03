@@ -549,11 +549,37 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
         agentRunId,
       );
       if (!found.ok) return null;
+      // A completion boundary advances the semantic source cursor without
+      // claiming that the Message mirror ingested every line through it. The
+      // next submitted turn must start after that boundary or an old reply can
+      // be reused as its completion. Read the immutable completion owner facts
+      // and expose only their latest cursor through Runtime's narrow lookup.
+      let completionWatermark: string | undefined;
+      let latestObservedAt = '';
+      let cursor: import('@novakai/foundation/contract').EventCursor | undefined;
+      do {
+        const page = await transcript.listTranscriptTurnCompletions(
+          { id: 'sys_agent_runtime', kind: 'system', verifiedScopes: [] }, {
+            agentRunId,
+            ...(cursor === undefined ? {} : { cursor }),
+            limit: 200,
+          },
+        );
+        if (!page.ok) return null;
+        for (const completion of page.value.items) {
+          if (completion.observedAt >= latestObservedAt) {
+            latestObservedAt = completion.observedAt;
+            completionWatermark = completion.completionTranscriptWatermark;
+          }
+        }
+        cursor = page.value.nextCursor;
+      } while (cursor !== undefined);
       return {
         bindingId: found.value.id,
         bindingState: found.value.sourceDiscoveryState,
-        ...(found.value.mirrorWatermark === undefined
-          ? {} : { mirrorWatermark: found.value.mirrorWatermark }),
+        ...(completionWatermark === undefined && found.value.mirrorWatermark === undefined
+          ? {}
+          : { mirrorWatermark: completionWatermark ?? found.value.mirrorWatermark! }),
       };
     },
   });

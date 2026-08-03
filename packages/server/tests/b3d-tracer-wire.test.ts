@@ -200,9 +200,13 @@ test('the B3d wire carries current from spawn to a queued Notification', async (
 
     // 2. The role's pinned watcher exists, aimed at THIS Run, with a deadline
     //    already armed — installed at spawn, not on first use.
-    const watchers = unwrap(await rig.chris.call<{
-      rules: readonly WatchRule[]; deadlines: readonly WatchDeadline[];
-    }>('b3.supervision.listWatchers', {}, opId()), 'listWatchers');
+    const watchers = await until('the completed work turn to arm its idle deadline', async () => {
+      const listed = await rig.chris.call<{
+        rules: readonly WatchRule[]; deadlines: readonly WatchDeadline[];
+      }>('b3.supervision.listWatchers', {}, opId());
+      if (!listed.ok || listed.value.deadlines.length === 0) return null;
+      return listed.value;
+    });
     assert.equal(watchers.rules.length, 1, 'the role pinned one watcher and got none');
     assert.deepEqual(watchers.rules[0]?.subject, {
       kind: 'agent-run', agentRunId: agent.agentRunId,

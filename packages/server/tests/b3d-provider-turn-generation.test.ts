@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { b3ok } from '@novakai/foundation/contract';
 import { createFakeProviderAdapters } from '../../agents/b3/contract/index.js';
 import {
   createFakePtyHost,
@@ -28,6 +29,26 @@ const rows = <T extends { id?: string }>(root: string, kind: string): T[] => {
 test('a completed real-composition provider turn advances ActivityGeneration', async () => {
   const root = mkdtempSync(path.join(tmpdir(), 'nvk-b3d-provider-turn-generation-'));
   const ptyHost = createFakePtyHost({ echoInput: false, composer: true });
+  const baseProviders = createFakeProviderAdapters();
+  const claude = baseProviders.claude;
+  let observedBoundaries = 0;
+  const providers = {
+    ...baseProviders,
+    claude: {
+      ...claude,
+      async observeProviderTurnBoundary(
+        input: Parameters<typeof claude.observeProviderTurnBoundary>[0],
+      ) {
+        observedBoundaries += 1;
+        if (observedBoundaries === 1) return claude.observeProviderTurnBoundary(input);
+        return b3ok({
+          kind: 'unavailable' as const,
+          reason: 'source-unavailable' as const,
+          evidenceRefs: ['the synthetic work turn has no provider reply'],
+        });
+      },
+    },
+  };
   const known = new Set<FakePty>();
   let completedProviderTurns = 0;
   const attach = setInterval(() => {
@@ -47,7 +68,7 @@ test('a completed real-composition provider turn advances ActivityGeneration', a
     root,
     port: 0,
     ptyHost,
-    providers: createFakeProviderAdapters(),
+    providers,
     gateTimeoutMs: 5_000,
   });
   const client = await connectRuntime({ root, port: host.port, token: host.token });
@@ -75,6 +96,10 @@ test('a completed real-composition provider turn advances ActivityGeneration', a
     assert.equal(spawned.value.run.activityGeneration, 4,
       'submit, completion, and work release must each advance one generation');
 
+    // Force at least one periodic reconciliation pass. An unfinished work turn
+    // remains active; the gate completion must not be reused to finish it.
+    await new Promise((resolve) => { setTimeout(resolve, 1_200); });
+
     const submissions = rows<{
       id: string;
       providerTurnId: string;
@@ -87,17 +112,20 @@ test('a completed real-composition provider turn advances ActivityGeneration', a
         transcriptTurnCompletionId?: string;
         providerUsageEvidenceId?: string;
       };
+      startTranscriptWatermark: string | null;
     }>(root, 'providerTurnSubmissions');
     assert.equal(submissions.length, 2, 'both governed origins use the correlation operation');
     const completed = submissions.find((item) => item.state.kind === 'completed');
     const active = submissions.find((item) => item.state.kind === 'submitted-confirmed');
     assert.ok(completed);
-    assert.ok(active);
+    assert.ok(active, `unfinished work turn did not remain active: ${JSON.stringify(submissions)}`);
     const completions = rows<{ id: string; providerTurnId: string }>(
       root, 'transcriptTurnCompletions',
     );
     assert.equal(completions.length, 1);
     assert.equal(completions[0]!.providerTurnId, completed!.providerTurnId);
+    assert.notEqual(active!.startTranscriptWatermark, null,
+      'the successor turn could reuse completion evidence from before its start');
     const evidence = rows<{
       id: string;
       scope: { kind: string; providerTurnId: string; transcriptTurnCompletionId: string };
