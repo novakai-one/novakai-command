@@ -29,6 +29,7 @@ export class LiveSession {
   exit: PtyExit | null = null;
   appliedViewport: { columns: number; rows: number };
   private readonly listeners = new Set<FrameListener>();
+  private expectedExit = false;
 
   constructor(
     readonly sessionId: TerminalSessionId,
@@ -36,6 +37,7 @@ export class LiveSession {
     columns: number,
     rows: number,
     replayBytes: number,
+    private readonly onUnexpectedExit?: (exit: PtyExit) => void,
   ) {
     this.replay = new ReplayBuffer(replayBytes);
     this.appliedViewport = { columns, rows };
@@ -55,6 +57,12 @@ export class LiveSession {
       ...(exit.exitCode === undefined ? {} : { exitCode: exit.exitCode }),
       ...(exit.signal === undefined ? {} : { signal: exit.signal }),
     });
+    if (!this.expectedExit) this.onUnexpectedExit?.(exit);
+  }
+
+  /** Mark an authorised Runtime stop so it is not reported as provider loss. */
+  expectExit(): void {
+    this.expectedExit = true;
   }
 
   private broadcast(frame: TerminalOutputFrame): void {

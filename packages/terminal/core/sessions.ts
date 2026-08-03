@@ -144,9 +144,23 @@ async function launchReserved(
 
   // Tracked before the durable promotion, so a retry inside THIS runtime adopts
   // the process rather than being told the effect is uncertain.
-  core.live.track(new LiveSession(
+  const liveSession = new LiveSession(
     starting.value.id, started.value, input.columns, input.rows, core.replayBytes,
-  ));
+    () => {
+      void (async () => {
+        try {
+          await core.onUnexpectedExit?.(starting.value.id);
+        } catch (cause) {
+          console.error(
+            `[terminal] unexpected-exit observer failed for ${String(starting.value.id)}: ${
+              cause instanceof Error ? cause.message : String(cause)
+            }`,
+          );
+        }
+      })();
+    },
+  );
+  core.live.track(liveSession);
   const live = await patchSession(core, starting.value, {
     status: 'live',
     privateProcessRef: started.value.processRef,
@@ -156,6 +170,7 @@ async function launchReserved(
     // The record can no longer be made to own this process, so the launch is
     // undone rather than left as an unowned PTY (red gates 25/28).
     core.live.forget(starting.value.id);
+    liveSession.expectExit();
     started.value.kill();
     await patchSession(core, starting.value, { status: 'failed' });
     return live;
@@ -262,6 +277,7 @@ export async function terminateTerminal(
   if (FINAL_STATUSES.has(session.value.status)) return session; // already final: idempotent
 
   const live = core.live.lookup(session.value.id);
+  live?.expectExit();
   live?.pty.kill();
   const closed = await closeSession(core, session.value, {
     status: 'exited',

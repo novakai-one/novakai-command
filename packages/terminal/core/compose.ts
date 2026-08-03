@@ -44,6 +44,8 @@ export interface ComposeTerminalOptions extends TerminalStoreOptions {
   readonly receipts?: ReceiptStore;
   /** Bytes of output kept for replay per session. */
   readonly replayBytes?: number;
+  /** Host observation of an uncommanded managed-process exit. */
+  readonly onUnexpectedExit?: (terminalSessionId: TerminalSessionId) => void | Promise<void>;
   /** How long a controller may go unseen before it is `stale` (§13.4). */
   readonly staleAfterMs?: number;
 }
@@ -58,6 +60,9 @@ export function composeTerminal(options: ComposeTerminalOptions): TerminalContra
     clock: options.clock ?? systemClock,
     receipts: options.receipts ?? composeReceiptStore(options),
     replayBytes: options.replayBytes ?? DEFAULT_REPLAY_BYTES,
+    ...(options.onUnexpectedExit === undefined
+      ? {}
+      : { onUnexpectedExit: options.onUnexpectedExit }),
     staleAfterMs: options.staleAfterMs ?? DEFAULT_STALE_AFTER_MS,
   };
 

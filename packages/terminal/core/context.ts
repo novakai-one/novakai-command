@@ -19,6 +19,8 @@ export interface TerminalCore {
   readonly clock: Clock;
   readonly receipts: ReceiptStore;
   readonly replayBytes: number;
+  /** Host observation of a PTY exit that Terminal did not authorise. */
+  readonly onUnexpectedExit?: (terminalSessionId: TerminalSessionId) => void | Promise<void>;
   /** How long a controller may go unseen before it is `stale` (§13.4). */
   readonly staleAfterMs: number;
 }

@@ -8,6 +8,7 @@ import {
   b3fail, b3ok, mintClientOpId, nowIsoUtc,
   type ActivityGeneration, type AgentId, type AgentRunId, type AuthenticatedPrincipal, type B3Page,
   type B3Result, type IsoUtc, type ResolvedLaunchPlanId, type RunOperationId,
+  type TerminalSessionId,
 } from '@novakai/foundation/contract';
 import type {
   AgentRunView, ListAgentRunsFilter, RunOperationView, RunUsageFacts,
@@ -134,6 +135,18 @@ async function settleIfTerminalGone(
   // The shift is over, so the endpoint stops advertising it (§8.1's cutoff).
   await closeEndpointOf(core, settled.value);
   return b3ok(settled.value);
+}
+
+/** Reconcile the Run that owned a Terminal-reported unexpected provider exit. */
+export async function observeTerminalExit(
+  core: RunsCore, terminalSessionId: TerminalSessionId,
+): Promise<B3Result<null>> {
+  const runs = await core.store.list<AgentRun>('agentRun', { terminalSessionId });
+  if (!runs.ok) return runs;
+  const live = runs.value.find((run) => !FINAL_LIFECYCLES.has(run.lifecycle));
+  if (live === undefined) return b3ok(null);
+  const reconciled = await settleIfTerminalGone(core, live);
+  return reconciled.ok ? b3ok(null) : b3fail(reconciled.error);
 }
 
 export async function viewOfRun(
