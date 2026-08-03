@@ -18,6 +18,7 @@ import type {
   AgentControlFacts, AgentControlOutcomeFacts, AgentRelationshipFacts,
   ControlCapabilityFacts,
 } from './ports.js';
+import type { AgentRunUsage } from '../../supervision/contract/index.js';
 
 // ── Inputs ──────────────────────────────────────────────────────────────────
 
@@ -181,11 +182,8 @@ export interface AgentRunView {
      */
     readonly supervisionVersion: RecordVersion;
   };
-  /**
-   * Present as a NAMED absence until B3d: a zero here would be an invented
-   * measurement, which red gate 13 forbids.
-   */
-  readonly usage: { readonly quality: 'unavailable'; readonly reason: string };
+  /** Supervision-owned projection over Agents evidence for this exact Run. */
+  readonly usage: AgentRunUsage;
   /**
    * §19.1's transcript section (B3c).
    *
@@ -209,6 +207,32 @@ export interface RunOperationView {
     readonly reason?: string;
   }[];
 }
+
+/** Runtime-owned facts Supervision needs without recursively assembling a Run view. */
+export interface RunUsageFacts {
+  readonly agentRunId: AgentRunId;
+  readonly agentId: AgentId;
+  readonly providerSessionId: ProviderSessionId;
+  readonly final: boolean;
+}
+
+/** Narrow composition adapter from Runtime records into Supervision projections. */
+export interface RunUsageSource {
+  getUsageRun(
+    principal: AuthenticatedPrincipal,
+    agentRunId: AgentRunId,
+  ): Promise<B3Result<RunUsageFacts>>;
+  listUsageRuns(
+    principal: AuthenticatedPrincipal,
+    agentId: AgentId,
+  ): Promise<B3Result<readonly RunUsageFacts[]>>;
+}
+
+/** Supervision projection lookup used while Runtime assembles a public Run view. */
+export type RunUsageLookup = (
+  principal: AuthenticatedPrincipal,
+  agentRunId: AgentRunId,
+) => Promise<B3Result<AgentRunUsage>>;
 
 /**
  * A Run in the family, plus the two facts that only the TREE knows: how far
@@ -381,6 +405,7 @@ export interface AgentRuntimeQueries {
    */
   publishCapabilityEvent(
     kind: string, payload: Readonly<Record<string, unknown>>, sourceOwner: CapabilityOwner,
+    traceId?: TraceCorrelationId,
   ): void;
 
   /**

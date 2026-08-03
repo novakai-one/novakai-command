@@ -5,7 +5,7 @@ import type { AgentEvent, LayoutRecord, PresenceSource, SettingsRecord } from '.
 import type { SetSettingError } from './settings.js';
 import type { PersistFailedError } from './errors.js';
 import type { ScreenContext } from './context.js';
-import type { UsageTableView } from './usage.js';
+import type { RunUsageTableView, UsageTableView } from './usage.js';
 import type { NotificationInboxView } from './notifications.js';
 
 /**
@@ -93,6 +93,8 @@ export interface MessagingEvents {
    * follows the capability rather than a poll interval.
    */
   onNotifications?(inbox: NotificationInboxView): void;
+  /** A committed Agents evidence event says the rebuildable Run rows may have moved. */
+  onRunUsageChanged?(): void;
 }
 
 export interface ShellServices {
@@ -162,4 +164,6 @@ export interface ShellServices {
    * and from nothing else. Resolves when the durable state has moved.
    */
   acknowledgeNotification?(notificationId: string): Promise<void>;
+  /** B3d Run usage read from Runtime views; older hosts omit or refuse it. */
+  getRunUsageTable?(): Promise<RunUsageTableView>;
 }

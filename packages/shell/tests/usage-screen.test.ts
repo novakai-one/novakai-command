@@ -6,9 +6,9 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import {
   exceptionOf, formatCount, formatIdentity, formatTokens, orderRows, totals,
-  type UsageRowView, type UsageTableView,
+  formatRunUsage, type RunUsageTableView, type UsageRowView, type UsageTableView,
 } from '../contract/usage.js';
-import { UsageView } from '../ui/screens/supervision/UsageScreen.js';
+import { RunUsageView, UsageView } from '../ui/screens/supervision/UsageScreen.js';
 
 const row = (partial: Partial<UsageRowView> = {}): UsageRowView => ({
   sessionId: 'sess_1', agentId: 'agent_1', provider: 'codex', model: 'cli-default',
@@ -123,5 +123,54 @@ describe('what the screen shows', () => {
   it('before the first broadcast arrives the screen renders without throwing', () => {
     const html = renderToStaticMarkup(React.createElement(UsageView, { table: null }));
     expect(html).toContain('No provider sessions yet');
+  });
+});
+
+describe('B3d Run usage rows', () => {
+  const runTable: RunUsageTableView = {
+    at: '2026-08-03T03:00:00.000Z',
+    rows: [{
+      agentRunId: 'agentRun_019fd000-0000-7000-8000-0000000000a1',
+      agentId: 'agent_123e4567-e89b-42d3-a456-426614174000',
+      displayName: 'Usage Builder',
+      provider: 'claude',
+      model: 'cli-default',
+      lifecycle: 'ready',
+      inputTokens: {
+        quality: 'unavailable', source: 'agents:provider-usage-evidence',
+        limitations: ['no-provider-usage-evidence'],
+      },
+      outputTokens: {
+        quality: 'measured', value: 75, source: 'provider-turn-completed', limitations: [],
+      },
+      cachedInputTokens: {
+        quality: 'unavailable', source: 'agents:provider-usage-evidence',
+        limitations: ['no-provider-usage-evidence'],
+      },
+      costMicros: {
+        quality: 'unavailable', source: 'agents:provider-usage-evidence',
+        limitations: ['no-provider-usage-evidence'],
+      },
+      providerTurns: {
+        quality: 'measured', value: 1, source: 'provider-turn-completed', limitations: [],
+      },
+      observedAt: '2026-08-03T03:00:00.000Z',
+      final: false,
+    }],
+  };
+
+  it('renders absence as a dash with quality and the owning limitation', () => {
+    const text = formatRunUsage(runTable.rows[0]!);
+    expect(text).toContain('— in (unavailable: no-provider-usage-evidence)');
+    expect(text).toContain('75 out (measured)');
+    expect(text).not.toContain('0 in');
+  });
+
+  it('draws one row per Run and exposes quality in the Shell surface', () => {
+    const html = renderToStaticMarkup(React.createElement(RunUsageView, { table: runTable }));
+    expect(html).toContain('Usage Builder');
+    expect(html).toContain('unavailable');
+    expect(html).toContain('no-provider-usage-evidence');
+    expect(html).toContain('agentRun_019fd000-0000-7000-8000-0000000000a1');
   });
 });

@@ -8,10 +8,26 @@
 // The demo's two spawn affordances collapse into the server's single
 // spawnAgentConversation (§7): the real-provider entry point is always wired,
 // and the mock entry point appears only when the server says dev.allowMock.
-import type { ShellServices, SettingsRecord, AgentEvent } from '../contract/index.js';
+import type {
+  AgentEvent, RunUsageTableView, ShellServices, SettingsRecord,
+} from '../contract/index.js';
 import type { SetSettingError } from '../contract/index.js';
 
 interface Pending { resolve(v: unknown): void; reject(e: Error): void }
+
+interface B3WireResult<Value> {
+  readonly ok: boolean;
+  readonly value?: Value;
+  readonly error?: { readonly code: string; readonly message: string };
+}
+
+interface RunUsageWireView {
+  readonly agent: { readonly agentId: string; readonly displayName: string };
+  readonly run: { readonly id: string; readonly lifecycle: string };
+  readonly provider: { readonly provider: string; readonly modelId: string };
+  readonly usage: Omit<RunUsageTableView['rows'][number],
+    'agentRunId' | 'agentId' | 'displayName' | 'provider' | 'model' | 'lifecycle'>;
+}
 
 const PROTOCOL_VERSION = 1;
 
@@ -62,6 +78,10 @@ export function createServerServices(
         if (frame.name === 'conversation') convListeners.forEach((l) => l(frame.data));
         // B1b §8: the supervision usage table, every usageIntervalSec.
         if (frame.name === 'usage') usageListeners.forEach((l) => l(frame.data));
+        if (frame.name === 'agent.provider-usage-evidence.committed'
+          || frame.name === 'agent.run.usage.changed') {
+          runUsageListeners.forEach((listener) => listener());
+        }
         return;
       }
       const p = pending.get(frame.id);
@@ -73,11 +93,34 @@ export function createServerServices(
 
     const convListeners = new Set<(c: unknown) => void>();
     const usageListeners = new Set<(t: unknown) => void>();
+    const runUsageListeners = new Set<() => void>();
     const call = <T>(method: string, params: unknown = {}): Promise<T> => {
       const id = ++seq;
       ws.send(JSON.stringify({ id, method, params, v: PROTOCOL_VERSION }));
       return new Promise<T>((res, rej) => pending.set(id, { resolve: res as (v: unknown) => void, reject: rej }));
     };
+
+    async function readRunUsageTable(): Promise<RunUsageTableView> {
+      const result = await call<B3WireResult<{ readonly items: readonly RunUsageWireView[] }>>(
+        'b3.agent.listRuns',
+        { contractVersion: 1, payload: { includeFinal: true, limit: 500 } },
+      );
+      if (!result.ok || result.value === undefined) {
+        throw new Error(result.error?.message ?? 'B3 Run usage is unavailable');
+      }
+      return {
+        at: new Date().toISOString(),
+        rows: result.value.items.map((view) => ({
+          agentRunId: view.run.id,
+          agentId: view.agent.agentId,
+          displayName: view.agent.displayName,
+          provider: view.provider.provider,
+          model: view.provider.modelId,
+          lifecycle: view.run.lifecycle,
+          ...view.usage,
+        })),
+      };
+    }
 
     const api: ShellServices = {
       listConversations: () => call('listConversations'),
@@ -94,12 +137,16 @@ export function createServerServices(
         const ml = (m: unknown) => events.onMessage?.(m as never);
         const cl = (c: unknown) => events.onConversation?.(c as never);
         const ul = (t: unknown) => events.onUsage?.(t as never);
+        const runUsageListener = () => events.onRunUsageChanged?.();
         msgListeners.add(ml); convListeners.add(cl); usageListeners.add(ul);
+        runUsageListeners.add(runUsageListener);
         return () => {
           msgListeners.delete(ml); convListeners.delete(cl); usageListeners.delete(ul);
+          runUsageListeners.delete(runUsageListener);
         };
       },
       getUsageTable: () => call('getUsageTable'),
+      getRunUsageTable: readRunUsageTable,
       getLayout: () => call('getLayout'),
       // M5/DEC-S2-12: clientOpId minted HERE (the interaction layer) and sent
       // with the mutation; the server threads it to foundation meta.

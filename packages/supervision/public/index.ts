@@ -21,6 +21,13 @@ export {
   type SupervisionCoreOptions,
   type SupervisionWatcherReads,
   type SupervisionWireSlice,
+  type TranscriptUsageReader,
+  type TranscriptUsageSample,
+  type UsageEvidenceReader,
+  type UsageProjection,
+  type UsageProjectionOptions,
+  type UsageRunFacts,
+  type UsageRunReader,
   type WatcherTemplate,
   type WatcherTemplatePort,
 } from '../core/index.js';

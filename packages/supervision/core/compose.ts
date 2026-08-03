@@ -5,7 +5,9 @@
 // that drifts from the freeze stops compiling here rather than passing a test
 // that agreed with itself. Lanes A/B/C fill in the members this tracer leaves
 // out; none of them has to change what is already wired.
-import type { AuthenticatedPrincipal, B3Result } from '@novakai/foundation/contract';
+import {
+  b3err, b3fail, type AuthenticatedPrincipal, type B3Result,
+} from '@novakai/foundation/contract';
 import type {
   NotificationEventPage, NotificationEventPageInput,
   SupervisionContract, WatchDeadline, WatcherTemplate, WatcherTemplateCatalogue,
@@ -27,6 +29,9 @@ import {
   recordNotificationTranscriptNonObservation,
   recordNotificationTranscriptObservation, subscribeNotifications,
 } from './notifications/index.js';
+import {
+  createUsageProjection, type UsageProjection, type UsageProjectionOptions,
+} from './usage/index.js';
 
 /** The frozen members the tracer's live wire actually carries current through. */
 export type SupervisionWireSlice = Pick<
@@ -39,6 +44,9 @@ export type SupervisionWireSlice = Pick<
   // Lane C, Q11: the transcript half — the only path past `offered-to-endpoint`.
   | 'recordNotificationTranscriptObservation'
   | 'recordNotificationTranscriptNonObservation'
+  // Lane A: the usage half — every Run gets an honest row.
+  | 'getAgentUsage'
+  | 'getRunUsage'
 >;
 
 /** Deadline detail remains a tracer host read; WatchRule listing is now frozen. */
@@ -73,7 +81,24 @@ export interface SupervisionCoreOptions extends SupervisionStoreOptions {
   readonly templates?: WatcherTemplateCatalogue;
   readonly extraTemplates?: readonly WatcherTemplate[];
   readonly clock?: () => Date;
+  /** B3d usage authorities; absent hosts return typed unavailability. */
+  readonly usage?: UsageProjectionOptions;
 }
+
+const USAGE_NOT_COMPOSED: UsageProjection = {
+  getRunUsage: async () => b3fail(b3err(
+    'RuntimeUnavailable',
+    'usage projection authorities are not composed in this host',
+    { reason: 'usage-not-composed' },
+    true,
+  )),
+  getAgentUsage: async () => b3fail(b3err(
+    'RuntimeUnavailable',
+    'usage projection authorities are not composed in this host',
+    { reason: 'usage-not-composed' },
+    true,
+  )),
+};
 
 export function composeSupervision(options: SupervisionCoreOptions): SupervisionCore {
   const store = options.store ?? createSupervisionStore(options);
@@ -84,6 +109,9 @@ export function composeSupervision(options: SupervisionCoreOptions): Supervision
     authority: options.installAuthority,
     clock: options.clock ?? ((): Date => new Date()),
   };
+  const usage = options.usage === undefined
+    ? USAGE_NOT_COMPOSED
+    : createUsageProjection(options.usage);
 
   return {
     installRunWatchers: (context, input) => {
@@ -109,6 +137,8 @@ export function composeSupervision(options: SupervisionCoreOptions): Supervision
       recordNotificationTranscriptNonObservation({ store }, context, input),
     subscribeNotifications: (_principal, after) => subscribeNotifications({ store }, after),
     notificationEventPage: (_principal, input) => notificationEventPage({ store }, input),
+    getRunUsage: (principal, agentRunId) => usage.getRunUsage(principal, agentRunId),
+    getAgentUsage: (principal, agentId) => usage.getAgentUsage(principal, agentId),
     listWatchDeadlines: () => store.list<WatchDeadline>('watchDeadline'),
   };
 }

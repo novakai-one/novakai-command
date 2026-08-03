@@ -71,9 +71,9 @@ export const OBJECT_KINDS = [
   'transcriptBinding',  // DEC-B3V4-24: transcript-owned Run↔source custody
   'observedSubagent',   // DEC-B3V4-18: transcript-owned observed native subagent
   'storeRouteCutover',  // DEC-B3V4-25: foundation-bootstrap-only cutover receipt
-  // B3d (B3V4-P2 §§9.1, 9.2, 18.1): supervision's standing rules, the durable
-  // deadlines they wait on, and the alerts they queue. Supervision is the sole
-  // writer of all three (§3.3); Agent Runtime asks through its contract.
+  // B3d (B3V4-P2 §§5.5, 9.1, 9.2, 18.1): Agents retains provider usage
+  // evidence; Supervision owns standing rules, durable deadlines, and alerts.
+  'providerUsageEvidence', // agents-owned append-only provider measurement
   'watchRule',          // DEC-B3V4-07: supervision-owned standing watcher rule
   'watchDeadline',      // supervision-owned generation-fenced durable deadline
   'notification',       // supervision-owned queued/delivered alert
