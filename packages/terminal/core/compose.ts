@@ -45,7 +45,7 @@ export interface ComposeTerminalOptions extends TerminalStoreOptions {
   /** Bytes of output kept for replay per session. */
   readonly replayBytes?: number;
   /** Host observation of an uncommanded managed-process exit. */
-  readonly onUnexpectedExit?: (terminalSessionId: TerminalSessionId) => void | Promise<void>;
+  readonly onUnexpectedExit?: (terminalSessionId: TerminalSessionId) => void;
   /** How long a controller may go unseen before it is `stale` (§13.4). */
   readonly staleAfterMs?: number;
 }

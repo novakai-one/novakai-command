@@ -233,14 +233,21 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
     dataRoot,
     ptyHost,
     epochFence: runtime.fence,
-    onUnexpectedExit: async (terminalSessionId) => {
-      const observed = await runs?.observeTerminalExit(terminalSessionId);
-      if (observed !== undefined && !observed.ok) {
-        console.error(
-          `[agent-runtime] provider exit reconciliation failed for ${String(terminalSessionId)} `
-          + `(${observed.error.code}): ${observed.error.message}`,
-        );
-      }
+    onUnexpectedExit: (terminalSessionId) => {
+      const activeRuns = runs;
+      if (activeRuns === null) return;
+      void activeRuns.observeTerminalExit(terminalSessionId).then((observed) => {
+        if (observed.ok) return;
+        activeRuns.publishCapabilityEvent('runtime.recovery.required', {
+          terminalSessionId,
+          reason: `${observed.error.code}: ${observed.error.message}`,
+        }, 'agent-runtime');
+      }, (cause: unknown) => {
+        activeRuns.publishCapabilityEvent('runtime.recovery.required', {
+          terminalSessionId,
+          reason: cause instanceof Error ? cause.message : String(cause),
+        }, 'agent-runtime');
+      });
     },
   });
 

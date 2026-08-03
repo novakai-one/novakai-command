@@ -146,19 +146,7 @@ async function launchReserved(
   // the process rather than being told the effect is uncertain.
   const liveSession = new LiveSession(
     starting.value.id, started.value, input.columns, input.rows, core.replayBytes,
-    () => {
-      void (async () => {
-        try {
-          await core.onUnexpectedExit?.(starting.value.id);
-        } catch (cause) {
-          console.error(
-            `[terminal] unexpected-exit observer failed for ${String(starting.value.id)}: ${
-              cause instanceof Error ? cause.message : String(cause)
-            }`,
-          );
-        }
-      })();
-    },
+    () => { core.onUnexpectedExit?.(starting.value.id); },
   );
   core.live.track(liveSession);
   const live = await patchSession(core, starting.value, {

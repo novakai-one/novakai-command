@@ -143,7 +143,7 @@ export async function observeTerminalExit(
 ): Promise<B3Result<null>> {
   const runs = await core.store.list<AgentRun>('agentRun', { terminalSessionId });
   if (!runs.ok) return runs;
-  const live = runs.value.find((run) => !FINAL_LIFECYCLES.has(run.lifecycle));
+  const live = runs.value.find((agentRun) => !FINAL_LIFECYCLES.has(agentRun.lifecycle));
   if (live === undefined) return b3ok(null);
   const reconciled = await settleIfTerminalGone(core, live);
   return reconciled.ok ? b3ok(null) : b3fail(reconciled.error);
