@@ -364,7 +364,7 @@ export async function finishRun(
   if (!granted.ok) return granted;
 
   const agentRun = await patchRun(core, input.agentRun, {
-    lifecycle: 'ready', activity: 'idle', startedAt: nowIsoUtc(),
+    lifecycle: 'ready', startedAt: nowIsoUtc(),
   });
   if (!agentRun.ok) return agentRun;
   const operation = await advance(core, input.operation, {

@@ -10,11 +10,12 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
-  agentRunPrincipalId, b3err, b3fail, b3ok, mintClientOpId, mintProviderSessionId,
-  mintRuntimeEpochId, mintTraceCorrelationId,
+  agentRunPrincipalId, b3err, b3fail, b3ok, deterministicId, mintClientOpId,
+  mintProviderSessionId, mintRuntimeEpochId, mintTraceCorrelationId, nowIsoUtc,
+  transcriptTurnCompletionId,
   type AgentRunId, type AuthenticatedPrincipal, type AuthorityScope,
-  type B3Result, type CommandContext, type ProviderSessionId, type RuntimeEpochId,
-  type TranscriptBindingId,
+  type B3Result, type CommandContext, type ProviderSessionId, type ProviderUsageEvidenceId,
+  type RuntimeEpochId, type TranscriptBindingId, type TranscriptTurnCompletionId,
 } from '@novakai/foundation/contract';
 import type { LaunchPlanFacts, RunCredentialPort } from '../contract/ports.js';
 import {
@@ -31,6 +32,9 @@ import type { RunWatcherPort } from '../contract/custody-ports.js';
 import {
   composeAgentRuns, type ComposeAgentRunsOptions, type ComposedAgentRuns,
 } from '../core/runs-compose.js';
+import type {
+  ProviderTurnCompletionCoordinator, ProviderTurnCompletionEvidenceLookup,
+} from '../core/runs-context.js';
 import {
   createFakeMessagingEndpoints, createFakeTranscriptCustody,
   type FakeMessagingEndpoints, type FakeTranscriptCustody,
@@ -154,8 +158,94 @@ export function createRunsRig(options: RunsRigOptions = {}): RunsRig {
   const fence = createFakeFence();
   const events: RunsRig['events'] = [];
 
+  const completions = new Map<TranscriptTurnCompletionId, Awaited<ReturnType<
+    ProviderTurnCompletionEvidenceLookup['getTranscriptCompletion']
+  >> extends B3Result<infer Value> ? Value : never>();
+  const usageEvidence = new Map<ProviderUsageEvidenceId, Awaited<ReturnType<
+    ProviderTurnCompletionEvidenceLookup['getUsageEvidence']
+  >> extends B3Result<infer Value> ? Value : never>();
+  const syntheticCompletionEvidence: ProviderTurnCompletionEvidenceLookup = {
+    async getTranscriptCompletion(id) {
+      const completion = completions.get(id);
+      return completion === undefined
+        ? b3fail(b3err('TranscriptSourceUnavailable', 'fake completion is not ready', {}, true))
+        : b3ok(completion);
+    },
+    async getUsageEvidence(id) {
+      const evidence = usageEvidence.get(id);
+      return evidence === undefined
+        ? b3fail(b3err('UsageUnavailable', 'fake usage evidence is not ready', {}, true))
+        : b3ok(evidence);
+    },
+  };
+
+  // A composed Runtime always has completion owners. Most contract tests do
+  // not care about that seam directly, but the two-turn skills gate now sends
+  // both turns through the semantic barrier and therefore must complete turn 1
+  // before it can release turn 2. Keep that production invariant in the rig;
+  // tests of unavailable owner evidence replace these fakes explicitly.
+  let runtime!: ComposedAgentRuns;
+  const syntheticCompletionCoordinator: ProviderTurnCompletionCoordinator = async (input) => {
+    const submissionResult = await runtime.getProviderTurnSubmission(
+      { id: CHRIS, kind: 'human', verifiedScopes: EVERY_SCOPE }, input.providerTurnId,
+    );
+    if (!submissionResult.ok) return submissionResult;
+    const submission = submissionResult.value;
+    const completionId = transcriptTurnCompletionId(
+      submission.transcriptBindingId, submission.providerTurnId,
+    );
+    const evidenceId = deterministicId('providerUsage', [
+      String(submission.providerSessionId), 'runtime-turn-completion',
+      String(submission.agentRunId), String(submission.providerTurnId), String(completionId),
+    ]) as ProviderUsageEvidenceId;
+    const observedAt = nowIsoUtc();
+    const evidenceDigest = 'd'.repeat(64);
+    completions.set(completionId, {
+      id: completionId,
+      providerTurnId: submission.providerTurnId,
+      agentRunId: submission.agentRunId,
+      providerSessionId: submission.providerSessionId,
+      providerConversationId: submission.providerConversationId,
+      transcriptBindingId: submission.transcriptBindingId,
+      completionTranscriptWatermark: '0000000001',
+      completionEvidenceDigest: evidenceDigest,
+      observedAt,
+    });
+    usageEvidence.set(evidenceId, {
+      id: evidenceId,
+      providerSessionId: submission.providerSessionId,
+      providerConversationId: submission.providerConversationId,
+      observedAt,
+      source: 'transcript-turn-completion',
+      sourceCursor: '0000000001',
+      scope: {
+        kind: 'runtime-turn-completion',
+        agentRunId: submission.agentRunId,
+        providerTurnId: submission.providerTurnId,
+        transcriptTurnCompletionId: completionId,
+      },
+      measurement: { quality: 'partial', providerTurns: 1, evidenceDigest },
+    });
+    return runtime.completeProviderTurn({
+      principal: { id: 'sys_reconciler', kind: 'system', verifiedScopes: [] },
+      clientOpId: mintClientOpId(),
+      traceId: input.traceId,
+      contractVersion: 1,
+      runtimeEpochId: fence.epochId,
+    }, {
+      agentRunId: input.agentRunId,
+      providerTurnId: input.providerTurnId,
+      expectedActiveTuple: {
+        providerTurnId: input.providerTurnId,
+        activityGeneration: input.activityGeneration,
+      },
+      transcriptTurnCompletionId: completionId,
+      providerUsageEvidenceId: evidenceId,
+    });
+  };
+
   const storeOptions = { root, dataRoot: path.join(root, 'stores') };
-  const runtime = composeAgentRuns({
+  runtime = composeAgentRuns({
     ...storeOptions,
     ...(options.crashAfterWrites === undefined
       ? {}
@@ -188,12 +278,10 @@ export function createRunsRig(options: RunsRigOptions = {}): RunsRig {
     ...(options.watchers === undefined ? {} : { watchers: options.watchers }),
     notifications,
     ...(options.usage === undefined ? {} : { usage: options.usage }),
-    ...(options.providerTurnCompletionEvidence === undefined
-      ? {}
-      : { providerTurnCompletionEvidence: options.providerTurnCompletionEvidence }),
-    ...(options.providerTurnCompletionCoordinator === undefined
-      ? {}
-      : { providerTurnCompletionCoordinator: options.providerTurnCompletionCoordinator }),
+    providerTurnCompletionEvidence:
+      options.providerTurnCompletionEvidence ?? syntheticCompletionEvidence,
+    providerTurnCompletionCoordinator:
+      options.providerTurnCompletionCoordinator ?? syntheticCompletionCoordinator,
   });
 
   const envelope = (principal: AuthenticatedPrincipal): CommandContext => ({
