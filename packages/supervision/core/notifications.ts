@@ -154,6 +154,10 @@ async function settleOne(
   const rule = await deps.store.read<WatchRule>('watchRule', deadline.watchRuleId);
   if (!rule.ok) return b3fail(rule.error);
   if (rule.value === null || rule.value.status !== 'active') return b3ok(null);
+  // Activity drift has its own evidence reducer, clocks, and fenced scheduler
+  // command. Letting the generic event path settle it would skip all nine
+  // durable drift steps and manufacture an ordinary condition notification.
+  if (rule.value.condition.kind === 'activity-drift') return b3ok(null);
   return settleDeadline(deps, principal, { rule: rule.value, deadline }, event);
 }
 

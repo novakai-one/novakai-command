@@ -484,6 +484,27 @@ test('replaying the same committed event queues no second Notification', async (
   }
 });
 
+test('ordinary event evaluation never fires an activity-drift deadline', async () => {
+  const rig = createRig('2026-08-03T00:00:00.000Z', 'required', []);
+  try {
+    await rig.supervision.installRunWatchers(runtimeContext(), {
+      ...INSTALL,
+      requiredTemplateRefs: [],
+    });
+    const queued = unwrap(await rig.supervision.evaluateEvent(runtimeContext(), {
+      event: committedEvent('2026-08-03T00:07:00.000Z', 4),
+    }), 'evaluateEvent');
+    assert.deepEqual(queued, [], 'generic event evaluation bypassed checkRunDrift');
+
+    const deadlines = unwrap(await rig.supervision.listWatchDeadlines(human), 'deadlines');
+    assert.equal(deadlines.length, 1);
+    assert.equal(deadlines[0]!.state, 'armed');
+    assert.equal(deadlines[0]!.driftState?.phase, 'observing');
+  } finally {
+    rig.close();
+  }
+});
+
 test('an unknown template ref is refused rather than silently skipped', async () => {
   const unknown = { id: 'watch-template/not-a-template', version: 1, digest: 'x' };
   const rig = createRig('2026-08-03T00:00:00.000Z', 'disabled-explicitly', [unknown]);
