@@ -33,7 +33,9 @@ import { everyCapability } from './claude.js';
 import {
   kimiSessionIdFrom, mergedEnvironment, newestSessionSince, probeVersion, resolveCli,
 } from './cli-probe.js';
-import { boundaryProfile, unavailableBoundary } from './turn-boundary.js';
+import {
+  observeProviderBoundaryFile, productionBoundaryProfile,
+} from './turn-boundary.js';
 
 /** Legacy seed values that are NOT model names and must never reach the CLI. */
 const NO_MODEL_FLAG = new Set(['cli-default', 'kimi-cli', '']);
@@ -77,7 +79,10 @@ export function createKimiAdapter(
       if (executable === '') {
         return everyCapability('kimi', tested, claims('unavailable', 'the kimi CLI is not on PATH'));
       }
-      const profile = boundaryProfile('kimi', tested);
+      const profile = productionBoundaryProfile('kimi', tested);
+      const boundary = profile === null
+        ? claims('unavailable', `kimi ${tested} has no conformance-tested boundary profile`)
+        : claims('native', `exact-version boundary profile ${profile.id}; source-schema ${profile.sourceFormatSchemaDigest}; terminal-semantics ${profile.completionFrame.terminalSemanticsEvidenceDigest}`);
       return {
         provider: 'kimi',
         testedProviderVersion: tested,
@@ -104,12 +109,24 @@ export function createKimiAdapter(
           + 'usage is B3d'),
         screenContext: claims('unsupported', 'no screen-context channel at this version'),
         nativeSubagentObservation: claims('unavailable', 'native subagent observation is B3c'),
-        turnBoundary: claims('native', `exact-version boundary profile ${profile.id}`),
+        turnBoundary: boundary,
         turnBoundaryProfile: profile,
       };
     },
 
-    async observeProviderTurnBoundary() { return b3ok(unavailableBoundary()); },
+    async observeProviderTurnBoundary(input) {
+      const profile = productionBoundaryProfile('kimi', versionOf());
+      if (profile === null) {
+        return b3ok({
+          kind: 'uncertain' as const,
+          reason: 'provider-version-unsupported' as const,
+          evidenceRefs: [`kimi ${versionOf()}`],
+        });
+      }
+      return b3ok(observeProviderBoundaryFile(
+        profile, sessionRoot, input,
+      ));
+    },
 
     async buildLaunch(
       plan: ResolvedLaunchPlan, input: ProviderLaunchInput,

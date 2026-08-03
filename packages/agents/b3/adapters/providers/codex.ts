@@ -33,7 +33,9 @@ import { everyCapability } from './claude.js';
 import {
   codexSessionIdFrom, mergedEnvironment, newestSessionSince, probeVersion, resolveCli,
 } from './cli-probe.js';
-import { boundaryProfile, unavailableBoundary } from './turn-boundary.js';
+import {
+  observeProviderBoundaryFile, productionBoundaryProfile,
+} from './turn-boundary.js';
 
 const NO_MODEL_FLAG = new Set(['cli-default', 'codex-cli', '']);
 
@@ -86,7 +88,10 @@ export function createCodexAdapter(
       if (executable === '') {
         return everyCapability('codex', tested, claims('unavailable', 'the codex CLI is not on PATH'));
       }
-      const profile = boundaryProfile('codex', tested);
+      const profile = productionBoundaryProfile('codex', tested);
+      const boundary = profile === null
+        ? claims('unavailable', `codex ${tested} has no conformance-tested boundary profile`)
+        : claims('native', `exact-version boundary profile ${profile.id}; source-schema ${profile.sourceFormatSchemaDigest}; terminal-semantics ${profile.completionFrame.terminalSemanticsEvidenceDigest}`);
       return {
         provider: 'codex',
         testedProviderVersion: tested,
@@ -112,12 +117,24 @@ export function createCodexAdapter(
         usage: claims('unavailable', 'per-Run usage is B3d'),
         screenContext: claims('unsupported', 'no screen-context channel at this version'),
         nativeSubagentObservation: claims('unavailable', 'native subagent observation is B3c'),
-        turnBoundary: claims('native', `exact-version boundary profile ${profile.id}`),
+        turnBoundary: boundary,
         turnBoundaryProfile: profile,
       };
     },
 
-    async observeProviderTurnBoundary() { return b3ok(unavailableBoundary()); },
+    async observeProviderTurnBoundary(input) {
+      const profile = productionBoundaryProfile('codex', versionOf());
+      if (profile === null) {
+        return b3ok({
+          kind: 'uncertain' as const,
+          reason: 'provider-version-unsupported' as const,
+          evidenceRefs: [`codex ${versionOf()}`],
+        });
+      }
+      return b3ok(observeProviderBoundaryFile(
+        profile, sessionRoot, input,
+      ));
+    },
 
     async buildLaunch(
       plan: ResolvedLaunchPlan, input: ProviderLaunchInput,
