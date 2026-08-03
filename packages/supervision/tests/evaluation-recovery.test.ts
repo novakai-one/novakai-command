@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { cpSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -508,5 +508,81 @@ test('AMD-003 #19/#39: retry appends a new ordinal and re-evaluates noncommittin
     ), true);
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('AMD-003 #32: equal-time cooldown anchors are deterministic across order and restart', async () => {
+  const baseRoot = mkdtempSync(path.join(tmpdir(), 'nvk-cooldown-tie-base-'));
+  const leftRoot = mkdtempSync(path.join(tmpdir(), 'nvk-cooldown-tie-left-'));
+  const rightRoot = mkdtempSync(path.join(tmpdir(), 'nvk-cooldown-tie-right-'));
+  try {
+    const base = compose(baseRoot, ownersFor());
+    const rule = await createThresholdRule(base, { cooldownMs: 0 });
+    cpSync(path.join(baseRoot, 'stores'), path.join(leftRoot, 'stores'), { recursive: true });
+    cpSync(path.join(baseRoot, 'stores'), path.join(rightRoot, 'stores'), { recursive: true });
+
+    const tiedAt = '2026-08-04T00:00:10.000Z';
+    const first = event(0, { observedAt: tiedAt });
+    const second = event(1, { observedAt: tiedAt });
+    const candidate = event(2, { observedAt: '2026-08-04T00:00:30.000Z' });
+    const exercise = async (
+      root: string,
+      order: readonly [ReturnType<typeof event>, ReturnType<typeof event>],
+    ) => {
+      const owners = ownersFor(first, second, candidate);
+      for (let index = 0; index < 3; index += 1) {
+        const facts = run(index);
+        owners.runs.set(String(facts.providerSessionId), facts);
+      }
+      const host = compose(root, owners);
+      for (const source of order) {
+        const committed = await host.evaluateEvent(systemContext(), { event: source });
+        assert.equal(committed.ok, true, committed.ok ? '' : committed.error.message);
+        if (committed.ok) assert.equal(committed.value.length, 1);
+      }
+      const updated = await host.updateWatchRule(humanContext(), {
+        watchRuleId: rule.id,
+        expectedRecordVersion: rule.recordVersion,
+        replacement: {
+          subject: rule.subject,
+          condition: rule.condition,
+          recipient: rule.recipient,
+          deliveryMode: rule.deliveryMode,
+          cooldownMs: 60_000,
+          status: rule.status,
+        },
+      });
+      assert.equal(updated.ok, true, updated.ok ? '' : updated.error.message);
+
+      const restarted = compose(root, owners);
+      const suppressed = await restarted.evaluateEvent(systemContext(), { event: candidate });
+      assert.deepEqual(suppressed, b3ok([]));
+      const replay = await restarted.evaluateEvent(systemContext(), { event: candidate });
+      assert.deepEqual(replay, b3ok([]));
+      const notifications = await restarted.listNotifications(HUMAN, { limit: 20 });
+      assert.equal(notifications.ok, true);
+      if (!notifications.ok) return { ids: [] as string[], outcomes: [] as string[] };
+      const progress = await restarted.listWatchEvaluationProgress(HUMAN, { limit: 20 });
+      assert.equal(progress.ok, true);
+      if (!progress.ok) return { ids: [] as string[], outcomes: [] as string[] };
+      const candidateProgress = progress.value.items.find(
+        (item) => item.trigger.kind === 'event' && item.trigger.eventId === candidate.eventId,
+      )!;
+      return {
+        ids: notifications.value.items.map((item) => String(item.id)).sort(),
+        outcomes: candidateProgress.completed.map((entry) => entry.outcome.kind),
+      };
+    };
+
+    const left = await exercise(leftRoot, [first, second]);
+    const right = await exercise(rightRoot, [second, first]);
+    assert.equal(left.ids.length, 2);
+    assert.deepEqual(left.ids, right.ids);
+    assert.deepEqual(left.outcomes, ['cooldown-suppressed']);
+    assert.deepEqual(right.outcomes, left.outcomes);
+  } finally {
+    rmSync(baseRoot, { recursive: true, force: true });
+    rmSync(leftRoot, { recursive: true, force: true });
+    rmSync(rightRoot, { recursive: true, force: true });
   }
 });
