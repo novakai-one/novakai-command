@@ -13,8 +13,9 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
   b3err, b3fail, b3ok, deriveClientOpId,
-  type AgentRunId, type AuthenticatedPrincipal, type CommandContext,
-  type ProviderTurnId, type RecordVersion, type SystemCommandContext,
+  type AgentRunId, type AuthenticatedPrincipal, type B3PrincipalId, type B3Result,
+  type ClientOpId, type CommandContext, type ProviderTurnId, type RecordEnvelope,
+  type RecordVersion, type SystemCommandContext,
   type TerminalInputAttemptId,
 } from '@novakai/foundation/contract';
 import {
@@ -72,6 +73,30 @@ function rig(): Rig {
   return {
     store: createSupervisionStore({ root, dataRoot: path.join(root, '.novakai') }),
     cleanup: () => rmSync(root, { recursive: true, force: true }),
+  };
+}
+
+function failNextUpdateFor(store: SupervisionStore, objectId: string): SupervisionStore {
+  let shouldFail = true;
+  return {
+    ...store,
+    async update<Record_ extends RecordEnvelope<string, string>>(
+      principal: B3PrincipalId,
+      candidateId: string,
+      patch: Record<string, unknown>,
+      expectedVersion: RecordVersion,
+      clientOpId: ClientOpId,
+    ): Promise<B3Result<Record_>> {
+      if (shouldFail && candidateId === objectId) {
+        shouldFail = false;
+        return b3fail(b3err(
+          'StoreUnavailable', 'injected crash between the deadline and Notification CAS', {}, true,
+        ));
+      }
+      return store.update<Record_>(
+        principal, candidateId, patch, expectedVersion, clientOpId,
+      );
+    },
   };
 }
 
@@ -169,6 +194,68 @@ const claimInput = (
   expectedActivityGeneration: 1 as never,
 });
 
+interface SeededDriftDelivery {
+  readonly deadline: WatchDeadline;
+  readonly notification: Notification;
+}
+
+async function seedQueuedDriftDelivery(store: SupervisionStore): Promise<SeededDriftDelivery> {
+  const episodeId = `driftEpisode_${'d'.repeat(52)}` as DriftEpisodeId;
+  const deadlineId = `watchDeadline_${'e'.repeat(52)}` as WatchDeadlineId;
+  const notificationId = `notification_${'f'.repeat(52)}` as NotificationId;
+  const effectKey = notificationDeliveryEffectKey(notificationId, episodeId);
+  const rule = await store.create<WatchRule>('sys_supervision', {
+    kind: 'watchRule', id: RULE_ID, schemaVersion: 1,
+    createdAt: '2026-08-03T00:00:00.000Z', permissionLevel: 'private',
+    createdBy: 'sys_supervision',
+    subject: { kind: 'agent-run', agentRunId: RUN_ID },
+    condition: {
+      kind: 'activity-drift', intervalMs: 300_000,
+      staleAfterIntervals: 2, escalateAfterConsecutive: 3,
+    },
+    recipient: { kind: 'human', principalId: 'person_chris' },
+    deliveryMode: 'queue-only', cooldownMs: 0, status: 'active',
+    driftPolicy: {
+      mode: 'cheap-first', freeEvidence: DRIFT_FREE_EVIDENCE,
+      statusTurn: 'queue-runtime-status-request-only-after-free-evidence-suspicious',
+      statusRecipient: 'subject-agent', statusDeliveryMode: 'start-turn',
+      replyWindowMs: 300_000, statusPrompt: DRIFT_STATUS_PROMPT,
+    },
+  } as never, deriveClientOpId('c7:drift-rule'));
+  assert.equal(rule.ok, true, rule.ok ? '' : rule.error.message);
+
+  const deadline = await store.create<WatchDeadline>('sys_supervision', {
+    kind: 'watchDeadline', id: deadlineId, schemaVersion: 1,
+    createdAt: '2026-08-03T00:01:00.000Z', permissionLevel: 'private',
+    createdBy: 'sys_supervision', watchRuleId: RULE_ID,
+    subjectKey: `agent-run:${RUN_ID}`, activityGeneration: 1,
+    dueAt: '2026-08-03T00:06:00.000Z', state: 'claimed',
+    driftState: {
+      kind: 'activity-drift', phase: 'status-outstanding', episodeOrdinal: 1,
+      quietIntervals: 2, episodeId, consecutiveUnansweredChecks: 0,
+      outstandingStatus: {
+        episodeId, effectKey, notificationId, state: 'queued',
+        requestedAt: '2026-08-03T00:01:00.000Z',
+      },
+    },
+  } as never, deriveClientOpId('c7:drift-deadline'));
+  assert.equal(deadline.ok, true, deadline.ok ? '' : deadline.error.message);
+
+  const notification = await store.create<Notification>('sys_supervision', {
+    kind: 'notification', id: notificationId, schemaVersion: 1,
+    createdAt: '2026-08-03T00:01:00.000Z', permissionLevel: 'private',
+    createdBy: 'sys_supervision', deliveryEffectKey: effectKey,
+    deliveryAttempt: { state: 'queued', effectKey }, watchRuleId: RULE_ID,
+    subject: { kind: 'agent-run', agentRunId: RUN_ID },
+    recipient: { kind: 'agent', agentId: 'agent_123e4567-e89b-42d3-a456-426614174000' },
+    conditionGeneration: 1, summary: DRIFT_STATUS_PROMPT,
+    evidenceRefs: ['drift:c7'], state: 'queued', deliveryMode: 'start-turn',
+    phase: 'drift-status-request', driftEpisodeId: episodeId,
+  } as never, deriveClientOpId('c7:drift-notification'));
+  assert.equal(notification.ok, true, notification.ok ? '' : notification.error.message);
+  return { deadline: deadline.value, notification: notification.value };
+}
+
 // ---------------------------------------------------------------------------
 // §13.8 — the delivery modes are not decorations; they gate the effect.
 // ---------------------------------------------------------------------------
@@ -233,73 +320,69 @@ test('next-turn-context IS claimable — it rides a turn it did not start', asyn
 test('a drift delivery claim advances and returns its matching WatchDeadline before the Notification', async () => {
   const { store, cleanup } = rig();
   try {
-    const episodeId = `driftEpisode_${'d'.repeat(52)}` as DriftEpisodeId;
-    const deadlineId = `watchDeadline_${'e'.repeat(52)}` as WatchDeadlineId;
-    const notificationId = `notification_${'f'.repeat(52)}` as NotificationId;
-    const effectKey = notificationDeliveryEffectKey(notificationId, episodeId);
-    const rule = await store.create<WatchRule>('sys_supervision', {
-      kind: 'watchRule', id: RULE_ID, schemaVersion: 1,
-      createdAt: '2026-08-03T00:00:00.000Z', permissionLevel: 'private',
-      createdBy: 'sys_supervision',
-      subject: { kind: 'agent-run', agentRunId: RUN_ID },
-      condition: {
-        kind: 'activity-drift', intervalMs: 300_000,
-        staleAfterIntervals: 2, escalateAfterConsecutive: 3,
-      },
-      recipient: { kind: 'human', principalId: 'person_chris' },
-      deliveryMode: 'queue-only', cooldownMs: 0, status: 'active',
-      driftPolicy: {
-        mode: 'cheap-first', freeEvidence: DRIFT_FREE_EVIDENCE,
-        statusTurn: 'queue-runtime-status-request-only-after-free-evidence-suspicious',
-        statusRecipient: 'subject-agent', statusDeliveryMode: 'start-turn',
-        replyWindowMs: 300_000, statusPrompt: DRIFT_STATUS_PROMPT,
-      },
-    } as never, deriveClientOpId('c7:drift-rule'));
-    assert.equal(rule.ok, true, rule.ok ? '' : rule.error.message);
-
-    const deadline = await store.create<WatchDeadline>('sys_supervision', {
-      kind: 'watchDeadline', id: deadlineId, schemaVersion: 1,
-      createdAt: '2026-08-03T00:01:00.000Z', permissionLevel: 'private',
-      createdBy: 'sys_supervision', watchRuleId: RULE_ID,
-      subjectKey: `agent-run:${RUN_ID}`, activityGeneration: 1,
-      dueAt: '2026-08-03T00:06:00.000Z', state: 'claimed',
-      driftState: {
-        kind: 'activity-drift', phase: 'status-outstanding', episodeOrdinal: 1,
-        quietIntervals: 2, episodeId, consecutiveUnansweredChecks: 0,
-        outstandingStatus: {
-          episodeId, effectKey, notificationId, state: 'queued',
-          requestedAt: '2026-08-03T00:01:00.000Z',
-        },
-      },
-    } as never, deriveClientOpId('c7:drift-deadline'));
-    assert.equal(deadline.ok, true, deadline.ok ? '' : deadline.error.message);
-
-    const notification = await store.create<Notification>('sys_supervision', {
-      kind: 'notification', id: notificationId, schemaVersion: 1,
-      createdAt: '2026-08-03T00:01:00.000Z', permissionLevel: 'private',
-      createdBy: 'sys_supervision', deliveryEffectKey: effectKey,
-      deliveryAttempt: { state: 'queued', effectKey }, watchRuleId: RULE_ID,
-      subject: { kind: 'agent-run', agentRunId: RUN_ID },
-      recipient: { kind: 'agent', agentId: 'agent_123e4567-e89b-42d3-a456-426614174000' },
-      conditionGeneration: 1, summary: DRIFT_STATUS_PROMPT,
-      evidenceRefs: ['drift:c7'], state: 'queued', deliveryMode: 'start-turn',
-      phase: 'drift-status-request', driftEpisodeId: episodeId,
-    } as never, deriveClientOpId('c7:drift-notification'));
-    assert.equal(notification.ok, true, notification.ok ? '' : notification.error.message);
-    if (!notification.ok) return;
+    const { deadline, notification } = await seedQueuedDriftDelivery(store);
 
     const claimed = await claimNotificationDelivery(
-      { store }, runtime(), claimInput(notification.value),
+      { store }, runtime(), claimInput(notification),
     );
 
     assert.equal(claimed.ok, true, claimed.ok ? '' : claimed.error.message);
     if (!claimed.ok) return;
     assert.equal(claimed.value.notification.deliveryAttempt.state, 'delivery-claimed');
-    assert.equal(claimed.value.watchDeadline?.id, deadlineId);
+    assert.equal(claimed.value.watchDeadline?.id, deadline.id);
     assert.equal(
       claimed.value.watchDeadline?.driftState?.phase === 'status-outstanding'
         ? claimed.value.watchDeadline.driftState.outstandingStatus.state : undefined,
       'delivery-claimed',
+    );
+  } finally { cleanup(); }
+});
+
+test('a drift claim replay heals a crash between the deadline and Notification CAS', async () => {
+  const { store, cleanup } = rig();
+  try {
+    const { deadline, notification } = await seedQueuedDriftDelivery(store);
+    const crashStore = failNextUpdateFor(store, notification.id);
+    const input = claimInput(notification);
+
+    const interrupted = await claimNotificationDelivery({ store: crashStore }, runtime(), input);
+    assert.equal(interrupted.ok, false);
+    assert.equal(interrupted.ok ? '' : interrupted.error.code, 'StoreUnavailable');
+
+    const splitDeadline = await store.read<WatchDeadline>('watchDeadline', deadline.id);
+    const splitNotification = await store.read<Notification>('notification', notification.id);
+    assert.equal(splitDeadline.ok, true, splitDeadline.ok ? '' : splitDeadline.error.message);
+    assert.equal(splitNotification.ok, true, splitNotification.ok ? '' : splitNotification.error.message);
+    if (!splitDeadline.ok || !splitDeadline.value || !splitNotification.ok || !splitNotification.value) {
+      return;
+    }
+    assert.equal(splitNotification.value.deliveryAttempt.state, 'queued');
+    assert.equal(
+      splitDeadline.value.driftState?.phase === 'status-outstanding'
+        ? splitDeadline.value.driftState.outstandingStatus.state : undefined,
+      'delivery-claimed',
+    );
+    const splitDeadlineVersion = splitDeadline.value.recordVersion;
+
+    const healed = await claimNotificationDelivery({ store: crashStore }, runtime(), input);
+    assert.equal(healed.ok, true, healed.ok ? '' : healed.error.message);
+    if (!healed.ok) return;
+    assert.equal(healed.value.notification.deliveryAttempt.state, 'delivery-claimed');
+    assert.equal(healed.value.watchDeadline?.recordVersion, splitDeadlineVersion);
+    assert.equal(
+      healed.value.watchDeadline?.driftState?.phase === 'status-outstanding'
+        && healed.value.watchDeadline.driftState.outstandingStatus.state === 'delivery-claimed'
+        ? healed.value.watchDeadline.driftState.outstandingStatus.notificationInputReservationId
+        : undefined,
+      RESERVATION,
+    );
+    assert.equal(
+      healed.value.notification.deliveryAttempt.state === 'delivery-claimed'
+        ? healed.value.notification.deliveryAttempt.claimedAt : undefined,
+      healed.value.watchDeadline?.driftState?.phase === 'status-outstanding'
+        && healed.value.watchDeadline.driftState.outstandingStatus.state === 'delivery-claimed'
+        ? healed.value.watchDeadline.driftState.outstandingStatus.claimedAt : undefined,
+      'healing must preserve the first half claim timestamp',
     );
   } finally { cleanup(); }
 });
