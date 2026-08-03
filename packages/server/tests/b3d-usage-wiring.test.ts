@@ -242,6 +242,84 @@ test('the live composition turns satisfied output-token evidence into a Notifica
   }
 });
 
+test('C20: production composition notifies for a final historical Run with no live replacement', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'nvk-b3d-c20-final-'));
+  const host = await startRuntimeHost({
+    root, port: 0, ptyHost: createFakePtyHost(), providers: createFakeProviderAdapters(),
+  });
+  try {
+    const client = await connectRuntime({ root, port: host.port, token: host.token });
+    try {
+      const role = unwrap(await client.call<{ id: string }>(
+        'b3.agent.createRole', chatRole('c20-final-wire'), mintClientOpId(),
+      ), 'create role');
+      const spawned = unwrap(await client.call<AgentRunView>('b3.agent.spawn', {
+        roleProfileId: role.id, displayName: 'C20 Final', workingDirectory: root,
+      }, mintClientOpId()), 'spawn');
+      const rule = unwrap(await host.runtime.supervision.createWatchRule({
+        principal: PRINCIPAL,
+        clientOpId: mintClientOpId(),
+        traceId: mintTraceCorrelationId(),
+        contractVersion: 1,
+      }, {
+        subject: { kind: 'agent', agentId: spawned.agent.agentId },
+        condition: { kind: 'output-tokens-at-least', value: 1 },
+        recipient: { kind: 'human', principalId: PRINCIPAL.id },
+        deliveryMode: 'queue-only', cooldownMs: 0, status: 'active',
+      }), 'create stable-Agent threshold');
+      const stopped = await client.call('b3.agent.stop', {
+        agentId: spawned.agent.agentId,
+        expectedLiveRunId: spawned.run.id,
+        confirmation: 'stop-one',
+      }, mintClientOpId());
+      assert.equal(stopped.ok, true, stopped.ok ? '' : stopped.error.message);
+      const noCurrent = unwrap(await host.runtime.runs.resolveCurrentRunByAgent(
+        PRINCIPAL, spawned.agent.agentId,
+      ), 'current Run after stop');
+      assert.equal(noCurrent, null);
+
+      const recorded = await host.runtime.usageEvidence.recordProviderUsageEvidence({
+        principal: { id: 'sys_agents', kind: 'system', verifiedScopes: [] },
+        clientOpId: mintClientOpId(),
+        traceId: mintTraceCorrelationId(),
+        contractVersion: 1,
+      }, {
+        providerSessionId: spawned.provider.providerSessionId,
+        providerConversationId: null,
+        observedAt: '2026-08-04T04:00:00.000Z' as never,
+        source: 'transcript-derived:provider-total',
+        sourceCursor: 'line:c20-final',
+        measurement: {
+          quality: 'measured', inputTokens: 10, outputTokens: 2, cachedInputTokens: 0,
+          costMicros: 1, providerTurns: 1, limitations: [],
+          evidenceDigest: 'sha256:c20-final-wire',
+        },
+      });
+      assert.equal(recorded.ok, true, recorded.ok ? '' : recorded.error.message);
+      const page = await waitForThresholdNotification(host);
+      assert.equal(page.items.length, 1);
+      const notification = page.items[0]!;
+      assert.equal(notification.watchRuleId, rule.id);
+      assert.equal(notification.schemaVersion, 2);
+      if (notification.schemaVersion !== 2 || notification.phase !== 'condition') return;
+      assert.equal(notification.occurrenceIdentity, 'agent-run');
+      if (notification.occurrenceIdentity !== 'agent-run') return;
+      assert.equal(notification.conditionOccurrence.agentRunId, spawned.run.id);
+      assert.equal(
+        notification.conditionOccurrence.providerSessionId,
+        spawned.provider.providerSessionId,
+      );
+      assert.equal(notification.conditionOccurrence.qualifyingEvidenceRef, recorded.value.id);
+      assert.equal(notification.qualifiedAt, recorded.value.observedAt);
+    } finally {
+      client.close();
+    }
+  } finally {
+    await host.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('the live composition estimates current token usage from the provider transcript', async () => {
   const root = mkdtempSync(path.join(tmpdir(), 'nvk-b3d-transcript-usage-'));
   const providerHome = mkdtempSync(path.join(tmpdir(), 'nvk-b3d-provider-home-'));
