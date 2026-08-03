@@ -12,7 +12,8 @@
 import {
   b3err, b3fail, b3ok, composeReceiptStore, mintClientOpId, mintTraceCorrelationId,
   type AuthenticatedPrincipal, type B3Result, type CommandContext,
-  type PublicOperationName, type ReceiptStore, type RunOperationId, type TerminalSessionId,
+  type CapabilityOwner, type PublicOperationName, type ReceiptStore, type RunOperationId,
+  type TerminalSessionId, type TraceCorrelationId,
 } from '@novakai/foundation/contract';
 import type {
   AdoptAgentInput, AgentRunsContract, AgentRunView, ApplyRunControlInput,
@@ -55,6 +56,7 @@ import {
   getNotificationTurnSubmission, startNotificationTurnAtSafeBoundary,
 } from './notification-delivery.js';
 import { RunActivityQueue } from './run-activity-queue.js';
+import { retainRunOccurrenceEvent } from './occurrence-event-retention.js';
 
 /**
  * What a host with no Messaging answers: there is nothing to deliver.
@@ -152,19 +154,31 @@ export function composeAgentRuns(options: ComposeAgentRunsOptions): ComposedAgen
   const events = createRunEventLog();
   const publish = options.publish;
   const providerActivity = new RunActivityQueue();
+  const store = options.store ?? createRunsStore(options);
+  const retainAndPublish = async (
+    kind: string,
+    payload: Readonly<Record<string, unknown>>,
+    sourceOwner: CapabilityOwner,
+    traceId?: TraceCorrelationId,
+  ) => {
+    const event = events.append(kind, payload, traceId, sourceOwner);
+    const retained = await retainRunOccurrenceEvent(store, event);
+    if (!retained.ok) return b3fail(retained.error);
+    publish?.(kind, { ...payload, cursor: event.cursor, eventId: event.eventId });
+    return b3ok(event);
+  };
 
   const core: RunsCore = {
-    store: options.store ?? createRunsStore(options),
+    store,
     agents: options.agents,
     terminal: options.terminal,
     providers: options.providers,
     credentials: options.credentials,
     receipts: options.receipts ?? composeReceiptStore(options),
     fence: options.fence,
-    publish: (kind, payload, traceId) => {
-      const event = events.append(kind, payload, traceId);
-      publish?.(kind, { ...payload, cursor: event.cursor, eventId: event.eventId });
-    },
+    publish: (kind, payload, traceId) => retainAndPublish(
+      kind, payload, 'agent-runtime', traceId,
+    ),
     defaultViewport: options.defaultViewport ?? MANAGED_VIEWPORT,
     gateTimeoutMs: options.gateTimeoutMs ?? DEFAULT_GATE_TIMEOUT_MS,
     clock: options.clock ?? (() => Date.now()),
@@ -219,7 +233,7 @@ export function composeAgentRuns(options: ComposeAgentRunsOptions): ComposedAgen
       resolveCurrentRunByAgent: (principal, agentId) =>
         resolveCurrentRunByAgent(core, principal, agentId),
       getRunOccurrenceEvent: (principal, eventId) =>
-        getRunOccurrenceEvent(core, events, principal, eventId),
+        getRunOccurrenceEvent(core, principal, eventId),
     },
 
     spawnAgent: guarded(OPERATION.spawn, async (context, input: SpawnAgentInput) => {
@@ -308,7 +322,7 @@ export function composeAgentRuns(options: ComposeAgentRunsOptions): ComposedAgen
     resolveCurrentRunByAgent: (principal, agentId) =>
       resolveCurrentRunByAgent(core, principal, agentId),
     getRunOccurrenceEvent: (principal, eventId) =>
-      getRunOccurrenceEvent(core, events, principal, eventId),
+      getRunOccurrenceEvent(core, principal, eventId),
     listAgentRuns: (principal, filter) => listAgentRuns(core, principal, filter),
     getAgentRunTree: (principal, input) => getAgentRunTree(core, principal, input),
     discoverRunControls: (principal, input) => discoverRunControls(core, principal, input),
@@ -316,9 +330,9 @@ export function composeAgentRuns(options: ComposeAgentRunsOptions): ComposedAgen
     getNotificationTurnSubmission: (_principal, effectKey) =>
       getNotificationTurnSubmission(core, effectKey),
     subscribeRunEvents: (_principal, after) => events.subscribe(after),
-    publishCapabilityEvent: (kind, payload, sourceOwner, traceId) => {
-      const event = events.append(kind, payload, traceId, sourceOwner);
-      publish?.(kind, { ...payload, cursor: event.cursor, eventId: event.eventId });
+    publishCapabilityEvent: async (kind, payload, sourceOwner, traceId) => {
+      const retained = await retainAndPublish(kind, payload, sourceOwner, traceId);
+      return retained.ok ? b3ok(null) : b3fail(retained.error);
     },
     readRunEvents: async (_principal, input) => events.read(input.after, input.limit ?? 200),
 

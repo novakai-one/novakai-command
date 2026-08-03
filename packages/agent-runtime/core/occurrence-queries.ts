@@ -7,13 +7,14 @@ import type {
   RunEvent, RunUsageFacts,
 } from '../contract/runs-api.js';
 import type {
-  RunOccurrenceEventBase, RunOccurrenceEventFacts,
+  RunConnectionSnapshot, RunOccurrenceEventBase, RunOccurrenceEventFacts,
 } from '../../supervision/contract/index.js';
+import { isRunDisconnectedEdge } from '../../supervision/contract/index.js';
 import {
   FINAL_LIFECYCLES, type AgentRun, type RunOperation,
 } from '../contract/runs.js';
 import { requireRun, type RunsCore } from './runs-context.js';
-import type { RunEventLog } from './events.js';
+import { findRetainedRunOccurrenceEvent } from './occurrence-event-retention.js';
 
 function usageFacts(agentRun: AgentRun): RunUsageFacts {
   return {
@@ -84,7 +85,23 @@ async function eventRunId(core: RunsCore, event: RunEvent): Promise<B3Result<Age
   if (typeof operationId !== 'string') return b3ok(null);
   const operation = await core.store.read<RunOperation>('runOperation', operationId);
   if (!operation.ok) return b3fail(operation.error);
-  return b3ok(operation.value?.newRunId ?? operation.value?.oldRunId ?? null);
+  if (operation.value === null) return b3ok(null);
+  const targets = [...new Set([operation.value.oldRunId, operation.value.newRunId]
+    .filter((candidate): candidate is AgentRunId => candidate !== undefined))];
+  if (targets.length !== 1) {
+    return b3fail(b3err(
+      'RecoveryRequired',
+      'the retained Runtime operation event does not resolve exactly one target Run',
+      {
+        stage: 'occurrence-derivation',
+        eventId: event.eventId,
+        operationId,
+        resolvedTargetAgentRunIds: targets,
+      },
+      true,
+    ));
+  }
+  return b3ok(targets[0]!);
 }
 
 function eventGeneration(event: RunEvent): ActivityGeneration | null {
@@ -138,6 +155,14 @@ function finalOccurrence(
       { stage: 'occurrence-derivation', eventId: event.eventId }, true,
     ));
   }
+  const reconciledFinal = event.payload['reconciledFinal'];
+  if ((toLifecycle === 'interrupted' && reconciledFinal !== true)
+    || (toLifecycle !== 'interrupted' && reconciledFinal !== undefined)) {
+    return b3fail(b3err(
+      'RecoveryRequired', 'the retained final event has an invalid reconciledFinal discriminator',
+      { stage: 'occurrence-derivation', eventId: event.eventId, toLifecycle }, true,
+    ));
+  }
   return b3ok({
     ...base,
     kind: 'agent.run.lifecycle.changed',
@@ -150,21 +175,47 @@ function finalOccurrence(
 
 function disconnectedOccurrence(
   event: RunEvent,
+  runFacts: RunUsageFacts,
   generation: ActivityGeneration | null,
   base: RunOccurrenceEventBase,
 ): B3Result<RunOccurrenceEventFacts | null> {
+  if (runFacts.final) return b3ok(null);
   const previous = event.payload['previous'];
   const current = event.payload['current'];
   const currentGeneration = current !== null && typeof current === 'object'
     ? (current as Record<string, unknown>)['activityGeneration'] : null;
-  if (previous === null || typeof previous !== 'object'
-    || current === null || typeof current !== 'object'
+  if (previous === null || typeof previous !== 'object' || Array.isArray(previous)
+    || current === null || typeof current !== 'object' || Array.isArray(current)
     || generation === null || Number(currentGeneration) !== Number(generation)) {
     return b3fail(b3err(
       'RecoveryRequired', 'the retained activity event has corrupt occurrence snapshots',
       { stage: 'occurrence-derivation', eventId: event.eventId }, true,
     ));
   }
+  const snapshots = [previous, current] as Readonly<Record<string, unknown>>[];
+  for (const snapshot of snapshots) {
+    const uncertaintyCodes = snapshot['uncertaintyCodes'];
+    if (!['idle', 'working', 'waiting-provider', 'waiting-input', 'interrupting', 'unknown']
+      .includes(String(snapshot['activity']))
+      || !Number.isSafeInteger(snapshot['activityGeneration'])
+      || Number(snapshot['activityGeneration']) < 0
+      || typeof snapshot['observedAt'] !== 'string'
+      || !Array.isArray(uncertaintyCodes)
+      || !uncertaintyCodes.every((code) => typeof code === 'string')
+      || new Set(uncertaintyCodes).size !== uncertaintyCodes.length
+      || [...uncertaintyCodes].sort().some(
+        (code, index) => code !== uncertaintyCodes[index],
+      )) {
+      return b3fail(b3err(
+        'RecoveryRequired', 'the retained activity event has invalid connection snapshots',
+        { stage: 'occurrence-derivation', eventId: event.eventId }, true,
+      ));
+    }
+  }
+  if (!isRunDisconnectedEdge(
+    previous as unknown as RunConnectionSnapshot,
+    current as unknown as RunConnectionSnapshot,
+  )) return b3ok(null);
   return b3ok({
     ...base,
     kind: 'agent.run.activity.changed',
@@ -175,20 +226,27 @@ function disconnectedOccurrence(
 
 function helpOccurrence(
   event: RunEvent,
+  runFacts: RunUsageFacts,
   base: RunOccurrenceEventBase,
 ): B3Result<RunOccurrenceEventFacts | null> {
   const reason = event.payload['reason'];
   const evidenceRefs = event.payload['evidenceRefs'];
-  if (typeof reason !== 'string' || !Array.isArray(evidenceRefs)) return b3ok(null);
+  if (typeof reason !== 'string' || reason.trim() === ''
+    || !Array.isArray(evidenceRefs) || evidenceRefs.length === 0
+    || !evidenceRefs.every((evidenceRef) => typeof evidenceRef === 'string')) {
+    return b3fail(b3err(
+      'RecoveryRequired', 'the retained child recovery event lacks typed recovery evidence',
+      { stage: 'occurrence-derivation', eventId: event.eventId }, true,
+    ));
+  }
+  if (runFacts.lifecycle !== 'recovery-required') return b3ok(null);
   return b3ok({
     ...base,
     kind: 'runtime.recovery.required',
     occurrenceKind: 'child-needs-help',
     occurrence: {
       recoveryReason: reason,
-      evidenceRefs: evidenceRefs.filter(
-        (evidenceRef): evidenceRef is string => typeof evidenceRef === 'string',
-      ),
+      evidenceRefs,
     },
   });
 }
@@ -239,8 +297,10 @@ async function occurrenceForKind(
   const base = occurrenceBase(event, runFacts, generation);
   switch (event.kind) {
     case 'agent.run.lifecycle.changed': return finalOccurrence(event, runFacts, generation, base);
-    case 'agent.run.activity.changed': return disconnectedOccurrence(event, generation, base);
-    case 'runtime.recovery.required': return helpOccurrence(event, base);
+    case 'agent.run.activity.changed': return disconnectedOccurrence(
+      event, runFacts, generation, base,
+    );
+    case 'runtime.recovery.required': return helpOccurrence(event, runFacts, base);
     case 'agent.run.operation.stage.changed': return failedOperationOccurrence(core, event, base);
     case 'agent.run.usage.changed': return usageOccurrence(event, base);
     default: return b3ok(null);
@@ -250,11 +310,10 @@ async function occurrenceForKind(
 /** Exact retained Runtime event lookup enriched from durable owner records. */
 export async function getRunOccurrenceEvent(
   core: RunsCore,
-  events: RunEventLog,
   principal: AuthenticatedPrincipal,
   eventId: string,
 ): Promise<B3Result<RunOccurrenceEventFacts | null>> {
-  const found = events.find(eventId);
+  const found = await findRetainedRunOccurrenceEvent(core.store, eventId);
   if (!found.ok) return b3fail(found.error);
   if (found.value === null) {
     return b3fail(b3err(
@@ -264,12 +323,24 @@ export async function getRunOccurrenceEvent(
       true,
     ));
   }
-  if (found.value.sourceOwner !== 'agent-runtime') return b3ok(null);
-  const resolvedRunId = await eventRunId(core, found.value);
+  const event = found.value.event;
+  if (event.sourceOwner !== 'agent-runtime') return b3ok(null);
+  const resolvedRunId = await eventRunId(core, event);
   if (!resolvedRunId.ok) return b3fail(resolvedRunId.error);
   if (resolvedRunId.value === null) return b3ok(null);
+  if (found.value.runFacts !== undefined) {
+    if (found.value.runFacts.agentRunId !== resolvedRunId.value) {
+      return b3fail(b3err(
+        'RecoveryRequired', 'retained event/Run snapshot mismatch',
+        { stage: 'occurrence-derivation', eventId }, true,
+      ));
+    }
+    const visible = await core.agents.getAgent(principal, found.value.runFacts.agentId);
+    if (!visible.ok) return visible;
+    return occurrenceForKind(core, event, found.value.runFacts);
+  }
   const runFacts = await getUsageRun(core, principal, resolvedRunId.value);
-  return runFacts.ok ? occurrenceForKind(core, found.value, runFacts.value) : runFacts;
+  return runFacts.ok ? occurrenceForKind(core, event, runFacts.value) : runFacts;
 }
 
 /** Composition-only Runtime read that avoids Runtime→Supervision→Runtime recursion. */

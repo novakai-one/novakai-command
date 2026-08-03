@@ -148,9 +148,10 @@ export async function advance(
     operation.recordVersion, mintClientOpId(),
   );
   if (written.ok) {
-    core.publish('agent.run.operation.stage.changed', {
+    const announced = await core.publish('agent.run.operation.stage.changed', {
       operationId: operation.id, stage: step.stage, effectKey: outcome.effectKey,
     });
+    if (!announced.ok) return b3fail(announced.error);
   }
   return written;
 }
@@ -248,7 +249,10 @@ export async function compensate(
     compensation: [...operation.compensation, ...outcomes],
   });
   if (!settled.ok) return settled;
-  core.publish('runtime.recovery.required', { operationId: operation.id, reason });
+  const announced = await core.publish('runtime.recovery.required', {
+    operationId: operation.id, reason,
+  });
+  if (!announced.ok) return b3fail(announced.error);
   return settled;
 }
 

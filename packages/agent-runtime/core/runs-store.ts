@@ -10,7 +10,7 @@ import {
 
 export const RUNTIME_KINDS: readonly ObjectKind[] = [
   'agentRun', 'runContinuation', 'supervisionAssignment',
-  'treeMutationFence', 'runOperation',
+  'treeMutationFence', 'runOperation', 'runOccurrenceEvent',
 ];
 
 export interface RunsStoreOptions {

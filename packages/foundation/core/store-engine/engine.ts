@@ -58,6 +58,7 @@ export const KIND_FILES: Readonly<Record<Exclude<ObjectKind, 'token'>, string>> 
   supervisionAssignment: 'supervisionAssignments.jsonl', // B3b DEC-B3V4-07
   treeMutationFence: 'treeMutationFences.jsonl',         // B3b DEC-B3V4-11
   runOperation: 'runOperations.jsonl',                   // B3b DEC-B3V4-26
+  runOccurrenceEvent: 'runOccurrenceEvents.jsonl',       // B3V4-AMD-003 §3
   messagingStoreOp: 'messagingStoreOps.jsonl',           // B3c DEC-B3V4-33
   transcriptBinding: 'transcriptBindings.jsonl',         // B3c DEC-B3V4-24
   observedSubagent: 'observedSubagents.jsonl',           // B3c DEC-B3V4-18
@@ -86,7 +87,7 @@ export const RECORD_KINDS: readonly string[] = [
   'agentRoleProfile', 'resolvedLaunchPlan', 'agentRelationship',
   'delegationGrant', 'controlReplacementPlan',
   'agentRun', 'runContinuation', 'supervisionAssignment',
-  'treeMutationFence', 'runOperation',
+  'treeMutationFence', 'runOperation', 'runOccurrenceEvent',
   'messagingStoreOp', 'transcriptBinding', 'observedSubagent', 'storeRouteCutover',
   'providerUsageEvidence',
   'watchRule', 'watchDeadline', 'notification', 'watchEvaluation',

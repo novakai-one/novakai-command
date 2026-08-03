@@ -369,6 +369,9 @@ export async function finishRun(
     stage: 'run-ready', owner: 'agent-runtime', ownerObjectId: input.agentRun.id,
   }, { state: 'completed' });
   if (!operation.ok) return operation;
-  core.publish('agent.run.lifecycle.changed', { agentRunId: input.agentRun.id, toLifecycle: 'ready' });
+  const announced = await core.publish('agent.run.lifecycle.changed', {
+    agentRunId: input.agentRun.id, toLifecycle: 'ready',
+  });
+  if (!announced.ok) return b3fail(announced.error);
   return b3ok({ agentRun: agentRun.value, operation: operation.value });
 }

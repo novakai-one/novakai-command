@@ -452,13 +452,14 @@ export interface AgentRuntimeQueries {
    * each other, and §24.4's second-host proof subscribes to exactly one. So
    * the stream is shared and the event names its real owner.
    *
-   * This publishes; it does not make Agent Runtime the writer of anything.
-   * Events are not durable records (§18.1 registers no events file).
+   * Runtime retains the exact envelope before it becomes observable so an
+   * occurrence query remains complete across restart. The source owner remains
+   * the writer of the fact; retention is evidence custody, not fact ownership.
    */
   publishCapabilityEvent(
     kind: string, payload: Readonly<Record<string, unknown>>, sourceOwner: CapabilityOwner,
     traceId?: TraceCorrelationId,
-  ): void;
+  ): Promise<B3Result<null>>;
 
   /**
    * The tree-closing fence covering this Agent, or `null` when nothing is

@@ -67,14 +67,16 @@ async function settleInterruptedRun(
     agentRun.recordVersion, mintClientOpId(),
   );
   if (!settled.ok) return settled;
-  core.publish('agent.run.lifecycle.changed', {
+  const announced = await core.publish('agent.run.lifecycle.changed', {
     agentRunId: agentRun.id,
     fromLifecycle: agentRun.lifecycle,
     toLifecycle: 'interrupted',
     activityGeneration: settled.value.activityGeneration,
     uncertaintyCodes: settled.value.uncertainty.map((item) => item.code),
     final: true,
+    reconciledFinal: true,
   });
+  if (!announced.ok) return b3fail(announced.error);
   await expireAuthorityOf(core, settled.value);
   // The shift is over, so the endpoint stops advertising it (§8.1's cutoff).
   await closeEndpointOf(core, settled.value);
@@ -132,7 +134,7 @@ async function settleIfTerminalGone(
     );
     if (!observed.ok) return b3ok(agentRun);
     disconnected = observed.value;
-    core.publish('agent.run.activity.changed', {
+    const announced = await core.publish('agent.run.activity.changed', {
       agentRunId: agentRun.id,
       activityGeneration: generation,
       previous: {
@@ -148,6 +150,7 @@ async function settleIfTerminalGone(
         observedAt,
       },
     });
+    if (!announced.ok) return b3fail(announced.error);
   }
 
   const settled = await settleInterruptedRun(core, disconnected, { finalAt: nowIsoUtc() });
@@ -398,9 +401,10 @@ async function settleAbandonedOperations(
       operation.recordVersion, `op_${crypto.randomUUID()}` as never,
     );
     if (!settled.ok) return settled;
-    core.publish('runtime.recovery.required', {
+    const announced = await core.publish('runtime.recovery.required', {
       operationId: operation.id, reason: 'abandoned by a runtime that ended',
     });
+    if (!announced.ok) return b3fail(announced.error);
   }
   return b3ok(null);
 }

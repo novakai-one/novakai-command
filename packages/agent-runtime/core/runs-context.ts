@@ -6,7 +6,7 @@ import {
   type SystemCommandContext, type TraceCorrelationId,
 } from '@novakai/foundation/contract';
 import type { RuntimeHostContract } from '../contract/types.js';
-import type { RunUsageLookup } from '../contract/runs-api.js';
+import type { RunEvent, RunUsageLookup } from '../contract/runs-api.js';
 import type {
   AgentsPort, MessagingEndpointPort, ProviderPort, RunCredentialPort, TerminalPort,
   NotificationDeliveryPort, RunWatcherPort, TranscriptCustodyPort,
@@ -62,7 +62,7 @@ export interface RunsCore {
     kind: string,
     payload: Readonly<Record<string, unknown>>,
     traceId?: TraceCorrelationId,
-  ) => void;
+  ) => Promise<B3Result<RunEvent>>;
   readonly defaultViewport: { readonly columns: number; readonly rows: number };
   /** How long the gate waits for turn 1's confirmation before failing it. */
   readonly gateTimeoutMs: number;
@@ -190,9 +190,10 @@ export async function assignSupervisor(
     context.principal.id, record as never, mintClientOpId(),
   );
   if (written.ok) {
-    core.publish('agent.supervision.changed', {
+    const announced = await core.publish('agent.supervision.changed', {
       subjectAgentId: input.subjectAgentId, supervisor: input.supervisor,
     });
+    if (!announced.ok) return b3fail(announced.error);
   }
   return written;
 }
@@ -210,7 +211,7 @@ export async function expireAuthorityOf(
 ): Promise<void> {
   const expired = await core.agents.expireGrantsOfRun(agentRun.id);
   if (expired.ok) return;
-  core.publish('runtime.recovery.required', {
+  await core.publish('runtime.recovery.required', {
     agentRunId: agentRun.id,
     reason: `authority outlived its Run: ${expired.error.message}`,
   });
@@ -264,7 +265,7 @@ export async function patchRun(
   );
   if (!written.ok) return written;
   if (patch.lifecycle !== undefined && patch.lifecycle !== agentRun.lifecycle) {
-    core.publish('agent.run.lifecycle.changed', {
+    const announced = await core.publish('agent.run.lifecycle.changed', {
       agentRunId: agentRun.id,
       fromLifecycle: agentRun.lifecycle,
       toLifecycle: patch.lifecycle,
@@ -272,13 +273,15 @@ export async function patchRun(
       uncertaintyCodes: written.value.uncertainty.map((item) => item.code),
       final: FINAL_LIFECYCLES.has(written.value.lifecycle),
     });
+    if (!announced.ok) return b3fail(announced.error);
   }
   if (patch.activity !== undefined && patch.activity !== agentRun.activity) {
-    core.publish('agent.run.activity.changed', {
+    const announced = await core.publish('agent.run.activity.changed', {
       agentRunId: agentRun.id,
       activity: patch.activity,
       activityGeneration: written.value.activityGeneration,
     });
+    if (!announced.ok) return b3fail(announced.error);
   }
   return written;
 }

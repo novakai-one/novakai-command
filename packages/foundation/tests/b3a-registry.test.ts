@@ -54,6 +54,7 @@ const EXPECTED: ReadonlyArray<readonly [ObjectKind, string, CapabilityId]> = [
   ['supervisionAssignment', 'supervisionAssignments.jsonl', 'agent-runtime'],
   ['treeMutationFence', 'treeMutationFences.jsonl', 'agent-runtime'],
   ['runOperation', 'runOperations.jsonl', 'agent-runtime'],
+  ['runOccurrenceEvent', 'runOccurrenceEvents.jsonl', 'agent-runtime'],
   // ── B3c additions ──────────────────────────────────────────────────────
   ['messagingStoreOp', 'messagingStoreOps.jsonl', 'messaging'],
   ['transcriptBinding', 'transcriptBindings.jsonl', 'transcript'],

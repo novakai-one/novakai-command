@@ -134,9 +134,10 @@ export async function runSkillsGate(
   });
   if (!passed.ok) return passed;
   operation = passed.value;
-  core.publish('agent.run.skills-gate.passed', {
+  const announced = await core.publish('agent.run.skills-gate.passed', {
     agentRunId: input.agentRun.id, skills: canonicalTokens(input.plan),
   });
+  if (!announced.ok) return b3fail(announced.error);
 
   const released = await releaseWorkTurn(core, context, { ...input, operation });
   if (!released.ok) return released;
@@ -368,7 +369,6 @@ export function workPrompt(brief: string): string {
 async function failGate(
   core: RunsCore, input: GateInput, reason: string,
 ): Promise<B3Result<null>> {
-  core.publish('agent.run.skills-gate.failed', { agentRunId: input.agentRun.id, reason });
   const failed = await core.store.update<AgentRun>(
     'sys_agent_runtime', input.agentRun.id,
     {
@@ -378,6 +378,10 @@ async function failGate(
     input.agentRun.recordVersion, context0(),
   );
   if (!failed.ok) return failed;
+  const announced = await core.publish('agent.run.skills-gate.failed', {
+    agentRunId: input.agentRun.id, reason,
+  });
+  if (!announced.ok) return b3fail(announced.error);
   return b3ok(null);
 }
 
