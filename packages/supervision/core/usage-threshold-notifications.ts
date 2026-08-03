@@ -57,15 +57,17 @@ async function evidenceMatchesRule(
   evidence: ProviderUsageEvidence,
 ): Promise<B3Result<boolean>> {
   if (rule.subject.kind === 'agent-run') {
-    const run = await runs.getUsageRun(principal, rule.subject.agentRunId);
-    return run.ok
-      ? b3ok(run.value.providerSessionId === evidence.providerSessionId)
-      : b3fail(run.error);
+    const usageRun = await runs.getUsageRun(principal, rule.subject.agentRunId);
+    return usageRun.ok
+      ? b3ok(usageRun.value.providerSessionId === evidence.providerSessionId)
+      : b3fail(usageRun.error);
   }
   if (rule.subject.kind === 'agent') {
     const known = await runs.listUsageRuns(principal, rule.subject.agentId);
     return known.ok
-      ? b3ok(known.value.some((run) => run.providerSessionId === evidence.providerSessionId))
+      ? b3ok(known.value.some(
+        (usageRun) => usageRun.providerSessionId === evidence.providerSessionId,
+      ))
       : b3fail(known.error);
   }
   return b3ok(false);
