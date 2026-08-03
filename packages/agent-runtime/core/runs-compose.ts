@@ -53,10 +53,10 @@ import {
   listRunOperations, reconcileAfterRestart, runsCensus, viewOfRun, observeTerminalExit,
 } from './queries.js';
 import {
-  getRunOccurrenceEvent, getUsageRun, listUsageRuns,
+  getRunOccurrenceEvent,
 } from './occurrence-queries.js';
 import {
-  resolveCurrentRunByAgent, resolveUsageRunByProviderSession,
+  getUsageRun, listUsageRuns, resolveCurrentRunByAgent, resolveUsageRunByProviderSession,
 } from './usage-run-resolution.js';
 import { getAgentRunTree } from './tree.js';
 import { repairRunOperation } from './repair.js';

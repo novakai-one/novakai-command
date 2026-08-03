@@ -1,11 +1,12 @@
 import {
   b3err, b3fail, b3ok,
-  type AgentId, type AuthenticatedPrincipal, type B3Result, type ProviderSessionId,
+  type AgentId, type AgentRunId, type AuthenticatedPrincipal, type B3Result,
+  type ProviderSessionId,
 } from '@novakai/foundation/contract';
 import type { RunUsageFacts } from '../contract/runs-api.js';
 import type { ProviderTurnSubmission } from '../contract/provider-turns.js';
 import { FINAL_LIFECYCLES, type AgentRun } from '../contract/runs.js';
-import type { RunsCore } from './runs-context.js';
+import { requireRun, type RunsCore } from './runs-context.js';
 
 export function usageFacts(
   agentRun: AgentRun,
@@ -26,6 +27,46 @@ export function usageFacts(
       })),
     }),
   };
+}
+
+async function usageSubmissions(
+  core: RunsCore,
+  agentRunId: AgentRunId,
+): Promise<B3Result<readonly ProviderTurnSubmission[]>> {
+  return core.store.list('providerTurnSubmission', { agentRunId });
+}
+
+/** Composition-only Runtime read that avoids Runtime→Supervision→Runtime recursion. */
+export async function getUsageRun(
+  core: RunsCore,
+  principal: AuthenticatedPrincipal,
+  agentRunId: AgentRunId,
+): Promise<B3Result<RunUsageFacts>> {
+  const agentRun = await requireRun(core, agentRunId);
+  if (!agentRun.ok) return agentRun;
+  const visible = await core.agents.getAgent(principal, agentRun.value.agentId);
+  if (!visible.ok) return visible;
+  const submissions = await usageSubmissions(core, agentRun.value.id);
+  return submissions.ok ? b3ok(usageFacts(agentRun.value, submissions.value)) : submissions;
+}
+
+/** All Runtime-owned Run facts for one visible stable Agent. */
+export async function listUsageRuns(
+  core: RunsCore,
+  principal: AuthenticatedPrincipal,
+  agentId: AgentId,
+): Promise<B3Result<readonly RunUsageFacts[]>> {
+  const visible = await core.agents.getAgent(principal, agentId);
+  if (!visible.ok) return visible;
+  const storedRuns = await core.store.list<AgentRun>('agentRun', { agentId });
+  if (!storedRuns.ok) return storedRuns;
+  const facts: RunUsageFacts[] = [];
+  for (const agentRun of storedRuns.value) {
+    const submissions = await usageSubmissions(core, agentRun.id);
+    if (!submissions.ok) return submissions;
+    facts.push(usageFacts(agentRun, submissions.value));
+  }
+  return b3ok(facts);
 }
 
 /** Complete ProviderSession→Run correlation across live and final history. */

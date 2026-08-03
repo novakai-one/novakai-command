@@ -1,27 +1,17 @@
 import {
   b3err, b3fail, b3ok, canonicalRequestHash,
-  type ActivityGeneration, type AgentId, type AgentRunId, type AuthenticatedPrincipal,
+  type ActivityGeneration, type AgentRunId, type AuthenticatedPrincipal,
   type B3Result,
 } from '@novakai/foundation/contract';
 import type { RunEvent, RunUsageFacts } from '../contract/runs-api.js';
-import type { ProviderTurnSubmission } from '../contract/provider-turns.js';
 import type {
   RunConnectionSnapshot, RunOccurrenceEventBase, RunOccurrenceEventFacts,
 } from '../../supervision/contract/index.js';
 import { isRunDisconnectedEdge } from '../../supervision/contract/index.js';
-import {
-  type AgentRun, type RunOperation,
-} from '../contract/runs.js';
-import { requireRun, type RunsCore } from './runs-context.js';
+import type { RunOperation } from '../contract/runs.js';
+import type { RunsCore } from './runs-context.js';
 import { findRetainedRunOccurrenceEvent } from './occurrence-event-retention.js';
-import { usageFacts } from './usage-run-resolution.js';
-
-async function usageSubmissions(
-  core: RunsCore,
-  agentRunId: AgentRunId,
-): Promise<B3Result<readonly ProviderTurnSubmission[]>> {
-  return core.store.list('providerTurnSubmission', { agentRunId });
-}
+import { getUsageRun } from './usage-run-resolution.js';
 
 async function eventRunId(core: RunsCore, event: RunEvent): Promise<B3Result<AgentRunId | null>> {
   const directRunId = event.payload['agentRunId'];
@@ -295,37 +285,4 @@ export async function getRunOccurrenceEvent(
     core, principal, eventId, resolvedRunId.value, found.value.runFacts,
   );
   return runFacts.ok ? occurrenceForKind(core, event, runFacts.value) : runFacts;
-}
-
-/** Composition-only Runtime read that avoids Runtime→Supervision→Runtime recursion. */
-export async function getUsageRun(
-  core: RunsCore,
-  principal: AuthenticatedPrincipal,
-  agentRunId: AgentRunId,
-): Promise<B3Result<RunUsageFacts>> {
-  const agentRun = await requireRun(core, agentRunId);
-  if (!agentRun.ok) return agentRun;
-  const visible = await core.agents.getAgent(principal, agentRun.value.agentId);
-  if (!visible.ok) return visible;
-  const submissions = await usageSubmissions(core, agentRun.value.id);
-  return submissions.ok ? b3ok(usageFacts(agentRun.value, submissions.value)) : submissions;
-}
-
-/** All Runtime-owned Run facts for one visible stable Agent. */
-export async function listUsageRuns(
-  core: RunsCore,
-  principal: AuthenticatedPrincipal,
-  agentId: AgentId,
-): Promise<B3Result<readonly RunUsageFacts[]>> {
-  const visible = await core.agents.getAgent(principal, agentId);
-  if (!visible.ok) return visible;
-  const storedRuns = await core.store.list<AgentRun>('agentRun', { agentId });
-  if (!storedRuns.ok) return storedRuns;
-  const facts: RunUsageFacts[] = [];
-  for (const agentRun of storedRuns.value) {
-    const submissions = await usageSubmissions(core, agentRun.id);
-    if (!submissions.ok) return submissions;
-    facts.push(usageFacts(agentRun, submissions.value));
-  }
-  return b3ok(facts);
 }
