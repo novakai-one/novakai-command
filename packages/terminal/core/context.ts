@@ -23,6 +23,11 @@ export interface TerminalCore {
   readonly onUnexpectedExit?: (terminalSessionId: TerminalSessionId) => void;
   /** How long a controller may go unseen before it is `stale` (§13.4). */
   readonly staleAfterMs: number;
+  /** Provider-owned framing, injected at composition; logical bytes stay authoritative. */
+  readonly providerTurnDelivery: (
+    providerSessionId: import('@novakai/foundation/contract').ProviderSessionId,
+    utf8Text: string,
+  ) => Promise<readonly { readonly utf8Text: string; readonly pauseMsAfter: number }[]>;
 }
 
 export const OPERATION = {
@@ -41,6 +46,11 @@ export const OPERATION = {
   terminate: 'terminal.terminateTerminal' as PublicOperationName,
   observe: 'terminal.observeControllers' as PublicOperationName,
   reconcile: 'terminal.reconcileAfterRestart' as PublicOperationName,
+  prepareProviderTurn: 'terminal.prepareProviderTurnInput' as PublicOperationName,
+  executeProviderTurn: 'terminal.executeProviderTurnInput' as PublicOperationName,
+  cancelProviderTurn: 'terminal.cancelPreparedProviderTurnInput' as PublicOperationName,
+  settleProviderTurn: 'terminal.settleProviderTurnCompletion' as PublicOperationName,
+  closeProviderTurn: 'terminal.closeProviderTurnBarrierUnproven' as PublicOperationName,
 } as const;
 
 export const FINAL_STATUSES = new Set(['exited', 'failed']);

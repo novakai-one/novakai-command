@@ -1,10 +1,10 @@
 import type {
   AuthenticatedPrincipal,
-  B3Brand,
   B3Page,
   B3Result,
   IsoUtc,
   ProviderSessionId,
+  ProviderUsageEvidenceId,
   RecordEnvelope,
   SystemCommandContext,
   TraceCorrelationId,
@@ -16,12 +16,11 @@ import {
   validationFailed,
 } from '@novakai/foundation/contract';
 
+export type { ProviderUsageEvidenceId } from '@novakai/foundation/contract';
+
 /** Agents-owned committed fact consumed by Supervision and external hosts. */
 export const PROVIDER_USAGE_EVIDENCE_COMMITTED_EVENT =
   'agent.provider-usage-evidence.committed' as const;
-
-/** One deterministic Agents-owned provider measurement record. */
-export type ProviderUsageEvidenceId = B3Brand<string, 'ProviderUsageEvidenceId'>;
 
 /** Provider-native totals with explicit measurement uncertainty. */
 export interface ProviderUsageMeasurement {

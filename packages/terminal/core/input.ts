@@ -8,7 +8,7 @@ import type {
   AcquireInputLeaseInput, ReleaseInputLeaseInput, WriteTerminalInput,
 } from '../contract/api.js';
 import type {
-  ControllerAttachment, TerminalInputAttempt, TerminalInputLease,
+  ControllerAttachment, ExistingTerminalInputAttempt, TerminalInputLease,
 } from '../contract/records.js';
 import { requireOwnAttachment, requireTakeoverAuthority } from './authority.js';
 import {
@@ -20,6 +20,7 @@ import { FIRST_INPUT_SEQUENCE } from './live.js';
 import type { Persisted } from './store.js';
 import { OPERATION, requireLiveSession, type TerminalCore } from './context.js';
 import { activeNotificationReservation } from './notification-input.js';
+import { activeProviderTurnAttempt } from './provider-turn-input.js';
 
 async function attachedController(
   core: TerminalCore, terminalSessionId: string, attachmentId: string,
@@ -46,6 +47,15 @@ async function requireNoNotificationReservation(
       'a reserved Notification input holds the terminal boundary', {
         reason: 'notification-input-reserved',
         notificationInputReservationId: reservation.value.id,
+      }, true));
+  }
+  const providerTurn = await activeProviderTurnAttempt(core, terminalSessionId);
+  if (!providerTurn.ok) return providerTurn;
+  if (providerTurn.value !== null) {
+    return b3fail(b3err('InputLeaseBusy',
+      'a semantic provider turn holds the terminal boundary', {
+        reason: 'provider-turn-reserved',
+        terminalInputAttemptId: providerTurn.value.id,
       }, true));
   }
   return b3ok(null);
@@ -167,7 +177,7 @@ export async function releaseInputLease(
 
 export async function writeInput(
   core: TerminalCore, context: CommandContext, input: WriteTerminalInput,
-): Promise<B3Result<TerminalInputAttempt>> {
+): Promise<B3Result<Extract<ExistingTerminalInputAttempt, { readonly source: 'controller' }>>> {
   const session = await requireLiveSession(core, input.terminalSessionId);
   if (!session.ok) return session;
   // §22: writing terminal input needs an ACTIVE ATTACHMENT and the lease. The
@@ -176,6 +186,13 @@ export async function writeInput(
   if (!controller.ok) return controller;
   const allowed = requireOwnAttachment(context, controller.value, OPERATION.write);
   if (!allowed.ok) return allowed;
+  const semanticTurn = await activeProviderTurnAttempt(core, input.terminalSessionId);
+  if (!semanticTurn.ok) return semanticTurn;
+  if (semanticTurn.value !== null) {
+    return b3fail(b3err('InputLeaseBusy', 'a semantic provider turn holds the input boundary', {
+      reason: 'provider-turn-reserved', terminalInputAttemptId: semanticTurn.value.id,
+    }, true));
+  }
   const guarded = await guardWrite(core, input);
   if (!guarded.ok) return guarded;
 
@@ -187,7 +204,8 @@ export async function writeInput(
   }
 
   const payload = bytesFor(input);
-  let outcome: TerminalInputAttempt['outcome'] = 'submitted-confirmed';
+  let outcome: Extract<ExistingTerminalInputAttempt, { readonly source: 'controller' }>['outcome']
+    = 'submitted-confirmed';
   try {
     live.pty.write(payload);
   } catch {
@@ -198,7 +216,7 @@ export async function writeInput(
   const sequence = live.nextInputSequence;
   live.nextInputSequence += 1;
 
-  const record: Persisted<TerminalInputAttempt> = {
+  const record: Persisted<Extract<ExistingTerminalInputAttempt, { readonly source: 'controller' }>> = {
     kind: 'terminalInputAttempt',
     id: mintTerminalInputAttemptId(),
     schemaVersion: 1,
@@ -214,7 +232,7 @@ export async function writeInput(
     kindOfInput: input.kindOfInput,
     outcome,
   };
-  return core.store.create<TerminalInputAttempt>(
+  return core.store.create<Extract<ExistingTerminalInputAttempt, { readonly source: 'controller' }>>(
     context.principal.id, record, mintClientOpId(),
   );
 }

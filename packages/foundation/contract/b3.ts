@@ -46,6 +46,7 @@ export type TerminalInputAttemptId = B3Brand<string, 'TerminalInputAttemptId'>;
 export type ProviderTurnSubmissionId = B3Brand<string, 'ProviderTurnSubmissionId'>;
 export type TranscriptTurnCompletionId = B3Brand<string, 'TranscriptTurnCompletionId'>;
 export type ProviderTurnBoundaryProfileId = B3Brand<string, 'ProviderTurnBoundaryProfileId'>;
+export type ProviderUsageEvidenceId = B3Brand<string, 'ProviderUsageEvidenceId'>;
 /** Terminal-owned deterministic fence for one Supervision delivery effect (Q7). */
 export type NotificationInputReservationId =
   B3Brand<string, 'NotificationInputReservationId'>;
@@ -397,6 +398,9 @@ export type B3ErrorCode =
   | 'SupervisorIneligible' | 'UnknownTerminalSession' | 'TerminalNotLive'
   | 'InputLeaseBusy' | 'InputLeaseGenerationChanged' | 'TargetTurnNotActive'
   | 'InputSubmittedUnconfirmed' | 'Backpressure' | 'CursorExpired'
+  | 'SemanticSubmitRequired' | 'UnknownProviderTurnSubmission'
+  | 'ProviderTurnSubmissionConflict' | 'ProviderTurnOperationInProgress'
+  | 'ProviderTurnBoundaryUnavailable'
   | 'EndpointClaimConflict' | 'ExactRunEndpointClosed'
   | 'TranscriptSourceUnavailable' | 'TranscriptCorrupt' | 'UsageUnavailable'
   | 'WatchRuleInvalid' | 'WatcherConflict' | 'NotificationDeliveryUnsafe'
