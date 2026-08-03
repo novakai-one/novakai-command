@@ -54,6 +54,8 @@ export interface FakeTerminal extends TerminalPort {
    * has already missed the window it is trying to prove.
    */
   duringNextTerminate: (() => Promise<void>) | null;
+  /** Pause one Q7 reservation so a contract test can race another public Run command. */
+  duringNextNotificationReservation: (() => Promise<void>) | null;
   /**
    * Echo like a REAL TUI: re-wrap what was typed at this width instead of
    * echoing it back line for line.
@@ -134,6 +136,7 @@ export function createFakeTerminal(): FakeTerminal {
     interruptOutcome: 'barrier-committed',
     failTerminate: null,
     duringNextTerminate: null,
+    duringNextNotificationReservation: null,
     reflowColumns: null,
 
     async openManagedTerminal(context, input) {
@@ -188,6 +191,11 @@ export function createFakeTerminal(): FakeTerminal {
     },
 
     async reserveNotificationInput(input) {
+      const during = port.duringNextNotificationReservation;
+      if (during !== null) {
+        port.duringNextNotificationReservation = null;
+        await during();
+      }
       const id = notificationInputReservationId(input.effectKey);
       const prior = notificationReservations.get(id);
       if (prior !== undefined) return b3ok(prior);

@@ -18,6 +18,12 @@ const supervisionContext = (): SystemCommandContext<'sys_supervision'> => ({
   contractVersion: 1,
 });
 
+function gate(): { readonly promise: Promise<void>; readonly open: () => void } {
+  let open = (): void => {};
+  const promise = new Promise<void>((resolve) => { open = resolve; });
+  return { promise, open };
+}
+
 test('an unseen Notification delivery effect has durable state absent', async () => {
   const rig = createRunsRig();
   try {
@@ -71,6 +77,64 @@ test('a safe-boundary command submits one Notification turn and remembers its ou
     assert.equal(remembered.ok, true, remembered.ok ? '' : remembered.error.message);
     if (remembered.ok) assert.deepEqual(remembered.value, submitted.value);
   } finally {
+    rig.close();
+  }
+});
+
+test('a safe-boundary delivery excludes a concurrent provider turn start', async () => {
+  const rig = createRunsRig();
+  const reservationEntered = gate();
+  const releaseReservation = gate();
+  try {
+    const roleProfileId = rig.agents.defineRole('notification-turn-race-target');
+    const spawned = await rig.runtime.spawnAgent(rig.human(), {
+      roleProfileId,
+      displayName: 'Notification turn race target',
+      workingDirectory: '/tmp/work',
+    });
+    assert.equal(spawned.ok, true, spawned.ok ? '' : spawned.error.message);
+    if (!spawned.ok) return;
+    const notificationId = `notification_${'e'.repeat(52)}` as NotificationId;
+    const effectKey = `b3v4:notification-delivery:${notificationId}:condition`;
+    const input = {
+      notificationId,
+      agentRunId: spawned.value.run.id,
+      effectKey,
+      expectedActivityGeneration: spawned.value.run.activityGeneration,
+    };
+    rig.notifications.authorize({
+      ...input,
+      activityGeneration: input.expectedActivityGeneration,
+      inputText: 'Do not race the normal turn',
+    });
+    rig.terminal.duringNextNotificationReservation = async () => {
+      reservationEntered.open();
+      await releaseReservation.promise;
+    };
+
+    const delivery = rig.runtime.startNotificationTurnAtSafeBoundary(
+      supervisionContext(), input,
+    );
+    await reservationEntered.promise;
+    const normalTurn = rig.runtime.beginProviderTurn(rig.human(), {
+      agentRunId: spawned.value.run.id,
+      expectedRecordVersion: spawned.value.run.recordVersion,
+    });
+    const concurrentResult = await Promise.race([
+      normalTurn.then(() => 'started' as const),
+      new Promise<'blocked'>((resolve) => {
+        setTimeout(() => { resolve('blocked'); }, 250);
+      }),
+    ]);
+    releaseReservation.open();
+
+    const [submitted, begun] = await Promise.all([delivery, normalTurn]);
+    assert.equal(submitted.ok, true, submitted.ok ? '' : submitted.error.message);
+    assert.equal(begun.ok, true, begun.ok ? '' : begun.error.message);
+    assert.equal(concurrentResult, 'blocked',
+      'a normal provider turn entered while Notification delivery held the Run boundary');
+  } finally {
+    releaseReservation.open();
     rig.close();
   }
 });
