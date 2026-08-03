@@ -19,8 +19,10 @@ import {
   parseWatchRuleFilter,
   type Notification, type WatchDeadline, type WatchRule,
 } from '../../../supervision/contract/index.js';
+import { readAgentRunIdInput } from '../../../agent-runtime/contract/index.js';
 import type { SupervisionCore } from '../../../supervision/public/index.js';
 import type { CallerSession, MethodTable } from '../../contract/protocol.js';
+import { readAgentIdInput } from './agent-reads.js';
 
 export interface B3SupervisionMethodOptions {
   readonly supervision: SupervisionCore;
@@ -96,6 +98,26 @@ export function buildB3SupervisionMethods(options: B3SupervisionMethodOptions): 
   }
 
   return {
+    'b3.supervision.getRunUsage': async (params, session) => {
+      const parsed = readParams(params);
+      if (!parsed.ok) return parsed;
+      const target = readAgentRunIdInput(parsed.value.payload);
+      if (!target.ok) return target;
+      return supervision.getRunUsage(
+        options.principalFor(session), target.value.agentRunId,
+      );
+    },
+
+    'b3.supervision.getAgentUsage': async (params, session) => {
+      const parsed = readParams(params);
+      if (!parsed.ok) return parsed;
+      const target = readAgentIdInput(parsed.value.payload);
+      if (!target.ok) return target;
+      return supervision.getAgentUsage(
+        options.principalFor(session), target.value.agentId,
+      );
+    },
+
     'b3.supervision.listWatchers': async (params, session) => {
       const parsed = readParams(params);
       if (!parsed.ok) return parsed;

@@ -405,6 +405,7 @@ export interface AgentRuntimeQueries {
    */
   publishCapabilityEvent(
     kind: string, payload: Readonly<Record<string, unknown>>, sourceOwner: CapabilityOwner,
+    traceId?: TraceCorrelationId,
   ): void;
 
   /**

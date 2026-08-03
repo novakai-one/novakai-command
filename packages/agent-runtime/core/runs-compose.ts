@@ -273,8 +273,8 @@ export function composeAgentRuns(options: ComposeAgentRunsOptions): ComposedAgen
     discoverRunControls: (principal, input) => discoverRunControls(core, principal, input),
     getRunOperation: (principal, operationId) => getRunOperation(core, principal, operationId),
     subscribeRunEvents: (_principal, after) => events.subscribe(after),
-    publishCapabilityEvent: (kind, payload, sourceOwner) => {
-      const event = events.append(kind, payload, undefined, sourceOwner);
+    publishCapabilityEvent: (kind, payload, sourceOwner, traceId) => {
+      const event = events.append(kind, payload, traceId, sourceOwner);
       publish?.(kind, { ...payload, cursor: event.cursor, eventId: event.eventId });
     },
     readRunEvents: async (_principal, input) => events.read(input.after, input.limit ?? 200),

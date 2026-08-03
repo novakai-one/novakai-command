@@ -7,6 +7,19 @@
 import type {
   AgentRunTreeView, AgentRunView, ControlCapabilityFacts,
 } from '../../agent-runtime/contract/index.js';
+import type {
+  AgentRunUsage, AgentUsageSummary, UsageValue,
+} from '../../supervision/contract/index.js';
+
+function usageValue(value: UsageValue): string {
+  return `${value.value === undefined ? '—' : value.value.toLocaleString('en-US')} (${value.quality})`;
+}
+
+function usageLine(usage: Omit<AgentRunUsage, 'agentRunId'>): string {
+  return `${usageValue(usage.inputTokens)} in · ${usageValue(usage.outputTokens)} out · `
+    + `${usageValue(usage.cachedInputTokens)} cached · ${usageValue(usage.costMicros)} µ-cost · `
+    + `${usageValue(usage.providerTurns)} turns`;
+}
 
 /**
  * The sentence Chris needs, with the four facts kept apart: where it came from,
@@ -26,7 +39,7 @@ export function describeRun(view: AgentRunView): string {
     + `  ${view.provider.provider}/${view.provider.modelId} (${view.provider.effort}); `
     + `${view.run.lifecycle}, ${view.run.activity}\n`
     + `  Started from ${view.launch.surface} by ${view.launch.requestedBy}; ${family}; ${supervisor}\n`
-    + `  ${view.family.childCount} child agent(s); usage ${view.usage.quality} (${view.usage.reason})`
+    + `  ${view.family.childCount} child agent(s); usage ${usageLine(view.usage)}`
     + doubts;
 }
 
@@ -53,4 +66,16 @@ export function describeControls(report: ControlCapabilityFacts): string {
     + report.controls.map((control) => `  ${control.name}  ${control.support}`
       + ` (${control.enforcement})${control.allowedValues === undefined
         ? '' : ` — ${control.allowedValues.join(', ')}`}\n    ${control.reason}`).join('\n');
+}
+
+/** Human usage output keeps uncertainty beside every value, including absence. */
+export function describeUsage(usage: AgentRunUsage | AgentUsageSummary): string {
+  if ('agentRunId' in usage) {
+    return `${usage.agentRunId}\n  ${usageLine(usage)}\n`
+      + `  observed ${usage.observedAt}; ${usage.final ? 'final' : 'live'}`;
+  }
+  const runs = usage.runs.length === 0
+    ? '  No Runs.'
+    : usage.runs.map((item) => `  ${item.agentRunId}  ${usageLine(item)}`).join('\n');
+  return `${usage.agentId}\n  Aggregate  ${usageLine(usage.aggregate)}\n${runs}`;
 }

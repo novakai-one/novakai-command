@@ -157,15 +157,19 @@ test('Agent aggregate is no more certain than its least certain Run', async () =
 });
 
 test('aggregate quality follows the exact measured, estimated, partial, unavailable table', async () => {
+  const {
+    outputTokens: omittedOutputTokens,
+    ...measurementWithoutOutputTokens
+  } = MEASURED_EVIDENCE.measurement;
+  void omittedOutputTokens;
   const estimated = {
     ...MEASURED_EVIDENCE,
     id: `providerUsage_${'b'.repeat(52)}` as never,
     providerSessionId: SECOND_SESSION_ID,
     observedAt: '2026-08-03T02:02:00.000Z' as never,
     measurement: {
-      ...MEASURED_EVIDENCE.measurement,
+      ...measurementWithoutOutputTokens,
       quality: 'estimated' as const,
-      outputTokens: undefined,
       limitations: ['provider-omitted-output'],
     },
   };
