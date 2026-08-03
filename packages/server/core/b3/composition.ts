@@ -47,22 +47,15 @@ import {
   type RecordDriftStatusSubmissionInput, type WatcherTemplate,
 } from '../../../supervision/contract/index.js';
 import {
-<<<<<<< HEAD
   followEventsIntoSupervision, supervisionNotificationDeliveryPort,
   supervisionWatcherPort, watcherInstallAuthority, watchRuleAccess,
-=======
-  followEventsIntoSupervision, supervisionWatcherPort, watcherInstallAuthority, watchRuleAccess,
   watchRuleGeneration,
->>>>>>> kimi/b3-runtime
 } from './supervision-ports.js';
 import { notificationTranscriptObserver } from './notification-transcript-port.js';
 import { createUsageReader } from '../supervision/usage.js';
 import { createTranscriptUsagePort } from './usage-transcript-port.js';
-<<<<<<< HEAD
 import { createNotificationDeliveryPump } from './notification-delivery-pump.js';
-=======
 import { startWatcherScheduler } from './watcher-scheduler.js';
->>>>>>> kimi/b3-runtime
 
 export interface B3RuntimeOptions {
   /** `.novakai/` root. Domain records live in `<root>/stores`. */
@@ -104,13 +97,10 @@ export interface B3RuntimeOptions {
   readonly mirrorIntervalMs?: number;
   /** How often the inbox delivery loop looks. Same reason as the mirror's. */
   readonly inboxDeliveryIntervalMs?: number;
-<<<<<<< HEAD
   /** How often Runtime reconciles durable Notification delivery work. */
   readonly notificationDeliveryIntervalMs?: number;
-=======
   /** How often the Runtime scans durable watcher deadlines. */
   readonly watcherIntervalMs?: number;
->>>>>>> kimi/b3-runtime
   /**
    * B3d: extra pinned watcher templates this host's role catalogue offers, on
    * top of the ones Supervision ships. The frozen catalogue seam is owned by
@@ -481,7 +471,6 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
   const following = followEventsIntoSupervision(
     runs, supervision, notificationTranscriptObserver(supervision),
   );
-<<<<<<< HEAD
   const notificationDelivery = createNotificationDeliveryPump({
     supervision,
     runs,
@@ -489,11 +478,10 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
     providers: runtimeProviders,
     ...(options.notificationDeliveryIntervalMs === undefined
       ? {} : { intervalMs: options.notificationDeliveryIntervalMs }),
-=======
+  });
   const watcherScheduler = startWatcherScheduler(supervision, {
     ...(options.watcherIntervalMs === undefined
       ? {} : { intervalMs: options.watcherIntervalMs }),
->>>>>>> kimi/b3-runtime
   });
 
   const composedTranscript = composeB3TranscriptFor({
@@ -529,11 +517,8 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
     supervision,
     dataRoot,
     async close() {
-<<<<<<< HEAD
-      await notificationDelivery.stop();
-=======
       await watcherScheduler.stop();
->>>>>>> kimi/b3-runtime
+      await notificationDelivery.stop();
       // First, and awaited: a pass in flight holds durable Messaging and
       // Transcript writes, and closing the stores under it is the one way to
       // manufacture the torn outcome §13.9's watermark law exists to survive.

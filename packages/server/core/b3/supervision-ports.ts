@@ -5,14 +5,9 @@
 // asks one question through a narrow port; Supervision answers it through its
 // FROZEN contract, and this file is the translation between the two.
 import {
-<<<<<<< HEAD
   b3err, b3fail, b3ok, deriveClientOpId, mintClientOpId, mintTraceCorrelationId,
-  type AgentRunId, type AuthenticatedPrincipal, type ResolvedLaunchPlanId,
-=======
-  b3err, b3fail, b3ok, mintClientOpId, mintTraceCorrelationId,
   type ActivityGeneration, type AgentRunId, type AuthenticatedPrincipal, type B3Result,
   type ResolvedLaunchPlanId,
->>>>>>> kimi/b3-runtime
   type SystemCommandContext,
 } from '@novakai/foundation/contract';
 import type {
