@@ -83,6 +83,12 @@ export interface FakeTerminal extends TerminalPort {
    * twice (`nvk048-skll@v1#d0`, from `p10`'s own failure record).
    */
   repaintAnswer: boolean;
+  /** Failure-injection cut immediately after a durable provider prepare. */
+  crashAfterProviderTurnPrepare: boolean;
+  /** Failure-injection cut after Runtime commits prepared/fence, before execute. */
+  crashOnProviderTurnExecute: boolean;
+  /** Safe-boundary denial before any provider attempt exists. */
+  providerTurnPrepareBlocked: boolean;
 }
 
 /**
@@ -176,6 +182,9 @@ export function createFakeTerminal(): FakeTerminal {
     duringNextNotificationReservation: null,
     reflowColumns: null,
     repaintAnswer: false,
+    crashAfterProviderTurnPrepare: false,
+    crashOnProviderTurnExecute: false,
+    providerTurnPrepareBlocked: false,
 
     async openManagedTerminal(context, input) {
       if (port.failOpen) {
@@ -320,6 +329,15 @@ export function createFakeTerminal(): FakeTerminal {
     },
 
     async prepareProviderTurnInput(input) {
+      if (port.providerTurnPrepareBlocked) {
+        return b3ok({
+          kind: 'not-yet-safe' as const,
+          blocking: { kind: 'controller-draft' as const },
+          retryable: true as const,
+          attemptCreated: false as const,
+          inputChanged: false as const,
+        });
+      }
       const prior = [...providerTurnAttempts.values()].find((attempt) =>
         attempt.providerTurnSubmissionId === input.providerTurnSubmissionId
         && attempt.deliveryAttemptOrdinal === input.deliveryAttemptOrdinal);
@@ -345,10 +363,18 @@ export function createFakeTerminal(): FakeTerminal {
         turnBarrier: { kind: 'reserved-pre-effect' },
       };
       providerTurnAttempts.set(attempt.id, attempt);
+      if (port.crashAfterProviderTurnPrepare) {
+        port.crashAfterProviderTurnPrepare = false;
+        throw new Error('injected crash after durable Terminal provider-turn prepare');
+      }
       return b3ok({ kind: 'prepared' as const, attempt });
     },
 
     async executeProviderTurnInput(input) {
+      if (port.crashOnProviderTurnExecute) {
+        port.crashOnProviderTurnExecute = false;
+        throw new Error('injected crash before Terminal provider-turn execute');
+      }
       const attempt = providerTurnAttempts.get(input.terminalInputAttemptId);
       if (attempt === undefined) {
         return b3fail(b3err('ProviderTurnSubmissionConflict', 'unknown fake attempt', {}, false));

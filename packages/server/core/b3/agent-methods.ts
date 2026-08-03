@@ -15,7 +15,9 @@ import {
   readAdoptAgentInput, readAgentRunIdInput, readApplyRunControlInput,
   readContinueAgentInput, readDiscoverRunControlsInput, readGetAgentRunTreeInput,
   readInterruptAgentTurnInput, readListAgentRunsFilter, readPrepareStopAgentTreeInput,
-  readRunOperationIdInput, readSpawnAgentInput, readStopAgentInput, readStopAgentTreeInput,
+  readProviderTurnIdInput, readProviderTurnSubmissionFilter,
+  readControllerProviderTurnSubmitInput, readRunOperationIdInput, readSpawnAgentInput,
+  readStopAgentInput, readStopAgentTreeInput,
 } from '../../../agent-runtime/contract/index.js';
 import {
   readCreateRoleProfileInput, readIssueDelegationGrantInput, readUpdateRoleProfileInput,
@@ -131,12 +133,19 @@ export function buildB3AgentMethods(options: B3AgentMethodOptions): MethodTable 
     perform: (
       payload: Payload, context: CommandContext, principal: AuthenticatedPrincipal,
     ) => Promise<B3Result<Value>>,
+    requireClientOpId = false,
   ) {
     return async (params: never, session?: CallerSession): Promise<B3Result<Value>> => {
       const parsed = readParams<unknown>(params);
       if (!parsed.ok) return parsed;
       const payload = validate(parsed.value.payload);
       if (!payload.ok) return payload;
+      if (requireClientOpId && parsed.value.clientOpId === undefined) {
+        return b3fail(b3err('ValidationFailed',
+          'clientOpId is required for semantic provider-turn submission', {
+            issues: [{ path: 'clientOpId', message: 'required' }],
+          }, false));
+      }
       // The caller's key, not one minted here: the receipt id is derived from
       // {principal, operation, clientOpId}, so a fresh key per call made every
       // retry a brand-new command (NVK-KIMI-028 finding 2).
@@ -159,6 +168,16 @@ export function buildB3AgentMethods(options: B3AgentMethodOptions): MethodTable 
 
     'b3.agent.beginTurn': method(readInterruptAgentTurnInput,
       (payload, context) => runs.beginProviderTurn(context, payload)),
+
+    'b3.agent.submitProviderTurn': method(readControllerProviderTurnSubmitInput,
+      (payload, context) => runs.submitProviderTurn(context, payload), true),
+
+    'b3.agent.getTurnSubmission': method(readProviderTurnIdInput,
+      (payload, _context, principal) =>
+        runs.getProviderTurnSubmission(principal, payload.providerTurnId)),
+
+    'b3.agent.listTurnSubmissions': method(readProviderTurnSubmissionFilter,
+      (payload, _context, principal) => runs.listProviderTurnSubmissions(principal, payload)),
 
     'b3.agent.stop': method(readStopAgentInput,
       (payload, context) => runs.stopAgent(context, payload)),

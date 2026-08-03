@@ -543,6 +543,15 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
       };
     },
   });
+  const providerTurnReconciliation = setInterval(() => {
+    void runs!.reconcileProviderTurns().then((result) => {
+      if (result.ok) return;
+      runs!.publishCapabilityEvent('runtime.recovery.required', {
+        reason: `${result.error.code}: ${result.error.message}`,
+      }, 'agent-runtime');
+    });
+  }, 1_000);
+  providerTurnReconciliation.unref();
 
   // The production source: each provider's own file, read-only, found through
   // the NATIVE session id that Agents recorded at discovery. A binding whose
@@ -654,6 +663,7 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
     supervision,
     dataRoot,
     async close() {
+      clearInterval(providerTurnReconciliation);
       await watcherScheduler.stop();
       await notificationDelivery.stop();
       // First, and awaited: a pass in flight holds durable Messaging and

@@ -497,6 +497,93 @@ export async function listProviderTurnSubmissions(
   return b3ok({ items, omissions: [] });
 }
 
+/**
+ * Startup's controller pre-effect law (R3 N2-L1/N2-L2). A controller's bytes
+ * are deliberately not durable, so a dead process may reject the old logical
+ * operation only after Terminal proves no effect began. A prepared reservation
+ * is cancelled before either the Run fence or submission is released.
+ */
+export async function reconcileControllerPreEffectSubmissions(
+  core: RunsCore,
+  mode: 'startup' | 'periodic',
+): Promise<B3Result<readonly ProviderTurnSubmissionId[]>> {
+  const listed = await core.store.list<ProviderTurnSubmission>('providerTurnSubmission');
+  if (!listed.ok) return listed;
+  const reconciled: ProviderTurnSubmissionId[] = [];
+  const candidates = listed.value
+    .filter((submission) => submission.origin.kind === 'controller'
+      && (submission.state.kind === 'queued' || submission.state.kind === 'prepared'))
+    .sort((left, right) => left.createdAt.localeCompare(right.createdAt)
+      || left.id.localeCompare(right.id));
+  for (const stale of candidates) {
+    let submission = stale;
+    const attemptResult = await core.terminal.getProviderTurnInputAttempt({
+      terminalSessionId: submission.terminalSessionId,
+      providerTurnId: submission.providerTurnId,
+      submissionEffectKey: submission.submissionEffectKey,
+    });
+    if (!attemptResult.ok) return attemptResult;
+    const attempt = attemptResult.value;
+    if (attempt !== null && (attempt.effectState.kind !== 'prepared'
+      || attempt.turnBarrier.kind !== 'reserved-pre-effect')) {
+      const held = await patchSubmission(core, submission, {
+        state: {
+          kind: 'recovery-required', enteredAt: now(core),
+          lastSafeState: submission.state.kind === 'queued' ? 'queued' : 'prepared',
+          terminalInputAttemptId: attempt.id,
+          reason: 'controller attempt may have crossed the provider-effect boundary',
+          evidenceRefs: [attempt.id, attempt.effectState.kind, attempt.turnBarrier.kind],
+        },
+      });
+      if (!held.ok) return held;
+      reconciled.push(submission.id);
+      continue;
+    }
+    if (mode === 'periodic') {
+      const runResult = await requireRun(core, submission.agentRunId);
+      if (!runResult.ok) return runResult;
+      const deadline = runResult.value.providerTurnOperationFence?.controllerResumeDeadlineAt;
+      // A merely queued controller operation has no owner deadline proving its
+      // authenticated root command stopped resuming. Startup is R3 N2-L1's
+      // deterministic bound; the periodic pass therefore leaves that row.
+      if (attempt === null && deadline === undefined) continue;
+      if (deadline !== undefined && core.clock() < Date.parse(deadline)) continue;
+    }
+    if (attempt !== null) {
+      const cancelled = await core.terminal.cancelPreparedProviderTurnInput({
+        terminalInputAttemptId: attempt.id,
+        expectedAttemptRecordVersion: attempt.recordVersion,
+        reason: 'runtime-preparation-rejected',
+      });
+      if (!cancelled.ok) return cancelled;
+    }
+    const runResult = await requireRun(core, submission.agentRunId);
+    if (!runResult.ok) return runResult;
+    let run = runResult.value;
+    if (run.providerTurnOperationFence?.providerTurnSubmissionId === submission.id) {
+      const cleared = await patchRun(core, run, { providerTurnOperationFence: undefined });
+      if (!cleared.ok) return cleared;
+      run = cleared.value;
+    }
+    const rejected = await patchSubmission(core, submission, {
+      state: {
+        kind: 'rejected', rejectedAt: now(core),
+        ...(attempt === null ? {} : { terminalInputAttemptId: attempt.id }),
+        reason: attempt === null
+          ? 'startup proved no Terminal attempt exists'
+          : 'startup cancelled the prepared pre-effect Terminal reservation',
+        effectEscaped: false,
+        evidenceRefs: attempt === null ? [] : [attempt.id],
+      },
+    });
+    if (!rejected.ok) return rejected;
+    submission = rejected.value;
+    void run;
+    reconciled.push(submission.id);
+  }
+  return b3ok(reconciled);
+}
+
 const sameCompletion = (
   run: AgentRun,
   input: CompleteProviderTurnInput,

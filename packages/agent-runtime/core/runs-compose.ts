@@ -62,7 +62,7 @@ import {
 import { RunActivityQueue } from './run-activity-queue.js';
 import {
   completeProviderTurn, getProviderTurnSubmission, listProviderTurnSubmissions,
-  submitProviderTurn,
+  reconcileControllerPreEffectSubmissions, submitProviderTurn,
 } from './provider-turns.js';
 
 /**
@@ -138,6 +138,8 @@ export type ComposedAgentRuns = AgentRunsContract & {
   readonly usageRuns: RunUsageSource;
   /** Composition-only sink for Terminal's unexpected managed-process exit fact. */
   observeTerminalExit(terminalSessionId: TerminalSessionId): Promise<B3Result<null>>;
+  /** One periodic owner-ordered provider-turn repair pass. */
+  reconcileProviderTurns(): Promise<B3Result<readonly import('@novakai/foundation/contract').ProviderTurnSubmissionId[]>>;
 };
 
 /** Generous, because a real model reading its skills is not instant. */
@@ -379,6 +381,9 @@ export function composeAgentRuns(options: ComposeAgentRunsOptions): ComposedAgen
       listRunOperations(core, principal, filter),
     getRunLaunchPlanId: (principal, agentRunId) =>
       getRunLaunchPlanId(core, principal, agentRunId),
+
+    reconcileProviderTurns: () =>
+      reconcileControllerPreEffectSubmissions(core, 'periodic'),
 
     async reconcileAfterRestart() {
       const active = core.fence.activeEpochId();

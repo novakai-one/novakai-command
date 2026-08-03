@@ -28,7 +28,9 @@ import {
 import type { RunUsageLookup } from '../contract/runs-api.js';
 import type { RuntimeHostContract } from '../contract/types.js';
 import type { RunWatcherPort } from '../contract/custody-ports.js';
-import { composeAgentRuns, type ComposedAgentRuns } from '../core/runs-compose.js';
+import {
+  composeAgentRuns, type ComposeAgentRunsOptions, type ComposedAgentRuns,
+} from '../core/runs-compose.js';
 import {
   createFakeMessagingEndpoints, createFakeTranscriptCustody,
   type FakeMessagingEndpoints, type FakeTranscriptCustody,
@@ -132,6 +134,7 @@ export interface RunsRigOptions extends FakeAgentsOptions {
   readonly messagingEndpoint?: FakeMessagingEndpoints;
   readonly transcriptCustody?: FakeTranscriptCustody;
   readonly notifications?: FakeNotificationDelivery;
+  readonly providerTurnCompletionEvidence?: ComposeAgentRunsOptions['providerTurnCompletionEvidence'];
 }
 
 export function createRunsRig(options: RunsRigOptions = {}): RunsRig {
@@ -184,6 +187,9 @@ export function createRunsRig(options: RunsRigOptions = {}): RunsRig {
     ...(options.watchers === undefined ? {} : { watchers: options.watchers }),
     notifications,
     ...(options.usage === undefined ? {} : { usage: options.usage }),
+    ...(options.providerTurnCompletionEvidence === undefined
+      ? {}
+      : { providerTurnCompletionEvidence: options.providerTurnCompletionEvidence }),
   });
 
   const envelope = (principal: AuthenticatedPrincipal): CommandContext => ({
