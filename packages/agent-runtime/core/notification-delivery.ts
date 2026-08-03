@@ -174,6 +174,7 @@ export async function startNotificationTurnAtSafeBoundary(
   }
   const priorOperation = await operationFor(core, input.effectKey);
   if (!priorOperation.ok) return priorOperation;
+  let resumeClaimedDelivery = false;
   if (priorOperation.value !== null) {
     if (priorOperation.value.notificationId !== input.notificationId) {
       return b3fail(b3err(
@@ -188,21 +189,44 @@ export async function startNotificationTurnAtSafeBoundary(
     const prior = await getNotificationTurnSubmission(core, input.effectKey);
     if (!prior.ok) return prior;
     if (prior.value.state === 'submitted-confirmed'
-      || prior.value.state === 'submitted-unconfirmed') return b3ok(prior.value);
+      || prior.value.state === 'submitted-unconfirmed') {
+      const fullyRecorded = priorOperation.value.state === 'completed'
+        && priorOperation.value.completedStages.some(
+          (stage) => stage.stage === 'supervision-delivery-recorded');
+      if (fullyRecorded) return b3ok(prior.value);
+    }
     if (prior.value.state === 'cancelled-not-submitted') {
       return b3fail(b3err(
         'IdempotencyConflict', 'the deterministic delivery reservation was cancelled',
         { effectKey: input.effectKey }, false,
       ));
     }
+    const reservationId = priorOperation.value.notificationInputReservationId;
+    if (reservationId !== undefined) {
+      const ownerState = await notifications.getDeliveryState(reader, {
+        notificationId: input.notificationId,
+        effectKey: input.effectKey,
+        notificationInputReservationId: reservationId,
+      });
+      if (!ownerState.ok) return ownerState;
+      resumeClaimedDelivery = ownerState.value.state !== 'queued';
+      if ((prior.value.state === 'submitted-confirmed'
+          || prior.value.state === 'submitted-unconfirmed')
+        && !resumeClaimedDelivery) {
+        return b3fail(b3err(
+          'RecoveryRequired', 'Terminal submitted before Supervision recorded a claim',
+          { notificationId: input.notificationId, effectKey: input.effectKey }, true,
+        ));
+      }
+    }
   }
   const run = await requireRun(core, input.agentRunId);
   if (!run.ok) return run;
-  if (run.value.lifecycle !== 'ready'
+  if (!resumeClaimedDelivery && (run.value.lifecycle !== 'ready'
     || run.value.activity !== 'idle'
     || run.value.activeProviderTurn !== undefined
     || run.value.terminalSessionId === undefined
-    || Number(run.value.activityGeneration) !== Number(input.expectedActivityGeneration)) {
+    || Number(run.value.activityGeneration) !== Number(input.expectedActivityGeneration))) {
     return b3fail(unsafe('the target Run is not at the requested safe boundary', {
       agentRunId: input.agentRunId,
       lifecycle: run.value.lifecycle,
@@ -210,6 +234,13 @@ export async function startNotificationTurnAtSafeBoundary(
       activityGeneration: run.value.activityGeneration,
     }));
   }
+  if (run.value.terminalSessionId === undefined) {
+    return b3fail(unsafe('the target Run has no Terminal session for delivery recovery', {
+      agentRunId: input.agentRunId,
+      effectKey: input.effectKey,
+    }));
+  }
+  const terminalSessionId = run.value.terminalSessionId;
   const authority = await notifications.getAuthority(reader, input.notificationId);
   if (!authority.ok) return authority;
   if (authority.value.notificationId !== input.notificationId
@@ -258,7 +289,7 @@ export async function startNotificationTurnAtSafeBoundary(
   operation = journalled.value;
 
   const reserved = await core.terminal.reserveNotificationInput({
-    terminalSessionId: run.value.terminalSessionId,
+    terminalSessionId,
     agentRunId: input.agentRunId,
     notificationId: input.notificationId,
     effectKey: input.effectKey,
