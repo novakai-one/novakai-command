@@ -28,6 +28,66 @@ type Outstanding = Extract<DurableDriftState, { readonly phase: 'status-outstand
 const conflict = (message: string, details: Readonly<Record<string, unknown>>) =>
   b3err('WatcherConflict', message, details, true);
 
+interface SubmissionRecords {
+  readonly deadline: WatchDeadline;
+  readonly notification: Notification;
+}
+
+async function loadSubmissionRecords(
+  store: SupervisionStore, input: RecordDriftStatusSubmissionInput,
+): Promise<B3Result<SubmissionRecords>> {
+  const [deadlineRead, notificationRead] = await Promise.all([
+    store.read<WatchDeadline>('watchDeadline', input.watchDeadlineId),
+    store.read<Notification>('notification', input.expectedNotificationId),
+  ]);
+  if (!deadlineRead.ok) return deadlineRead;
+  if (!notificationRead.ok) return notificationRead;
+  if (deadlineRead.value === null || notificationRead.value === null) {
+    return b3fail(conflict('the drift submission records do not exist', {
+      watchDeadlineId: input.watchDeadlineId,
+      notificationId: input.expectedNotificationId,
+    }));
+  }
+  return b3ok({ deadline: deadlineRead.value, notification: notificationRead.value });
+}
+
+interface DriftTiming {
+  readonly intervalMs: number;
+  readonly replyWindowMs: number;
+}
+
+async function loadDriftTiming(
+  store: SupervisionStore, deadline: WatchDeadline,
+): Promise<B3Result<DriftTiming>> {
+  const ruleRead = await store.read<WatchRule>('watchRule', deadline.watchRuleId);
+  if (!ruleRead.ok) return ruleRead;
+  const rule = ruleRead.value;
+  if (rule === null || rule.condition.kind !== 'activity-drift'
+    || rule.driftPolicy === undefined) {
+    return b3fail(conflict('the drift submission has no compatible WatchRule', {
+      watchRuleId: deadline.watchRuleId,
+    }));
+  }
+  return b3ok({
+    intervalMs: rule.condition.intervalMs,
+    replyWindowMs: rule.driftPolicy.replyWindowMs,
+  });
+}
+
+function parseSubmittedAt(
+  deadline: WatchDeadline & { readonly driftState: Outstanding },
+  input: RecordDriftStatusSubmissionInput,
+): B3Result<number> {
+  const submittedAtMs = Date.parse(input.submission.submittedAt);
+  if (!Number.isFinite(submittedAtMs)
+    || submittedAtMs < Date.parse(deadline.driftState.outstandingStatus.requestedAt)) {
+    return b3fail(conflict('submittedAt precedes the durable request', {
+      submittedAt: input.submission.submittedAt,
+    }));
+  }
+  return b3ok(submittedAtMs);
+}
+
 function sameSubmission(
   deadline: WatchDeadline, input: RecordDriftStatusSubmissionInput,
 ): boolean {
@@ -60,6 +120,13 @@ function notificationRecorded(
     && attempt.terminalInputAttemptId === input.expectedTerminalInputAttemptId
     && attempt.submittedAt === input.submission.submittedAt
     && attempt.providerTurnId === input.submission.providerTurnId;
+}
+
+function submissionAlreadyComplete(
+  records: SubmissionRecords, input: RecordDriftStatusSubmissionInput,
+): boolean {
+  return sameSubmission(records.deadline, input)
+    && notificationRecorded(records.notification, input);
 }
 
 function claimMatches(
@@ -171,76 +238,52 @@ export async function recordDriftStatusSubmission(
   _context: SystemCommandContext<'sys_agent_runtime'>,
   input: RecordDriftStatusSubmissionInput,
 ): Promise<B3Result<WatchDeadline>> {
-  const [deadlineRead, notificationRead] = await Promise.all([
-    deps.store.read<WatchDeadline>('watchDeadline', input.watchDeadlineId),
-    deps.store.read<Notification>('notification', input.expectedNotificationId),
-  ]);
-  if (!deadlineRead.ok) return deadlineRead;
-  if (!notificationRead.ok) return notificationRead;
-  if (deadlineRead.value === null || notificationRead.value === null) {
-    return b3fail(conflict('the drift submission records do not exist', {
-      watchDeadlineId: input.watchDeadlineId,
-      notificationId: input.expectedNotificationId,
-    }));
+  const records = await loadSubmissionRecords(deps.store, input);
+  if (!records.ok) return records;
+  const { deadline, notification: currentNotification } = records.value;
+  if (submissionAlreadyComplete(records.value, input)) {
+    return b3ok(deadline);
   }
-  if (sameSubmission(deadlineRead.value, input)
-    && notificationRecorded(notificationRead.value, input)) {
-    return b3ok(deadlineRead.value);
-  }
-  if (!claimMatches(deadlineRead.value, input)) {
+  if (!claimMatches(deadline, input)) {
     return b3fail(conflict('the claimed drift status tuple does not match current truth', {
       watchDeadlineId: input.watchDeadlineId,
       expectedRecordVersion: input.expectedRecordVersion,
-      actualRecordVersion: deadlineRead.value.recordVersion,
-      actualDeliveryState: deadlineRead.value.driftState?.phase === 'status-outstanding'
-        ? deadlineRead.value.driftState.outstandingStatus.state : undefined,
+      actualRecordVersion: deadline.recordVersion,
+      actualDeliveryState: deadline.driftState?.phase === 'status-outstanding'
+        ? deadline.driftState.outstandingStatus.state : undefined,
     }));
   }
-  const ruleRead = await deps.store.read<WatchRule>(
-    'watchRule', deadlineRead.value.watchRuleId,
-  );
-  if (!ruleRead.ok) return ruleRead;
-  const rule = ruleRead.value;
-  if (rule === null || rule.condition.kind !== 'activity-drift'
-    || rule.driftPolicy === undefined) {
-    return b3fail(conflict('the drift submission has no compatible WatchRule', {
-      watchRuleId: deadlineRead.value.watchRuleId,
-    }));
-  }
-  const submittedAtMs = Date.parse(input.submission.submittedAt);
-  if (!Number.isFinite(submittedAtMs)
-    || submittedAtMs < Date.parse(deadlineRead.value.driftState.outstandingStatus.requestedAt)) {
-    return b3fail(conflict('submittedAt precedes the durable request', {
-      submittedAt: input.submission.submittedAt,
-    }));
-  }
+  const timing = await loadDriftTiming(deps.store, deadline);
+  if (!timing.ok) return timing;
+  const submittedAt = parseSubmittedAt(deadline, input);
+  if (!submittedAt.ok) return submittedAt;
   const verified = await deps.authority.verify(input);
   if (!verified.ok) return verified;
-  const notification = await persistNotification(
-    deps.store, notificationRead.value, input,
+  const persisted = await persistNotification(
+    deps.store, currentNotification, input,
   );
-  if (!notification.ok) return notification;
+  if (!persisted.ok) return persisted;
 
-  const closed = closedAfterPendingMovement(deadlineRead.value.driftState, input);
+  const closed = closedAfterPendingMovement(deadline.driftState, input);
   const replyDueAt = new Date(
-    submittedAtMs + rule.driftPolicy.replyWindowMs,
+    submittedAt.value + timing.value.replyWindowMs,
   ).toISOString() as IsoUtc;
   const dueAt = closed === null
     ? replyDueAt
-    : new Date(submittedAtMs + rule.condition.intervalMs).toISOString() as IsoUtc;
+    : new Date(submittedAt.value + timing.value.intervalMs).toISOString() as IsoUtc;
   return deps.store.update<WatchDeadline>(
     SUPERVISION_RECORD_WRITER,
-    deadlineRead.value.id,
+    deadline.id,
     {
       dueAt,
       state: 'armed',
       driftState: closed ?? submittedState(
-        deadlineRead.value.driftState, input, replyDueAt,
+        deadline.driftState, input, replyDueAt,
       ),
     },
-    deadlineRead.value.recordVersion,
+    deadline.recordVersion,
     deriveClientOpId(
-      `b3v4:record-drift-status-submission:${deadlineRead.value.id}:`
+      `b3v4:record-drift-status-submission:${deadline.id}:`
         + input.expectedTerminalInputAttemptId,
     ),
   );
