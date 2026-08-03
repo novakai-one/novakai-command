@@ -19,7 +19,13 @@ import type {
   CommandContext,
 } from '@novakai/foundation/contract';
 import type { NotificationEvent, PublicEvent } from './events.js';
-import type { DriftEpisodeId, NotificationId, NotificationInputReservationId, WatchDeadlineId, WatchRuleId } from './identifiers.js';
+import type {
+  DriftEpisodeId,
+  NotificationId,
+  NotificationInputReservationId,
+  WatchDeadlineId,
+  WatchRuleId,
+} from './identifiers.js';
 import type {
   AgentUsageAggregate,
   AgentRunUsage,
@@ -30,7 +36,6 @@ import type {
   WatchSubject,
 } from './records.js';
 import type { VersionedRef } from './policy.js';
-import type { NotificationTranscriptCommands } from './transcript-observation.js';
 
 /** Public input for WatchRule creation; authoritative envelope fields are omitted. */
 export type CreateWatchRuleInput = Omit<
@@ -276,7 +281,7 @@ export interface NotificationEventPageInput {
 export type NotificationEventPage = B3Page<NotificationEvent>;
 
 /** Frozen B3d Supervision mutation surface (§12.4). */
-export interface SupervisionCommands extends NotificationTranscriptCommands {
+export interface SupervisionCommands {
   installRunWatchers(
     context: SystemCommandContext<'sys_agent_runtime'>,
     input: InstallRunWatchersInput,

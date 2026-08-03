@@ -57,8 +57,16 @@ export interface RecordNotificationTranscriptNonObservationInput {
   readonly evidence: TranscriptDeliveryNonObservationEvidence;
 }
 
-/** The two Transcript-owned Q11 commands merged into SupervisionCommands. */
-export interface NotificationTranscriptCommands {
-  recordNotificationTranscriptObservation(context: SystemCommandContext<'sys_transcript'>, input: RecordNotificationTranscriptObservationInput): Promise<B3Result<Notification>>;
-  recordNotificationTranscriptNonObservation(context: SystemCommandContext<'sys_transcript'>, input: RecordNotificationTranscriptNonObservationInput): Promise<B3Result<Notification>>;
+/** Add Q11's two Transcript-owned mutations without changing the frozen API module. */
+declare module './api.js' {
+  interface SupervisionCommands {
+    recordNotificationTranscriptObservation(
+      context: SystemCommandContext<'sys_transcript'>,
+      input: RecordNotificationTranscriptObservationInput,
+    ): Promise<B3Result<Notification>>;
+    recordNotificationTranscriptNonObservation(
+      context: SystemCommandContext<'sys_transcript'>,
+      input: RecordNotificationTranscriptNonObservationInput,
+    ): Promise<B3Result<Notification>>;
+  }
 }
