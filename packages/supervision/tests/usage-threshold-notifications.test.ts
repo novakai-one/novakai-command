@@ -9,9 +9,11 @@ import {
 } from '@novakai/foundation/contract';
 import {
   composeSupervision, createSupervisionStore,
-  type SupervisionCoreOptions, type UsageRunReader,
+  type SupervisionCore, type SupervisionCoreOptions, type UsageRunReader,
 } from '../core/index.js';
-import { deriveNotificationId, subjectKey } from '../contract/index.js';
+import {
+  deriveNotificationId, subjectKey, type WatchCondition,
+} from '../contract/index.js';
 import { usageEvidenceEvent } from './fixtures.js';
 
 const RUN_ID = 'agentRun_019fd000-0000-7000-8000-0000000000a1' as never;
@@ -58,6 +60,22 @@ function options(root: string): SupervisionCoreOptions {
   };
 }
 
+async function createRule(supervision: SupervisionCore, condition: WatchCondition) {
+  return unwrap(await supervision.createWatchRule({
+    principal: HUMAN,
+    clientOpId: mintClientOpId(),
+    traceId: mintTraceCorrelationId(),
+    contractVersion: 1,
+  }, {
+    subject: { kind: 'agent-run', agentRunId: RUN_ID },
+    condition,
+    recipient: { kind: 'human', principalId: HUMAN.id },
+    deliveryMode: 'queue-only',
+    cooldownMs: 0,
+    status: 'active',
+  }), `create ${condition.kind} rule`);
+}
+
 test('usage threshold notification identity absorbs replay and restart redelivery', async () => {
   const root = mkdtempSync(path.join(tmpdir(), 'nvk-usage-threshold-replay-'));
   try {
@@ -65,19 +83,7 @@ test('usage threshold notification identity absorbs replay and restart redeliver
     const firstStore = createSupervisionStore(configured);
     const supervision = composeSupervision({ ...configured, store: firstStore });
     const condition = { kind: 'output-tokens-at-least' as const, value: 100_000 };
-    const rule = unwrap(await supervision.createWatchRule({
-      principal: HUMAN,
-      clientOpId: mintClientOpId(),
-      traceId: mintTraceCorrelationId(),
-      contractVersion: 1,
-    }, {
-      subject: { kind: 'agent-run', agentRunId: RUN_ID },
-      condition,
-      recipient: { kind: 'human', principalId: HUMAN.id },
-      deliveryMode: 'queue-only',
-      cooldownMs: 0,
-      status: 'active',
-    }), 'create threshold rule');
+    const rule = await createRule(supervision, condition);
     const measurement = {
       quality: 'measured' as const,
       inputTokens: 50_000,
@@ -125,6 +131,52 @@ test('usage threshold notification identity absorbs replay and restart redeliver
     );
     assert.equal(stored.items.length, 1);
     assert.equal(stored.items[0]!.id, first[0]!.id);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('usage threshold evaluation compares every at-least condition inclusively', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'nvk-usage-threshold-kinds-'));
+  try {
+    const supervision = composeSupervision(options(root));
+    const satisfied = [
+      { kind: 'turn-count-at-least' as const, value: 100 },
+      { kind: 'input-tokens-at-least' as const, value: 50_000 },
+      { kind: 'output-tokens-at-least' as const, value: 100_000 },
+      { kind: 'cost-micros-at-least' as const, value: 2_500_000 },
+    ];
+    const expectedRuleIds = [];
+    for (const condition of satisfied) {
+      expectedRuleIds.push((await createRule(supervision, condition)).id);
+    }
+    const unsatisfied = await createRule(
+      supervision,
+      { kind: 'output-tokens-at-least', value: 100_001 },
+    );
+    const event = usageEvidenceEvent({
+      quality: 'measured',
+      inputTokens: 50_000,
+      outputTokens: 100_000,
+      cachedInputTokens: 10_000,
+      costMicros: 2_500_000,
+      providerTurns: 100,
+      limitations: [],
+      evidenceDigest: 'sha256:usage-all-thresholds',
+    });
+
+    const queued = unwrap(
+      await supervision.evaluateEvent(usageContext(), { event }),
+      'all threshold evaluation',
+    );
+    assert.deepEqual(
+      queued.map((notification) => notification.watchRuleId).sort(),
+      expectedRuleIds.sort(),
+    );
+    assert.equal(
+      queued.some((notification) => notification.watchRuleId === unsatisfied.id),
+      false,
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
