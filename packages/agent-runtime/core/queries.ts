@@ -232,13 +232,28 @@ export async function viewOfRun(
   } as AgentRunView);
 }
 
-function usageFacts(agentRun: AgentRun): RunUsageFacts {
+function usageFacts(
+  agentRun: AgentRun,
+  submissions: readonly import('../contract/provider-turns.js').ProviderTurnSubmission[],
+): RunUsageFacts {
   return {
     agentRunId: agentRun.id,
     agentId: agentRun.agentId,
     providerSessionId: agentRun.providerSessionId,
     final: FINAL_LIFECYCLES.has(agentRun.lifecycle),
+    ...(submissions.length === 0 ? {} : {
+      providerTurnSubmissions: submissions.map((submission) => ({
+        providerTurnId: submission.providerTurnId,
+        state: submission.state.kind,
+      })),
+    }),
   };
+}
+
+async function usageSubmissions(
+  core: RunsCore, agentRunId: AgentRunId,
+): Promise<B3Result<readonly import('../contract/provider-turns.js').ProviderTurnSubmission[]>> {
+  return core.store.list('providerTurnSubmission', { agentRunId });
 }
 
 /** Composition-only Runtime read that avoids Runtime→Supervision→Runtime recursion. */
@@ -251,7 +266,8 @@ export async function getUsageRun(
   if (!run.ok) return run;
   const visible = await core.agents.getAgent(principal, run.value.agentId);
   if (!visible.ok) return visible;
-  return b3ok(usageFacts(run.value));
+  const submissions = await usageSubmissions(core, run.value.id);
+  return submissions.ok ? b3ok(usageFacts(run.value, submissions.value)) : submissions;
 }
 
 /** All Runtime-owned Run facts for one visible stable Agent. */
@@ -264,7 +280,13 @@ export async function listUsageRuns(
   if (!visible.ok) return visible;
   const runs = await core.store.list<AgentRun>('agentRun', { agentId });
   if (!runs.ok) return runs;
-  return b3ok(runs.value.map(usageFacts));
+  const facts: RunUsageFacts[] = [];
+  for (const run of runs.value) {
+    const submissions = await usageSubmissions(core, run.id);
+    if (!submissions.ok) return submissions;
+    facts.push(usageFacts(run, submissions.value));
+  }
+  return b3ok(facts);
 }
 
 export async function getAgentRun(

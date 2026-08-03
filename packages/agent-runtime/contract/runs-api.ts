@@ -234,6 +234,13 @@ export interface RunUsageFacts {
   readonly agentId: AgentId;
   readonly providerSessionId: ProviderSessionId;
   readonly final: boolean;
+  /** Omitted means no amendment-era submission set exists for this Run. */
+  readonly providerTurnSubmissions?: readonly {
+    readonly providerTurnId: ProviderTurnId;
+    readonly state:
+      | 'queued' | 'prepared' | 'submitted-confirmed' | 'submitted-unconfirmed'
+      | 'completed' | 'rejected' | 'recovery-required' | 'completion-unproven-final';
+  }[];
 }
 
 /** Narrow composition adapter from Runtime records into Supervision projections. */
