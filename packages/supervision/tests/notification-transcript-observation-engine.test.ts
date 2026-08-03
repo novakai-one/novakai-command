@@ -15,13 +15,14 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
-  deriveClientOpId,
-  type AgentRunId, type ProviderSessionId, type ProviderTurnId,
+  b3err, b3fail, b3ok, deriveClientOpId,
+  type AgentRunId, type AuthenticatedPrincipal, type CommandContext,
+  type ProviderSessionId, type ProviderTurnId,
   type SystemCommandContext, type TerminalInputAttemptId,
   type TranscriptBindingId, type TranscriptLineId,
 } from '@novakai/foundation/contract';
 import {
-  createSupervisionStore, notificationLogicalInputDigest,
+  composeSupervision, createSupervisionStore, notificationLogicalInputDigest,
   recordNotificationTranscriptNonObservation,
   recordNotificationTranscriptObservation,
   type SupervisionStore,
@@ -52,6 +53,17 @@ const SUMMARY = 'Output token threshold reached';
 
 const transcript = (): SystemCommandContext<'sys_transcript'> => ({
   principal: { id: 'sys_transcript', kind: 'system', verifiedScopes: [] },
+  clientOpId: 'op_123e4567-e89b-42d3-a456-426614174000' as never,
+  traceId: 'trace_123e4567-e89b-42d3-a456-426614174000' as never,
+  contractVersion: 1,
+});
+
+const human: AuthenticatedPrincipal = {
+  id: 'person_chris' as never, kind: 'human', verifiedScopes: [],
+};
+
+const humanContext = (): CommandContext => ({
+  principal: human,
   clientOpId: 'op_123e4567-e89b-42d3-a456-426614174000' as never,
   traceId: 'trace_123e4567-e89b-42d3-a456-426614174000' as never,
   contractVersion: 1,
@@ -499,4 +511,50 @@ test('an uncertain notification is still promotable by later positive evidence',
     assert.equal(observed.ok, true, observed.ok ? '' : observed.error.message);
     assert.equal(observed.value.state, 'transcript-observed');
   } finally { cleanup(); }
+});
+
+// ---------------------------------------------------------------------------
+// The live wire — Transcript reaches this through the composed capability, not
+// through an import. A seam that only compiles is a seam nobody can call.
+// ---------------------------------------------------------------------------
+
+test('Transcript closes and then promotes a Notification through the composed capability', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'nvk-lane-c-q11-wire-'));
+  try {
+    const store = createSupervisionStore({ root, dataRoot: path.join(root, 'stores') });
+    const supervision = composeSupervision({
+      root,
+      dataRoot: path.join(root, 'stores'),
+      store,
+      installAuthority: {
+        resolve: async () => b3fail(
+          b3err('UnsupportedOperation', 'not exercised by this test', {}, false),
+        ),
+      },
+      watchRuleAccess: { agentIdFor: async () => b3ok(null) },
+    });
+    const notification = await seedOffered(store);
+
+    // Transcript reads to the end of the source and finds nothing for our turn.
+    const closed = await supervision.recordNotificationTranscriptNonObservation(
+      transcript(), closureFor(notification),
+    );
+    assert.equal(closed.ok, true, closed.ok ? '' : closed.error.message);
+    if (!closed.ok) return;
+    assert.equal(closed.value.state, 'delivery-uncertain');
+
+    // A later scan binds the line after all. Uncertainty is not a verdict.
+    const observed = await supervision.recordNotificationTranscriptObservation(
+      transcript(), observationFor(closed.value),
+    );
+    assert.equal(observed.ok, true, observed.ok ? '' : observed.error.message);
+    if (!observed.ok) return;
+    assert.equal(observed.value.state, 'transcript-observed');
+
+    // And only now may a human settle it.
+    const acked = await supervision.acknowledgeNotification(humanContext(), notification.id);
+    assert.equal(acked.ok, true, acked.ok ? '' : acked.error.message);
+    if (!acked.ok) return;
+    assert.equal(acked.value.state, 'acknowledged');
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });

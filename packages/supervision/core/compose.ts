@@ -23,7 +23,9 @@ import { evaluateEvent, listNotifications } from './notifications.js';
 import {
   acknowledgeNotification, claimNotificationDelivery,
   getNotificationDeliveryAuthority, notificationEventPage,
-  recordNotificationDeliveryOutcome, subscribeNotifications,
+  recordNotificationDeliveryOutcome,
+  recordNotificationTranscriptNonObservation,
+  recordNotificationTranscriptObservation, subscribeNotifications,
 } from './notifications/index.js';
 
 /** The frozen members the tracer's live wire actually carries current through. */
@@ -34,6 +36,9 @@ export type SupervisionWireSlice = Pick<
   | 'claimNotificationDelivery' | 'recordNotificationDeliveryOutcome'
   | 'acknowledgeNotification' | 'getNotificationDeliveryAuthority'
   | 'subscribeNotifications'
+  // Lane C, Q11: the transcript half — the only path past `offered-to-endpoint`.
+  | 'recordNotificationTranscriptObservation'
+  | 'recordNotificationTranscriptNonObservation'
 >;
 
 /** Deadline detail remains a tracer host read; WatchRule listing is now frozen. */
@@ -98,6 +103,10 @@ export function composeSupervision(options: SupervisionCoreOptions): Supervision
       acknowledgeNotification({ store }, context, notificationId),
     getNotificationDeliveryAuthority: (principal, notificationId) =>
       getNotificationDeliveryAuthority({ store }, principal, notificationId),
+    recordNotificationTranscriptObservation: (context, input) =>
+      recordNotificationTranscriptObservation({ store }, context, input),
+    recordNotificationTranscriptNonObservation: (context, input) =>
+      recordNotificationTranscriptNonObservation({ store }, context, input),
     subscribeNotifications: (_principal, after) => subscribeNotifications({ store }, after),
     notificationEventPage: (_principal, input) => notificationEventPage({ store }, input),
     listWatchDeadlines: () => store.list<WatchDeadline>('watchDeadline'),
