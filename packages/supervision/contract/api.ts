@@ -12,23 +12,14 @@ import type {
   RecordEnvelope,
   RecordVersion,
   ResolvedLaunchPlanId,
-  ProviderSessionId,
   ProviderTurnId,
   TerminalInputAttemptId,
   TraceCorrelationId,
-  TranscriptBindingId,
-  TranscriptLineId,
   SystemCommandContext,
   CommandContext,
 } from '@novakai/foundation/contract';
 import type { NotificationEvent, PublicEvent } from './events.js';
-import type {
-  DriftEpisodeId,
-  NotificationId,
-  NotificationInputReservationId,
-  WatchDeadlineId,
-  WatchRuleId,
-} from './identifiers.js';
+import type { DriftEpisodeId, NotificationId, NotificationInputReservationId, WatchDeadlineId, WatchRuleId } from './identifiers.js';
 import type {
   AgentUsageAggregate,
   AgentRunUsage,
@@ -39,6 +30,7 @@ import type {
   WatchSubject,
 } from './records.js';
 import type { VersionedRef } from './policy.js';
+import type { NotificationTranscriptCommands } from './transcript-observation.js';
 
 /** Public input for WatchRule creation; authoritative envelope fields are omitted. */
 export type CreateWatchRuleInput = Omit<
@@ -192,51 +184,6 @@ export interface RecordNotificationDeliveryOutcomeInput {
   readonly outcome: NotificationTurnSubmission;
 }
 
-/** Durable positive evidence for the exact provider-visible delivery turn (Q11). */
-export interface TranscriptDeliveryEvidence {
-  readonly bindingId: TranscriptBindingId;
-  readonly transcriptLineId: TranscriptLineId;
-  readonly agentRunId: AgentRunId;
-  readonly providerSessionId: ProviderSessionId;
-  readonly providerTurnId: ProviderTurnId;
-  readonly sourcePosition: string;
-  readonly sourceDigest: string;
-  readonly logicalInputDigest: string;
-}
-
-/** Durable negative closure for one exact provider delivery turn (Q11). */
-export interface TranscriptDeliveryNonObservationEvidence {
-  readonly bindingId: TranscriptBindingId;
-  readonly agentRunId: AgentRunId;
-  readonly providerSessionId: ProviderSessionId;
-  readonly providerTurnId: ProviderTurnId;
-  readonly terminalInputAttemptId: TerminalInputAttemptId;
-  readonly reason:
-    | 'complete-for-turn'
-    | 'final-source-missing'
-    | 'final-source-corrupt';
-  readonly sourceDiscoveryState: 'bound' | 'missing' | 'corrupt';
-  readonly completeThroughWatermark?: string;
-  readonly evidenceRefs: readonly string[];
-}
-
-/** Transcript's exact-CAS positive observation command input (Q11). */
-export interface RecordNotificationTranscriptObservationInput {
-  readonly notificationId: NotificationId;
-  readonly expectedRecordVersion: RecordVersion;
-  readonly expectedEffectKey: string;
-  readonly terminalInputAttemptId: TerminalInputAttemptId;
-  readonly evidence: TranscriptDeliveryEvidence;
-}
-
-/** Transcript's exact-CAS durable non-observation command input (Q11). */
-export interface RecordNotificationTranscriptNonObservationInput {
-  readonly notificationId: NotificationId;
-  readonly expectedRecordVersion: RecordVersion;
-  readonly expectedEffectKey: string;
-  readonly evidence: TranscriptDeliveryNonObservationEvidence;
-}
-
 /** Exact observable outcomes from §12.7; every evaluation starts zero turns. */
 export type DriftCheckOutcome =
   | {
@@ -329,7 +276,7 @@ export interface NotificationEventPageInput {
 export type NotificationEventPage = B3Page<NotificationEvent>;
 
 /** Frozen B3d Supervision mutation surface (§12.4). */
-export interface SupervisionCommands {
+export interface SupervisionCommands extends NotificationTranscriptCommands {
   installRunWatchers(
     context: SystemCommandContext<'sys_agent_runtime'>,
     input: InstallRunWatchersInput,
@@ -375,14 +322,6 @@ export interface SupervisionCommands {
   recordNotificationDeliveryOutcome(
     context: SystemCommandContext<'sys_agent_runtime'>,
     input: RecordNotificationDeliveryOutcomeInput,
-  ): Promise<B3Result<Notification>>;
-  recordNotificationTranscriptObservation(
-    context: SystemCommandContext<'sys_transcript'>,
-    input: RecordNotificationTranscriptObservationInput,
-  ): Promise<B3Result<Notification>>;
-  recordNotificationTranscriptNonObservation(
-    context: SystemCommandContext<'sys_transcript'>,
-    input: RecordNotificationTranscriptNonObservationInput,
   ): Promise<B3Result<Notification>>;
 }
 
