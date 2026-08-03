@@ -6,7 +6,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  mintClientOpId, mintTraceCorrelationId,
+  mintClientOpId, mintTraceCorrelationId, notificationInputReservationId,
   type NotificationId, type SystemCommandContext,
 } from '@novakai/foundation/contract';
 import { createRunsRig } from '../runs-harness.js';
@@ -72,5 +72,68 @@ test('a safe-boundary command submits one Notification turn and remembers its ou
     if (remembered.ok) assert.deepEqual(remembered.value, submitted.value);
   } finally {
     rig.close();
+  }
+});
+
+test('the query adopts a Supervision claim whose Runtime stage write crashed', async () => {
+  const healthy = createRunsRig();
+  let crashed: ReturnType<typeof createRunsRig> | null = null;
+  try {
+    const roleProfileId = healthy.agents.defineRole('claim-recovery-target');
+    const spawned = await healthy.runtime.spawnAgent(healthy.human(), {
+      roleProfileId,
+      displayName: 'Claim recovery target',
+      workingDirectory: '/tmp/work',
+    });
+    assert.equal(spawned.ok, true, spawned.ok ? '' : spawned.error.message);
+    if (!spawned.ok) return;
+    const notificationId = `notification_${'b'.repeat(52)}` as NotificationId;
+    const effectKey = `b3v4:notification-delivery:${notificationId}:condition`;
+    healthy.notifications.authorize({
+      notificationId,
+      agentRunId: spawned.value.run.id,
+      effectKey,
+      activityGeneration: spawned.value.run.activityGeneration,
+      inputText: 'Status requested',
+    });
+    crashed = createRunsRig({
+      root: healthy.root,
+      agents: healthy.agents,
+      terminal: healthy.terminal,
+      providers: healthy.providers,
+      notifications: healthy.notifications,
+      messagingEndpoint: healthy.messagingEndpoint,
+      transcriptCustody: healthy.transcriptCustody,
+      // open operation, journal intent, journal Terminal reservation, then die
+      // on the write that would journal Supervision's already-durable claim.
+      crashAfterWrites: 3,
+    });
+
+    const interrupted = await crashed.runtime.startNotificationTurnAtSafeBoundary(
+      supervisionContext(),
+      {
+        notificationId,
+        agentRunId: spawned.value.run.id,
+        effectKey,
+        expectedActivityGeneration: spawned.value.run.activityGeneration,
+      },
+    );
+    assert.equal(interrupted.ok, false, 'fault injection did not interrupt the operation');
+    if (!interrupted.ok) assert.equal(interrupted.error.code, 'StoreUnavailable');
+
+    const recovered = await crashed.runtime.getNotificationTurnSubmission(
+      crashed.principal(), effectKey,
+    );
+    assert.equal(recovered.ok, true, recovered.ok ? '' : recovered.error.message);
+    if (recovered.ok) {
+      assert.deepEqual(recovered.value, {
+        state: 'claimed-pending-submission',
+        notificationInputReservationId: notificationInputReservationId(effectKey),
+        notificationId,
+      });
+    }
+  } finally {
+    crashed?.close();
+    healthy.close();
   }
 });
