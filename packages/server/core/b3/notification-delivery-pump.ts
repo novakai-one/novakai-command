@@ -12,10 +12,12 @@ import {
   type SystemCommandContext,
 } from '@novakai/foundation/contract';
 import type { AgentRunsContract, ProviderPort } from '../../../agent-runtime/contract/index.js';
-import type { TerminalContract } from '../../../terminal/contract/index.js';
+import type {
+  TerminalContract, TerminalInputAttempt,
+} from '../../../terminal/contract/index.js';
 import type { SupervisionCore } from '../../../supervision/public/index.js';
 import type {
-  Notification, NotificationInputReservationId,
+  Notification, NotificationDeliveryClaim, NotificationInputReservationId,
 } from '../../../supervision/contract/index.js';
 
 export interface NotificationDeliveryPass {
@@ -41,6 +43,9 @@ export interface NotificationDeliveryPumpOptions {
 const DEFAULT_INTERVAL_MS = 500;
 const LIMIT = 100;
 const EMPTY: NotificationDeliveryPass = { considered: 0, delivered: 0, failures: [] };
+type NotificationTerminalAttempt = Extract<
+  TerminalInputAttempt, { readonly source: 'system-notification' }
+>;
 
 const reader: AuthenticatedPrincipal = {
   id: 'sys_agent_runtime', kind: 'system', verifiedScopes: [],
@@ -93,6 +98,54 @@ export function createNotificationDeliveryPump(
   let timer: ReturnType<typeof setInterval> | null = null;
   let inFlight: Promise<NotificationDeliveryPass> | null = null;
 
+  async function recordOutcome(
+    notification: Notification,
+    claimed: NotificationDeliveryClaim,
+    reservation: NotificationInputReservationId,
+    attempt: NotificationTerminalAttempt,
+  ): Promise<string> {
+    const submission = attempt.outcome === 'submitted-confirmed'
+      ? {
+          state: 'submitted-confirmed' as const,
+          submittedAt: attempt.submittedAt,
+          providerTurnId: attempt.providerTurnId,
+        }
+      : {
+          state: 'submitted-unconfirmed' as const,
+          submittedAt: attempt.submittedAt,
+          providerTurnId: attempt.providerTurnId,
+        };
+    if (notification.phase === 'drift-status-request') {
+      const deadline = claimed.watchDeadline;
+      if (deadline === undefined) return 'WatcherConflict';
+      const outcome = await options.supervision.recordDriftStatusSubmission(
+        runtimeContext(notification.deliveryEffectKey, 'record-drift-outcome'),
+        {
+          watchDeadlineId: deadline.id,
+          expectedRecordVersion: deadline.recordVersion,
+          expectedEpisodeId: notification.driftEpisodeId,
+          expectedEffectKey: notification.deliveryEffectKey,
+          expectedNotificationId: notification.id,
+          expectedNotificationInputReservationId: reservation,
+          expectedTerminalInputAttemptId: attempt.id,
+          submission,
+        },
+      );
+      return outcome.ok ? '' : outcome.error.code;
+    }
+    const outcome = await options.supervision.recordNotificationDeliveryOutcome(
+      runtimeContext(notification.deliveryEffectKey, 'record-outcome'), {
+        notificationId: notification.id,
+        expectedRecordVersion: claimed.notification.recordVersion,
+        expectedEffectKey: notification.deliveryEffectKey,
+        notificationInputReservationId: reservation,
+        terminalInputAttemptId: attempt.id,
+        outcome: submission,
+      },
+    );
+    return outcome.ok ? '' : outcome.error.code;
+  }
+
   async function deliver(notification: Notification): Promise<string | null> {
     // queue-only is durable UI truth. start-turn carries explicit policy
     // authority; next-turn-context gains execution authority only after the
@@ -118,6 +171,40 @@ export function createNotificationDeliveryPump(
       claimGeneration: notification.conditionGeneration as ActivityGeneration,
       inputText: notification.summary,
     };
+    const reservation = notificationInputReservationId(
+      target.effectKey,
+    ) as NotificationInputReservationId;
+    const priorReservation = await options.terminal.getNotificationInputReservation(
+      reader, reservation,
+    );
+    if (!priorReservation.ok && priorReservation.error.code !== 'ValidationFailed') {
+      return priorReservation.error.code;
+    }
+    if (priorReservation.ok && priorReservation.value.state === 'committed') {
+      const held = priorReservation.value;
+      if (held.agentRunId !== target.agentRunId
+        || held.notificationId !== notification.id
+        || held.deliveryEffectKey !== target.effectKey) return 'IdempotencyConflict';
+      const attempt = await options.terminal.getTerminalInputAttempt(
+        reader, held.terminalInputAttemptId,
+      );
+      if (!attempt.ok) return attempt.error.code;
+      if (attempt.value.source !== 'system-notification'
+        || attempt.value.notificationInputReservationId !== reservation
+        || attempt.value.deliveryEffectKey !== target.effectKey) return 'IdempotencyConflict';
+      const claimed = await options.supervision.claimNotificationDelivery(
+        runtimeContext(target.effectKey, 'claim'),
+        {
+          notificationId: notification.id,
+          expectedNotificationRecordVersion: notification.recordVersion,
+          expectedEffectKey: target.effectKey,
+          notificationInputReservationId: reservation,
+          expectedActivityGeneration: target.claimGeneration,
+        },
+      );
+      if (!claimed.ok) return claimed.error.code;
+      return recordOutcome(notification, claimed.value, reservation, attempt.value);
+    }
 
     const run = await options.runs.getAgentRun(reader, target.agentRunId);
     if (!run.ok) return run.error.code;
@@ -137,15 +224,6 @@ export function createNotificationDeliveryPump(
     if (terminal.value.session.status !== 'live'
       || terminal.value.activeInputLease !== undefined) return null;
 
-    const reservation = notificationInputReservationId(
-      target.effectKey,
-    ) as NotificationInputReservationId;
-    const priorReservation = await options.terminal.getNotificationInputReservation(
-      reader, reservation,
-    );
-    if (!priorReservation.ok && priorReservation.error.code !== 'ValidationFailed') {
-      return priorReservation.error.code;
-    }
     const providerTurnId = priorReservation.ok
       ? priorReservation.value.providerTurnId : mintProviderTurnId();
     const reserved = await options.terminal.reserveNotificationInput(
@@ -199,47 +277,7 @@ export function createNotificationDeliveryPump(
     );
     if (!submitted.ok) return submitted.error.code;
 
-    const attempt = submitted.value.attempt;
-    const submission = attempt.outcome === 'submitted-confirmed'
-      ? {
-          state: 'submitted-confirmed' as const,
-          submittedAt: attempt.submittedAt,
-          providerTurnId: attempt.providerTurnId,
-        }
-      : {
-          state: 'submitted-unconfirmed' as const,
-          submittedAt: attempt.submittedAt,
-          providerTurnId: attempt.providerTurnId,
-        };
-    if (notification.phase === 'drift-status-request') {
-      const deadline = claimed.value.watchDeadline;
-      if (deadline === undefined) return 'WatcherConflict';
-      const outcome = await options.supervision.recordDriftStatusSubmission(
-        runtimeContext(target.effectKey, 'record-drift-outcome'),
-        {
-          watchDeadlineId: deadline.id,
-          expectedRecordVersion: deadline.recordVersion,
-          expectedEpisodeId: notification.driftEpisodeId,
-          expectedEffectKey: target.effectKey,
-          expectedNotificationId: notification.id,
-          expectedNotificationInputReservationId: reservation,
-          expectedTerminalInputAttemptId: attempt.id,
-          submission,
-        },
-      );
-      return outcome.ok ? '' : outcome.error.code;
-    }
-    const outcome = await options.supervision.recordNotificationDeliveryOutcome(
-      runtimeContext(target.effectKey, 'record-outcome'), {
-        notificationId: notification.id,
-        expectedRecordVersion: claimed.value.notification.recordVersion,
-        expectedEffectKey: target.effectKey,
-        notificationInputReservationId: reservation,
-        terminalInputAttemptId: attempt.id,
-        outcome: submission,
-      },
-    );
-    return outcome.ok ? '' : outcome.error.code;
+    return recordOutcome(notification, claimed.value, reservation, submitted.value.attempt);
   }
 
   async function runPass(): Promise<NotificationDeliveryPass> {
