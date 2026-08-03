@@ -47,6 +47,40 @@ const RUN_FIELD = 'run';
  */
 const TERMINAL_IS_OVER: ReadonlySet<string> = new Set(['exited', 'failed']);
 
+/**
+ * Commit one honest interrupted edge and announce it through Runtime's one
+ * lifecycle stream. The successful CAS is the edge: failed or replayed
+ * settlements publish nothing.
+ */
+async function settleInterruptedRun(
+  core: RunsCore,
+  agentRun: AgentRun,
+  observations: Readonly<Partial<Pick<AgentRun, 'activity' | 'finalAt' | 'uncertainty'>>>,
+): Promise<B3Result<AgentRun>> {
+  const settled = await core.store.update<AgentRun>(
+    'sys_agent_runtime', agentRun.id,
+    {
+      ...observations,
+      lifecycle: 'interrupted',
+      finalReason: 'runtime-reconciled-missing',
+    },
+    agentRun.recordVersion, mintClientOpId(),
+  );
+  if (!settled.ok) return settled;
+  core.publish('agent.run.lifecycle.changed', {
+    agentRunId: agentRun.id,
+    fromLifecycle: agentRun.lifecycle,
+    toLifecycle: 'interrupted',
+    activityGeneration: settled.value.activityGeneration,
+    uncertaintyCodes: settled.value.uncertainty.map((item) => item.code),
+    final: true,
+  });
+  await expireAuthorityOf(core, settled.value);
+  // The shift is over, so the endpoint stops advertising it (§8.1's cutoff).
+  await closeEndpointOf(core, settled.value);
+  return b3ok(settled.value);
+}
+
 function unavailableUsage(agentRun: AgentRun, observedAt: IsoUtc): AgentRunUsage {
   const unavailable = (): UsageValue => ({
     quality: 'unavailable',
@@ -113,28 +147,9 @@ async function settleIfTerminalGone(
     });
   }
 
-  const settled = await core.store.update<AgentRun>(
-    'sys_agent_runtime', disconnected.id,
-    {
-      lifecycle: 'interrupted',
-      finalReason: 'runtime-reconciled-missing',
-      finalAt: nowIsoUtc(),
-    } as Record<string, unknown>,
-    disconnected.recordVersion, mintClientOpId(),
-  );
+  const settled = await settleInterruptedRun(core, disconnected, { finalAt: nowIsoUtc() });
   if (!settled.ok) return b3ok(agentRun);
-  core.publish('agent.run.lifecycle.changed', {
-    agentRunId: agentRun.id,
-    fromLifecycle: disconnected.lifecycle,
-    toLifecycle: 'interrupted',
-    activityGeneration: settled.value.activityGeneration,
-    uncertaintyCodes: settled.value.uncertainty.map((item) => item.code),
-    final: true,
-  });
-  await expireAuthorityOf(core, settled.value);
-  // The shift is over, so the endpoint stops advertising it (§8.1's cutoff).
-  await closeEndpointOf(core, settled.value);
-  return b3ok(settled.value);
+  return settled;
 }
 
 /** Reconcile the Run that owned a Terminal-reported unexpected provider exit. */
@@ -360,28 +375,17 @@ export async function reconcileAfterRestart(
   for (const agentRun of runs.value) {
     if (FINAL_LIFECYCLES.has(agentRun.lifecycle)) continue;
     if (epochOf.get(agentRun.id) === activeEpochId) continue;
-    const settled = await core.store.update<AgentRun>(
-      'sys_agent_runtime', agentRun.id,
-      {
-        lifecycle: 'interrupted',
-        activity: 'unknown',
-        finalReason: 'runtime-reconciled-missing',
-        uncertainty: [{
-          code: 'provider-liveness-unknown',
-          summary: 'the runtime that owned this agentRun ended; its managed terminal '
-            + 'went with it and no claim is made about the provider process',
-          evidenceRefs: [agentRun.terminalSessionId ?? 'no terminal was recorded'],
-        }],
-      } as Record<string, unknown>,
-      agentRun.recordVersion, `op_${crypto.randomUUID()}` as never,
-    );
+    const settled = await settleInterruptedRun(core, agentRun, {
+      activity: 'unknown',
+      uncertainty: [{
+        code: 'provider-liveness-unknown',
+        summary: 'the runtime that owned this agentRun ended; its managed terminal '
+          + 'went with it and no claim is made about the provider process',
+        evidenceRefs: [agentRun.terminalSessionId ?? 'no terminal was recorded'],
+      }],
+    });
     if (!settled.ok) return settled;
-    await expireAuthorityOf(core, agentRun);
-    // A Run whose Runtime died is as over as one somebody stopped, and exam
-    // row D2 is what an endpoint that disagrees costs: mail accepted into a
-    // durable inbox behind a claim with nobody behind it.
-    await closeEndpointOf(core, agentRun);
-    reconciled.push(agentRun.id);
+    reconciled.push(settled.value.id);
   }
   const operations2 = await settleAbandonedOperations(core, operations.value, activeEpochId);
   if (!operations2.ok) return operations2;

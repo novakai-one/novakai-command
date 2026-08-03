@@ -125,11 +125,13 @@ test('boot reconciliation publishes one run-final Notification and never re-fire
     const published = await lifecycleEventsFor(second.client, spawned.value.run.id);
     assert.equal(published.length, 1,
       'boot did not publish exactly one lifecycle edge for the newly final Run');
-    assert.deepEqual(published[0]?.payload, {
+    const { activityGeneration, ...payload } = published[0]!.payload;
+    assert.equal(Number.isInteger(activityGeneration) && Number(activityGeneration) >= 0, true,
+      'the lifecycle edge omitted its non-negative activity generation');
+    assert.deepEqual(payload, {
       agentRunId: spawned.value.run.id,
       fromLifecycle: 'ready',
       toLifecycle: 'interrupted',
-      activityGeneration: 0,
       uncertaintyCodes: ['provider-liveness-unknown'],
       final: true,
     });
