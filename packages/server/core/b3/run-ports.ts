@@ -15,7 +15,8 @@ import path from 'node:path';
 import {
   b3err, b3fail, b3ok, deriveClientOpId, mintClientOpId, mintTraceCorrelationId,
   type AgentId, type AgentRunId, type B3Result, type CommandContext,
-  type ProviderSessionId, type SystemCommandContext,
+  type IsoUtc, type ProviderSessionId, type SystemCommandContext,
+  type TerminalInputAttemptId,
 } from '@novakai/foundation/contract';
 import type {
   AgentsPort, ProviderPort, RunCredentialPort, TerminalPort, TurnDeliveryStep,
@@ -274,7 +275,11 @@ async function typeAsRuntime(
     readonly attachmentId: Parameters<TerminalContract['writeInput']>[1]['attachmentId'];
     readonly keystrokes: readonly TurnDeliveryStep[];
   },
-): Promise<B3Result<{ readonly confirmed: boolean }>> {
+): Promise<B3Result<{
+  readonly confirmed: boolean;
+  readonly terminalInputAttemptId: TerminalInputAttemptId;
+  readonly submittedAt: IsoUtc;
+}>> {
   const lease = await terminal.acquireInputLease(step('lease'), {
     terminalSessionId: input.terminalSessionId,
     attachmentId: input.attachmentId,
@@ -291,12 +296,15 @@ async function typeAsRuntime(
   const view = await terminal.getTerminalSession(
     systemContext().principal, input.terminalSessionId,
   );
-  let outcome: B3Result<{ readonly confirmed: boolean }> = view.ok
-    ? b3ok({ confirmed: true }) : view;
-  let sequence = view.ok ? view.value.nextInputSequence : 0;
+  if (!view.ok) return view;
+  let outcome: B3Result<{
+    readonly confirmed: boolean;
+    readonly terminalInputAttemptId: TerminalInputAttemptId;
+    readonly submittedAt: IsoUtc;
+  }> | null = null;
+  let sequence = view.value.nextInputSequence;
 
   for (const [index, keystroke] of input.keystrokes.entries()) {
-    if (!outcome.ok) break;
     const written = await terminal.writeInput(step(`write-${String(index)}`), {
       terminalSessionId: input.terminalSessionId,
       attachmentId: input.attachmentId,
@@ -316,7 +324,11 @@ async function typeAsRuntime(
       break;
     }
     sequence = written.value.inputSequence + 1;
-    outcome = b3ok({ confirmed: written.value.outcome !== 'submitted-unconfirmed' });
+    outcome = b3ok({
+      confirmed: written.value.outcome !== 'submitted-unconfirmed',
+      terminalInputAttemptId: written.value.id,
+      submittedAt: written.value.createdAt,
+    });
     if (keystroke.pauseMsAfter > 0) await pause(keystroke.pauseMsAfter);
   }
 
@@ -326,7 +338,10 @@ async function typeAsRuntime(
     leaseId: lease.value.id,
     generation: lease.value.generation,
   });
-  return outcome;
+  return outcome ?? b3fail(b3err(
+    'ValidationFailed', 'a Runtime input turn must contain at least one delivery step',
+    { operation: 'terminal.submitRuntimeInput' }, false,
+  ));
 }
 
 export type { ProviderPort, RunCredentialPort };

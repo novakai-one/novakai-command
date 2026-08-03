@@ -51,6 +51,7 @@ import {
 import { notificationTranscriptObserver } from './notification-transcript-port.js';
 import { createUsageReader } from '../supervision/usage.js';
 import { createTranscriptUsagePort } from './usage-transcript-port.js';
+import { createNotificationDeliveryPump } from './notification-delivery-pump.js';
 
 export interface B3RuntimeOptions {
   /** `.novakai/` root. Domain records live in `<root>/stores`. */
@@ -92,6 +93,8 @@ export interface B3RuntimeOptions {
   readonly mirrorIntervalMs?: number;
   /** How often the inbox delivery loop looks. Same reason as the mirror's. */
   readonly inboxDeliveryIntervalMs?: number;
+  /** How often Runtime reconciles durable Notification delivery work. */
+  readonly notificationDeliveryIntervalMs?: number;
   /**
    * B3d: extra pinned watcher templates this host's role catalogue offers, on
    * top of the ones Supervision ships. The frozen catalogue seam is owned by
@@ -170,6 +173,7 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
   await gateStoreRoute(options.root, dataRoot);
   const authorities = options.authorities ?? createLaunchAuthorities();
   const ptyHost = options.ptyHost ?? await createNodePtyHost({ authorities });
+  const providerAdapters = options.providers ?? createProviderAdapters();
 
   // Deliberate ordering: the runtime host exists first so Terminal is born
   // already fenced, then Terminal registers itself for recovery.
@@ -238,7 +242,7 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
   const agents = composeGovernedAgents({
     root: options.root,
     dataRoot,
-    providers: options.providers ?? createProviderAdapters(),
+    providers: providerAdapters,
     watcherTemplates: {
       inspect: (templateRef) => {
         const template = watcherTemplates.resolve(templateRef);
@@ -336,14 +340,14 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
     },
   });
 
+  const runtimeTerminal = terminalPort(terminal, () => runtime.fence.activeEpochId());
+  const runtimeProviders = createProviderPort(providerAdapters, authorities);
   runs = composeAgentRuns({
     root: options.root,
     dataRoot,
     agents: agentsPort(agents),
-    terminal: terminalPort(terminal, () => runtime.fence.activeEpochId()),
-    providers: createProviderPort(
-      options.providers ?? createProviderAdapters(), authorities,
-    ),
+    terminal: runtimeTerminal,
+    providers: runtimeProviders,
     credentials,
     fence: runtime.fence,
     ...(options.publish === undefined ? {} : { publish: options.publish }),
@@ -404,6 +408,15 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
   const following = followEventsIntoSupervision(
     runs, supervision, notificationTranscriptObserver(supervision),
   );
+  const notificationDelivery = createNotificationDeliveryPump({
+    supervision,
+    runs,
+    terminal,
+    terminalEffects: runtimeTerminal,
+    providers: runtimeProviders,
+    ...(options.notificationDeliveryIntervalMs === undefined
+      ? {} : { intervalMs: options.notificationDeliveryIntervalMs }),
+  });
 
   const composedTranscript = composeB3TranscriptFor({
     root: options.root,
@@ -423,6 +436,7 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
   // The other direction of the same promise: an accepted Message becomes
   // keystrokes in the Agent's own terminal, with nobody asking.
   runs.inboxDelivery.start();
+  notificationDelivery.start();
 
   return {
     runtime,
@@ -437,6 +451,7 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
     supervision,
     dataRoot,
     async close() {
+      await notificationDelivery.stop();
       // First, and awaited: a pass in flight holds durable Messaging and
       // Transcript writes, and closing the stores under it is the one way to
       // manufacture the torn outcome §13.9's watermark law exists to survive.

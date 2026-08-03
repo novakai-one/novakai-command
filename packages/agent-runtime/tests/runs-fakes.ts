@@ -3,7 +3,7 @@
 // Split from `runs-harness.ts` so that file is the RIG and this one is what the
 // rig pretends to be talking to.
 import {
-  b3err, b3fail, b3ok, mintTerminalSessionId,
+  b3err, b3fail, b3ok, mintTerminalInputAttemptId, mintTerminalSessionId, nowIsoUtc,
   type ProviderSessionId, type TerminalSessionId,
 } from '@novakai/foundation/contract';
 import type {
@@ -156,6 +156,10 @@ export function createFakeTerminal(): FakeTerminal {
     },
 
     async submitRuntimeInput(_context, input) {
+      const attempted = {
+        terminalInputAttemptId: mintTerminalInputAttemptId(),
+        submittedAt: nowIsoUtc(),
+      };
       const typed = input.keystrokes.map((step) => step.utf8Text).join('');
       port.submitted.push({ ...input, text: typed });
       // A real PTY shows what was typed at it, and §13.5's "retry observes
@@ -166,7 +170,7 @@ export function createFakeTerminal(): FakeTerminal {
       // And a real composer only ANSWERS a turn that was actually submitted.
       // A fake that replies to bytes alone cannot tell a sent turn from one
       // sitting in a composer for ever, which is the whole of hold-out B3.
-      if (!typed.includes('\r')) return b3ok({ confirmed: false });
+      if (!typed.includes('\r')) return b3ok({ confirmed: false, ...attempted });
       // A scripted agent answers turn 1 — correctly, or with one of the ways an
       // agent gets it wrong. Turn 1 is the one that HOLDS the work; turn 2
       // releases it and is never answered.
@@ -174,7 +178,7 @@ export function createFakeTerminal(): FakeTerminal {
         const answer = scriptedConfirmation(port.pinnedTokens, port.reply);
         if (answer !== null) port.output = `${port.output}\nthinking...\n${answer}\n`;
       }
-      return b3ok({ confirmed: true });
+      return b3ok({ confirmed: true, ...attempted });
     },
 
     async readOutputSoFar() { return b3ok(port.output); },
@@ -278,4 +282,3 @@ export function createFakeProviders(): FakeProviders {
   };
   return port;
 }
-

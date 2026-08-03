@@ -12,8 +12,9 @@
 import type {
   AgentId, AgentRoleProfileId, AgentRunId, AuthenticatedPrincipal, AuthorityScope,
   B3Result, CommandContext, ControlReplacementPlanId, DelegationGrantId,
-  HumanPrincipalId, ProviderSessionId, ProviderTurnId, ActivityGeneration,
-  RecordVersion, ResolvedLaunchPlanId, RuntimeEpochId, TerminalSessionId,
+  HumanPrincipalId, ProviderSessionId, ProviderTurnId, ActivityGeneration, IsoUtc,
+  RecordVersion, ResolvedLaunchPlanId, RuntimeEpochId, TerminalInputAttemptId,
+  TerminalSessionId,
 } from '@novakai/foundation/contract';
 import type { ContinuationMode, LaunchConfigurationMode, LaunchSurface } from './runs.js';
 import type { TurnDeliveryStep } from './types.js';
@@ -240,7 +241,11 @@ export interface TerminalPort {
       readonly keystrokes: readonly TurnDeliveryStep[];
       readonly effectKey: string;
     },
-  ): Promise<B3Result<{ readonly confirmed: boolean }>>;
+  ): Promise<B3Result<{
+    readonly confirmed: boolean;
+    readonly terminalInputAttemptId: TerminalInputAttemptId;
+    readonly submittedAt: IsoUtc;
+  }>>;
 
   /** Everything the session has printed, for the gate to read its reply from. */
   readOutputSoFar(

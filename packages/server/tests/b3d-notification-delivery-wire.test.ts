@@ -125,7 +125,8 @@ test('Runtime advances a queued start-turn Notification without a delivery calle
       return listed.value.items.find((notification: Notification) =>
         notification.subject.kind === 'agent-run'
           && notification.subject.agentRunId === spawned.run.id
-          && notification.deliveryAttempt.state !== 'queued') ?? null;
+          && (notification.deliveryAttempt.state === 'submitted-confirmed'
+            || notification.deliveryAttempt.state === 'submitted-unconfirmed')) ?? null;
     });
 
     assert.notEqual(delivered, null,
