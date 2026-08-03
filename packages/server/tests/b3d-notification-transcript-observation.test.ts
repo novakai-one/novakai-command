@@ -131,9 +131,12 @@ async function until<T>(attempt: () => Promise<T | null>, budgetMs: number): Pro
   }
 }
 
-test('a delivered Notification reaches transcript-observed when the provider transcript records its turn', async () => {
-  const root = mkdtempSync(path.join(tmpdir(), 'nvk-b3d-q11-wire-'));
-  const source = scriptedSource();
+/** The whole rig, up to and including a Notification whose input was submitted. */
+async function deliveredNotification(root: string, source: TranscriptSourcePort): Promise<{
+  readonly host: Awaited<ReturnType<typeof startRuntimeHost>>;
+  readonly chris: Awaited<ReturnType<typeof connectRuntime>>;
+  readonly notification: Notification;
+}> {
   const host = await startRuntimeHost({
     root, port: 0, ptyHost: createFakePtyHost(), providers: createFakeProviderAdapters(),
     transcriptSource: source,
@@ -141,86 +144,106 @@ test('a delivered Notification reaches transcript-observed when the provider tra
   });
   const chris = await connectRuntime({ root, port: host.port, token: host.token });
   const { supervision } = host.runtime;
+
+  const role = unwrap(await chris.call<{ id: string }>('b3.agent.createRole', {
+    ...governedRole('q11-wire-role'),
+    skillsConfirmationGate: { mode: 'disabled', allowedFor: 'interactive-chat-only' },
+    supervisionPolicy: {
+      activityDrift: 'disabled-explicitly',
+      requiredWatcherTemplates: [TEMPLATE.templateRef],
+      parentNotificationMode: 'queue-only',
+    },
+  }), 'create role');
+  const spawned = unwrap(await chris.call<{
+    agent: { agentId: string }; run: { id: string };
+  }>('b3.agent.spawn', {
+    roleProfileId: role.id, displayName: 'Q11 Wire', workingDirectory: root,
+  }), 'spawn');
+  const runId = spawned.run.id;
+
+  // The watcher rung installed a durable deadline; an ordinary committed event
+  // past its due time fires it. This is Supervision's whole clock (§9.2).
+  const deadlines = unwrap(await supervision.listWatchDeadlines(PRINCIPAL), 'list deadlines');
+  const armed = deadlines.find(
+    (deadline: WatchDeadline) => deadline.subjectKey === `agent-run:${runId}`
+      && deadline.state === 'armed',
+  );
+  if (armed === undefined) throw new Error('the spawn ladder armed no deadline for this Run');
+
+  const firedAt = new Date(new Date(armed.dueAt).getTime() + 1_000).toISOString();
+  unwrap(await supervision.evaluateEvent(runtimeContext(), {
+    event: {
+      eventId: 'evt_q11_fire',
+      kind: 'agent.run.changed',
+      schemaVersion: 1,
+      occurredAt: firedAt as never,
+      committedAt: firedAt as never,
+      sourceOwner: 'agent-runtime',
+      traceId: 'trace_123e4567-e89b-42d3-a456-426614174000' as never,
+      cursor: 'q11-fire-cursor' as never,
+      payload: { agentRunId: runId },
+    },
+  }), 'fire the deadline');
+
+  const queued = unwrap(
+    await supervision.listNotifications(PRINCIPAL, { state: ['queued'], limit: 50 }),
+    'list queued notifications',
+  );
+  const notification = queued.items.find(
+    (item: Notification) => item.subject.kind === 'agent-run'
+      && item.subject.agentRunId === runId,
+  );
+  if (notification === undefined) throw new Error('the fired deadline queued no Notification');
+
+  // The delivery half, driven the way Runtime drives it: claim the queued
+  // Notification against a Terminal reservation, then record what Terminal
+  // observed of the submission. That stops at `offered-to-endpoint` by design —
+  // a confirmed submission proves the INPUT EFFECT, never the provider turn.
+  const claimed = unwrap(await supervision.claimNotificationDelivery(runtimeContext(), {
+    notificationId: notification.id,
+    expectedNotificationRecordVersion: notification.recordVersion,
+    expectedEffectKey: notification.deliveryEffectKey,
+    notificationInputReservationId: RESERVATION,
+    expectedActivityGeneration: notification.conditionGeneration as ActivityGeneration,
+  }), 'claim delivery');
+  const offered = unwrap(await supervision.recordNotificationDeliveryOutcome(runtimeContext(), {
+    notificationId: notification.id,
+    expectedRecordVersion: claimed.notification.recordVersion,
+    expectedEffectKey: notification.deliveryEffectKey,
+    notificationInputReservationId: RESERVATION,
+    terminalInputAttemptId: mintTerminalInputAttemptId(),
+    outcome: {
+      state: 'submitted-confirmed',
+      submittedAt: new Date().toISOString() as never,
+      providerTurnId: TURN_ID,
+    },
+  }), 'record delivery outcome');
+  assert.equal(offered.state, 'offered-to-endpoint');
+
+  return { host, chris, notification };
+}
+
+/** Wait until the mirror has announced a committed pass on the live stream. */
+async function mirrorCommitted(
+  chris: Awaited<ReturnType<typeof connectRuntime>>,
+): Promise<boolean> {
+  const seen = await until(async () => {
+    const page = await chris.call<{ events: readonly { kind: string }[] }>(
+      'b3.agent.subscribeEvents', { limit: 500 },
+    );
+    if (!page.ok) return null;
+    return page.value.events.some((event) => event.kind === 'transcript.line.committed')
+      ? true : null;
+  }, 20_000);
+  return seen === true;
+}
+
+test('a delivered Notification reaches transcript-observed when the provider transcript records its turn', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'nvk-b3d-q11-wire-'));
+  const source = scriptedSource();
+  const { host, chris, notification } = await deliveredNotification(root, source);
+  const { supervision } = host.runtime;
   try {
-    const role = unwrap(await chris.call<{ id: string }>('b3.agent.createRole', {
-      ...governedRole('q11-wire-role'),
-      skillsConfirmationGate: { mode: 'disabled', allowedFor: 'interactive-chat-only' },
-      supervisionPolicy: {
-        activityDrift: 'disabled-explicitly',
-        requiredWatcherTemplates: [TEMPLATE.templateRef],
-        parentNotificationMode: 'queue-only',
-      },
-    }), 'create role');
-    const spawned = unwrap(await chris.call<{
-      agent: { agentId: string }; run: { id: string };
-    }>('b3.agent.spawn', {
-      roleProfileId: role.id, displayName: 'Q11 Wire', workingDirectory: root,
-    }), 'spawn');
-    const runId = spawned.run.id;
-
-    // The watcher rung installed a durable deadline; an ordinary committed event
-    // past its due time fires it. This is Supervision's whole clock (§9.2).
-    const deadlines = unwrap(
-      await supervision.listWatchDeadlines(PRINCIPAL), 'list deadlines',
-    );
-    const armed = deadlines.find(
-      (deadline: WatchDeadline) => deadline.subjectKey === `agent-run:${runId}`
-        && deadline.state === 'armed',
-    );
-    assert.notEqual(armed, undefined, 'the spawn ladder armed no deadline for this Run');
-    if (armed === undefined) return;
-
-    const firedAt = new Date(new Date(armed.dueAt).getTime() + 1_000).toISOString();
-    unwrap(await supervision.evaluateEvent(runtimeContext(), {
-      event: {
-        eventId: 'evt_q11_fire',
-        kind: 'agent.run.changed',
-        schemaVersion: 1,
-        occurredAt: firedAt as never,
-        committedAt: firedAt as never,
-        sourceOwner: 'agent-runtime',
-        traceId: 'trace_123e4567-e89b-42d3-a456-426614174000' as never,
-        cursor: 'q11-fire-cursor' as never,
-        payload: { agentRunId: runId },
-      },
-    }), 'fire the deadline');
-
-    const queued = unwrap(
-      await supervision.listNotifications(PRINCIPAL, { state: ['queued'], limit: 50 }),
-      'list queued notifications',
-    );
-    const notification = queued.items.find(
-      (item: Notification) => item.subject.kind === 'agent-run'
-        && item.subject.agentRunId === runId,
-    );
-    assert.notEqual(notification, undefined, 'the fired deadline queued no Notification');
-    if (notification === undefined) return;
-
-    // The delivery half, driven the way Runtime drives it: claim the queued
-    // Notification against a Terminal reservation, then record what Terminal
-    // observed of the submission. That stops at `offered-to-endpoint` by design
-    // — a confirmed submission proves the INPUT EFFECT, never the provider turn.
-    const claimed = unwrap(await supervision.claimNotificationDelivery(runtimeContext(), {
-      notificationId: notification.id,
-      expectedNotificationRecordVersion: notification.recordVersion,
-      expectedEffectKey: notification.deliveryEffectKey,
-      notificationInputReservationId: RESERVATION,
-      expectedActivityGeneration: notification.conditionGeneration as ActivityGeneration,
-    }), 'claim delivery');
-    const offered = unwrap(await supervision.recordNotificationDeliveryOutcome(runtimeContext(), {
-      notificationId: notification.id,
-      expectedRecordVersion: claimed.notification.recordVersion,
-      expectedEffectKey: notification.deliveryEffectKey,
-      notificationInputReservationId: RESERVATION,
-      terminalInputAttemptId: mintTerminalInputAttemptId(),
-      outcome: {
-        state: 'submitted-confirmed',
-        submittedAt: new Date().toISOString() as never,
-        providerTurnId: TURN_ID,
-      },
-    }), 'record delivery outcome');
-    assert.equal(offered.state, 'offered-to-endpoint');
-
     // The provider's transcript now contains the turn that delivery caused. No
     // ingest call, no observation call, no CLI verb — only the line appearing.
     source.produce(notification.summary);
@@ -228,15 +251,8 @@ test('a delivered Notification reaches transcript-observed when the provider tra
     // Guard the guard: if the mirror never committed the line, the assertion
     // below would be measuring nothing. This makes "the turn is in the
     // transcript" a checked precondition rather than an assumption.
-    const committed = await until(async () => {
-      const page = await chris.call<{ events: readonly { kind: string }[] }>(
-        'b3.agent.subscribeEvents', { limit: 500 },
-      );
-      if (!page.ok) return null;
-      return page.value.events.some((event) => event.kind === 'transcript.line.committed')
-        ? true : null;
-    }, 20_000);
-    assert.equal(committed, true, 'the mirror never committed the produced line');
+    assert.equal(await mirrorCommitted(chris), true,
+      'the mirror never committed the produced line');
 
     const observed = await until(async () => {
       const page = await supervision.listNotifications(
@@ -256,6 +272,40 @@ test('a delivered Notification reaches transcript-observed when the provider tra
       (observed?.evidenceRefs ?? []).some((ref) => ref.startsWith('q11-transcript-observed:')),
       true,
       `the observation pinned no evidence: ${JSON.stringify(observed?.evidenceRefs)}`,
+    );
+  } finally {
+    chris.close();
+    await host.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// The dangerous half. A transcript is full of turns, and a wire that promoted on
+// "a line arrived for this Run" would be correlation theatre: it would mark the
+// Notification seen the moment the Agent said anything at all. The identifiers
+// all line up here — same Run, same session, same binding, same delivered
+// attempt — and the only thing that differs is the one thing that matters.
+test('a neighbouring turn on the same Run never promotes the Notification', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'nvk-b3d-q11-neighbour-'));
+  const source = scriptedSource();
+  const { host, chris, notification } = await deliveredNotification(root, source);
+  const { supervision } = host.runtime;
+  try {
+    source.produce('what did you change in the runtime?');
+    assert.equal(await mirrorCommitted(chris), true,
+      'the mirror never committed the neighbouring line');
+
+    // Give the wire every chance to be wrong: the pump keeps running and the
+    // observer sees the committed pass on the same stream as the passing test.
+    await new Promise((resolve) => { setTimeout(resolve, 2_000); });
+
+    const still = unwrap(await supervision.listNotifications(
+      PRINCIPAL, { state: ['offered-to-endpoint'], limit: 50 },
+    ), 'list offered notifications');
+    assert.equal(
+      still.items.some((item) => item.id === notification.id), true,
+      'a turn that does not carry the input we authorised promoted the Notification: '
+      + 'the wire is matching on identifiers alone',
     );
   } finally {
     chris.close();

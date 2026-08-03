@@ -24,9 +24,11 @@ import {
   type B3Result, type ClientOpId,
 } from '@novakai/foundation/contract';
 
+import { createHash } from 'node:crypto';
+
 import type {
-  IngestTranscriptSourceInput, MirrorStage, MirrorStageHooks, SourceLine,
-  TranscriptIngestOutcome, TranscriptSourcePort,
+  CommittedInputLine, IngestTranscriptSourceInput, MirrorStage, MirrorStageHooks,
+  SourceLine, TranscriptIngestOutcome, TranscriptSourcePort,
 } from '../contract/api.js';
 import type {
   NormalisedTranscriptTurn, TranscriptBinding, TranscriptLineId,
@@ -172,7 +174,8 @@ async function guardPrefix(
 type LineOutcome =
   | { readonly kind: 'already-done' }
   | { readonly kind: 'filtered' }
-  | { readonly kind: 'mirrored' }
+  /** B3d: a mirrored human turn carries its identity out with it. */
+  | { readonly kind: 'mirrored'; readonly committedInput?: CommittedInputLine }
   | { readonly kind: 'quarantined' }
   | { readonly kind: 'halt' }
   | { readonly kind: 'failed'; readonly error: B3Result<never> };
@@ -182,6 +185,7 @@ async function runPass(
   lines: readonly SourceLine[], more: boolean,
 ): Promise<B3Result<TranscriptIngestOutcome>> {
   const counters: PassCounters = { discovered: 0, filtered: 0, mirrored: 0, quarantined: 0 };
+  const committedInputs: CommittedInputLine[] = [];
   let watermark = binding.mirrorWatermark;
   let current = binding;
 
@@ -191,8 +195,13 @@ async function runPass(
 
     if (handled.kind === 'failed') return handled.error;
     tally(counters, handled.kind);
+    if (handled.kind === 'mirrored' && handled.committedInput !== undefined) {
+      committedInputs.push(handled.committedInput);
+    }
     const stop = stopReasonFor(handled.kind);
-    if (stop !== null) return b3ok(outcome(binding, counters, watermark, stop));
+    if (stop !== null) {
+      return b3ok(outcome(binding, counters, watermark, stop, committedInputs));
+    }
 
     // The watermark moves ONLY here, after a durable outcome for this line.
     watermark = line.position;
@@ -202,7 +211,9 @@ async function runPass(
   const advanced = await persistProgress(deps.store, binding, watermark, lines.length);
   if (!advanced.ok) return advanced;
 
-  return b3ok(outcome(binding, counters, watermark, more ? 'max-lines' : undefined));
+  return b3ok(outcome(
+    binding, counters, watermark, more ? 'max-lines' : undefined, committedInputs,
+  ));
 }
 
 function tally(counters: PassCounters, kind: LineOutcome['kind']): void {
@@ -336,7 +347,20 @@ async function mirrorOne(
   if (await halted(deps, 'before-watermark-advance', { position: line.position })) {
     return { kind: 'halt' };
   }
-  return { kind: 'mirrored' };
+  // B3d: a committed HUMAN turn is announced with the facts that identify it,
+  // because something outside Transcript may have caused it and has no other
+  // way to recognise its own input in the provider's own words. An assistant
+  // turn is nobody's input, so it carries no such fact.
+  if (role !== 'human') return { kind: 'mirrored' };
+  return {
+    kind: 'mirrored',
+    committedInput: {
+      transcriptLineId: ledgerId,
+      sourcePosition: line.position,
+      sourceDigest: line.digest,
+      textDigest: createHash('sha256').update(text, 'utf8').digest('hex'),
+    },
+  };
 }
 
 /**
@@ -411,9 +435,11 @@ const empty = (
 const outcome = (
   binding: TranscriptBinding, counters: PassCounters, watermark: string | undefined,
   haltedBy: TranscriptIngestOutcome['haltedBy'],
+  committedInputLines: readonly CommittedInputLine[] = [],
 ): TranscriptIngestOutcome => ({
   bindingId: binding.id,
   ...counters,
   ...(watermark === undefined ? {} : { nextWatermark: watermark }),
   ...(haltedBy === undefined ? {} : { haltedBy }),
+  ...(committedInputLines.length === 0 ? {} : { committedInputLines }),
 });

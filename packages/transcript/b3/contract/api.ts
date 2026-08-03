@@ -14,7 +14,7 @@ import type {
 } from '@novakai/foundation/contract';
 import type {
   AgentId, AgentRunId, ObservedSubagent, ObservedSubagentId, ProviderKind,
-  ProviderSessionId, TranscriptBinding, TranscriptBindingId,
+  ProviderSessionId, TranscriptBinding, TranscriptBindingId, TranscriptLineId,
 } from './records.js';
 
 export interface BindTranscriptToRunInput {
@@ -41,6 +41,27 @@ export interface IngestTranscriptSourceInput {
   readonly maxLines: number;
 }
 
+/**
+ * One human-role line this pass durably committed, reduced to the facts that
+ * identify it. B3d: a consumer correlating a provider turn against something it
+ * caused needs the line's identity, its position and its content digests — the
+ * counts alone say a turn arrived without saying which.
+ *
+ * HUMAN-ROLE ONLY, deliberately. An input Novakai caused arrives as a human
+ * turn, so every other role is noise for this purpose; announcing all of them
+ * would put an unbounded slab of an assistant's output on §15's bounded stream
+ * to say nothing new. `textDigest` rather than the text for the same reason,
+ * and because a turn's content is not the event stream's business.
+ */
+export interface CommittedInputLine {
+  readonly transcriptLineId: TranscriptLineId;
+  readonly sourcePosition: string;
+  /** Digest of the raw source row — §8.2's corruption comparison. */
+  readonly sourceDigest: string;
+  /** SHA-256 hex over the classified text: what a person would have read. */
+  readonly textDigest: string;
+}
+
 export interface TranscriptIngestOutcome {
   readonly bindingId: TranscriptBindingId;
   readonly discovered: number;
@@ -50,6 +71,8 @@ export interface TranscriptIngestOutcome {
   readonly nextWatermark?: string;
   /** Why ingestion stopped early, when it did. Never a silent short read. */
   readonly haltedBy?: 'quarantine' | 'max-lines' | 'source-unavailable' | 'stage-pause';
+  /** The human turns this pass committed. Absent when it committed none. */
+  readonly committedInputLines?: readonly CommittedInputLine[];
 }
 
 export interface PromoteMirrorWatermarkInput {
