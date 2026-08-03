@@ -62,7 +62,7 @@ import {
 import { RunActivityQueue } from './run-activity-queue.js';
 import {
   completeProviderTurn, getProviderTurnSubmission, listProviderTurnSubmissions,
-  reconcileControllerPreEffectSubmissions, submitProviderTurn,
+  reconcileAllProviderTurnSubmissions, submitProviderTurn,
 } from './provider-turns.js';
 
 /**
@@ -387,7 +387,7 @@ export function composeAgentRuns(options: ComposeAgentRunsOptions): ComposedAgen
       getRunLaunchPlanId(core, principal, agentRunId),
 
     reconcileProviderTurns: () =>
-      reconcileControllerPreEffectSubmissions(core, 'periodic'),
+      reconcileAllProviderTurnSubmissions(core, 'periodic'),
 
     async reconcileAfterRestart() {
       const active = core.fence.activeEpochId();

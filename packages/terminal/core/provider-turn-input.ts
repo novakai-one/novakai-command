@@ -274,9 +274,8 @@ export async function executeProviderTurnInput(
   let attempt = found.value;
   if (attempt.providerTurnId !== input.providerTurnId
     || attempt.submissionEffectKey !== input.submissionEffectKey
-    || attempt.activityGeneration !== input.activityGeneration
-    || attempt.payloadDigest !== digest(input.utf8Text)) {
-    return conflict('provider-turn execute tuple or digest does not match preparation', {
+    || attempt.activityGeneration !== input.activityGeneration) {
+    return conflict('provider-turn execute tuple does not match preparation', {
       terminalInputAttemptId: input.terminalInputAttemptId,
     });
   }
@@ -296,6 +295,11 @@ export async function executeProviderTurnInput(
       attempt.recordVersion,
       mintClientOpId(),
     );
+  }
+  if (attempt.payloadDigest !== digest(input.utf8Text)) {
+    return conflict('provider-turn execute digest does not match preparation', {
+      terminalInputAttemptId: input.terminalInputAttemptId,
+    });
   }
   if (attempt.effectState.kind !== 'prepared'
     || attempt.turnBarrier.kind !== 'reserved-pre-effect'

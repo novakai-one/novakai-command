@@ -498,7 +498,7 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
           status: reconciled.value.kind,
           reason: reconciled.value.reason,
           evidenceRefs: reconciled.value.evidenceRefs,
-          retryable: reconciled.value.kind === 'uncertain',
+          retryable: false,
         });
       }
       const evidence = await usageEvidence.ensureProviderTurnCompletionEvidence({

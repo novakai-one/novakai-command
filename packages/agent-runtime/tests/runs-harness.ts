@@ -135,6 +135,7 @@ export interface RunsRigOptions extends FakeAgentsOptions {
   readonly transcriptCustody?: FakeTranscriptCustody;
   readonly notifications?: FakeNotificationDelivery;
   readonly providerTurnCompletionEvidence?: ComposeAgentRunsOptions['providerTurnCompletionEvidence'];
+  readonly providerTurnCompletionCoordinator?: ComposeAgentRunsOptions['providerTurnCompletionCoordinator'];
 }
 
 export function createRunsRig(options: RunsRigOptions = {}): RunsRig {
@@ -190,6 +191,9 @@ export function createRunsRig(options: RunsRigOptions = {}): RunsRig {
     ...(options.providerTurnCompletionEvidence === undefined
       ? {}
       : { providerTurnCompletionEvidence: options.providerTurnCompletionEvidence }),
+    ...(options.providerTurnCompletionCoordinator === undefined
+      ? {}
+      : { providerTurnCompletionCoordinator: options.providerTurnCompletionCoordinator }),
   });
 
   const envelope = (principal: AuthenticatedPrincipal): CommandContext => ({

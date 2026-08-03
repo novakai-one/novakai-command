@@ -249,6 +249,13 @@ export function composeB3Transcript(options: B3TranscriptOptions): B3TranscriptC
         currentTranscriptWatermark: binding.mirrorWatermark ?? null,
       });
       if (!observed.ok) return observed;
+      if (observed.value.kind === 'unavailable'
+        && observed.value.reason === 'source-unavailable') {
+        return b3ok({
+          kind: 'pending', reason: 'provider source has not exposed the terminal frame yet',
+          retryable: true,
+        });
+      }
       if (observed.value.kind !== 'proven') return b3ok({
         kind: observed.value.kind,
         reason: observed.value.reason,

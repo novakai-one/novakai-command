@@ -6,6 +6,7 @@ import {
   deriveClientOpId,
   mintClientOpId,
   mintProviderTurnId,
+  mintTraceCorrelationId,
   providerTurnSubmissionId,
   type ActivityGeneration,
   type B3Result,
@@ -24,6 +25,7 @@ import type {
   ProviderTurnSubmitOutcome,
 } from '../contract/provider-turns.js';
 import { FINAL_LIFECYCLES, type AgentRun } from '../contract/runs.js';
+import type { ProviderTurnInputAttemptFacts } from '../contract/ports.js';
 import { patchRun, requireRun, type RunsCore } from './runs-context.js';
 import type { Persisted } from './runs-store.js';
 
@@ -528,17 +530,9 @@ export async function reconcileControllerPreEffectSubmissions(
     const attempt = attemptResult.value;
     if (attempt !== null && (attempt.effectState.kind !== 'prepared'
       || attempt.turnBarrier.kind !== 'reserved-pre-effect')) {
-      const held = await patchSubmission(core, submission, {
-        state: {
-          kind: 'recovery-required', enteredAt: now(core),
-          lastSafeState: submission.state.kind === 'queued' ? 'queued' : 'prepared',
-          terminalInputAttemptId: attempt.id,
-          reason: 'controller attempt may have crossed the provider-effect boundary',
-          evidenceRefs: [attempt.id, attempt.effectState.kind, attempt.turnBarrier.kind],
-        },
-      });
-      if (!held.ok) return held;
-      reconciled.push(submission.id);
+      // Execution/submission is recovered by the general pass below. It must
+      // never be labelled no-effect or re-issued merely because the caller's
+      // logical bytes were deliberately not persisted.
       continue;
     }
     if (mode === 'periodic') {
@@ -584,6 +578,372 @@ export async function reconcileControllerPreEffectSubmissions(
     reconciled.push(submission.id);
   }
   return b3ok(reconciled);
+}
+
+function attemptMatchesSubmission(
+  attempt: ProviderTurnInputAttemptFacts,
+  submission: ProviderTurnSubmission,
+): boolean {
+  return attempt.terminalSessionId === submission.terminalSessionId
+    && attempt.agentRunId === submission.agentRunId
+    && attempt.providerTurnSubmissionId === submission.id
+    && attempt.providerTurnId === submission.providerTurnId
+    && attempt.activityGeneration === submission.activationTarget.activityGeneration
+    && attempt.submissionEffectKey === submission.submissionEffectKey
+    && attempt.providerSessionId === submission.providerSessionId
+    && attempt.transcriptBindingId === submission.transcriptBindingId
+    && attempt.payloadDigest === submission.inputDigest;
+}
+
+async function holdForRecovery(
+  core: RunsCore,
+  submission: ProviderTurnSubmission,
+  reason: string,
+  evidenceRefs: readonly string[],
+  attempt?: ProviderTurnInputAttemptFacts,
+): Promise<B3Result<ProviderTurnSubmission>> {
+  if (submission.state.kind === 'recovery-required') return b3ok(submission);
+  const lastSafeState = submission.state.kind === 'queued'
+    || submission.state.kind === 'prepared'
+    || submission.state.kind === 'submitted-confirmed'
+    || submission.state.kind === 'submitted-unconfirmed'
+    ? submission.state.kind
+    : null;
+  if (lastSafeState === null) return operationConflict(
+    submission, `cannot move ${submission.state.kind} into recovery-required`,
+  );
+  const held = await patchSubmission(core, submission, {
+    state: {
+      kind: 'recovery-required', enteredAt: now(core), lastSafeState,
+      ...(attempt === undefined ? {} : { terminalInputAttemptId: attempt.id }),
+      reason, evidenceRefs,
+    },
+  });
+  if (!held.ok) return held;
+  const runResult = await requireRun(core, submission.agentRunId);
+  if (!runResult.ok) return runResult;
+  const fence = runResult.value.providerTurnOperationFence;
+  if (fence?.providerTurnSubmissionId === submission.id && fence.phase !== 'recovery-required') {
+    const fenced = await patchRun(core, runResult.value, {
+      providerTurnOperationFence: { ...fence, phase: 'recovery-required' },
+    });
+    if (!fenced.ok) return fenced;
+  }
+  return held;
+}
+
+function storedSystemInput(submission: ProviderTurnSubmission): string | null {
+  return submission.recoverableLogicalInput.kind === 'runtime-effect-snapshot'
+    ? submission.recoverableLogicalInput.utf8Text
+    : null;
+}
+
+function systemReplayContext(core: RunsCore, submission: ProviderTurnSubmission): CommandContext {
+  const runtimeEpochId = core.fence.activeEpochId();
+  return {
+    principal: { id: 'sys_agent_runtime', kind: 'system', verifiedScopes: [] },
+    clientOpId: deriveClientOpId(`agent.reconcileProviderTurn:${submission.id}`),
+    traceId: mintTraceCorrelationId(),
+    contractVersion: 1,
+    ...(runtimeEpochId === null ? {} : { runtimeEpochId }),
+  };
+}
+
+async function recoverAttemptedSubmission(
+  core: RunsCore,
+  submission: ProviderTurnSubmission,
+  initialAttempt: ProviderTurnInputAttemptFacts,
+): Promise<B3Result<ProviderTurnSubmission>> {
+  if (!attemptMatchesSubmission(initialAttempt, submission)) {
+    return holdForRecovery(core, submission,
+      'Terminal attempt lineage differs from the Runtime submission',
+      [submission.id, initialAttempt.id], initialAttempt);
+  }
+  let attempt = initialAttempt;
+  let runResult = await requireRun(core, submission.agentRunId);
+  if (!runResult.ok) return runResult;
+  let run = runResult.value;
+  let fence = run.providerTurnOperationFence;
+  const matchingFence = fence !== undefined
+    && fence.providerTurnSubmissionId === submission.id
+    && fence.providerTurnId === submission.providerTurnId
+    && fence.terminalInputAttemptId === attempt.id
+    && fence.submissionEffectKey === submission.submissionEffectKey
+    && fence.activityGeneration === submission.activationTarget.activityGeneration;
+
+  if (!matchingFence) {
+    const lawfulPreFenceGap = submission.origin.kind === 'runtime-effect'
+      && submission.state.kind === 'queued'
+      && attempt.effectState.kind === 'prepared'
+      && attempt.turnBarrier.kind === 'reserved-pre-effect'
+      && fence === undefined;
+    if (!lawfulPreFenceGap) {
+      return holdForRecovery(core, submission,
+        'Run fence does not match the durable Terminal attempt',
+        [submission.id, attempt.id, fence?.providerTurnSubmissionId ?? 'no-run-fence'], attempt);
+    }
+    const installed = await patchRun(core, run, {
+      providerTurnOperationFence: {
+        providerTurnId: submission.providerTurnId,
+        providerTurnSubmissionId: submission.id,
+        terminalInputAttemptId: attempt.id,
+        commandClientOpId: deriveClientOpId(`agent.reconcileProviderTurn:${submission.id}`),
+        submissionEffectKey: submission.submissionEffectKey,
+        activityGeneration: submission.activationTarget.activityGeneration,
+        acquiredAt: now(core),
+        phase: 'terminal-prepared',
+      },
+    });
+    if (!installed.ok) return installed;
+    run = installed.value;
+    fence = run.providerTurnOperationFence;
+  }
+
+  if (attempt.effectState.kind === 'prepared') {
+    const logicalInput = storedSystemInput(submission);
+    if (logicalInput === null) {
+      return holdForRecovery(core, submission,
+        'controller pre-effect input is replay-only and has no authenticated resumer',
+        [submission.id, attempt.id], attempt);
+    }
+    if (digest(logicalInput) !== submission.inputDigest) {
+      return holdForRecovery(core, submission,
+        'Runtime system-input snapshot digest differs from its durable digest',
+        [submission.id, attempt.id, submission.inputDigest], attempt);
+    }
+    if (submission.state.kind === 'queued') {
+      const prepared = await patchSubmission(core, submission, {
+        state: {
+          kind: 'prepared', preparedAt: now(core),
+          deliveryAttemptOrdinal: attempt.deliveryAttemptOrdinal,
+          activation: { state: 'pending' },
+        },
+      });
+      if (!prepared.ok) return prepared;
+      submission = prepared.value;
+    }
+    if (run.providerTurnOperationFence?.phase !== 'submission-prepared') {
+      const advanced = await patchRun(core, run, {
+        providerTurnOperationFence: {
+          ...run.providerTurnOperationFence!, phase: 'submission-prepared',
+        },
+      });
+      if (!advanced.ok) return advanced;
+      run = advanced.value;
+    }
+  }
+
+  if (attempt.effectState.kind === 'prepared' || attempt.effectState.kind === 'executing') {
+    const logicalInput = storedSystemInput(submission) ?? '';
+    const executed = await core.terminal.executeProviderTurnInput({
+      terminalInputAttemptId: attempt.id,
+      expectedAttemptRecordVersion: attempt.recordVersion,
+      submissionEffectKey: submission.submissionEffectKey,
+      providerTurnId: submission.providerTurnId,
+      activityGeneration: submission.activationTarget.activityGeneration,
+      utf8Text: logicalInput,
+    });
+    if (!executed.ok) return executed;
+    attempt = executed.value;
+  }
+  if (attempt.effectState.kind !== 'submitted-confirmed'
+    && attempt.effectState.kind !== 'submitted-unconfirmed') {
+    return holdForRecovery(core, submission,
+      'Terminal attempt has no recoverable submitted disposition',
+      [submission.id, attempt.id, attempt.effectState.kind], attempt);
+  }
+
+  const submissionState = attempt.effectState.kind === 'submitted-confirmed'
+    ? {
+        kind: 'submitted-confirmed' as const,
+        terminalInputAttemptId: attempt.id,
+        submittedAt: attempt.effectState.submittedAt,
+        activation: { state: 'pending' as const },
+      }
+    : {
+        kind: 'submitted-unconfirmed' as const,
+        terminalInputAttemptId: attempt.id,
+        submittedAt: attempt.effectState.submittedAt,
+        uncertaintyReason: attempt.effectState.reason,
+        activation: { state: 'pending' as const },
+      };
+  if (submission.state.kind !== 'submitted-confirmed'
+    && submission.state.kind !== 'submitted-unconfirmed') {
+    const patched = await patchSubmission(core, submission, { state: submissionState });
+    if (!patched.ok) return patched;
+    submission = patched.value;
+  }
+
+  runResult = await requireRun(core, submission.agentRunId);
+  if (!runResult.ok) return runResult;
+  run = runResult.value;
+  const exactActive = run.activeProviderTurn?.providerTurnId === submission.providerTurnId
+    && run.activeProviderTurn.activityGeneration === submission.activationTarget.activityGeneration
+    && run.activityGeneration === submission.activationTarget.activityGeneration;
+  if (!exactActive) {
+    const mayActivate = run.activeProviderTurn === undefined
+      && run.activityGeneration + 1 === submission.activationTarget.activityGeneration
+      && run.providerTurnOperationFence?.providerTurnSubmissionId === submission.id;
+    if (!mayActivate) {
+      return holdForRecovery(core, submission,
+        'Run activation target changed before recovery could commit it',
+        [submission.id, attempt.id, String(run.activityGeneration)], attempt);
+    }
+    const activatedAt = now(core);
+    const activated = await patchRun(core, run, {
+      activity: 'working',
+      activityGeneration: submission.activationTarget.activityGeneration,
+      activeProviderTurn: {
+        providerTurnId: submission.providerTurnId,
+        activityGeneration: submission.activationTarget.activityGeneration,
+        startedAt: activatedAt,
+        state: 'working',
+      },
+      providerTurnOperationFence: {
+        ...run.providerTurnOperationFence!, phase: 'active',
+      },
+    });
+    if (!activated.ok) return activated;
+    run = activated.value;
+  } else if (run.providerTurnOperationFence?.phase !== 'active') {
+    const activatedFence = await patchRun(core, run, {
+      providerTurnOperationFence: {
+        ...run.providerTurnOperationFence!, phase: 'active',
+      },
+    });
+    if (!activatedFence.ok) return activatedFence;
+    run = activatedFence.value;
+  }
+
+  const currentState = submission.state;
+  if ((currentState.kind === 'submitted-confirmed'
+      || currentState.kind === 'submitted-unconfirmed')
+    && currentState.activation.state === 'pending') {
+    const committed = await patchSubmission(core, submission, {
+      state: {
+        ...currentState,
+        activation: {
+          state: 'committed', committedRunRecordVersion: run.recordVersion,
+          activatedAt: run.activeProviderTurn!.startedAt,
+        },
+      },
+    });
+    if (!committed.ok) return committed;
+    submission = committed.value;
+  }
+  return b3ok(submission);
+}
+
+/** Owner-ordered recovery for every nonterminal submission, oldest first. */
+export async function reconcileAllProviderTurnSubmissions(
+  core: RunsCore,
+  mode: 'startup' | 'periodic',
+): Promise<B3Result<readonly ProviderTurnSubmissionId[]>> {
+  const controller = await reconcileControllerPreEffectSubmissions(core, mode);
+  if (!controller.ok) return controller;
+  const reconciled = [...controller.value];
+  const listed = await core.store.list<ProviderTurnSubmission>('providerTurnSubmission');
+  if (!listed.ok) return listed;
+  const terminalStates = new Set(['rejected', 'completion-unproven-final']);
+  const submissions = listed.value
+    .filter((item) => !terminalStates.has(item.state.kind))
+    .sort((left, right) => left.createdAt.localeCompare(right.createdAt)
+      || left.id.localeCompare(right.id));
+
+  for (const initial of submissions) {
+    let submission = initial;
+    if (submission.state.kind === 'completed') {
+      const runResult = await requireRun(core, submission.agentRunId);
+      if (!runResult.ok) return runResult;
+      const run = runResult.value;
+      const fence = run.providerTurnOperationFence;
+      if (fence?.providerTurnSubmissionId === submission.id) {
+        const completed = run.lastCompletedProviderTurn;
+        if (completed?.providerTurnId !== submission.providerTurnId
+          || completed.transcriptTurnCompletionId
+            !== submission.state.transcriptTurnCompletionId
+          || completed.providerUsageEvidenceId !== submission.state.providerUsageEvidenceId
+          || fence.phase !== 'completion-barrier-committed') {
+          return operationConflict(submission,
+            'completed submission does not match the Run completion/fence disposition');
+        }
+        const cleared = await patchRun(core, run, { providerTurnOperationFence: undefined });
+        if (!cleared.ok) return cleared;
+        reconciled.push(submission.id);
+      }
+      continue;
+    }
+    if (submission.state.kind === 'recovery-required') continue;
+    const attemptResult = await core.terminal.getProviderTurnInputAttempt({
+      terminalSessionId: submission.terminalSessionId,
+      providerTurnId: submission.providerTurnId,
+      submissionEffectKey: submission.submissionEffectKey,
+    });
+    if (!attemptResult.ok) return attemptResult;
+    const attempt = attemptResult.value;
+    if (attempt === null) {
+      if (submission.origin.kind === 'runtime-effect' && submission.state.kind === 'queued') {
+        const logicalInput = storedSystemInput(submission);
+        if (logicalInput === null || digest(logicalInput) !== submission.inputDigest) {
+          const held = await holdForRecovery(core, submission,
+            'Runtime system-input snapshot is missing or corrupt',
+            [submission.id, submission.inputDigest]);
+          if (!held.ok) return held;
+          reconciled.push(submission.id);
+          continue;
+        }
+        const resumed = await submitProviderTurn(core, systemReplayContext(core, submission), {
+          kind: 'runtime-effect',
+          source: submission.origin.source,
+          sourceEffectKey: submission.origin.sourceEffectKey,
+          sourceObjectRef: submission.origin.sourceObjectRef,
+          agentRunId: submission.agentRunId,
+          terminalSessionId: submission.terminalSessionId,
+          transcriptBindingId: submission.transcriptBindingId,
+          utf8Text: logicalInput,
+        });
+        if (!resumed.ok) return resumed;
+        submission = resumed.value.submission;
+        reconciled.push(submission.id);
+      } else if (submission.state.kind !== 'queued') {
+        const held = await holdForRecovery(core, submission,
+          'Runtime submission has no exact Terminal attempt', [submission.id]);
+        if (!held.ok) return held;
+        reconciled.push(submission.id);
+        continue;
+      } else {
+        continue;
+      }
+    } else {
+      const recovered = await recoverAttemptedSubmission(core, submission, attempt);
+      if (!recovered.ok) return recovered;
+      submission = recovered.value;
+      reconciled.push(submission.id);
+    }
+
+    if ((submission.state.kind === 'submitted-confirmed'
+        || submission.state.kind === 'submitted-unconfirmed')
+      && submission.state.activation.state === 'committed'
+      && core.providerTurnCompletionCoordinator !== undefined) {
+      const coordinated = await core.providerTurnCompletionCoordinator({
+        agentRunId: submission.agentRunId,
+        providerTurnId: submission.providerTurnId,
+        providerTurnSubmissionId: submission.id,
+        activityGeneration: submission.activationTarget.activityGeneration,
+        traceId: mintTraceCorrelationId(),
+      });
+      if (!coordinated.ok) return coordinated;
+      if (coordinated.value.kind === 'completion-boundary-unproven'
+        && !coordinated.value.retryable) {
+        const held = await holdForRecovery(core, submission,
+          coordinated.value.reason,
+          coordinated.value.evidenceRefs,
+          attempt ?? undefined);
+        if (!held.ok) return held;
+      }
+    }
+  }
+  return b3ok([...new Set(reconciled)]);
 }
 
 const sameCompletion = (

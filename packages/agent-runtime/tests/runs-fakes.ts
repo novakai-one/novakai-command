@@ -87,6 +87,8 @@ export interface FakeTerminal extends TerminalPort {
   crashAfterProviderTurnPrepare: boolean;
   /** Failure-injection cut after Runtime commits prepared/fence, before execute. */
   crashOnProviderTurnExecute: boolean;
+  /** Failure-injection cut after Terminal records executing, before any outcome. */
+  crashAfterProviderTurnExecutionStarted: boolean;
   /** Safe-boundary denial before any provider attempt exists. */
   providerTurnPrepareBlocked: boolean;
 }
@@ -184,6 +186,7 @@ export function createFakeTerminal(): FakeTerminal {
     repaintAnswer: false,
     crashAfterProviderTurnPrepare: false,
     crashOnProviderTurnExecute: false,
+    crashAfterProviderTurnExecutionStarted: false,
     providerTurnPrepareBlocked: false,
 
     async openManagedTerminal(context, input) {
@@ -381,9 +384,32 @@ export function createFakeTerminal(): FakeTerminal {
       }
       if (attempt.effectState.kind === 'submitted-confirmed'
         || attempt.effectState.kind === 'submitted-unconfirmed') return b3ok(attempt);
-      const submitted: ProviderTurnInputAttemptFacts = {
+      if (attempt.effectState.kind === 'executing') {
+        const uncertain: ProviderTurnInputAttemptFacts = {
+          ...attempt,
+          recordVersion: (attempt.recordVersion + 1) as RecordVersion,
+          effectState: {
+            kind: 'submitted-unconfirmed', submittedAt: nowIsoUtc(),
+            reason: 'execution outcome was lost after the pre-effect fence',
+          },
+          turnBarrier: { kind: 'active', activatedAt: nowIsoUtc() },
+        };
+        providerTurnAttempts.set(uncertain.id, uncertain);
+        return b3ok(uncertain);
+      }
+      const executing: ProviderTurnInputAttemptFacts = {
         ...attempt,
         recordVersion: (attempt.recordVersion + 1) as RecordVersion,
+        effectState: { kind: 'executing', executionStartedAt: nowIsoUtc() },
+      };
+      providerTurnAttempts.set(executing.id, executing);
+      if (port.crashAfterProviderTurnExecutionStarted) {
+        port.crashAfterProviderTurnExecutionStarted = false;
+        throw new Error('injected crash after Terminal provider-turn execution began');
+      }
+      const submitted: ProviderTurnInputAttemptFacts = {
+        ...executing,
+        recordVersion: (executing.recordVersion + 1) as RecordVersion,
         effectState: { kind: 'submitted-confirmed', submittedAt: nowIsoUtc() },
         turnBarrier: { kind: 'active', activatedAt: nowIsoUtc() },
       };

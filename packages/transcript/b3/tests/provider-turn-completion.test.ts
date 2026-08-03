@@ -131,7 +131,7 @@ test('Transcript commits one deterministic completion only from a proven native 
   }
 });
 
-test('uncertain or unavailable boundary observations never create a completion fact', async () => {
+test('uncertain or temporarily unavailable boundary observations never create a completion fact', async () => {
   for (const kind of ['uncertain', 'unavailable'] as const) {
     const root = mkdtempSync(path.join(tmpdir(), `nvk-transcript-${kind}-`));
     const providerTurnId = mintProviderTurnId();
@@ -176,7 +176,9 @@ test('uncertain or unavailable boundary observations never create a completion f
         providerTurnId, expectedProviderTurnSubmissionId: submissionId,
       });
       assert.equal(outcome.ok, true);
-      if (outcome.ok) assert.equal(outcome.value.kind, kind);
+      if (outcome.ok) assert.equal(
+        outcome.value.kind, kind === 'unavailable' ? 'pending' : kind,
+      );
       const listed = await store.list('transcriptTurnCompletion');
       assert.equal(listed.ok, true);
       if (listed.ok) assert.equal(listed.value.length, 0);
