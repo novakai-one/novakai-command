@@ -1,81 +1,19 @@
 import {
   b3err, b3fail, b3ok, canonicalRequestHash,
   type ActivityGeneration, type AgentId, type AgentRunId, type AuthenticatedPrincipal,
-  type B3Result, type ProviderSessionId,
+  type B3Result,
 } from '@novakai/foundation/contract';
-import type {
-  RunEvent, RunUsageFacts,
-} from '../contract/runs-api.js';
+import type { RunEvent, RunUsageFacts } from '../contract/runs-api.js';
 import type {
   RunConnectionSnapshot, RunOccurrenceEventBase, RunOccurrenceEventFacts,
 } from '../../supervision/contract/index.js';
 import { isRunDisconnectedEdge } from '../../supervision/contract/index.js';
 import {
-  FINAL_LIFECYCLES, type AgentRun, type RunOperation,
+  type AgentRun, type RunOperation,
 } from '../contract/runs.js';
 import { requireRun, type RunsCore } from './runs-context.js';
 import { findRetainedRunOccurrenceEvent } from './occurrence-event-retention.js';
-
-function usageFacts(agentRun: AgentRun): RunUsageFacts {
-  return {
-    agentRunId: agentRun.id,
-    agentId: agentRun.agentId,
-    providerSessionId: agentRun.providerSessionId,
-    lifecycle: agentRun.lifecycle,
-    final: FINAL_LIFECYCLES.has(agentRun.lifecycle),
-    activityGeneration: agentRun.activityGeneration,
-    recordVersion: agentRun.recordVersion,
-  };
-}
-
-/** Complete ProviderSession→Run correlation across live and final history. */
-export async function resolveUsageRunByProviderSession(
-  core: RunsCore,
-  principal: AuthenticatedPrincipal,
-  providerSessionId: ProviderSessionId,
-): Promise<B3Result<RunUsageFacts | null>> {
-  const stored = await core.store.list<AgentRun>('agentRun', { providerSessionId });
-  if (!stored.ok) return stored;
-  if (stored.value.length > 1) {
-    return b3fail(b3err(
-      'ProviderSessionReservationConflict',
-      'one ProviderSession is bound to more than one Run',
-      {
-        providerSessionId,
-        conflictingAgentRunIds: stored.value.map((agentRun) => agentRun.id).sort(),
-      },
-      false,
-    ));
-  }
-  const agentRun = stored.value[0];
-  if (agentRun === undefined) return b3ok(null);
-  const visible = await core.agents.getAgent(principal, agentRun.agentId);
-  return visible.ok ? b3ok(usageFacts(agentRun)) : visible;
-}
-
-/** The sole non-final Run for one Agent, or authoritative absence. */
-export async function resolveCurrentRunByAgent(
-  core: RunsCore,
-  principal: AuthenticatedPrincipal,
-  agentId: AgentId,
-): Promise<B3Result<RunUsageFacts | null>> {
-  const visible = await core.agents.getAgent(principal, agentId);
-  if (!visible.ok) return visible;
-  const stored = await core.store.list<AgentRun>('agentRun', { agentId });
-  if (!stored.ok) return stored;
-  const liveRuns = stored.value.filter(
-    (agentRun) => !FINAL_LIFECYCLES.has(agentRun.lifecycle),
-  );
-  if (liveRuns.length > 1) {
-    return b3fail(b3err(
-      'RuntimeUnavailable',
-      'current-Run uniqueness is not proven for this Agent',
-      { agentId, conflictingAgentRunIds: liveRuns.map((agentRun) => agentRun.id).sort() },
-      true,
-    ));
-  }
-  return b3ok(liveRuns[0] === undefined ? null : usageFacts(liveRuns[0]));
-}
+import { usageFacts } from './usage-run-resolution.js';
 
 async function eventRunId(core: RunsCore, event: RunEvent): Promise<B3Result<AgentRunId | null>> {
   const directRunId = event.payload['agentRunId'];
@@ -293,8 +231,7 @@ async function occurrenceForKind(
   event: RunEvent,
   runFacts: RunUsageFacts,
 ): Promise<B3Result<RunOccurrenceEventFacts | null>> {
-  const generation = eventGeneration(event);
-  const base = occurrenceBase(event, runFacts, generation);
+  const generation = eventGeneration(event); const base = occurrenceBase(event, runFacts, generation);
   switch (event.kind) {
     case 'agent.run.lifecycle.changed': return finalOccurrence(event, runFacts, generation, base);
     case 'agent.run.activity.changed': return disconnectedOccurrence(
@@ -305,6 +242,24 @@ async function occurrenceForKind(
     case 'agent.run.usage.changed': return usageOccurrence(event, base);
     default: return b3ok(null);
   }
+}
+
+async function resolveOccurrenceRunFacts(
+  core: RunsCore,
+  principal: AuthenticatedPrincipal,
+  eventId: string,
+  agentRunId: AgentRunId,
+  retainedFacts: RunUsageFacts | undefined,
+): Promise<B3Result<RunUsageFacts>> {
+  if (retainedFacts === undefined) return getUsageRun(core, principal, agentRunId);
+  if (retainedFacts.agentRunId !== agentRunId) {
+    return b3fail(b3err(
+      'RecoveryRequired', 'retained event/Run snapshot mismatch',
+      { stage: 'occurrence-derivation', eventId }, true,
+    ));
+  }
+  const visible = await core.agents.getAgent(principal, retainedFacts.agentId);
+  return visible.ok ? b3ok(retainedFacts) : visible;
 }
 
 /** Exact retained Runtime event lookup enriched from durable owner records. */
@@ -328,18 +283,9 @@ export async function getRunOccurrenceEvent(
   const resolvedRunId = await eventRunId(core, event);
   if (!resolvedRunId.ok) return b3fail(resolvedRunId.error);
   if (resolvedRunId.value === null) return b3ok(null);
-  if (found.value.runFacts !== undefined) {
-    if (found.value.runFacts.agentRunId !== resolvedRunId.value) {
-      return b3fail(b3err(
-        'RecoveryRequired', 'retained event/Run snapshot mismatch',
-        { stage: 'occurrence-derivation', eventId }, true,
-      ));
-    }
-    const visible = await core.agents.getAgent(principal, found.value.runFacts.agentId);
-    if (!visible.ok) return visible;
-    return occurrenceForKind(core, event, found.value.runFacts);
-  }
-  const runFacts = await getUsageRun(core, principal, resolvedRunId.value);
+  const runFacts = await resolveOccurrenceRunFacts(
+    core, principal, eventId, resolvedRunId.value, found.value.runFacts,
+  );
   return runFacts.ok ? occurrenceForKind(core, event, runFacts.value) : runFacts;
 }
 

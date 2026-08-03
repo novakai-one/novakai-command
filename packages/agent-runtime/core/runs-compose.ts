@@ -46,8 +46,10 @@ import {
 } from './queries.js';
 import {
   getRunOccurrenceEvent, getUsageRun, listUsageRuns,
-  resolveCurrentRunByAgent, resolveUsageRunByProviderSession,
 } from './occurrence-queries.js';
+import {
+  resolveCurrentRunByAgent, resolveUsageRunByProviderSession,
+} from './usage-run-resolution.js';
 import { getAgentRunTree } from './tree.js';
 import { repairRunOperation } from './repair.js';
 import { createRunEventLog } from './events.js';

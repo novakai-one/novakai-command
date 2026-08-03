@@ -55,28 +55,36 @@ const usageFacts = (agentRun: AgentRun): RunUsageFacts => ({
   recordVersion: agentRun.recordVersion,
 });
 
+async function resolveEventRunId(
+  store: RunsStore,
+  event: RunEvent,
+): Promise<B3Result<string | undefined>> {
+  const directRunId = event.payload['agentRunId'];
+  if (typeof directRunId === 'string') return b3ok(directRunId);
+  if (event.kind !== 'agent.run.operation.stage.changed') return b3ok(undefined);
+  const operationId = event.payload['operationId'];
+  if (typeof operationId !== 'string') return b3ok(undefined);
+  const operation = await store.read<RunOperation>('runOperation', operationId);
+  if (!operation.ok || operation.value === null) {
+    return operation.ok ? b3ok(undefined) : operation;
+  }
+  const targets = [...new Set([operation.value.oldRunId, operation.value.newRunId]
+    .filter((candidate): candidate is NonNullable<typeof candidate> => candidate !== undefined))];
+  return b3ok(targets.length === 1 ? targets[0] : undefined);
+}
+
 async function snapshotRunFacts(
   store: RunsStore,
   event: RunEvent,
 ): Promise<B3Result<RunUsageFacts | undefined>> {
-  let agentRunId = typeof event.payload['agentRunId'] === 'string'
-    ? event.payload['agentRunId']
-    : undefined;
-  if (agentRunId === undefined && event.kind === 'agent.run.operation.stage.changed') {
-    const operationId = event.payload['operationId'];
-    if (typeof operationId === 'string') {
-      const operation = await store.read<RunOperation>('runOperation', operationId);
-      if (!operation.ok) return operation;
-      const targets = operation.value === null
-        ? []
-        : [...new Set([operation.value.oldRunId, operation.value.newRunId]
-            .filter((candidate): candidate is NonNullable<typeof candidate> => candidate !== undefined))];
-      if (targets.length === 1) [agentRunId] = targets;
-    }
+  const agentRunId = await resolveEventRunId(store, event);
+  if (!agentRunId.ok || agentRunId.value === undefined) {
+    return agentRunId.ok ? b3ok(undefined) : agentRunId;
   }
-  if (agentRunId === undefined) return b3ok(undefined);
-  const run = await store.read<AgentRun>('agentRun', agentRunId);
-  return run.ok ? b3ok(run.value === null ? undefined : usageFacts(run.value)) : run;
+  const storedRun = await store.read<AgentRun>('agentRun', agentRunId.value);
+  return storedRun.ok
+    ? b3ok(storedRun.value === null ? undefined : usageFacts(storedRun.value))
+    : storedRun;
 }
 
 function corruption(eventId: string, reason: string): ReturnType<typeof b3err> {
@@ -86,6 +94,18 @@ function corruption(eventId: string, reason: string): ReturnType<typeof b3err> {
     { stage: 'occurrence-derivation', eventId, reason },
     true,
   );
+}
+
+function matchesRetainedEvidence(
+  record: RetainedRunOccurrenceEvent,
+  event: RunEvent,
+  payloadDigest: string,
+  evidenceDigest: string,
+): boolean {
+  return record.eventId === event.eventId
+    && record.canonicalPayloadDigest === payloadDigest
+    && canonicalRequestHash(record.payload) === payloadDigest
+    && record.canonicalEvidenceDigest === evidenceDigest;
 }
 
 /** Persist the exact public event before any consumer can observe it. */
@@ -104,10 +124,7 @@ export async function retainRunOccurrenceEvent(
   const prior = await store.read<RetainedRunOccurrenceEvent>('runOccurrenceEvent', id);
   if (!prior.ok) return prior;
   if (prior.value !== null) {
-    return prior.value.eventId === event.eventId
-      && prior.value.canonicalPayloadDigest === digest
-      && canonicalRequestHash(prior.value.payload) === digest
-      && prior.value.canonicalEvidenceDigest === evidenceDigest
+    return matchesRetainedEvidence(prior.value, event, digest, evidenceDigest)
       ? b3ok(null)
       : b3fail(corruption(event.eventId, 'duplicate identity has different payload facts'));
   }
@@ -137,9 +154,7 @@ export async function retainRunOccurrenceEvent(
   if (written.ok) return b3ok(null);
   const raced = await store.read<RetainedRunOccurrenceEvent>('runOccurrenceEvent', id);
   if (!raced.ok || raced.value === null) return written;
-  return raced.value.eventId === event.eventId
-    && raced.value.canonicalPayloadDigest === digest
-    && raced.value.canonicalEvidenceDigest === evidenceDigest
+  return matchesRetainedEvidence(raced.value, event, digest, evidenceDigest)
     ? b3ok(null)
     : b3fail(corruption(event.eventId, 'competing append has different payload facts'));
 }
