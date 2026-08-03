@@ -1,5 +1,5 @@
 import {
-  b3err, b3fail, b3ok, canonicalRequestHash, validationFailed,
+  b3err, b3fail, b3ok, canonicalRequestHash,
   type ActivityGeneration, type AuthenticatedPrincipal, type B3PrincipalId, type B3Result,
   type IsoUtc,
 } from '@novakai/foundation/contract';
@@ -24,15 +24,6 @@ export interface LifecycleEvent {
   readonly evidenceRef: string;
   readonly qualifiedAt: IsoUtc;
   readonly about: string | null;
-}
-
-function activityGenerationOfEvent(
-  payload: Readonly<Record<string, unknown>>,
-): ActivityGeneration | null {
-  const generation = payload['activityGeneration'];
-  return Number.isInteger(generation) && Number(generation) >= 0
-    ? generation as ActivityGeneration
-    : null;
 }
 
 function connectionSnapshot(candidate: unknown): RunConnectionSnapshot | null {
@@ -112,20 +103,6 @@ export async function lifecycleNotificationCandidate(
 ): Promise<B3Result<(Persisted<Notification> & Record<string, unknown>) | null>> {
   if (!eventMatchesRule(event, rule)) return b3ok(null);
   const family = watchOccurrenceFamily(rule.subject, rule.condition);
-  if (family === 'L') {
-    if (event.about !== subjectKey(rule.subject)) return b3ok(null);
-    const generation = activityGenerationOfEvent(event.payload);
-    if (generation === null) {
-      return b3fail(validationFailed([{
-        path: 'event.payload.activityGeneration',
-        message: 'must be a non-negative integer for a lifecycle watcher edge',
-      }]));
-    }
-    return b3ok(conditionNotification(
-      principal.id, rule, subjectKey(rule.subject), generation, event.evidenceRef,
-      { occurrenceIdentity: 'legacy-generation', qualifiedAt: event.qualifiedAt },
-    ));
-  }
   if (deps.runs?.getRunOccurrenceEvent === undefined) {
     return b3fail(b3err(
       'RuntimeUnavailable', 'retained Runtime occurrence lookup is not composed',
@@ -147,9 +124,35 @@ export async function lifecycleNotificationCandidate(
       { stage: 'occurrence-derivation', eventId: event.evidenceRef }, true,
     ));
   }
+  const expectedOccurrenceKind = rule.condition.kind === 'run-final'
+    ? 'run-final'
+    : rule.condition.kind === 'run-disconnected'
+      ? 'run-disconnected'
+      : rule.condition.kind === 'child-needs-help'
+        ? 'child-needs-help'
+        : rule.condition.kind === 'operation-failed'
+          ? 'operation-failed'
+          : null;
+  if (source.value.kind !== event.kind
+    || source.value.occurrenceKind !== expectedOccurrenceKind) {
+    return b3fail(b3err(
+      'RecoveryRequired', 'caller event kind disagrees with retained Runtime occurrence truth',
+      { stage: 'occurrence-derivation', eventId: event.evidenceRef }, true,
+    ));
+  }
   const matches = await subjectMatches(deps, principal, rule, source.value);
   if (!matches.ok) return matches;
   if (!matches.value) return b3ok(null);
+  if (family === 'L') {
+    return b3ok(conditionNotification(
+      principal.id,
+      rule,
+      subjectKey(rule.subject),
+      source.value.activityGeneration,
+      source.value.eventId,
+      { occurrenceIdentity: 'legacy-generation', qualifiedAt: source.value.occurredAt },
+    ));
+  }
   const occurrence = family === 'AR'
     ? {
         occurrenceIdentity: 'agent-run' as const,

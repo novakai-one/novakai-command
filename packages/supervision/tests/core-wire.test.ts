@@ -13,7 +13,7 @@ import { readFile, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
-  b3err, b3fail, b3ok, mintTraceCorrelationId,
+  b3err, b3fail, b3ok, canonicalRequestHash, mintTraceCorrelationId,
   type AgentRunId, type AuthenticatedPrincipal, type B3Result, type EventCursor,
   type ResolvedLaunchPlanId, type SystemCommandContext,
 } from '@novakai/foundation/contract';
@@ -24,7 +24,7 @@ import {
 import {
   parseNotificationRecord, parseWatchDeadline, parseWatchRule,
   subjectKey as subjectKeyOf,
-  type PublicEvent, type WatcherTemplate,
+  type PublicEvent, type RunOccurrenceEventFacts, type WatcherTemplate,
 } from '../contract/index.js';
 
 const RUN_ID = 'agentRun_019fd000-0000-7000-8000-0000000000a1' as AgentRunId;
@@ -78,6 +78,7 @@ function createRig(
     readonly extraTemplates?: readonly WatcherTemplate[];
     readonly activityGeneration?: () => number;
     readonly watchStartTurnAuthorized?: boolean;
+    readonly occurrenceEvents?: ReadonlyMap<string, RunOccurrenceEventFacts>;
   } = {},
 ): Rig {
   const root = mkdtempSync(path.join(tmpdir(), 'nvk-b3d-core-'));
@@ -105,12 +106,65 @@ function createRig(
       }),
     },
     watchRuleAccess: { agentIdFor: async () => b3ok(null) },
+    ...(options.occurrenceEvents === undefined ? {} : {
+      usage: {
+        runs: {
+          getUsageRun: async () => b3ok(null as never),
+          listUsageRuns: async () => b3ok([]),
+          resolveUsageRunByProviderSession: async () => b3ok(null),
+          resolveCurrentRunByAgent: async () => b3ok(null),
+          getRunOccurrenceEvent: async (_principal: AuthenticatedPrincipal, eventId: string) =>
+            b3ok(options.occurrenceEvents!.get(eventId) ?? null),
+        },
+        evidence: {
+          getProviderUsageEvidence: async () => b3ok(null),
+          listProviderUsageEvidence: async () => b3ok({ items: [], omissions: [] }),
+        },
+      },
+    }),
     ...(options.extraTemplates === undefined ? {} : { extraTemplates: options.extraTemplates }),
   });
   return {
     supervision, store, root, startedAt,
     close: () => { rmSync(root, { recursive: true, force: true }); },
   };
+}
+
+function lifecycleFacts(
+  event: PublicEvent<string, Readonly<Record<string, unknown>>>,
+  occurrenceKind: 'run-final' | 'run-disconnected',
+): RunOccurrenceEventFacts {
+  const generation = event.payload['activityGeneration'] as never;
+  const base = {
+    eventId: event.eventId,
+    occurredAt: event.occurredAt,
+    committedAt: event.committedAt,
+    sourceOwner: 'agent-runtime' as const,
+    agentRunId: RUN_ID,
+    agentId: 'agent_123e4567-e89b-42d3-a456-426614174000' as never,
+    providerSessionId: 'sess_123e4567-e89b-42d3-a456-426614174000' as never,
+    lifecycle: occurrenceKind === 'run-final' ? 'stopped' as const : 'ready' as const,
+    final: occurrenceKind === 'run-final',
+    activityGeneration: generation,
+    recordVersion: 1 as never,
+    canonicalPayloadDigest: canonicalRequestHash(event.payload),
+  };
+  if (occurrenceKind === 'run-final') {
+    return {
+      ...base,
+      kind: 'agent.run.lifecycle.changed',
+      occurrenceKind,
+      occurrence: { toLifecycle: 'stopped' },
+    };
+  }
+  return {
+    ...base,
+    kind: 'agent.run.activity.changed',
+    occurrenceKind,
+    occurrence: {
+      previous: event.payload['previous'], current: event.payload['current'],
+    },
+  } as RunOccurrenceEventFacts;
 }
 
 /**
@@ -548,7 +602,9 @@ test('manual event watcher creation does not invent or require a generation', as
 });
 
 test('a run-final lifecycle event queues one Notification under replay', async () => {
-  const rig = createRig('2026-08-03T00:00:00.000Z');
+  const occurrenceEvents = new Map<string, RunOccurrenceEventFacts>();
+  const rig = createRig('2026-08-03T00:00:00.000Z', 'disabled-explicitly',
+    [IDLE_WATCH_TEMPLATE.templateRef], { occurrenceEvents });
   try {
     const rule = unwrap(await rig.supervision.createWatchRule({
       principal: human,
@@ -571,6 +627,7 @@ test('a run-final lifecycle event queues one Notification under replay', async (
         activityGeneration: 4,
       },
     };
+    occurrenceEvents.set(event.eventId, lifecycleFacts(event, 'run-final'));
 
     const first = unwrap(await rig.supervision.evaluateEvent(runtimeContext(), { event }), 'first');
     const replay = unwrap(await rig.supervision.evaluateEvent(runtimeContext(), { event }), 'replay');
@@ -589,7 +646,9 @@ test('a run-final lifecycle event queues one Notification under replay', async (
 });
 
 test('a run-final Notification survives restart and absorbs transition redelivery', async () => {
-  const rig = createRig('2026-08-03T00:00:00.000Z');
+  const occurrenceEvents = new Map<string, RunOccurrenceEventFacts>();
+  const rig = createRig('2026-08-03T00:00:00.000Z', 'disabled-explicitly',
+    [IDLE_WATCH_TEMPLATE.templateRef], { occurrenceEvents });
   try {
     const rule = unwrap(await rig.supervision.createWatchRule({
       principal: human,
@@ -613,6 +672,7 @@ test('a run-final Notification survives restart and absorbs transition redeliver
         activityGeneration: 4,
       },
     };
+    occurrenceEvents.set(transition.eventId, lifecycleFacts(transition, 'run-final'));
     const first = unwrap(
       await rig.supervision.evaluateEvent(runtimeContext(), { event: transition }),
       'first lifecycle evaluation',
@@ -646,6 +706,21 @@ test('a run-final Notification survives restart and absorbs transition redeliver
         }),
       },
       watchRuleAccess: { agentIdFor: async () => b3ok(null) },
+      usage: {
+        runs: {
+          getUsageRun: async () => b3ok(null as never),
+          listUsageRuns: async () => b3ok([]),
+          resolveUsageRunByProviderSession: async () => b3ok(null),
+          resolveCurrentRunByAgent: async () => b3ok(null),
+          getRunOccurrenceEvent: async (_principal, eventId) => b3ok(
+            occurrenceEvents.get(eventId) ?? null,
+          ),
+        },
+        evidence: {
+          getProviderUsageEvidence: async () => b3ok(null),
+          listProviderUsageEvidence: async () => b3ok({ items: [], omissions: [] }),
+        },
+      },
     });
     const beforeReplay = unwrap(
       await restarted.listNotifications(human, { limit: 50 }),
@@ -659,6 +734,7 @@ test('a run-final Notification survives restart and absorbs transition redeliver
       eventId: 'event_tracer_13',
       cursor: 'tracer.13' as EventCursor,
     };
+    occurrenceEvents.set(redelivery.eventId, lifecycleFacts(redelivery, 'run-final'));
     const replay = unwrap(
       await restarted.evaluateEvent(runtimeContext(
         'op_123e4567-e89b-42d3-a456-426614174093' as never,
@@ -678,7 +754,9 @@ test('a run-final Notification survives restart and absorbs transition redeliver
 });
 
 test('a new provider-liveness loss generation queues one run-disconnected Notification', async () => {
-  const rig = createRig('2026-08-03T00:00:00.000Z');
+  const occurrenceEvents = new Map<string, RunOccurrenceEventFacts>();
+  const rig = createRig('2026-08-03T00:00:00.000Z', 'disabled-explicitly',
+    [IDLE_WATCH_TEMPLATE.templateRef], { occurrenceEvents });
   try {
     const rule = unwrap(await rig.supervision.createWatchRule({
       principal: human,
@@ -713,6 +791,7 @@ test('a new provider-liveness loss generation queues one run-disconnected Notifi
         },
       },
     };
+    occurrenceEvents.set(event.eventId, lifecycleFacts(event, 'run-disconnected'));
 
     const first = unwrap(await rig.supervision.evaluateEvent(runtimeContext(), { event }), 'first');
     const replay = unwrap(await rig.supervision.evaluateEvent(runtimeContext(), { event }), 'replay');
