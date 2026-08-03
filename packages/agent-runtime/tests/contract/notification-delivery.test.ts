@@ -168,9 +168,10 @@ test('the query adopts a Supervision claim whose Runtime stage write crashed', a
       notifications: healthy.notifications,
       messagingEndpoint: healthy.messagingEndpoint,
       transcriptCustody: healthy.transcriptCustody,
-      // open operation, journal intent, journal Terminal reservation, then die
-      // on the write that would journal Supervision's already-durable claim.
-      crashAfterWrites: 3,
+      // Open operation, journal intent + its retained occurrence event, then
+      // journal Terminal reservation + its retained event. Die on the write
+      // that would journal Supervision's already-durable claim.
+      crashAfterWrites: 5,
     });
 
     const interrupted = await crashed.runtime.startNotificationTurnAtSafeBoundary(
@@ -293,9 +294,10 @@ test('restart records Supervision outcome after Terminal committed before a cras
       notifications: healthy.notifications,
       messagingEndpoint: healthy.messagingEndpoint,
       transcriptCustody: healthy.transcriptCustody,
-      // The fourth Runtime write journals Supervision's claim. Terminal then
-      // commits, and the fifth write (terminal-input-submitted) crashes.
-      crashAfterWrites: 4,
+      // Each Runtime stage now durably retains its exact event. The sixth
+      // write journals Supervision's claim and the seventh retains that event;
+      // Terminal then commits, and terminal-input-submitted crashes.
+      crashAfterWrites: 7,
     });
     const interrupted = await crashed.runtime.startNotificationTurnAtSafeBoundary(
       supervisionContext(), input,
