@@ -334,6 +334,10 @@ export async function evaluateEvent(
           signalEventId: deterministicId('event', [
             'watch-rule-admission-signal', progress.id, rule.id, String(rule.recordVersion),
           ]),
+          signalOccurredAt: progress.createdAt,
+          signalTraceId: _context.traceId,
+          subject: rule.subject,
+          condition: rule.condition,
           reason: issue.issue,
         };
       } else {

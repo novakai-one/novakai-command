@@ -12,6 +12,7 @@ import {
   type WatchEvaluationTrigger,
   type WatchDeadline,
   type WatchRuleId,
+  type WatchRuleAdmissionEvent,
 } from '../contract/index.js';
 import type { SupervisionStore } from './store.js';
 
@@ -268,4 +269,82 @@ export async function listWatchEvaluationProgress(
 
 export function triggerOf(progress: WatchEvaluationProgress): WatchEvaluationTrigger {
   return progress.trigger;
+}
+
+function admissionCursor(occurredAt: string, eventId: string): EventCursor {
+  return `watchAdmission:${occurredAt}:${eventId}` as EventCursor;
+}
+
+function admissionCursorKey(cursor: EventCursor | undefined): string | null {
+  if (cursor === undefined) return '';
+  const raw = String(cursor);
+  if (!raw.startsWith('watchAdmission:')) return null;
+  const marker = raw.lastIndexOf(':event_');
+  return marker < 0
+    ? null
+    : `${raw.slice('watchAdmission:'.length, marker)}\u0000${raw.slice(marker + 1)}`;
+}
+
+/** Durable replay plus live tail for persisted R-pair operator signals. */
+export async function* subscribeWatchRuleAdmissionSignals(
+  store: SupervisionStore,
+  principal: AuthenticatedPrincipal,
+  after?: EventCursor,
+): AsyncIterable<B3Result<WatchRuleAdmissionEvent>> {
+  const access = authorized(principal);
+  if (!access.ok) {
+    yield access;
+    return;
+  }
+  let cursorKey = admissionCursorKey(after);
+  if (cursorKey === null) {
+    yield b3fail(b3err(
+      'CursorExpired', 'the watch-admission cursor is not recognized',
+      { newestCursor: null, reason: 'cursor was not minted by this signal stream' }, false,
+    ));
+    return;
+  }
+  const emitted = new Set<string>();
+  for (;;) {
+    const listed = await store.list<WatchEvaluationProgress>('watchEvaluation');
+    if (!listed.ok) {
+      yield listed;
+      return;
+    }
+    const events = listed.value.flatMap((progress) => progress.completed.flatMap((entry) => {
+      if (entry.outcome.kind !== 'pair-not-admitted') return [];
+      const outcome = entry.outcome;
+      const cursor = admissionCursor(outcome.signalOccurredAt, outcome.signalEventId);
+      const key = `${String(outcome.signalOccurredAt)}\u0000${outcome.signalEventId}`;
+      const event: WatchRuleAdmissionEvent = {
+        eventId: outcome.signalEventId,
+        kind: 'supervision.watch-rule-admission.changed',
+        schemaVersion: 1,
+        occurredAt: outcome.signalOccurredAt,
+        committedAt: outcome.signalOccurredAt,
+        sourceOwner: 'supervision',
+        traceId: outcome.signalTraceId,
+        cursor,
+        payload: {
+          watchEvaluationId: progress.id,
+          watchRuleId: entry.watchRuleId,
+          evaluatedRecordVersion: entry.evaluatedRecordVersion,
+          subject: outcome.subject,
+          condition: outcome.condition,
+          reason: outcome.reason,
+        },
+      };
+      return [{ key, event }];
+    })).sort((left, right) => left.key.localeCompare(right.key));
+    let delivered = false;
+    for (const candidate of events) {
+      if (candidate.key <= cursorKey || emitted.has(candidate.event.eventId)) continue;
+      emitted.add(candidate.event.eventId);
+      cursorKey = candidate.key;
+      delivered = true;
+      yield b3ok(candidate.event);
+    }
+    if (delivered) continue;
+    await new Promise<void>((resolve) => { setTimeout(resolve, 25); });
+  }
 }

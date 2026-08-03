@@ -57,6 +57,7 @@ import {
 import { createSupervisionOwnerLinearizer } from './owner-linearizer.js';
 import {
   getWatchEvaluationProgress, listWatchEvaluationProgress,
+  subscribeWatchRuleAdmissionSignals,
 } from './watch-evaluation-progress.js';
 
 /** The frozen members the tracer's live wire actually carries current through. */
@@ -80,6 +81,7 @@ export type SupervisionWireSlice = Pick<
   | 'getAgentUsage'
   | 'getRunUsage'
   | 'getWatchEvaluationProgress' | 'listWatchEvaluationProgress'
+  | 'subscribeWatchRuleAdmissionSignals'
 >;
 
 /** Deadline detail remains a tracer host read; WatchRule listing is now frozen. */
@@ -315,6 +317,8 @@ export function composeSupervision(options: SupervisionCoreOptions): Supervision
       getWatchEvaluationProgress(store, principal, watchEvaluationId),
     listWatchEvaluationProgress: (principal, filter) =>
       listWatchEvaluationProgress(store, principal, filter),
+    subscribeWatchRuleAdmissionSignals: (principal, after) =>
+      subscribeWatchRuleAdmissionSignals(store, principal, after),
     listWatchDeadlines: () => store.list<WatchDeadline>('watchDeadline'),
   };
 }

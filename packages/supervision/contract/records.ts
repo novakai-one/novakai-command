@@ -432,6 +432,10 @@ export type WatchEvaluationRuleOutcome =
   | {
       readonly kind: 'pair-not-admitted';
       readonly signalEventId: string;
+      readonly signalOccurredAt: IsoUtc;
+      readonly signalTraceId: TraceCorrelationId;
+      readonly subject: WatchSubject;
+      readonly condition: WatchCondition;
       readonly reason: string;
     }
   | {

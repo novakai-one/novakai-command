@@ -18,7 +18,9 @@ import type {
   SystemCommandContext,
   CommandContext,
 } from '@novakai/foundation/contract';
-import type { NotificationEvent, PublicEvent } from './events.js';
+import type {
+  NotificationEvent, PublicEvent, WatchRuleAdmissionEvent,
+} from './events.js';
 import type {
   DriftEpisodeId,
   NotificationId,
@@ -358,6 +360,10 @@ export interface SupervisionCommands {
 
 /** Frozen B3d Supervision read/stream surface (§12.4). */
 export interface SupervisionQueries {
+  subscribeWatchRuleAdmissionSignals(
+    principal: AuthenticatedPrincipal,
+    after?: EventCursor,
+  ): AsyncIterable<B3Result<WatchRuleAdmissionEvent>>;
   getWatchEvaluationProgress(
     principal: AuthenticatedPrincipal,
     watchEvaluationId: WatchEvaluationId,
