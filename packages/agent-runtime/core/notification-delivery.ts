@@ -172,6 +172,30 @@ export async function startNotificationTurnAtSafeBoundary(
       { reason: 'notification-delivery-not-composed' }, true,
     ));
   }
+  const priorOperation = await operationFor(core, input.effectKey);
+  if (!priorOperation.ok) return priorOperation;
+  if (priorOperation.value !== null) {
+    if (priorOperation.value.notificationId !== input.notificationId) {
+      return b3fail(b3err(
+        'IdempotencyConflict', 'delivery effect is bound to another Notification',
+        {
+          effectKey: input.effectKey,
+          heldNotificationId: priorOperation.value.notificationId,
+          requestedNotificationId: input.notificationId,
+        }, false,
+      ));
+    }
+    const prior = await getNotificationTurnSubmission(core, input.effectKey);
+    if (!prior.ok) return prior;
+    if (prior.value.state === 'submitted-confirmed'
+      || prior.value.state === 'submitted-unconfirmed') return b3ok(prior.value);
+    if (prior.value.state === 'cancelled-not-submitted') {
+      return b3fail(b3err(
+        'IdempotencyConflict', 'the deterministic delivery reservation was cancelled',
+        { effectKey: input.effectKey }, false,
+      ));
+    }
+  }
   const run = await requireRun(core, input.agentRunId);
   if (!run.ok) return run;
   if (run.value.lifecycle !== 'ready'
@@ -212,8 +236,6 @@ export async function startNotificationTurnAtSafeBoundary(
   const reservationId = notificationInputReservationId(
     input.effectKey,
   ) as NotificationInputReservationId;
-  const priorOperation = await operationFor(core, input.effectKey);
-  if (!priorOperation.ok) return priorOperation;
   const providerTurnId = priorOperation.value?.notificationProviderTurnId
     ?? mintProviderTurnId();
   const opened = await openOperation(core, runtimeContext(context, input.effectKey), {
