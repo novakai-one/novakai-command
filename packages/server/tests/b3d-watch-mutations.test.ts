@@ -34,7 +34,41 @@ function call(table: MethodTable, method: string, payload: unknown) {
     contractVersion: 1,
     clientOpId: 'op_123e4567-e89b-42d3-a456-426614174020',
     payload,
-  } as never) as Promise<{ readonly ok: boolean; readonly value?: unknown }>;
+  } as never) as Promise<{
+    readonly ok: boolean;
+    readonly value?: unknown;
+    readonly error?: { readonly code: string };
+  }>;
+}
+
+function publishedDriftPayload(
+  intervalMs = 300_000,
+  staleAfterIntervals = 2,
+  escalateAfterConsecutive = 3,
+) {
+  return {
+    subject: {
+      kind: 'agent-run',
+      agentRunId: 'agentRun_019fd000-0000-7000-8000-0000000000a1',
+    },
+    condition: {
+      kind: 'activity-drift',
+      intervalMs,
+      staleAfterIntervals,
+      escalateAfterConsecutive,
+    },
+    recipient: { kind: 'human', principalId: 'person_chris' },
+    deliveryMode: 'queue-only',
+    cooldownMs: 0,
+    status: 'active',
+    driftPolicy: {
+      mode: 'cheap-first',
+      freeEvidence: ['terminal-liveness', 'transcript-advance', 'usage-delta'],
+      statusTurn: 'queue-runtime-status-request-only-after-free-evidence-suspicious',
+      replyWindowMs: intervalMs,
+      statusPrompt: 'Status check: reply with one line — what are you working on right now?',
+    },
+  };
 }
 
 function runNvk(args: readonly string[]): Promise<{ readonly code: number | null; readonly out: string }> {
@@ -125,29 +159,11 @@ test('b3.supervision.createWatch accepts the published activity-drift policy and
       }),
       activityGenerationFor: async () => 7 as never,
     });
-    const created = await call(table, 'b3.supervision.createWatch', {
-      subject: {
-        kind: 'agent-run',
-        agentRunId: 'agentRun_019fd000-0000-7000-8000-0000000000a1',
-      },
-      condition: {
-        kind: 'activity-drift',
-        intervalMs: 300_000,
-        staleAfterIntervals: 2,
-        escalateAfterConsecutive: 3,
-      },
-      recipient: { kind: 'human', principalId: 'person_chris' },
-      deliveryMode: 'queue-only',
-      cooldownMs: 0,
-      status: 'active',
-      driftPolicy: {
-        mode: 'cheap-first',
-        freeEvidence: ['terminal-liveness', 'transcript-advance', 'usage-delta'],
-        statusTurn: 'queue-runtime-status-request-only-after-free-evidence-suspicious',
-        replyWindowMs: 300_000,
-        statusPrompt: 'Status check: reply with one line — what are you working on right now?',
-      },
-    });
+    const created = await call(
+      table,
+      'b3.supervision.createWatch',
+      publishedDriftPayload(),
+    );
     assert.equal(created.ok, true, JSON.stringify(created));
 
     const listed = await call(table, 'b3.supervision.listWatchers', { limit: 50 });
@@ -161,6 +177,74 @@ test('b3.supervision.createWatch accepts the published activity-drift policy and
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test('b3.supervision.createWatch names noncanonical drift constants WatchRuleInvalid', async () => {
+  const table = buildB3SupervisionMethods({
+    supervision: {
+      createWatchRule: async () => { throw new Error('invalid input reached the core'); },
+    } as never,
+    principalFor: () => HUMAN,
+    activityGenerationFor: async () => 1 as never,
+  });
+  const stale = await call(
+    table,
+    'b3.supervision.createWatch',
+    publishedDriftPayload(300_000, 3, 3),
+  );
+  const escalate = await call(
+    table,
+    'b3.supervision.createWatch',
+    publishedDriftPayload(300_000, 2, 4),
+  );
+
+  assert.equal(stale.ok, false);
+  assert.equal(stale.error?.code, 'WatchRuleInvalid');
+  assert.equal(escalate.ok, false);
+  assert.equal(escalate.error?.code, 'WatchRuleInvalid');
+});
+
+test('b3.supervision.createWatch enforces drift-policy presence by condition kind', async () => {
+  const table = buildB3SupervisionMethods({
+    supervision: {
+      createWatchRule: async () => { throw new Error('invalid input reached the core'); },
+    } as never,
+    principalFor: () => HUMAN,
+    activityGenerationFor: async () => 1 as never,
+  });
+  const { driftPolicy, ...missingPolicy } = publishedDriftPayload();
+  const strayPolicy = {
+    ...missingPolicy,
+    condition: { kind: 'run-final' },
+    driftPolicy,
+  };
+
+  const missing = await call(table, 'b3.supervision.createWatch', missingPolicy);
+  const stray = await call(table, 'b3.supervision.createWatch', strayPolicy);
+
+  assert.equal(missing.ok, false);
+  assert.equal(missing.error?.code, 'WatchRuleInvalid');
+  assert.equal(stray.ok, false);
+  assert.equal(stray.error?.code, 'WatchRuleInvalid');
+});
+
+test('b3.supervision.createWatch accepts both inclusive drift timing endpoints', async () => {
+  const table = buildB3SupervisionMethods({
+    supervision: {
+      createWatchRule: async (_context: unknown, input: unknown) => b3ok(input as never),
+    } as never,
+    principalFor: () => ({
+      ...HUMAN,
+      verifiedScopes: ['supervision:watch:start-turn' as never],
+    }),
+    activityGenerationFor: async () => 1 as never,
+  });
+
+  const low = await call(table, 'b3.supervision.createWatch', publishedDriftPayload(300_000));
+  const high = await call(table, 'b3.supervision.createWatch', publishedDriftPayload(600_000));
+
+  assert.equal(low.ok, true, JSON.stringify(low));
+  assert.equal(high.ok, true, JSON.stringify(high));
 });
 
 test('b3.supervision.resetDrift carries the exact episode/version fence', async () => {

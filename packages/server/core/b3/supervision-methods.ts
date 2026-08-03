@@ -13,7 +13,7 @@
 import {
   b3err, b3fail, b3ok, isValidClientOpId, mintClientOpId, mintTraceCorrelationId,
   type ActivityGeneration, type AgentRunId, type AuthenticatedPrincipal, type B3Result,
-  type CommandContext,
+  type B3ContractError, type CommandContext,
 } from '@novakai/foundation/contract';
 import {
   parseCreateWatchRuleInput,
@@ -118,6 +118,30 @@ function completePublishedDriftPolicy(
   };
 }
 
+const FIXED_DRIFT_TEMPLATE_PATHS = new Set([
+  'condition.staleAfterIntervals',
+  'condition.escalateAfterConsecutive',
+  'driftPolicy',
+]);
+
+function watchRuleParseFailure<T>(error: B3ContractError): B3Result<T> {
+  const rawIssues = error.details.issues;
+  const hasFixedTemplateIssue = error.code === 'ValidationFailed'
+    && Array.isArray(rawIssues)
+    && rawIssues.some((issue) => typeof issue === 'object' && issue !== null
+      && FIXED_DRIFT_TEMPLATE_PATHS.has(
+        String((issue as { readonly path?: unknown }).path),
+      ));
+  return hasFixedTemplateIssue
+    ? b3fail(b3err(
+      'WatchRuleInvalid',
+      'activity-drift uses a fixed policy template',
+      { issues: rawIssues },
+      false,
+    ))
+    : b3fail(error);
+}
+
 function resolveUpdateAuthenticatedHuman(
   payload: Readonly<Record<string, unknown>>,
   principal: AuthenticatedPrincipal,
@@ -179,7 +203,7 @@ export function buildB3SupervisionMethods(options: B3SupervisionMethodOptions): 
       const resolved = resolveAuthenticatedHuman(parsed.value.payload, principal);
       if (!resolved.ok) return resolved;
       const input = parseCreateWatchRuleInput(completePublishedDriftPolicy(resolved.value));
-      if (!input.ok) return input;
+      if (!input.ok) return watchRuleParseFailure(input.error);
       const context = commandContext(parsed.value, principal);
       return context.ok
         ? supervision.createWatchRule(context.value, input.value)
