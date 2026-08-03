@@ -8,9 +8,10 @@ import {
   type SystemCommandContext, type TerminalSessionId,
 } from '@novakai/foundation/contract';
 import type {
-  LaunchPlanFacts, NotificationDeliveryAuthorityFacts, NotificationDeliveryClaimFacts,
+  NotificationDeliveryAuthorityFacts, NotificationDeliveryClaimFacts,
   NotificationDeliveryPort, NotificationTurnSubmission, StartNotificationTurnInput,
-} from '../contract/index.js';
+} from '../contract/notification-delivery.js';
+import type { LaunchPlanFacts } from '../contract/launch-facts.js';
 import type { AgentRun, RunOperation, RunOperationStage } from '../contract/runs.js';
 import { advance, openOperation, settleOperation } from './journal.js';
 import { requireRun, type RunsCore } from './runs-context.js';
