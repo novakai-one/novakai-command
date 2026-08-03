@@ -255,16 +255,6 @@ export function composeProviderUsageEvidence(
       });
     },
 
-    async getProviderUsageEvidence(_principal, providerUsageEvidenceId) {
-      const found = await getObject<ProviderUsageEvidence>(
-        reader,
-        'providerUsageEvidence',
-        providerUsageEvidenceId as unknown as ObjectId,
-      );
-      if (!found.ok) return b3fail(storeFailure('agents', found.error));
-      return b3ok(isAbsent(found.value) ? null : publicView(found.value));
-    },
-
     async listProviderTurnCompletionEvidence(_principal, filter) {
       const listed = await listObjects(
         reader, 'providerUsageEvidence', {}, { limit: 100_000 },
