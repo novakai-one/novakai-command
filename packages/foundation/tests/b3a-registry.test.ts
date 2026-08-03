@@ -60,6 +60,7 @@ const EXPECTED: ReadonlyArray<readonly [ObjectKind, string, CapabilityId]> = [
   ['observedSubagent', 'observedSubagents.jsonl', 'transcript'],
   ['storeRouteCutover', 'storeRouteCutovers.jsonl', 'foundation'],
   // ── B3d additions ──────────────────────────────────────────────────────
+  ['providerUsageEvidence', 'providerUsageEvidence.jsonl', 'agents'],
   ['watchRule', 'watchRules.jsonl', 'supervision'],
   ['watchDeadline', 'watchDeadlines.jsonl', 'supervision'],
   ['notification', 'notifications.jsonl', 'supervision'],
@@ -172,7 +173,9 @@ const B3A_KINDS = new Set<string>([
   'controllerAttachment', 'terminalInputLease', 'terminalInputAttempt',
 ]);
 
-const B3D_KINDS = new Set<string>(['watchRule', 'watchDeadline', 'notification']);
+const B3D_KINDS = new Set<string>([
+  'providerUsageEvidence', 'watchRule', 'watchDeadline', 'notification',
+]);
 
 const B3C_KINDS = new Set<string>([
   'messagingStoreOp', 'transcriptBinding', 'observedSubagent', 'storeRouteCutover',
