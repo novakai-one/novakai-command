@@ -89,6 +89,34 @@ test('a parent Run can read a child watcher addressed to its stable Agent', asyn
   if (page.ok) assert.equal(page.value.items[0]!.id, rule.id);
 });
 
+test('a human can list a watcher they created for an Agent recipient', async () => {
+  const [base] = installedWatchRules({
+    agentRunId: RUN_ID as never,
+    launchPlanId: 'launchPlan_018f0f8a-4f7b-7abc-8def-0123456789ab' as never,
+    requiredTemplateRefs: [],
+    recipient: {
+      kind: 'agent',
+      agentId: 'agent_123e4567-e89b-42d3-a456-426614174000' as never,
+    },
+    activityGeneration: 1 as never,
+  });
+  const rule = { ...base!, createdBy: 'person_chris' as never };
+  const store = {
+    list: async () => ({ ok: true as const, value: [rule] }),
+  } as unknown as SupervisionStore;
+
+  const page = await listWatchRules(store, {
+    agentIdFor: async () => ({ ok: true as const, value: null }),
+  }, {
+    id: 'person_chris' as never,
+    kind: 'human',
+    verifiedScopes: [],
+  }, { limit: 10 });
+
+  assert.equal(page.ok, true);
+  if (page.ok) assert.equal(page.value.items[0]!.id, rule.id);
+});
+
 test('WatchRule filter and page reject unbounded or malformed wire shapes', () => {
   assert.equal(parseWatchRuleFilter({ limit: 0 }).ok, false);
   assert.equal(parseWatchRuleFilter({

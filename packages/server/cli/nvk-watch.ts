@@ -1,22 +1,25 @@
 #!/usr/bin/env -S npx tsx
-// nvk-watch — see what is watching, and what it has queued (§17.1).
+// nvk-watch — create and inspect durable watcher rules (§17.1).
 //
+//   nvk watch add            create one active watcher rule
 //   nvk watch list           the standing watcher rules and their deadlines
 //   nvk watch notifications  the durable Notification queue
 //   nvk watch acknowledge    settle one Notification you have actually seen
-//
-// All take --json (§17.2). `add`, `update`, `remove` and `reset-drift` remain
-// absent on purpose: they are lane B mutations, and a stub that pretended to
-// perform one would be worse than its absence — an operator would believe a
-// watcher was retired when it was not.
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { b3err, b3fail, type B3Result } from '@novakai/foundation/contract';
+import {
+  b3err, b3fail, b3ok, isValidId, validationFailed,
+  type B3Result,
+} from '@novakai/foundation/contract';
 import type {
   Notification, WatchDeadline, WatchRule,
 } from '../../supervision/contract/index.js';
+import { watchRemoveRetirement } from '../../supervision/contract/index.js';
 import { connectRuntime, type RuntimeClient } from '../core/b3/client.js';
-import { emit, parseFlags, type Flags } from '../core/b3/cli-shared.js';
+import {
+  clientOpIdFrom, emit, parseFlags, type Flags,
+} from '../core/b3/cli-shared.js';
+import { addWatchInput, replacementWatchInput } from './nvk-watch-inputs.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '..', '..', '..');
@@ -58,7 +61,9 @@ function describeWatchers(listing: WatcherListing): string {
     const deadline = listing.deadlines
       .filter((item) => item.watchRuleId === rule.id)
       .sort((left, right) => Number(right.activityGeneration) - Number(left.activityGeneration))[0];
-    return deadline === undefined ? 'no deadline' : `${deadline.state} until ${deadline.dueAt}`;
+    return deadline === undefined
+      ? 'no deadline'
+      : `${deadline.id} · ${deadline.state} until ${deadline.dueAt}`;
   };
   return listing.rules.map((rule) => `${rule.condition.kind}  ${rule.status}  ${rule.id}\n`
     + `  ${JSON.stringify(rule.subject)} · ${rule.deliveryMode} · ${dueOf(rule)}`).join('\n');
@@ -70,11 +75,114 @@ function describeNotifications(page: { readonly items: readonly Notification[] }
     + `  ${item.id} · ${item.phase} · ${item.deliveryMode}`).join('\n');
 }
 
+const ADD_COMMAND = 'add';
+const UPDATE_COMMAND = 'update';
+const REMOVE_COMMAND = 'remove';
+const RESET_DRIFT_COMMAND = 'reset-drift';
+
+async function currentRule(
+  client: RuntimeClient,
+  watchRuleId: string | undefined,
+): Promise<B3Result<WatchRule>> {
+  if (watchRuleId === undefined || !isValidId(watchRuleId, 'watchRule', 'uuidv7')) {
+    return b3fail(validationFailed([{
+      path: 'watchRuleId', message: 'must be a WatchRuleId positional argument',
+    }]));
+  }
+  const listed = await client.call<WatcherListing>(
+    'b3.supervision.listWatchers', { limit: 500 },
+  );
+  if (!listed.ok) return listed;
+  const found = listed.value.rules.find((rule) => rule.id === watchRuleId);
+  return found === undefined
+    ? b3fail(b3err('WatcherConflict', 'the WatchRule does not exist', { watchRuleId }, true))
+    : b3ok(found);
+}
+
+async function currentDeadline(
+  client: RuntimeClient,
+  watchDeadlineId: string | undefined,
+): Promise<B3Result<WatchDeadline>> {
+  if (watchDeadlineId === undefined
+    || !isValidId(watchDeadlineId, 'watchDeadline', 'base32sha256')) {
+    return b3fail(validationFailed([{
+      path: 'watchDeadlineId', message: 'must be a WatchDeadlineId positional argument',
+    }]));
+  }
+  const listed = await client.call<WatcherListing>(
+    'b3.supervision.listWatchers', { limit: 500 },
+  );
+  if (!listed.ok) return listed;
+  const found = listed.value.deadlines.find((deadline) => deadline.id === watchDeadlineId);
+  return found === undefined
+    ? b3fail(b3err(
+      'WatcherConflict', 'the current WatchDeadline does not exist', { watchDeadlineId }, true,
+    ))
+    : b3ok(found);
+}
+
 function describeAcknowledgement(item: Notification): string {
   return `${item.state}  ${item.summary}\n  ${item.id}`;
 }
 
 const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
+  [ADD_COMMAND]: async function addWatcher(argFlags) {
+    const input = addWatchInput(argFlags);
+    if (!input.ok) emit('watch add', argFlags, input, () => '');
+    const clientOpId = clientOpIdFrom(argFlags);
+    if (!clientOpId.ok) emit('watch add', argFlags, clientOpId, () => '');
+    emit('watch add', argFlags, await withClient<WatchRule>(
+      (client) => client.call(
+        'b3.supervision.createWatch', input.value, clientOpId.value,
+      ),
+    ), (rule) => `Watching ${JSON.stringify(rule.subject)} for ${rule.condition.kind}.`);
+  },
+
+  [UPDATE_COMMAND]: async function updateWatcher(argFlags) {
+    const clientOpId = clientOpIdFrom(argFlags);
+    if (!clientOpId.ok) emit('watch update', argFlags, clientOpId, () => '');
+    emit('watch update', argFlags, await withClient<WatchRule>(async (client) => {
+      const current = await currentRule(client, argFlags.positional[0]);
+      if (!current.ok) return current;
+      const replacement = replacementWatchInput(current.value, argFlags);
+      if (!replacement.ok) return replacement;
+      return client.call('b3.supervision.updateWatch', {
+        watchRuleId: current.value.id,
+        expectedRecordVersion: current.value.recordVersion,
+        replacement: replacement.value,
+      }, clientOpId.value);
+    }), (rule) => `Updated ${rule.id} to record version ${String(rule.recordVersion)}.`);
+  },
+
+  [REMOVE_COMMAND]: async function removeWatcher(argFlags) {
+    const clientOpId = clientOpIdFrom(argFlags);
+    if (!clientOpId.ok) emit('watch remove', argFlags, clientOpId, () => '');
+    emit('watch remove', argFlags, await withClient<WatchRule>(async (client) => {
+      const current = await currentRule(client, argFlags.positional[0]);
+      if (!current.ok) return current;
+      return client.call(
+        'b3.supervision.updateWatch',
+        watchRemoveRetirement(current.value) as unknown as Readonly<Record<string, unknown>>,
+        clientOpId.value,
+      );
+    }), (rule) => `Retired ${rule.id}.`);
+  },
+
+  [RESET_DRIFT_COMMAND]: async function resetDrift(argFlags) {
+    const clientOpId = clientOpIdFrom(argFlags);
+    if (!clientOpId.ok) emit('watch reset-drift', argFlags, clientOpId, () => '');
+    emit('watch reset-drift', argFlags, await withClient<WatchDeadline>(async (client) => {
+      const deadline = await currentDeadline(client, argFlags.positional[0]);
+      if (!deadline.ok) return deadline;
+      return client.call('b3.supervision.resetDrift', {
+        watchDeadlineId: deadline.value.id,
+        expectedRecordVersion: deadline.value.recordVersion,
+        expectedEpisodeId: argFlags.value('episode'),
+        reason: argFlags.value('reason') ?? 'reset requested by nvk watch reset-drift',
+      }, clientOpId.value);
+    }), (deadline) => `Reset drift deadline ${deadline.id}.`);
+  },
+
   async list(argFlags) {
     const limit = Number(argFlags.value('limit') ?? 50);
     emit('watch list', argFlags, await withClient<WatcherListing>(
@@ -110,7 +218,7 @@ const chosen = COMMANDS[command];
 if (chosen === undefined) {
   process.stderr.write(`${JSON.stringify({
     code: 'Usage',
-    message: `usage: nvk watch ${Object.keys(COMMANDS).join('|')} [--json] [--limit <n>]`,
+    message: `usage: nvk watch ${Object.keys(COMMANDS).join('|')} [options] [--json]`,
   })}\n`);
   process.exitCode = 2;
 } else {

@@ -47,10 +47,12 @@ import {
 } from '../../../supervision/contract/index.js';
 import {
   followEventsIntoSupervision, supervisionWatcherPort, watcherInstallAuthority, watchRuleAccess,
+  watchRuleGeneration,
 } from './supervision-ports.js';
 import { notificationTranscriptObserver } from './notification-transcript-port.js';
 import { createUsageReader } from '../supervision/usage.js';
 import { createTranscriptUsagePort } from './usage-transcript-port.js';
+import { startWatcherScheduler } from './watcher-scheduler.js';
 
 export interface B3RuntimeOptions {
   /** `.novakai/` root. Domain records live in `<root>/stores`. */
@@ -92,6 +94,8 @@ export interface B3RuntimeOptions {
   readonly mirrorIntervalMs?: number;
   /** How often the inbox delivery loop looks. Same reason as the mirror's. */
   readonly inboxDeliveryIntervalMs?: number;
+  /** How often the Runtime scans durable watcher deadlines. */
+  readonly watcherIntervalMs?: number;
   /**
    * B3d: extra pinned watcher templates this host's role catalogue offers, on
    * top of the ones Supervision ships. The frozen catalogue seam is owned by
@@ -230,6 +234,22 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
     dataRoot,
     ptyHost,
     epochFence: runtime.fence,
+    onUnexpectedExit: (terminalSessionId) => {
+      const activeRuns = runs;
+      if (activeRuns === null) return;
+      void activeRuns.observeTerminalExit(terminalSessionId).then((observed) => {
+        if (observed.ok) return;
+        activeRuns.publishCapabilityEvent('runtime.recovery.required', {
+          terminalSessionId,
+          reason: `${observed.error.code}: ${observed.error.message}`,
+        }, 'agent-runtime');
+      }, (cause: unknown) => {
+        activeRuns.publishCapabilityEvent('runtime.recovery.required', {
+          terminalSessionId,
+          reason: cause instanceof Error ? cause.message : String(cause),
+        }, 'agent-runtime');
+      });
+    },
   });
 
   // Agents owns roles, family and grants; Agent Runtime owns Runs. They meet
@@ -285,6 +305,7 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
     dataRoot,
     installAuthority: watcherInstallAuthority(agents, () => runs ?? undefined),
     watchRuleAccess: watchRuleAccess(() => runs ?? undefined),
+    watchRuleGeneration: watchRuleGeneration(() => runs ?? undefined),
     templates: watcherTemplates,
     usage: {
       runs: {
@@ -404,6 +425,10 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
   const following = followEventsIntoSupervision(
     runs, supervision, notificationTranscriptObserver(supervision),
   );
+  const watcherScheduler = startWatcherScheduler(supervision, {
+    ...(options.watcherIntervalMs === undefined
+      ? {} : { intervalMs: options.watcherIntervalMs }),
+  });
 
   const composedTranscript = composeB3TranscriptFor({
     root: options.root,
@@ -437,6 +462,7 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
     supervision,
     dataRoot,
     async close() {
+      await watcherScheduler.stop();
       // First, and awaited: a pass in flight holds durable Messaging and
       // Transcript writes, and closing the stores under it is the one way to
       // manufacture the torn outcome §13.9's watermark law exists to survive.

@@ -3,7 +3,7 @@
 // `--json` field names and enum meanings are a compatibility contract; the
 // human text above them is free to improve.
 import {
-  b3fail, b3ok, isValidId, mintClientOpId, validationFailed,
+  b3fail, b3ok, isValidClientOpId, mintClientOpId, validationFailed,
   type B3ClientOpId, type B3ContractError, type B3Result,
 } from '@novakai/foundation/contract';
 
@@ -46,6 +46,7 @@ const BY_CODE: Readonly<Record<string, number>> = {
   InputLeaseBusy: EXIT.conflict,
   InputLeaseGenerationChanged: EXIT.conflict,
   LiveRunConflict: EXIT.conflict,
+  WatcherConflict: EXIT.conflict,
   StoreRouteConflict: EXIT.conflict,
   StaleRuntimeEpoch: EXIT.retryable,
   RuntimeUnavailable: EXIT.retryable,
@@ -91,10 +92,10 @@ export const CLIENT_OP_ID_FLAG = 'client-op-id';
 export function clientOpIdFrom(flags: Flags): B3Result<B3ClientOpId> {
   const given = flags.value(CLIENT_OP_ID_FLAG);
   if (given === undefined) return b3ok(mintClientOpId());
-  if (!isValidId(given, 'op', 'uuidv4')) {
+  if (!isValidClientOpId(given)) {
     return b3fail(validationFailed([{
       path: CLIENT_OP_ID_FLAG,
-      message: 'must be op_<uuidv4>; omit the flag and one is generated',
+      message: 'must be op_<uuidv4|uuidv5>; omit the flag and one is generated',
     }]));
   }
   return b3ok(given as B3ClientOpId);

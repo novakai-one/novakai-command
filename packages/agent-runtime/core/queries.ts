@@ -6,8 +6,9 @@
 // is not "zero" (§24.5, red gates 4 and 13).
 import {
   b3fail, b3ok, mintClientOpId, nowIsoUtc,
-  type AgentId, type AgentRunId, type AuthenticatedPrincipal, type B3Page,
+  type ActivityGeneration, type AgentId, type AgentRunId, type AuthenticatedPrincipal, type B3Page,
   type B3Result, type IsoUtc, type ResolvedLaunchPlanId, type RunOperationId,
+  type TerminalSessionId,
 } from '@novakai/foundation/contract';
 import type {
   AgentRunView, ListAgentRunsFilter, RunOperationView, RunUsageFacts,
@@ -46,6 +47,40 @@ const RUN_FIELD = 'run';
  */
 const TERMINAL_IS_OVER: ReadonlySet<string> = new Set(['exited', 'failed']);
 
+/**
+ * Commit one honest interrupted edge and announce it through Runtime's one
+ * lifecycle stream. The successful CAS is the edge: failed or replayed
+ * settlements publish nothing.
+ */
+async function settleInterruptedRun(
+  core: RunsCore,
+  agentRun: AgentRun,
+  observations: Readonly<Partial<Pick<AgentRun, 'activity' | 'finalAt' | 'uncertainty'>>>,
+): Promise<B3Result<AgentRun>> {
+  const settled = await core.store.update<AgentRun>(
+    'sys_agent_runtime', agentRun.id,
+    {
+      ...observations,
+      lifecycle: 'interrupted',
+      finalReason: 'runtime-reconciled-missing',
+    },
+    agentRun.recordVersion, mintClientOpId(),
+  );
+  if (!settled.ok) return settled;
+  core.publish('agent.run.lifecycle.changed', {
+    agentRunId: agentRun.id,
+    fromLifecycle: agentRun.lifecycle,
+    toLifecycle: 'interrupted',
+    activityGeneration: settled.value.activityGeneration,
+    uncertaintyCodes: settled.value.uncertainty.map((item) => item.code),
+    final: true,
+  });
+  await expireAuthorityOf(core, settled.value);
+  // The shift is over, so the endpoint stops advertising it (§8.1's cutoff).
+  await closeEndpointOf(core, settled.value);
+  return b3ok(settled.value);
+}
+
 function unavailableUsage(agentRun: AgentRun, observedAt: IsoUtc): AgentRunUsage {
   const unavailable = (): UsageValue => ({
     quality: 'unavailable',
@@ -76,30 +111,57 @@ async function settleIfTerminalGone(
   if (!found.ok) return b3ok(agentRun);
   if (found.value === null || !TERMINAL_IS_OVER.has(found.value.status)) return b3ok(agentRun);
 
-  const settled = await core.store.update<AgentRun>(
-    'sys_agent_runtime', agentRun.id,
-    {
-      lifecycle: 'interrupted',
-      activity: 'unknown',
-      finalReason: 'runtime-reconciled-missing',
-      finalAt: nowIsoUtc(),
-      uncertainty: [{
+  const livenessCode = 'provider-liveness-unknown';
+  let disconnected = agentRun;
+  if (!agentRun.uncertainty.some((item) => item.code === livenessCode)) {
+    const generation = (Number(agentRun.activityGeneration) + 1) as ActivityGeneration;
+    const observed = await core.store.update<AgentRun>(
+      'sys_agent_runtime', agentRun.id,
+      {
+        activity: 'unknown',
+        activityGeneration: generation,
+        uncertainty: [...agentRun.uncertainty, {
         code: 'provider-liveness-unknown',
         summary: 'the managed terminal for this Run has ended; whether the provider '
           + 'finished its work or was killed mid-turn is not known',
         evidenceRefs: [terminalSessionId],
-      }],
-    } as Record<string, unknown>,
-    agentRun.recordVersion, mintClientOpId(),
-  );
+        }],
+      } as Record<string, unknown>,
+      agentRun.recordVersion, mintClientOpId(),
+    );
+    if (!observed.ok) return b3ok(agentRun);
+    disconnected = observed.value;
+    core.publish('agent.run.connection.changed', {
+      agentRunId: agentRun.id,
+      activityGeneration: generation,
+      previous: {
+        final: false,
+        activityGeneration: agentRun.activityGeneration,
+        uncertaintyCodes: agentRun.uncertainty.map((item) => item.code),
+      },
+      current: {
+        final: false,
+        activityGeneration: generation,
+        uncertaintyCodes: disconnected.uncertainty.map((item) => item.code),
+      },
+    });
+  }
+
+  const settled = await settleInterruptedRun(core, disconnected, { finalAt: nowIsoUtc() });
   if (!settled.ok) return b3ok(agentRun);
-  core.publish('agent.run.lifecycle.changed', {
-    agentRunId: agentRun.id, toLifecycle: 'interrupted',
-  });
-  await expireAuthorityOf(core, settled.value);
-  // The shift is over, so the endpoint stops advertising it (§8.1's cutoff).
-  await closeEndpointOf(core, settled.value);
-  return b3ok(settled.value);
+  return settled;
+}
+
+/** Reconcile the Run that owned a Terminal-reported unexpected provider exit. */
+export async function observeTerminalExit(
+  core: RunsCore, terminalSessionId: TerminalSessionId,
+): Promise<B3Result<null>> {
+  const runs = await core.store.list<AgentRun>('agentRun', { terminalSessionId });
+  if (!runs.ok) return runs;
+  const live = runs.value.find((agentRun) => !FINAL_LIFECYCLES.has(agentRun.lifecycle));
+  if (live === undefined) return b3ok(null);
+  const reconciled = await settleIfTerminalGone(core, live);
+  return reconciled.ok ? b3ok(null) : b3fail(reconciled.error);
 }
 
 export async function viewOfRun(
@@ -313,28 +375,17 @@ export async function reconcileAfterRestart(
   for (const agentRun of runs.value) {
     if (FINAL_LIFECYCLES.has(agentRun.lifecycle)) continue;
     if (epochOf.get(agentRun.id) === activeEpochId) continue;
-    const settled = await core.store.update<AgentRun>(
-      'sys_agent_runtime', agentRun.id,
-      {
-        lifecycle: 'interrupted',
-        activity: 'unknown',
-        finalReason: 'runtime-reconciled-missing',
-        uncertainty: [{
-          code: 'provider-liveness-unknown',
-          summary: 'the runtime that owned this agentRun ended; its managed terminal '
-            + 'went with it and no claim is made about the provider process',
-          evidenceRefs: [agentRun.terminalSessionId ?? 'no terminal was recorded'],
-        }],
-      } as Record<string, unknown>,
-      agentRun.recordVersion, `op_${crypto.randomUUID()}` as never,
-    );
+    const settled = await settleInterruptedRun(core, agentRun, {
+      activity: 'unknown',
+      uncertainty: [{
+        code: 'provider-liveness-unknown',
+        summary: 'the runtime that owned this agentRun ended; its managed terminal '
+          + 'went with it and no claim is made about the provider process',
+        evidenceRefs: [agentRun.terminalSessionId ?? 'no terminal was recorded'],
+      }],
+    });
     if (!settled.ok) return settled;
-    await expireAuthorityOf(core, agentRun);
-    // A Run whose Runtime died is as over as one somebody stopped, and exam
-    // row D2 is what an endpoint that disagrees costs: mail accepted into a
-    // durable inbox behind a claim with nobody behind it.
-    await closeEndpointOf(core, agentRun);
-    reconciled.push(agentRun.id);
+    reconciled.push(settled.value.id);
   }
   const operations2 = await settleAbandonedOperations(core, operations.value, activeEpochId);
   if (!operations2.ok) return operations2;

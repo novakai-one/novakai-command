@@ -20,7 +20,8 @@ function canRead(
   if (principal.kind === 'system') return true;
   if (principal.verifiedScopes.includes('supervision:watch:read-all' as never)) return true;
   if (principal.kind === 'human') {
-    return rule.recipient.kind === 'human' && rule.recipient.principalId === principal.id;
+    return rule.createdBy === principal.id
+      || (rule.recipient.kind === 'human' && rule.recipient.principalId === principal.id);
   }
   if (principal.kind !== 'agent-run') return false;
   if (rule.subject.kind === 'agent-run' && rule.subject.agentRunId === principal.agentRunId) {

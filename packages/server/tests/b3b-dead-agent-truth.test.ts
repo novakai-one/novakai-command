@@ -29,6 +29,15 @@ interface RunView {
   provider: { liveness?: string };
 }
 
+interface WatchRuleView {
+  readonly id: string;
+}
+
+interface NotificationView {
+  readonly watchRuleId: string;
+  readonly state: string;
+}
+
 interface Rig {
   readonly host: RunningRuntimeHost;
   readonly chris: RuntimeClient;
@@ -59,6 +68,42 @@ async function createRig(): Promise<Rig> {
       rmSync(root, { recursive: true, force: true });
     },
   };
+}
+
+async function watchRun(
+  rig: Rig, agentRunId: string, condition: 'run-disconnected' | 'run-final',
+): Promise<WatchRuleView> {
+  const created = await rig.chris.call<WatchRuleView>('b3.supervision.createWatch', {
+    subject: { kind: 'agent-run', agentRunId },
+    condition: { kind: condition },
+    recipient: { kind: 'human', principalId: 'person_chris' },
+    deliveryMode: 'queue-only',
+    cooldownMs: 0,
+    status: 'active',
+  }, mintClientOpId());
+  if (!created.ok) assert.fail(created.error.message);
+  return created.value;
+}
+
+async function notificationsFor(rig: Rig, watchRuleId: string): Promise<readonly NotificationView[]> {
+  const deadline = Date.now() + 3_000;
+  for (;;) {
+    const matching = await currentNotificationsFor(rig, watchRuleId);
+    if (matching.length > 0) return matching;
+    if (Date.now() >= deadline) return matching;
+    await new Promise((resolve) => { setTimeout(resolve, 25); });
+  }
+}
+
+async function currentNotificationsFor(
+  rig: Rig, watchRuleId: string,
+): Promise<readonly NotificationView[]> {
+  const listed = await rig.chris.call<{ readonly items: readonly NotificationView[] }>(
+    'b3.supervision.listNotifications', { limit: 50 }, mintClientOpId(),
+  );
+  assert.equal(listed.ok, true, listed.ok ? '' : listed.error.message);
+  if (!listed.ok) return [];
+  return listed.value.items.filter((item) => item.watchRuleId === watchRuleId);
 }
 
 test('stopping a stale Run refuses instead of reporting a stop that never happened', async () => {
@@ -99,12 +144,23 @@ test('stopping a stale Run refuses instead of reporting a stop that never happen
     }
 
     // The control: naming the Run that IS live stops it.
+    const finalRule = await watchRun(rig, continued.value.run.id, 'run-final');
+    const disconnectedRule = await watchRun(
+      rig, continued.value.run.id, 'run-disconnected',
+    );
     const live = await rig.chris.call('b3.agent.stop', {
       agentId: spawned.value.agent.agentId,
       expectedLiveRunId: continued.value.run.id,
       confirmation: 'stop-one',
     }, mintClientOpId());
     assert.equal(live.ok, true, live.ok ? '' : `the live Run would not stop: ${live.error.code}`);
+    const finalNotifications = await notificationsFor(rig, finalRule.id);
+    assert.equal(finalNotifications.length, 1,
+      'one explicit stop did not queue exactly one run-final Notification');
+    assert.equal(finalNotifications[0]?.state, 'queued');
+    await new Promise((resolve) => { setTimeout(resolve, 100); });
+    assert.equal((await currentNotificationsFor(rig, disconnectedRule.id)).length, 0,
+      'an authorised stop was misreported as provider-process loss');
   } finally {
     await rig.close();
   }
@@ -120,10 +176,18 @@ test('a Run whose provider process died does not keep reading ready and idle', a
     assert.equal(spawned.ok, true, spawned.ok ? '' : spawned.error.message);
     if (!spawned.ok) return;
     assert.equal(spawned.value.run.lifecycle, 'ready');
+    const disconnectedRule = await watchRun(
+      rig, spawned.value.run.id, 'run-disconnected',
+    );
 
     // A crash, from the outside: the process is gone and nobody told the
     // Runtime. This is `kill -9` on the provider PID.
     rig.ptyHost.latest().finish({ signal: 'SIGKILL' });
+
+    const disconnectedNotifications = await notificationsFor(rig, disconnectedRule.id);
+    assert.equal(disconnectedNotifications.length, 1,
+      'provider-process loss needed an unrelated Run read before watchers saw it');
+    assert.equal(disconnectedNotifications[0]?.state, 'queued');
 
     const seen = await rig.chris.call<RunView>('b3.agent.getRun', {
       agentRunId: spawned.value.run.id,
@@ -133,6 +197,13 @@ test('a Run whose provider process died does not keep reading ready and idle', a
     assert.notEqual(
       `${seen.value.run.lifecycle}/${seen.value.run.activity}`, 'ready/idle',
       'a killed Agent still reports "ready, idle"');
+
+    // Reading the already-reconciled Run again must not manufacture a second edge.
+    await rig.chris.call<RunView>('b3.agent.getRun', {
+      agentRunId: spawned.value.run.id,
+    }, mintClientOpId());
+    await new Promise((resolve) => { setTimeout(resolve, 100); });
+    assert.equal((await notificationsFor(rig, disconnectedRule.id)).length, 1);
   } finally {
     await rig.close();
   }

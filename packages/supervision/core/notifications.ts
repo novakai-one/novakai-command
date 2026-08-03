@@ -5,18 +5,24 @@
 // holds a store and its own contract, and no way to reach a PTY. An ordinary
 // event that was already going to be published is the whole clock.
 import {
-  b3fail, b3ok, deriveClientOpId, nowIsoUtc, validationFailed,
-  type B3Page, type B3PrincipalId, type B3Result, type IsoUtc, type SystemCommandContext,
+  b3fail, b3ok, deriveClientOpId, validationFailed,
+  type B3Page, type B3PrincipalId, type B3Result, type IsoUtc,
+  type SystemCommandContext,
 } from '@novakai/foundation/contract';
 import {
-  deriveNotificationId, notificationDeliveryEffectKey, parsePublicEvent,
-  SUPERVISION_RECORD_WRITER,
+  parsePublicEvent, SUPERVISION_RECORD_WRITER,
   type EvaluateSupervisionEventInput, type Notification, type NotificationFilter,
   type WatchDeadline, type WatchRule,
 } from '../contract/index.js';
-import type { Persisted, SupervisionStore } from './store.js';
+import { conditionNotification, queueConditionNotification } from './condition-notifications.js';
+import { settleLifecycleEventRules } from './lifecycle-notifications.js';
+import type { SupervisionStore } from './store.js';
+import {
+  settleUsageThresholdRules, type UsageThresholdDependencies,
+} from './usage-threshold-notifications.js';
+import { claimDeadline } from './watchers/deadlines.js';
 
-export interface EvaluateDependencies {
+export interface EvaluateDependencies extends UsageThresholdDependencies {
   readonly store: SupervisionStore;
 }
 
@@ -28,41 +34,6 @@ type EvaluationContext = SystemCommandContext<
 function subjectKeyOfEvent(payload: Readonly<Record<string, unknown>>): string | null {
   const agentRunId = payload['agentRunId'];
   return typeof agentRunId === 'string' ? `agent-run:${agentRunId}` : null;
-}
-
-function queuedNotification(
-  principal: B3PrincipalId,
-  rule: WatchRule,
-  deadline: WatchDeadline,
-  evidenceRef: string,
-): Persisted<Notification> & Record<string, unknown> {
-  const notificationId = deriveNotificationId({
-    watchRuleId: rule.id,
-    subjectKey: deadline.subjectKey,
-    condition: rule.condition,
-    activityGeneration: deadline.activityGeneration,
-    phase: 'condition',
-  });
-  const effectKey = notificationDeliveryEffectKey(notificationId);
-  return {
-    kind: 'notification',
-    id: notificationId,
-    schemaVersion: 1,
-    createdAt: nowIsoUtc(),
-    permissionLevel: 'private',
-    createdBy: principal,
-    deliveryEffectKey: effectKey,
-    deliveryAttempt: { state: 'queued', effectKey },
-    watchRuleId: rule.id,
-    subject: rule.subject,
-    recipient: rule.recipient,
-    conditionGeneration: Number(deadline.activityGeneration),
-    summary: `${rule.condition.kind} fired for ${deadline.subjectKey}`,
-    evidenceRefs: [evidenceRef],
-    state: 'queued',
-    deliveryMode: rule.deliveryMode,
-    phase: 'condition',
-  };
 }
 
 /**
@@ -82,26 +53,29 @@ async function fireDeadline(
   observedAt: IsoUtc,
   evidenceRef: string,
 ): Promise<B3Result<Notification | null>> {
-  const record = queuedNotification(principal, input.rule, input.deadline, evidenceRef);
-  const existing = await deps.store.read<Notification>('notification', record.id);
-  if (!existing.ok) return b3fail(existing.error);
-  let queued: Notification | null = null;
-  if (existing.value === null) {
-    const written = await deps.store.create<Notification>(
-      principal, record, deriveClientOpId(`b3v4:queue-notification:${record.id}`),
-    );
-    if (!written.ok) return b3fail(written.error);
-    queued = written.value;
-  }
+  const record = conditionNotification(
+    principal,
+    input.rule,
+    input.deadline.subjectKey,
+    input.deadline.activityGeneration,
+    evidenceRef,
+  );
+  const queued = await queueConditionNotification(deps, principal, record);
+  if (!queued.ok) return queued;
+  const claimed = await claimDeadline({
+    store: deps.store,
+    clock: () => new Date(observedAt),
+  }, input.deadline);
+  if (!claimed.ok) return b3fail(claimed.error);
   const lateByMs = Math.max(
     0, new Date(observedAt).getTime() - new Date(input.deadline.dueAt).getTime(),
   );
   const fired = await deps.store.update<WatchDeadline>(
-    principal, input.deadline.id, { state: 'fired', lateByMs },
-    input.deadline.recordVersion, deriveClientOpId(`b3v4:fire-deadline:${input.deadline.id}`),
+    principal, claimed.value.id, { state: 'fired', lateByMs },
+    claimed.value.recordVersion, deriveClientOpId(`b3v4:fire-deadline:${claimed.value.id}`),
   );
   if (!fired.ok) return b3fail(fired.error);
-  return b3ok(queued);
+  return b3ok(queued.value);
 }
 
 /** Push an idle deadline out; observed activity is why it has not fired. */
@@ -154,7 +128,25 @@ async function settleOne(
   const rule = await deps.store.read<WatchRule>('watchRule', deadline.watchRuleId);
   if (!rule.ok) return b3fail(rule.error);
   if (rule.value === null || rule.value.status !== 'active') return b3ok(null);
+  // Activity drift has its own evidence reducer, clocks, and fenced scheduler
+  // command. Letting the generic event path settle it would skip all nine
+  // durable drift steps and manufacture an ordinary condition notification.
+  if (rule.value.condition.kind === 'activity-drift') return b3ok(null);
   return settleDeadline(deps, principal, { rule: rule.value, deadline }, event);
+}
+
+async function settleArmedDeadlines(
+  deps: EvaluateDependencies,
+  deadlines: readonly WatchDeadline[],
+  event: ObservedEvent,
+): Promise<B3Result<readonly Notification[]>> {
+  const queued: Notification[] = [];
+  for (const deadline of deadlines) {
+    const settled = await settleOne(deps, SUPERVISION_RECORD_WRITER, deadline, event);
+    if (!settled.ok) return b3fail(settled.error);
+    if (settled.value !== null) queued.push(settled.value);
+  }
+  return b3ok(queued);
 }
 
 /**
@@ -177,9 +169,54 @@ export async function evaluateEvent(
     evidenceRef: parsed.value.eventId,
     about: subjectKeyOfEvent(parsed.value.payload),
   };
+  const deadlineNotifications = await settleArmedDeadlines(deps, armed.value, event);
+  if (!deadlineNotifications.ok) return deadlineNotifications;
+  const rules = await deps.store.list<WatchRule>('watchRule', { status: 'active' });
+  if (!rules.ok) return b3fail(rules.error);
+  const eventNotifications = await settleLifecycleEventRules(
+    deps, SUPERVISION_RECORD_WRITER, rules.value, {
+    kind: parsed.value.kind,
+    payload: parsed.value.payload,
+    evidenceRef: parsed.value.eventId,
+    about: event.about,
+    },
+  );
+  if (!eventNotifications.ok) return eventNotifications;
+  const thresholdNotifications = await settleUsageThresholdRules(
+    deps, _context.principal, rules.value, parsed.value,
+  );
+  if (!thresholdNotifications.ok) return thresholdNotifications;
+  return b3ok([
+    ...deadlineNotifications.value,
+    ...eventNotifications.value,
+    ...thresholdNotifications.value,
+  ]);
+}
+
+/**
+ * Settle clock-driven idle work even when the Runtime is otherwise silent.
+ *
+ * This is an embedded-host seam, not another public command. The durable
+ * deadline remains the authority: every pass re-reads armed rows, claims the
+ * exact record version, and the deterministic Notification absorbs replay.
+ */
+export async function evaluateDueDeadlines(
+  deps: EvaluateDependencies,
+  observedAt: IsoUtc,
+): Promise<B3Result<readonly Notification[]>> {
+  const armed = await deps.store.list<WatchDeadline>('watchDeadline', { state: 'armed' });
+  if (!armed.ok) return b3fail(armed.error);
+  const dueDeadlines = armed.value
+    .filter((deadline) => String(deadline.dueAt) <= String(observedAt))
+    .sort((left, right) => String(left.dueAt).localeCompare(String(right.dueAt))
+      || String(left.id).localeCompare(String(right.id)));
   const queued: Notification[] = [];
-  for (const deadline of armed.value) {
-    const settled = await settleOne(deps, SUPERVISION_RECORD_WRITER, deadline, event);
+  for (const deadline of dueDeadlines) {
+    const settled = await settleOne(deps, SUPERVISION_RECORD_WRITER, deadline, {
+      observedAt,
+      evidenceRef: `watch-deadline:${String(deadline.id)}:due:${String(deadline.dueAt)}`,
+      about: null,
+    });
     if (!settled.ok) return b3fail(settled.error);
     if (settled.value !== null) queued.push(settled.value);
   }
