@@ -17,6 +17,7 @@ import React, { useEffect, useState } from 'react';
 import type { ShellServices } from '../../../contract/index.js';
 import {
   exceptionOf, formatIdentity, formatTokens, orderRows, totals, formatCount,
+  formatRunUsage, type RunUsageRowView, type RunUsageTableView,
   type UsageRowView, type UsageTableView,
 } from '../../../contract/usage.js';
 import {
@@ -62,6 +63,36 @@ export function UsageView(props: { table: UsageTableView | null }) {
   );
 }
 
+/** B3d's per-Run usage surface; it only renders the Runtime view it receives. */
+export function RunUsageView(props: { table: RunUsageTableView | null }) {
+  const rows = props.table?.rows ?? [];
+  return (
+    <ScrollArea style={{ flex: 1 }}>
+      <Panel head="Agent Runs">
+        <Stack className="nv-usage">
+          {rows.length === 0 ? (
+            <EmptyState>No agent runs yet</EmptyState>
+          ) : (
+            <Stack gap={0} className="nv-usage__rows">
+              {rows.map((row) => <RunUsageRow key={row.agentRunId} row={row} />)}
+            </Stack>
+          )}
+        </Stack>
+      </Panel>
+    </ScrollArea>
+  );
+}
+
+function RunUsageRow(props: { row: RunUsageRowView }) {
+  const { row } = props;
+  return (
+    <ListRow
+      label={row.displayName}
+      meta={`${row.provider} · ${row.model} · ${row.lifecycle} · ${row.agentRunId}\n${formatRunUsage(row)}`}
+    />
+  );
+}
+
 function UsageRow(props: { row: UsageRowView }) {
   const { row } = props;
   const exception = exceptionOf(row);
@@ -85,20 +116,34 @@ function UsageRow(props: { row: UsageRowView }) {
 
 export function UsageScreen(props: { services: ShellServices }) {
   const [table, setTable] = useState<UsageTableView | null>(null);
+  const [runTable, setRunTable] = useState<RunUsageTableView | null>(null);
 
   useEffect(() => {
     let live = true;
-    // One immediate pull so the screen is never blank waiting for the interval,
-    // then the broadcast keeps it current.
-    void props.services.getUsageTable?.().then((next) => { if (live) setTable(next); });
+    const reload = async (): Promise<void> => {
+      if (props.services.getRunUsageTable) {
+        try {
+          const next = await props.services.getRunUsageTable();
+          if (live) setRunTable(next);
+          return;
+        } catch {
+          // An older host truthfully lacks B3 methods; its B1 table remains valid.
+        }
+      }
+      const next = await props.services.getUsageTable?.();
+      if (live && next !== undefined) setTable(next);
+    };
+    // One immediate pull so the screen is never blank waiting for an event.
+    void reload();
     const off = props.services.subscribe({
       onUsage: (next) => { if (live) setTable(next); },
+      onRunUsageChanged: () => { void reload(); },
     });
     return () => { live = false; off(); };
   }, [props.services]);
 
-  if (!props.services.getUsageTable) {
+  if (!props.services.getRunUsageTable && !props.services.getUsageTable) {
     return <EmptyState>Supervision is not available in this host.</EmptyState>;
   }
-  return <UsageView table={table} />;
+  return runTable === null ? <UsageView table={table} /> : <RunUsageView table={runTable} />;
 }

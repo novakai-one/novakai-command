@@ -35,6 +35,38 @@ export interface UsageTableView {
   tokenAccounting: string;
 }
 
+export type RunUsageQuality = 'measured' | 'estimated' | 'partial' | 'unavailable';
+
+/** Browser-safe copy of one sourced Supervision usage value. */
+export interface RunUsageValueView {
+  quality: RunUsageQuality;
+  value?: number;
+  source: string;
+  limitations: readonly string[];
+}
+
+/** One Runtime Run with the exact Supervision usage row embedded in its view. */
+export interface RunUsageRowView {
+  agentRunId: string;
+  agentId: string;
+  displayName: string;
+  provider: string;
+  model: string;
+  lifecycle: string;
+  inputTokens: RunUsageValueView;
+  outputTokens: RunUsageValueView;
+  cachedInputTokens: RunUsageValueView;
+  costMicros: RunUsageValueView;
+  providerTurns: RunUsageValueView;
+  observedAt: string;
+  final: boolean;
+}
+
+export interface RunUsageTableView {
+  at: string;
+  rows: readonly RunUsageRowView[];
+}
+
 /**
  * A count the server could not measure prints as an em dash. It must NEVER
  * print as 0: a zero says "this session cost nothing", which is a claim, and
@@ -52,6 +84,23 @@ export function formatIdentity(row: UsageRowView): string {
 /** "1,204 in · 88 out" — or "— in · — out" when nothing is measurable. */
 export function formatTokens(row: UsageRowView): string {
   return `${formatCount(row.inputTokens)} in · ${formatCount(row.outputTokens)} out`;
+}
+
+function formatRunMetric(value: RunUsageValueView, label: string): string {
+  const limitations = value.limitations.length === 0
+    ? '' : `: ${value.limitations.join(', ')}`;
+  return `${formatCount(value.value ?? null)} ${label} (${value.quality}${limitations})`;
+}
+
+/** Quality and limitation stay beside every B3d value; absence remains a dash. */
+export function formatRunUsage(row: RunUsageRowView): string {
+  return [
+    formatRunMetric(row.inputTokens, 'in'),
+    formatRunMetric(row.outputTokens, 'out'),
+    formatRunMetric(row.cachedInputTokens, 'cached'),
+    formatRunMetric(row.costMicros, 'µ-cost'),
+    formatRunMetric(row.providerTurns, 'turns'),
+  ].join(' · ');
 }
 
 /**

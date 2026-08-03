@@ -56,6 +56,16 @@ test('the live composition projects durable Agents evidence into Run views after
       runId = spawned.run.id;
       assert.equal(spawned.usage.inputTokens.quality, 'unavailable');
       assert.equal(spawned.usage.inputTokens.value, undefined);
+      const missingCli = await runNvk([
+        'agent', 'usage', spawned.run.id,
+        '--root', root, '--port', String(host.port),
+      ]);
+      assert.equal(missingCli.code, 0, missingCli.out);
+      assert.equal(
+        missingCli.out.includes('— input tokens (unavailable: no-provider-usage-evidence)'),
+        true,
+        missingCli.out,
+      );
 
       const recorded = await host.runtime.usageEvidence.recordProviderUsageEvidence({
         principal: { id: 'sys_agents', kind: 'system', verifiedScopes: [] },

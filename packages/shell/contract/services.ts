@@ -5,7 +5,7 @@ import type { AgentEvent, LayoutRecord, PresenceSource, SettingsRecord } from '.
 import type { SetSettingError } from './settings.js';
 import type { PersistFailedError } from './errors.js';
 import type { ScreenContext } from './context.js';
-import type { UsageTableView } from './usage.js';
+import type { RunUsageTableView, UsageTableView } from './usage.js';
 
 /**
  * S2a: shell-side view of an agent definition v2 (plain data — the browser
@@ -86,6 +86,8 @@ export interface MessagingEvents {
    * never call it.
    */
   onUsage?(table: UsageTableView): void;
+  /** A committed Agents evidence event says the rebuildable Run rows may have moved. */
+  onRunUsageChanged?(): void;
 }
 
 export interface ShellServices {
@@ -143,4 +145,6 @@ export interface ShellServices {
    * Absent on hosts with no supervision engine — the screen draws that.
    */
   getUsageTable?(): Promise<UsageTableView>;
+  /** B3d Run usage read from Runtime views; older hosts omit or refuse it. */
+  getRunUsageTable?(): Promise<RunUsageTableView>;
 }

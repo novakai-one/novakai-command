@@ -161,3 +161,30 @@ test('Agents replays one provider usage command without a second record or event
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('the same deterministic evidence is idempotent across different commands', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'nvk-provider-usage-deterministic-'));
+  try {
+    let published = 0;
+    const evidence = composeProviderUsageEvidence({
+      root,
+      dataRoot: path.join(root, 'stores'),
+      publish() { published += 1; },
+    });
+
+    const first = await evidence.recordProviderUsageEvidence(systemContext(), INPUT);
+    const second = await evidence.recordProviderUsageEvidence(systemContext(), INPUT);
+    assert.equal(first.ok, true, first.ok ? '' : first.error.message);
+    assert.equal(second.ok, true, second.ok ? '' : second.error.message);
+    if (!first.ok || !second.ok) return;
+    assert.deepEqual(second.value, first.value);
+    const lines = readFileSync(
+      path.join(root, 'stores', 'providerUsageEvidence.jsonl'),
+      'utf8',
+    ).trim().split('\n');
+    assert.equal(lines.length, 1);
+    assert.equal(published, 1);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

@@ -6,10 +6,13 @@ import {
   composeReceiptStore,
   createObject,
   deterministicId,
+  getObject,
+  isAbsent,
   listObjects,
   storeFailure,
   type B3PrincipalId,
   type EventCursor,
+  type ObjectId,
   type PublicOperationName,
   type RecordVersion,
   type ReceiptStore,
@@ -84,7 +87,23 @@ export function composeProviderUsageEvidence(
         },
         async () => {
           const id = providerUsageEvidenceId(parsed.value);
-          const written = await createObject(handleFor(context.principal.id), {
+          const handle = handleFor(context.principal.id);
+          const existing = await getObject<ProviderUsageEvidence>(
+            handle, 'providerUsageEvidence', id as unknown as ObjectId,
+          );
+          if (!existing.ok) return b3fail(storeFailure('agents', existing.error));
+          if (!isAbsent(existing.value)) {
+            const evidence = publicView(existing.value);
+            return sameEvidence(evidence, parsed.value)
+              ? b3ok(evidence)
+              : b3fail(b3err(
+                  'IdempotencyConflict',
+                  `provider usage evidence "${String(id)}" already names different facts`,
+                  { providerUsageEvidenceId: id },
+                  false,
+                ));
+          }
+          const written = await createObject(handle, {
             id,
             kind: 'providerUsageEvidence',
             schemaVersion: 1,
@@ -122,6 +141,21 @@ export function composeProviderUsageEvidence(
       });
     },
   };
+}
+
+function sameEvidence(
+  existing: ProviderUsageEvidence,
+  input: RecordProviderUsageEvidenceInput,
+): boolean {
+  const content = (value: ProviderUsageEvidence | RecordProviderUsageEvidenceInput) => ({
+    providerSessionId: value.providerSessionId,
+    providerConversationId: value.providerConversationId,
+    observedAt: value.observedAt,
+    source: value.source,
+    sourceCursor: value.sourceCursor ?? null,
+    measurement: value.measurement,
+  });
+  return JSON.stringify(content(existing)) === JSON.stringify(content(input));
 }
 
 /** §5.5's deterministic identity tuple. */

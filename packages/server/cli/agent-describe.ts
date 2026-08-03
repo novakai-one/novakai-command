@@ -11,14 +11,19 @@ import type {
   AgentRunUsage, AgentUsageSummary, UsageValue,
 } from '../../supervision/contract/index.js';
 
-function usageValue(value: UsageValue): string {
-  return `${value.value === undefined ? '—' : value.value.toLocaleString('en-US')} (${value.quality})`;
+function usageValue(value: UsageValue, label: string): string {
+  const limitations = value.limitations.length === 0
+    ? '' : `: ${value.limitations.join(', ')}`;
+  return `${value.value === undefined ? '—' : value.value.toLocaleString('en-US')} `
+    + `${label} (${value.quality}${limitations})`;
 }
 
 function usageLine(usage: Omit<AgentRunUsage, 'agentRunId'>): string {
-  return `${usageValue(usage.inputTokens)} in · ${usageValue(usage.outputTokens)} out · `
-    + `${usageValue(usage.cachedInputTokens)} cached · ${usageValue(usage.costMicros)} µ-cost · `
-    + `${usageValue(usage.providerTurns)} turns`;
+  return `${usageValue(usage.inputTokens, 'input tokens')} · `
+    + `${usageValue(usage.outputTokens, 'output tokens')} · `
+    + `${usageValue(usage.cachedInputTokens, 'cached input tokens')} · `
+    + `${usageValue(usage.costMicros, 'cost micros')} · `
+    + usageValue(usage.providerTurns, 'provider turns');
 }
 
 /**
