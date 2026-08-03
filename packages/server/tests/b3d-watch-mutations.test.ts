@@ -107,6 +107,62 @@ test('b3.supervision.createWatch creates one event watcher through the frozen co
   }
 });
 
+test('b3.supervision.createWatch accepts the published activity-drift policy and arms it', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'nvk-b3d-drift-mutation-'));
+  try {
+    const supervision = composeSupervision({
+      root,
+      dataRoot: path.join(root, 'stores'),
+      installAuthority: { resolve: async () => { throw new Error('not used'); } },
+      watchRuleAccess: { agentIdFor: async () => b3ok(null) },
+      watchRuleGeneration: { generationFor: async () => b3ok(7 as never) },
+    });
+    const table = buildB3SupervisionMethods({
+      supervision,
+      principalFor: () => ({
+        ...HUMAN,
+        verifiedScopes: ['supervision:watch:start-turn' as never],
+      }),
+      activityGenerationFor: async () => 7 as never,
+    });
+    const created = await call(table, 'b3.supervision.createWatch', {
+      subject: {
+        kind: 'agent-run',
+        agentRunId: 'agentRun_019fd000-0000-7000-8000-0000000000a1',
+      },
+      condition: {
+        kind: 'activity-drift',
+        intervalMs: 300_000,
+        staleAfterIntervals: 2,
+        escalateAfterConsecutive: 3,
+      },
+      recipient: { kind: 'human', principalId: 'person_chris' },
+      deliveryMode: 'queue-only',
+      cooldownMs: 0,
+      status: 'active',
+      driftPolicy: {
+        mode: 'cheap-first',
+        freeEvidence: ['terminal-liveness', 'transcript-advance', 'usage-delta'],
+        statusTurn: 'queue-runtime-status-request-only-after-free-evidence-suspicious',
+        replyWindowMs: 300_000,
+        statusPrompt: 'Status check: reply with one line — what are you working on right now?',
+      },
+    });
+    assert.equal(created.ok, true, JSON.stringify(created));
+
+    const listed = await call(table, 'b3.supervision.listWatchers', { limit: 50 });
+    assert.equal(listed.ok, true);
+    const value = listed.value as {
+      readonly deadlines: readonly { readonly id: string; readonly activityGeneration: number }[];
+    };
+    assert.equal(value.deadlines.length, 1);
+    assert.match(value.deadlines[0]!.id, /^watchDeadline_[a-z2-7]{52}$/);
+    assert.equal(value.deadlines[0]!.activityGeneration, 7);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('b3.supervision.resetDrift carries the exact episode/version fence', async () => {
   let received: unknown;
   const table = buildB3SupervisionMethods({

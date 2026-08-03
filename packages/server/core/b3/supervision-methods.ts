@@ -99,6 +99,25 @@ function resolveAuthenticatedHuman(
   });
 }
 
+function completePublishedDriftPolicy(
+  payload: Readonly<Record<string, unknown>>,
+): Readonly<Record<string, unknown>> {
+  if (typeof payload.condition !== 'object' || payload.condition === null
+    || (payload.condition as { readonly kind?: unknown }).kind !== 'activity-drift'
+    || typeof payload.driftPolicy !== 'object' || payload.driftPolicy === null) {
+    return payload;
+  }
+  const driftPolicy = payload.driftPolicy as Readonly<Record<string, unknown>>;
+  return {
+    ...payload,
+    driftPolicy: {
+      ...driftPolicy,
+      statusRecipient: driftPolicy.statusRecipient ?? 'subject-agent',
+      statusDeliveryMode: driftPolicy.statusDeliveryMode ?? 'start-turn',
+    },
+  };
+}
+
 function resolveUpdateAuthenticatedHuman(
   payload: Readonly<Record<string, unknown>>,
   principal: AuthenticatedPrincipal,
@@ -159,7 +178,7 @@ export function buildB3SupervisionMethods(options: B3SupervisionMethodOptions): 
       const principal = options.principalFor(session);
       const resolved = resolveAuthenticatedHuman(parsed.value.payload, principal);
       if (!resolved.ok) return resolved;
-      const input = parseCreateWatchRuleInput(resolved.value);
+      const input = parseCreateWatchRuleInput(completePublishedDriftPolicy(resolved.value));
       if (!input.ok) return input;
       const context = commandContext(parsed.value, principal);
       return context.ok
