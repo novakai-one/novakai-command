@@ -11,13 +11,16 @@ import { MessagingScreen, MessagingRail } from './screens/messaging/MessagingScr
 import { SettingsScreen } from './screens/settings/SettingsScreen.js';
 import { AgentsScreen } from './screens/agents/AgentsScreen.js';
 import { UsageScreen } from './screens/supervision/UsageScreen.js';
+import { NotificationInboxScreen } from './screens/supervision/NotificationInboxScreen.js';
 import { Inspector } from './inspector/Inspector.js';
 import { ListRow } from './kit/index.js';
 
 export function App(props: { services: ShellServices; models?: string[] }) {
   const { services } = props;
   const [settings, setSettings] = useState<SettingsRecord[]>([]);
-  const [view, setView] = useState<'messaging' | 'agents' | 'sessions' | 'settings'>('messaging');
+  const [view, setView] = useState<
+    'messaging' | 'agents' | 'sessions' | 'notifications' | 'settings'
+  >('messaging');
   const [selectedConvo, setSelectedConvo] = useState<string | null>(null);
   const [inspected, setInspected] = useState<{ title: string; body: React.ReactNode } | null>(null);
   const [expanded, setExpanded] = useState<{ title: string; body: React.ReactNode } | null>(null);
@@ -77,6 +80,7 @@ export function App(props: { services: ShellServices; models?: string[] }) {
       <ListRow label="Messages" selected={view === 'messaging'} onClick={() => setView('messaging')} />
       <ListRow label="Agents" selected={view === 'agents'} onClick={() => setView('agents')} />
       <ListRow label="Sessions" selected={view === 'sessions'} onClick={() => setView('sessions')} />
+      <ListRow label="Notifications" selected={view === 'notifications'} onClick={() => setView('notifications')} />
       <ListRow label="Settings" selected={view === 'settings'} onClick={() => setView('settings')} />
     </div>
   );
@@ -125,6 +129,8 @@ export function App(props: { services: ShellServices; models?: string[] }) {
         <AgentsScreen services={services} />
       ) : view === 'sessions' ? (
         <UsageScreen services={services} />
+      ) : view === 'notifications' ? (
+        <NotificationInboxScreen services={services} />
       ) : (
         <SettingsScreen services={services} settings={settings} refresh={refreshSettings}
           models={props.models ?? ['kimi-k2', 'claude-sonnet-4', 'codex-1']} />
