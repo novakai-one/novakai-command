@@ -3,8 +3,10 @@ import {
   type ActivityGeneration, type AuthenticatedPrincipal, type B3Result,
 } from '@novakai/foundation/contract';
 import {
-  parseProviderUsageEvidenceCommittedEvent, subjectKey, SUPERVISION_RECORD_WRITER,
+  parseProviderUsageEvidenceCommittedEvent, parsePublicEvent, subjectKey,
+  SUPERVISION_RECORD_WRITER,
   type Notification, type ProviderUsageEvidence, type RunUsageFacts,
+  type RunOccurrenceEventFacts,
   type WatchCondition, type WatchOccurrenceRelationshipAuthority, type WatchRule,
 } from '../contract/index.js';
 import { conditionNotification, queueConditionNotification } from './condition-notifications.js';
@@ -120,6 +122,9 @@ export async function usageThresholdCandidate(
   principal: AuthenticatedPrincipal,
   rule: WatchRule,
   evidence: ProviderUsageEvidence,
+  sourceOccurrence?: Extract<RunOccurrenceEventFacts, {
+    readonly occurrenceKind: 'usage-generation';
+  }>,
 ): Promise<B3Result<(Persisted<Notification> & Record<string, unknown>) | null>> {
   const condition = thresholdCondition(rule.condition);
   if (condition === null) return b3ok(null);
@@ -149,8 +154,22 @@ export async function usageThresholdCandidate(
   const resolved = await resolveEvidenceRun(deps, principal, rule, authoritativeEvidence);
   if (!resolved.ok) return b3fail(resolved.error);
   if (resolved.value === null) return b3ok(null);
+  if (sourceOccurrence !== undefined
+    && (sourceOccurrence.agentRunId !== resolved.value.agentRunId
+      || sourceOccurrence.agentId !== resolved.value.agentId
+      || sourceOccurrence.providerSessionId !== resolved.value.providerSessionId
+      || sourceOccurrence.occurrence.qualifyingEvidenceRef !== authoritativeEvidence.id)) {
+    return b3fail(b3err(
+      'RecoveryRequired',
+      'Runtime usage occurrence disagrees with Agents-owned evidence or Run correlation',
+      { stage: 'occurrence-derivation', eventId: sourceOccurrence.eventId },
+      true,
+    ));
+  }
   let generation: ActivityGeneration;
-  if ('activityGeneration' in resolved.value) {
+  if (rule.subject.kind === 'agent-run' && sourceOccurrence !== undefined) {
+    generation = sourceOccurrence.activityGeneration;
+  } else if ('activityGeneration' in resolved.value) {
     generation = resolved.value.activityGeneration;
   } else {
     const current = await deps.generation.generationFor(principal, rule.subject);
@@ -186,7 +205,9 @@ export async function usageThresholdCandidate(
       rule,
       subjectKey(rule.subject),
       generation,
-      String(authoritativeEvidence.id),
+      rule.subject.kind === 'agent-run' && sourceOccurrence !== undefined
+        ? sourceOccurrence.eventId
+        : String(authoritativeEvidence.id),
       occurrence,
     ));
 }
@@ -198,16 +219,71 @@ export async function usageThresholdCandidateForEvent(
   rule: WatchRule,
   event: unknown,
 ): Promise<B3Result<(Persisted<Notification> & Record<string, unknown>) | null>> {
-  if ((event as { readonly kind?: unknown } | null)?.kind
-    !== 'agent.provider-usage-evidence.committed') return b3ok(null);
   if (thresholdCondition(rule.condition) === null) return b3ok(null);
-  const parsed = parseProviderUsageEvidenceCommittedEvent(event);
-  if (!parsed.ok) return b3fail(parsed.error);
+  const eventKind = (event as { readonly kind?: unknown } | null)?.kind;
+  if (eventKind !== 'agent.provider-usage-evidence.committed'
+    && eventKind !== 'agent.run.usage.changed') return b3ok(null);
   if (deps.runs === undefined) {
     return b3fail(b3err(
       'RuntimeUnavailable', 'usage-threshold authorities are not composed in this host',
       { reason: 'usage-thresholds-not-composed' }, true,
     ));
+  }
+  let evidence: ProviderUsageEvidence;
+  let sourceOccurrence: Extract<RunOccurrenceEventFacts, {
+    readonly occurrenceKind: 'usage-generation';
+  }> | undefined;
+  if (eventKind === 'agent.provider-usage-evidence.committed') {
+    if (rule.subject.kind === 'agent-run') return b3ok(null);
+    const parsed = parseProviderUsageEvidenceCommittedEvent(event);
+    if (!parsed.ok) return b3fail(parsed.error);
+    evidence = parsed.value.payload as unknown as ProviderUsageEvidence;
+  } else {
+    if (rule.subject.kind !== 'agent-run') return b3ok(null);
+    const parsed = parsePublicEvent(event);
+    if (!parsed.ok) return b3fail(parsed.error);
+    if (parsed.value.sourceOwner !== 'agent-runtime'
+      || deps.runs.getRunOccurrenceEvent === undefined) {
+      return b3fail(b3err(
+        'RuntimeUnavailable', 'Runtime usage occurrence authority is not composed',
+        { stage: 'occurrence-derivation', eventId: parsed.value.eventId }, true,
+      ));
+    }
+    const source = await deps.runs.getRunOccurrenceEvent(principal, parsed.value.eventId);
+    if (!source.ok) return source;
+    if (source.value === null
+      || source.value.kind !== 'agent.run.usage.changed'
+      || source.value.occurrenceKind !== 'usage-generation') {
+      return b3fail(b3err(
+        'RecoveryRequired', 'Runtime event is not retained usage-generation evidence',
+        { stage: 'occurrence-derivation', eventId: parsed.value.eventId }, true,
+      ));
+    }
+    if (source.value.canonicalPayloadDigest !== canonicalRequestHash(parsed.value.payload)
+      || source.value.occurredAt !== parsed.value.occurredAt) {
+      return b3fail(b3err(
+        'RecoveryRequired', 'caller usage event disagrees with retained Runtime truth',
+        { stage: 'occurrence-derivation', eventId: parsed.value.eventId }, true,
+      ));
+    }
+    if (deps.evidence?.getProviderUsageEvidence === undefined) {
+      return b3fail(b3err(
+        'RuntimeUnavailable', 'Agents usage evidence lookup is not composed',
+        { stage: 'occurrence-derivation', eventId: parsed.value.eventId }, true,
+      ));
+    }
+    const owned = await deps.evidence.getProviderUsageEvidence(
+      principal, source.value.occurrence.qualifyingEvidenceRef,
+    );
+    if (!owned.ok) return owned;
+    if (owned.value === null) {
+      return b3fail(b3err(
+        'RuntimeUnavailable', 'Runtime usage occurrence cites unavailable Agents evidence',
+        { stage: 'occurrence-derivation', eventId: parsed.value.eventId }, true,
+      ));
+    }
+    evidence = owned.value;
+    sourceOccurrence = source.value;
   }
   return usageThresholdCandidate({
     store: deps.store,
@@ -223,7 +299,7 @@ export async function usageThresholdCandidateForEvent(
       )),
     },
     ...(deps.relationships === undefined ? {} : { relationships: deps.relationships }),
-  }, principal, rule, parsed.value.payload as unknown as ProviderUsageEvidence);
+  }, principal, rule, evidence, sourceOccurrence);
 }
 
 /** Reduce one committed usage fact into generation-fenced threshold Notifications. */

@@ -4,13 +4,14 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import {
-  b3ok, deriveClientOpId, mintClientOpId, mintTraceCorrelationId,
+  b3ok, canonicalRequestHash, deriveClientOpId, mintClientOpId, mintTraceCorrelationId,
   type AgentRunId, type ProviderSessionId, type SystemCommandContext,
 } from '@novakai/foundation/contract';
 import {
   deriveNotificationId, notificationDeliveryEffectKey, subjectKey,
   SUPERVISION_RECORD_WRITER,
   type Notification, type ProviderUsageEvidence, type WatchCondition, type WatchRule,
+  type RunOccurrenceEventFacts,
 } from '../contract/index.js';
 import { composeSupervision, createSupervisionStore } from '../core/index.js';
 import { usageEvidenceEvent } from './fixtures.js';
@@ -234,6 +235,115 @@ test('many legacy generations for one Run adopt without rewriting history', asyn
     assert.equal(stored.ok, true);
     if (!stored.ok) return;
     assert.deepEqual(stored.value.items.map((item) => item.id).sort(), [legacy1.id, legacy2.id].sort());
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('AMD-003 #45: L adoption uses retained source generation, never query-time generation', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'nvk-legacy-l-generation-'));
+  try {
+    const store = createSupervisionStore({ root, dataRoot: path.join(root, 'stores') });
+    const usage = evidence('a', SESSION_1, '2026-08-04T00:00:12.000Z');
+    const sourceEventId = 'event_runtime_usage_generation_12';
+    const sourcePayload = {
+      agentRunId: RUN_1,
+      providerSessionId: SESSION_1,
+      activityGeneration: 12,
+      qualifyingEvidenceRef: usage.payload.id,
+    };
+    const run = {
+      agentRunId: RUN_1,
+      agentId: AGENT_ID,
+      providerSessionId: SESSION_1,
+      lifecycle: 'ready' as const,
+      final: false,
+      activityGeneration: 13 as never,
+      recordVersion: 7 as never,
+    };
+    const retained: RunOccurrenceEventFacts = {
+      eventId: sourceEventId,
+      occurredAt: '2026-08-04T00:00:12.000Z' as never,
+      committedAt: '2026-08-04T00:00:12.100Z' as never,
+      sourceOwner: 'agent-runtime',
+      agentRunId: RUN_1,
+      agentId: AGENT_ID,
+      providerSessionId: SESSION_1,
+      lifecycle: 'ready',
+      final: false,
+      activityGeneration: 12 as never,
+      canonicalPayloadDigest: canonicalRequestHash(sourcePayload),
+      kind: 'agent.run.usage.changed',
+      occurrenceKind: 'usage-generation',
+      occurrence: { qualifyingEvidenceRef: usage.payload.id as never },
+    };
+    const supervision = composeSupervision({
+      root, dataRoot: path.join(root, 'stores'), store,
+      installAuthority: { resolve: async () => { throw new Error('not used'); } },
+      watchRuleAccess: { agentIdFor: async () => b3ok(null) },
+      watchRuleGeneration: { generationFor: async () => b3ok(13 as never) },
+      usage: {
+        runs: {
+          getUsageRun: async () => b3ok(run),
+          listUsageRuns: async () => b3ok([run]),
+          resolveUsageRunByProviderSession: async () => b3ok(run),
+          resolveCurrentRunByAgent: async () => b3ok(run),
+          getRunOccurrenceEvent: async (_principal, eventId) =>
+            b3ok(eventId === sourceEventId ? retained : null),
+        },
+        evidence: {
+          getProviderUsageEvidence: async (_principal, id) =>
+            b3ok(String(id) === String(usage.payload.id)
+              ? usage.payload as unknown as ProviderUsageEvidence
+              : null),
+          listProviderUsageEvidence: async () => b3ok({ items: [], omissions: [] }),
+        },
+      },
+    });
+    const created = await supervision.createWatchRule({
+      principal: HUMAN, clientOpId: mintClientOpId(), traceId: mintTraceCorrelationId(),
+      contractVersion: 1,
+    }, {
+      subject: { kind: 'agent-run', agentRunId: RUN_1 }, condition: CONDITION,
+      recipient: { kind: 'human', principalId: HUMAN.id }, deliveryMode: 'queue-only',
+      cooldownMs: 0, status: 'active',
+    });
+    assert.equal(created.ok, true);
+    if (!created.ok) return;
+    const legacy = await seedLegacy(store, created.value, CONDITION, 13, [sourceEventId]);
+    const redelivery = {
+      eventId: sourceEventId,
+      kind: 'agent.run.usage.changed',
+      schemaVersion: 1 as const,
+      occurredAt: retained.occurredAt,
+      committedAt: retained.committedAt,
+      sourceOwner: 'agent-runtime' as const,
+      traceId: mintTraceCorrelationId(),
+      cursor: 'runtime-usage-generation-12' as never,
+      payload: sourcePayload,
+    };
+    const evaluated = await supervision.evaluateEvent(context(), { event: redelivery });
+    assert.equal(evaluated.ok, true, evaluated.ok ? '' : evaluated.error.message);
+    if (!evaluated.ok) return;
+    assert.deepEqual(evaluated.value, []);
+    const stored = await supervision.listNotifications(HUMAN, { limit: 20 });
+    assert.equal(stored.ok, true);
+    if (!stored.ok) return;
+    assert.equal(stored.value.items.length, 1);
+    assert.equal(stored.value.items[0]!.id, legacy.id);
+    assert.equal(stored.value.items[0]!.conditionGeneration, 13);
+    assert.equal(stored.value.items[0]!.schemaVersion, 1);
+    const progress = await supervision.listWatchEvaluationProgress({
+      id: 'ops_legacy' as never,
+      kind: 'operations',
+      verifiedScopes: ['supervision:watch:repair' as never],
+    }, { limit: 20 });
+    assert.equal(progress.ok, true);
+    if (!progress.ok) return;
+    assert.equal(progress.value.items.length, 1);
+    assert.equal(progress.value.items[0]!.state, 'completed');
+    assert.equal(progress.value.items[0]!.completed.length, 1);
+    assert.equal(progress.value.items[0]!.completed[0]!.outcome.kind, 'legacy-adopted');
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

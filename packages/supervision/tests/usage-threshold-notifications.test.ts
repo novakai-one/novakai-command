@@ -4,15 +4,16 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
-  b3ok, mintClientOpId, mintTraceCorrelationId,
-  type B3Result, type SystemCommandContext,
+  b3ok, canonicalRequestHash, mintClientOpId, mintTraceCorrelationId,
+  type B3Result, type IsoUtc, type SystemCommandContext,
 } from '@novakai/foundation/contract';
 import {
   composeSupervision, createSupervisionStore,
   type SupervisionCore, type SupervisionCoreOptions, type UsageRunReader,
 } from '../core/index.js';
 import {
-  deriveNotificationId, subjectKey, type ProviderUsageEvidence, type WatchCondition,
+  deriveNotificationId, subjectKey, type ProviderUsageEvidence, type RunOccurrenceEventFacts,
+  type WatchCondition,
 } from '../contract/index.js';
 import { usageEvidenceEvent } from './fixtures.js';
 
@@ -35,16 +36,26 @@ function unwrap<Value>(result: B3Result<Value>, what: string): Value {
   return result.value;
 }
 
-function options(root: string): SupervisionCoreOptions {
+function options(
+  root: string,
+  occurrenceEvents = new Map<string, RunOccurrenceEventFacts>(),
+): SupervisionCoreOptions {
   const run = {
     agentRunId: RUN_ID,
     agentId: AGENT_ID,
     providerSessionId: SESSION_ID,
+    lifecycle: 'ready' as const,
     final: false,
+    activityGeneration: GENERATION,
+    recordVersion: 1 as never,
   };
   const runs: UsageRunReader = {
     getUsageRun: async () => b3ok(run),
     listUsageRuns: async () => b3ok([run]),
+    resolveUsageRunByProviderSession: async () => b3ok(run),
+    resolveCurrentRunByAgent: async () => b3ok(run),
+    getRunOccurrenceEvent: async (_principal, eventId) =>
+      b3ok(occurrenceEvents.get(eventId) ?? null),
   };
   return {
     root,
@@ -62,6 +73,49 @@ function options(root: string): SupervisionCoreOptions {
       },
     },
   };
+}
+
+function runtimeUsageEvent(
+  evidence: ReturnType<typeof usageEvidenceEvent>,
+  occurrenceEvents: Map<string, RunOccurrenceEventFacts>,
+  revision: number,
+) {
+  const eventId = `event_runtime_usage_${revision}`;
+  const occurredAt = evidence.payload.observedAt as IsoUtc;
+  const payload = {
+    agentRunId: RUN_ID,
+    providerSessionId: SESSION_ID,
+    activityGeneration: Number(GENERATION),
+    qualifyingEvidenceRef: evidence.payload.id,
+  };
+  const event = {
+    eventId,
+    kind: 'agent.run.usage.changed',
+    schemaVersion: 1 as const,
+    occurredAt,
+    committedAt: evidence.committedAt,
+    sourceOwner: 'agent-runtime' as const,
+    traceId: evidence.traceId,
+    cursor: `runtime-usage-${revision}` as never,
+    payload,
+  };
+  occurrenceEvents.set(eventId, {
+    eventId,
+    kind: 'agent.run.usage.changed',
+    occurrenceKind: 'usage-generation',
+    occurredAt: event.occurredAt,
+    committedAt: event.committedAt,
+    sourceOwner: 'agent-runtime',
+    agentRunId: RUN_ID,
+    agentId: AGENT_ID,
+    providerSessionId: SESSION_ID,
+    lifecycle: 'ready',
+    final: false,
+    activityGeneration: GENERATION,
+    canonicalPayloadDigest: canonicalRequestHash(payload),
+    occurrence: { qualifyingEvidenceRef: evidence.payload.id as never },
+  });
+  return event;
 }
 
 async function createRule(supervision: SupervisionCore, condition: WatchCondition) {
@@ -83,7 +137,8 @@ async function createRule(supervision: SupervisionCore, condition: WatchConditio
 test('usage threshold notification identity absorbs replay and restart redelivery', async () => {
   const root = mkdtempSync(path.join(tmpdir(), 'nvk-usage-threshold-replay-'));
   try {
-    const configured = options(root);
+    const occurrenceEvents = new Map<string, RunOccurrenceEventFacts>();
+    const configured = options(root, occurrenceEvents);
     const firstStore = createSupervisionStore(configured);
     const supervision = composeSupervision({ ...configured, store: firstStore });
     const condition = { kind: 'output-tokens-at-least' as const, value: 100_000 };
@@ -102,13 +157,14 @@ test('usage threshold notification identity absorbs replay and restart redeliver
     ownedEvidence.set(
       String(event.payload.id), event.payload as unknown as ProviderUsageEvidence,
     );
+    const sourceEvent = runtimeUsageEvent(event, occurrenceEvents, 1);
 
     const first = unwrap(
-      await supervision.evaluateEvent(usageContext(), { event }),
+      await supervision.evaluateEvent(usageContext(), { event: sourceEvent }),
       'first threshold evaluation',
     );
     const replay = unwrap(
-      await supervision.evaluateEvent(usageContext(), { event }),
+      await supervision.evaluateEvent(usageContext(), { event: sourceEvent }),
       'same-event replay',
     );
     assert.equal(first.length, 1);
@@ -120,7 +176,7 @@ test('usage threshold notification identity absorbs replay and restart redeliver
       activityGeneration: GENERATION,
       phase: 'condition',
     }));
-    assert.deepEqual(first[0]!.evidenceRefs, [event.payload.id]);
+    assert.deepEqual(first[0]!.evidenceRefs, [sourceEvent.eventId]);
 
     const restarted = composeSupervision({
       ...configured,
@@ -131,8 +187,9 @@ test('usage threshold notification identity absorbs replay and restart redeliver
       String(equivalentNewEvent.payload.id),
       equivalentNewEvent.payload as unknown as ProviderUsageEvidence,
     );
+    const equivalentSource = runtimeUsageEvent(equivalentNewEvent, occurrenceEvents, 2);
     const redelivery = unwrap(
-      await restarted.evaluateEvent(usageContext(), { event: equivalentNewEvent }),
+      await restarted.evaluateEvent(usageContext(), { event: equivalentSource }),
       'post-restart equivalent redelivery',
     );
     assert.deepEqual(redelivery, []);
@@ -150,7 +207,8 @@ test('usage threshold notification identity absorbs replay and restart redeliver
 test('usage threshold evaluation compares every at-least condition inclusively', async () => {
   const root = mkdtempSync(path.join(tmpdir(), 'nvk-usage-threshold-kinds-'));
   try {
-    const supervision = composeSupervision(options(root));
+    const occurrenceEvents = new Map<string, RunOccurrenceEventFacts>();
+    const supervision = composeSupervision(options(root, occurrenceEvents));
     const satisfied = [
       { kind: 'turn-count-at-least' as const, value: 100 },
       { kind: 'input-tokens-at-least' as const, value: 50_000 },
@@ -178,9 +236,10 @@ test('usage threshold evaluation compares every at-least condition inclusively',
     ownedEvidence.set(
       String(event.payload.id), event.payload as unknown as ProviderUsageEvidence,
     );
+    const sourceEvent = runtimeUsageEvent(event, occurrenceEvents, 3);
 
     const queued = unwrap(
-      await supervision.evaluateEvent(usageContext(), { event }),
+      await supervision.evaluateEvent(usageContext(), { event: sourceEvent }),
       'all threshold evaluation',
     );
     assert.deepEqual(

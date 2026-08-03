@@ -232,7 +232,17 @@ test('the live composition turns satisfied output-token evidence into a Notifica
       assert.equal(notifications.items.length, 1,
         'satisfied output-token evidence queued no Notification');
       assert.equal(notifications.items[0]!.watchRuleId, rule.id);
-      assert.deepEqual(notifications.items[0]!.evidenceRefs, [recorded.value.id]);
+      assert.equal(notifications.items[0]!.evidenceRefs.length, 1);
+      const runtimeUsageEventId = notifications.items[0]!.evidenceRefs[0]!;
+      const retained = unwrap(
+        await host.runtime.runs.getRunOccurrenceEvent(PRINCIPAL, runtimeUsageEventId),
+        'retained Runtime usage occurrence',
+      );
+      assert.equal(retained?.occurrenceKind, 'usage-generation');
+      if (retained?.occurrenceKind === 'usage-generation') {
+        assert.equal(retained.agentRunId, spawned.run.id);
+        assert.equal(retained.occurrence.qualifyingEvidenceRef, recorded.value.id);
+      }
     } finally {
       client.close();
     }

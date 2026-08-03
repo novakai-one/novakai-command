@@ -368,6 +368,14 @@ export async function evaluateEvent(
           ));
         }
         if (!candidate.ok) {
+          const candidateError = candidate.error.code === 'RecoveryRequired'
+            ? b3err(
+                'RecoveryRequired',
+                candidate.error.message,
+                { ...candidate.error.details, operationId: progress.id },
+                candidate.error.retryable,
+              )
+            : candidate.error;
           if (!candidate.error.retryable) {
             outcome = {
               kind: 'failed-non-retryable',
@@ -382,9 +390,9 @@ export async function evaluateEvent(
               : details['stage'] === 'rule-version-fence'
                 ? 'rule-version-fence'
                 : 'occurrence-derivation';
-            const recovery = {
-              stage,
-              reason: `${String(rule.id)}: ${candidate.error.message}`,
+              const recovery = {
+                stage,
+                reason: `${String(rule.id)}: ${candidateError.message}`,
             } as const;
             const advanced = await advanceProgressRecovery(
               deps.store, SUPERVISION_RECORD_WRITER, progress, recovery,
@@ -397,7 +405,7 @@ export async function evaluateEvent(
               deps.store, SUPERVISION_RECORD_WRITER, progress, isolatedRecovery,
             );
             if (!finished.ok) return finished;
-            return b3fail(candidate.error);
+              return b3fail(candidateError);
           }
         } else if (candidate.value === null) {
           outcome = { kind: 'not-matching' };

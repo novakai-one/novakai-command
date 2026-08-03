@@ -320,7 +320,29 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
     root: options.root,
     dataRoot,
     publish: (kind, payload, traceId) => {
-      runs?.publishCapabilityEvent(kind, { ...payload }, 'agents', traceId);
+      const activeRuns = runs;
+      if (activeRuns === null) return;
+      void (async () => {
+        const published = await activeRuns.publishCapabilityEvent(
+          kind, { ...payload }, 'agents', traceId,
+        );
+        if (!published.ok || kind !== 'agent.provider-usage-evidence.committed') return;
+        const providerSessionId = payload['providerSessionId'];
+        const qualifyingEvidenceRef = payload['id'];
+        if (typeof providerSessionId !== 'string'
+          || typeof qualifyingEvidenceRef !== 'string') return;
+        const source = await activeRuns.resolveUsageRunByProviderSession(
+          { id: 'sys_agent_runtime', kind: 'system', verifiedScopes: [] },
+          providerSessionId as never,
+        );
+        if (!source.ok || source.value === null) return;
+        await activeRuns.publishCapabilityEvent('agent.run.usage.changed', {
+          agentRunId: source.value.agentRunId,
+          providerSessionId: source.value.providerSessionId,
+          activityGeneration: source.value.activityGeneration,
+          qualifyingEvidenceRef,
+        }, 'agent-runtime', traceId);
+      })();
     },
   });
   const usageTranscriptReader = createUsageReader({

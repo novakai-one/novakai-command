@@ -98,6 +98,93 @@ async function resolveLegacy(
     'turn-count-at-least', 'input-tokens-at-least',
     'output-tokens-at-least', 'cost-micros-at-least',
   ].includes(rule.condition.kind);
+  if (usageCondition && family === 'L') {
+    if (deps.runs?.getRunOccurrenceEvent === undefined
+      || deps.runs.resolveUsageRunByProviderSession === undefined
+      || deps.evidence?.getProviderUsageEvidence === undefined) {
+      return b3fail(recovery(
+        operationId,
+        'legacy-occurrence-adoption',
+        `legacy L-usage Notification ${String(legacy.id)} lacks composed owner lookups`,
+      ));
+    }
+    let selected: Extract<RunOccurrenceEventFacts, {
+      readonly occurrenceKind: 'usage-generation';
+    }> | undefined;
+    let qualifiedAt: string | undefined;
+    for (const ref of references) {
+      const source = await deps.runs.getRunOccurrenceEvent(principal, ref);
+      if (!source.ok) return source;
+      if (source.value === null
+        || source.value.kind !== 'agent.run.usage.changed'
+        || source.value.occurrenceKind !== 'usage-generation') {
+        return b3fail(recovery(
+          operationId,
+          'legacy-occurrence-adoption',
+          `legacy L-usage Notification ${String(legacy.id)} cannot validate Runtime source ${ref}`,
+        ));
+      }
+      const evidence = await deps.evidence.getProviderUsageEvidence(
+        principal, source.value.occurrence.qualifyingEvidenceRef,
+      );
+      if (!evidence.ok) return evidence;
+      if (evidence.value === null) {
+        return b3fail(recovery(
+          operationId,
+          'legacy-occurrence-adoption',
+          `legacy L-usage Notification ${String(legacy.id)} cites absent Agents evidence`,
+        ));
+      }
+      const bound = await deps.runs.resolveUsageRunByProviderSession(
+        principal, evidence.value.providerSessionId,
+      );
+      if (!bound.ok) return bound;
+      if (bound.value === null
+        || bound.value.agentRunId !== source.value.agentRunId
+        || bound.value.providerSessionId !== source.value.providerSessionId
+        || source.value.occurrence.qualifyingEvidenceRef !== evidence.value.id
+        || rule.subject.kind !== 'agent-run'
+        || rule.subject.agentRunId !== source.value.agentRunId) {
+        return b3fail(recovery(
+          operationId,
+          'legacy-occurrence-adoption',
+          `legacy L-usage Notification ${String(legacy.id)} has contradictory owner provenance`,
+        ));
+      }
+      if (selected !== undefined
+        && (selected.eventId !== source.value.eventId
+          || selected.activityGeneration !== source.value.activityGeneration
+          || qualifiedAt !== evidence.value.observedAt)) {
+        return b3fail(recovery(
+          operationId,
+          'legacy-occurrence-adoption',
+          `legacy L-usage Notification ${String(legacy.id)} has ambiguous Runtime sources`,
+        ));
+      }
+      selected = source.value;
+      qualifiedAt = evidence.value.observedAt;
+    }
+    if (selected === undefined || qualifiedAt === undefined) {
+      return b3fail(recovery(
+        operationId,
+        'legacy-occurrence-adoption',
+        `legacy L-usage Notification ${String(legacy.id)} has absent Runtime provenance/time`,
+      ));
+    }
+    const expectedLegacyId = deriveNotificationId({
+      watchRuleId: rule.id,
+      subjectKey: subjectKey(rule.subject),
+      condition: rule.condition,
+      activityGeneration: legacy.conditionGeneration as never,
+      phase: 'condition',
+    });
+    return b3ok({
+      qualifiedAt,
+      activityGeneration: Number(selected.activityGeneration),
+      occurrenceKey: `L:${String(selected.activityGeneration)}`,
+      sameCondition: expectedLegacyId === legacy.id,
+    });
+  }
   if (usageCondition) {
     if (deps.runs?.resolveUsageRunByProviderSession === undefined
       || deps.evidence?.getProviderUsageEvidence === undefined) {

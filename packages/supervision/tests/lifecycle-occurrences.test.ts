@@ -6,8 +6,10 @@ import test from 'node:test';
 import {
   b3ok, canonicalRequestHash, mintClientOpId, mintTraceCorrelationId,
 } from '@novakai/foundation/contract';
-import type {
-  Notification, RunOccurrenceEventFacts, RunUsageFacts, WatchCondition, WatchRule,
+import {
+  isWatchEvaluationId,
+  type Notification, type RunOccurrenceEventFacts, type RunUsageFacts,
+  type WatchCondition, type WatchRule,
 } from '../contract/index.js';
 import { composeSupervision, type SupervisionCore } from '../core/index.js';
 
@@ -437,6 +439,7 @@ test('AMD-003 #11/#41: L and occurrence-aware rows reject caller/owner disagreem
     if (!rejected.ok) {
       assert.equal(rejected.error.code, 'RecoveryRequired');
       assert.equal(rejected.error.details['stage'], 'occurrence-derivation');
+      assert.equal(isWatchEvaluationId(rejected.error.details['operationId']), true);
     }
     const stored = await supervision.listNotifications(HUMAN, { limit: 10 });
     assert.equal(stored.ok, true);
