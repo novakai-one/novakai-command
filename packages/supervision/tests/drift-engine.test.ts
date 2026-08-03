@@ -18,8 +18,10 @@ import {
 } from '../core/index.js';
 import {
   deriveDriftEpisodeId,
+  deriveNotificationId,
   deriveNotificationInputReservationId,
   DRIFT_STATUS_PROMPT,
+  notificationDeliveryEffectKey,
   type CheckRunDriftInput,
   type DriftCheckOutcome,
   type Notification,
@@ -451,6 +453,130 @@ test('identical free evidence establishes a baseline then opens one quiet episod
       unwrap(await supervision.recordDriftStatusSubmission(runtimeContext(), uncertainInput)),
       closedAfterClaim,
       'pending-movement submission replay did not reconcile the closed episode',
+    );
+
+    deadline = closedAfterClaim;
+    const timeoutFingerprint = deadline.driftState!.lastEvidence!.fingerprint;
+    const timeoutEpisodeId = deriveDriftEpisodeId({
+      watchRuleId: rule.id,
+      subjectKey: deadline.subjectKey,
+      activityGeneration: deadline.activityGeneration,
+      fingerprint: timeoutFingerprint,
+      episodeOrdinal: deadline.driftState!.episodeOrdinal + 1,
+    });
+    const timeoutNotificationId = deriveNotificationId({
+      watchRuleId: rule.id,
+      subjectKey: deadline.subjectKey,
+      condition: rule.condition,
+      activityGeneration: deadline.activityGeneration,
+      episodeId: timeoutEpisodeId,
+      phase: 'drift-status-request',
+    });
+    const timeoutEffectKey = notificationDeliveryEffectKey(
+      timeoutNotificationId, timeoutEpisodeId,
+    );
+    const timeoutReservationId = deriveNotificationInputReservationId(timeoutEffectKey);
+    const timeoutAttemptId =
+      'terminalInput_019fd000-0000-7000-8000-0000000000b6' as never;
+    const timeoutTurnId = 'providerTurn_019fd000-0000-7000-8000-0000000000b7' as never;
+    const timeoutNotification = unwrap(await store.create<Notification>(
+      'sys_supervision',
+      {
+        kind: 'notification',
+        id: timeoutNotificationId,
+        schemaVersion: 1,
+        createdAt: '2026-08-03T01:01:00.000Z' as IsoUtc,
+        permissionLevel: 'private',
+        createdBy: 'sys_supervision',
+        deliveryEffectKey: timeoutEffectKey,
+        deliveryAttempt: {
+          state: 'submitted-confirmed',
+          effectKey: timeoutEffectKey,
+          submittedAt: '2026-08-03T01:01:30.000Z' as IsoUtc,
+          notificationInputReservationId: timeoutReservationId,
+          terminalInputAttemptId: timeoutAttemptId,
+          providerTurnId: timeoutTurnId,
+        },
+        watchRuleId: rule.id,
+        subject: rule.subject,
+        recipient: {
+          kind: 'agent',
+          agentId: 'agent_123e4567-e89b-42d3-a456-426614174000' as never,
+        },
+        conditionGeneration: Number(deadline.activityGeneration),
+        summary: DRIFT_STATUS_PROMPT,
+        evidenceRefs: ['sample-timeout'],
+        state: 'offered-to-endpoint',
+        deliveryMode: 'start-turn',
+        phase: 'drift-status-request',
+        driftEpisodeId: timeoutEpisodeId,
+      },
+      deriveClientOpId('test:timeout-notification:' + timeoutNotificationId),
+    ));
+    deadline = unwrap(await store.update<WatchDeadline>(
+      'sys_supervision',
+      deadline.id,
+      {
+        dueAt: '2026-08-03T01:06:30.000Z',
+        driftState: {
+          kind: 'activity-drift',
+          episodeOrdinal: deadline.driftState!.episodeOrdinal + 1,
+          phase: 'status-outstanding',
+          quietIntervals: 2,
+          episodeId: timeoutEpisodeId,
+          consecutiveUnansweredChecks: 0,
+          lastEvidence: deadline.driftState!.lastEvidence,
+          outstandingStatus: {
+            episodeId: timeoutEpisodeId,
+            effectKey: timeoutEffectKey,
+            notificationId: timeoutNotificationId,
+            state: 'submitted-confirmed',
+            requestedAt: '2026-08-03T01:01:00.000Z',
+            submittedAt: '2026-08-03T01:01:30.000Z',
+            replyDueAt: '2026-08-03T01:06:30.000Z',
+            providerTurnId: timeoutTurnId,
+            notificationInputReservationId: timeoutReservationId,
+            terminalInputAttemptId: timeoutAttemptId,
+          },
+        },
+      },
+      deadline.recordVersion,
+      deriveClientOpId('test:timeout-deadline:' + deadline.id),
+    ));
+    const notificationCount = unwrap(await store.list<Notification>('notification')).length;
+
+    now = new Date('2026-08-03T01:06:30.000Z');
+    const unansweredOne = unwrap(
+      await supervision.checkRunDrift(supervisionContext(), input()),
+    );
+    assert.deepEqual(unansweredOne, {
+      kind: 'status-still-unanswered',
+      providerTurnsStartedThisEvaluation: 0,
+      consecutiveUnansweredChecks: 1,
+      effectKey: timeoutEffectKey,
+    });
+    deadline = unwrap(await store.list<WatchDeadline>('watchDeadline'))[0]!;
+    assert.equal(deadline.dueAt, '2026-08-03T01:11:30.000Z');
+    assert.equal(deadline.driftState?.consecutiveUnansweredChecks, 1);
+
+    now = new Date('2026-08-03T01:11:30.000Z');
+    const unansweredTwo = unwrap(
+      await supervision.checkRunDrift(supervisionContext(), input()),
+    );
+    assert.deepEqual(unansweredTwo, {
+      kind: 'status-still-unanswered',
+      providerTurnsStartedThisEvaluation: 0,
+      consecutiveUnansweredChecks: 2,
+      effectKey: timeoutEffectKey,
+    });
+    deadline = unwrap(await store.list<WatchDeadline>('watchDeadline'))[0]!;
+    assert.equal(deadline.dueAt, '2026-08-03T01:16:30.000Z');
+    assert.equal(deadline.driftState?.consecutiveUnansweredChecks, 2);
+    assert.equal(unwrap(await store.list<Notification>('notification')).length, notificationCount);
+    assert.equal(
+      unwrap(await store.read<Notification>('notification', timeoutNotificationId))!.recordVersion,
+      timeoutNotification.recordVersion,
+      'an unanswered window rewrote or duplicated the status request',
     );
   } finally {
     rmSync(root, { recursive: true, force: true });

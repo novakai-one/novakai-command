@@ -222,13 +222,14 @@ async function persistDrift(
   current: { readonly rule: WatchRule; readonly deadline: WatchDeadline },
   state: DurableDriftState,
   now: Date,
+  dueAt: IsoUtc = rearmedDueAt(now, current.rule),
 ): Promise<B3Result<WatchDeadline>> {
   return deps.store.update<WatchDeadline>(
     SUPERVISION_RECORD_WRITER,
     current.deadline.id,
     {
       state: 'armed',
-      dueAt: rearmedDueAt(now, current.rule),
+      dueAt,
       driftState: state,
     },
     current.deadline.recordVersion,
@@ -498,13 +499,39 @@ async function keepQueuedStatus(
   now: Date,
 ): Promise<B3Result<DriftCheckOutcome>> {
   const outstanding = priorState.outstandingStatus;
-  if (outstanding.state !== 'queued' && outstanding.state !== 'delivery-claimed') {
-    return b3fail(b3err(
-      'UnsupportedOperation',
-      'submitted reply windows are not implemented by the current vertical slice',
-      { state: outstanding.state },
-      false,
-    ));
+  if (outstanding.state === 'submitted-confirmed'
+    || outstanding.state === 'submitted-unconfirmed') {
+    const nextCount = priorState.consecutiveUnansweredChecks + 1;
+    if (nextCount > 2) {
+      return b3fail(b3err(
+        'UnsupportedOperation',
+        'human escalation is not implemented by the current vertical slice',
+        { consecutiveUnansweredChecks: nextCount },
+        false,
+      ));
+    }
+    if (current.rule.driftPolicy === undefined) {
+      return b3fail(watcherConflict('activity-drift rule has no durable drift policy', {
+        watchRuleId: current.rule.id,
+      }));
+    }
+    const replyDueAt = new Date(
+      Date.parse(outstanding.replyDueAt) + current.rule.driftPolicy.replyWindowMs,
+    ).toISOString() as IsoUtc;
+    const state: DurableDriftState = {
+      ...priorState,
+      lastEvidence: nextEvidence,
+      consecutiveUnansweredChecks: nextCount as 1 | 2,
+      outstandingStatus: { ...outstanding, replyDueAt },
+    };
+    const written = await persistDrift(deps, current, state, now, replyDueAt);
+    if (!written.ok) return b3fail(written.error);
+    return b3ok({
+      kind: 'status-still-unanswered',
+      providerTurnsStartedThisEvaluation: 0,
+      consecutiveUnansweredChecks: nextCount as 1 | 2,
+      effectKey: outstanding.effectKey,
+    });
   }
   const state: DurableDriftState = { ...priorState, lastEvidence: nextEvidence };
   const written = await persistDrift(deps, current, state, now);
