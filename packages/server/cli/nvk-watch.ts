@@ -75,6 +75,7 @@ function describeNotifications(page: { readonly items: readonly Notification[] }
 const ADD_COMMAND = 'add';
 const UPDATE_COMMAND = 'update';
 const REMOVE_COMMAND = 'remove';
+const RESET_DRIFT_COMMAND = 'reset-drift';
 
 async function currentRule(
   client: RuntimeClient,
@@ -92,6 +93,28 @@ async function currentRule(
   const found = listed.value.rules.find((rule) => rule.id === watchRuleId);
   return found === undefined
     ? b3fail(b3err('WatcherConflict', 'the WatchRule does not exist', { watchRuleId }, true))
+    : b3ok(found);
+}
+
+async function currentDeadline(
+  client: RuntimeClient,
+  watchDeadlineId: string | undefined,
+): Promise<B3Result<WatchDeadline>> {
+  if (watchDeadlineId === undefined
+    || !isValidId(watchDeadlineId, 'watchDeadline', 'base32sha256')) {
+    return b3fail(validationFailed([{
+      path: 'watchDeadlineId', message: 'must be a WatchDeadlineId positional argument',
+    }]));
+  }
+  const listed = await client.call<WatcherListing>(
+    'b3.supervision.listWatchers', { limit: 500 },
+  );
+  if (!listed.ok) return listed;
+  const found = listed.value.deadlines.find((deadline) => deadline.id === watchDeadlineId);
+  return found === undefined
+    ? b3fail(b3err(
+      'WatcherConflict', 'the current WatchDeadline does not exist', { watchDeadlineId }, true,
+    ))
     : b3ok(found);
 }
 
@@ -136,6 +159,21 @@ const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
         clientOpId.value,
       );
     }), (rule) => `Retired ${rule.id}.`);
+  },
+
+  [RESET_DRIFT_COMMAND]: async function resetDrift(argFlags) {
+    const clientOpId = clientOpIdFrom(argFlags);
+    if (!clientOpId.ok) emit('watch reset-drift', argFlags, clientOpId, () => '');
+    emit('watch reset-drift', argFlags, await withClient<WatchDeadline>(async (client) => {
+      const deadline = await currentDeadline(client, argFlags.positional[0]);
+      if (!deadline.ok) return deadline;
+      return client.call('b3.supervision.resetDrift', {
+        watchDeadlineId: deadline.value.id,
+        expectedRecordVersion: deadline.value.recordVersion,
+        expectedEpisodeId: argFlags.value('episode'),
+        reason: argFlags.value('reason') ?? 'reset requested by nvk watch reset-drift',
+      }, clientOpId.value);
+    }), (deadline) => `Reset drift deadline ${deadline.id}.`);
   },
 
   async list(argFlags) {

@@ -95,6 +95,29 @@ test('b3.supervision.createWatch creates one event watcher through the frozen co
   }
 });
 
+test('b3.supervision.resetDrift carries the exact episode/version fence', async () => {
+  let received: unknown;
+  const table = buildB3SupervisionMethods({
+    supervision: {
+      resetDriftEpisode: async (_context: unknown, input: unknown) => {
+        received = input;
+        return b3ok({ id: 'watchDeadline_' + 'a'.repeat(52) } as never);
+      },
+    } as never,
+    principalFor: () => HUMAN,
+    activityGenerationFor: async () => 1 as never,
+  });
+  const payload = {
+    watchDeadlineId: 'watchDeadline_' + 'a'.repeat(52),
+    expectedRecordVersion: 7,
+    expectedEpisodeId: 'driftEpisode_' + 'b'.repeat(52),
+    reason: 'operator reviewed the escalation',
+  };
+  const reset = await call(table, 'b3.supervision.resetDrift', payload);
+  assert.equal(reset.ok, true);
+  assert.deepEqual(received, payload);
+});
+
 test('nvk watch add creates an event watcher visible through nvk watch list', async () => {
   const root = mkdtempSync(path.join(tmpdir(), 'nvk-b3d-watch-cli-'));
   const host = await startRuntimeHost({
@@ -259,9 +282,20 @@ test('nvk watch add arms activity drift from the live Run generation', async () 
     assert.equal(added.code, 0, added.out);
     const listed = await runNvk(['watch', 'list', ...where]);
     const page = JSON.parse(listed.out) as {
-      readonly value: { readonly deadlines: readonly { readonly state: string }[] };
+      readonly value: {
+        readonly deadlines: readonly { readonly id: string; readonly state: string }[];
+      };
     };
     assert.equal(page.value.deadlines[0]?.state, 'armed');
+
+    const reset = await runNvk([
+      'watch', 'reset-drift', page.value.deadlines[0]!.id,
+      '--episode', 'driftEpisode_' + 'b'.repeat(52),
+      ...where,
+    ]);
+    assert.equal(reset.code, 4, reset.out);
+    const refused = JSON.parse(reset.out) as { readonly error: { readonly code: string } };
+    assert.equal(refused.error.code, 'WatcherConflict');
   } finally {
     client.close();
     await host.close();

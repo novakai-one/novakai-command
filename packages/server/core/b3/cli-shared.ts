@@ -46,6 +46,7 @@ const BY_CODE: Readonly<Record<string, number>> = {
   InputLeaseBusy: EXIT.conflict,
   InputLeaseGenerationChanged: EXIT.conflict,
   LiveRunConflict: EXIT.conflict,
+  WatcherConflict: EXIT.conflict,
   StoreRouteConflict: EXIT.conflict,
   StaleRuntimeEpoch: EXIT.retryable,
   RuntimeUnavailable: EXIT.retryable,

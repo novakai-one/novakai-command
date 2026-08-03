@@ -18,6 +18,7 @@ import {
 import {
   parseCreateWatchRuleInput,
   parseNotificationFilter,
+  parseResetDriftEpisodeInput,
   parseUpdateWatchRuleInput,
   parseWatchRuleFilter,
   type Notification, type WatchDeadline, type WatchRule,
@@ -177,6 +178,17 @@ export function buildB3SupervisionMethods(options: B3SupervisionMethodOptions): 
       const context = commandContext(parsed.value, principal);
       return context.ok
         ? supervision.updateWatchRule(context.value, input.value)
+        : context;
+    },
+
+    'b3.supervision.resetDrift': async (params, session) => {
+      const parsed = readParams(params);
+      if (!parsed.ok) return parsed;
+      const input = parseResetDriftEpisodeInput(parsed.value.payload);
+      if (!input.ok) return input;
+      const context = commandContext(parsed.value, options.principalFor(session));
+      return context.ok
+        ? supervision.resetDriftEpisode(context.value, input.value)
         : context;
     },
 
