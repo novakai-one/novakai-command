@@ -148,6 +148,71 @@ async function ensureStatusNotification(
   );
 }
 
+function humanEscalationRecord(
+  current: { readonly rule: WatchRule; readonly deadline: WatchDeadline },
+  episodeId: NonNullable<DurableDriftState['episodeId']>,
+  evidenceRefs: readonly string[],
+  createdAt: IsoUtc,
+): Persisted<Notification> & Record<string, unknown> {
+  const notificationId = deriveNotificationId({
+    watchRuleId: current.rule.id,
+    subjectKey: current.deadline.subjectKey,
+    condition: current.rule.condition,
+    activityGeneration: current.deadline.activityGeneration,
+    episodeId,
+    phase: 'drift-human-escalation',
+  });
+  const effectKey = notificationDeliveryEffectKey(notificationId, episodeId);
+  return {
+    kind: 'notification',
+    id: notificationId,
+    schemaVersion: 1,
+    createdAt,
+    permissionLevel: 'private',
+    createdBy: SUPERVISION_RECORD_WRITER,
+    deliveryEffectKey: effectKey,
+    deliveryAttempt: { state: 'queued', effectKey },
+    watchRuleId: current.rule.id,
+    subject: current.rule.subject,
+    recipient: current.rule.recipient,
+    conditionGeneration: Number(current.deadline.activityGeneration),
+    summary: 'Activity drift requires human attention for ' + current.deadline.subjectKey,
+    evidenceRefs,
+    state: 'queued',
+    deliveryMode: current.rule.deliveryMode,
+    phase: 'drift-human-escalation',
+    driftEpisodeId: episodeId,
+  };
+}
+
+async function ensureHumanEscalation(
+  deps: DriftDependencies,
+  current: { readonly rule: WatchRule; readonly deadline: WatchDeadline },
+  episodeId: NonNullable<DurableDriftState['episodeId']>,
+  evidenceRefs: readonly string[],
+  createdAt: IsoUtc,
+): Promise<B3Result<Notification>> {
+  const record = humanEscalationRecord(current, episodeId, evidenceRefs, createdAt);
+  const existing = await deps.store.read<Notification>('notification', record.id);
+  if (!existing.ok) return b3fail(existing.error);
+  if (existing.value !== null) {
+    const matches = existing.value.phase === 'drift-human-escalation'
+      && existing.value.driftEpisodeId === episodeId
+      && existing.value.deliveryEffectKey === record.deliveryEffectKey;
+    return matches
+      ? b3ok(existing.value)
+      : b3fail(watcherConflict('the human escalation identity is occupied', {
+        notificationId: record.id,
+        episodeId,
+      }));
+  }
+  return deps.store.create<Notification>(
+    SUPERVISION_RECORD_WRITER,
+    record,
+    deriveClientOpId('b3v4:queue-drift-human-escalation:' + record.id),
+  );
+}
+
 function checkpoint(
   observation: DriftEvidenceObservation,
   checkedAt: IsoUtc,
@@ -503,12 +568,7 @@ async function keepQueuedStatus(
     || outstanding.state === 'submitted-unconfirmed') {
     const nextCount = priorState.consecutiveUnansweredChecks + 1;
     if (nextCount > 2) {
-      return b3fail(b3err(
-        'UnsupportedOperation',
-        'human escalation is not implemented by the current vertical slice',
-        { consecutiveUnansweredChecks: nextCount },
-        false,
-      ));
+      return queueHumanEscalation(deps, current, priorState, nextEvidence, now);
     }
     if (current.rule.driftPolicy === undefined) {
       return b3fail(watcherConflict('activity-drift rule has no durable drift policy', {
@@ -542,6 +602,70 @@ async function keepQueuedStatus(
     staleIntervals: 2,
     notificationId: outstanding.notificationId,
     effectKey: outstanding.effectKey,
+  });
+}
+
+async function queueHumanEscalation(
+  deps: DriftDependencies,
+  current: { readonly rule: WatchRule; readonly deadline: WatchDeadline },
+  priorState: Extract<DurableDriftState, { readonly phase: 'status-outstanding' }>,
+  nextEvidence: DriftEvidenceCheckpoint,
+  now: Date,
+): Promise<B3Result<DriftCheckOutcome>> {
+  const outstanding = priorState.outstandingStatus;
+  if (outstanding.state !== 'submitted-confirmed'
+    && outstanding.state !== 'submitted-unconfirmed') {
+    return b3fail(watcherConflict('only a submitted status turn can escalate', {
+      watchDeadlineId: current.deadline.id,
+      deliveryState: outstanding.state,
+    }));
+  }
+  const escalation = await ensureHumanEscalation(
+    deps,
+    current,
+    priorState.episodeId,
+    nextEvidence.evidenceRefs,
+    now.toISOString() as IsoUtc,
+  );
+  if (!escalation.ok) return b3fail(escalation.error);
+  const state: DurableDriftState = {
+    kind: 'activity-drift',
+    episodeOrdinal: priorState.episodeOrdinal,
+    phase: 'escalated-waiting-human',
+    quietIntervals: 2,
+    episodeId: priorState.episodeId,
+    consecutiveUnansweredChecks: 3,
+    outstandingStatus: outstanding,
+    escalationNotificationId: escalation.value.id,
+    lastEvidence: nextEvidence,
+  };
+  const written = await persistDrift(deps, current, state, now);
+  if (!written.ok) return b3fail(written.error);
+  return b3ok({
+    kind: 'human-escalation-queued',
+    providerTurnsStartedThisEvaluation: 0,
+    consecutiveUnansweredChecks: 3,
+    notificationId: escalation.value.id,
+    state: 'escalated-waiting-human',
+  });
+}
+
+async function keepEscalated(
+  deps: DriftDependencies,
+  current: { readonly rule: WatchRule; readonly deadline: WatchDeadline },
+  priorState: Extract<DurableDriftState, { readonly phase: 'escalated-waiting-human' }>,
+  nextEvidence: DriftEvidenceCheckpoint,
+  now: Date,
+): Promise<B3Result<DriftCheckOutcome>> {
+  const state: DurableDriftState = { ...priorState, lastEvidence: nextEvidence };
+  const written = await persistDrift(deps, current, state, now);
+  if (!written.ok) return b3fail(written.error);
+  return b3ok({
+    kind: 'human-escalation-queued',
+    providerTurnsStartedThisEvaluation: 0,
+    consecutiveUnansweredChecks: 3,
+    notificationId: priorState.escalationNotificationId,
+    state: 'escalated-waiting-human',
   });
 }
 
@@ -618,10 +742,9 @@ export async function checkRunDrift(
   if (priorState.phase === 'status-outstanding') {
     return keepQueuedStatus(deps, current.value, priorState, nextEvidence, now);
   }
-  return b3fail(b3err(
-    'UnsupportedOperation',
-    'this activity-drift phase is not implemented by the current vertical slice',
-    { phase: priorState.phase, quietIntervals: priorState.quietIntervals },
-    false,
-  ));
+  if (priorState.phase === 'escalated-waiting-human') {
+    return keepEscalated(deps, current.value, priorState, nextEvidence, now);
+  }
+  const unreachable: never = priorState;
+  return unreachable;
 }

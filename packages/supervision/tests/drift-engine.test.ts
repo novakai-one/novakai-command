@@ -578,6 +578,51 @@ test('identical free evidence establishes a baseline then opens one quiet episod
       timeoutNotification.recordVersion,
       'an unanswered window rewrote or duplicated the status request',
     );
+
+    now = new Date('2026-08-03T01:16:30.000Z');
+    const escalated = unwrap(
+      await supervision.checkRunDrift(supervisionContext(), input()),
+    );
+    assert.equal(escalated.kind, 'human-escalation-queued');
+    assert.equal(escalated.providerTurnsStartedThisEvaluation, 0);
+    if (escalated.kind !== 'human-escalation-queued') {
+      throw new Error('third unanswered window did not escalate');
+    }
+    deadline = unwrap(await store.list<WatchDeadline>('watchDeadline'))[0]!;
+    assert.equal(deadline.driftState?.phase, 'escalated-waiting-human');
+    assert.equal(deadline.driftState?.consecutiveUnansweredChecks, 3);
+    assert.equal(deadline.driftState?.escalationNotificationId, escalated.notificationId);
+    const escalation = unwrap(
+      await store.read<Notification>('notification', escalated.notificationId),
+    )!;
+    assert.equal(escalation.phase, 'drift-human-escalation');
+    assert.notEqual(escalation.id, timeoutNotificationId);
+    assert.deepEqual(escalation.recipient, {
+      kind: 'human', principalId: 'person_chris',
+    });
+    assert.equal(escalation.deliveryMode, 'queue-only');
+    assert.equal(escalation.state, 'queued');
+    const afterEscalationCount = unwrap(
+      await store.list<Notification>('notification'),
+    ).length;
+
+    now = new Date('2026-08-03T01:21:30.000Z');
+    const stillEscalated = unwrap(
+      await supervision.checkRunDrift(supervisionContext(), input()),
+    );
+    assert.equal(stillEscalated.kind, 'human-escalation-queued');
+    assert.equal(stillEscalated.providerTurnsStartedThisEvaluation, 0);
+    assert.equal(
+      unwrap(await store.list<Notification>('notification')).length,
+      afterEscalationCount,
+      'an escalated episode queued a second human alert',
+    );
+    assert.equal(
+      unwrap(await store.read<Notification>('notification', escalated.notificationId))!
+        .recordVersion,
+      escalation.recordVersion,
+      'suppressed escalation replay rewrote the human alert',
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
