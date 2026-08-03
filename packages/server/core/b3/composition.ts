@@ -273,11 +273,22 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
     capabilities: [capability, runsCapability],
   });
 
+  // Terminal owns delivery and asks only for framing. The provider session's
+  // provider is Agents-owned, so this is deliberately late-bound across the
+  // composition root instead of inferred from bytes or ids.
+  let agents!: GovernedAgentsContract;
   terminal = composeTerminal({
     root: options.root,
     dataRoot,
     ptyHost,
     epochFence: runtime.fence,
+    providerTurnDelivery: async (providerSessionId, utf8Text) => {
+      const session = await agents.getProviderSession(
+        { id: 'sys_terminal', kind: 'system', verifiedScopes: [] }, providerSessionId,
+      );
+      if (!session.ok) throw new Error(`${session.error.code}: ${session.error.message}`);
+      return providerAdapters[session.value.provider].deliverTurn(utf8Text);
+    },
     publish: (kind, payload) => {
       runs?.publishCapabilityEvent(kind, payload, 'terminal');
     },
@@ -302,7 +313,7 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
   // Agents owns roles, family and grants; Agent Runtime owns Runs. They meet
   // ONLY through the narrow ports in `run-ports.ts` — neither imports the other.
   const watcherTemplates = createTemplateCatalogue(options.watcherTemplates ?? []);
-  const agents = composeGovernedAgents({
+  agents = composeGovernedAgents({
     root: options.root,
     dataRoot,
     providers: providerAdapters,

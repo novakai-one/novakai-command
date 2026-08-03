@@ -54,7 +54,7 @@ function answerWhenAsked(ptyHost: FakePtyHost, text: string): void {
       if (known.has(pty)) continue;
       known.add(pty);
       pty.onTurn((turn) => {
-        if (turn.includes('do NOT begin it yet')) pty.emit(`${text}\n`);
+        pty.emit(turn.includes('do NOT begin it yet') ? `${text}\n` : 'Work complete.\n');
       });
     }
   }, 5);
@@ -243,9 +243,10 @@ test('the B3d wire carries current from spawn to a queued Notification', async (
     const fired = unwrap(await rig.chris.call<{
       deadlines: readonly WatchDeadline[];
     }>('b3.supervision.listWatchers', {}, opId()), 'listWatchers after firing');
-    assert.equal(fired.deadlines[0]?.state, 'fired');
+    assert.equal(fired.deadlines.length, 0,
+      'the current watcher view retained a deadline that has already fired');
     assert.deepEqual(
-      deadlineStates(rig.root, fired.deadlines[0]!.id),
+      deadlineStates(rig.root, watchers.deadlines[0]!.id),
       ['armed', 'claimed', 'fired'],
       'the durable scheduler skipped a published deadline state',
     );

@@ -60,6 +60,7 @@ interface WireStep {
   /** Built from what earlier steps returned — this is one session, not fourteen. */
   readonly payload: (state: WireState) => unknown;
   readonly remember?: (state: WireState, value: unknown) => void;
+  readonly outcome?: 'success' | 'domain-refusal';
 }
 
 interface WireState {
@@ -97,6 +98,19 @@ const WIRE_STEPS: readonly WireStep[] = [
     remember: (state, value) => {
       state.nextInputSequence = (value as { nextInputSequence: number }).nextInputSequence;
     },
+  },
+  {
+    method: 'b3.terminal.listIncompleteProviderTurnInputAttempts',
+    payload: () => ({ limit: 50 }),
+  },
+  {
+    method: 'b3.terminal.getProviderTurnInputAttempt',
+    payload: (state) => ({
+      terminalSessionId: state.sessionId,
+      providerTurnId: 'providerTurn_019fc81c-f754-731f-a2de-4d4af92ac200',
+      submissionEffectKey: 'wire-missing-provider-turn',
+    }),
+    outcome: 'domain-refusal',
   },
   {
     method: 'b3.terminal.attach',
@@ -189,8 +203,8 @@ test('every b3 method rides the existing {id, method, params, v:1} frame', async
       // Domain success/failure travels as a Result INSIDE result (§16.1).
       const result = raw.result as B3Result<unknown> | undefined;
       assert.equal(typeof result?.ok, 'boolean', `${step.method}: no Result inside result`);
-      assert.equal(result?.ok, true,
-        `${step.method} was refused: ${JSON.stringify(result)}`);
+      assert.equal(result?.ok, step.outcome !== 'domain-refusal',
+        `${step.method} returned the wrong domain disposition: ${JSON.stringify(result)}`);
       if (result?.ok) step.remember?.(state, result.value);
     }
   } finally {

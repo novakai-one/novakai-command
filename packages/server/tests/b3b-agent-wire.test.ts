@@ -12,7 +12,9 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import type { B3Result } from '@novakai/foundation/dist/contract/index.js';
+import {
+  mintClientOpId, type B3Result,
+} from '@novakai/foundation/dist/contract/index.js';
 import { createFakePtyHost } from '../../terminal/adapters/pty-host/fake.js';
 import { createFakeProviderAdapters } from '../../agents/b3/contract/index.js';
 import { startRuntimeHost, type RunningRuntimeHost } from '../core/b3/host.js';
@@ -36,7 +38,17 @@ interface WireStep {
   readonly method: string;
   readonly payload: (state: WireState) => Record<string, unknown>;
   readonly remember?: (state: WireState, value: unknown) => void;
+  readonly outcome?: 'success' | 'domain-refusal';
+  readonly requireClientOpId?: boolean;
 }
+
+const PROVIDER_TURN_ID = 'providerTurn_019fc81c-f754-731f-a2de-4d4af92ac200';
+const TERMINAL_ID = 'terminal_019fc81c-f754-731f-a2de-4d4af92ac201';
+const ATTACHMENT_ID = 'controller_019fc81c-f754-731f-a2de-4d4af92ac202';
+const LEASE_ID = 'terminalInputLease_019fc81c-f754-731f-a2de-4d4af92ac203';
+const BINDING_ID = `transcriptBinding_${'a'.repeat(52)}`;
+const COMPLETION_ID = `transcriptTurnCompletion_${'b'.repeat(52)}`;
+const USAGE_ID = `providerUsage_${'c'.repeat(52)}`;
 
 function chatRole(
   name: string, allowedChildRoleIds: readonly string[], provider: string,
@@ -122,6 +134,63 @@ const WIRE_STEPS: readonly WireStep[] = [
     },
   },
   { method: 'b3.agent.listRuns', payload: () => ({ includeFinal: true, limit: 50 }) },
+  {
+    method: 'b3.agent.listTurnSubmissions',
+    payload: (state) => ({
+      agentRunId: state.managerRunId, includeTerminal: false, limit: 50,
+    }),
+  },
+  {
+    method: 'b3.agent.listProviderTurnCompletionEvidence',
+    payload: (state) => ({ agentRunId: state.managerRunId, limit: 50 }),
+  },
+  {
+    method: 'b3.agent.getTurnSubmission',
+    payload: () => ({ providerTurnId: PROVIDER_TURN_ID }),
+    outcome: 'domain-refusal',
+  },
+  {
+    method: 'b3.agent.submitProviderTurn',
+    payload: (state) => ({
+      kind: 'controller',
+      agentRunId: state.managerRunId,
+      terminalSessionId: TERMINAL_ID,
+      transcriptBindingId: BINDING_ID,
+      attachmentId: ATTACHMENT_ID,
+      inputLeaseId: LEASE_ID,
+      leaseGeneration: 1,
+      expectedNextInputSequence: 1,
+      utf8Text: 'wire coverage',
+    }),
+    outcome: 'domain-refusal',
+    requireClientOpId: true,
+  },
+  {
+    method: 'b3.agent.ensureTurnCompletionEvidence',
+    payload: () => ({ transcriptTurnCompletionId: COMPLETION_ID }),
+    outcome: 'domain-refusal',
+  },
+  {
+    method: 'b3.agent.completeProviderTurn',
+    payload: (state) => ({
+      agentRunId: state.managerRunId,
+      providerTurnId: PROVIDER_TURN_ID,
+      expectedActiveTuple: { providerTurnId: PROVIDER_TURN_ID, activityGeneration: 1 },
+      transcriptTurnCompletionId: COMPLETION_ID,
+      providerUsageEvidenceId: USAGE_ID,
+    }),
+    outcome: 'domain-refusal',
+  },
+  {
+    method: 'b3.agent.closeTurnCompletionUnproven',
+    payload: (state) => ({
+      agentRunId: state.managerRunId,
+      providerTurnId: PROVIDER_TURN_ID,
+      reason: 'wire coverage of governed closure',
+      completionEvidenceRefs: ['wire-test'],
+    }),
+    outcome: 'domain-refusal',
+  },
   {
     method: 'b3.agent.getTree',
     payload: (state) => ({ rootAgentId: state.managerAgentId, maxDepth: 4 }),
@@ -331,7 +400,11 @@ test('every b3.agent.* method answers on the v1 frame, in one team\'s life', asy
       const id = 500 + index;
       const raw = await rig.client.sendRaw({
         id, method: step.method, v: 1,
-        params: { contractVersion: 1, payload: step.payload(state) },
+        params: {
+          contractVersion: 1,
+          ...(step.requireClientOpId === true ? { clientOpId: mintClientOpId() } : {}),
+          payload: step.payload(state),
+        },
       });
       assert.equal(raw.v, 1, `${step.method}: the response frame is not v1`);
       assert.equal(raw.id, id, `${step.method}: the frame id was not echoed`);
@@ -340,8 +413,8 @@ test('every b3.agent.* method answers on the v1 frame, in one team\'s life', asy
 
       const result = raw.result as B3Result<unknown> | undefined;
       assert.equal(typeof result?.ok, 'boolean', `${step.method}: no Result inside result`);
-      assert.equal(result?.ok, true,
-        `${step.method} was refused: ${JSON.stringify(result)}`);
+      assert.equal(result?.ok, step.outcome !== 'domain-refusal',
+        `${step.method} returned the wrong domain disposition: ${JSON.stringify(result)}`);
       if (result?.ok) step.remember?.(state, result.value);
     }
   } finally {

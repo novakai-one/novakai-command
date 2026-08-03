@@ -849,6 +849,14 @@ export async function reconcileAllProviderTurnSubmissions(
   const attempts = await core.terminal.listIncompleteProviderTurnInputAttempts({});
   if (!attempts.ok) return attempts;
   for (const attempt of attempts.value) {
+    if (mode === 'periodic') {
+      const runResult = await requireRun(core, attempt.agentRunId);
+      if (!runResult.ok) return runResult;
+      // A live command owns this Run until provisioning commits. Periodic
+      // recovery must not race that owner through the same intermediate states;
+      // startup recovery is different because the former owner is gone.
+      if (runResult.value.lifecycle === 'provisioning') continue;
+    }
     const submission = byId.get(attempt.providerTurnSubmissionId);
     const immutableMismatch = submission !== undefined
       && !attemptMatchesSubmission(attempt, submission);
@@ -907,6 +915,11 @@ export async function reconcileAllProviderTurnSubmissions(
 
   for (const initial of submissions) {
     let submission = initial;
+    if (mode === 'periodic') {
+      const runResult = await requireRun(core, submission.agentRunId);
+      if (!runResult.ok) return runResult;
+      if (runResult.value.lifecycle === 'provisioning') continue;
+    }
     if (submission.state.kind === 'completed') {
       const runResult = await requireRun(core, submission.agentRunId);
       if (!runResult.ok) return runResult;
