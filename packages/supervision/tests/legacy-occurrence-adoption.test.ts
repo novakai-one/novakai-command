@@ -421,3 +421,131 @@ test('contradictory legacy evidence fails closed and stays operator-visible', as
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('AMD-003 #15: legacy recovery hands off, refreshes, and clears across retries', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'nvk-legacy-recovery-handoff-'));
+  try {
+    const store = createSupervisionStore({ root, dataRoot: path.join(root, 'stores') });
+    const firstEvidence = evidence('a', SESSION_1, '2026-08-04T00:00:01.000Z');
+    const secondEvidence = evidence('c', SESSION_2, '2026-08-04T00:00:02.000Z');
+    const current = evidence('d', SESSION_1, '2026-08-04T00:00:03.000Z');
+    const evidenceById = new Map<string, ProviderUsageEvidence>([[
+      String(current.payload.id), current.payload as unknown as ProviderUsageEvidence,
+    ]]);
+    const run1 = {
+      agentRunId: RUN_1, agentId: AGENT_ID, providerSessionId: SESSION_1,
+      lifecycle: 'ready' as const, final: false, activityGeneration: 9 as never,
+      recordVersion: 1 as never,
+    };
+    const run2 = {
+      agentRunId: RUN_2, agentId: AGENT_ID, providerSessionId: SESSION_2,
+      lifecycle: 'ready' as const, final: false, activityGeneration: 9 as never,
+      recordVersion: 1 as never,
+    };
+    const runBySession = new Map<ProviderSessionId, typeof run1>();
+    runBySession.set(SESSION_1, run1);
+    const supervision = composeSupervision({
+      root, dataRoot: path.join(root, 'stores'), store,
+      installAuthority: { resolve: async () => { throw new Error('not used'); } },
+      watchRuleAccess: { agentIdFor: async () => b3ok(null) },
+      watchRuleGeneration: { generationFor: async () => b3ok(9 as never) },
+      usage: {
+        runs: {
+          getUsageRun: async (_principal, runId) =>
+            b3ok(runId === RUN_2 ? run2 : run1),
+          listUsageRuns: async () => b3ok([...runBySession.values()]),
+          resolveUsageRunByProviderSession: async (_principal, session) =>
+            b3ok(runBySession.get(session) ?? null),
+          resolveCurrentRunByAgent: async () => b3ok(run1),
+          getRunOccurrenceEvent: async () => b3ok(null),
+        },
+        evidence: {
+          getProviderUsageEvidence: async (_principal, id) =>
+            b3ok(evidenceById.get(String(id)) ?? null),
+          listProviderUsageEvidence: async () => b3ok({ items: [], omissions: [] }),
+        },
+      },
+    });
+    const rules: WatchRule[] = [];
+    for (let index = 0; index < 3; index += 1) {
+      const created = await supervision.createWatchRule({
+        principal: HUMAN, clientOpId: mintClientOpId(), traceId: mintTraceCorrelationId(),
+        contractVersion: 1,
+      }, {
+        subject: { kind: 'agent', agentId: AGENT_ID }, condition: CONDITION,
+        recipient: { kind: 'human', principalId: HUMAN.id }, deliveryMode: 'queue-only',
+        cooldownMs: 0, status: 'active',
+      });
+      assert.equal(created.ok, true);
+      if (created.ok) rules.push(created.value);
+    }
+    rules.sort((left, right) => String(left.id).localeCompare(String(right.id)));
+    const [firstRule, secondRule, healthyRule] = rules as [WatchRule, WatchRule, WatchRule];
+    await seedLegacy(store, firstRule, CONDITION, 1, [String(firstEvidence.payload.id)]);
+    await seedLegacy(store, secondRule, CONDITION, 1, [String(secondEvidence.payload.id)]);
+
+    const evaluationContext = context();
+    const operator = {
+      id: 'ops_legacy' as never,
+      kind: 'operations' as const,
+      verifiedScopes: ['supervision:watch:repair' as never],
+    };
+    const progress = async () => {
+      const listed = await supervision.listWatchEvaluationProgress(operator, { limit: 20 });
+      assert.equal(listed.ok, true);
+      if (!listed.ok) throw new Error('progress listing failed');
+      assert.equal(listed.value.items.length, 1);
+      return listed.value.items[0]!;
+    };
+
+    const first = await supervision.evaluateEvent(evaluationContext, { event: current });
+    assert.equal(first.ok, false);
+    if (!first.ok) assert.equal(first.error.code, 'RecoveryRequired');
+    let state = await progress();
+    assert.equal(state.state, 'recovery-required');
+    assert.match(state.recovery!.reason, new RegExp(String(firstRule.id)));
+    assert.match(state.recovery!.reason, new RegExp(String(firstEvidence.payload.id)));
+    assert.equal(state.completed.some((entry) =>
+      entry.watchRuleId === healthyRule.id && entry.outcome.kind === 'committed'), true);
+    assert.equal(state.completed.some((entry) => entry.outcome.kind === 'failed-non-retryable'), false);
+
+    evidenceById.set(
+      String(firstEvidence.payload.id),
+      firstEvidence.payload as unknown as ProviderUsageEvidence,
+    );
+    const second = await supervision.evaluateEvent(evaluationContext, { event: current });
+    assert.equal(second.ok, false);
+    state = await progress();
+    assert.equal(state.attemptOrdinal, 1);
+    assert.match(state.recovery!.reason, new RegExp(String(secondRule.id)));
+    assert.match(state.recovery!.reason, new RegExp(String(secondEvidence.payload.id)));
+
+    evidenceById.set(
+      String(secondEvidence.payload.id),
+      secondEvidence.payload as unknown as ProviderUsageEvidence,
+    );
+    const third = await supervision.evaluateEvent(evaluationContext, { event: current });
+    assert.equal(third.ok, false);
+    state = await progress();
+    assert.equal(state.attemptOrdinal, 2);
+    assert.match(state.recovery!.reason, new RegExp(String(secondRule.id)));
+    assert.match(state.recovery!.reason, /names no retained Run/);
+
+    runBySession.set(SESSION_2, run2);
+    const completed = await supervision.evaluateEvent(evaluationContext, { event: current });
+    assert.equal(completed.ok, true, completed.ok ? '' : completed.error.message);
+    state = await progress();
+    assert.equal(state.attemptOrdinal, 3);
+    assert.equal(state.state, 'completed');
+    assert.equal(state.recovery, undefined);
+    const notifications = await supervision.listNotifications(HUMAN, { limit: 20 });
+    assert.equal(notifications.ok, true);
+    if (notifications.ok) {
+      assert.equal(notifications.value.items.filter(
+        (notification) => notification.watchRuleId === healthyRule.id,
+      ).length, 1);
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

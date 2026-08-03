@@ -227,6 +227,13 @@ async function resolveLegacy(
           `legacy usage Notification ${String(legacy.id)} names no retained Run for ${ref}`,
         ));
       }
+      if (source.value.providerSessionId !== evidence.value.providerSessionId) {
+        return b3fail(recovery(
+          operationId,
+          'legacy-occurrence-adoption',
+          `legacy usage Notification ${String(legacy.id)} has a Run/ProviderSession mismatch`,
+        ));
+      }
       if ((resolvedSession !== undefined
           && resolvedSession !== evidence.value.providerSessionId)
         || (resolvedRun !== undefined && resolvedRun !== source.value.agentRunId)
