@@ -115,6 +115,42 @@ test('one committed provider measurement moves the live Run projection', async (
   assert.equal(result.value.providerTurns.value, 1);
 });
 
+test('sourced transcript totals fill token usage when Agents has no provider measurement', async () => {
+  const usage = createUsageProjection({
+    runs: runReader(),
+    evidence: noEvidence(),
+    transcript: {
+      readTranscriptUsage: async () => b3ok({
+        quality: 'estimated',
+        inputTokens: 240,
+        outputTokens: 60,
+        cachedInputTokens: 20,
+        observedAt: '2026-08-03T02:04:00.000Z' as never,
+        source: 'transcript:claude/session.jsonl',
+        limitations: ['provider transcript totals are an estimate'],
+      }),
+    },
+  });
+
+  const result = await usage.getRunUsage(PRINCIPAL, RUN_ID);
+  assert.equal(result.ok, true, result.ok ? '' : result.error.message);
+  if (!result.ok) return;
+  assert.deepEqual(result.value.inputTokens, {
+    quality: 'estimated',
+    value: 240,
+    source: 'transcript:claude/session.jsonl',
+    limitations: ['provider transcript totals are an estimate'],
+  });
+  assert.equal(result.value.outputTokens.value, 60);
+  assert.equal(result.value.cachedInputTokens.value, 20);
+  assert.equal(result.value.costMicros.quality, 'unavailable');
+  assert.equal(result.value.costMicros.value, undefined);
+  assert.ok(result.value.costMicros.limitations.includes('costMicros-not-reported'));
+  assert.equal(result.value.providerTurns.quality, 'unavailable');
+  assert.equal(result.value.providerTurns.value, undefined);
+  assert.equal(result.value.observedAt, '2026-08-03T02:04:00.000Z');
+});
+
 test('Agent aggregate is no more certain than its least certain Run', async () => {
   const secondRun = {
     agentRunId: SECOND_RUN_ID,

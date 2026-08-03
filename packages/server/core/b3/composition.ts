@@ -48,6 +48,8 @@ import {
 import {
   followEventsIntoSupervision, supervisionWatcherPort, watcherInstallAuthority, watchRuleAccess,
 } from './supervision-ports.js';
+import { createUsageReader } from '../supervision/usage.js';
+import { createTranscriptUsagePort } from './usage-transcript-port.js';
 
 export interface B3RuntimeOptions {
   /** `.novakai/` root. Domain records live in `<root>/stores`. */
@@ -256,6 +258,13 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
       runs?.publishCapabilityEvent(kind, { ...payload }, 'agents', traceId);
     },
   });
+  const usageTranscriptReader = createUsageReader({
+    ...(options.providerHome === undefined ? {} : { home: options.providerHome }),
+    transcriptRoot: path.join(options.root, 'transcripts'),
+    // A usage query is a request for current evidence. A five-minute manifest
+    // would render the first completed provider turn unavailable until later.
+    discoveryIntervalMs: 0,
+  });
   const credentials = createRunCredentials(options.root);
   // Late-bound on purpose: Transcript is composed AFTER Runs (it needs the
   // Messaging capability, which needs the store this root opens). The closure
@@ -296,6 +305,7 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
         },
       },
       evidence: usageEvidence,
+      transcript: createTranscriptUsagePort({ agents, reader: usageTranscriptReader }),
     },
   });
 

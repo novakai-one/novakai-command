@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -13,6 +13,7 @@ import { createFakeProviderAdapters } from '../../agents/b3/contract/index.js';
 import { createFakePtyHost } from '../../terminal/adapters/pty-host/fake.js';
 import { connectRuntime } from '../core/b3/client.js';
 import { startRuntimeHost } from '../core/b3/host.js';
+import { sanitizeCwd } from '../core/supervision/usage.js';
 import { chatRole } from './governed-role.js';
 import type { AgentRunUsage, AgentUsageSummary } from '../../supervision/contract/index.js';
 
@@ -143,5 +144,71 @@ test('the live composition projects durable Agents evidence into Run views after
   } finally {
     await restarted.close();
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('the live composition estimates current token usage from the provider transcript', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'nvk-b3d-transcript-usage-'));
+  const providerHome = mkdtempSync(path.join(tmpdir(), 'nvk-b3d-provider-home-'));
+  const host = await startRuntimeHost({
+    root,
+    providerHome,
+    port: 0,
+    ptyHost: createFakePtyHost(),
+    providers: createFakeProviderAdapters(),
+  });
+  const client = await connectRuntime({ root, port: host.port, token: host.token });
+  try {
+    const role = unwrap(await client.call<{ id: string }>(
+      'b3.agent.createRole', chatRole('usage-transcript-wire'), mintClientOpId(),
+    ), 'create role');
+    const spawned = unwrap(await client.call<AgentRunView>('b3.agent.spawn', {
+      roleProfileId: role.id,
+      displayName: 'Transcript Usage Wire',
+      workingDirectory: root,
+    }, mintClientOpId()), 'spawn');
+    const session = unwrap(await host.runtime.agents.getProviderSession(
+      PRINCIPAL,
+      spawned.provider.providerSessionId,
+    ), 'provider session');
+    assert.equal(session.provider, 'claude');
+    assert.notEqual(session.providerConversationId, null);
+    const transcriptDir = path.join(
+      providerHome,
+      '.claude',
+      'projects',
+      sanitizeCwd(root),
+    );
+    mkdirSync(transcriptDir, { recursive: true });
+    writeFileSync(path.join(transcriptDir, `${session.providerConversationId!}.jsonl`),
+      `${JSON.stringify({
+        timestamp: '2026-08-03T03:30:00.000Z',
+        message: {
+          id: 'msg_usage_1',
+          usage: {
+            input_tokens: 240,
+            output_tokens: 60,
+            cache_read_input_tokens: 20,
+          },
+        },
+      })}\n`);
+
+    const usage = unwrap(await host.runtime.supervision.getRunUsage(
+      PRINCIPAL,
+      spawned.run.id,
+    ), 'transcript usage');
+    assert.equal(usage.inputTokens.quality, 'estimated');
+    assert.equal(usage.inputTokens.value, 240);
+    assert.equal(usage.outputTokens.value, 60);
+    assert.equal(usage.cachedInputTokens.value, 20);
+    assert.equal(usage.costMicros.quality, 'unavailable');
+    assert.equal(usage.costMicros.value, undefined);
+    assert.equal(usage.providerTurns.quality, 'unavailable');
+    assert.equal(usage.observedAt, '2026-08-03T03:30:00.000Z');
+  } finally {
+    client.close();
+    await host.close();
+    rmSync(root, { recursive: true, force: true });
+    rmSync(providerHome, { recursive: true, force: true });
   }
 });

@@ -4,6 +4,7 @@ import type {
   AuthenticatedPrincipal,
   B3Page,
   B3Result,
+  IsoUtc,
   ProviderSessionId,
 } from '@novakai/foundation/contract';
 import type { ProviderUsageEvidence } from '../../contract/index.js';
@@ -34,4 +35,23 @@ export interface UsageEvidenceReader {
     principal: AuthenticatedPrincipal,
     providerSessionId: ProviderSessionId,
   ): Promise<B3Result<B3Page<ProviderUsageEvidence>>>;
+}
+
+/** Read-only provider-transcript totals supplied by the composition root. */
+export interface TranscriptUsageSample {
+  readonly quality: 'estimated' | 'partial' | 'unavailable';
+  readonly inputTokens?: number;
+  readonly outputTokens?: number;
+  readonly cachedInputTokens?: number;
+  readonly observedAt: IsoUtc;
+  readonly source: string;
+  readonly limitations: readonly string[];
+}
+
+/** Adapter over Transcript evidence; it owns no usage state and performs no writes. */
+export interface TranscriptUsageReader {
+  readTranscriptUsage(
+    principal: AuthenticatedPrincipal,
+    runFacts: UsageRunFacts,
+  ): Promise<B3Result<TranscriptUsageSample>>;
 }

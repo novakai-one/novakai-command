@@ -7,13 +7,20 @@ import type {
   SupervisionContract,
   UsageValue,
 } from '../../contract/index.js';
-import type { UsageEvidenceReader, UsageRunFacts, UsageRunReader } from './ports.js';
+import type {
+  TranscriptUsageReader,
+  TranscriptUsageSample,
+  UsageEvidenceReader,
+  UsageRunFacts,
+  UsageRunReader,
+} from './ports.js';
 
 export type UsageProjection = Pick<SupervisionContract, 'getRunUsage' | 'getAgentUsage'>;
 
 export interface UsageProjectionOptions {
   readonly runs: UsageRunReader;
   readonly evidence: UsageEvidenceReader;
+  readonly transcript?: TranscriptUsageReader;
   readonly clock?: () => Date;
 }
 
@@ -34,10 +41,21 @@ export function createUsageProjection(options: UsageProjectionOptions): UsagePro
       runFacts.providerSessionId,
     );
     if (!evidence.ok) return evidence;
+    const latest = latestEvidence(evidence.value.items);
+    const needsTranscript = latest === undefined
+      || latest.measurement.quality === 'unavailable'
+      || latest.measurement.inputTokens === undefined
+      || latest.measurement.outputTokens === undefined
+      || latest.measurement.cachedInputTokens === undefined;
+    const transcript = needsTranscript
+      ? await options.transcript?.readTranscriptUsage(principal, runFacts)
+      : undefined;
+    if (transcript !== undefined && !transcript.ok) return transcript;
     return b3ok(projectRunUsage(
       runFacts.agentRunId,
       runFacts.final,
       evidence.value.items,
+      transcript?.value,
       clock,
     ));
   };
@@ -70,20 +88,21 @@ function projectRunUsage(
   agentRunId: AgentRunId,
   final: boolean,
   evidence: readonly ProviderUsageEvidence[],
+  transcript: TranscriptUsageSample | undefined,
   clock: () => Date,
 ): AgentRunUsage {
-  const ordered = [...evidence].sort((left, right) =>
-    String(left.observedAt).localeCompare(String(right.observedAt))
-      || String(left.id).localeCompare(String(right.id)));
-  const latest = ordered[ordered.length - 1];
+  const latest = latestEvidence(evidence);
+  const availableTranscript = transcript?.quality === 'unavailable' ? undefined : transcript;
   const unavailable = (): UsageValue => ({
     quality: 'unavailable',
-    source: SOURCE,
-    limitations: ['no-provider-usage-evidence'],
+    source: availableTranscript?.source ?? SOURCE,
+    limitations: availableTranscript?.limitations ?? ['no-provider-usage-evidence'],
   });
   const metrics = Object.fromEntries(METRICS.map((metric) => [
     metric,
-    latest === undefined ? unavailable() : usageValue(latest, metric),
+    latest === undefined
+      ? transcriptUsageValue(transcript, metric) ?? unavailable()
+      : preferEvidence(latest, transcript, metric),
   ])) as Pick<
     AgentRunUsage,
     typeof METRICS[number]
@@ -91,12 +110,68 @@ function projectRunUsage(
   return {
     agentRunId,
     ...metrics,
-    observedAt: latest?.observedAt ?? clock().toISOString() as never,
+    observedAt: newestObservedAt(latest?.observedAt, availableTranscript?.observedAt)
+      ?? clock().toISOString() as never,
     final,
   };
 }
 
 type UsageMetric = typeof METRICS[number];
+
+function latestEvidence(
+  evidence: readonly ProviderUsageEvidence[],
+): ProviderUsageEvidence | undefined {
+  return [...evidence].sort((left, right) =>
+    String(left.observedAt).localeCompare(String(right.observedAt))
+      || String(left.id).localeCompare(String(right.id)))[evidence.length - 1];
+}
+
+function newestObservedAt(
+  evidenceAt: ProviderUsageEvidence['observedAt'] | undefined,
+  transcriptAt: TranscriptUsageSample['observedAt'] | undefined,
+): ProviderUsageEvidence['observedAt'] | undefined {
+  if (evidenceAt === undefined) return transcriptAt;
+  if (transcriptAt === undefined) return evidenceAt;
+  return String(evidenceAt) >= String(transcriptAt) ? evidenceAt : transcriptAt;
+}
+
+function preferEvidence(
+  evidence: ProviderUsageEvidence,
+  transcript: TranscriptUsageSample | undefined,
+  metric: UsageMetric,
+): UsageValue {
+  const preferred = usageValue(evidence, metric);
+  return preferred.value !== undefined
+    ? preferred
+    : transcriptUsageValue(transcript, metric) ?? preferred;
+}
+
+function transcriptUsageValue(
+  transcript: TranscriptUsageSample | undefined,
+  metric: UsageMetric,
+): UsageValue | undefined {
+  if (transcript === undefined || transcript.quality === 'unavailable') return undefined;
+  const value = metric === 'inputTokens'
+    ? transcript.inputTokens
+    : metric === 'outputTokens'
+      ? transcript.outputTokens
+      : metric === 'cachedInputTokens'
+        ? transcript.cachedInputTokens
+        : undefined;
+  if (value === undefined) {
+    return {
+      quality: 'unavailable',
+      source: transcript.source,
+      limitations: [...transcript.limitations, `${metric}-not-reported`],
+    };
+  }
+  return {
+    quality: transcript.quality,
+    value,
+    source: transcript.source,
+    limitations: transcript.limitations,
+  };
+}
 
 function usageValue(
   evidence: ProviderUsageEvidence,
