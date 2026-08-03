@@ -218,6 +218,16 @@ test('the live composition turns satisfied output-token evidence into a Notifica
       });
       assert.equal(recorded.ok, true, recorded.ok ? '' : recorded.error.message);
 
+      const projected = unwrap(
+        await host.runtime.supervision.getRunUsage(PRINCIPAL, spawned.run.id),
+        'threshold Run usage',
+      );
+      assert.equal(projected.outputTokens.quality, 'measured');
+      assert.equal(projected.outputTokens.value, 2);
+      const events = unwrap(await host.runtime.runs.readRunEvents(PRINCIPAL, {}), 'events');
+      const committed = events.events.find((event) => event.payload.id === recorded.value.id);
+      assert.notEqual(committed, undefined, 'usage evidence did not enter the Runtime event stream');
+
       const notifications = await waitForThresholdNotification(host);
       assert.equal(notifications.items.length, 1,
         'satisfied output-token evidence queued no Notification');

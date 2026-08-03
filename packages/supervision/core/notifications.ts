@@ -17,9 +17,12 @@ import {
 import { conditionNotification, queueConditionNotification } from './condition-notifications.js';
 import { settleLifecycleEventRules } from './lifecycle-notifications.js';
 import type { SupervisionStore } from './store.js';
+import {
+  settleUsageThresholdRules, type UsageThresholdDependencies,
+} from './usage-threshold-notifications.js';
 import { claimDeadline } from './watchers/deadlines.js';
 
-export interface EvaluateDependencies {
+export interface EvaluateDependencies extends UsageThresholdDependencies {
   readonly store: SupervisionStore;
 }
 
@@ -179,7 +182,15 @@ export async function evaluateEvent(
     },
   );
   if (!eventNotifications.ok) return eventNotifications;
-  return b3ok([...deadlineNotifications.value, ...eventNotifications.value]);
+  const thresholdNotifications = await settleUsageThresholdRules(
+    deps, _context.principal, rules.value, parsed.value,
+  );
+  if (!thresholdNotifications.ok) return thresholdNotifications;
+  return b3ok([
+    ...deadlineNotifications.value,
+    ...eventNotifications.value,
+    ...thresholdNotifications.value,
+  ]);
 }
 
 /**

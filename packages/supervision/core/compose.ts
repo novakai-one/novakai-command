@@ -115,7 +115,7 @@ export interface SupervisionCoreOptions extends SupervisionStoreOptions {
   readonly driftEvidence?: DriftEvidencePort;
   /** Runtime/Terminal truth used to authenticate one recorded status attempt. */
   readonly driftSubmissionAuthority?: DriftSubmissionAuthority;
-  /** Required for manual timed rules; there is deliberately no default generation. */
+  /** Runtime generation authority for manual timed and generation-fenced rules. */
   readonly watchRuleGeneration?: WatchRuleGenerationPort;
   /** B3d usage authorities; absent hosts return typed unavailability. */
   readonly usage?: UsageProjectionOptions;
@@ -149,13 +149,20 @@ export function composeSupervision(options: SupervisionCoreOptions): Supervision
   const usage = options.usage === undefined
     ? USAGE_NOT_COMPOSED
     : createUsageProjection(options.usage);
+  const evaluation = {
+    store,
+    ...(options.usage === undefined ? {} : { runs: options.usage.runs }),
+    ...(options.watchRuleGeneration === undefined
+      ? {}
+      : { generation: options.watchRuleGeneration }),
+  };
 
   return {
     installRunWatchers: (context, input) => {
       const parsed = parseInstallRunWatchersInput(input);
       return parsed.ok ? installRunWatchers(install, context, parsed.value) : Promise.resolve(parsed);
     },
-    evaluateEvent: (context, input) => evaluateEvent({ store }, context, input),
+    evaluateEvent: (context, input) => evaluateEvent(evaluation, context, input),
     evaluateDueDeadlines: (observedAt) => evaluateDueDeadlines({ store }, observedAt),
     listNotifications: (_principal, filter) => listNotifications({ store }, filter),
     listWatchRules: (principal, filter) => listWatchRules(
