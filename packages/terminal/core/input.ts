@@ -19,6 +19,7 @@ import { applyAuthoritativeViewport } from './controllers.js';
 import { FIRST_INPUT_SEQUENCE } from './live.js';
 import type { Persisted } from './store.js';
 import { OPERATION, requireLiveSession, type TerminalCore } from './context.js';
+import { activeNotificationReservation } from './notification-input.js';
 
 async function attachedController(
   core: TerminalCore, terminalSessionId: string, attachmentId: string,
@@ -46,6 +47,16 @@ export async function acquireInputLease(
   if (!controller.ok) return controller;
   const allowed = requireOwnAttachment(context, controller.value, OPERATION.acquire);
   if (!allowed.ok) return allowed;
+
+  const reservation = await activeNotificationReservation(core, input.terminalSessionId);
+  if (!reservation.ok) return reservation;
+  if (reservation.value !== null) {
+    return b3fail(b3err('InputLeaseBusy',
+      'a reserved Notification input holds the terminal boundary', {
+        reason: 'notification-input-reserved',
+        notificationInputReservationId: reservation.value.id,
+      }, true));
+  }
 
   const active = await settleAndFindActive(core, input.terminalSessionId);
   if (!active.ok) return active;
@@ -186,6 +197,7 @@ export async function writeInput(
     createdAt: nowIsoUtc(),
     permissionLevel: 'private',
     createdBy: context.principal.id,
+    source: 'controller',
     terminalSessionId: input.terminalSessionId,
     attachmentId: input.attachmentId,
     leaseGeneration: input.leaseGeneration,

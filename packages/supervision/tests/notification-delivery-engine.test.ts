@@ -24,6 +24,7 @@ import {
   getNotificationDeliveryAuthority, notificationEventPage,
   recordNotificationDeliveryOutcome,
 } from '../core/index.js';
+import { recordDriftStatusSubmission } from '../core/watchers/drift-submission.js';
 import {
   notificationDeliveryEffectKey, parseNotificationEvent, parseNotificationRecord,
   DRIFT_FREE_EVIDENCE, DRIFT_STATUS_PROMPT,
@@ -384,6 +385,57 @@ test('a drift claim replay heals a crash between the deadline and Notification C
         ? healed.value.watchDeadline.driftState.outstandingStatus.claimedAt : undefined,
       'healing must preserve the first half claim timestamp',
     );
+  } finally { cleanup(); }
+});
+
+test('a drift outcome replay heals a crash between the Notification and deadline CAS', async () => {
+  const { store, cleanup } = rig();
+  try {
+    const { deadline, notification } = await seedQueuedDriftDelivery(store);
+    const claimed = await claimNotificationDelivery(
+      { store }, runtime(), claimInput(notification),
+    );
+    assert.equal(claimed.ok, true, claimed.ok ? '' : claimed.error.message);
+    if (!claimed.ok || claimed.value.watchDeadline === undefined) return;
+    const input = {
+      watchDeadlineId: deadline.id,
+      expectedRecordVersion: claimed.value.watchDeadline.recordVersion,
+      expectedEpisodeId: notification.driftEpisodeId!,
+      expectedEffectKey: notification.deliveryEffectKey,
+      expectedNotificationId: notification.id,
+      expectedNotificationInputReservationId: RESERVATION,
+      expectedTerminalInputAttemptId: ATTEMPT_ID,
+      submission: {
+        state: 'submitted-confirmed' as const,
+        submittedAt: '2026-08-03T00:02:00.000Z' as never,
+        providerTurnId: TURN_ID,
+      },
+    };
+    const authority = { verify: async () => b3ok(null) };
+    const crashStore = failNextUpdateFor(store, deadline.id);
+
+    const interrupted = await recordDriftStatusSubmission(
+      { store: crashStore, authority }, runtime(), input,
+    );
+    assert.equal(interrupted.ok, false);
+    assert.equal(interrupted.ok ? '' : interrupted.error.code, 'StoreUnavailable');
+    const splitNotification = await store.read<Notification>('notification', notification.id);
+    assert.equal(splitNotification.ok, true, splitNotification.ok ? '' : splitNotification.error.message);
+    assert.equal(splitNotification.ok && splitNotification.value?.deliveryAttempt.state,
+      'submitted-confirmed');
+
+    const healed = await recordDriftStatusSubmission(
+      { store: crashStore, authority }, runtime(), input,
+    );
+    assert.equal(healed.ok, true, healed.ok ? '' : healed.error.message);
+    if (!healed.ok) return;
+    assert.equal(healed.value.state, 'armed');
+    assert.equal(
+      healed.value.driftState?.phase === 'status-outstanding'
+        ? healed.value.driftState.outstandingStatus.state : undefined,
+      'submitted-confirmed',
+    );
+    assert.equal(healed.value.dueAt, '2026-08-03T00:07:00.000Z');
   } finally { cleanup(); }
 });
 

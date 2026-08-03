@@ -43,6 +43,11 @@ export type TerminalSessionId = B3Brand<string, 'TerminalSessionId'>;
 export type ControllerAttachmentId = B3Brand<string, 'ControllerAttachmentId'>;
 export type TerminalInputLeaseId = B3Brand<string, 'TerminalInputLeaseId'>;
 export type TerminalInputAttemptId = B3Brand<string, 'TerminalInputAttemptId'>;
+/** Terminal-owned deterministic fence for one Supervision delivery effect (Q7). */
+export type NotificationInputReservationId =
+  B3Brand<string, 'NotificationInputReservationId'>;
+/** Shared identity only; Supervision remains the sole Notification writer. */
+export type NotificationId = B3Brand<string, 'NotificationId'>;
 // B3c (§4.1). Messaging mints the first three; Transcript the next three;
 // Foundation's bootstrap the last. All deterministic base32-sha256, because
 // each names a fact a retry must land on again rather than duplicate.
@@ -163,6 +168,11 @@ export const mintTerminalSessionId = (): TerminalSessionId => `terminal_${uuidv7
 export const mintControllerAttachmentId = (): ControllerAttachmentId => `controller_${uuidv7()}` as ControllerAttachmentId;
 export const mintTerminalInputLeaseId = (): TerminalInputLeaseId => `terminalInputLease_${uuidv7()}` as TerminalInputLeaseId;
 export const mintTerminalInputAttemptId = (): TerminalInputAttemptId => `terminalInput_${uuidv7()}` as TerminalInputAttemptId;
+export const notificationInputReservationId = (
+  deliveryEffectKey: string,
+): NotificationInputReservationId => deterministicId(
+  'notificationInput', ['notification-input', deliveryEffectKey],
+) as NotificationInputReservationId;
 export const mintAgentRunId = (): AgentRunId => `agentRun_${uuidv7()}` as AgentRunId;
 export const mintProviderTurnId = (): ProviderTurnId => `providerTurn_${uuidv7()}` as ProviderTurnId;
 export const mintAgentRoleProfileId = (): AgentRoleProfileId => `agentRole_${uuidv7()}` as AgentRoleProfileId;

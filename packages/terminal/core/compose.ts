@@ -12,8 +12,11 @@ import {
 } from '@novakai/foundation/contract';
 import type {
   AcquireInputLeaseInput, AttachControllerInput, DetachControllerInput,
+  CancelReservedNotificationInput, CommitReservedNotificationInput,
   InterruptTerminalTurnInput, ListTerminalSessionsFilter, OpenManagedTerminalInput,
+  NotificationInputCommitOutcome, ReserveNotificationInput,
   ReadTerminalStreamInput, ReleaseInputLeaseInput, ResizeTerminalInput,
+  SetControllerDraftStateInput,
   TerminalContract, TerminateTerminalInput, WriteTerminalInput,
   InterruptTerminalTurnOutcome,
 } from '../contract/api.js';
@@ -35,7 +38,14 @@ import { attachController, detachController, resizeTerminal } from './controller
 import { acquireInputLease, releaseInputLease, writeInput } from './input.js';
 import { interruptTerminalTurn } from './interrupt.js';
 import { readTerminalStream } from './stream.js';
-import type { ControllerAttachment, TerminalSession } from '../contract/records.js';
+import type {
+  ControllerAttachment, NotificationInputReservation, TerminalInputAttempt, TerminalSession,
+} from '../contract/records.js';
+import {
+  cancelReservedNotificationInput, commitReservedNotificationInput,
+  getNotificationInputReservation, getTerminalInputAttempt,
+  reserveNotificationInput, setControllerDraftState,
+} from './notification-input.js';
 
 export interface ComposeTerminalOptions extends TerminalStoreOptions {
   readonly ptyHost: PtyHost;
@@ -107,6 +117,68 @@ export function composeTerminal(options: ComposeTerminalOptions): TerminalContra
       OPERATION.release, (input) => input.terminalSessionId, true,
       (context, input: ReleaseInputLeaseInput) => releaseInputLease(core, context, input),
     ),
+    async reserveNotificationInput(context, input: ReserveNotificationInput) {
+      const version = versionGuard<NotificationInputReservation>(context);
+      if (version) return version;
+      const authorised = requireSystemAuthority(
+        context, 'sys_agent_runtime', OPERATION.reserveNotification,
+      );
+      if (!authorised.ok) return authorised;
+      return core.queue.enqueue(input.terminalSessionId, () => core.receipts.runCommand(
+        context,
+        { operation: OPERATION.reserveNotification, request: input, replaySafe: true },
+        () => reserveNotificationInput(core, context, input),
+      ));
+    },
+    async commitReservedNotificationInput(context, input: CommitReservedNotificationInput) {
+      const version = versionGuard<NotificationInputCommitOutcome>(context);
+      if (version) return version;
+      const authorised = requireSystemAuthority(
+        context, 'sys_agent_runtime', OPERATION.commitNotification,
+      );
+      if (!authorised.ok) return authorised;
+      const reservation = await core.store.read<NotificationInputReservation>(
+        'notificationInputReservation', input.notificationInputReservationId,
+      );
+      if (!reservation.ok) return reservation;
+      const lane = reservation.value?.terminalSessionId ?? input.notificationInputReservationId;
+      return core.queue.enqueue(lane, () => core.receipts.runCommand(
+        context,
+        { operation: OPERATION.commitNotification, request: input, replaySafe: true },
+        () => commitReservedNotificationInput(core, context, input),
+      ));
+    },
+    async cancelReservedNotificationInput(context, input: CancelReservedNotificationInput) {
+      const version = versionGuard<NotificationInputReservation>(context);
+      if (version) return version;
+      const authorised = requireSystemAuthority(
+        context, 'sys_agent_runtime', OPERATION.cancelNotification,
+      );
+      if (!authorised.ok) return authorised;
+      const reservation = await core.store.read<NotificationInputReservation>(
+        'notificationInputReservation', input.notificationInputReservationId,
+      );
+      if (!reservation.ok) return reservation;
+      const lane = reservation.value?.terminalSessionId ?? input.notificationInputReservationId;
+      return core.queue.enqueue(lane, () => core.receipts.runCommand(
+        context,
+        { operation: OPERATION.cancelNotification, request: input, replaySafe: true },
+        () => cancelReservedNotificationInput(core, context, input),
+      ));
+    },
+    async setControllerDraftState(context, input: SetControllerDraftStateInput) {
+      const version = versionGuard<ControllerAttachment>(context);
+      if (version) return version;
+      const attachment = await core.store.read<ControllerAttachment>(
+        'controllerAttachment', input.attachmentId,
+      );
+      if (!attachment.ok) return attachment;
+      const lane = attachment.value?.terminalSessionId ?? input.attachmentId;
+      return core.queue.enqueue(lane, () => core.receipts.runCommand(
+        context, { operation: OPERATION.draft, request: input, replaySafe: true },
+        () => setControllerDraftState(core, context, input),
+      ));
+    },
     writeInput: guarded(
       OPERATION.write, (input) => input.terminalSessionId, false,
       (context, input: WriteTerminalInput) => writeInput(core, context, input),
@@ -154,6 +226,12 @@ export function composeTerminal(options: ComposeTerminalOptions): TerminalContra
         'controllerAttachment', { terminalSessionId },
       );
     },
+
+    getTerminalInputAttempt: (_principal, terminalInputAttemptId) =>
+      getTerminalInputAttempt(core, terminalInputAttemptId),
+
+    getNotificationInputReservation: (_principal, notificationInputReservationId) =>
+      getNotificationInputReservation(core, notificationInputReservationId),
 
     readTerminalStream: (principal, input: ReadTerminalStreamInput) =>
       readTerminalStream(core, principal, input),

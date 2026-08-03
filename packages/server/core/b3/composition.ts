@@ -43,7 +43,8 @@ import {
   composeSupervision, createTemplateCatalogue, type SupervisionCore,
 } from '../../../supervision/public/index.js';
 import {
-  ACTIVITY_DRIFT_TEMPLATE_REF, type WatcherTemplate,
+  ACTIVITY_DRIFT_TEMPLATE_REF,
+  type RecordDriftStatusSubmissionInput, type WatcherTemplate,
 } from '../../../supervision/contract/index.js';
 import {
   followEventsIntoSupervision, supervisionWatcherPort, watcherInstallAuthority, watchRuleAccess,
@@ -164,6 +165,44 @@ function terminalAsRecoverable(terminal: TerminalContract): RecoverableCapabilit
         reason: 'stop-one',
       });
       return stopped.ok ? b3ok(null) : stopped;
+    },
+  };
+}
+
+/** Q2: prove the supplied drift outcome against Terminal-owned durable facts. */
+function driftSubmissionAuthority(terminal: TerminalContract): {
+  verify(input: RecordDriftStatusSubmissionInput): Promise<B3Result<null>>;
+} {
+  const principal = { id: 'sys_supervision', kind: 'system', verifiedScopes: [] } as const;
+  const mismatch = (reason: string) => b3fail(b3err(
+    'WatcherConflict', 'Terminal facts do not match the drift submission', { reason }, true,
+  ));
+  return {
+    async verify(input) {
+      const reservation = await terminal.getNotificationInputReservation(
+        principal, input.expectedNotificationInputReservationId,
+      );
+      if (!reservation.ok) return reservation;
+      if (reservation.value.state !== 'committed'
+        || reservation.value.notificationId !== input.expectedNotificationId
+        || reservation.value.deliveryEffectKey !== input.expectedEffectKey
+        || reservation.value.terminalInputAttemptId !== input.expectedTerminalInputAttemptId) {
+        return mismatch('reservation-tuple');
+      }
+      const attempt = await terminal.getTerminalInputAttempt(
+        principal, input.expectedTerminalInputAttemptId,
+      );
+      if (!attempt.ok) return attempt;
+      if (attempt.value.source !== 'system-notification'
+        || attempt.value.notificationInputReservationId
+          !== input.expectedNotificationInputReservationId
+        || attempt.value.deliveryEffectKey !== input.expectedEffectKey
+        || attempt.value.outcome !== input.submission.state
+        || attempt.value.submittedAt !== input.submission.submittedAt
+        || attempt.value.providerTurnId !== input.submission.providerTurnId) {
+        return mismatch('terminal-attempt-tuple');
+      }
+      return b3ok(null);
     },
   };
 }
@@ -290,6 +329,7 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
     installAuthority: watcherInstallAuthority(agents, () => runs ?? undefined),
     watchRuleAccess: watchRuleAccess(() => runs ?? undefined),
     templates: watcherTemplates,
+    driftSubmissionAuthority: driftSubmissionAuthority(terminal),
     usage: {
       runs: {
         async getUsageRun(principal, agentRunId) {
@@ -412,7 +452,6 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
     supervision,
     runs,
     terminal,
-    terminalEffects: runtimeTerminal,
     providers: runtimeProviders,
     ...(options.notificationDeliveryIntervalMs === undefined
       ? {} : { intervalMs: options.notificationDeliveryIntervalMs }),

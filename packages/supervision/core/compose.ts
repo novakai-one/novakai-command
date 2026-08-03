@@ -32,6 +32,10 @@ import {
 import {
   createUsageProjection, type UsageProjection, type UsageProjectionOptions,
 } from './usage/index.js';
+import {
+  recordDriftStatusSubmission,
+  type DriftSubmissionAuthority,
+} from './watchers/drift-submission.js';
 
 /** The frozen members the tracer's live wire actually carries current through. */
 export type SupervisionWireSlice = Pick<
@@ -39,6 +43,7 @@ export type SupervisionWireSlice = Pick<
   'installRunWatchers' | 'evaluateEvent' | 'listNotifications' | 'listWatchRules'
   // Lane C: the delivery half of the Notification seam.
   | 'claimNotificationDelivery' | 'recordNotificationDeliveryOutcome'
+  | 'recordDriftStatusSubmission'
   | 'acknowledgeNotification' | 'getNotificationDeliveryAuthority'
   | 'subscribeNotifications'
   // Lane C, Q11: the transcript half — the only path past `offered-to-endpoint`.
@@ -83,6 +88,8 @@ export interface SupervisionCoreOptions extends SupervisionStoreOptions {
   readonly clock?: () => Date;
   /** B3d usage authorities; absent hosts return typed unavailability. */
   readonly usage?: UsageProjectionOptions;
+  /** Q2: resolves the Terminal-owned reservation/attempt before drift writes. */
+  readonly driftSubmissionAuthority?: DriftSubmissionAuthority;
 }
 
 const USAGE_NOT_COMPOSED: UsageProjection = {
@@ -96,6 +103,15 @@ const USAGE_NOT_COMPOSED: UsageProjection = {
     'RuntimeUnavailable',
     'usage projection authorities are not composed in this host',
     { reason: 'usage-not-composed' },
+    true,
+  )),
+};
+
+const DRIFT_SUBMISSION_NOT_COMPOSED: DriftSubmissionAuthority = {
+  verify: async () => b3fail(b3err(
+    'RuntimeUnavailable',
+    'Terminal drift-submission authority is not composed in this host',
+    { reason: 'drift-submission-authority-not-composed' },
     true,
   )),
 };
@@ -127,6 +143,11 @@ export function composeSupervision(options: SupervisionCoreOptions): Supervision
       claimNotificationDelivery({ store }, context, input),
     recordNotificationDeliveryOutcome: (context, input) =>
       recordNotificationDeliveryOutcome({ store }, context, input),
+    recordDriftStatusSubmission: (context, input) =>
+      recordDriftStatusSubmission({
+        store,
+        authority: options.driftSubmissionAuthority ?? DRIFT_SUBMISSION_NOT_COMPOSED,
+      }, context, input),
     acknowledgeNotification: (context, notificationId) =>
       acknowledgeNotification({ store }, context, notificationId),
     getNotificationDeliveryAuthority: (principal, notificationId) =>

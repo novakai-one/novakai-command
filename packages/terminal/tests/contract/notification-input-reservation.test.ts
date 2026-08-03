@@ -8,19 +8,16 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import {
   deterministicId, mintProviderTurnId,
-  type ActivityGeneration, type AgentRunId, type B3Brand, type B3Result,
-  type IsoUtc, type ProviderTurnId, type RecordEnvelope, type TerminalInputAttemptId,
+  type ActivityGeneration, type AgentRunId, type NotificationId,
+  type NotificationInputReservationId,
 } from '@novakai/foundation/contract';
-import type {
-  ControllerAttachment, TerminalContract, TerminalInputAttempt,
-} from '../../contract/index.js';
 import {
   createRig, expectError, humanContext, openMockManagedSession,
   runtimeContext, unwrap,
 } from '../harness.js';
 
 const RUN_ID = 'agentRun_00000000-0000-7000-8000-000000000001' as AgentRunId;
-const NOTIFICATION_ID = `notification_${'c'.repeat(52)}`;
+const NOTIFICATION_ID = `notification_${'c'.repeat(52)}` as NotificationId;
 const EFFECT_KEY = `b3v4:notification-delivery:${NOTIFICATION_ID}:condition`;
 const SUMMARY = 'Output token threshold reached';
 
@@ -31,70 +28,10 @@ const reservationId = (): NotificationInputReservationId => deterministicId(
 const digest = (value: string): string =>
   createHash('sha256').update(value, 'utf8').digest('hex');
 
-type NotificationInputReservationId = B3Brand<string, 'NotificationInputReservationId'>;
-type NotificationInputReservation = RecordEnvelope<
-  NotificationInputReservationId, 'notificationInputReservation'
-> & {
-  readonly terminalSessionId: string;
-  readonly providerTurnId: ProviderTurnId;
-  readonly state: 'reserved' | 'committed' | 'cancelled';
-  readonly terminalInputAttemptId?: TerminalInputAttemptId;
-};
-interface NotificationInputCommitOutcome {
-  readonly reservation: NotificationInputReservation & {
-    readonly state: 'committed';
-    readonly terminalInputAttemptId: TerminalInputAttemptId;
-  };
-  readonly attempt: TerminalInputAttempt & {
-    readonly source: 'system-notification';
-    readonly providerTurnId: ProviderTurnId;
-    readonly submittedAt: IsoUtc;
-  };
-}
-
-interface NotificationTerminal extends TerminalContract {
-  reserveNotificationInput(
-    context: ReturnType<typeof runtimeContext>,
-    input: {
-      readonly terminalSessionId: string;
-      readonly agentRunId: AgentRunId;
-      readonly notificationId: string;
-      readonly effectKey: string;
-      readonly expectedActivityGeneration: ActivityGeneration;
-      readonly inputTextDigest: string;
-      readonly providerTurnId: ReturnType<typeof mintProviderTurnId>;
-    },
-  ): Promise<B3Result<NotificationInputReservation>>;
-  commitReservedNotificationInput(
-    context: ReturnType<typeof runtimeContext>,
-    input: {
-      readonly notificationInputReservationId: NotificationInputReservationId;
-      readonly effectKey: string;
-      readonly utf8Text: string;
-    },
-  ): Promise<B3Result<NotificationInputCommitOutcome>>;
-  getNotificationInputReservation(
-    principal: ReturnType<typeof humanContext>['principal'],
-    id: NotificationInputReservationId,
-  ): Promise<B3Result<NotificationInputReservation>>;
-  getTerminalInputAttempt(
-    principal: ReturnType<typeof humanContext>['principal'],
-    id: TerminalInputAttemptId,
-  ): Promise<B3Result<TerminalInputAttempt>>;
-  setControllerDraftState(
-    context: ReturnType<typeof humanContext>,
-    input: {
-      readonly attachmentId: ControllerAttachment['id'];
-      readonly expectedDraftGeneration: number;
-      readonly state: 'empty' | 'present';
-    },
-  ): Promise<B3Result<ControllerAttachment>>;
-}
-
 test('a reserved notification input commits once and replays the same Terminal attempt', async () => {
   const rig = createRig();
   try {
-    const terminal = rig.terminal as NotificationTerminal;
+    const terminal = rig.terminal;
     const session = unwrap(await openMockManagedSession(rig, RUN_ID), 'open managed session');
     const providerTurnId = mintProviderTurnId();
     const input = {
@@ -150,7 +87,7 @@ test('a reserved notification input commits once and replays the same Terminal a
 test('controller drafts and notification reservations fence each other', async () => {
   const rig = createRig();
   try {
-    const terminal = rig.terminal as NotificationTerminal;
+    const terminal = rig.terminal;
     const session = unwrap(await openMockManagedSession(rig, RUN_ID), 'open managed session');
     const controller = unwrap(await terminal.attachController(humanContext(), {
       terminalSessionId: session.id,

@@ -42,6 +42,7 @@ export const KIND_FILES: Readonly<Record<Exclude<ObjectKind, 'token'>, string>> 
   controllerAttachment: 'controllerAttachments.jsonl', // B3a DEC-B3V4-08
   terminalInputLease: 'terminalInputLeases.jsonl',     // B3a DEC-B3V4-29
   terminalInputAttempt: 'terminalInputAttempts.jsonl', // B3a DEC-B3V4-29
+  notificationInputReservation: 'notificationInputReservations.jsonl', // B3d Q7
   agentRoleProfile: 'agentRoleProfiles.jsonl',           // B3b DEC-B3V4-03
   resolvedLaunchPlan: 'resolvedLaunchPlans.jsonl',       // B3b DEC-B3V4-03/31
   agentRelationship: 'agentRelationships.jsonl',         // B3b DEC-B3V4-06
@@ -73,6 +74,7 @@ export const RECORD_KINDS: readonly string[] = [
   'transcriptCheckpoint',
   'runtimeEpoch', 'commandReceipt', 'terminalSession',
   'controllerAttachment', 'terminalInputLease', 'terminalInputAttempt',
+  'notificationInputReservation',
   'agentRoleProfile', 'resolvedLaunchPlan', 'agentRelationship',
   'delegationGrant', 'controlReplacementPlan',
   'agentRun', 'runContinuation', 'supervisionAssignment',
