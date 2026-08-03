@@ -30,7 +30,7 @@ export function startWatcherScheduler(
   let stopped = false;
   let inFlight: Promise<void> | null = null;
 
-  const run = async (): Promise<void> => {
+  const scan = async (): Promise<void> => {
     try {
       const outcome = await supervision.evaluateDueDeadlines(nowIsoUtc());
       if (!outcome.ok) {
@@ -43,7 +43,7 @@ export function startWatcherScheduler(
 
   const tick = (): void => {
     if (stopped || inFlight !== null) return;
-    inFlight = run().finally(() => { inFlight = null; });
+    inFlight = scan().finally(() => { inFlight = null; });
   };
 
   tick();

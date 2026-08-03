@@ -36,7 +36,7 @@ const repoRoot = path.resolve(here, '..', '..', '..');
  * actually outlive. It resolves through the REAL catalogue seam by ref and
  * digest — a shorter window, not a different mechanism.
  */
-const IDLE_MS = 150;
+const IDLE_MS = 1_000;
 const FAST_IDLE = createIdleWatchTemplate({ version: 99, idleMs: IDLE_MS });
 
 const opId = (): ClientOpId => mintClientOpId();
