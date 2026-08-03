@@ -248,6 +248,24 @@ test('required activity drift is injected beside explicit launch-plan refs', asy
       await rig.supervision.installRunWatchers(runtimeContext(), INSTALL), 'install with drift',
     );
     assert.deepEqual(rules.map((rule) => rule.condition.kind), ['activity-drift', 'idle-for-ms']);
+    const driftRule = rules[0]!;
+    const deadlines = unwrap(
+      await rig.supervision.listWatchDeadlines(human), 'activity-drift deadline',
+    );
+    const deadline = deadlines.find((item) => item.watchRuleId === driftRule.id);
+    assert.ok(deadline, 'required activity drift must be armed at spawn');
+    assert.equal(deadline.dueAt, '2026-08-03T00:05:00.000Z');
+    assert.deepEqual(deadline.driftState, {
+      kind: 'activity-drift',
+      episodeOrdinal: 0,
+      phase: 'observing',
+      quietIntervals: 0,
+      consecutiveUnansweredChecks: 0,
+    });
+    assertContractShaped(
+      parseWatchDeadline(deadline, { conditionKind: 'activity-drift' }),
+      'the armed activity-drift deadline',
+    );
   } finally {
     rig.close();
   }
