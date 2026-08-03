@@ -6,13 +6,14 @@
 // event that was already going to be published is the whole clock.
 import {
   b3fail, b3ok, deriveClientOpId, nowIsoUtc, validationFailed,
-  type B3Page, type B3PrincipalId, type B3Result, type IsoUtc, type SystemCommandContext,
+  type ActivityGeneration, type B3Page, type B3PrincipalId, type B3Result, type IsoUtc,
+  type SystemCommandContext,
 } from '@novakai/foundation/contract';
 import {
-  deriveNotificationId, notificationDeliveryEffectKey, parsePublicEvent,
-  SUPERVISION_RECORD_WRITER,
+  deriveNotificationId, isRunDisconnectedEdge, notificationDeliveryEffectKey, parsePublicEvent,
+  subjectKey, SUPERVISION_RECORD_WRITER,
   type EvaluateSupervisionEventInput, type Notification, type NotificationFilter,
-  type WatchDeadline, type WatchRule,
+  type RunConnectionSnapshot, type WatchDeadline, type WatchRule,
 } from '../contract/index.js';
 import type { Persisted, SupervisionStore } from './store.js';
 import { claimDeadline } from './watchers/deadlines.js';
@@ -37,11 +38,24 @@ function queuedNotification(
   deadline: WatchDeadline,
   evidenceRef: string,
 ): Persisted<Notification> & Record<string, unknown> {
+  return conditionNotification(
+    principal, rule, deadline.subjectKey, deadline.activityGeneration, evidenceRef,
+  );
+}
+
+/** Build the one stable Notification for a non-drift condition generation. */
+function conditionNotification(
+  principal: B3PrincipalId,
+  rule: WatchRule,
+  keyedSubject: string,
+  activityGeneration: ActivityGeneration,
+  evidenceRef: string,
+): Persisted<Notification> & Record<string, unknown> {
   const notificationId = deriveNotificationId({
     watchRuleId: rule.id,
-    subjectKey: deadline.subjectKey,
+    subjectKey: keyedSubject,
     condition: rule.condition,
-    activityGeneration: deadline.activityGeneration,
+    activityGeneration,
     phase: 'condition',
   });
   const effectKey = notificationDeliveryEffectKey(notificationId);
@@ -57,13 +71,28 @@ function queuedNotification(
     watchRuleId: rule.id,
     subject: rule.subject,
     recipient: rule.recipient,
-    conditionGeneration: Number(deadline.activityGeneration),
-    summary: `${rule.condition.kind} fired for ${deadline.subjectKey}`,
+    conditionGeneration: Number(activityGeneration),
+    summary: `${rule.condition.kind} fired for ${keyedSubject}`,
     evidenceRefs: [evidenceRef],
     state: 'queued',
     deliveryMode: rule.deliveryMode,
     phase: 'condition',
   };
+}
+
+/** Queue a pre-built Notification exactly once under its deterministic ID. */
+async function queueConditionNotification(
+  deps: EvaluateDependencies,
+  principal: B3PrincipalId,
+  record: Persisted<Notification> & Record<string, unknown>,
+): Promise<B3Result<Notification | null>> {
+  const existing = await deps.store.read<Notification>('notification', record.id);
+  if (!existing.ok) return b3fail(existing.error);
+  if (existing.value !== null) return b3ok(null);
+  const written = await deps.store.create<Notification>(
+    principal, record, deriveClientOpId(`b3v4:queue-notification:${record.id}`),
+  );
+  return written.ok ? b3ok(written.value) : b3fail(written.error);
 }
 
 /**
@@ -84,16 +113,8 @@ async function fireDeadline(
   evidenceRef: string,
 ): Promise<B3Result<Notification | null>> {
   const record = queuedNotification(principal, input.rule, input.deadline, evidenceRef);
-  const existing = await deps.store.read<Notification>('notification', record.id);
-  if (!existing.ok) return b3fail(existing.error);
-  let queued: Notification | null = null;
-  if (existing.value === null) {
-    const written = await deps.store.create<Notification>(
-      principal, record, deriveClientOpId(`b3v4:queue-notification:${record.id}`),
-    );
-    if (!written.ok) return b3fail(written.error);
-    queued = written.value;
-  }
+  const queued = await queueConditionNotification(deps, principal, record);
+  if (!queued.ok) return queued;
   const claimed = await claimDeadline({
     store: deps.store,
     clock: () => new Date(observedAt),
@@ -107,7 +128,80 @@ async function fireDeadline(
     claimed.value.recordVersion, deriveClientOpId(`b3v4:fire-deadline:${claimed.value.id}`),
   );
   if (!fired.ok) return b3fail(fired.error);
-  return b3ok(queued);
+  return b3ok(queued.value);
+}
+
+function activityGenerationOfEvent(
+  payload: Readonly<Record<string, unknown>>,
+): ActivityGeneration | null {
+  const generation = payload['activityGeneration'];
+  return Number.isInteger(generation) && Number(generation) >= 0
+    ? generation as ActivityGeneration
+    : null;
+}
+
+/** Manual event conditions that are true at one committed Runtime edge. */
+function eventMatchesRule(
+  kind: string,
+  payload: Readonly<Record<string, unknown>>,
+  rule: WatchRule,
+): boolean {
+  if (rule.condition.kind === 'run-final') {
+    return kind === 'agent.run.lifecycle.changed'
+      && ['stopped', 'failed', 'interrupted'].includes(String(payload['toLifecycle']));
+  }
+  if (rule.condition.kind !== 'run-disconnected'
+    || kind !== 'agent.run.connection.changed') return false;
+  const previous = connectionSnapshot(payload['previous']);
+  const current = connectionSnapshot(payload['current']);
+  return previous !== null && current !== null
+    && Number(current.activityGeneration) === Number(payload['activityGeneration'])
+    && isRunDisconnectedEdge(previous, current);
+}
+
+function connectionSnapshot(candidate: unknown): RunConnectionSnapshot | null {
+  if (candidate === null || typeof candidate !== 'object' || Array.isArray(candidate)) return null;
+  const record = candidate as Readonly<Record<string, unknown>>;
+  const generation = record['activityGeneration'];
+  const uncertaintyCodes = record['uncertaintyCodes'];
+  if (typeof record['final'] !== 'boolean'
+    || !Number.isInteger(generation) || Number(generation) < 0
+    || !Array.isArray(uncertaintyCodes)
+    || !uncertaintyCodes.every((code) => typeof code === 'string')) return null;
+  return {
+    final: record['final'],
+    activityGeneration: generation as ActivityGeneration,
+    uncertaintyCodes,
+  };
+}
+
+async function settleEventRule(
+  deps: EvaluateDependencies,
+  principal: B3PrincipalId,
+  rule: WatchRule,
+  event: {
+    readonly kind: string;
+    readonly payload: Readonly<Record<string, unknown>>;
+    readonly evidenceRef: string;
+    readonly about: string | null;
+  },
+): Promise<B3Result<Notification | null>> {
+  const keyedSubject = subjectKey(rule.subject);
+  if (event.about !== keyedSubject || !eventMatchesRule(event.kind, event.payload, rule)) {
+    return b3ok(null);
+  }
+  const generation = activityGenerationOfEvent(event.payload);
+  if (generation === null) {
+    return b3fail(validationFailed([{
+      path: 'event.payload.activityGeneration',
+      message: 'must be a non-negative integer for a lifecycle watcher edge',
+    }]));
+  }
+  return queueConditionNotification(
+    deps,
+    principal,
+    conditionNotification(principal, rule, keyedSubject, generation, event.evidenceRef),
+  );
 }
 
 /** Push an idle deadline out; observed activity is why it has not fired. */
@@ -190,6 +284,18 @@ export async function evaluateEvent(
   const queued: Notification[] = [];
   for (const deadline of armed.value) {
     const settled = await settleOne(deps, SUPERVISION_RECORD_WRITER, deadline, event);
+    if (!settled.ok) return b3fail(settled.error);
+    if (settled.value !== null) queued.push(settled.value);
+  }
+  const rules = await deps.store.list<WatchRule>('watchRule', { status: 'active' });
+  if (!rules.ok) return b3fail(rules.error);
+  for (const rule of rules.value) {
+    const settled = await settleEventRule(deps, SUPERVISION_RECORD_WRITER, rule, {
+      kind: parsed.value.kind,
+      payload: parsed.value.payload,
+      evidenceRef: parsed.value.eventId,
+      about: event.about,
+    });
     if (!settled.ok) return b3fail(settled.error);
     if (settled.value !== null) queued.push(settled.value);
   }

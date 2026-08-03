@@ -26,6 +26,7 @@ const HUMAN = {
   kind: 'human' as const,
   verifiedScopes: [],
 };
+const AGENT_RECIPIENT = 'agent_123e4567-e89b-42d3-a456-426614174000';
 
 function call(table: MethodTable, method: string, payload: unknown) {
   const handler = table[method];
@@ -57,7 +58,7 @@ function publishedDriftPayload(
       staleAfterIntervals,
       escalateAfterConsecutive,
     },
-    recipient: { kind: 'human', principalId: 'person_chris' },
+    recipient: { kind: 'agent', agentId: AGENT_RECIPIENT },
     deliveryMode: 'queue-only',
     cooldownMs: 0,
     status: 'active',
@@ -172,6 +173,7 @@ test('b3.supervision.createWatch accepts the published activity-drift policy and
       readonly deadlines: readonly { readonly id: string; readonly activityGeneration: number }[];
     };
     assert.equal(value.deadlines.length, 1);
+    assert.equal(typeof value.deadlines[0]!.id, 'string');
     assert.match(value.deadlines[0]!.id, /^watchDeadline_[a-z2-7]{52}$/);
     assert.equal(value.deadlines[0]!.activityGeneration, 7);
   } finally {
@@ -284,7 +286,7 @@ test('nvk watch add creates an event watcher visible through nvk watch list', as
       'watch', 'add',
       '--subject', 'agentRun_019fd000-0000-7000-8000-0000000000a1',
       '--when', 'run-final',
-      '--notify', 'human',
+      '--notify', AGENT_RECIPIENT,
       '--delivery', 'queue-only',
       ...where,
     ]);
@@ -362,7 +364,7 @@ test('nvk watch remove retires its watcher instead of deleting it', async () => 
       'watch', 'add',
       '--subject', 'agentRun_019fd000-0000-7000-8000-0000000000a1',
       '--when', 'run-final',
-      '--notify', 'human',
+      '--notify', AGENT_RECIPIENT,
       '--delivery', 'queue-only',
       ...where,
     ]);

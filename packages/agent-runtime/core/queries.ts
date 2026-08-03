@@ -6,7 +6,7 @@
 // is not "zero" (§24.5, red gates 4 and 13).
 import {
   b3fail, b3ok, mintClientOpId, nowIsoUtc,
-  type AgentId, type AgentRunId, type AuthenticatedPrincipal, type B3Page,
+  type ActivityGeneration, type AgentId, type AgentRunId, type AuthenticatedPrincipal, type B3Page,
   type B3Result, type IsoUtc, type ResolvedLaunchPlanId, type RunOperationId,
 } from '@novakai/foundation/contract';
 import type {
@@ -76,25 +76,59 @@ async function settleIfTerminalGone(
   if (!found.ok) return b3ok(agentRun);
   if (found.value === null || !TERMINAL_IS_OVER.has(found.value.status)) return b3ok(agentRun);
 
-  const settled = await core.store.update<AgentRun>(
-    'sys_agent_runtime', agentRun.id,
-    {
-      lifecycle: 'interrupted',
-      activity: 'unknown',
-      finalReason: 'runtime-reconciled-missing',
-      finalAt: nowIsoUtc(),
-      uncertainty: [{
+  const livenessCode = 'provider-liveness-unknown';
+  let disconnected = agentRun;
+  if (!agentRun.uncertainty.some((item) => item.code === livenessCode)) {
+    const generation = (Number(agentRun.activityGeneration) + 1) as ActivityGeneration;
+    const observed = await core.store.update<AgentRun>(
+      'sys_agent_runtime', agentRun.id,
+      {
+        activity: 'unknown',
+        activityGeneration: generation,
+        uncertainty: [...agentRun.uncertainty, {
         code: 'provider-liveness-unknown',
         summary: 'the managed terminal for this Run has ended; whether the provider '
           + 'finished its work or was killed mid-turn is not known',
         evidenceRefs: [terminalSessionId],
-      }],
+        }],
+      } as Record<string, unknown>,
+      agentRun.recordVersion, mintClientOpId(),
+    );
+    if (!observed.ok) return b3ok(agentRun);
+    disconnected = observed.value;
+    core.publish('agent.run.connection.changed', {
+      agentRunId: agentRun.id,
+      activityGeneration: generation,
+      previous: {
+        final: false,
+        activityGeneration: agentRun.activityGeneration,
+        uncertaintyCodes: agentRun.uncertainty.map((item) => item.code),
+      },
+      current: {
+        final: false,
+        activityGeneration: generation,
+        uncertaintyCodes: disconnected.uncertainty.map((item) => item.code),
+      },
+    });
+  }
+
+  const settled = await core.store.update<AgentRun>(
+    'sys_agent_runtime', disconnected.id,
+    {
+      lifecycle: 'interrupted',
+      finalReason: 'runtime-reconciled-missing',
+      finalAt: nowIsoUtc(),
     } as Record<string, unknown>,
-    agentRun.recordVersion, mintClientOpId(),
+    disconnected.recordVersion, mintClientOpId(),
   );
   if (!settled.ok) return b3ok(agentRun);
   core.publish('agent.run.lifecycle.changed', {
-    agentRunId: agentRun.id, toLifecycle: 'interrupted',
+    agentRunId: agentRun.id,
+    fromLifecycle: disconnected.lifecycle,
+    toLifecycle: 'interrupted',
+    activityGeneration: settled.value.activityGeneration,
+    uncertaintyCodes: settled.value.uncertainty.map((item) => item.code),
+    final: true,
   });
   await expireAuthorityOf(core, settled.value);
   // The shift is over, so the endpoint stops advertising it (§8.1's cutoff).
