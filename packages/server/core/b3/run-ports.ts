@@ -26,19 +26,13 @@ import type { TerminalContract } from '../../../terminal/contract/index.js';
 import type {
   LaunchAuthorityRegistrar,
 } from '../../../terminal/adapters/pty-host/node-pty.js';
+import { notificationTerminalPort } from './notification-terminal-port.js';
 
 const systemContext = (): SystemCommandContext<'sys_agent_runtime'> => ({
   principal: { id: 'sys_agent_runtime', kind: 'system', verifiedScopes: [] },
   clientOpId: mintClientOpId(),
   traceId: mintTraceCorrelationId(),
   contractVersion: 1,
-});
-
-const notificationContext = (
-  effectKey: string, step: string,
-): SystemCommandContext<'sys_agent_runtime'> => ({
-  ...systemContext(),
-  clientOpId: deriveClientOpId(`${effectKey}:${step}`),
 });
 
 /** Agents, narrowed to exactly what the Runtime is allowed to ask for. */
@@ -156,6 +150,7 @@ export function terminalPort(
   };
 
   return {
+    ...notificationTerminalPort(terminal),
     async openManagedTerminal(context, input) {
       const opened = await terminal.openManagedTerminal(context, {
         owner: { kind: 'agent-run', agentRunId: input.agentRunId },
@@ -196,48 +191,6 @@ export function terminalPort(
         attachmentId: attached.value.id,
       });
       return submitted;
-    },
-
-    reserveNotificationInput: (input) => terminal.reserveNotificationInput(
-      notificationContext(input.effectKey, 'reserve-terminal-input'), input,
-    ),
-
-    commitReservedNotificationInput: (input) => terminal.commitReservedNotificationInput(
-      notificationContext(input.effectKey, 'commit-terminal-input'), input,
-    ),
-
-    cancelReservedNotificationInput: (input) => terminal.cancelReservedNotificationInput(
-      notificationContext(input.effectKey, 'cancel-terminal-input'), input,
-    ),
-
-    async getNotificationInputReservation(notificationInputReservationId) {
-      const found = await terminal.getNotificationInputReservation(
-        systemContext().principal, notificationInputReservationId,
-      );
-      if (!found.ok && found.error.code === 'ValidationFailed') return b3ok(null);
-      return found;
-    },
-
-    async getNotificationInputAttempt(terminalInputAttemptId) {
-      const found = await terminal.getTerminalInputAttempt(
-        systemContext().principal, terminalInputAttemptId,
-      );
-      if (!found.ok && found.error.code === 'ValidationFailed') return b3ok(null);
-      if (!found.ok) return found;
-      if (found.value.source !== 'system-notification') {
-        return b3fail(b3err(
-          'RecoveryRequired', 'Notification reservation names a controller input attempt',
-          { terminalInputAttemptId }, true,
-        ));
-      }
-      return b3ok({
-        id: found.value.id,
-        notificationInputReservationId: found.value.notificationInputReservationId,
-        deliveryEffectKey: found.value.deliveryEffectKey,
-        providerTurnId: found.value.providerTurnId,
-        outcome: found.value.outcome,
-        submittedAt: found.value.submittedAt,
-      });
     },
 
     async readOutputSoFar(principal, terminalSessionId) {

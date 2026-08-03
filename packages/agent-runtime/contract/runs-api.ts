@@ -7,7 +7,6 @@
 import type {
   AgentId, AgentRunId, AuthenticatedPrincipal, B3Page, B3Result, CapabilityOwner, CommandContext,
   ControlReplacementPlanId, EventCursor, HumanPrincipalId, IsoUtc,
-  NotificationId, NotificationInputReservationId,
   ProviderSessionId, ProviderTurnId, ActivityGeneration, RecordVersion,
   AgentRoleProfileId, ResolvedLaunchPlanId, RunOperationId, TraceCorrelationId,
   SystemCommandContext,
@@ -21,6 +20,13 @@ import type {
   ControlCapabilityFacts,
 } from './ports.js';
 import type { AgentRunUsage } from '../../supervision/contract/index.js';
+import type {
+  NotificationTurnSubmission, StartNotificationTurnInput,
+} from './notification-delivery.js';
+
+export type {
+  NotificationTurnSubmission, StartNotificationTurnInput,
+} from './notification-delivery.js';
 
 // ── Inputs ──────────────────────────────────────────────────────────────────
 
@@ -284,41 +290,6 @@ export interface RunEventPage {
 export interface ReadRunEventsInput {
   readonly after?: EventCursor;
   readonly limit?: number;
-}
-
-/** Q7's durable Runtime view of one Notification delivery effect. */
-export type NotificationTurnSubmission =
-  | {
-      readonly state: 'submitted-confirmed';
-      readonly submittedAt: IsoUtc;
-      readonly providerTurnId: ProviderTurnId;
-    }
-  | {
-      readonly state: 'submitted-unconfirmed';
-      readonly submittedAt: IsoUtc;
-      readonly providerTurnId?: ProviderTurnId;
-    }
-  | { readonly state: 'absent' }
-  | {
-      readonly state: 'reserved-not-claimed';
-      readonly notificationInputReservationId: NotificationInputReservationId;
-    }
-  | {
-      readonly state: 'claimed-pending-submission';
-      readonly notificationInputReservationId: NotificationInputReservationId;
-      readonly notificationId: NotificationId;
-    }
-  | {
-      readonly state: 'cancelled-not-submitted';
-      readonly notificationInputReservationId: NotificationInputReservationId;
-      readonly cancelledAt: IsoUtc;
-    };
-
-export interface StartNotificationTurnInput {
-  readonly notificationId: NotificationId;
-  readonly agentRunId: AgentRunId;
-  readonly effectKey: string;
-  readonly expectedActivityGeneration: ActivityGeneration;
 }
 
 // ── The contract ────────────────────────────────────────────────────────────
