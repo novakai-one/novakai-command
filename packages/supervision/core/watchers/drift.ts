@@ -251,6 +251,16 @@ async function recordMovement(
     && previous.outstandingStatus.state === 'queued') {
     return cancelQueuedStatus(deps, current, previous, observed, nextEvidence, now);
   }
+  if (previous.phase === 'status-outstanding'
+    && previous.outstandingStatus.state === 'delivery-claimed') {
+    return deferClaimedMovement(deps, current, previous, observed, nextEvidence, now);
+  }
+  if ((previous.phase === 'status-outstanding'
+      && (previous.outstandingStatus.state === 'submitted-confirmed'
+        || previous.outstandingStatus.state === 'submitted-unconfirmed'))
+    || previous.phase === 'escalated-waiting-human') {
+    return closeSubmittedMovement(deps, current, previous, observed, nextEvidence, now);
+  }
   const state: DurableDriftState = {
     kind: 'activity-drift',
     episodeOrdinal: previous.episodeOrdinal,
@@ -269,6 +279,86 @@ async function recordMovement(
     providerTurnsStartedThisEvaluation: 0,
     evidenceRefs: observed.evidenceRefs,
   });
+}
+
+async function deferClaimedMovement(
+  deps: DriftDependencies,
+  current: { readonly rule: WatchRule; readonly deadline: WatchDeadline },
+  previous: Extract<DurableDriftState, { readonly phase: 'status-outstanding' }>,
+  observed: DriftEvidenceObservation,
+  nextEvidence: DriftEvidenceCheckpoint,
+  now: Date,
+): Promise<B3Result<DriftCheckOutcome>> {
+  const outstanding = previous.outstandingStatus;
+  if (outstanding.state !== 'delivery-claimed') {
+    throw new TypeError('claimed movement reducer received a non-claimed status');
+  }
+  const state: DurableDriftState = {
+    ...previous,
+    lastEvidence: nextEvidence,
+    outstandingStatus: {
+      ...outstanding,
+      pendingMovementEvidenceRef: movementEvidenceRef(observed, nextEvidence),
+    },
+  };
+  const written = await persistDrift(deps, current, state, now);
+  if (!written.ok) return b3fail(written.error);
+  return b3ok({
+    kind: 'healthy-free-evidence',
+    providerTurnsStartedThisEvaluation: 0,
+    evidenceRefs: observed.evidenceRefs,
+  });
+}
+
+async function closeSubmittedMovement(
+  deps: DriftDependencies,
+  current: { readonly rule: WatchRule; readonly deadline: WatchDeadline },
+  previous: Extract<
+    DurableDriftState,
+    { readonly phase: 'status-outstanding' | 'escalated-waiting-human' }
+  >,
+  observed: DriftEvidenceObservation,
+  nextEvidence: DriftEvidenceCheckpoint,
+  now: Date,
+): Promise<B3Result<DriftCheckOutcome>> {
+  const outstanding = previous.outstandingStatus;
+  if (outstanding.state !== 'submitted-confirmed'
+    && outstanding.state !== 'submitted-unconfirmed') {
+    throw new TypeError('submitted movement reducer received a non-submitted status');
+  }
+  const closureEvidenceRef = movementEvidenceRef(observed, nextEvidence);
+  const replied = observed.replyEvidenceRef !== undefined;
+  const closed: ClosedDriftStatus = {
+    episodeId: outstanding.episodeId,
+    effectKey: outstanding.effectKey,
+    notificationId: outstanding.notificationId,
+    state: replied ? 'replied' : 'activity-observed-after-submission',
+    closedAt: now.toISOString() as IsoUtc,
+    closureEvidenceRef,
+  };
+  const state: DurableDriftState = {
+    kind: 'activity-drift',
+    episodeOrdinal: previous.episodeOrdinal,
+    phase: 'observing',
+    quietIntervals: 0,
+    consecutiveUnansweredChecks: 0,
+    lastEvidence: nextEvidence,
+    lastClosedStatus: closed,
+  };
+  const written = await persistDrift(deps, current, state, now);
+  if (!written.ok) return b3fail(written.error);
+  return replied
+    ? b3ok({
+      kind: 'status-replied',
+      providerTurnsStartedThisEvaluation: 0,
+      consecutiveDrift: 0,
+      replyEvidenceRef: observed.replyEvidenceRef!,
+    })
+    : b3ok({
+      kind: 'healthy-free-evidence',
+      providerTurnsStartedThisEvaluation: 0,
+      evidenceRefs: observed.evidenceRefs,
+    });
 }
 
 function movementEvidenceRef(

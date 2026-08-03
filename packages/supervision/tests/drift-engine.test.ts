@@ -56,6 +56,7 @@ test('identical free evidence establishes a baseline then opens one quiet episod
   let now = new Date('2026-08-03T00:00:00.000Z');
   let sample = 0;
   let transcriptWatermark = 'transcript.42';
+  let replyEvidenceRef: string | undefined;
   const store = createSupervisionStore({ root, dataRoot: path.join(root, 'stores') });
   const options = {
     root,
@@ -88,6 +89,7 @@ test('identical free evidence establishes a baseline then opens one quiet episod
         usageActivityDigest: 'usage:in=10;out=20;turns=2',
         usageSourceCursor: 'usage.7',
         evidenceRefs: [`sample-${String(++sample)}`],
+        ...(replyEvidenceRef === undefined ? {} : { replyEvidenceRef }),
       }),
     },
     driftSubmissionAuthority: { verify: async () => b3ok(null) },
@@ -318,6 +320,138 @@ test('identical free evidence establishes a baseline then opens one quiet episod
       runtimeContext(), submissionInput,
     ));
     assert.deepEqual(replayed, submitted, 'submission replay changed durable state');
+
+    deadline = submitted;
+    transcriptWatermark = 'transcript.44';
+    replyEvidenceRef = 'transcript-turn:reply-44';
+    now = new Date('2026-08-03T00:41:00.000Z');
+    const replied = unwrap(
+      await supervision.checkRunDrift(supervisionContext(), input()),
+    );
+    assert.deepEqual(replied, {
+      kind: 'status-replied',
+      providerTurnsStartedThisEvaluation: 0,
+      consecutiveDrift: 0,
+      replyEvidenceRef: 'transcript-turn:reply-44',
+    });
+    deadline = unwrap(await store.list<WatchDeadline>('watchDeadline'))[0]!;
+    assert.equal(deadline.dueAt, '2026-08-03T00:46:00.000Z');
+    assert.equal(deadline.driftState?.phase, 'observing');
+    assert.equal(deadline.driftState?.quietIntervals, 0);
+    assert.equal(deadline.driftState?.consecutiveUnansweredChecks, 0);
+    assert.deepEqual(deadline.driftState?.lastClosedStatus, {
+      episodeId: submissionInput.expectedEpisodeId,
+      effectKey: submissionInput.expectedEffectKey,
+      notificationId: submissionInput.expectedNotificationId,
+      state: 'replied',
+      closedAt: '2026-08-03T00:41:00.000Z',
+      closureEvidenceRef: 'transcript-turn:reply-44',
+    });
+
+    replyEvidenceRef = undefined;
+    now = new Date('2026-08-03T00:46:00.000Z');
+    unwrap(await supervision.checkRunDrift(supervisionContext(), input()));
+    deadline = unwrap(await store.list<WatchDeadline>('watchDeadline'))[0]!;
+    now = new Date('2026-08-03T00:51:00.000Z');
+    const thirdQueued = unwrap(
+      await supervision.checkRunDrift(supervisionContext(), input()),
+    );
+    assert.equal(thirdQueued.kind, 'status-turn-queued');
+    if (thirdQueued.kind !== 'status-turn-queued') throw new Error('third status not queued');
+    deadline = unwrap(await store.list<WatchDeadline>('watchDeadline'))[0]!;
+    const thirdNotification = unwrap(
+      await store.list<Notification>('notification'),
+    ).find((item) => item.id === thirdQueued.notificationId)!;
+    const thirdReservationId = deriveNotificationInputReservationId(thirdQueued.effectKey);
+    const thirdTerminalAttemptId =
+      'terminalInput_019fd000-0000-7000-8000-0000000000b5' as never;
+    const thirdOutstanding = deadline.driftState?.outstandingStatus;
+    assert.equal(thirdOutstanding?.state, 'queued');
+    if (thirdOutstanding?.state !== 'queued') throw new Error('third status not queued');
+    deadline = unwrap(await store.update<WatchDeadline>(
+      'sys_supervision',
+      deadline.id,
+      {
+        driftState: {
+          ...deadline.driftState,
+          outstandingStatus: {
+            ...thirdOutstanding,
+            state: 'delivery-claimed',
+            claimedAt: '2026-08-03T00:51:30.000Z',
+            notificationInputReservationId: thirdReservationId,
+          },
+        },
+      },
+      deadline.recordVersion,
+      deriveClientOpId('test:claim-third-drift:' + deadline.id),
+    ));
+    unwrap(await store.update<Notification>(
+      'sys_supervision',
+      thirdNotification.id,
+      {
+        state: 'offered-to-endpoint',
+        deliveryAttempt: {
+          state: 'delivery-claimed',
+          effectKey: thirdQueued.effectKey,
+          claimedAt: '2026-08-03T00:51:30.000Z',
+          notificationInputReservationId: thirdReservationId,
+        },
+      },
+      thirdNotification.recordVersion,
+      deriveClientOpId('test:claim-third-notification:' + thirdNotification.id),
+    ));
+    transcriptWatermark = 'transcript.45';
+    now = new Date('2026-08-03T00:56:00.000Z');
+    const claimedMovement = unwrap(
+      await supervision.checkRunDrift(supervisionContext(), input()),
+    );
+    assert.equal(claimedMovement.kind, 'healthy-free-evidence');
+    deadline = unwrap(await store.list<WatchDeadline>('watchDeadline'))[0]!;
+    assert.equal(deadline.driftState?.outstandingStatus?.state, 'delivery-claimed');
+    assert.equal(
+      deadline.driftState?.outstandingStatus?.state === 'delivery-claimed'
+        ? deadline.driftState.outstandingStatus.pendingMovementEvidenceRef
+        : undefined,
+      'sample-11',
+    );
+    const uncertainInput = {
+      watchDeadlineId: deadline.id,
+      expectedRecordVersion: deadline.recordVersion,
+      expectedEpisodeId: deadline.driftState!.episodeId!,
+      expectedEffectKey: thirdQueued.effectKey,
+      expectedNotificationId: thirdQueued.notificationId,
+      expectedNotificationInputReservationId: thirdReservationId,
+      expectedTerminalInputAttemptId: thirdTerminalAttemptId,
+      submission: {
+        state: 'submitted-unconfirmed' as const,
+        submittedAt: '2026-08-03T00:56:30.000Z' as IsoUtc,
+      },
+    };
+    const closedAfterClaim = unwrap(await supervision.recordDriftStatusSubmission(
+      runtimeContext(), uncertainInput,
+    ));
+    assert.equal(closedAfterClaim.dueAt, '2026-08-03T01:01:30.000Z');
+    assert.equal(closedAfterClaim.driftState?.phase, 'observing');
+    assert.equal(closedAfterClaim.driftState?.quietIntervals, 0);
+    assert.deepEqual(closedAfterClaim.driftState?.lastClosedStatus, {
+      episodeId: uncertainInput.expectedEpisodeId,
+      effectKey: uncertainInput.expectedEffectKey,
+      notificationId: uncertainInput.expectedNotificationId,
+      state: 'activity-observed-after-submission',
+      closedAt: '2026-08-03T00:56:30.000Z',
+      closureEvidenceRef: 'sample-11',
+    });
+    assert.equal(
+      unwrap(await store.read<Notification>(
+        'notification', uncertainInput.expectedNotificationId,
+      ))!.state,
+      'delivery-uncertain',
+    );
+    assert.deepEqual(
+      unwrap(await supervision.recordDriftStatusSubmission(runtimeContext(), uncertainInput)),
+      closedAfterClaim,
+      'pending-movement submission replay did not reconcile the closed episode',
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

@@ -14,6 +14,7 @@ import {
 } from '@novakai/foundation/contract';
 import {
   SUPERVISION_RECORD_WRITER,
+  type ClosedDriftStatus,
   type DurableDriftState,
   type Notification,
   type RecordDriftStatusSubmissionInput,
@@ -43,6 +44,12 @@ function sameSubmission(
   input: RecordDriftStatusSubmissionInput,
 ): boolean {
   const state = deadline.driftState;
+  if (state?.phase === 'observing' && state.lastClosedStatus !== undefined) {
+    const closed = state.lastClosedStatus;
+    return closed.episodeId === input.expectedEpisodeId
+      && closed.effectKey === input.expectedEffectKey
+      && closed.notificationId === input.expectedNotificationId;
+  }
   if (state?.phase !== 'status-outstanding') return false;
   const outstanding = state.outstandingStatus;
   if (outstanding.state !== input.submission.state) return false;
@@ -78,7 +85,8 @@ async function loadClaim(
     ]);
     if (!rule.ok) return b3fail(rule.error);
     if (!notification.ok) return b3fail(notification.error);
-    if (rule.value !== null && notification.value !== null) {
+    if (rule.value !== null && notification.value !== null
+      && notificationAlreadyRecorded(notification.value, input)) {
       return b3ok({ deadline: deadline.value, rule: rule.value, notification: notification.value });
     }
   }
@@ -200,6 +208,32 @@ function submittedState(
   } as DurableDriftState;
 }
 
+function closedAfterPendingMovement(
+  current: Extract<DurableDriftState, { readonly phase: 'status-outstanding' }>,
+  input: RecordDriftStatusSubmissionInput,
+): DurableDriftState | null {
+  const claimed = current.outstandingStatus;
+  if (claimed.state !== 'delivery-claimed'
+    || claimed.pendingMovementEvidenceRef === undefined) return null;
+  const closed: ClosedDriftStatus = {
+    episodeId: claimed.episodeId,
+    effectKey: claimed.effectKey,
+    notificationId: claimed.notificationId,
+    state: 'activity-observed-after-submission',
+    closedAt: input.submission.submittedAt,
+    closureEvidenceRef: claimed.pendingMovementEvidenceRef,
+  };
+  return {
+    kind: 'activity-drift',
+    episodeOrdinal: current.episodeOrdinal,
+    phase: 'observing',
+    quietIntervals: 0,
+    consecutiveUnansweredChecks: 0,
+    ...(current.lastEvidence === undefined ? {} : { lastEvidence: current.lastEvidence }),
+    lastClosedStatus: closed,
+  };
+}
+
 /** Q2's complete Runtime→Supervision CAS, with no provider effect. */
 export async function recordDriftStatusSubmission(
   deps: DriftSubmissionDependencies,
@@ -232,10 +266,24 @@ export async function recordDriftStatusSubmission(
     deps, current.value.notification, input,
   );
   if (!notification.ok) return b3fail(notification.error);
+  const closed = closedAfterPendingMovement(state, input);
+  const dueAt = closed === null
+    ? replyDueAt
+    : new Date(
+      submittedAtMs + (
+        current.value.rule.condition.kind === 'activity-drift'
+          ? current.value.rule.condition.intervalMs
+          : 0
+      ),
+    ).toISOString() as IsoUtc;
   return deps.store.update<WatchDeadline>(
     SUPERVISION_RECORD_WRITER,
     current.value.deadline.id,
-    { dueAt: replyDueAt, state: 'armed', driftState: submittedState(state, input, replyDueAt) },
+    {
+      dueAt,
+      state: 'armed',
+      driftState: closed ?? submittedState(state, input, replyDueAt),
+    },
     current.value.deadline.recordVersion,
     deriveClientOpId(
       'b3v4:record-drift-status-submission:'
