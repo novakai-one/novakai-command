@@ -3,10 +3,12 @@ import {
   b3fail,
   b3ok,
   b3err,
+  commandReceiptId,
   deriveClientOpId,
   type CommandContext,
   type B3Result,
   type SystemCommandContext,
+  type PublicOperationName,
 } from '@novakai/foundation/contract';
 import {
   SUPERVISION_RECORD_WRITER,
@@ -17,6 +19,7 @@ import {
   type WatchRule,
 } from '../../contract/index.js';
 import type { SupervisionStore } from '../store.js';
+import { startDeadlineEvaluation } from '../watch-evaluation-progress.js';
 
 export interface DeadlineDependencies {
   readonly store: SupervisionStore;
@@ -129,10 +132,47 @@ export async function claimDueDeadlines(
       || String(left.id).localeCompare(String(right.id)))
     .slice(0, input.limit);
   const claimed: WatchDeadline[] = [];
+  let invariantBreach: ReturnType<typeof b3err> | undefined;
+  const receiptId = commandReceiptId(
+    _context.principal.id,
+    'supervision.claimDueDeadlines' as PublicOperationName,
+    _context.clientOpId,
+  );
   for (const deadline of dueDeadlines) {
+    const rule = await deps.store.read<WatchRule>('watchRule', deadline.watchRuleId);
+    if (!rule.ok) return rule;
+    const ordinary = rule.value?.condition.kind !== 'activity-drift';
+    if (ordinary
+      && (deadline.creationRecordVersion === undefined
+        || deadline.armingOrdinal === undefined)) {
+      invariantBreach ??= b3err(
+        'RecoveryRequired',
+        `ordinary deadline ${String(deadline.id)} is missing immutable arming identity fields`,
+        {
+          operationId: receiptId,
+          reason: `WatchDeadline ${String(deadline.id)} is missing `
+            + `${deadline.creationRecordVersion === undefined ? 'creationRecordVersion' : 'armingOrdinal'}`,
+        },
+        true,
+      );
+      continue;
+    }
     const written = await claimDeadline(deps, deadline);
     if (!written.ok) return b3fail(written.error);
     claimed.push(written.value);
+    if (ordinary) {
+      const progress = await startDeadlineEvaluation(
+        deps.store,
+        SUPERVISION_RECORD_WRITER,
+        {
+          commandReceiptId: receiptId,
+          deadline: written.value as WatchDeadline & {
+            readonly creationRecordVersion: NonNullable<WatchDeadline['creationRecordVersion']>;
+          },
+        },
+      );
+      if (!progress.ok) return progress;
+    }
   }
-  return b3ok(claimed);
+  return invariantBreach === undefined ? b3ok(claimed) : b3fail(invariantBreach);
 }

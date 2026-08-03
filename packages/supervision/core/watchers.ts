@@ -6,6 +6,7 @@
 import {
   b3err, b3fail, b3ok, deriveClientOpId, nowIsoUtc,
   type ActivityGeneration, type B3PrincipalId, type B3Result, type IsoUtc,
+  type RecordVersion,
   type SystemCommandContext,
 } from '@novakai/foundation/contract';
 import {
@@ -131,12 +132,14 @@ function deadlineRecord(
   rule: WatchRule,
   generation: ActivityGeneration,
   dueAt: IsoUtc,
+  armingOrdinal?: number,
 ): Persisted<WatchDeadline> & Record<string, unknown> {
   const keyed = subjectKey(rule.subject);
   return {
     kind: 'watchDeadline',
     id: deriveWatchDeadlineId({
       watchRuleId: rule.id, subjectKey: keyed, activityGeneration: generation,
+      ...(armingOrdinal === undefined ? {} : { armingOrdinal }),
     }),
     schemaVersion: 1,
     createdAt: nowIsoUtc(),
@@ -147,6 +150,10 @@ function deadlineRecord(
     activityGeneration: generation,
     dueAt,
     state: 'armed',
+    ...(armingOrdinal === undefined ? {} : {
+      creationRecordVersion: 1 as RecordVersion,
+      armingOrdinal,
+    }),
     ...(rule.condition.kind === 'activity-drift' ? {
       driftState: {
         kind: 'activity-drift' as const,
@@ -159,16 +166,94 @@ function deadlineRecord(
   };
 }
 
+async function supersedeOtherOrdinaryDeadlines(
+  deps: Pick<InstallDependencies, 'store'>,
+  rule: WatchRule,
+  keep: WatchDeadline,
+): Promise<B3Result<null>> {
+  const listed = await deps.store.list<WatchDeadline>('watchDeadline');
+  if (!listed.ok) return listed;
+  for (const deadline of listed.value) {
+    if (deadline.id === keep.id
+      || deadline.watchRuleId !== rule.id
+      || deadline.driftState !== undefined
+      || deadline.state === 'fired'
+      || deadline.state === 'superseded') continue;
+    const superseded = await deps.store.update<WatchDeadline>(
+      SUPERVISION_RECORD_WRITER,
+      deadline.id,
+      { state: 'superseded' },
+      deadline.recordVersion,
+      deriveClientOpId(`b3v4:supersede-ordinary-deadline:${String(deadline.id)}:${String(keep.id)}`),
+    );
+    if (!superseded.ok) return superseded;
+  }
+  return b3ok(null);
+}
+
+/** Append one immutable ordinary arming cycle and supersede its predecessor. */
+export async function armOrdinaryDeadlineAt(
+  deps: Pick<InstallDependencies, 'store'>,
+  principal: B3PrincipalId,
+  rule: WatchRule,
+  generation: ActivityGeneration,
+  dueAt: IsoUtc,
+  forceRearm: boolean,
+): Promise<B3Result<null>> {
+  const keyed = subjectKey(rule.subject);
+  const listed = await deps.store.list<WatchDeadline>('watchDeadline');
+  if (!listed.ok) return listed;
+  const ordinary = listed.value.filter((deadline) => deadline.watchRuleId === rule.id
+    && deadline.subjectKey === keyed
+    && deadline.driftState === undefined);
+  const exact = ordinary.find((deadline) => deadline.activityGeneration === generation
+    && deadline.dueAt === dueAt
+    && (deadline.state === 'armed' || deadline.state === 'claimed')
+    && deadline.armingOrdinal !== undefined);
+  if (exact !== undefined) {
+    return supersedeOtherOrdinaryDeadlines(deps, rule, exact);
+  }
+  const current = ordinary.find((deadline) => deadline.state === 'armed'
+    || deadline.state === 'claimed');
+  if (!forceRearm && current !== undefined) return b3ok(null);
+  const sameGeneration = ordinary.filter((deadline) =>
+    Number(deadline.activityGeneration) === Number(generation));
+  const armingOrdinal = sameGeneration.reduce(
+    (largest, deadline) => Math.max(largest, deadline.armingOrdinal ?? -1),
+    -1,
+  ) + 1;
+  const record = deadlineRecord(principal, rule, generation, dueAt, armingOrdinal);
+  const existing = await deps.store.read<WatchDeadline>('watchDeadline', record.id);
+  if (!existing.ok) return existing;
+  let armed = existing.value;
+  if (armed === null) {
+    const created = await deps.store.create<WatchDeadline>(
+      SUPERVISION_RECORD_WRITER,
+      record,
+      deriveClientOpId(`b3v4:arm-ordinary-deadline:${String(record.id)}`),
+    );
+    if (!created.ok) return b3fail(created.error);
+    armed = created.value;
+  }
+  return supersedeOtherOrdinaryDeadlines(deps, rule, armed);
+}
+
 /** Arm one rule's deadline, or report that this rule waits on nothing. */
 export async function armDeadline(
   deps: Pick<InstallDependencies, 'store' | 'clock'>,
   principal: B3PrincipalId,
   rule: WatchRule,
   generation: ActivityGeneration,
+  forceOrdinaryRearm = false,
 ): Promise<B3Result<null>> {
   const waitMs = waitMsOf(rule);
   if (waitMs === null) return b3ok(null);
   const dueAt = new Date(deps.clock().getTime() + waitMs).toISOString() as IsoUtc;
+  if (rule.condition.kind !== 'activity-drift') {
+    return armOrdinaryDeadlineAt(
+      deps, principal, rule, generation, dueAt, forceOrdinaryRearm,
+    );
+  }
   const record = deadlineRecord(principal, rule, generation, dueAt);
   const existing = await deps.store.read<WatchDeadline>('watchDeadline', record.id);
   if (!existing.ok) return existing;

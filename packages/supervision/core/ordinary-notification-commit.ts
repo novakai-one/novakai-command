@@ -4,7 +4,8 @@ import {
 } from '@novakai/foundation/contract';
 import {
   deriveNotificationId, isProviderUsageEvidenceId, subjectKey, watchOccurrenceFamily,
-  type Notification, type ProviderUsageEvidence, type RunOccurrenceEventFacts,
+  type ConditionOccurrence, type Notification, type ProviderUsageEvidence,
+  type RunOccurrenceEventFacts,
   type WatchEvaluationId, type WatchEvaluationRuleOutcome, type WatchRule,
 } from '../contract/index.js';
 import type { Persisted, SupervisionStore } from './store.js';
@@ -279,9 +280,36 @@ export async function commitOrdinaryNotification(
     return b3ok({ outcome: { kind: 'cooldown-suppressed', qualifiedAt: qualifiedAt as never } });
   }
 
+  let committable = candidate;
+  if (candidate.schemaVersion === 2
+    && candidate.deliveryMode === 'next-turn-context'
+    && candidate.subject.kind === 'agent'
+    && candidate.occurrenceIdentity !== 'legacy-generation') {
+    if (deps.runs?.resolveCurrentRunByAgent === undefined) {
+      return b3fail(b3err(
+        'RuntimeUnavailable', 'current-Run delivery-fence authority is not composed',
+        { operationId, stage: 'occurrence-derivation', reason: 'current-run-query-not-composed' },
+        true,
+      ));
+    }
+    const target = await deps.runs.resolveCurrentRunByAgent(principal, candidate.subject.agentId);
+    if (!target.ok) return target;
+    const sourceRunId = (candidate.conditionOccurrence as ConditionOccurrence).agentRunId;
+    if (target.value !== null && target.value.agentRunId !== sourceRunId) {
+      committable = {
+        ...candidate,
+        deliveryFence: {
+          targetAgentRunId: target.value.agentRunId,
+          baselineActivityGeneration: target.value.activityGeneration,
+          boundAt: candidate.qualifiedAt,
+        },
+      };
+    }
+  }
+
   const written = await deps.store.create<Notification>(
     'sys_supervision' as B3PrincipalId,
-    candidate,
+    committable,
     // The occurrence ID, not delivery/evaluation time, is the logical effect.
     deriveClientOpId(`b3v4:ordinary-notification:${String(candidate.id)}`),
   );

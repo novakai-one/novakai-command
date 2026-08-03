@@ -7,7 +7,7 @@
 import {
   b3err, b3fail, b3ok, commandReceiptId, deriveClientOpId, deterministicId,
   validationFailed,
-  type B3Page, type B3PrincipalId, type B3Result, type IsoUtc,
+  type B3Page, type B3PrincipalId, type B3Result, type CommandReceiptId, type IsoUtc,
   type PublicOperationName,
   type SystemCommandContext,
 } from '@novakai/foundation/contract';
@@ -17,7 +17,7 @@ import {
   type WatchDeadline, type WatchEvaluationProgress, type WatchEvaluationRuleOutcome,
   type WatchRule,
 } from '../contract/index.js';
-import { conditionNotification, queueConditionNotification } from './condition-notifications.js';
+import { conditionNotification } from './condition-notifications.js';
 import {
   lifecycleNotificationCandidate, settleLifecycleEventRules,
 } from './lifecycle-notifications.js';
@@ -28,11 +28,13 @@ import {
   type UsageThresholdDependencies,
 } from './usage-threshold-notifications.js';
 import { claimDeadline } from './watchers/deadlines.js';
+import { armOrdinaryDeadlineAt } from './watchers.js';
 import {
   advanceProgressRecovery, appendProgressOutcome, beginProgressAttempt,
-  finishProgress, startEventEvaluation,
+  finishProgress, startDeadlineEvaluation, startEventEvaluation,
 } from './watch-evaluation-progress.js';
 import type { WatchOccurrenceRelationshipAuthority } from '../contract/api.js';
+import { rebindDeliveryFences } from './delivery-fences.js';
 
 export interface EvaluateDependencies extends UsageThresholdDependencies {
   readonly store: SupervisionStore;
@@ -65,7 +67,36 @@ async function fireDeadline(
   input: { readonly rule: WatchRule; readonly deadline: WatchDeadline },
   observedAt: IsoUtc,
   evidenceRef: string,
+  receiptId: CommandReceiptId,
 ): Promise<B3Result<Notification | null>> {
+  if (input.deadline.creationRecordVersion === undefined
+    || input.deadline.armingOrdinal === undefined) {
+    return b3fail(b3err(
+      'RecoveryRequired',
+      `ordinary deadline ${String(input.deadline.id)} lacks immutable arming identity`,
+      {
+        operationId: receiptId,
+        reason: `WatchDeadline ${String(input.deadline.id)} is missing `
+          + `${input.deadline.creationRecordVersion === undefined
+            ? 'creationRecordVersion'
+            : 'armingOrdinal'}`,
+      },
+      true,
+    ));
+  }
+  const started = await startDeadlineEvaluation(deps.store, principal, {
+    commandReceiptId: receiptId,
+    deadline: input.deadline as WatchDeadline & {
+      readonly creationRecordVersion: NonNullable<WatchDeadline['creationRecordVersion']>;
+    },
+  });
+  if (!started.ok) return started;
+  let progress = started.value;
+  let queued: Notification | null = null;
+  if (progress.state !== 'completed') {
+    const begun = await beginProgressAttempt(deps.store, principal, progress);
+    if (!begun.ok) return begun;
+    progress = begun.value;
   const record = conditionNotification(
     principal,
     input.rule,
@@ -74,8 +105,39 @@ async function fireDeadline(
     evidenceRef,
     { occurrenceIdentity: 'legacy-generation', qualifiedAt: input.deadline.dueAt },
   );
-  const queued = await queueConditionNotification(deps, principal, record);
-  if (!queued.ok) return queued;
+    const committed = await commitOrdinaryNotification(
+      deps,
+      { id: principal, kind: 'system', verifiedScopes: [] },
+      input.rule,
+      record,
+      progress.id,
+    );
+    if (!committed.ok) {
+      const details = committed.error.details as Readonly<Record<string, unknown>>;
+      const stage = details['stage'] === 'legacy-occurrence-adoption'
+        ? 'legacy-occurrence-adoption'
+        : details['stage'] === 'rule-version-fence'
+          ? 'rule-version-fence'
+          : 'occurrence-derivation';
+      const recovery = { stage, reason: committed.error.message } as const;
+      const finished = await finishProgress(deps.store, principal, progress, recovery);
+      return finished.ok ? b3fail(committed.error) : finished;
+    }
+    queued = committed.value.notification ?? null;
+    const recorded = await appendProgressOutcome(
+      deps.store,
+      principal,
+      progress,
+      {
+        watchRuleId: input.rule.id,
+        evaluatedRecordVersion: input.rule.recordVersion,
+        outcome: committed.value.outcome,
+      },
+    );
+    if (!recorded.ok) return recorded;
+    const finished = await finishProgress(deps.store, principal, recorded.value);
+    if (!finished.ok) return finished;
+  }
   const claimed = await claimDeadline({
     store: deps.store,
     clock: () => new Date(observedAt),
@@ -89,7 +151,7 @@ async function fireDeadline(
     claimed.value.recordVersion, deriveClientOpId(`b3v4:fire-deadline:${claimed.value.id}`),
   );
   if (!fired.ok) return b3fail(fired.error);
-  return b3ok(queued.value);
+  return b3ok(queued);
 }
 
 /** Push an idle deadline out; observed activity is why it has not fired. */
@@ -97,17 +159,24 @@ async function rearmDeadline(
   deps: EvaluateDependencies,
   principal: B3PrincipalId,
   input: { readonly rule: WatchRule; readonly deadline: WatchDeadline },
-  observedAt: IsoUtc,
+  event: ObservedEvent,
 ): Promise<B3Result<null>> {
   if (input.rule.condition.kind !== 'idle-for-ms') return b3ok(null);
+  if (event.activityGeneration === null
+    || Number(event.activityGeneration) <= Number(input.deadline.activityGeneration)) {
+    return b3ok(null);
+  }
   const dueAt = new Date(
-    new Date(observedAt).getTime() + input.rule.condition.value,
+    new Date(event.observedAt).getTime() + input.rule.condition.value,
   ).toISOString();
-  const written = await deps.store.update<WatchDeadline>(
-    principal, input.deadline.id, { dueAt },
-    input.deadline.recordVersion, deriveClientOpId(`b3v4:rearm:${input.deadline.id}:${observedAt}`),
+  return armOrdinaryDeadlineAt(
+    deps,
+    principal,
+    input.rule,
+    event.activityGeneration,
+    dueAt as IsoUtc,
+    true,
   );
-  return written.ok ? b3ok(null) : b3fail(written.error);
 }
 
 /** The three facts a committed event contributes to a watcher evaluation. */
@@ -115,6 +184,8 @@ interface ObservedEvent {
   readonly observedAt: IsoUtc;
   readonly evidenceRef: string;
   readonly about: string | null;
+  readonly activityGeneration: import('@novakai/foundation/contract').ActivityGeneration | null;
+  readonly commandReceiptId: CommandReceiptId;
 }
 
 /** What one armed deadline does about one committed event. */
@@ -125,10 +196,12 @@ async function settleDeadline(
   event: ObservedEvent,
 ): Promise<B3Result<Notification | null>> {
   if (String(event.observedAt) >= String(input.deadline.dueAt)) {
-    return fireDeadline(deps, principal, input, event.observedAt, event.evidenceRef);
+    return fireDeadline(
+      deps, principal, input, event.observedAt, event.evidenceRef, event.commandReceiptId,
+    );
   }
   if (event.about !== input.deadline.subjectKey) return b3ok(null);
-  const rearmed = await rearmDeadline(deps, principal, input, event.observedAt);
+  const rearmed = await rearmDeadline(deps, principal, input, event);
   return rearmed.ok ? b3ok(null) : b3fail(rearmed.error);
 }
 
@@ -176,6 +249,11 @@ export async function evaluateEvent(
   if (!parsed.ok) {
     return b3fail(validationFailed([{ path: 'event', message: parsed.error.message }]));
   }
+  const receiptId = commandReceiptId(
+    _context.principal.id,
+    'supervision.evaluateEvent' as PublicOperationName,
+    _context.clientOpId,
+  );
   const armed = await deps.store.list<WatchDeadline>('watchDeadline', { state: 'armed' });
   if (!armed.ok) return b3fail(armed.error);
   const event = {
@@ -183,16 +261,16 @@ export async function evaluateEvent(
     evidenceRef: parsed.value.eventId,
     qualifiedAt: parsed.value.occurredAt,
     about: subjectKeyOfEvent(parsed.value.payload),
+    activityGeneration: Number.isSafeInteger(parsed.value.payload['activityGeneration'])
+      && Number(parsed.value.payload['activityGeneration']) >= 0
+      ? parsed.value.payload['activityGeneration'] as import('@novakai/foundation/contract').ActivityGeneration
+      : null,
+    commandReceiptId: receiptId,
   };
   const deadlineNotifications = await settleArmedDeadlines(deps, armed.value, event);
   if (!deadlineNotifications.ok) return deadlineNotifications;
   const rules = await deps.store.list<WatchRule>('watchRule');
   if (!rules.ok) return b3fail(rules.error);
-  const receiptId = commandReceiptId(
-    _context.principal.id,
-    'supervision.evaluateEvent' as PublicOperationName,
-    _context.clientOpId,
-  );
   const started = await startEventEvaluation(deps.store, SUPERVISION_RECORD_WRITER, {
     commandReceiptId: receiptId,
     eventId: parsed.value.eventId,
@@ -354,6 +432,12 @@ export async function evaluateEvent(
     if (!recorded.ok) return recorded;
     progress = recorded.value;
   }
+  const rebound = await rebindDeliveryFences(deps, _context.principal, {
+    eventId: parsed.value.eventId,
+    kind: parsed.value.kind,
+    occurredAt: parsed.value.occurredAt,
+  });
+  if (!rebound.ok) return rebound;
   const finished = await finishProgress(
     deps.store, SUPERVISION_RECORD_WRITER, progress, isolatedRecovery,
   );
@@ -377,10 +461,12 @@ export async function evaluateEvent(
 export async function evaluateDueDeadlines(
   deps: EvaluateDependencies,
   observedAt: IsoUtc,
+  receiptId: CommandReceiptId,
 ): Promise<B3Result<readonly Notification[]>> {
-  const armed = await deps.store.list<WatchDeadline>('watchDeadline', { state: 'armed' });
-  if (!armed.ok) return b3fail(armed.error);
-  const dueDeadlines = armed.value
+  const deadlines = await deps.store.list<WatchDeadline>('watchDeadline');
+  if (!deadlines.ok) return b3fail(deadlines.error);
+  const dueDeadlines = deadlines.value
+    .filter((deadline) => deadline.state === 'armed' || deadline.state === 'claimed')
     .filter((deadline) => String(deadline.dueAt) <= String(observedAt))
     .sort((left, right) => String(left.dueAt).localeCompare(String(right.dueAt))
       || String(left.id).localeCompare(String(right.id)));
@@ -390,6 +476,8 @@ export async function evaluateDueDeadlines(
       observedAt,
       evidenceRef: `watch-deadline:${String(deadline.id)}:due:${String(deadline.dueAt)}`,
       about: null,
+      activityGeneration: null,
+      commandReceiptId: receiptId,
     });
     if (!settled.ok) return b3fail(settled.error);
     if (settled.value !== null) queued.push(settled.value);

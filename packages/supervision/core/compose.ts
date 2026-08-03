@@ -6,7 +6,8 @@
 // that agreed with itself. Lanes A/B/C fill in the members this tracer leaves
 // out; none of them has to change what is already wired.
 import {
-  b3err, b3fail, b3ok, composeReceiptStore,
+  b3err, b3fail, b3ok, commandReceiptId, composeReceiptStore, deriveClientOpId,
+  mintTraceCorrelationId,
   type AuthenticatedPrincipal, type B3Result, type IsoUtc, type PublicOperationName,
 } from '@novakai/foundation/contract';
 import type {
@@ -195,9 +196,23 @@ export function composeSupervision(options: SupervisionCoreOptions): Supervision
       },
       () => evaluateEvent(evaluation, context, input),
     )),
-    evaluateDueDeadlines: (observedAt) => owner.run(
-      () => evaluateDueDeadlines({ store }, observedAt),
-    ),
+    evaluateDueDeadlines: (observedAt) => {
+      const context = {
+        principal: { id: 'sys_supervision' as const, kind: 'system' as const, verifiedScopes: [] },
+        clientOpId: deriveClientOpId(`b3v4:evaluate-due-deadlines:${String(observedAt)}`),
+        traceId: mintTraceCorrelationId(),
+        contractVersion: 1 as const,
+      };
+      const operation = 'supervision.evaluateDueDeadlines' as PublicOperationName;
+      const receiptId = commandReceiptId(
+        context.principal.id, operation, context.clientOpId,
+      );
+      return owner.run(() => receipts.runCommand(
+        context,
+        { operation, request: { observedAt }, replaySafe: true, retainRetryableProgress: true },
+        () => evaluateDueDeadlines({ store }, observedAt, receiptId),
+      ));
+    },
     listNotifications: (_principal, filter) => listNotifications({ store }, filter),
     listWatchRules: (principal, filter) => listWatchRules(
       store, options.watchRuleAccess, principal, filter,
@@ -222,7 +237,16 @@ export function composeSupervision(options: SupervisionCoreOptions): Supervision
     claimDueDeadlines: (context, input) => {
       const parsed = parseClaimDueDeadlinesInput(input);
       return parsed.ok
-        ? claimDueDeadlines({ store, clock }, context, parsed.value)
+        ? owner.run(() => receipts.runCommand(
+            context,
+            {
+              operation: 'supervision.claimDueDeadlines' as PublicOperationName,
+              request: parsed.value,
+              replaySafe: true,
+              retainRetryableProgress: true,
+            },
+            () => claimDueDeadlines({ store, clock }, context, parsed.value),
+          ))
         : Promise.resolve(parsed);
     },
     resetDriftEpisode: (context, input) => {

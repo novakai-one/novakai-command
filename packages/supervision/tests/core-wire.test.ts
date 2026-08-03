@@ -425,14 +425,27 @@ test('an event inside the idle window pushes the deadline out and queues nothing
   try {
     await rig.supervision.installRunWatchers(runtimeContext(), INSTALL);
     const queued = unwrap(await rig.supervision.evaluateEvent(runtimeContext(), {
-      event: committedEvent('2026-08-03T00:01:00.000Z', 1),
+      event: {
+        ...committedEvent('2026-08-03T00:01:00.000Z', 1),
+        payload: {
+          agentRunId: RUN_ID,
+          toLifecycle: 'ready',
+          activityGeneration: 5,
+        },
+      },
     }), 'evaluateEvent');
     assert.deepEqual(queued, [], 'a live Run was reported idle');
 
     const deadlines = unwrap(await rig.supervision.listWatchDeadlines(human), 'listWatchDeadlines');
-    assert.equal(deadlines[0]!.state, 'armed');
-    assert.equal(deadlines[0]!.dueAt, '2026-08-03T00:06:00.000Z',
+    assert.equal(deadlines.length, 2);
+    const armed = deadlines.find((deadline) => deadline.state === 'armed');
+    const superseded = deadlines.find((deadline) => deadline.state === 'superseded');
+    assert.equal(armed?.dueAt, '2026-08-03T00:06:00.000Z',
       'observed activity did not re-arm the idle deadline');
+    assert.equal(armed?.activityGeneration, 5);
+    assert.equal(armed?.armingOrdinal, 0);
+    assert.equal(armed?.creationRecordVersion, 1);
+    assert.equal(superseded?.activityGeneration, 4);
   } finally {
     rig.close();
   }

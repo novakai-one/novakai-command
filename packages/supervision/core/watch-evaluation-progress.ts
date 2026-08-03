@@ -4,12 +4,13 @@ import {
   type CommandReceiptId, type EventCursor,
 } from '@novakai/foundation/contract';
 import {
-  deriveEventWatchEvaluationId,
+  deriveDeadlineWatchEvaluationId, deriveEventWatchEvaluationId,
   type WatchEvaluationId,
   type WatchEvaluationProgress,
   type WatchEvaluationProgressFilter,
   type WatchEvaluationRuleOutcome,
   type WatchEvaluationTrigger,
+  type WatchDeadline,
   type WatchRuleId,
 } from '../contract/index.js';
 import type { SupervisionStore } from './store.js';
@@ -20,6 +21,13 @@ export interface StartEventEvaluationInput {
   readonly commandReceiptId: CommandReceiptId;
   readonly eventId: string;
   readonly orderedWatchRuleIds: readonly WatchRuleId[];
+}
+
+export interface StartDeadlineEvaluationInput {
+  readonly commandReceiptId: CommandReceiptId;
+  readonly deadline: WatchDeadline & {
+    readonly creationRecordVersion: NonNullable<WatchDeadline['creationRecordVersion']>;
+  };
 }
 
 export interface ProgressEntry {
@@ -78,6 +86,41 @@ export async function startEventEvaluation(
     nextRuleIndex: 0,
     state: 'running',
   }, deriveClientOpId(`b3v4:start-watch-evaluation:${String(id)}`));
+}
+
+/** Create or adopt the progress identity of one immutable ordinary arming. */
+export async function startDeadlineEvaluation(
+  store: SupervisionStore,
+  principal: B3PrincipalId,
+  input: StartDeadlineEvaluationInput,
+): Promise<B3Result<WatchEvaluationProgress>> {
+  const { deadline } = input;
+  const evaluationId = deriveDeadlineWatchEvaluationId(
+    deadline.id,
+    deadline.creationRecordVersion,
+  );
+  const prior = await store.read<WatchEvaluationProgress>('watchEvaluation', evaluationId);
+  if (!prior.ok) return prior;
+  if (prior.value !== null) return b3ok(prior.value);
+  return store.create<WatchEvaluationProgress>(principal, {
+    kind: 'watchEvaluation',
+    id: evaluationId,
+    schemaVersion: 1,
+    createdAt: nowIsoUtc(),
+    permissionLevel: 'private',
+    createdBy: principal,
+    commandReceiptId: input.commandReceiptId,
+    trigger: {
+      kind: 'deadline',
+      watchDeadlineId: deadline.id,
+      deadlineCreationRecordVersion: deadline.creationRecordVersion,
+    },
+    orderedWatchRuleIds: [deadline.watchRuleId],
+    attemptOrdinal: 0,
+    completed: [],
+    nextRuleIndex: 0,
+    state: 'running',
+  }, deriveClientOpId(`b3v4:start-deadline-evaluation:${String(evaluationId)}`));
 }
 
 export async function beginProgressAttempt(
