@@ -133,25 +133,31 @@ export function composeSupervision(options: SupervisionCoreOptions): Supervision
     createWatchRule: (context, input) => {
       const parsed = parseCreateWatchRuleInput(input);
       if (!parsed.ok) return Promise.resolve(parsed);
-      if (options.watchRuleGeneration === undefined) {
-        return Promise.resolve(b3fail(b3err(
-          'RuntimeUnavailable', 'watcher generationFor is not composed', {}, true,
-        )));
-      }
       return createWatchRule(
-        { store, generation: options.watchRuleGeneration, clock }, context, parsed.value,
+        {
+          store,
+          clock,
+          ...(options.watchRuleGeneration === undefined
+            ? {}
+            : { generation: options.watchRuleGeneration }),
+        },
+        context,
+        parsed.value,
       );
     },
     updateWatchRule: (context, input) => {
       const parsed = parseUpdateWatchRuleInput(input);
       if (!parsed.ok) return Promise.resolve(parsed);
-      if (options.watchRuleGeneration === undefined) {
-        return Promise.resolve(b3fail(b3err(
-          'RuntimeUnavailable', 'watcher generationFor is not composed', {}, true,
-        )));
-      }
       return updateWatchRule(
-        { store, generation: options.watchRuleGeneration, clock }, context, parsed.value,
+        {
+          store,
+          clock,
+          ...(options.watchRuleGeneration === undefined
+            ? {}
+            : { generation: options.watchRuleGeneration }),
+        },
+        context,
+        parsed.value,
       );
     },
     listWatchDeadlines: () => store.list<WatchDeadline>('watchDeadline'),

@@ -505,6 +505,29 @@ test('ordinary event evaluation never fires an activity-drift deadline', async (
   }
 });
 
+test('manual event watcher creation does not invent or require a generation', async () => {
+  const rig = createRig('2026-08-03T00:00:00.000Z');
+  try {
+    const created = unwrap(await rig.supervision.createWatchRule({
+      principal: human,
+      clientOpId: 'op_123e4567-e89b-42d3-a456-426614174010' as never,
+      traceId: 'trace_123e4567-e89b-42d3-a456-426614174010' as never,
+      contractVersion: 1,
+    }, {
+      subject: { kind: 'agent-run', agentRunId: RUN_ID },
+      condition: { kind: 'run-final' },
+      recipient: { kind: 'human', principalId: 'person_chris' as never },
+      deliveryMode: 'queue-only',
+      cooldownMs: 0,
+      status: 'active',
+    }), 'createWatchRule');
+    assert.equal(created.condition.kind, 'run-final');
+    assert.equal(unwrap(await rig.store.list('watchDeadline'), 'deadlines').length, 0);
+  } finally {
+    rig.close();
+  }
+});
+
 test('an unknown template ref is refused rather than silently skipped', async () => {
   const unknown = { id: 'watch-template/not-a-template', version: 1, digest: 'x' };
   const rig = createRig('2026-08-03T00:00:00.000Z', 'disabled-explicitly', [unknown]);

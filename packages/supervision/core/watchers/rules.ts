@@ -32,7 +32,7 @@ export interface WatchRuleGenerationPort {
 
 export interface RuleDependencies {
   readonly store: SupervisionStore;
-  readonly generation: WatchRuleGenerationPort;
+  readonly generation?: WatchRuleGenerationPort;
   readonly clock: () => Date;
 }
 
@@ -76,6 +76,11 @@ async function generationForActiveRule(
   rule: WatchRule,
 ): Promise<B3Result<ActivityGeneration | null>> {
   if (rule.status !== 'active' || !timed(rule)) return b3ok(null);
+  if (deps.generation === undefined) {
+    return b3fail(b3err(
+      'RuntimeUnavailable', 'watcher generationFor is not composed', {}, true,
+    ));
+  }
   return deps.generation.generationFor(principal, rule.subject);
 }
 
