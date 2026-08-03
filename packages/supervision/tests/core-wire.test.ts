@@ -565,6 +565,93 @@ test('a run-final lifecycle event queues one Notification under replay', async (
   }
 });
 
+test('a run-final Notification survives restart and absorbs transition redelivery', async () => {
+  const rig = createRig('2026-08-03T00:00:00.000Z');
+  try {
+    const rule = unwrap(await rig.supervision.createWatchRule({
+      principal: human,
+      clientOpId: 'op_123e4567-e89b-42d3-a456-426614174013' as never,
+      traceId: 'trace_123e4567-e89b-42d3-a456-426614174013' as never,
+      contractVersion: 1,
+    }, {
+      subject: { kind: 'agent-run', agentRunId: RUN_ID },
+      condition: { kind: 'run-final' },
+      recipient: { kind: 'human', principalId: 'person_chris' as never },
+      deliveryMode: 'queue-only',
+      cooldownMs: 0,
+      status: 'active',
+    }), 'create restart-safe run-final watcher');
+    const transition = {
+      ...committedEvent('2026-08-03T00:01:00.000Z', 12),
+      payload: {
+        agentRunId: RUN_ID,
+        fromLifecycle: 'ready',
+        toLifecycle: 'stopped',
+        activityGeneration: 4,
+      },
+    };
+    const first = unwrap(
+      await rig.supervision.evaluateEvent(runtimeContext(), { event: transition }),
+      'first lifecycle evaluation',
+    );
+    assert.equal(first.length, 1);
+
+    // A fresh composition owns no in-memory evaluator state. Its only memory is
+    // the same durable store a restarted Runtime would reopen.
+    const restartedStore = createSupervisionStore({
+      root: rig.root,
+      dataRoot: path.join(rig.root, 'stores'),
+    });
+    const restarted = composeSupervision({
+      root: rig.root,
+      dataRoot: path.join(rig.root, 'stores'),
+      store: restartedStore,
+      installAuthority: {
+        resolve: async () => b3ok({
+          agentRunId: RUN_ID,
+          launchPlanId: PLAN_ID,
+          activityDrift: 'disabled-explicitly' as const,
+          requiredTemplateRefs: [IDLE_WATCH_TEMPLATE.templateRef],
+          parentNotificationMode: 'queue-only' as const,
+          recipient: { kind: 'human' as const, principalId: 'person_chris' as never },
+          activityGeneration: 4 as never,
+          watchStartTurnAuthorized: false,
+          requestProvenance: {
+            requestedBy: 'person_chris' as never,
+            traceId: INSTALL_TRACE_ID,
+          },
+        }),
+      },
+      watchRuleAccess: { agentIdFor: async () => b3ok(null) },
+    });
+    const beforeReplay = unwrap(
+      await restarted.listNotifications(human, { limit: 50 }),
+      'restart read',
+    );
+    assert.equal(beforeReplay.items.length, 1);
+    assert.equal(beforeReplay.items[0]!.watchRuleId, rule.id);
+
+    const redelivery = {
+      ...transition,
+      eventId: 'event_tracer_13',
+      cursor: 'tracer.13' as EventCursor,
+    };
+    const replay = unwrap(
+      await restarted.evaluateEvent(runtimeContext(), { event: redelivery }),
+      'transition redelivery after restart',
+    );
+    assert.deepEqual(replay, []);
+    const afterReplay = unwrap(
+      await restarted.listNotifications(human, { limit: 50 }),
+      'post-replay read',
+    );
+    assert.equal(afterReplay.items.length, 1);
+    assert.equal(afterReplay.items[0]!.id, beforeReplay.items[0]!.id);
+  } finally {
+    rig.close();
+  }
+});
+
 test('a new provider-liveness loss generation queues one run-disconnected Notification', async () => {
   const rig = createRig('2026-08-03T00:00:00.000Z');
   try {
