@@ -103,14 +103,14 @@ export async function claimDueDeadlines(
 ): Promise<B3Result<readonly WatchDeadline[]>> {
   const armed = await deps.store.list<WatchDeadline>('watchDeadline', { state: 'armed' });
   if (!armed.ok) return b3fail(armed.error);
-  const due = armed.value
+  const dueDeadlines = armed.value
     .filter((deadline) => String(deadline.dueAt) <= String(input.dueBefore))
     .sort((left, right) =>
       String(left.dueAt).localeCompare(String(right.dueAt))
       || String(left.id).localeCompare(String(right.id)))
     .slice(0, input.limit);
   const claimed: WatchDeadline[] = [];
-  for (const deadline of due) {
+  for (const deadline of dueDeadlines) {
     const written = await deps.store.update<WatchDeadline>(
       SUPERVISION_RECORD_WRITER,
       deadline.id,

@@ -140,19 +140,19 @@ export async function loadCurrentDrift(
   return b3ok({ rule: rule.value, deadline: current });
 }
 
-function rearmedDueAt(now: Date, rule: WatchRule): IsoUtc {
+function rearmedDueAt(observedAt: Date, rule: WatchRule): IsoUtc {
   if (rule.condition.kind !== 'activity-drift') {
     throw new TypeError('activity-drift reducer received a non-drift rule');
   }
-  return new Date(now.getTime() + rule.condition.intervalMs).toISOString() as IsoUtc;
+  return new Date(observedAt.getTime() + rule.condition.intervalMs).toISOString() as IsoUtc;
 }
 
 export async function persistDrift(
   deps: DriftDependencies,
   current: CurrentDrift,
   state: DurableDriftState,
-  now: Date,
-  dueAt: IsoUtc = rearmedDueAt(now, current.rule),
+  observedAt: Date,
+  dueAt: IsoUtc = rearmedDueAt(observedAt, current.rule),
 ): Promise<B3Result<WatchDeadline>> {
   return deps.store.update<WatchDeadline>(
     SUPERVISION_RECORD_WRITER,
