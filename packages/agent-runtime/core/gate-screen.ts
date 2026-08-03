@@ -58,26 +58,26 @@ export function plainText(output: string): string {
 interface Screen {
   readonly rows: string[][];
   readonly emitted: string[];
-  row: number;
+  cursorRow: number;
   column: number;
-  saved: { readonly row: number; readonly column: number } | null;
+  saved: { readonly cursorRow: number; readonly column: number } | null;
 }
 
-function rowAt(screen: Screen, row: number): string[] {
-  while (screen.rows.length <= row) screen.rows.push([]);
-  return screen.rows[row]!;
+function cellsAt(screen: Screen, wanted: number): string[] {
+  while (screen.rows.length <= wanted) screen.rows.push([]);
+  return screen.rows[wanted]!;
 }
 
 /** This row into the transcript, as it currently reads. */
 function emit(screen: Screen): void {
-  screen.emitted.push((screen.rows[screen.row] ?? []).join('').replace(/\s+$/u, ''));
+  screen.emitted.push((screen.rows[screen.cursorRow] ?? []).join('').replace(/\s+$/u, ''));
 }
 
 /** One character, at the cursor — over whatever the last paint left there. */
-function put(screen: Screen, character: string): void {
-  const row = rowAt(screen, screen.row);
-  while (row.length < screen.column) row.push(' ');
-  row[screen.column] = character;
+function paint(screen: Screen, character: string): void {
+  const cells = cellsAt(screen, screen.cursorRow);
+  while (cells.length < screen.column) cells.push(' ');
+  cells[screen.column] = character;
   screen.column += 1;
 }
 
@@ -88,10 +88,10 @@ function put(screen: Screen, character: string): void {
  * mangled parameter is a real possibility, and a row index taken on faith is
  * one allocation loop away from taking the Runtime down.
  */
-function toRow(screen: Screen, row: number): void {
+function toRow(screen: Screen, wanted: number): void {
   emit(screen);
-  screen.row = Math.min(Math.max(0, row), screen.row + MAX_ROW_JUMP);
-  rowAt(screen, screen.row);
+  screen.cursorRow = Math.min(Math.max(0, wanted), screen.cursorRow + MAX_ROW_JUMP);
+  cellsAt(screen, screen.cursorRow);
 }
 
 /**
@@ -103,14 +103,14 @@ function toRow(screen: Screen, row: number): void {
  */
 function csiAt(
   output: string, index: number,
-): { readonly params: string; readonly final: string; readonly end: number } | null {
+): { readonly params: string; readonly final: string; readonly after: number } | null {
   let scan = index + 2;
   while (scan < output.length && /[0-9;?<>=!]/u.test(output[scan]!)) scan += 1;
   const paramsEnd = scan;
   while (scan < output.length && /[ -/]/u.test(output[scan]!)) scan += 1;
   const final = output[scan];
   if (final === undefined || !/[@-~]/u.test(final)) return null;
-  return { params: output.slice(index + 2, paramsEnd), final, end: scan + 1 };
+  return { params: output.slice(index + 2, paramsEnd), final, after: scan + 1 };
 }
 
 /** The first numeric parameter, defaulted the way a terminal defaults it. */
@@ -122,11 +122,11 @@ function firstParam(params: string, fallback: number): number {
 
 /** An erase-in-line, in the three forms a TUI actually emits. */
 function eraseInLine(screen: Screen, mode: number): void {
-  const row = rowAt(screen, screen.row);
-  if (mode === 0) row.length = Math.min(row.length, screen.column);
+  const cells = cellsAt(screen, screen.cursorRow);
+  if (mode === 0) cells.length = Math.min(cells.length, screen.column);
   else if (mode === 1) {
-    for (let at = 0; at <= screen.column && at < row.length; at += 1) row[at] = ' ';
-  } else if (mode === 2) row.length = 0;
+    for (let cell = 0; cell <= screen.column && cell < cells.length; cell += 1) cells[cell] = ' ';
+  } else if (mode === 2) cells.length = 0;
 }
 
 /**
@@ -143,8 +143,8 @@ function applyCsi(screen: Screen, params: string, final: string): boolean {
     case 'G': case '`': screen.column = Math.max(0, firstParam(params, 1) - 1); return true;
     case 'C': case 'a': screen.column += firstParam(params, 1); return true;
     case 'D': screen.column = Math.max(0, screen.column - firstParam(params, 1)); return true;
-    case 'A': toRow(screen, screen.row - firstParam(params, 1)); return true;
-    case 'B': case 'e': toRow(screen, screen.row + firstParam(params, 1)); return true;
+    case 'A': toRow(screen, screen.cursorRow - firstParam(params, 1)); return true;
+    case 'B': case 'e': toRow(screen, screen.cursorRow + firstParam(params, 1)); return true;
     case 'K': eraseInLine(screen, firstParam(params, 0)); return true;
     // Colour, cursor visibility, mode switches, device reports, scroll regions,
     // window manipulation: dressing. None of it moves a character, so none of
@@ -155,14 +155,62 @@ function applyCsi(screen: Screen, params: string, final: string): boolean {
   }
 }
 
-/** Past an OSC, or past nothing if the terminator has not arrived yet. */
+/**
+ * Past an OSC, or past nothing if the terminator has not arrived yet.
+ *
+ * Window titles, progress state, and the hyperlink terminator a real kimi
+ * paints at the end of every row. Left in, one sits between a wrapped
+ * confirmation and its continuation and makes the two unjoinable.
+ */
 function afterOsc(output: string, index: number): number {
   const rest = output.slice(index + 2);
   const bell = rest.indexOf('\u0007');
-  const st = rest.indexOf('\u001B\\');
-  if (bell < 0 && st < 0) return index + 2;
-  const at = bell < 0 ? st : st < 0 ? bell : Math.min(bell, st);
-  return index + 2 + at + (rest[at] === '\u0007' ? 1 : 2);
+  const stringTerminator = rest.indexOf('\u001B\\');
+  if (bell < 0 && stringTerminator < 0) return index + 2;
+  const ends = bell < 0 ? stringTerminator
+    : stringTerminator < 0 ? bell : Math.min(bell, stringTerminator);
+  return index + 2 + ends + (rest[ends] === '\u0007' ? 1 : 2);
+}
+
+/** Past one CSI, having moved the cursor the way it says — or broken the row. */
+function afterCsi(output: string, index: number, screen: Screen): number {
+  const control = csiAt(output, index);
+  if (control === null) return index + 2;
+  if (!applyCsi(screen, control.params, control.final)) toRow(screen, screen.cursorRow + 1);
+  return control.after;
+}
+
+/** Past one escape sequence, having done whatever it does to the cursor. */
+function afterEscape(output: string, index: number, screen: Screen): number {
+  const next = output[index + 1];
+  if (next === '[') return afterCsi(output, index, screen);
+  if (next === ']') return afterOsc(output, index);
+  if (next === '7') {
+    screen.saved = { cursorRow: screen.cursorRow, column: screen.column };
+    return index + 2;
+  }
+  if (next === '8' && screen.saved !== null) {
+    toRow(screen, screen.saved.cursorRow);
+    screen.column = screen.saved.column;
+    return index + 2;
+  }
+  // Charset selection and the other short escapes: no movement.
+  return index + (next !== undefined && /[()*+]/u.test(next) ? 3 : 2);
+}
+
+/** Past one character that is not an escape, painted or obeyed. */
+function afterCharacter(character: string, index: number, screen: Screen): number {
+  if (character === '\n') toRow(screen, screen.cursorRow + 1);
+  else if (character === '\r') {
+    // A repaint of this row is about to begin, and what it says now is
+    // something the agent said. Kept, then painted over.
+    emit(screen);
+    screen.column = 0;
+  } else if (character === '\b') screen.column = Math.max(0, screen.column - 1);
+  else if (character === '\t') screen.column += 8 - (screen.column % 8);
+  // Bell, and the shift-in/shift-out a kimi emits around its box drawing.
+  else if (!'\u0007\u000E\u000F'.includes(character)) paint(screen, character);
+  return index + 1;
 }
 
 /**
@@ -175,65 +223,12 @@ function afterOsc(output: string, index: number): number {
  * join that was never safe to make, rather than inventing a position.
  */
 function replay(output: string): string {
-  const screen: Screen = { rows: [[]], emitted: [], row: 0, column: 0, saved: null };
+  const screen: Screen = { rows: [[]], emitted: [], cursorRow: 0, column: 0, saved: null };
 
   for (let index = 0; index < output.length;) {
-    const character = output[index]!;
-
-    if (character === '\u001B') {
-      const next = output[index + 1];
-      if (next === '[') {
-        const csi = csiAt(output, index);
-        if (csi === null) { index += 2; continue; }
-        if (!applyCsi(screen, csi.params, csi.final)) toRow(screen, screen.row + 1);
-        index = csi.end;
-        continue;
-      }
-      if (next === ']') {
-        // Window titles, progress state, and the hyperlink terminator a real
-        // kimi paints at the end of every row. Left in, one sits between a
-        // wrapped confirmation and its continuation and makes the two
-        // unjoinable.
-        index = afterOsc(output, index);
-        continue;
-      }
-      if (next === '7') {
-        screen.saved = { row: screen.row, column: screen.column };
-        index += 2;
-        continue;
-      }
-      if (next === '8') {
-        if (screen.saved !== null) {
-          toRow(screen, screen.saved.row);
-          screen.column = screen.saved.column;
-        }
-        index += 2;
-        continue;
-      }
-      // Charset selection and the other short escapes: no movement.
-      index += next !== undefined && /[()*+]/u.test(next) ? 3 : 2;
-      continue;
-    }
-
-    if (character === '\n') { toRow(screen, screen.row + 1); index += 1; continue; }
-    if (character === '\r') {
-      // A repaint of this row is about to begin, and what it says now is
-      // something the agent said. Kept, then painted over.
-      emit(screen);
-      screen.column = 0;
-      index += 1;
-      continue;
-    }
-    if (character === '\b') { screen.column = Math.max(0, screen.column - 1); index += 1; continue; }
-    if (character === '\t') { screen.column += 8 - (screen.column % 8); index += 1; continue; }
-    // Bell, and the shift-in/shift-out a kimi emits around its box drawing.
-    if (character === '\u0007' || character === '\u000E' || character === '\u000F') {
-      index += 1;
-      continue;
-    }
-
-    put(screen, character);
-    index += 1;
+    index = output[index] === '\u001B'
+      ? afterEscape(output, index, screen)
+      : afterCharacter(output[index]!, index, screen);
   }
 
   emit(screen);

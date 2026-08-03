@@ -93,11 +93,11 @@ export interface FakeTerminal extends TerminalPort {
  */
 export function repaint(said: string, steppedOver: number): string {
   const column = 2;
-  const at = (zeroBased: number): string => `[${String(zeroBased + 1)}G`;
+  const column0 = (zeroBased: number): string => `[${String(zeroBased + 1)}G`;
   return [
-    '\r\n', at(column), said.slice(0, steppedOver + 1),
-    '\r', at(column), said.slice(0, steppedOver),
-    at(column + steppedOver + 1), said.slice(steppedOver + 1),
+    '\r\n', column0(column), said.slice(0, steppedOver + 1),
+    '\r', column0(column), said.slice(0, steppedOver),
+    column0(column + steppedOver + 1), said.slice(steppedOver + 1),
     '[K\r\n',
   ].join('');
 }
