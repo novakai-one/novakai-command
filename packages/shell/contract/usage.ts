@@ -77,13 +77,15 @@ export function formatCount(value: number | null): string {
 }
 
 /** "codex · cli-default · 7 turns" — the quiet half of a row. */
-export function formatIdentity(row: UsageRowView): string {
-  return `${row.provider} · ${row.model} · ${row.turns} ${row.turns === 1 ? 'turn' : 'turns'}`;
+export function formatIdentity(usageRow: UsageRowView): string {
+  return `${usageRow.provider} · ${usageRow.model} · ${usageRow.turns} `
+    + `${usageRow.turns === 1 ? 'turn' : 'turns'}`;
 }
 
 /** "1,204 in · 88 out" — or "— in · — out" when nothing is measurable. */
-export function formatTokens(row: UsageRowView): string {
-  return `${formatCount(row.inputTokens)} in · ${formatCount(row.outputTokens)} out`;
+export function formatTokens(usageRow: UsageRowView): string {
+  return `${formatCount(usageRow.inputTokens)} in · `
+    + `${formatCount(usageRow.outputTokens)} out`;
 }
 
 function formatRunMetric(value: RunUsageValueView, label: string): string {
@@ -93,13 +95,13 @@ function formatRunMetric(value: RunUsageValueView, label: string): string {
 }
 
 /** Quality and limitation stay beside every B3d value; absence remains a dash. */
-export function formatRunUsage(row: RunUsageRowView): string {
+export function formatRunUsage(usageRow: RunUsageRowView): string {
   return [
-    formatRunMetric(row.inputTokens, 'in'),
-    formatRunMetric(row.outputTokens, 'out'),
-    formatRunMetric(row.cachedInputTokens, 'cached'),
-    formatRunMetric(row.costMicros, 'µ-cost'),
-    formatRunMetric(row.providerTurns, 'turns'),
+    formatRunMetric(usageRow.inputTokens, 'in'),
+    formatRunMetric(usageRow.outputTokens, 'out'),
+    formatRunMetric(usageRow.cachedInputTokens, 'cached'),
+    formatRunMetric(usageRow.costMicros, 'µ-cost'),
+    formatRunMetric(usageRow.providerTurns, 'turns'),
   ].join(' · ');
 }
 
@@ -111,16 +113,16 @@ export function formatRunUsage(row: RunUsageRowView): string {
  * telling him where to look.
  */
 export function orderRows(rows: readonly UsageRowView[]): UsageRowView[] {
-  const rank = (row: UsageRowView): number => {
-    if (row.drift) return 0;
-    if (row.interrupted) return 1;
-    if (row.status === 'running') return 2;
+  const rank = (usageRow: UsageRowView): number => {
+    if (usageRow.drift) return 0;
+    if (usageRow.interrupted) return 1;
+    if (usageRow.status === 'running') return 2;
     return 3;
   };
-  return [...rows].sort((a, b) => {
-    const byRank = rank(a) - rank(b);
+  return [...rows].sort((firstRow, secondRow) => {
+    const byRank = rank(firstRow) - rank(secondRow);
     if (byRank !== 0) return byRank;
-    return Date.parse(b.lastActivityAt) - Date.parse(a.lastActivityAt);
+    return Date.parse(secondRow.lastActivityAt) - Date.parse(firstRow.lastActivityAt);
   });
 }
 
@@ -128,17 +130,22 @@ export function orderRows(rows: readonly UsageRowView[]): UsageRowView[] {
  * Does this row get a mark at all? Only the exception does. A dot on every row
  * is the pattern Chris rejected outright, so "healthy" is drawn as nothing.
  */
-export function exceptionOf(row: UsageRowView): 'drift' | 'interrupted' | null {
-  if (row.drift) return 'drift';
-  if (row.interrupted) return 'interrupted';
+export function exceptionOf(usageRow: UsageRowView): 'drift' | 'interrupted' | null {
+  if (usageRow.drift) return 'drift';
+  if (usageRow.interrupted) return 'interrupted';
   return null;
 }
 
 /** Totals across every session, skipping the counts that do not exist. */
 export function totals(rows: readonly UsageRowView[]): { input: number | null; output: number | null } {
-  const sum = (pick: (row: UsageRowView) => number | null): number | null => {
-    const known = rows.map(pick).filter((v): v is number => v !== null);
-    return known.length === 0 ? null : known.reduce((a, b) => a + b, 0);
+  const aggregateKnown = (pick: (usageRow: UsageRowView) => number | null): number | null => {
+    const known = rows.map(pick).filter((value): value is number => value !== null);
+    return known.length === 0
+      ? null
+      : known.reduce((total, nextValue) => total + nextValue, 0);
   };
-  return { input: sum((r) => r.inputTokens), output: sum((r) => r.outputTokens) };
+  return {
+    input: aggregateKnown((usageRow) => usageRow.inputTokens),
+    output: aggregateKnown((usageRow) => usageRow.outputTokens),
+  };
 }

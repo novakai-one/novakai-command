@@ -27,16 +27,16 @@ export function createUsageProjection(options: UsageProjectionOptions): UsagePro
   const clock = options.clock ?? (() => new Date());
   const project = async (
     principal: AuthenticatedPrincipal,
-    run: UsageRunFacts,
+    runFacts: UsageRunFacts,
   ) => {
     const evidence = await options.evidence.listProviderUsageEvidence(
       principal,
-      run.providerSessionId,
+      runFacts.providerSessionId,
     );
     if (!evidence.ok) return evidence;
     return b3ok(projectRunUsage(
-      run.agentRunId,
-      run.final,
+      runFacts.agentRunId,
+      runFacts.final,
       evidence.value.items,
       clock,
     ));
@@ -51,8 +51,8 @@ export function createUsageProjection(options: UsageProjectionOptions): UsagePro
       const listed = await options.runs.listUsageRuns(principal, agentId);
       if (!listed.ok) return listed;
       const runs: AgentRunUsage[] = [];
-      for (const run of listed.value) {
-        const projected = await project(principal, run);
+      for (const runFacts of listed.value) {
+        const projected = await project(principal, runFacts);
         if (!projected.ok) return projected;
         runs.push(projected.value);
       }
@@ -128,13 +128,13 @@ function aggregateUsage(
   ])) as Pick<AgentUsageAggregate, UsageMetric>;
   const observedAt = runs.length === 0
     ? clock().toISOString()
-    : runs.reduce((latest, run) => String(run.observedAt) > latest
-      ? String(run.observedAt)
+    : runs.reduce((latest, runUsage) => String(runUsage.observedAt) > latest
+      ? String(runUsage.observedAt)
       : latest, String(runs[0]!.observedAt));
   return {
     ...metrics,
     observedAt: observedAt as never,
-    final: runs.every((run) => run.final),
+    final: runs.every((runUsage) => runUsage.final),
   };
 }
 
@@ -145,19 +145,20 @@ function aggregateValue(
   if (runs.length === 0) {
     return { quality: 'unavailable', source: 'aggregate:runs', limitations: ['no-runs'] };
   }
-  const supplied = runs.filter((run) => run[metric].value !== undefined);
-  const limitations = [...new Set(runs.flatMap((run) => [
-    ...run[metric].limitations,
-    ...(run[metric].value === undefined ? [String(run.agentRunId)] : []),
+  const supplied = runs.filter((runUsage) => runUsage[metric].value !== undefined);
+  const limitations = [...new Set(runs.flatMap((runUsage) => [
+    ...runUsage[metric].limitations,
+    ...(runUsage[metric].value === undefined ? [String(runUsage.agentRunId)] : []),
   ]))].sort();
   if (supplied.length === 0) {
     return { quality: 'unavailable', source: 'aggregate:runs', limitations };
   }
   const everySupplies = supplied.length === runs.length;
   const hasPartialOrUnavailable = runs.some(
-    (run) => run[metric].quality === 'partial' || run[metric].quality === 'unavailable',
+    (runUsage) => runUsage[metric].quality === 'partial'
+      || runUsage[metric].quality === 'unavailable',
   );
-  const quality = runs.every((run) => run[metric].quality === 'measured')
+  const quality = runs.every((runUsage) => runUsage[metric].quality === 'measured')
     ? 'measured'
     : everySupplies && !hasPartialOrUnavailable
       ? 'estimated'
@@ -168,7 +169,9 @@ function aggregateValue(
     quality,
     ...(quality === 'unavailable'
       ? {}
-      : { value: supplied.reduce((total, run) => total + run[metric].value!, 0) }),
+      : { value: supplied.reduce(
+          (total, runUsage) => total + runUsage[metric].value!, 0,
+        ) }),
     source: 'aggregate:runs',
     limitations,
   };

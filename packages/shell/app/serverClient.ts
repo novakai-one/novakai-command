@@ -137,12 +137,12 @@ export function createServerServices(
         const ml = (m: unknown) => events.onMessage?.(m as never);
         const cl = (c: unknown) => events.onConversation?.(c as never);
         const ul = (t: unknown) => events.onUsage?.(t as never);
-        const rul = () => events.onRunUsageChanged?.();
+        const runUsageListener = () => events.onRunUsageChanged?.();
         msgListeners.add(ml); convListeners.add(cl); usageListeners.add(ul);
-        runUsageListeners.add(rul);
+        runUsageListeners.add(runUsageListener);
         return () => {
           msgListeners.delete(ml); convListeners.delete(cl); usageListeners.delete(ul);
-          runUsageListeners.delete(rul);
+          runUsageListeners.delete(runUsageListener);
         };
       },
       getUsageTable: () => call('getUsageTable'),

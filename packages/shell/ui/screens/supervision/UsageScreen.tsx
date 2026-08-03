@@ -29,7 +29,7 @@ import './usage.css';
 export function UsageView(props: { table: UsageTableView | null }) {
   const table = props.table;
   const rows = orderRows(table?.rows ?? []);
-  const sum = totals(rows);
+  const aggregate = totals(rows);
 
   return (
     <ScrollArea style={{ flex: 1 }}>
@@ -39,8 +39,8 @@ export function UsageView(props: { table: UsageTableView | null }) {
             <EmptyState>No provider sessions yet</EmptyState>
           ) : (
             <Stack gap={0} className="nv-usage__rows">
-              {rows.map((row) => (
-                <UsageRow key={row.sessionId} row={row} />
+              {rows.map((usageRow) => (
+                <UsageRow key={usageRow.sessionId} row={usageRow} />
               ))}
             </Stack>
           )}
@@ -48,7 +48,7 @@ export function UsageView(props: { table: UsageTableView | null }) {
             <Stack horizontal className="nv-usage__totals">
               <Text className="nv-usage__totalLabel">All sessions</Text>
               <Text className="nv-usage__totalValue">
-                {`${formatCount(sum.input)} in · ${formatCount(sum.output)} out`}
+                {`${formatCount(aggregate.input)} in · ${formatCount(aggregate.output)} out`}
               </Text>
             </Stack>
           )}
@@ -74,7 +74,9 @@ export function RunUsageView(props: { table: RunUsageTableView | null }) {
             <EmptyState>No agent runs yet</EmptyState>
           ) : (
             <Stack gap={0} className="nv-usage__rows">
-              {rows.map((row) => <RunUsageRow key={row.agentRunId} row={row} />)}
+              {rows.map((usageRow) => (
+                <RunUsageRow key={usageRow.agentRunId} row={usageRow} />
+              ))}
             </Stack>
           )}
         </Stack>
@@ -84,22 +86,23 @@ export function RunUsageView(props: { table: RunUsageTableView | null }) {
 }
 
 function RunUsageRow(props: { row: RunUsageRowView }) {
-  const { row } = props;
+  const usageRow = props.row;
   return (
     <ListRow
-      label={row.displayName}
-      meta={`${row.provider} · ${row.model} · ${row.lifecycle} · ${row.agentRunId}\n${formatRunUsage(row)}`}
+      label={usageRow.displayName}
+      meta={`${usageRow.provider} · ${usageRow.model} · ${usageRow.lifecycle} · `
+        + `${usageRow.agentRunId}\n${formatRunUsage(usageRow)}`}
     />
   );
 }
 
 function UsageRow(props: { row: UsageRowView }) {
-  const { row } = props;
-  const exception = exceptionOf(row);
+  const usageRow = props.row;
+  const exception = exceptionOf(usageRow);
   return (
     <ListRow
-      label={row.agentId}
-      meta={`${formatIdentity(row)}  ·  ${formatTokens(row)}`}
+      label={usageRow.agentId}
+      meta={`${formatIdentity(usageRow)}  ·  ${formatTokens(usageRow)}`}
       // The ONLY ornament on this screen, and only when the row is the
       // exception. Liveness tokens, never the accent (R3-25).
       leading={exception ? (
@@ -135,11 +138,14 @@ export function UsageScreen(props: { services: ShellServices }) {
     };
     // One immediate pull so the screen is never blank waiting for an event.
     void reload();
-    const off = props.services.subscribe({
+    const unsubscribe = props.services.subscribe({
       onUsage: (next) => { if (live) setTable(next); },
       onRunUsageChanged: () => { void reload(); },
     });
-    return () => { live = false; off(); };
+    return () => {
+      live = false;
+      unsubscribe();
+    };
   }, [props.services]);
 
   if (!props.services.getRunUsageTable && !props.services.getUsageTable) {
