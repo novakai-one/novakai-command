@@ -81,8 +81,7 @@ async function watchRun(
     cooldownMs: 0,
     status: 'active',
   }, mintClientOpId());
-  assert.equal(created.ok, true, created.ok ? '' : created.error.message);
-  if (!created.ok) throw new Error(created.error.message);
+  if (!created.ok) assert.fail(created.error.message);
   return created.value;
 }
 
