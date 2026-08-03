@@ -159,8 +159,8 @@ function deadlineRecord(
 }
 
 /** Arm one rule's deadline, or report that this rule waits on nothing. */
-async function armDeadline(
-  deps: InstallDependencies,
+export async function armDeadline(
+  deps: Pick<InstallDependencies, 'store' | 'clock'>,
   principal: B3PrincipalId,
   rule: WatchRule,
   generation: ActivityGeneration,

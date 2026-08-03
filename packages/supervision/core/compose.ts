@@ -28,6 +28,16 @@ import {
   recordDriftStatusSubmission, type DriftSubmissionAuthority,
 } from './watchers/submission.js';
 import { parseRecordDriftStatusSubmissionInput } from '../contract/input-validation.js';
+import { claimDueDeadlines, resetDriftEpisode } from './watchers/deadlines.js';
+import {
+  parseClaimDueDeadlinesInput, parseResetDriftEpisodeInput,
+} from '../contract/input-validation.js';
+import {
+  createWatchRule, updateWatchRule, type WatchRuleGenerationPort,
+} from './watchers/rules.js';
+import {
+  parseCreateWatchRuleInput, parseUpdateWatchRuleInput,
+} from '../contract/index.js';
 
 /** The frozen members the tracer's live wire actually carries current through. */
 export type SupervisionWireSlice = Pick<
@@ -35,6 +45,9 @@ export type SupervisionWireSlice = Pick<
   'installRunWatchers' | 'evaluateEvent' | 'listNotifications' | 'listWatchRules'
   | 'checkRunDrift'
   | 'recordDriftStatusSubmission'
+  | 'claimDueDeadlines'
+  | 'resetDriftEpisode'
+  | 'createWatchRule' | 'updateWatchRule'
 >;
 
 /** Deadline detail remains a tracer host read; WatchRule listing is now frozen. */
@@ -63,6 +76,8 @@ export interface SupervisionCoreOptions extends SupervisionStoreOptions {
   readonly driftEvidence?: DriftEvidencePort;
   /** Runtime/Terminal truth used to authenticate one recorded status attempt. */
   readonly driftSubmissionAuthority?: DriftSubmissionAuthority;
+  /** Required for manual timed rules; there is deliberately no default generation. */
+  readonly watchRuleGeneration?: WatchRuleGenerationPort;
 }
 
 export function composeSupervision(options: SupervisionCoreOptions): SupervisionCore {
@@ -101,6 +116,42 @@ export function composeSupervision(options: SupervisionCoreOptions): Supervision
       }
       return recordDriftStatusSubmission(
         { store, authority: options.driftSubmissionAuthority }, context, parsed.value,
+      );
+    },
+    claimDueDeadlines: (context, input) => {
+      const parsed = parseClaimDueDeadlinesInput(input);
+      return parsed.ok
+        ? claimDueDeadlines({ store, clock }, context, parsed.value)
+        : Promise.resolve(parsed);
+    },
+    resetDriftEpisode: (context, input) => {
+      const parsed = parseResetDriftEpisodeInput(input);
+      return parsed.ok
+        ? resetDriftEpisode({ store, clock }, context, parsed.value)
+        : Promise.resolve(parsed);
+    },
+    createWatchRule: (context, input) => {
+      const parsed = parseCreateWatchRuleInput(input);
+      if (!parsed.ok) return Promise.resolve(parsed);
+      if (options.watchRuleGeneration === undefined) {
+        return Promise.resolve(b3fail(b3err(
+          'RuntimeUnavailable', 'watcher generationFor is not composed', {}, true,
+        )));
+      }
+      return createWatchRule(
+        { store, generation: options.watchRuleGeneration, clock }, context, parsed.value,
+      );
+    },
+    updateWatchRule: (context, input) => {
+      const parsed = parseUpdateWatchRuleInput(input);
+      if (!parsed.ok) return Promise.resolve(parsed);
+      if (options.watchRuleGeneration === undefined) {
+        return Promise.resolve(b3fail(b3err(
+          'RuntimeUnavailable', 'watcher generationFor is not composed', {}, true,
+        )));
+      }
+      return updateWatchRule(
+        { store, generation: options.watchRuleGeneration, clock }, context, parsed.value,
       );
     },
     listWatchDeadlines: () => store.list<WatchDeadline>('watchDeadline'),

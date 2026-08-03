@@ -30,3 +30,4 @@ export {
   type DriftEvidencePort,
 } from '../core/watchers/drift.js';
 export type { DriftSubmissionAuthority } from '../core/watchers/submission.js';
+export type { WatchRuleGenerationPort } from '../core/watchers/rules.js';

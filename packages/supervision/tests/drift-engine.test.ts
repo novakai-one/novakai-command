@@ -21,12 +21,14 @@ import {
   deriveNotificationId,
   deriveNotificationInputReservationId,
   DRIFT_STATUS_PROMPT,
+  ACTIVITY_DRIFT_TEMPLATE,
   notificationDeliveryEffectKey,
   type CheckRunDriftInput,
   type DriftCheckOutcome,
   type Notification,
   type SupervisionContract,
   type WatchDeadline,
+  watchRemoveRetirement,
 } from '../contract/index.js';
 
 const RUN_ID = 'agentRun_019fd000-0000-7000-8000-0000000000b1' as AgentRunId;
@@ -44,6 +46,22 @@ const supervisionContext = (): SystemCommandContext<'sys_supervision'> => ({
   clientOpId: 'op_123e4567-e89b-42d3-a456-426614174101' as never,
   traceId: 'trace_123e4567-e89b-42d3-a456-426614174101' as never,
   contractVersion: 1,
+});
+
+const humanContext = () => ({
+  principal: { id: 'person_chris' as never, kind: 'human' as const, verifiedScopes: [] },
+  clientOpId: 'op_123e4567-e89b-42d3-a456-426614174102' as never,
+  traceId: 'trace_123e4567-e89b-42d3-a456-426614174102' as never,
+  contractVersion: 1 as const,
+});
+
+const scopedHumanContext = () => ({
+  ...humanContext(),
+  principal: {
+    ...humanContext().principal,
+    verifiedScopes: ['supervision:watch:start-turn' as never],
+  },
+  clientOpId: 'op_123e4567-e89b-42d3-a456-426614174103' as never,
 });
 
 function unwrap<Value>(result: { readonly ok: true; readonly value: Value } | {
@@ -95,6 +113,7 @@ test('identical free evidence establishes a baseline then opens one quiet episod
       }),
     },
     driftSubmissionAuthority: { verify: async () => b3ok(null) },
+    watchRuleGeneration: { generationFor: async () => b3ok(9 as never) },
   } as SupervisionCoreOptions & {
     readonly driftEvidence: {
       observe(agentRunId: AgentRunId): Promise<ReturnType<typeof b3ok<{
@@ -134,6 +153,16 @@ test('identical free evidence establishes a baseline then opens one quiet episod
     });
 
     now = new Date('2026-08-03T00:05:00.000Z');
+    const claimed = unwrap(await supervision.claimDueDeadlines(supervisionContext(), {
+      dueBefore: '2026-08-03T00:05:00.000Z' as IsoUtc,
+      limit: 10,
+      schedulerLeaseMs: 30_000,
+    }));
+    assert.equal(claimed.length, 1);
+    assert.equal(claimed[0]!.id, deadline.id);
+    assert.equal(claimed[0]!.state, 'claimed');
+    assert.equal(claimed[0]!.lateByMs, 0);
+    deadline = claimed[0]!;
     const baseline: DriftCheckOutcome = unwrap(
       await supervision.checkRunDrift(supervisionContext(), input()),
     );
@@ -622,6 +651,67 @@ test('identical free evidence establishes a baseline then opens one quiet episod
         .recordVersion,
       escalation.recordVersion,
       'suppressed escalation replay rewrote the human alert',
+    );
+    deadline = unwrap(await store.list<WatchDeadline>('watchDeadline'))[0]!;
+    const wrongReset = await supervision.resetDriftEpisode(humanContext(), {
+      watchDeadlineId: deadline.id,
+      expectedRecordVersion: deadline.recordVersion,
+      expectedEpisodeId: ('driftEpisode_' + 'z'.repeat(52)) as never,
+      reason: 'operator confirmed the Run is healthy',
+    });
+    assert.equal(wrongReset.ok, false);
+    if (!wrongReset.ok) assert.equal(wrongReset.error.code, 'WatcherConflict');
+    const beforeResetCount = unwrap(await store.list<Notification>('notification')).length;
+    const reset = unwrap(await supervision.resetDriftEpisode(humanContext(), {
+      watchDeadlineId: deadline.id,
+      expectedRecordVersion: deadline.recordVersion,
+      expectedEpisodeId: timeoutEpisodeId,
+      reason: 'operator confirmed the Run is healthy',
+    }));
+    assert.equal(reset.dueAt, '2026-08-03T01:26:30.000Z');
+    assert.equal(reset.driftState?.phase, 'observing');
+    assert.equal(reset.driftState?.quietIntervals, 0);
+    assert.equal(reset.driftState?.consecutiveUnansweredChecks, 0);
+    assert.equal(reset.driftState?.episodeOrdinal, deadline.driftState?.episodeOrdinal);
+    assert.deepEqual(reset.driftState?.lastEvidence, deadline.driftState?.lastEvidence);
+    assert.equal(unwrap(await store.list<Notification>('notification')).length, beforeResetCount);
+
+    const manualActivityRule = {
+      subject: { kind: 'agent-run' as const, agentRunId: RUN_ID },
+      condition: ACTIVITY_DRIFT_TEMPLATE.condition,
+      recipient: { kind: 'human' as const, principalId: 'person_chris' as never },
+      deliveryMode: 'queue-only' as const,
+      cooldownMs: 0,
+      status: 'active' as const,
+      driftPolicy: ACTIVITY_DRIFT_TEMPLATE.driftPolicy,
+    };
+    const deniedCreate = await supervision.createWatchRule(
+      humanContext(), manualActivityRule,
+    );
+    assert.equal(deniedCreate.ok, false);
+    if (!deniedCreate.ok) assert.equal(deniedCreate.error.code, 'PermissionDenied');
+    const created = unwrap(await supervision.createWatchRule(
+      scopedHumanContext(), manualActivityRule,
+    ));
+    assert.equal(created.condition.kind, 'activity-drift');
+    const createdDeadline = unwrap(
+      await store.list<WatchDeadline>('watchDeadline'),
+    ).find((item) => item.watchRuleId === created.id)!;
+    assert.equal(createdDeadline.activityGeneration, 9);
+    assert.equal(createdDeadline.dueAt, '2026-08-03T01:26:30.000Z');
+    assert.equal(createdDeadline.driftState?.phase, 'observing');
+
+    const retired = unwrap(await supervision.updateWatchRule(
+      {
+        ...humanContext(),
+        clientOpId: 'op_123e4567-e89b-42d3-a456-426614174104' as never,
+      },
+      watchRemoveRetirement(created),
+    ));
+    assert.equal(retired.status, 'retired');
+    assert.equal(
+      unwrap(await store.read<WatchDeadline>('watchDeadline', createdDeadline.id))!.state,
+      'superseded',
     );
   } finally {
     rmSync(root, { recursive: true, force: true });
