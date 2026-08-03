@@ -9,7 +9,9 @@ import {
   type AgentRunId, type AuthenticatedPrincipal, type ResolvedLaunchPlanId,
   type SystemCommandContext,
 } from '@novakai/foundation/contract';
-import type { AgentRunsContract, RunWatcherPort } from '../../../agent-runtime/contract/index.js';
+import type {
+  AgentRunsContract, RunEvent, RunWatcherPort,
+} from '../../../agent-runtime/contract/index.js';
 import type { GovernedAgentsContract } from '../../../agents/b3/contract/index.js';
 import type { SupervisionCore } from '../../../supervision/public/index.js';
 import type {
@@ -150,7 +152,15 @@ export interface FollowedEvents {
  * polling this slice exists to retire.
  */
 export function followEventsIntoSupervision(
-  runs: AgentRunsContract, supervision: SupervisionCore,
+  runs: AgentRunsContract,
+  supervision: SupervisionCore,
+  /**
+   * Q11's transcript half, fed from THIS subscription rather than a second one.
+   * A watcher and an observation read the same committed facts in the same
+   * order; two cursors over one stream would be two answers to "what happened
+   * first?" and only one of them could be right.
+   */
+  observer?: { observe(event: RunEvent): Promise<void> },
 ): FollowedEvents {
   let stopped = false;
   void (async () => {
@@ -160,6 +170,7 @@ export function followEventsIntoSupervision(
       // A reducer failure is not a reason to stop watching. It is reported by
       // the record it failed to write, and the next event tries again.
       await supervision.evaluateEvent(runtimeContext(), { event: frame.value });
+      await observer?.observe(frame.value);
     }
   })();
   // Stopping is a flag, never a join. The published stream has no end of its
