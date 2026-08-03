@@ -17,6 +17,10 @@ import type {
 import {
   assertNotificationTranscriptObservationProviderContract,
   assertNotificationTranscriptObservationConsumerContract,
+  assertNotificationTranscriptNonObservationProviderContract,
+  assertNotificationTranscriptNonObservationConsumerContract,
+  type NotificationTranscriptNonObservationConsumerHarness,
+  type NotificationTranscriptNonObservationProviderHarness,
   type NotificationTranscriptObservationConsumerHarness,
   type NotificationTranscriptObservationProviderHarness,
 } from '../contract/testkit/index.js';
@@ -41,6 +45,67 @@ const OBSERVATION_INPUT: RecordNotificationTranscriptObservationInput = {
   },
 };
 
+const NON_OBSERVATION_INPUTS: readonly RecordNotificationTranscriptNonObservationInput[] = [
+  {
+    notificationId: `notification_${'f'.repeat(52)}` as never,
+    expectedRecordVersion: 3 as never,
+    expectedEffectKey: 'b3v4:notification-delivery:q11-complete',
+    evidence: {
+      bindingId: `transcriptBinding_${'g'.repeat(52)}` as never,
+      agentRunId: 'agentRun_018f0f8a-4f7b-7abc-8def-0123456789ad' as never,
+      providerSessionId: 'sess_123e4567-e89b-42d3-a456-426614174002' as never,
+      providerTurnId: 'providerTurn_018f0f8a-4f7b-7abc-8def-0123456789ad' as never,
+      terminalInputAttemptId:
+        'terminalInput_018f0f8a-4f7b-7abc-8def-0123456789ad' as never,
+      reason: 'complete-for-turn',
+      sourceDiscoveryState: 'bound',
+      completeThroughWatermark: '0000000099',
+      evidenceRefs: [
+        `transcriptBinding_${'g'.repeat(52)}`,
+        'provider-source-result:complete-through-provider-turn',
+      ],
+    },
+  },
+  {
+    notificationId: `notification_${'h'.repeat(52)}` as never,
+    expectedRecordVersion: 3 as never,
+    expectedEffectKey: 'b3v4:notification-delivery:q11-missing',
+    evidence: {
+      bindingId: `transcriptBinding_${'i'.repeat(52)}` as never,
+      agentRunId: 'agentRun_018f0f8a-4f7b-7abc-8def-0123456789ae' as never,
+      providerSessionId: 'sess_123e4567-e89b-42d3-a456-426614174003' as never,
+      providerTurnId: 'providerTurn_018f0f8a-4f7b-7abc-8def-0123456789ae' as never,
+      terminalInputAttemptId:
+        'terminalInput_018f0f8a-4f7b-7abc-8def-0123456789ae' as never,
+      reason: 'final-source-missing',
+      sourceDiscoveryState: 'missing',
+      evidenceRefs: [
+        `transcriptBinding_${'i'.repeat(52)}`,
+        'provider-source-result:final-missing',
+      ],
+    },
+  },
+  {
+    notificationId: `notification_${'j'.repeat(52)}` as never,
+    expectedRecordVersion: 3 as never,
+    expectedEffectKey: 'b3v4:notification-delivery:q11-corrupt',
+    evidence: {
+      bindingId: `transcriptBinding_${'k'.repeat(52)}` as never,
+      agentRunId: 'agentRun_018f0f8a-4f7b-7abc-8def-0123456789af' as never,
+      providerSessionId: 'sess_123e4567-e89b-42d3-a456-426614174004' as never,
+      providerTurnId: 'providerTurn_018f0f8a-4f7b-7abc-8def-0123456789af' as never,
+      terminalInputAttemptId:
+        'terminalInput_018f0f8a-4f7b-7abc-8def-0123456789af' as never,
+      reason: 'final-source-corrupt',
+      sourceDiscoveryState: 'corrupt',
+      evidenceRefs: [
+        `transcriptBinding_${'k'.repeat(52)}`,
+        'provider-source-result:final-corrupt',
+      ],
+    },
+  },
+];
+
 const OBSERVED_NOTIFICATION: Notification = {
   ...queuedNotificationEvent('start-turn').payload,
   id: OBSERVATION_INPUT.notificationId,
@@ -56,6 +121,25 @@ const OBSERVED_NOTIFICATION: Notification = {
   },
   state: 'transcript-observed',
 };
+
+const notificationAfterNonObservation = (
+  input: RecordNotificationTranscriptNonObservationInput,
+  state: Notification['state'] = 'delivery-uncertain',
+): Notification => ({
+  ...queuedNotificationEvent('start-turn').payload,
+  id: input.notificationId,
+  recordVersion: 4 as never,
+  deliveryEffectKey: input.expectedEffectKey,
+  deliveryAttempt: {
+    state: 'submitted-confirmed',
+    effectKey: input.expectedEffectKey,
+    submittedAt: '2026-08-03T00:00:00.000Z' as never,
+    notificationInputReservationId: `notificationInput_${'m'.repeat(52)}` as never,
+    terminalInputAttemptId: input.evidence.terminalInputAttemptId,
+    providerTurnId: input.evidence.providerTurnId,
+  },
+  state,
+});
 
 const q11CommandSurface: Pick<
   SupervisionCommands,
@@ -111,5 +195,35 @@ test('Supervision promotes only exact positive evidence and replays it idempoten
   await assertNotificationTranscriptObservationConsumerContract(
     consumer,
     OBSERVATION_INPUT,
+  );
+});
+
+test('Transcript provider preserves only durable negative-closure evidence', async () => {
+  const provider: NotificationTranscriptNonObservationProviderHarness = {
+    readNotificationTranscriptNonObservations: async () => NON_OBSERVATION_INPUTS,
+  };
+  await assertNotificationTranscriptNonObservationProviderContract(
+    provider,
+    NON_OBSERVATION_INPUTS,
+  );
+});
+
+test('Supervision records only durable negative closure and never promotes timeout', async () => {
+  const consumer: NotificationTranscriptNonObservationConsumerHarness = {
+    recordNotificationTranscriptNonObservation: async (_context, input) => {
+      const exact = NON_OBSERVATION_INPUTS.find((candidate) =>
+        isDeepStrictEqual(candidate, input));
+      if (exact !== undefined) return b3ok(notificationAfterNonObservation(input));
+      return b3fail(b3err(
+        'WatcherConflict',
+        'non-observation evidence conflicts',
+        {},
+        false,
+      ));
+    },
+  };
+  await assertNotificationTranscriptNonObservationConsumerContract(
+    consumer,
+    NON_OBSERVATION_INPUTS,
   );
 });
