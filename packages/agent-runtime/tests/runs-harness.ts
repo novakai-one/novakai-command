@@ -24,10 +24,10 @@ import {
   createFakeProviders, createFakeTerminal,
   type FakeProviders, type FakeTerminal,
 } from './runs-fakes.js';
-import type { AgentRunsContract } from '../contract/runs-api.js';
+import type { RunUsageLookup } from '../contract/runs-api.js';
 import type { RuntimeHostContract } from '../contract/types.js';
 import type { RunWatcherPort } from '../contract/custody-ports.js';
-import { composeAgentRuns } from '../core/runs-compose.js';
+import { composeAgentRuns, type ComposedAgentRuns } from '../core/runs-compose.js';
 import {
   createFakeMessagingEndpoints, createFakeTranscriptCustody,
   type FakeMessagingEndpoints, type FakeTranscriptCustody,
@@ -71,7 +71,7 @@ export const fakeCredentials: RunCredentialPort = {
 // ── The rig ─────────────────────────────────────────────────────────────────
 
 export interface RunsRig {
-  readonly runtime: AgentRunsContract;
+  readonly runtime: ComposedAgentRuns;
   readonly agents: FakeAgents;
   readonly terminal: FakeTerminal;
   readonly providers: FakeProviders;
@@ -88,6 +88,7 @@ export interface RunsRig {
 
 export interface RunsRigOptions extends FakeAgentsOptions {
   readonly watchers?: RunWatcherPort;
+  readonly usage?: RunUsageLookup;
   readonly gateTimeoutMs?: number;
   /**
    * Stop accepting durable writes after N of them — a crash, modelled as what a
@@ -158,6 +159,7 @@ export function createRunsRig(options: RunsRigOptions = {}): RunsRig {
     ...(options.withoutB3cCapabilities === true
       ? {} : { messagingEndpoint, transcriptCustody }),
     ...(options.watchers === undefined ? {} : { watchers: options.watchers }),
+    ...(options.usage === undefined ? {} : { usage: options.usage }),
   });
 
   const envelope = (principal: AuthenticatedPrincipal): CommandContext => ({

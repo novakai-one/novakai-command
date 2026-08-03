@@ -7,11 +7,12 @@
 import {
   b3fail, b3ok, mintClientOpId, nowIsoUtc,
   type AgentId, type AgentRunId, type AuthenticatedPrincipal, type B3Page,
-  type B3Result, type ResolvedLaunchPlanId, type RunOperationId,
+  type B3Result, type IsoUtc, type ResolvedLaunchPlanId, type RunOperationId,
 } from '@novakai/foundation/contract';
 import type {
-  AgentRunView, ListAgentRunsFilter, RunOperationView,
+  AgentRunView, ListAgentRunsFilter, RunOperationView, RunUsageFacts,
 } from '../contract/runs-api.js';
+import type { AgentRunUsage, UsageValue } from '../../supervision/contract/index.js';
 import {
   FINAL_LIFECYCLES, type AgentRun, type RunOperation,
 } from '../contract/runs.js';
@@ -44,6 +45,24 @@ const RUN_FIELD = 'run';
  * know — none of those is evidence the provider is gone.
  */
 const TERMINAL_IS_OVER: ReadonlySet<string> = new Set(['exited', 'failed']);
+
+function unavailableUsage(agentRun: AgentRun, observedAt: IsoUtc): AgentRunUsage {
+  const unavailable = (): UsageValue => ({
+    quality: 'unavailable',
+    source: 'agent-runtime:usage-not-composed',
+    limitations: ['usage-capability-not-composed'],
+  });
+  return {
+    agentRunId: agentRun.id,
+    inputTokens: unavailable(),
+    outputTokens: unavailable(),
+    cachedInputTokens: unavailable(),
+    costMicros: unavailable(),
+    providerTurns: unavailable(),
+    observedAt,
+    final: FINAL_LIFECYCLES.has(agentRun.lifecycle),
+  };
+}
 
 async function settleIfTerminalGone(
   core: RunsCore, agentRun: AgentRun,
@@ -103,6 +122,10 @@ export async function viewOfRun(
   // Transcript owns this fact; the Runtime asks. A null answer is "no binding",
   // never "no transcript" — the two are told apart in the view below.
   const binding = (await core.transcriptBinding?.(agentRun.id)) ?? null;
+  const usage = core.usage === undefined
+    ? b3ok(unavailableUsage(agentRun, new Date(core.clock()).toISOString() as IsoUtc))
+    : await core.usage(principal, agentRun.id);
+  if (!usage.ok) return usage;
 
   return b3ok({
     agent: {
@@ -131,8 +154,7 @@ export async function viewOfRun(
       // "expected" side of is not a safety mechanism, it is a retry loop.
       supervisionVersion: supervision.value.generation,
     },
-    // Named absence, not zero. B3d is where usage becomes a number.
-    usage: { quality: 'unavailable', reason: 'per-Run usage arrives in B3d' },
+    usage: usage.value,
     // §19.1: where this Run's transcript is, in the same four words Transcript
     // uses. `unbound` is the fifth: nobody has bound this Run at all, which is
     // a different fact from a file that is missing.
@@ -145,6 +167,41 @@ export async function viewOfRun(
         },
     [RUN_FIELD]: agentRun,
   } as AgentRunView);
+}
+
+function usageFacts(agentRun: AgentRun): RunUsageFacts {
+  return {
+    agentRunId: agentRun.id,
+    agentId: agentRun.agentId,
+    providerSessionId: agentRun.providerSessionId,
+    final: FINAL_LIFECYCLES.has(agentRun.lifecycle),
+  };
+}
+
+/** Composition-only Runtime read that avoids Runtime→Supervision→Runtime recursion. */
+export async function getUsageRun(
+  core: RunsCore,
+  principal: AuthenticatedPrincipal,
+  agentRunId: AgentRunId,
+): Promise<B3Result<RunUsageFacts>> {
+  const run = await requireRun(core, agentRunId);
+  if (!run.ok) return run;
+  const visible = await core.agents.getAgent(principal, run.value.agentId);
+  if (!visible.ok) return visible;
+  return b3ok(usageFacts(run.value));
+}
+
+/** All Runtime-owned Run facts for one visible stable Agent. */
+export async function listUsageRuns(
+  core: RunsCore,
+  principal: AuthenticatedPrincipal,
+  agentId: AgentId,
+): Promise<B3Result<readonly RunUsageFacts[]>> {
+  const visible = await core.agents.getAgent(principal, agentId);
+  if (!visible.ok) return visible;
+  const runs = await core.store.list<AgentRun>('agentRun', { agentId });
+  if (!runs.ok) return runs;
+  return b3ok(runs.value.map(usageFacts));
 }
 
 export async function getAgentRun(

@@ -5,3 +5,4 @@ export * from './watchers.js';
 export * from './watch-rule-query.js';
 export * from './notifications.js';
 export * from './compose.js';
+export * from './usage/index.js';
