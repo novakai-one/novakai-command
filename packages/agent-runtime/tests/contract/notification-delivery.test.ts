@@ -5,7 +5,36 @@
 // reaches Runtime's store or delivery implementation directly.
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {
+  mintClientOpId, mintTraceCorrelationId,
+  type ActivityGeneration, type AgentRunId, type B3Result, type NotificationId,
+  type SystemCommandContext,
+} from '@novakai/foundation/contract';
+import type { ComposedAgentRuns } from '../../core/runs-compose.js';
+import type { NotificationTurnSubmission } from '../../contract/runs-api.js';
 import { createRunsRig } from '../runs-harness.js';
+
+interface NotificationRuntime extends ComposedAgentRuns {
+  startNotificationTurnAtSafeBoundary(
+    context: SystemCommandContext<'sys_supervision'>,
+    input: {
+      readonly notificationId: NotificationId;
+      readonly agentRunId: AgentRunId;
+      readonly effectKey: string;
+      readonly expectedActivityGeneration: ActivityGeneration;
+    },
+  ): Promise<B3Result<Extract<
+    NotificationTurnSubmission,
+    { readonly state: 'submitted-confirmed' | 'submitted-unconfirmed' }
+  >>>;
+}
+
+const supervisionContext = (): SystemCommandContext<'sys_supervision'> => ({
+  principal: { id: 'sys_supervision', kind: 'system', verifiedScopes: [] },
+  clientOpId: mintClientOpId(),
+  traceId: mintTraceCorrelationId(),
+  contractVersion: 1,
+});
 
 test('an unseen Notification delivery effect has durable state absent', async () => {
   const rig = createRunsRig();
@@ -15,6 +44,42 @@ test('an unseen Notification delivery effect has durable state absent', async ()
     );
     assert.equal(found.ok, true, found.ok ? '' : found.error.message);
     if (found.ok) assert.deepEqual(found.value, { state: 'absent' });
+  } finally {
+    rig.close();
+  }
+});
+
+test('a safe-boundary command submits one Notification turn and remembers its outcome', async () => {
+  const rig = createRunsRig();
+  try {
+    const roleProfileId = rig.agents.defineRole('notification-target');
+    const spawned = await rig.runtime.spawnAgent(rig.human(), {
+      roleProfileId,
+      displayName: 'Notification target',
+      workingDirectory: '/tmp/work',
+    });
+    assert.equal(spawned.ok, true, spawned.ok ? '' : spawned.error.message);
+    if (!spawned.ok) return;
+    const notificationId = `notification_${'a'.repeat(52)}` as NotificationId;
+    const effectKey = `b3v4:notification-delivery:${notificationId}:condition`;
+    const runtime = rig.runtime as NotificationRuntime;
+
+    const submitted = await runtime.startNotificationTurnAtSafeBoundary(
+      supervisionContext(),
+      {
+        notificationId,
+        agentRunId: spawned.value.run.id,
+        effectKey,
+        expectedActivityGeneration: spawned.value.run.activityGeneration,
+      },
+    );
+
+    assert.equal(submitted.ok, true, submitted.ok ? '' : submitted.error.message);
+    if (!submitted.ok) return;
+    assert.equal(submitted.value.state, 'submitted-confirmed');
+    const remembered = await runtime.getNotificationTurnSubmission(rig.principal(), effectKey);
+    assert.equal(remembered.ok, true, remembered.ok ? '' : remembered.error.message);
+    if (remembered.ok) assert.deepEqual(remembered.value, submitted.value);
   } finally {
     rig.close();
   }
