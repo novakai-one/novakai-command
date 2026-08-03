@@ -18,6 +18,7 @@ import {
 import {
   parseCreateWatchRuleInput,
   parseNotificationFilter,
+  parseUpdateWatchRuleInput,
   parseWatchRuleFilter,
   type Notification, type WatchDeadline, type WatchRule,
 } from '../../../supervision/contract/index.js';
@@ -97,6 +98,22 @@ function resolveAuthenticatedHuman(
   });
 }
 
+function resolveUpdateAuthenticatedHuman(
+  payload: Readonly<Record<string, unknown>>,
+  principal: AuthenticatedPrincipal,
+): B3Result<Readonly<Record<string, unknown>>> {
+  if (typeof payload.replacement !== 'object' || payload.replacement === null) {
+    return b3ok(payload);
+  }
+  const resolved = resolveAuthenticatedHuman(
+    payload.replacement as Readonly<Record<string, unknown>>,
+    principal,
+  );
+  return resolved.ok
+    ? b3ok({ ...payload, replacement: resolved.value })
+    : resolved;
+}
+
 export interface WatcherListing {
   readonly rules: readonly WatchRule[];
   readonly deadlines: readonly WatchDeadline[];
@@ -146,6 +163,20 @@ export function buildB3SupervisionMethods(options: B3SupervisionMethodOptions): 
       const context = commandContext(parsed.value, principal);
       return context.ok
         ? supervision.createWatchRule(context.value, input.value)
+        : context;
+    },
+
+    'b3.supervision.updateWatch': async (params, session) => {
+      const parsed = readParams(params);
+      if (!parsed.ok) return parsed;
+      const principal = options.principalFor(session);
+      const resolved = resolveUpdateAuthenticatedHuman(parsed.value.payload, principal);
+      if (!resolved.ok) return resolved;
+      const input = parseUpdateWatchRuleInput(resolved.value);
+      if (!input.ok) return input;
+      const context = commandContext(parsed.value, principal);
+      return context.ok
+        ? supervision.updateWatchRule(context.value, input.value)
         : context;
     },
 

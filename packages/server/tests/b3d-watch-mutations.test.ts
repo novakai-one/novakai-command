@@ -114,3 +114,43 @@ test('nvk watch add creates an event watcher visible through nvk watch list', as
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('nvk watch update replaces one watcher behind its current version fence', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'nvk-b3d-watch-update-'));
+  const host = await startRuntimeHost({
+    root,
+    port: 0,
+    ptyHost: createFakePtyHost(),
+    providers: createFakeProviderAdapters(),
+  });
+  const where = ['--root', root, '--port', String(host.port), '--json'];
+  try {
+    const added = await runNvk([
+      'watch', 'add',
+      '--subject', 'agentRun_019fd000-0000-7000-8000-0000000000a1',
+      '--when', 'run-final',
+      '--notify', 'human',
+      '--delivery', 'queue-only',
+      ...where,
+    ]);
+    assert.equal(added.code, 0, added.out);
+    const created = JSON.parse(added.out) as {
+      readonly value: { readonly id: string };
+    };
+
+    const updated = await runNvk([
+      'watch', 'update', created.value.id,
+      '--delivery', 'next-turn-context',
+      ...where,
+    ]);
+    assert.equal(updated.code, 0, updated.out);
+    const replacement = JSON.parse(updated.out) as {
+      readonly value: { readonly deliveryMode: string; readonly recordVersion: number };
+    };
+    assert.equal(replacement.value.deliveryMode, 'next-turn-context');
+    assert.equal(replacement.value.recordVersion, 2);
+  } finally {
+    await host.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});

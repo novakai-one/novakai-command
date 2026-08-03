@@ -11,7 +11,7 @@ import {
   type B3Result,
 } from '@novakai/foundation/contract';
 import type {
-  Notification, WatchCondition, WatchDeadline, WatchRule, WatchSubject,
+  DriftCheckPolicy, Notification, WatchCondition, WatchDeadline, WatchRule, WatchSubject,
 } from '../../supervision/contract/index.js';
 import { ACTIVITY_DRIFT_TEMPLATE } from '../../supervision/contract/index.js';
 import { connectRuntime, type RuntimeClient } from '../core/b3/client.js';
@@ -98,7 +98,7 @@ function parseSubject(value: string | undefined): B3Result<WatchSubject> {
 
 interface ParsedCondition {
   readonly condition: WatchCondition;
-  readonly driftPolicy?: typeof ACTIVITY_DRIFT_TEMPLATE.driftPolicy;
+  readonly driftPolicy?: DriftCheckPolicy;
 }
 
 const NUMERIC_CONDITIONS = new Set<WatchCondition['kind']>([
@@ -181,6 +181,94 @@ function addInput(argFlags: Flags): B3Result<Readonly<Record<string, unknown>>> 
 }
 
 const ADD_COMMAND = 'add';
+const UPDATE_COMMAND = 'update';
+
+interface ReplacementIdentityFields {
+  readonly subject: WatchSubject;
+  readonly condition: ParsedCondition;
+  readonly recipient: unknown;
+}
+
+function replacementIdentityFields(
+  current: WatchRule,
+  argFlags: Flags,
+): B3Result<ReplacementIdentityFields> {
+  const parsedSubject = argFlags.value('subject') === undefined
+    ? b3ok(current.subject)
+    : parseSubject(argFlags.value('subject'));
+  if (!parsedSubject.ok) return parsedSubject;
+  const parsedCondition = argFlags.value('when') === undefined
+    ? b3ok({ condition: current.condition, driftPolicy: current.driftPolicy })
+    : parseCondition(argFlags.value('when'));
+  if (!parsedCondition.ok) return parsedCondition;
+  const parsedRecipient = argFlags.value('notify') === undefined
+    ? b3ok(current.recipient)
+    : parseRecipient(argFlags.value('notify'));
+  return parsedRecipient.ok
+    ? b3ok({
+      subject: parsedSubject.value,
+      condition: parsedCondition.value,
+      recipient: parsedRecipient.value,
+    })
+    : parsedRecipient;
+}
+
+function replacementInput(
+  current: WatchRule,
+  argFlags: Flags,
+): B3Result<Readonly<Record<string, unknown>>> {
+  const identity = replacementIdentityFields(current, argFlags);
+  if (!identity.ok) return identity;
+  const deliveryMode = argFlags.value('delivery') ?? current.deliveryMode;
+  if (!['queue-only', 'next-turn-context', 'start-turn'].includes(deliveryMode)) {
+    return b3fail(validationFailed([{
+      path: 'delivery', message: 'must be queue-only, next-turn-context, or start-turn',
+    }]));
+  }
+  const status = argFlags.value('status') ?? current.status;
+  if (!['active', 'paused', 'retired'].includes(status)) {
+    return b3fail(validationFailed([{
+      path: 'status', message: 'must be active, paused, or retired',
+    }]));
+  }
+  const cooldownMs = Number(argFlags.value('cooldown-ms') ?? current.cooldownMs);
+  if (!Number.isInteger(cooldownMs) || cooldownMs < 0) {
+    return b3fail(validationFailed([{
+      path: 'cooldown-ms', message: 'must be a non-negative whole number',
+    }]));
+  }
+  return b3ok({
+    subject: identity.value.subject,
+    condition: identity.value.condition.condition,
+    recipient: identity.value.recipient,
+    deliveryMode,
+    cooldownMs,
+    status,
+    ...(identity.value.condition.driftPolicy === undefined
+      ? {}
+      : { driftPolicy: identity.value.condition.driftPolicy }),
+    ...(current.action === undefined ? {} : { action: current.action }),
+  });
+}
+
+async function currentRule(
+  client: RuntimeClient,
+  watchRuleId: string | undefined,
+): Promise<B3Result<WatchRule>> {
+  if (watchRuleId === undefined || !isValidId(watchRuleId, 'watchRule', 'uuidv7')) {
+    return b3fail(validationFailed([{
+      path: 'watchRuleId', message: 'must be a WatchRuleId positional argument',
+    }]));
+  }
+  const listed = await client.call<WatcherListing>(
+    'b3.supervision.listWatchers', { limit: 500 },
+  );
+  if (!listed.ok) return listed;
+  const found = listed.value.rules.find((rule) => rule.id === watchRuleId);
+  return found === undefined
+    ? b3fail(b3err('WatcherConflict', 'the WatchRule does not exist', { watchRuleId }, true))
+    : b3ok(found);
+}
 
 const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
   [ADD_COMMAND]: async function addWatcher(argFlags) {
@@ -193,6 +281,22 @@ const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
         'b3.supervision.createWatch', input.value, clientOpId.value,
       ),
     ), (rule) => `Watching ${JSON.stringify(rule.subject)} for ${rule.condition.kind}.`);
+  },
+
+  [UPDATE_COMMAND]: async function updateWatcher(argFlags) {
+    const clientOpId = clientOpIdFrom(argFlags);
+    if (!clientOpId.ok) emit('watch update', argFlags, clientOpId, () => '');
+    emit('watch update', argFlags, await withClient<WatchRule>(async (client) => {
+      const current = await currentRule(client, argFlags.positional[0]);
+      if (!current.ok) return current;
+      const replacement = replacementInput(current.value, argFlags);
+      if (!replacement.ok) return replacement;
+      return client.call('b3.supervision.updateWatch', {
+        watchRuleId: current.value.id,
+        expectedRecordVersion: current.value.recordVersion,
+        replacement: replacement.value,
+      }, clientOpId.value);
+    }), (rule) => `Updated ${rule.id} to record version ${String(rule.recordVersion)}.`);
   },
 
   async list(argFlags) {
