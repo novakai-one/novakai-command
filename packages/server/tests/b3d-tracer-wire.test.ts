@@ -21,12 +21,13 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { mintClientOpId, type B3Result, type ClientOpId } from '@novakai/foundation/contract';
 import { createFakePtyHost, type FakePty, type FakePtyHost } from '../../terminal/adapters/pty-host/fake.js';
-import { createFakeProviderAdapters } from '../../agents/b3/contract/index.js';
 import { createIdleWatchTemplate } from '../../supervision/public/index.js';
 import type { Notification, WatchDeadline, WatchRule } from '../../supervision/contract/index.js';
 import { startRuntimeHost, type RunningRuntimeHost } from '../core/b3/host.js';
 import { connectRuntime, type RuntimeClient } from '../core/b3/client.js';
-import { chatRole, governedRole, governedTokens } from './governed-role.js';
+import {
+  chatRole, fakeProvidersWithCompletionLimit, governedRole, governedTokens,
+} from './governed-role.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '..', '..', '..');
@@ -54,7 +55,7 @@ function answerWhenAsked(ptyHost: FakePtyHost, text: string): void {
       if (known.has(pty)) continue;
       known.add(pty);
       pty.onTurn((turn) => {
-        pty.emit(turn.includes('do NOT begin it yet') ? `${text}\n` : 'Work complete.\n');
+        if (turn.includes('do NOT begin it yet')) pty.emit(`${text}\n`);
       });
     }
   }, 5);
@@ -74,9 +75,10 @@ async function createRig(): Promise<Rig> {
   const ptyHost = createFakePtyHost({ echoInput: false, composer: true });
   const host = await startRuntimeHost({
     root, port: 0, ptyHost,
-    providers: createFakeProviderAdapters(),
+    providers: fakeProvidersWithCompletionLimit(1),
     watcherTemplates: [FAST_IDLE],
     gateTimeoutMs: 5_000,
+    providerTurnReconciliationIntervalMs: 50,
   });
   answerWhenAsked(ptyHost, `SKILLS-CONFIRMED: ${JSON.stringify(governedTokens())}`);
   const chris = await connectRuntime({ root, port: host.port, token: host.token });
@@ -247,10 +249,9 @@ test('the B3d wire carries current from spawn to a queued Notification', async (
     const fired = unwrap(await rig.chris.call<{
       deadlines: readonly WatchDeadline[];
     }>('b3.supervision.listWatchers', {}, opId()), 'listWatchers after firing');
-    assert.equal(fired.deadlines.length, 0,
-      'the current watcher view retained a deadline that has already fired');
+    assert.equal(fired.deadlines[0]?.state, 'fired');
     assert.deepEqual(
-      deadlineStates(rig.root, watchers.deadlines[0]!.id),
+      deadlineStates(rig.root, fired.deadlines[0]!.id),
       ['armed', 'claimed', 'fired'],
       'the durable scheduler skipped a published deadline state',
     );

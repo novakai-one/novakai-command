@@ -3,7 +3,6 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { b3ok } from '@novakai/foundation/contract';
 import { createFakeProviderAdapters } from '../../agents/b3/contract/index.js';
 import {
   createFakePtyHost,
@@ -11,7 +10,9 @@ import {
 } from '../../terminal/adapters/pty-host/fake.js';
 import { connectRuntime } from '../core/b3/client.js';
 import { startRuntimeHost } from '../core/b3/host.js';
-import { governedRole, governedTokens } from './governed-role.js';
+import {
+  fakeProvidersWithCompletionLimit, governedRole, governedTokens,
+} from './governed-role.js';
 
 const rows = <T extends { id?: string }>(root: string, kind: string): T[] => {
   const parsed = readFileSync(path.join(root, 'stores', `${kind}.jsonl`), 'utf8')
@@ -29,26 +30,7 @@ const rows = <T extends { id?: string }>(root: string, kind: string): T[] => {
 test('a completed real-composition provider turn advances ActivityGeneration', async () => {
   const root = mkdtempSync(path.join(tmpdir(), 'nvk-b3d-provider-turn-generation-'));
   const ptyHost = createFakePtyHost({ echoInput: false, composer: true });
-  const baseProviders = createFakeProviderAdapters();
-  const claude = baseProviders.claude;
-  let observedBoundaries = 0;
-  const providers = {
-    ...baseProviders,
-    claude: {
-      ...claude,
-      async observeProviderTurnBoundary(
-        input: Parameters<typeof claude.observeProviderTurnBoundary>[0],
-      ) {
-        observedBoundaries += 1;
-        if (observedBoundaries === 1) return claude.observeProviderTurnBoundary(input);
-        return b3ok({
-          kind: 'unavailable' as const,
-          reason: 'source-unavailable' as const,
-          evidenceRefs: ['the synthetic work turn has no provider reply'],
-        });
-      },
-    },
-  };
+  const providers = fakeProvidersWithCompletionLimit(1);
   const known = new Set<FakePty>();
   let completedProviderTurns = 0;
   const attach = setInterval(() => {

@@ -101,6 +101,8 @@ export interface B3RuntimeOptions {
   readonly notificationDeliveryIntervalMs?: number;
   /** How often the Runtime scans durable watcher deadlines. */
   readonly watcherIntervalMs?: number;
+  /** How often Runtime reconciles incomplete semantic provider turns. */
+  readonly providerTurnReconciliationIntervalMs?: number;
   /**
    * B3d: extra pinned watcher templates this host's role catalogue offers, on
    * top of the ones Supervision ships. The frozen catalogue seam is owned by
@@ -590,7 +592,7 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
         reason: `${result.error.code}: ${result.error.message}`,
       }, 'agent-runtime');
     });
-  }, 1_000);
+  }, options.providerTurnReconciliationIntervalMs ?? 1_000);
   providerTurnReconciliation.unref();
 
   // The production source: each provider's own file, read-only, found through
