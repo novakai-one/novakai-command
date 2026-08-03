@@ -44,6 +44,7 @@ import {
 } from '../../../supervision/contract/index.js';
 import {
   followEventsIntoSupervision, supervisionWatcherPort, watcherInstallAuthority, watchRuleAccess,
+  watchRuleGeneration,
 } from './supervision-ports.js';
 
 export interface B3RuntimeOptions {
@@ -264,6 +265,7 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
     dataRoot,
     installAuthority: watcherInstallAuthority(agents, () => runs ?? undefined),
     watchRuleAccess: watchRuleAccess(() => runs ?? undefined),
+    watchRuleGeneration: watchRuleGeneration(() => runs ?? undefined),
     templates: watcherTemplates,
   });
 

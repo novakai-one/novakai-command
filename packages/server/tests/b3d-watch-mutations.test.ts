@@ -8,11 +8,13 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { b3ok } from '@novakai/foundation/contract';
 import { createFakeProviderAdapters } from '../../agents/b3/contract/index.js';
-import { createFakePtyHost } from '../../terminal/adapters/pty-host/fake.js';
+import { createFakePtyHost, type FakePty } from '../../terminal/adapters/pty-host/fake.js';
 import { composeSupervision } from '../../supervision/public/index.js';
 import { buildB3SupervisionMethods } from '../core/b3/supervision-methods.js';
 import { startRuntimeHost } from '../core/b3/host.js';
+import { connectRuntime } from '../core/b3/client.js';
 import type { MethodTable } from '../contract/protocol.js';
+import { governedRole, governedTokens } from './governed-role.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '..', '..', '..');
@@ -42,6 +44,22 @@ function runNvk(args: readonly string[]): Promise<{ readonly code: number | null
   return new Promise((resolve) => {
     child.on('close', (code) => { resolve({ code, out }); });
   });
+}
+
+function answerGate(ptyHost: ReturnType<typeof createFakePtyHost>): void {
+  const known = new Set<FakePty>();
+  const timer = setInterval(() => {
+    for (const pty of ptyHost.started) {
+      if (known.has(pty)) continue;
+      known.add(pty);
+      pty.onTurn((turn) => {
+        if (turn.includes('do NOT begin it yet')) {
+          pty.emit(`SKILLS-CONFIRMED: ${JSON.stringify(governedTokens())}\n`);
+        }
+      });
+    }
+  }, 5);
+  timer.unref();
 }
 
 test('b3.supervision.createWatch creates one event watcher through the frozen command', async () => {
@@ -190,6 +208,62 @@ test('nvk watch remove retires its watcher instead of deleting it', async () => 
     };
     assert.equal(page.value.rules[0]?.status, 'retired');
   } finally {
+    await host.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('nvk watch add arms activity drift from the live Run generation', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'nvk-b3d-watch-drift-add-'));
+  const ptyHost = createFakePtyHost({ echoInput: false, composer: true });
+  answerGate(ptyHost);
+  const host = await startRuntimeHost({
+    root,
+    port: 0,
+    ptyHost,
+    providers: createFakeProviderAdapters(),
+    gateTimeoutMs: 5_000,
+  });
+  const client = await connectRuntime({ root, port: host.port, token: host.token });
+  const where = ['--root', root, '--port', String(host.port), '--json'];
+  try {
+    const role = await client.call<{ readonly id: string }>('b3.agent.createRole', {
+      ...governedRole('b3d-manual-drift'),
+      supervisionPolicy: {
+        activityDrift: 'disabled-explicitly',
+        requiredWatcherTemplates: [],
+        parentNotificationMode: 'queue-only',
+      },
+    });
+    assert.equal(role.ok, true, role.ok ? '' : role.error.message);
+    if (!role.ok) return;
+    const spawned = await client.call<{ readonly run: { readonly id: string } }>(
+      'b3.agent.spawn', {
+        roleProfileId: role.value.id,
+        displayName: 'Drift subject',
+        workingDirectory: tmpdir(),
+        task: { kind: 'supervised', brief: 'Wait.' },
+      },
+    );
+    assert.equal(spawned.ok, true, spawned.ok ? '' : spawned.error.message);
+    if (!spawned.ok) return;
+
+    const added = await runNvk([
+      'watch', 'add',
+      '--subject', spawned.value.run.id,
+      '--when', 'activity-drift',
+      '--notify', 'human',
+      '--delivery', 'queue-only',
+      ...where,
+    ]);
+    assert.equal(added.code, 0, added.out);
+    const listed = await runNvk(['watch', 'list', ...where]);
+    const page = JSON.parse(listed.out) as {
+      readonly value: { readonly deadlines: readonly { readonly state: string }[] };
+    };
+    assert.equal(page.value.deadlines[0]?.state, 'armed');
+  } finally {
+    client.close();
     await host.close();
     rmSync(root, { recursive: true, force: true });
   }
