@@ -36,6 +36,21 @@ async function attachedController(
   return b3ok(found.value);
 }
 
+async function requireNoNotificationReservation(
+  core: TerminalCore, terminalSessionId: AcquireInputLeaseInput['terminalSessionId'],
+): Promise<B3Result<null>> {
+  const reservation = await activeNotificationReservation(core, terminalSessionId);
+  if (!reservation.ok) return reservation;
+  if (reservation.value !== null) {
+    return b3fail(b3err('InputLeaseBusy',
+      'a reserved Notification input holds the terminal boundary', {
+        reason: 'notification-input-reserved',
+        notificationInputReservationId: reservation.value.id,
+      }, true));
+  }
+  return b3ok(null);
+}
+
 export async function acquireInputLease(
   core: TerminalCore, context: CommandContext, input: AcquireInputLeaseInput,
 ): Promise<B3Result<TerminalInputLease>> {
@@ -48,15 +63,8 @@ export async function acquireInputLease(
   const allowed = requireOwnAttachment(context, controller.value, OPERATION.acquire);
   if (!allowed.ok) return allowed;
 
-  const reservation = await activeNotificationReservation(core, input.terminalSessionId);
-  if (!reservation.ok) return reservation;
-  if (reservation.value !== null) {
-    return b3fail(b3err('InputLeaseBusy',
-      'a reserved Notification input holds the terminal boundary', {
-        reason: 'notification-input-reserved',
-        notificationInputReservationId: reservation.value.id,
-      }, true));
-  }
+  const available = await requireNoNotificationReservation(core, input.terminalSessionId);
+  if (!available.ok) return available;
 
   const active = await settleAndFindActive(core, input.terminalSessionId);
   if (!active.ok) return active;
