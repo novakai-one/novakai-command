@@ -27,17 +27,17 @@ export interface NotificationRowView {
   deliveryMode: 'queue-only' | 'next-turn-context' | 'start-turn';
   recipient: string;
   subject: string;
-  at: string;
+  observedAt: string;
 }
 
 export interface NotificationInboxView {
-  at: string;
+  observedAt: string;
   rows: NotificationRowView[];
 }
 
 /** Finished, either way. Settled rows stay visible but stop competing. */
-export function isSettled(row: NotificationRowView): boolean {
-  return row.state === 'acknowledged' || row.state === 'expired';
+export function isSettled(item: NotificationRowView): boolean {
+  return item.state === 'acknowledged' || item.state === 'expired';
 }
 
 /**
@@ -52,7 +52,7 @@ export function isSettled(row: NotificationRowView): boolean {
 export function awaitingAcknowledgement(
   rows: readonly NotificationRowView[],
 ): NotificationRowView[] {
-  return rows.filter((row) => row.state === 'transcript-observed');
+  return rows.filter((item) => item.state === 'transcript-observed');
 }
 
 /** Attention order: what needs him, then what is in flight, then what is done. */
@@ -77,7 +77,7 @@ export function orderInbox(
   return [...rows].sort((left, right) => {
     const byState = RANK[left.state] - RANK[right.state];
     if (byState !== 0) return byState;
-    return right.at.localeCompare(left.at);
+    return right.observedAt.localeCompare(left.observedAt);
   });
 }
 
@@ -104,8 +104,8 @@ const STATE_WORDS: Readonly<Record<NotificationInboxState, string>> = {
   expired: 'Expired',
 };
 
-export function formatState(row: NotificationRowView): string {
-  return STATE_WORDS[row.state];
+export function formatState(item: NotificationRowView): string {
+  return STATE_WORDS[item.state];
 }
 
 /** How the notification was meant to arrive — provenance, not instruction. */
@@ -115,11 +115,11 @@ const DELIVERY_WORDS: Readonly<Record<NotificationRowView['deliveryMode'], strin
   'start-turn': 'starts a turn',
 };
 
-export function formatDelivery(row: NotificationRowView): string {
-  return DELIVERY_WORDS[row.deliveryMode];
+export function formatDelivery(item: NotificationRowView): string {
+  return DELIVERY_WORDS[item.deliveryMode];
 }
 
 /** "agent_kimi · starts a turn · Seen" — the quiet half of a row. */
-export function formatRowMeta(row: NotificationRowView): string {
-  return `${row.subject} · ${formatDelivery(row)} · ${formatState(row)}`;
+export function formatRowMeta(item: NotificationRowView): string {
+  return `${item.subject} · ${formatDelivery(item)} · ${formatState(item)}`;
 }

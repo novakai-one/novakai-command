@@ -41,7 +41,7 @@ export function NotificationInboxView(props: {
   const attentionId = attentionIdOf(rows);
 
   return (
-    <ScrollArea style={{ flex: 1 }}>
+    <ScrollArea className="nv-inbox__scroll">
       <Panel head="Notifications">
         <Stack className="nv-inbox">
           {rows.length === 0 ? (
@@ -50,11 +50,11 @@ export function NotificationInboxView(props: {
             <EmptyState>No notifications</EmptyState>
           ) : (
             <Stack gap={0} className="nv-inbox__rows">
-              {rows.map((row) => (
+              {rows.map((item) => (
                 <InboxRow
-                  key={row.id}
-                  row={row}
-                  attention={row.id === attentionId}
+                  key={item.id}
+                  row={item}
+                  attention={item.id === attentionId}
                   {...(props.onAcknowledge ? { onAcknowledge: props.onAcknowledge } : {})}
                 />
               ))}
@@ -71,8 +71,8 @@ function InboxRow(props: {
   attention: boolean;
   onAcknowledge?: (notificationId: string) => void;
 }) {
-  const { row, attention, onAcknowledge } = props;
-  const settled = isSettled(row);
+  const { row: notification, attention, onAcknowledge } = props;
+  const settled = isSettled(notification);
   const className = [
     'nv-inbox__row',
     attention ? 'nv-inbox__row--attention' : '',
@@ -82,15 +82,15 @@ function InboxRow(props: {
   return (
     <Stack gap={0} className={className}>
       <ListRow
-        label={row.summary}
-        meta={formatRowMeta(row)}
+        label={notification.summary}
+        meta={formatRowMeta(notification)}
         // The ONLY ornament on this screen, and only on the single row that is
         // the exception. Everything else stays flat.
         leading={attention ? (
           <PresenceDot state="active" title="seen by the provider — not yet settled" />
         ) : undefined}
         {...(attention && onAcknowledge
-          ? { onClick: () => { onAcknowledge(row.id); } }
+          ? { onClick: () => { onAcknowledge(notification.id); } }
           : {})}
       />
     </Stack>
@@ -111,10 +111,13 @@ export function NotificationInboxScreen(props: { services: ShellServices }) {
     // One immediate pull so the screen is never blank waiting for an event,
     // then the subscription keeps it current.
     void services.getNotificationInbox?.().then((next) => { if (live) setInbox(next); });
-    const off = services.subscribe({
+    const unsubscribe = services.subscribe({
       onNotifications: (next) => { if (live) setInbox(next); },
     });
-    return () => { live = false; off(); };
+    return () => {
+      live = false;
+      unsubscribe();
+    };
   }, [services]);
 
   const onAcknowledge = useCallback((notificationId: string) => {

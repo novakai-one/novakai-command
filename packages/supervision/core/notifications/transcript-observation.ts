@@ -115,11 +115,11 @@ async function pinObservation(
   deps: TranscriptObservationDependencies,
   notification: Notification,
   target: NotificationState,
-  pin: string,
+  pinRef: string,
   extraRefs: readonly string[],
   expectedRecordVersion: number,
 ): Promise<B3Result<Notification>> {
-  if (notification.evidenceRefs.includes(pin)) return b3ok(notification);
+  if (notification.evidenceRefs.includes(pinRef)) return b3ok(notification);
 
   if (!canTransitionNotificationState(notification.state, target)) {
     return b3fail(conflict('this notification cannot move to that state', {
@@ -141,14 +141,16 @@ async function pinObservation(
   }
 
   const refs = [...notification.evidenceRefs];
-  for (const ref of [pin, ...extraRefs]) if (!refs.includes(ref)) refs.push(ref);
+  for (const candidate of [pinRef, ...extraRefs]) {
+    if (!refs.includes(candidate)) refs.push(candidate);
+  }
 
   const written = await deps.store.update<Notification>(
     SUPERVISION_RECORD_WRITER,
     notification.id,
     { state: target, evidenceRefs: refs },
     notification.recordVersion,
-    deriveClientOpId(`b3v4:notification-transcript:${target}:${notification.id}:${pin}`),
+    deriveClientOpId(`b3v4:notification-transcript:${target}:${notification.id}:${pinRef}`),
   );
   if (!written.ok) return b3fail(written.error);
   return b3ok(written.value);
@@ -229,6 +231,50 @@ export async function recordNotificationTranscriptObservation(
 }
 
 /**
+ * Everything about a closure that can be judged from the evidence alone.
+ *
+ * Kept apart from the durable checks because these are the ones that must hold
+ * before the record is even read: a closure whose reason is not one of the three
+ * ruled forms, or that contradicts the discovery state that produced it, or that
+ * claims completion without the watermark proving the source was read PAST our
+ * turn, or that cites nothing at all, is not weaker evidence — it is not
+ * evidence. Returns the refusal, or null when the shape is lawful.
+ */
+function closureShapeProblem(
+  notificationId: NotificationId,
+  evidence: TranscriptDeliveryNonObservationEvidence,
+): ReturnType<typeof invalid> | null {
+  const requiredState = CLOSURE_REASONS[evidence.reason];
+  if (requiredState === undefined) {
+    return invalid('only durable non-observation closes a delivery', {
+      notificationId, reason: evidence.reason, lawful: Object.keys(CLOSURE_REASONS),
+    });
+  }
+  if (evidence.sourceDiscoveryState !== requiredState) {
+    return invalid('the closure reason contradicts the source discovery state', {
+      notificationId,
+      reason: evidence.reason,
+      expected: requiredState,
+      observed: evidence.sourceDiscoveryState,
+    });
+  }
+  if (
+    evidence.reason === 'complete-for-turn'
+    && (evidence.completeThroughWatermark ?? '') === ''
+  ) {
+    return invalid('completion must name the watermark it was complete through', {
+      notificationId,
+    });
+  }
+  if (evidence.evidenceRefs.length === 0) {
+    return invalid('a closure must cite the evidence that closed it', {
+      notificationId, reason: evidence.reason,
+    });
+  }
+  return null;
+}
+
+/**
  * Close a Notification as `delivery-uncertain` on durable non-observation (Q11).
  *
  * Only three things close it, and each has to prove itself. `complete-for-turn`
@@ -248,35 +294,8 @@ export async function recordNotificationTranscriptNonObservation(
 ): Promise<B3Result<Notification>> {
   const { evidence } = input;
 
-  const requiredState = CLOSURE_REASONS[evidence.reason];
-  if (requiredState === undefined) {
-    return b3fail(invalid('only durable non-observation closes a delivery', {
-      notificationId: input.notificationId,
-      reason: evidence.reason,
-      lawful: Object.keys(CLOSURE_REASONS),
-    }));
-  }
-  if (evidence.sourceDiscoveryState !== requiredState) {
-    return b3fail(invalid('the closure reason contradicts the source discovery state', {
-      notificationId: input.notificationId,
-      reason: evidence.reason,
-      expected: requiredState,
-      observed: evidence.sourceDiscoveryState,
-    }));
-  }
-  if (
-    evidence.reason === 'complete-for-turn'
-    && (evidence.completeThroughWatermark ?? '') === ''
-  ) {
-    return b3fail(invalid('completion must name the watermark it was complete through', {
-      notificationId: input.notificationId,
-    }));
-  }
-  if (evidence.evidenceRefs.length === 0) {
-    return b3fail(invalid('a closure must cite the evidence that closed it', {
-      notificationId: input.notificationId, reason: evidence.reason,
-    }));
-  }
+  const shape = closureShapeProblem(input.notificationId, evidence);
+  if (shape !== null) return b3fail(shape);
 
   const loaded = await loadForEffect(deps, input.notificationId, input.expectedEffectKey);
   if (!loaded.ok) return b3fail(loaded.error);

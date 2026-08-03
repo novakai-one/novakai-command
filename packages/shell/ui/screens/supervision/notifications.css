@@ -2,6 +2,10 @@
    Grayscale + spacing + weight carry everything; no accent token appears here
    at all (the composed viewport owns its single signal, SHL-010). */
 
+.nv-inbox__scroll {
+  flex: 1;
+}
+
 .nv-inbox {
   gap: 14px;
   padding: 12px 14px;

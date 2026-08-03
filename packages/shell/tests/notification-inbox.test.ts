@@ -31,12 +31,12 @@ const row = (partial: Partial<NotificationRowView> = {}): NotificationRowView =>
   deliveryMode: 'start-turn',
   recipient: 'Chris',
   subject: 'agent_kimi',
-  at: '2026-08-03T10:00:00.000Z',
+  observedAt: '2026-08-03T10:00:00.000Z',
   ...partial,
 });
 
 const inbox = (rows: NotificationRowView[]): NotificationInboxView => ({
-  at: '2026-08-03T10:05:00.000Z', rows,
+  observedAt: '2026-08-03T10:05:00.000Z', rows,
 });
 
 describe('the house gates still hold with the inbox in the viewport', () => {
@@ -54,9 +54,9 @@ describe('the house gates still hold with the inbox in the viewport', () => {
 describe('exactly one thing is the exception', () => {
   it('marks one row when several are waiting — not all of them', () => {
     const rows = [
-      row({ id: 'a', state: 'transcript-observed', at: '2026-08-03T10:00:00.000Z' }),
-      row({ id: 'b', state: 'transcript-observed', at: '2026-08-03T10:02:00.000Z' }),
-      row({ id: 'c', state: 'transcript-observed', at: '2026-08-03T10:01:00.000Z' }),
+      row({ id: 'a', state: 'transcript-observed', observedAt: '2026-08-03T10:00:00.000Z' }),
+      row({ id: 'b', state: 'transcript-observed', observedAt: '2026-08-03T10:02:00.000Z' }),
+      row({ id: 'c', state: 'transcript-observed', observedAt: '2026-08-03T10:01:00.000Z' }),
     ];
     expect(awaitingAcknowledgement(rows)).toHaveLength(3);
     expect(attentionIdOf(rows)).toBe('b');
@@ -64,8 +64,8 @@ describe('exactly one thing is the exception', () => {
 
   it('settling the marked row releases the marker onto the next one', () => {
     const rows = [
-      row({ id: 'a', state: 'transcript-observed', at: '2026-08-03T10:00:00.000Z' }),
-      row({ id: 'b', state: 'transcript-observed', at: '2026-08-03T10:02:00.000Z' }),
+      row({ id: 'a', state: 'transcript-observed', observedAt: '2026-08-03T10:00:00.000Z' }),
+      row({ id: 'b', state: 'transcript-observed', observedAt: '2026-08-03T10:02:00.000Z' }),
     ];
     expect(attentionIdOf(rows)).toBe('b');
     const settled = rows.map((r) => (r.id === 'b' ? { ...r, state: 'acknowledged' as const } : r));
@@ -121,8 +121,8 @@ describe('order carries the attention, not copy', () => {
 
   it('breaks ties by recency, newest first', () => {
     const rows = [
-      row({ id: 'older', state: 'queued', at: '2026-08-03T09:00:00.000Z' }),
-      row({ id: 'newer', state: 'queued', at: '2026-08-03T11:00:00.000Z' }),
+      row({ id: 'older', state: 'queued', observedAt: '2026-08-03T09:00:00.000Z' }),
+      row({ id: 'newer', state: 'queued', observedAt: '2026-08-03T11:00:00.000Z' }),
     ];
     expect(orderInbox(rows).map((r) => r.id)).toEqual(['newer', 'older']);
   });
@@ -174,8 +174,8 @@ describe('the rendered screen', () => {
   it('draws at most one marker no matter how many rows are waiting', () => {
     const rows = [
       row({ id: 'a', state: 'transcript-observed' }),
-      row({ id: 'b', state: 'transcript-observed', at: '2026-08-03T10:02:00.000Z' }),
-      row({ id: 'c', state: 'transcript-observed', at: '2026-08-03T10:01:00.000Z' }),
+      row({ id: 'b', state: 'transcript-observed', observedAt: '2026-08-03T10:02:00.000Z' }),
+      row({ id: 'c', state: 'transcript-observed', observedAt: '2026-08-03T10:01:00.000Z' }),
     ];
     const html = renderToStaticMarkup(
       React.createElement(InboxView, { inbox: inbox(rows) }),
