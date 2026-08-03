@@ -4,4 +4,5 @@ export * from './templates.js';
 export * from './watchers.js';
 export * from './watch-rule-query.js';
 export * from './notifications.js';
+export * from './notifications/index.js';
 export * from './compose.js';
