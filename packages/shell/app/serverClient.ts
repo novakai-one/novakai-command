@@ -8,7 +8,9 @@
 // The demo's two spawn affordances collapse into the server's single
 // spawnAgentConversation (§7): the real-provider entry point is always wired,
 // and the mock entry point appears only when the server says dev.allowMock.
-import type { ShellServices, SettingsRecord, AgentEvent } from '../contract/index.js';
+import type {
+  AgentEvent, ShellServices, SettingsRecord, WatcherListView,
+} from '../contract/index.js';
 import type { SetSettingError } from '../contract/index.js';
 
 interface Pending { resolve(v: unknown): void; reject(e: Error): void }
@@ -19,6 +21,38 @@ export interface BootstrapDocument {
   wsUrl: string;
   token: string;
   protocolVersion: number;
+}
+
+interface WatcherWireResult {
+  readonly ok: boolean;
+  readonly value?: Omit<WatcherListView, 'deadlines'> & {
+    readonly deadlines: readonly (Omit<WatcherListView['deadlines'][number], 'driftPhase'> & {
+      readonly driftState?: { readonly phase?: string };
+    })[];
+  };
+  readonly error?: { readonly code: string; readonly message: string };
+}
+
+/** Keep Supervision's record vocabulary out of the component tree. */
+export function watcherListingFromWire(result: WatcherWireResult): WatcherListView {
+  if (!result.ok || result.value === undefined) {
+    throw new Error(`${result.error?.code ?? 'RuntimeUnavailable'}: `
+      + `${result.error?.message ?? 'watcher listing returned no value'}`);
+  }
+  return {
+    rules: result.value.rules,
+    deadlines: result.value.deadlines.map((deadline) => ({
+      id: deadline.id,
+      watchRuleId: deadline.watchRuleId,
+      state: deadline.state,
+      dueAt: deadline.dueAt,
+      activityGeneration: deadline.activityGeneration,
+      ...(deadline.driftState?.phase === undefined
+        ? {}
+        : { driftPhase: deadline.driftState.phase }),
+    })),
+    omissions: result.value.omissions,
+  };
 }
 
 /** Same-origin bootstrap. The token is never hardcoded anywhere in the app. */
@@ -100,6 +134,10 @@ export function createServerServices(
         };
       },
       getUsageTable: () => call('getUsageTable'),
+      listWatchers: async () => watcherListingFromWire(await call<WatcherWireResult>(
+        'b3.supervision.listWatchers',
+        { contractVersion: 1, payload: { limit: 500 } },
+      )),
       getLayout: () => call('getLayout'),
       // M5/DEC-S2-12: clientOpId minted HERE (the interaction layer) and sent
       // with the mutation; the server threads it to foundation meta.

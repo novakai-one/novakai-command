@@ -6,6 +6,7 @@ import type { SetSettingError } from './settings.js';
 import type { PersistFailedError } from './errors.js';
 import type { ScreenContext } from './context.js';
 import type { UsageTableView } from './usage.js';
+import type { WatcherListView } from './watchers.js';
 
 /**
  * S2a: shell-side view of an agent definition v2 (plain data — the browser
@@ -143,4 +144,7 @@ export interface ShellServices {
    * Absent on hosts with no supervision engine — the screen draws that.
    */
   getUsageTable?(): Promise<UsageTableView>;
+
+  /** Current watcher rules joined to their generation-fenced deadlines. */
+  listWatchers?(): Promise<WatcherListView>;
 }
