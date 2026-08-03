@@ -195,7 +195,7 @@ test('a completed delivery replay survives a later Run generation', async () => 
   }
 });
 
-test('retry records Supervision outcome after Terminal committed before a crash', async () => {
+test('restart records Supervision outcome after Terminal committed before a crash', async () => {
   const healthy = createRunsRig();
   let crashed: ReturnType<typeof createRunsRig> | null = null;
   let resumed: ReturnType<typeof createRunsRig> | null = null;
@@ -250,6 +250,13 @@ test('retry records Supervision outcome after Terminal committed before a crash'
       messagingEndpoint: healthy.messagingEndpoint,
       transcriptCustody: healthy.transcriptCustody,
     });
+    const booted = await resumed.runtime.reconcileAfterRestart();
+    assert.equal(booted.ok, true, booted.ok ? '' : booted.error.message);
+    const interruptedRun = await resumed.runtime.getAgentRun(
+      resumed.principal(), spawned.value.run.id,
+    );
+    assert.equal(interruptedRun.ok, true, interruptedRun.ok ? '' : interruptedRun.error.message);
+    if (interruptedRun.ok) assert.equal(interruptedRun.value.run.lifecycle, 'interrupted');
     const recovered = await resumed.runtime.startNotificationTurnAtSafeBoundary(
       supervisionContext(), input,
     );
