@@ -3,10 +3,12 @@
 // Split from `runs-harness.ts` so that file is the RIG and this one is what the
 // rig pretends to be talking to.
 import {
-  b3err, b3fail, b3ok, mintTerminalInputAttemptId, mintTerminalSessionId, nowIsoUtc,
-  type ProviderSessionId, type TerminalSessionId,
+  b3err, b3fail, b3ok, mintTerminalInputAttemptId, mintTerminalSessionId,
+  notificationInputReservationId, nowIsoUtc,
+  type NotificationInputReservationId, type ProviderSessionId, type TerminalSessionId,
 } from '@novakai/foundation/contract';
 import type {
+  NotificationInputAttemptFacts, NotificationInputReservationFacts,
   ProviderPort, TerminalFacts, TerminalPort,
 } from '../contract/ports.js';
 import type { TurnDeliveryStep } from '../contract/types.js';
@@ -115,6 +117,10 @@ function scriptedConfirmation(
 
 export function createFakeTerminal(): FakeTerminal {
   const sessions = new Map<TerminalSessionId, TerminalFacts>();
+  const notificationReservations = new Map<
+    NotificationInputReservationId, NotificationInputReservationFacts
+  >();
+  const notificationAttempts = new Map<string, NotificationInputAttemptFacts>();
   /** One PTY per open OPERATION, so a retry adopts instead of launching. */
   const byOperation = new Map<string, TerminalFacts>();
   const port: FakeTerminal = {
@@ -179,6 +185,85 @@ export function createFakeTerminal(): FakeTerminal {
         if (answer !== null) port.output = `${port.output}\nthinking...\n${answer}\n`;
       }
       return b3ok({ confirmed: true, ...attempted });
+    },
+
+    async reserveNotificationInput(input) {
+      const id = notificationInputReservationId(input.effectKey);
+      const prior = notificationReservations.get(id);
+      if (prior !== undefined) return b3ok(prior);
+      const reservation: NotificationInputReservationFacts = {
+        id,
+        terminalSessionId: input.terminalSessionId,
+        agentRunId: input.agentRunId,
+        notificationId: input.notificationId,
+        deliveryEffectKey: input.effectKey,
+        expectedActivityGeneration: input.expectedActivityGeneration,
+        providerTurnId: input.providerTurnId,
+        state: 'reserved',
+      };
+      notificationReservations.set(id, reservation);
+      return b3ok(reservation);
+    },
+
+    async commitReservedNotificationInput(input) {
+      const prior = notificationReservations.get(input.notificationInputReservationId);
+      if (prior === undefined) {
+        return b3fail(b3err(
+          'ValidationFailed', 'unknown fake Notification reservation', {}, false,
+        ));
+      }
+      if (prior.state === 'cancelled') {
+        return b3fail(b3err(
+          'IdempotencyConflict', 'fake Notification reservation was cancelled', {}, false,
+        ));
+      }
+      if (prior.state === 'committed' && prior.terminalInputAttemptId !== undefined) {
+        const attempt = notificationAttempts.get(prior.terminalInputAttemptId);
+        if (attempt !== undefined) return b3ok({ reservation: prior, attempt });
+      }
+      const submittedAt = nowIsoUtc();
+      const attempt: NotificationInputAttemptFacts = {
+        id: mintTerminalInputAttemptId(),
+        notificationInputReservationId: prior.id,
+        deliveryEffectKey: prior.deliveryEffectKey,
+        providerTurnId: prior.providerTurnId,
+        outcome: 'submitted-confirmed',
+        submittedAt,
+      };
+      const reservation: NotificationInputReservationFacts = {
+        ...prior,
+        state: 'committed',
+        terminalInputAttemptId: attempt.id,
+        endedAt: submittedAt,
+      };
+      notificationAttempts.set(attempt.id, attempt);
+      notificationReservations.set(reservation.id, reservation);
+      port.output = `${port.output}${input.utf8Text}`;
+      return b3ok({ reservation, attempt });
+    },
+
+    async cancelReservedNotificationInput(input) {
+      const prior = notificationReservations.get(input.notificationInputReservationId);
+      if (prior === undefined) {
+        return b3fail(b3err(
+          'ValidationFailed', 'unknown fake Notification reservation', {}, false,
+        ));
+      }
+      const cancelled: NotificationInputReservationFacts = {
+        ...prior,
+        state: 'cancelled',
+        endedAt: nowIsoUtc(),
+      };
+      notificationReservations.set(cancelled.id, cancelled);
+      return b3ok(cancelled);
+    },
+
+    async getNotificationInputReservation(notificationInputReservationId) {
+      return b3ok(notificationReservations.get(notificationInputReservationId) ?? null);
+    },
+
+    async getNotificationInputAttempt(terminalInputAttemptId) {
+      return b3ok(notificationAttempts.get(terminalInputAttemptId) ?? null);
     },
 
     async readOutputSoFar() { return b3ok(port.output); },

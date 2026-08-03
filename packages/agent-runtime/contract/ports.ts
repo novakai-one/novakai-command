@@ -13,8 +13,8 @@ import type {
   AgentId, AgentRoleProfileId, AgentRunId, AuthenticatedPrincipal, AuthorityScope,
   B3Result, CommandContext, ControlReplacementPlanId, DelegationGrantId,
   HumanPrincipalId, ProviderSessionId, ProviderTurnId, ActivityGeneration, IsoUtc,
-  RecordVersion, ResolvedLaunchPlanId, RuntimeEpochId, TerminalInputAttemptId,
-  TerminalSessionId,
+  NotificationId, NotificationInputReservationId, RecordVersion,
+  ResolvedLaunchPlanId, RuntimeEpochId, TerminalInputAttemptId, TerminalSessionId,
 } from '@novakai/foundation/contract';
 import type { ContinuationMode, LaunchConfigurationMode, LaunchSurface } from './runs.js';
 import type { TurnDeliveryStep } from './types.js';
@@ -218,6 +218,28 @@ export interface TerminalFacts {
   readonly status: 'reserved' | 'starting' | 'live' | 'exited' | 'failed' | 'recovery-required';
 }
 
+export interface NotificationInputReservationFacts {
+  readonly id: NotificationInputReservationId;
+  readonly terminalSessionId: TerminalSessionId;
+  readonly agentRunId: AgentRunId;
+  readonly notificationId: NotificationId;
+  readonly deliveryEffectKey: string;
+  readonly expectedActivityGeneration: ActivityGeneration;
+  readonly providerTurnId: ProviderTurnId;
+  readonly state: 'reserved' | 'cancelled' | 'committed';
+  readonly terminalInputAttemptId?: TerminalInputAttemptId;
+  readonly endedAt?: IsoUtc;
+}
+
+export interface NotificationInputAttemptFacts {
+  readonly id: TerminalInputAttemptId;
+  readonly notificationInputReservationId: NotificationInputReservationId;
+  readonly deliveryEffectKey: string;
+  readonly providerTurnId: ProviderTurnId;
+  readonly outcome: 'submitted-confirmed' | 'submitted-unconfirmed';
+  readonly submittedAt: IsoUtc;
+}
+
 /**
  * Terminal, seen through the one hole the Runtime needs: open a managed PTY,
  * type into it under the Runtime's own authority, read what came back, name the
@@ -246,6 +268,39 @@ export interface TerminalPort {
     readonly terminalInputAttemptId: TerminalInputAttemptId;
     readonly submittedAt: IsoUtc;
   }>>;
+
+  reserveNotificationInput(input: {
+    readonly terminalSessionId: TerminalSessionId;
+    readonly agentRunId: AgentRunId;
+    readonly notificationId: NotificationId;
+    readonly effectKey: string;
+    readonly expectedActivityGeneration: ActivityGeneration;
+    readonly inputTextDigest: string;
+    readonly providerTurnId: ProviderTurnId;
+  }): Promise<B3Result<NotificationInputReservationFacts>>;
+
+  commitReservedNotificationInput(input: {
+    readonly notificationInputReservationId: NotificationInputReservationId;
+    readonly effectKey: string;
+    readonly utf8Text: string;
+  }): Promise<B3Result<{
+    readonly reservation: NotificationInputReservationFacts;
+    readonly attempt: NotificationInputAttemptFacts;
+  }>>;
+
+  cancelReservedNotificationInput(input: {
+    readonly notificationInputReservationId: NotificationInputReservationId;
+    readonly effectKey: string;
+    readonly reason: 'supervision-claim-rejected' | 'runtime-compensation';
+  }): Promise<B3Result<NotificationInputReservationFacts>>;
+
+  getNotificationInputReservation(
+    notificationInputReservationId: NotificationInputReservationId,
+  ): Promise<B3Result<NotificationInputReservationFacts | null>>;
+
+  getNotificationInputAttempt(
+    terminalInputAttemptId: TerminalInputAttemptId,
+  ): Promise<B3Result<NotificationInputAttemptFacts | null>>;
 
   /** Everything the session has printed, for the gate to read its reply from. */
   readOutputSoFar(
@@ -295,6 +350,68 @@ export interface TerminalPort {
   getTerminal(
     principal: AuthenticatedPrincipal, terminalSessionId: TerminalSessionId,
   ): Promise<B3Result<TerminalFacts | null>>;
+}
+
+// ── What Supervision must answer for one delivery operation ────────────────
+
+export interface NotificationDeliveryAuthorityFacts {
+  readonly notificationId: NotificationId;
+  readonly notificationRecordVersion: RecordVersion;
+  readonly watchRuleId: string;
+  readonly agentRunId: AgentRunId;
+  readonly deliveryEffectKey: string;
+  readonly activityGeneration: ActivityGeneration;
+  readonly deliveryMode: 'start-turn';
+  readonly inputText: string;
+  readonly authoritySource:
+    | { readonly kind: 'watch-rule'; readonly watchRuleId: string }
+    | { readonly kind: 'launch-plan'; readonly launchPlanId: ResolvedLaunchPlanId };
+}
+
+export type NotificationDeliveryClaimFacts =
+  | {
+      readonly phase: 'ordinary';
+      readonly notificationRecordVersion: RecordVersion;
+    }
+  | {
+      readonly phase: 'drift-status-request';
+      readonly notificationRecordVersion: RecordVersion;
+      readonly watchDeadlineId: string;
+      readonly watchDeadlineRecordVersion: RecordVersion;
+      readonly driftEpisodeId: string;
+    };
+
+export interface NotificationDeliveryPort {
+  getAuthority(
+    principal: AuthenticatedPrincipal, notificationId: NotificationId,
+  ): Promise<B3Result<NotificationDeliveryAuthorityFacts>>;
+
+  claim(input: {
+    readonly notificationId: NotificationId;
+    readonly expectedNotificationRecordVersion: RecordVersion;
+    readonly expectedEffectKey: string;
+    readonly notificationInputReservationId: NotificationInputReservationId;
+    readonly expectedActivityGeneration: ActivityGeneration;
+  }): Promise<B3Result<NotificationDeliveryClaimFacts>>;
+
+  recordSubmission(input: {
+    readonly claim: NotificationDeliveryClaimFacts;
+    readonly notificationId: NotificationId;
+    readonly effectKey: string;
+    readonly notificationInputReservationId: NotificationInputReservationId;
+    readonly terminalInputAttemptId: TerminalInputAttemptId;
+    readonly outcome:
+      | {
+          readonly state: 'submitted-confirmed';
+          readonly submittedAt: IsoUtc;
+          readonly providerTurnId: ProviderTurnId;
+        }
+      | {
+          readonly state: 'submitted-unconfirmed';
+          readonly submittedAt: IsoUtc;
+          readonly providerTurnId?: ProviderTurnId;
+        };
+  }): Promise<B3Result<null>>;
 }
 
 // ── What a provider must answer ─────────────────────────────────────────────

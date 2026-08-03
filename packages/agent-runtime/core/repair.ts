@@ -26,7 +26,7 @@ import {
 } from './stop-tree.js';
 
 /** Which authority a caller needs to repair each kind of operation. */
-const AUTHORITY: Readonly<Record<RunOperationKind, Parameters<
+const AUTHORITY: Readonly<Record<Exclude<RunOperationKind, 'deliver-notification'>, Parameters<
   RunsCore['agents']['authoriseRunOperation']
 >[1]['operation']>> = {
   spawn: 'continue',
@@ -70,6 +70,7 @@ async function authorise(
 ): Promise<B3Result<null>> {
   const targetAgentId = operation.agentId;
   if (targetAgentId === undefined) return b3ok(null);
+  if (operation.kindOfOperation === 'deliver-notification') return b3ok(null);
   const allowed = await core.agents.authoriseRunOperation(context.principal, {
     targetAgentId, operation: AUTHORITY[operation.kindOfOperation],
   });

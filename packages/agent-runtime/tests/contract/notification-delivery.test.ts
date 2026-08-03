@@ -7,27 +7,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   mintClientOpId, mintTraceCorrelationId,
-  type ActivityGeneration, type AgentRunId, type B3Result, type NotificationId,
-  type SystemCommandContext,
+  type NotificationId, type SystemCommandContext,
 } from '@novakai/foundation/contract';
-import type { ComposedAgentRuns } from '../../core/runs-compose.js';
-import type { NotificationTurnSubmission } from '../../contract/runs-api.js';
 import { createRunsRig } from '../runs-harness.js';
-
-interface NotificationRuntime extends ComposedAgentRuns {
-  startNotificationTurnAtSafeBoundary(
-    context: SystemCommandContext<'sys_supervision'>,
-    input: {
-      readonly notificationId: NotificationId;
-      readonly agentRunId: AgentRunId;
-      readonly effectKey: string;
-      readonly expectedActivityGeneration: ActivityGeneration;
-    },
-  ): Promise<B3Result<Extract<
-    NotificationTurnSubmission,
-    { readonly state: 'submitted-confirmed' | 'submitted-unconfirmed' }
-  >>>;
-}
 
 const supervisionContext = (): SystemCommandContext<'sys_supervision'> => ({
   principal: { id: 'sys_supervision', kind: 'system', verifiedScopes: [] },
@@ -62,9 +44,15 @@ test('a safe-boundary command submits one Notification turn and remembers its ou
     if (!spawned.ok) return;
     const notificationId = `notification_${'a'.repeat(52)}` as NotificationId;
     const effectKey = `b3v4:notification-delivery:${notificationId}:condition`;
-    const runtime = rig.runtime as NotificationRuntime;
+    rig.notifications.authorize({
+      notificationId,
+      agentRunId: spawned.value.run.id,
+      effectKey,
+      activityGeneration: spawned.value.run.activityGeneration,
+      inputText: 'Output token threshold reached',
+    });
 
-    const submitted = await runtime.startNotificationTurnAtSafeBoundary(
+    const submitted = await rig.runtime.startNotificationTurnAtSafeBoundary(
       supervisionContext(),
       {
         notificationId,
@@ -77,7 +65,9 @@ test('a safe-boundary command submits one Notification turn and remembers its ou
     assert.equal(submitted.ok, true, submitted.ok ? '' : submitted.error.message);
     if (!submitted.ok) return;
     assert.equal(submitted.value.state, 'submitted-confirmed');
-    const remembered = await runtime.getNotificationTurnSubmission(rig.principal(), effectKey);
+    const remembered = await rig.runtime.getNotificationTurnSubmission(
+      rig.principal(), effectKey,
+    );
     assert.equal(remembered.ok, true, remembered.ok ? '' : remembered.error.message);
     if (remembered.ok) assert.deepEqual(remembered.value, submitted.value);
   } finally {
