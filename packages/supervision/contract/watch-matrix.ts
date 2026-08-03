@@ -10,26 +10,30 @@ export interface WatchPairIssue {
   readonly templateRef?: VersionedRef;
 }
 
-const USAGE = new Set<WatchCondition['kind']>([
-  'turn-count-at-least',
-  'input-tokens-at-least',
-  'output-tokens-at-least',
-  'cost-micros-at-least',
-]);
+type SubjectKind = WatchSubject['kind'];
+type ConditionKind = WatchCondition['kind'];
+
+const FAMILY_BY_CONDITION: Readonly<Record<
+ConditionKind, Readonly<Record<SubjectKind, WatchOccurrenceFamily>>
+>> = {
+  'turn-count-at-least': { 'agent-run': 'L', agent: 'AR', 'children-of': 'AR' },
+  'input-tokens-at-least': { 'agent-run': 'L', agent: 'AR', 'children-of': 'AR' },
+  'output-tokens-at-least': { 'agent-run': 'L', agent: 'AR', 'children-of': 'AR' },
+  'cost-micros-at-least': { 'agent-run': 'L', agent: 'AR', 'children-of': 'AR' },
+  'idle-for-ms': { 'agent-run': 'L', agent: 'R', 'children-of': 'R' },
+  'activity-drift': { 'agent-run': 'A-03', agent: 'R', 'children-of': 'R' },
+  'run-disconnected': { 'agent-run': 'L', agent: 'EV', 'children-of': 'EV' },
+  'run-final': { 'agent-run': 'L', agent: 'AR', 'children-of': 'AR' },
+  'child-needs-help': { 'agent-run': 'EV', agent: 'EV', 'children-of': 'EV' },
+  'operation-failed': { 'agent-run': 'OP', agent: 'OP', 'children-of': 'OP' },
+};
 
 /** The exhaustive B3V4-AMD-003 WatchSubject × WatchCondition matrix. */
 export function watchOccurrenceFamily(
   subject: WatchSubject,
   condition: WatchCondition,
 ): WatchOccurrenceFamily {
-  if (USAGE.has(condition.kind)) return subject.kind === 'agent-run' ? 'L' : 'AR';
-  if (condition.kind === 'idle-for-ms') return subject.kind === 'agent-run' ? 'L' : 'R';
-  if (condition.kind === 'activity-drift') return subject.kind === 'agent-run' ? 'A-03' : 'R';
-  if (condition.kind === 'run-disconnected') return subject.kind === 'agent-run' ? 'L' : 'EV';
-  if (condition.kind === 'run-final') return subject.kind === 'agent-run' ? 'L' : 'AR';
-  if (condition.kind === 'child-needs-help') return 'EV';
-  if (condition.kind === 'operation-failed') return 'OP';
-  return 'R';
+  return FAMILY_BY_CONDITION[condition.kind][subject.kind];
 }
 
 /** Machine-readable rejection shared by install, create, and update. */

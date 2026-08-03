@@ -57,8 +57,8 @@ import {
 import { createSupervisionOwnerLinearizer } from './owner-linearizer.js';
 import {
   getWatchEvaluationProgress, listWatchEvaluationProgress,
-  subscribeWatchRuleAdmissionSignals,
 } from './watch-evaluation-progress.js';
+import { subscribeWatchRuleAdmissionSignals } from './admission-signals.js';
 
 /** The frozen members the tracer's live wire actually carries current through. */
 export type SupervisionWireSlice = Pick<

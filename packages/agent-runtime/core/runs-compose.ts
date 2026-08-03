@@ -41,11 +41,12 @@ import { applyRunControl, discoverRunControls } from './controls.js';
 import { continueAgent } from './continue.js';
 import {
   getAgentRun, getRunLaunchPlanId, getRunOperation, listAgentRuns,
-  getRunOccurrenceEvent, getUsageRun, listRunOperations, listUsageRuns,
-  reconcileAfterRestart, resolveCurrentRunByAgent, resolveUsageRunByProviderSession,
-  runsCensus, viewOfRun,
-  observeTerminalExit,
+  listRunOperations, reconcileAfterRestart, runsCensus, viewOfRun, observeTerminalExit,
 } from './queries.js';
+import {
+  getRunOccurrenceEvent, getUsageRun, listUsageRuns,
+  resolveCurrentRunByAgent, resolveUsageRunByProviderSession,
+} from './occurrence-queries.js';
 import { getAgentRunTree } from './tree.js';
 import { repairRunOperation } from './repair.js';
 import { createRunEventLog } from './events.js';

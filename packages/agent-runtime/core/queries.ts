@@ -5,18 +5,15 @@
 // live, and whether it is working. "No controller" is not "stopped"; "unknown"
 // is not "zero" (§24.5, red gates 4 and 13).
 import {
-  b3err, b3fail, b3ok, canonicalRequestHash, mintClientOpId, nowIsoUtc,
+  b3fail, b3ok, mintClientOpId, nowIsoUtc,
   type ActivityGeneration, type AgentId, type AgentRunId, type AuthenticatedPrincipal, type B3Page,
-  type B3Result, type IsoUtc, type ProviderSessionId, type ResolvedLaunchPlanId,
-  type RunOperationId,
+  type B3Result, type IsoUtc, type ResolvedLaunchPlanId, type RunOperationId,
   type TerminalSessionId,
 } from '@novakai/foundation/contract';
 import type {
-  AgentRunView, ListAgentRunsFilter, RunOperationView, RunUsageFacts,
+  AgentRunView, ListAgentRunsFilter, RunOperationView,
 } from '../contract/runs-api.js';
-import type {
-  AgentRunUsage, RunOccurrenceEventFacts, UsageValue,
-} from '../../supervision/contract/index.js';
+import type { AgentRunUsage, UsageValue } from '../../supervision/contract/index.js';
 import {
   FINAL_LIFECYCLES, type AgentRun, type RunOperation,
 } from '../contract/runs.js';
@@ -25,7 +22,6 @@ import {
 } from './runs-context.js';
 import { recoveryRequired, unknownRun } from './runs-store.js';
 import { completed } from './journal.js';
-import type { RunEventLog } from './events.js';
 
 /**
  * §19.1 names this view field `run`. It is a compatibility contract — the CLI
@@ -236,239 +232,6 @@ export async function viewOfRun(
         },
     [RUN_FIELD]: agentRun,
   } as AgentRunView);
-}
-
-function usageFacts(agentRun: AgentRun): RunUsageFacts {
-  return {
-    agentRunId: agentRun.id,
-    agentId: agentRun.agentId,
-    providerSessionId: agentRun.providerSessionId,
-    lifecycle: agentRun.lifecycle,
-    final: FINAL_LIFECYCLES.has(agentRun.lifecycle),
-    activityGeneration: agentRun.activityGeneration,
-    recordVersion: agentRun.recordVersion,
-  };
-}
-
-/** Complete ProviderSession→Run correlation across live and final history. */
-export async function resolveUsageRunByProviderSession(
-  core: RunsCore,
-  principal: AuthenticatedPrincipal,
-  providerSessionId: ProviderSessionId,
-): Promise<B3Result<RunUsageFacts | null>> {
-  const stored = await core.store.list<AgentRun>('agentRun', { providerSessionId });
-  if (!stored.ok) return stored;
-  if (stored.value.length > 1) {
-    return b3fail(b3err(
-      'ProviderSessionReservationConflict',
-      'one ProviderSession is bound to more than one Run',
-      {
-        providerSessionId,
-        conflictingAgentRunIds: stored.value.map((run) => run.id).sort(),
-      },
-      false,
-    ));
-  }
-  const run = stored.value[0];
-  if (run === undefined) return b3ok(null);
-  const visible = await core.agents.getAgent(principal, run.agentId);
-  if (!visible.ok) return visible;
-  return b3ok(usageFacts(run));
-}
-
-/** The sole non-final Run for one Agent, or authoritative absence. */
-export async function resolveCurrentRunByAgent(
-  core: RunsCore,
-  principal: AuthenticatedPrincipal,
-  agentId: AgentId,
-): Promise<B3Result<RunUsageFacts | null>> {
-  const visible = await core.agents.getAgent(principal, agentId);
-  if (!visible.ok) return visible;
-  const stored = await core.store.list<AgentRun>('agentRun', { agentId });
-  if (!stored.ok) return stored;
-  const live = stored.value.filter((run) => !FINAL_LIFECYCLES.has(run.lifecycle));
-  if (live.length > 1) {
-    return b3fail(b3err(
-      'RuntimeUnavailable',
-      'current-Run uniqueness is not proven for this Agent',
-      { agentId, conflictingAgentRunIds: live.map((run) => run.id).sort() },
-      true,
-    ));
-  }
-  return b3ok(live[0] === undefined ? null : usageFacts(live[0]));
-}
-
-function eventRunId(event: { readonly payload: Readonly<Record<string, unknown>> }): AgentRunId | null {
-  const runId = event.payload['agentRunId'];
-  return typeof runId === 'string' ? runId as AgentRunId : null;
-}
-
-/** Exact retained Runtime event lookup enriched from current durable owner records. */
-export async function getRunOccurrenceEvent(
-  core: RunsCore,
-  events: RunEventLog,
-  principal: AuthenticatedPrincipal,
-  eventId: string,
-): Promise<B3Result<RunOccurrenceEventFacts | null>> {
-  const found = events.find(eventId);
-  if (!found.ok) return b3fail(found.error);
-  if (found.value === null) {
-    return b3fail(b3err(
-      'RuntimeUnavailable',
-      'the exact occurrence event is not retained; absence cannot be proven after eviction or restart',
-      { stage: 'occurrence-derivation', eventId, reason: 'retained-event-completeness-unproven' },
-      true,
-    ));
-  }
-  const event = found.value;
-  if (event.sourceOwner !== 'agent-runtime') return b3ok(null);
-  let runId = eventRunId(event);
-  if (runId === null && event.kind === 'agent.run.operation.stage.changed') {
-    const operationId = event.payload['operationId'];
-    if (typeof operationId !== 'string') return b3ok(null);
-    const operation = await core.store.read<RunOperation>('runOperation', operationId);
-    if (!operation.ok || operation.value === null) return operation.ok ? b3ok(null) : operation;
-    runId = operation.value.newRunId ?? operation.value.oldRunId ?? null;
-  }
-  if (runId === null) return b3ok(null);
-  const run = await getUsageRun(core, principal, runId);
-  if (!run.ok) return run;
-  const payloadGeneration = event.payload['activityGeneration'];
-  const immutableGeneration = Number.isSafeInteger(payloadGeneration)
-    && Number(payloadGeneration) >= 0
-    ? payloadGeneration as ActivityGeneration
-    : event.kind === 'agent.run.activity.changed'
-      && event.payload['current'] !== null
-      && typeof event.payload['current'] === 'object'
-      && Number.isSafeInteger((event.payload['current'] as Record<string, unknown>)['activityGeneration'])
-      ? (event.payload['current'] as Record<string, unknown>)['activityGeneration'] as ActivityGeneration
-      : null;
-  const base = {
-    eventId: event.eventId,
-    occurredAt: event.occurredAt,
-    committedAt: event.committedAt,
-    sourceOwner: 'agent-runtime' as const,
-    agentRunId: run.value.agentRunId,
-    agentId: run.value.agentId,
-    providerSessionId: run.value.providerSessionId,
-    lifecycle: run.value.lifecycle,
-    final: run.value.final,
-    // L-family replay must use the generation frozen by the committed event,
-    // never the Run's mutable query-time generation. EV/OP rows retain this as
-    // provenance only and may fall back to the same-Run current snapshot when
-    // their old event shape did not carry a generation.
-    activityGeneration: immutableGeneration ?? run.value.activityGeneration,
-    canonicalPayloadDigest: canonicalRequestHash(event.payload),
-  };
-  if (event.kind === 'agent.run.lifecycle.changed') {
-    const toLifecycle = event.payload['toLifecycle'];
-    if (toLifecycle !== 'stopped' && toLifecycle !== 'failed' && toLifecycle !== 'interrupted') {
-      return b3ok(null);
-    }
-    if (!run.value.final || run.value.lifecycle !== toLifecycle) return b3ok(null);
-    if (immutableGeneration === null) {
-      return b3fail(b3err(
-        'RecoveryRequired', 'the retained final event lacks its immutable activity generation',
-        { stage: 'occurrence-derivation', eventId }, true,
-      ));
-    }
-    return b3ok({
-      ...base,
-      kind: event.kind,
-      occurrenceKind: 'run-final',
-      occurrence: toLifecycle === 'interrupted'
-        ? { toLifecycle, reconciledFinal: true as const }
-        : { toLifecycle },
-    });
-  }
-  if (event.kind === 'agent.run.activity.changed') {
-    const previous = event.payload['previous'];
-    const current = event.payload['current'];
-    if (previous === null || typeof previous !== 'object'
-      || current === null || typeof current !== 'object'
-      || immutableGeneration === null
-      || Number((current as Record<string, unknown>)['activityGeneration'])
-        !== Number(immutableGeneration)) {
-      return b3fail(b3err(
-        'RecoveryRequired', 'the retained activity event has corrupt occurrence snapshots',
-        { stage: 'occurrence-derivation', eventId }, true,
-      ));
-    }
-    return b3ok({
-      ...base,
-      kind: event.kind,
-      occurrenceKind: 'run-disconnected',
-      occurrence: { previous, current } as RunOccurrenceEventFacts & never,
-    } as RunOccurrenceEventFacts);
-  }
-  if (event.kind === 'runtime.recovery.required') {
-    const reason = event.payload['reason'];
-    const evidenceRefs = event.payload['evidenceRefs'];
-    if (typeof reason !== 'string' || !Array.isArray(evidenceRefs)) return b3ok(null);
-    return b3ok({
-      ...base,
-      kind: event.kind,
-      occurrenceKind: 'child-needs-help',
-      occurrence: {
-        recoveryReason: reason,
-        evidenceRefs: evidenceRefs.filter((ref): ref is string => typeof ref === 'string'),
-      },
-    });
-  }
-  if (event.kind === 'agent.run.operation.stage.changed') {
-    const operationId = event.payload['operationId'];
-    if (typeof operationId !== 'string') return b3ok(null);
-    const operation = await core.store.read<RunOperation>('runOperation', operationId);
-    if (!operation.ok || operation.value === null) return operation.ok ? b3ok(null) : operation;
-    if (operation.value.state !== 'recovery-required') return b3ok(null);
-    return b3ok({
-      ...base,
-      kind: event.kind,
-      occurrenceKind: 'operation-failed',
-      occurrence: {
-        runOperationId: operation.value.id,
-        terminalState: 'recovery-required',
-        reason: String(event.payload['reason'] ?? 'Runtime operation requires recovery'),
-      },
-    });
-  }
-  if (event.kind === 'agent.run.usage.changed') {
-    const evidenceRef = event.payload['qualifyingEvidenceRef'];
-    if (typeof evidenceRef !== 'string') return b3ok(null);
-    return b3ok({
-      ...base,
-      kind: event.kind,
-      occurrenceKind: 'usage-generation',
-      occurrence: { qualifyingEvidenceRef: evidenceRef as never },
-    });
-  }
-  return b3ok(null);
-}
-
-/** Composition-only Runtime read that avoids Runtime→Supervision→Runtime recursion. */
-export async function getUsageRun(
-  core: RunsCore,
-  principal: AuthenticatedPrincipal,
-  agentRunId: AgentRunId,
-): Promise<B3Result<RunUsageFacts>> {
-  const run = await requireRun(core, agentRunId);
-  if (!run.ok) return run;
-  const visible = await core.agents.getAgent(principal, run.value.agentId);
-  if (!visible.ok) return visible;
-  return b3ok(usageFacts(run.value));
-}
-
-/** All Runtime-owned Run facts for one visible stable Agent. */
-export async function listUsageRuns(
-  core: RunsCore,
-  principal: AuthenticatedPrincipal,
-  agentId: AgentId,
-): Promise<B3Result<readonly RunUsageFacts[]>> {
-  const visible = await core.agents.getAgent(principal, agentId);
-  if (!visible.ok) return visible;
-  const runs = await core.store.list<AgentRun>('agentRun', { agentId });
-  if (!runs.ok) return runs;
-  return b3ok(runs.value.map(usageFacts));
 }
 
 export async function getAgentRun(

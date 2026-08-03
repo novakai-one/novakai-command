@@ -8,6 +8,7 @@ export * from './watchers/deadlines.js';
 export * from './watchers/rules.js';
 export * from './watch-rule-query.js';
 export * from './watch-evaluation-progress.js';
+export * from './admission-signals.js';
 export * from './delivery-fences.js';
 export * from './notifications.js';
 export * from './notifications/index.js';

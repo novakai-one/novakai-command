@@ -7,25 +7,26 @@
  * only its own instance.
  */
 const ownerTails = new Map<string, Promise<void>>();
+const RUN_METHOD = 'run';
 
 export interface SupervisionOwnerLinearizer {
   run<Value>(operation: () => Promise<Value>): Promise<Value>;
 }
 
-export function createSupervisionOwnerLinearizer(key: string): SupervisionOwnerLinearizer {
+export function createSupervisionOwnerLinearizer(dataRootKey: string): SupervisionOwnerLinearizer {
   return {
-    async run<Value>(operation: () => Promise<Value>): Promise<Value> {
-      const prior = ownerTails.get(key) ?? Promise.resolve();
+    async [RUN_METHOD]<Value>(operation: () => Promise<Value>): Promise<Value> {
+      const prior = ownerTails.get(dataRootKey) ?? Promise.resolve();
       let release!: () => void;
       const current = new Promise<void>((resolve) => { release = resolve; });
       const tail = prior.then(() => current);
-      ownerTails.set(key, tail);
+      ownerTails.set(dataRootKey, tail);
       await prior;
       try {
         return await operation();
       } finally {
         release();
-        if (ownerTails.get(key) === tail) ownerTails.delete(key);
+        if (ownerTails.get(dataRootKey) === tail) ownerTails.delete(dataRootKey);
       }
     },
   };
