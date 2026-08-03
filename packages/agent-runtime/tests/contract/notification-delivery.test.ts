@@ -194,3 +194,71 @@ test('a completed delivery replay survives a later Run generation', async () => 
     rig.close();
   }
 });
+
+test('retry records Supervision outcome after Terminal committed before a crash', async () => {
+  const healthy = createRunsRig();
+  let crashed: ReturnType<typeof createRunsRig> | null = null;
+  let resumed: ReturnType<typeof createRunsRig> | null = null;
+  try {
+    const roleProfileId = healthy.agents.defineRole('terminal-commit-recovery-target');
+    const spawned = await healthy.runtime.spawnAgent(healthy.human(), {
+      roleProfileId,
+      displayName: 'Terminal commit recovery target',
+      workingDirectory: '/tmp/work',
+    });
+    assert.equal(spawned.ok, true, spawned.ok ? '' : spawned.error.message);
+    if (!spawned.ok) return;
+    const notificationId = `notification_${'d'.repeat(52)}` as NotificationId;
+    const effectKey = `b3v4:notification-delivery:${notificationId}:condition`;
+    const input = {
+      notificationId,
+      agentRunId: spawned.value.run.id,
+      effectKey,
+      expectedActivityGeneration: spawned.value.run.activityGeneration,
+    };
+    healthy.notifications.authorize({
+      ...input,
+      activityGeneration: input.expectedActivityGeneration,
+      inputText: 'Recover the owner outcome',
+    });
+    crashed = createRunsRig({
+      root: healthy.root,
+      agents: healthy.agents,
+      terminal: healthy.terminal,
+      providers: healthy.providers,
+      notifications: healthy.notifications,
+      messagingEndpoint: healthy.messagingEndpoint,
+      transcriptCustody: healthy.transcriptCustody,
+      // The fourth Runtime write journals Supervision's claim. Terminal then
+      // commits, and the fifth write (terminal-input-submitted) crashes.
+      crashAfterWrites: 4,
+    });
+    const interrupted = await crashed.runtime.startNotificationTurnAtSafeBoundary(
+      supervisionContext(), input,
+    );
+    assert.equal(interrupted.ok, false, 'fault injection did not interrupt the operation');
+    if (!interrupted.ok) assert.equal(interrupted.error.code, 'StoreUnavailable');
+    assert.equal(healthy.notifications.submissions.length, 0,
+      'Supervision outcome unexpectedly landed before the injected crash');
+
+    resumed = createRunsRig({
+      root: healthy.root,
+      agents: healthy.agents,
+      terminal: healthy.terminal,
+      providers: healthy.providers,
+      notifications: healthy.notifications,
+      messagingEndpoint: healthy.messagingEndpoint,
+      transcriptCustody: healthy.transcriptCustody,
+    });
+    const recovered = await resumed.runtime.startNotificationTurnAtSafeBoundary(
+      supervisionContext(), input,
+    );
+    assert.equal(recovered.ok, true, recovered.ok ? '' : recovered.error.message);
+    assert.equal(healthy.notifications.submissions.length, 1,
+      'recovery returned Terminal truth without recording Supervision outcome');
+  } finally {
+    resumed?.close();
+    crashed?.close();
+    healthy.close();
+  }
+});
