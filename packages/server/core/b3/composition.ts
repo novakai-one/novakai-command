@@ -650,14 +650,25 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
       };
     },
   });
-  const providerTurnReconciliation = setInterval(() => {
-    void runs!.reconcileProviderTurns().then((result) => {
+  let providerTurnReconciliationInFlight: Promise<void> | null = null;
+  const reconcileProviderTurnsOnce = (): void => {
+    if (providerTurnReconciliationInFlight !== null) return;
+    const started = runs!.reconcileProviderTurns().then(async (result) => {
       if (result.ok) return;
-      runs!.publishCapabilityEvent('runtime.recovery.required', {
+      await runs!.publishCapabilityEvent('runtime.recovery.required', {
         reason: `${result.error.code}: ${result.error.message}`,
       }, 'agent-runtime');
+    }).finally(() => {
+      if (providerTurnReconciliationInFlight === started) {
+        providerTurnReconciliationInFlight = null;
+      }
     });
-  }, options.providerTurnReconciliationIntervalMs ?? 1_000);
+    providerTurnReconciliationInFlight = started;
+  };
+  const providerTurnReconciliation = setInterval(
+    reconcileProviderTurnsOnce,
+    options.providerTurnReconciliationIntervalMs ?? 1_000,
+  );
   providerTurnReconciliation.unref();
 
   // The production source: each provider's own file, read-only, found through
@@ -771,6 +782,9 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
     dataRoot,
     async close() {
       clearInterval(providerTurnReconciliation);
+      if (providerTurnReconciliationInFlight !== null) {
+        await providerTurnReconciliationInFlight;
+      }
       await watcherScheduler.stop();
       await notificationDelivery.stop();
       // First, and awaited: a pass in flight holds durable Messaging and
@@ -780,7 +794,7 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
       await runs?.inboxDelivery.stop();
       await terminal?.dispose();
       await runtime.shutdown();
-      following.stop();
+      await following.stop();
       await messaging.store.close();
     },
   };
