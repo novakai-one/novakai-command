@@ -120,7 +120,60 @@ test('ordinary deadline arming cycles keep immutable identity and isolated progr
       assert.equal(progressAfterClaim.value.items.some((item) => item.id === expectedId), true);
     }
 
-    const fired = await supervision.evaluateDueDeadlines(now.toISOString() as IsoUtc);
+    const firstClaim = claimed.value.find((deadline) => deadline.id === firstDeadline.id)!;
+    assert.equal(firstClaim.lastMutation.state, 'trace-complete');
+    if (firstClaim.lastMutation.state !== 'trace-complete') return;
+    now = new Date(Math.max(
+      Date.parse(firstClaim.lastMutation.committedAt), Date.parse(firstClaim.dueAt),
+    ) + 30_001);
+    const restarted = composeSupervision({
+      root,
+      dataRoot: path.join(root, 'stores'),
+      clock: () => now,
+      installAuthority: { resolve: async () => { throw new Error('not used'); } },
+      watchRuleAccess: { agentIdFor: async () => b3ok(null) },
+      watchRuleGeneration: {
+        generationFor: async () => b3ok(3 as ActivityGeneration),
+      },
+    });
+    const reclaimed = await restarted.claimDueDeadlines(schedulerContext(), {
+      dueBefore: now.toISOString() as IsoUtc,
+      limit: 10,
+      schedulerLeaseMs: 30_000,
+    });
+    assert.equal(reclaimed.ok, true);
+    if (!reclaimed.ok) return;
+    assert.equal(reclaimed.value.length, 2);
+    const reclaimedFirst = reclaimed.value.find(
+      (deadline) => deadline.id === firstDeadline.id,
+    )!;
+    assert.deepEqual({
+      id: reclaimedFirst.id,
+      activityGeneration: reclaimedFirst.activityGeneration,
+      armingOrdinal: reclaimedFirst.armingOrdinal,
+      dueAt: reclaimedFirst.dueAt,
+      creationRecordVersion: reclaimedFirst.creationRecordVersion,
+    }, immutableIdentity);
+    assert.ok(Number(reclaimedFirst.recordVersion) > Number(firstClaim.recordVersion));
+    const progressAfterReclaim = await restarted.listWatchEvaluationProgress(operator, {
+      triggerKind: 'deadline', limit: 20,
+    });
+    assert.equal(progressAfterReclaim.ok, true);
+    if (!progressAfterReclaim.ok) return;
+    assert.equal(progressAfterReclaim.value.items.length, 2);
+    assert.equal(
+      progressAfterReclaim.value.items.find((item) =>
+        item.id === deriveDeadlineWatchEvaluationId(
+          firstDeadline.id, firstDeadline.creationRecordVersion!,
+        ))?.commandReceiptId,
+      progressAfterClaim.value.items.find((item) =>
+        item.id === deriveDeadlineWatchEvaluationId(
+          firstDeadline.id, firstDeadline.creationRecordVersion!,
+        ))?.commandReceiptId,
+      'a new claim receipt must adopt the original deadline progress identity',
+    );
+
+    const fired = await restarted.evaluateDueDeadlines(now.toISOString() as IsoUtc);
     assert.equal(fired.ok, true);
     if (!fired.ok) return;
     assert.equal(fired.value.length, 2);

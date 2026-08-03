@@ -123,10 +123,17 @@ export async function claimDueDeadlines(
   _context: SystemCommandContext<'sys_supervision'>,
   input: ClaimDueDeadlinesInput,
 ): Promise<B3Result<readonly WatchDeadline[]>> {
-  const armed = await deps.store.list<WatchDeadline>('watchDeadline', { state: 'armed' });
-  if (!armed.ok) return b3fail(armed.error);
-  const dueDeadlines = armed.value
-    .filter((deadline) => String(deadline.dueAt) <= String(input.dueBefore))
+  const deadlines = await deps.store.list<WatchDeadline>('watchDeadline');
+  if (!deadlines.ok) return b3fail(deadlines.error);
+  const nowMs = deps.clock().getTime();
+  const dueDeadlines = deadlines.value
+    .filter((deadline) => {
+      if (String(deadline.dueAt) > String(input.dueBefore)) return false;
+      if (deadline.state === 'armed') return true;
+      if (deadline.state !== 'claimed'
+        || deadline.lastMutation.state !== 'trace-complete') return false;
+      return Date.parse(deadline.lastMutation.committedAt) + input.schedulerLeaseMs <= nowMs;
+    })
     .sort((left, right) =>
       String(left.dueAt).localeCompare(String(right.dueAt))
       || String(left.id).localeCompare(String(right.id)))
