@@ -272,6 +272,7 @@ export function composeAgentRuns(options: ComposeAgentRunsOptions): ComposedAgen
     getAgentRunTree: (principal, input) => getAgentRunTree(core, principal, input),
     discoverRunControls: (principal, input) => discoverRunControls(core, principal, input),
     getRunOperation: (principal, operationId) => getRunOperation(core, principal, operationId),
+    getNotificationTurnSubmission: async () => b3ok({ state: 'absent' }),
     subscribeRunEvents: (_principal, after) => events.subscribe(after),
     publishCapabilityEvent: (kind, payload, sourceOwner, traceId) => {
       const event = events.append(kind, payload, traceId, sourceOwner);

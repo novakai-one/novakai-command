@@ -7,6 +7,7 @@
 import type {
   AgentId, AgentRunId, AuthenticatedPrincipal, B3Page, B3Result, CapabilityOwner, CommandContext,
   ControlReplacementPlanId, EventCursor, HumanPrincipalId, IsoUtc,
+  NotificationId, NotificationInputReservationId,
   ProviderSessionId, ProviderTurnId, ActivityGeneration, RecordVersion,
   AgentRoleProfileId, ResolvedLaunchPlanId, RunOperationId, TraceCorrelationId,
 } from '@novakai/foundation/contract';
@@ -284,6 +285,34 @@ export interface ReadRunEventsInput {
   readonly limit?: number;
 }
 
+/** Q7's durable Runtime view of one Notification delivery effect. */
+export type NotificationTurnSubmission =
+  | {
+      readonly state: 'submitted-confirmed';
+      readonly submittedAt: IsoUtc;
+      readonly providerTurnId: ProviderTurnId;
+    }
+  | {
+      readonly state: 'submitted-unconfirmed';
+      readonly submittedAt: IsoUtc;
+      readonly providerTurnId?: ProviderTurnId;
+    }
+  | { readonly state: 'absent' }
+  | {
+      readonly state: 'reserved-not-claimed';
+      readonly notificationInputReservationId: NotificationInputReservationId;
+    }
+  | {
+      readonly state: 'claimed-pending-submission';
+      readonly notificationInputReservationId: NotificationInputReservationId;
+      readonly notificationId: NotificationId;
+    }
+  | {
+      readonly state: 'cancelled-not-submitted';
+      readonly notificationInputReservationId: NotificationInputReservationId;
+      readonly cancelledAt: IsoUtc;
+    };
+
 // ── The contract ────────────────────────────────────────────────────────────
 
 export interface AgentRuntimeCommands {
@@ -371,6 +400,10 @@ export interface AgentRuntimeQueries {
   getRunOperation(
     principal: AuthenticatedPrincipal, operationId: RunOperationId,
   ): Promise<B3Result<RunOperationView>>;
+
+  getNotificationTurnSubmission(
+    principal: AuthenticatedPrincipal, effectKey: string,
+  ): Promise<B3Result<NotificationTurnSubmission>>;
 
   /**
    * §12.2's event subscription: every event after `after`, live, until the
