@@ -442,6 +442,16 @@ test('nvk watch add arms activity drift from the live Run generation', async () 
     };
     assert.equal(page.value.deadlines[0]?.state, 'armed');
 
+    const displayed = await runNvk([
+      'watch', 'list', '--root', root, '--port', String(host.port),
+    ]);
+    assert.equal(displayed.code, 0, displayed.out);
+    assert.match(
+      displayed.out,
+      /watchDeadline_[a-z2-7]{52}/,
+      'the published operator listing hid the durable deadline identity',
+    );
+
     const reset = await runNvk([
       'watch', 'reset-drift', page.value.deadlines[0]!.id,
       '--episode', 'driftEpisode_' + 'b'.repeat(52),

@@ -61,7 +61,9 @@ function describeWatchers(listing: WatcherListing): string {
     const deadline = listing.deadlines
       .filter((item) => item.watchRuleId === rule.id)
       .sort((left, right) => Number(right.activityGeneration) - Number(left.activityGeneration))[0];
-    return deadline === undefined ? 'no deadline' : `${deadline.state} until ${deadline.dueAt}`;
+    return deadline === undefined
+      ? 'no deadline'
+      : `${deadline.id} · ${deadline.state} until ${deadline.dueAt}`;
   };
   return listing.rules.map((rule) => `${rule.condition.kind}  ${rule.status}  ${rule.id}\n`
     + `  ${JSON.stringify(rule.subject)} · ${rule.deliveryMode} · ${dueOf(rule)}`).join('\n');
