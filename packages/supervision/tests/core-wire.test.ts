@@ -13,7 +13,7 @@ import { readFile, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
-  b3err, b3fail, b3ok, mintTraceCorrelationId,
+  b3err, b3fail, b3ok, canonicalRequestHash, mintTraceCorrelationId,
   type AgentRunId, type AuthenticatedPrincipal, type B3Result, type EventCursor,
   type ResolvedLaunchPlanId, type SystemCommandContext,
 } from '@novakai/foundation/contract';
@@ -24,7 +24,7 @@ import {
 import {
   parseNotificationRecord, parseWatchDeadline, parseWatchRule,
   subjectKey as subjectKeyOf,
-  type PublicEvent, type WatcherTemplate,
+  type PublicEvent, type RunOccurrenceEventFacts, type WatcherTemplate,
 } from '../contract/index.js';
 
 const RUN_ID = 'agentRun_019fd000-0000-7000-8000-0000000000a1' as AgentRunId;
@@ -32,9 +32,11 @@ const PLAN_ID = 'launchPlan_019fd000-0000-7000-8000-0000000000a2' as ResolvedLau
 const INSTALL_TRACE_ID = 'trace_123e4567-e89b-42d3-a456-426614174000' as never;
 const INSTALL_CLIENT_OP_ID = 'op_123e4567-e89b-42d3-a456-426614174000' as never;
 
-const runtimeContext = (): SystemCommandContext<'sys_agent_runtime'> => ({
+const runtimeContext = (
+  clientOpId = INSTALL_CLIENT_OP_ID,
+): SystemCommandContext<'sys_agent_runtime'> => ({
   principal: { id: 'sys_agent_runtime', kind: 'system', verifiedScopes: [] },
-  clientOpId: INSTALL_CLIENT_OP_ID,
+  clientOpId,
   traceId: INSTALL_TRACE_ID,
   contractVersion: 1,
 });
@@ -76,6 +78,7 @@ function createRig(
     readonly extraTemplates?: readonly WatcherTemplate[];
     readonly activityGeneration?: () => number;
     readonly watchStartTurnAuthorized?: boolean;
+    readonly occurrenceEvents?: ReadonlyMap<string, RunOccurrenceEventFacts>;
   } = {},
 ): Rig {
   const root = mkdtempSync(path.join(tmpdir(), 'nvk-b3d-core-'));
@@ -103,12 +106,65 @@ function createRig(
       }),
     },
     watchRuleAccess: { agentIdFor: async () => b3ok(null) },
+    ...(options.occurrenceEvents === undefined ? {} : {
+      usage: {
+        runs: {
+          getUsageRun: async () => b3ok(null as never),
+          listUsageRuns: async () => b3ok([]),
+          resolveUsageRunByProviderSession: async () => b3ok(null),
+          resolveCurrentRunByAgent: async () => b3ok(null),
+          getRunOccurrenceEvent: async (_principal: AuthenticatedPrincipal, eventId: string) =>
+            b3ok(options.occurrenceEvents!.get(eventId) ?? null),
+        },
+        evidence: {
+          getProviderUsageEvidence: async () => b3ok(null),
+          listProviderUsageEvidence: async () => b3ok({ items: [], omissions: [] }),
+        },
+      },
+    }),
     ...(options.extraTemplates === undefined ? {} : { extraTemplates: options.extraTemplates }),
   });
   return {
     supervision, store, root, startedAt,
     close: () => { rmSync(root, { recursive: true, force: true }); },
   };
+}
+
+function lifecycleFacts(
+  event: PublicEvent<string, Readonly<Record<string, unknown>>>,
+  occurrenceKind: 'run-final' | 'run-disconnected',
+): RunOccurrenceEventFacts {
+  const generation = event.payload['activityGeneration'] as never;
+  const base = {
+    eventId: event.eventId,
+    occurredAt: event.occurredAt,
+    committedAt: event.committedAt,
+    sourceOwner: 'agent-runtime' as const,
+    agentRunId: RUN_ID,
+    agentId: 'agent_123e4567-e89b-42d3-a456-426614174000' as never,
+    providerSessionId: 'sess_123e4567-e89b-42d3-a456-426614174000' as never,
+    lifecycle: occurrenceKind === 'run-final' ? 'stopped' as const : 'ready' as const,
+    final: occurrenceKind === 'run-final',
+    activityGeneration: generation,
+    recordVersion: 1 as never,
+    canonicalPayloadDigest: canonicalRequestHash(event.payload),
+  };
+  if (occurrenceKind === 'run-final') {
+    return {
+      ...base,
+      kind: 'agent.run.lifecycle.changed',
+      occurrenceKind,
+      occurrence: { toLifecycle: 'stopped' },
+    };
+  }
+  return {
+    ...base,
+    kind: 'agent.run.activity.changed',
+    occurrenceKind,
+    occurrence: {
+      previous: event.payload['previous'], current: event.payload['current'],
+    },
+  } as RunOccurrenceEventFacts;
 }
 
 /**
@@ -423,14 +479,27 @@ test('an event inside the idle window pushes the deadline out and queues nothing
   try {
     await rig.supervision.installRunWatchers(runtimeContext(), INSTALL);
     const queued = unwrap(await rig.supervision.evaluateEvent(runtimeContext(), {
-      event: committedEvent('2026-08-03T00:01:00.000Z', 1),
+      event: {
+        ...committedEvent('2026-08-03T00:01:00.000Z', 1),
+        payload: {
+          agentRunId: RUN_ID,
+          toLifecycle: 'ready',
+          activityGeneration: 5,
+        },
+      },
     }), 'evaluateEvent');
     assert.deepEqual(queued, [], 'a live Run was reported idle');
 
     const deadlines = unwrap(await rig.supervision.listWatchDeadlines(human), 'listWatchDeadlines');
-    assert.equal(deadlines[0]!.state, 'armed');
-    assert.equal(deadlines[0]!.dueAt, '2026-08-03T00:06:00.000Z',
+    assert.equal(deadlines.length, 2);
+    const armed = deadlines.find((deadline) => deadline.state === 'armed');
+    const superseded = deadlines.find((deadline) => deadline.state === 'superseded');
+    assert.equal(armed?.dueAt, '2026-08-03T00:06:00.000Z',
       'observed activity did not re-arm the idle deadline');
+    assert.equal(armed?.activityGeneration, 5);
+    assert.equal(armed?.armingOrdinal, 0);
+    assert.equal(armed?.creationRecordVersion, 1);
+    assert.equal(superseded?.activityGeneration, 4);
   } finally {
     rig.close();
   }
@@ -464,15 +533,19 @@ test('an event past the deadline fires it and queues one Notification, starting 
   }
 });
 
-test('replaying the same committed event queues no second Notification', async () => {
+test('same command replays its result; a new operation adopts without a second Notification', async () => {
   const rig = createRig('2026-08-03T00:00:00.000Z');
   try {
     await rig.supervision.installRunWatchers(runtimeContext(), INSTALL);
     const event = committedEvent('2026-08-03T00:07:00.000Z', 3);
     const first = unwrap(await rig.supervision.evaluateEvent(runtimeContext(), { event }), 'first');
     const again = unwrap(await rig.supervision.evaluateEvent(runtimeContext(), { event }), 'replay');
+    const redelivery = unwrap(await rig.supervision.evaluateEvent(runtimeContext(
+      'op_123e4567-e89b-42d3-a456-426614174091' as never,
+    ), { event }), 'new-operation redelivery');
     assert.equal(first.length, 1);
-    assert.deepEqual(again, [], 'at-least-once delivery produced a second Notification');
+    assert.deepEqual(again, first, 'same receipt did not replay its stored result');
+    assert.deepEqual(redelivery, [], 'at-least-once delivery produced a second Notification');
 
     const page = unwrap(
       await rig.supervision.listNotifications(human, { limit: 50 }), 'listNotifications',
@@ -529,7 +602,9 @@ test('manual event watcher creation does not invent or require a generation', as
 });
 
 test('a run-final lifecycle event queues one Notification under replay', async () => {
-  const rig = createRig('2026-08-03T00:00:00.000Z');
+  const occurrenceEvents = new Map<string, RunOccurrenceEventFacts>();
+  const rig = createRig('2026-08-03T00:00:00.000Z', 'disabled-explicitly',
+    [IDLE_WATCH_TEMPLATE.templateRef], { occurrenceEvents });
   try {
     const rule = unwrap(await rig.supervision.createWatchRule({
       principal: human,
@@ -552,21 +627,28 @@ test('a run-final lifecycle event queues one Notification under replay', async (
         activityGeneration: 4,
       },
     };
+    occurrenceEvents.set(event.eventId, lifecycleFacts(event, 'run-final'));
 
     const first = unwrap(await rig.supervision.evaluateEvent(runtimeContext(), { event }), 'first');
     const replay = unwrap(await rig.supervision.evaluateEvent(runtimeContext(), { event }), 'replay');
+    const redelivery = unwrap(await rig.supervision.evaluateEvent(runtimeContext(
+      'op_123e4567-e89b-42d3-a456-426614174092' as never,
+    ), { event }), 'new-operation redelivery');
 
     assert.equal(first.length, 1);
     assert.equal(first[0]!.watchRuleId, rule.id);
     assert.equal(first[0]!.conditionGeneration, 4);
-    assert.deepEqual(replay, []);
+    assert.deepEqual(replay, first);
+    assert.deepEqual(redelivery, []);
   } finally {
     rig.close();
   }
 });
 
 test('a run-final Notification survives restart and absorbs transition redelivery', async () => {
-  const rig = createRig('2026-08-03T00:00:00.000Z');
+  const occurrenceEvents = new Map<string, RunOccurrenceEventFacts>();
+  const rig = createRig('2026-08-03T00:00:00.000Z', 'disabled-explicitly',
+    [IDLE_WATCH_TEMPLATE.templateRef], { occurrenceEvents });
   try {
     const rule = unwrap(await rig.supervision.createWatchRule({
       principal: human,
@@ -590,6 +672,7 @@ test('a run-final Notification survives restart and absorbs transition redeliver
         activityGeneration: 4,
       },
     };
+    occurrenceEvents.set(transition.eventId, lifecycleFacts(transition, 'run-final'));
     const first = unwrap(
       await rig.supervision.evaluateEvent(runtimeContext(), { event: transition }),
       'first lifecycle evaluation',
@@ -623,6 +706,21 @@ test('a run-final Notification survives restart and absorbs transition redeliver
         }),
       },
       watchRuleAccess: { agentIdFor: async () => b3ok(null) },
+      usage: {
+        runs: {
+          getUsageRun: async () => b3ok(null as never),
+          listUsageRuns: async () => b3ok([]),
+          resolveUsageRunByProviderSession: async () => b3ok(null),
+          resolveCurrentRunByAgent: async () => b3ok(null),
+          getRunOccurrenceEvent: async (_principal, eventId) => b3ok(
+            occurrenceEvents.get(eventId) ?? null,
+          ),
+        },
+        evidence: {
+          getProviderUsageEvidence: async () => b3ok(null),
+          listProviderUsageEvidence: async () => b3ok({ items: [], omissions: [] }),
+        },
+      },
     });
     const beforeReplay = unwrap(
       await restarted.listNotifications(human, { limit: 50 }),
@@ -636,8 +734,11 @@ test('a run-final Notification survives restart and absorbs transition redeliver
       eventId: 'event_tracer_13',
       cursor: 'tracer.13' as EventCursor,
     };
+    occurrenceEvents.set(redelivery.eventId, lifecycleFacts(redelivery, 'run-final'));
     const replay = unwrap(
-      await restarted.evaluateEvent(runtimeContext(), { event: redelivery }),
+      await restarted.evaluateEvent(runtimeContext(
+        'op_123e4567-e89b-42d3-a456-426614174093' as never,
+      ), { event: redelivery }),
       'transition redelivery after restart',
     );
     assert.deepEqual(replay, []);
@@ -653,7 +754,9 @@ test('a run-final Notification survives restart and absorbs transition redeliver
 });
 
 test('a new provider-liveness loss generation queues one run-disconnected Notification', async () => {
-  const rig = createRig('2026-08-03T00:00:00.000Z');
+  const occurrenceEvents = new Map<string, RunOccurrenceEventFacts>();
+  const rig = createRig('2026-08-03T00:00:00.000Z', 'disabled-explicitly',
+    [IDLE_WATCH_TEMPLATE.templateRef], { occurrenceEvents });
   try {
     const rule = unwrap(await rig.supervision.createWatchRule({
       principal: human,
@@ -670,30 +773,37 @@ test('a new provider-liveness loss generation queues one run-disconnected Notifi
     }), 'create run-disconnected watcher');
     const event = {
       ...committedEvent('2026-08-03T00:01:00.000Z', 11),
-      kind: 'agent.run.connection.changed',
+      kind: 'agent.run.activity.changed',
       payload: {
         agentRunId: RUN_ID,
         activityGeneration: 5,
         previous: {
-          final: false,
+          activity: 'idle',
           activityGeneration: 4,
           uncertaintyCodes: [],
+          observedAt: '2026-08-03T00:00:59.000Z',
         },
         current: {
-          final: false,
+          activity: 'unknown',
           activityGeneration: 5,
           uncertaintyCodes: ['provider-liveness-unknown'],
+          observedAt: '2026-08-03T00:01:00.000Z',
         },
       },
     };
+    occurrenceEvents.set(event.eventId, lifecycleFacts(event, 'run-disconnected'));
 
     const first = unwrap(await rig.supervision.evaluateEvent(runtimeContext(), { event }), 'first');
     const replay = unwrap(await rig.supervision.evaluateEvent(runtimeContext(), { event }), 'replay');
+    const redelivery = unwrap(await rig.supervision.evaluateEvent(runtimeContext(
+      'op_123e4567-e89b-42d3-a456-426614174094' as never,
+    ), { event }), 'new-operation redelivery');
 
     assert.equal(first.length, 1);
     assert.equal(first[0]!.watchRuleId, rule.id);
     assert.equal(first[0]!.conditionGeneration, 5);
-    assert.deepEqual(replay, []);
+    assert.deepEqual(replay, first);
+    assert.deepEqual(redelivery, []);
   } finally {
     rig.close();
   }

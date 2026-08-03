@@ -26,6 +26,7 @@ import type {
   WatchCondition,
   WatchSubject,
 } from './records.js';
+import { watchPairIssue } from './watch-matrix.js';
 
 interface Issue {
   readonly path: string;
@@ -186,8 +187,9 @@ export function parseCreateWatchRuleInput(candidate: unknown): B3Result<CreateWa
       message: 'is required only when condition.kind is activity-drift',
     });
   }
+  const subject = readSubject(input.subject, issues);
   const parsed: CreateWatchRuleInput = {
-    subject: readSubject(input.subject, issues),
+    subject,
     condition,
     recipient: readRecipient(input.recipient, issues),
     deliveryMode: choice(
@@ -199,6 +201,15 @@ export function parseCreateWatchRuleInput(candidate: unknown): B3Result<CreateWa
     ...(hasDriftPolicy ? { driftPolicy: readDriftPolicy(input.driftPolicy, issues) } : {}),
     ...(input.action === undefined ? {} : { action: readAction(input.action, issues) }),
   };
+  const pairIssue = watchPairIssue(subject, condition);
+  if (issues.length === 0 && pairIssue !== null) {
+    return b3fail(b3err(
+      'WatchRuleInvalid',
+      'the WatchSubject and WatchCondition pair is not admitted',
+      { issues: [pairIssue] },
+      false,
+    ));
+  }
   return issues.length === 0
     ? b3ok(parsed)
     : b3fail(driftRangeError(issues));

@@ -21,7 +21,7 @@ import {
   type WatchSubject,
 } from '../../contract/index.js';
 import type { Persisted, SupervisionStore } from '../store.js';
-import { armDeadline } from '../watchers.js';
+import { armDeadline, armOrdinaryDeadlineAt } from '../watchers.js';
 
 export interface WatchRuleGenerationPort {
   generationFor(
@@ -88,11 +88,14 @@ async function ensureDeadline(
   deps: RuleDependencies,
   principal: AuthenticatedPrincipal,
   rule: WatchRule,
+  forceOrdinaryRearm = false,
 ): Promise<B3Result<null>> {
   const generation = await generationForActiveRule(deps, principal, rule);
   if (!generation.ok) return b3fail(generation.error);
   if (generation.value === null) return b3ok(null);
-  return armDeadline(deps, SUPERVISION_RECORD_WRITER, rule, generation.value);
+  return armDeadline(
+    deps, SUPERVISION_RECORD_WRITER, rule, generation.value, forceOrdinaryRearm,
+  );
 }
 
 function mutationClientOpId(rule: WatchRule): string | undefined {
@@ -170,6 +173,11 @@ export async function updateWatchRule(
   if (!authorized.ok) return b3fail(authorized.error);
   const current = await deps.store.read<WatchRule>('watchRule', input.watchRuleId);
   if (!current.ok) return b3fail(current.error);
+  if (current.value !== null
+    && mutationClientOpId(current.value) === String(context.clientOpId)) {
+    const armed = await ensureDeadline(deps, context.principal, current.value);
+    return armed.ok ? b3ok(current.value) : b3fail(armed.error);
+  }
   if (current.value === null
     || Number(current.value.recordVersion) !== Number(input.expectedRecordVersion)) {
     return b3fail(b3err(
@@ -194,10 +202,49 @@ export async function updateWatchRule(
     context.clientOpId,
   );
   if (!written.ok) return b3fail(written.error);
-  if (written.value.status !== 'active') {
+  if (written.value.status !== 'active' || !timed(written.value)) {
     const superseded = await supersedeDeadlines(deps, written.value, context);
     return superseded.ok ? b3ok(written.value) : b3fail(superseded.error);
   }
-  const armed = await ensureDeadline(deps, context.principal, written.value);
+  const forceOrdinaryRearm = written.value.condition.kind === 'idle-for-ms'
+    && (current.value.status !== 'active'
+      || current.value.condition.kind !== 'idle-for-ms'
+      || current.value.condition.value !== written.value.condition.value);
+  let armed: B3Result<null>;
+  if (forceOrdinaryRearm && current.value.condition.kind === 'idle-for-ms') {
+    const previousIdleMs = current.value.condition.value;
+    const replacementIdleMs = written.value.condition.kind === 'idle-for-ms'
+      ? written.value.condition.value
+      : 0;
+    const generation = await generationForActiveRule(deps, context.principal, written.value);
+    if (!generation.ok) return generation;
+    if (generation.value === null) return b3ok(written.value);
+    const deadlines = await deps.store.list<WatchDeadline>('watchDeadline');
+    if (!deadlines.ok) return deadlines;
+    const prior = deadlines.value
+      .filter((deadline) => deadline.watchRuleId === written.value.id
+        && deadline.driftState === undefined
+        && Number(deadline.activityGeneration) === Number(generation.value))
+      .sort((left, right) => Number(right.armingOrdinal ?? -1) - Number(left.armingOrdinal ?? -1))[0];
+    const dueAt = prior === undefined
+      ? new Date(deps.clock().getTime() + replacementIdleMs).toISOString()
+      : new Date(
+          Date.parse(prior.dueAt)
+            - previousIdleMs
+            + replacementIdleMs,
+        ).toISOString();
+    armed = await armOrdinaryDeadlineAt(
+      deps,
+      SUPERVISION_RECORD_WRITER,
+      written.value,
+      generation.value,
+      dueAt as never,
+      true,
+    );
+  } else {
+    armed = await ensureDeadline(
+      deps, context.principal, written.value, forceOrdinaryRearm,
+    );
+  }
   return armed.ok ? b3ok(written.value) : b3fail(armed.error);
 }

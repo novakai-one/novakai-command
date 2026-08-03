@@ -1,8 +1,17 @@
-import { deterministicId, type ActivityGeneration } from '@novakai/foundation/contract';
+import {
+  deterministicId,
+  type ActivityGeneration,
+  type AgentRunId,
+  type CommandReceiptId,
+  type RecordVersion,
+  type RunOperationId,
+} from '@novakai/foundation/contract';
 import type {
   DriftEpisodeId,
   NotificationId,
   NotificationInputReservationId,
+  NotificationDeliveryFenceOperationId,
+  WatchEvaluationId,
   WatchDeadlineId,
   WatchRuleId,
 } from './identifiers.js';
@@ -55,16 +64,92 @@ export interface WatchDeadlineIdentityInput {
   readonly watchRuleId: WatchRuleId;
   readonly subjectKey: string;
   readonly activityGeneration: ActivityGeneration;
+  /** Absent preserves the byte-for-byte legacy identity. */
+  readonly armingOrdinal?: number;
 }
 
 /** Deterministically derive one WatchDeadline identity. */
 export function deriveWatchDeadlineId(input: WatchDeadlineIdentityInput): WatchDeadlineId {
+  if (input.armingOrdinal !== undefined) {
+    return deterministicId('watchDeadline', [
+      'watch-deadline-arming',
+      input.watchRuleId,
+      input.subjectKey,
+      String(input.activityGeneration),
+      String(input.armingOrdinal),
+    ]) as WatchDeadlineId;
+  }
   return deterministicId('watchDeadline', [
     'watch-deadline',
     input.watchRuleId,
     input.subjectKey,
     String(input.activityGeneration),
   ]) as WatchDeadlineId;
+}
+
+/** The three AMD-003 collision-safe ordinary occurrence namespaces. */
+export type OccurrenceNotificationIdentityInput = {
+  readonly watchRuleId: WatchRuleId;
+  readonly subjectKey: string;
+  readonly condition: WatchCondition;
+  readonly phase: 'condition';
+} & (
+  | { readonly occurrenceIdentity: 'agent-run'; readonly agentRunId: AgentRunId }
+  | { readonly occurrenceIdentity: 'committed-event'; readonly eventId: string }
+  | { readonly occurrenceIdentity: 'run-operation'; readonly runOperationId: RunOperationId }
+);
+
+/** Derive an AR, EV, or OP ordinary Notification identity. */
+export function deriveOccurrenceNotificationId(
+  input: OccurrenceNotificationIdentityInput,
+): NotificationId {
+  const common = [
+    input.watchRuleId,
+    input.subjectKey,
+    canonicalConditionScalar(input.condition),
+  ];
+  if (input.occurrenceIdentity === 'agent-run') {
+    return deterministicId('notification', [
+      'notification-agent-run-condition-v1', ...common, input.agentRunId, input.phase,
+    ]) as NotificationId;
+  }
+  if (input.occurrenceIdentity === 'committed-event') {
+    return deterministicId('notification', [
+      'notification-event-condition-v1', ...common, input.eventId, input.phase,
+    ]) as NotificationId;
+  }
+  return deterministicId('notification', [
+    'notification-operation-condition-v1', ...common, input.runOperationId, input.phase,
+  ]) as NotificationId;
+}
+
+/** Stable evaluation identity for an event receipt. */
+export function deriveEventWatchEvaluationId(
+  commandReceiptId: CommandReceiptId,
+): WatchEvaluationId {
+  return deterministicId('watchEvaluation', [
+    'watch-evaluation-event', commandReceiptId,
+  ]) as WatchEvaluationId;
+}
+
+/** Stable evaluation identity for one immutable ordinary arming cycle. */
+export function deriveDeadlineWatchEvaluationId(
+  watchDeadlineId: WatchDeadlineId,
+  deadlineCreationRecordVersion: RecordVersion,
+): WatchEvaluationId {
+  return deterministicId('watchEvaluation', [
+    'watch-evaluation-deadline', watchDeadlineId, String(deadlineCreationRecordVersion),
+  ]) as WatchEvaluationId;
+}
+
+/** Stable progress identity for rebinding one Notification after one committed trigger. */
+export function deriveNotificationDeliveryFenceOperationId(
+  notificationId: NotificationId,
+  triggerEventId: string,
+): NotificationDeliveryFenceOperationId {
+  return deterministicId('notificationDeliveryFenceOperation', [
+    'notification-delivery-fence-operation', notificationId, triggerEventId,
+  ]) as NotificationDeliveryFenceOperationId;
 }
 
 /** Exact scalar tuple fixed by §9.2 step 3 for one drift episode. */

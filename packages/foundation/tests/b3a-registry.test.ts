@@ -54,6 +54,7 @@ const EXPECTED: ReadonlyArray<readonly [ObjectKind, string, CapabilityId]> = [
   ['supervisionAssignment', 'supervisionAssignments.jsonl', 'agent-runtime'],
   ['treeMutationFence', 'treeMutationFences.jsonl', 'agent-runtime'],
   ['runOperation', 'runOperations.jsonl', 'agent-runtime'],
+  ['runOccurrenceEvent', 'runOccurrenceEvents.jsonl', 'agent-runtime'],
   // ── B3c additions ──────────────────────────────────────────────────────
   ['messagingStoreOp', 'messagingStoreOps.jsonl', 'messaging'],
   ['transcriptBinding', 'transcriptBindings.jsonl', 'transcript'],
@@ -67,6 +68,12 @@ const EXPECTED: ReadonlyArray<readonly [ObjectKind, string, CapabilityId]> = [
   ['watchRule', 'watchRules.jsonl', 'supervision'],
   ['watchDeadline', 'watchDeadlines.jsonl', 'supervision'],
   ['notification', 'notifications.jsonl', 'supervision'],
+  ['watchEvaluation', 'watchEvaluations.jsonl', 'supervision'],
+  [
+    'notificationDeliveryFenceOperation',
+    'notificationDeliveryFenceOperations.jsonl',
+    'supervision',
+  ],
 ];
 
 /** The three named special cases §18.1 allows to sit outside the ordinary path. */
@@ -182,6 +189,7 @@ const B3D_KINDS = new Set<string>([
   'providerUsageEvidence', 'providerTurnSubmission', 'transcriptTurnCompletion',
   'notificationInputReservation',
   'watchRule', 'watchDeadline', 'notification',
+  'watchEvaluation', 'notificationDeliveryFenceOperation',
 ]);
 
 const B3C_KINDS = new Set<string>([

@@ -134,6 +134,7 @@ test('boot reconciliation publishes one run-final Notification and never re-fire
       toLifecycle: 'interrupted',
       uncertaintyCodes: ['provider-liveness-unknown'],
       final: true,
+      reconciledFinal: true,
     });
 
     await stop(second.host, second.client);

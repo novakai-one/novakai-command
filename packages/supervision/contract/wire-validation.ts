@@ -1,4 +1,5 @@
 import {
+  isValidId,
   type B3Page,
   type B3Result,
 } from '@novakai/foundation/contract';
@@ -100,6 +101,19 @@ function parseContractError(candidate: unknown): B3Result<ContractError> {
   oneOf(error.code, SUPERVISION_ERROR_CODES, 'error.code', issues);
   nonEmpty(error.message, 'error.message', issues);
   objectValue(error.details, 'error.details', issues);
+  if (error.code === 'RecoveryRequired') {
+    const details = objectValue(error.details, 'error.details', issues);
+    const operationId = details.operationId;
+    const ownedOperation = isValidId(operationId, 'watchEvaluation', 'base32sha256')
+      || isValidId(operationId, 'notificationDeliveryFenceOperation', 'base32sha256')
+      || isValidId(operationId, 'receipt', 'base32sha256');
+    if (!ownedOperation) {
+      issues.push({
+        path: 'error.details.operationId',
+        message: 'must identify the owning Supervision evaluation, delivery fence, or claim receipt',
+      });
+    }
+  }
   if (typeof error.retryable !== 'boolean') {
     issues.push({ path: 'error.retryable', message: 'must be a boolean' });
   }

@@ -11,7 +11,7 @@ import {
   type TerminalSessionId,
 } from '@novakai/foundation/contract';
 import type {
-  AgentRunView, ListAgentRunsFilter, RunOperationView, RunUsageFacts,
+  AgentRunView, ListAgentRunsFilter, RunOperationView,
 } from '../contract/runs-api.js';
 import type { AgentRunUsage, UsageValue } from '../../supervision/contract/index.js';
 import {
@@ -68,14 +68,16 @@ async function settleInterruptedRun(
     agentRun.recordVersion, mintClientOpId(),
   );
   if (!settled.ok) return settled;
-  core.publish('agent.run.lifecycle.changed', {
+  const announced = await core.publish('agent.run.lifecycle.changed', {
     agentRunId: agentRun.id,
     fromLifecycle: agentRun.lifecycle,
     toLifecycle: 'interrupted',
     activityGeneration: settled.value.activityGeneration,
     uncertaintyCodes: settled.value.uncertainty.map((item) => item.code),
     final: true,
+    reconciledFinal: true,
   });
+  if (!announced.ok) return b3fail(announced.error);
   await expireAuthorityOf(core, settled.value);
   // The shift is over, so the endpoint stops advertising it (§8.1's cutoff).
   await closeEndpointOf(core, settled.value);
@@ -116,6 +118,7 @@ async function settleIfTerminalGone(
   let disconnected = agentRun;
   if (!agentRun.uncertainty.some((item) => item.code === livenessCode)) {
     const generation = (Number(agentRun.activityGeneration) + 1) as ActivityGeneration;
+    const observedAt = nowIsoUtc();
     const observed = await core.store.update<AgentRun>(
       'sys_agent_runtime', agentRun.id,
       {
@@ -132,20 +135,23 @@ async function settleIfTerminalGone(
     );
     if (!observed.ok) return b3ok(agentRun);
     disconnected = observed.value;
-    core.publish('agent.run.connection.changed', {
+    const announced = await core.publish('agent.run.activity.changed', {
       agentRunId: agentRun.id,
       activityGeneration: generation,
       previous: {
-        final: false,
+        activity: agentRun.activity,
         activityGeneration: agentRun.activityGeneration,
         uncertaintyCodes: agentRun.uncertainty.map((item) => item.code),
+        observedAt,
       },
       current: {
-        final: false,
+        activity: disconnected.activity,
         activityGeneration: generation,
         uncertaintyCodes: disconnected.uncertainty.map((item) => item.code),
+        observedAt,
       },
     });
+    if (!announced.ok) return b3fail(announced.error);
   }
 
   const settled = await settleInterruptedRun(core, disconnected, { finalAt: nowIsoUtc() });
@@ -231,63 +237,6 @@ export async function viewOfRun(
         },
     [RUN_FIELD]: agentRun,
   } as AgentRunView);
-}
-
-function usageFacts(
-  agentRun: AgentRun,
-  submissions: readonly import('../contract/provider-turns.js').ProviderTurnSubmission[],
-): RunUsageFacts {
-  return {
-    agentRunId: agentRun.id,
-    agentId: agentRun.agentId,
-    providerSessionId: agentRun.providerSessionId,
-    final: FINAL_LIFECYCLES.has(agentRun.lifecycle),
-    ...(submissions.length === 0 ? {} : {
-      providerTurnSubmissions: submissions.map((submission) => ({
-        providerTurnId: submission.providerTurnId,
-        state: submission.state.kind,
-      })),
-    }),
-  };
-}
-
-async function usageSubmissions(
-  core: RunsCore, agentRunId: AgentRunId,
-): Promise<B3Result<readonly import('../contract/provider-turns.js').ProviderTurnSubmission[]>> {
-  return core.store.list('providerTurnSubmission', { agentRunId });
-}
-
-/** Composition-only Runtime read that avoids Runtime→Supervision→Runtime recursion. */
-export async function getUsageRun(
-  core: RunsCore,
-  principal: AuthenticatedPrincipal,
-  agentRunId: AgentRunId,
-): Promise<B3Result<RunUsageFacts>> {
-  const runResult = await requireRun(core, agentRunId);
-  if (!runResult.ok) return runResult;
-  const visible = await core.agents.getAgent(principal, runResult.value.agentId);
-  if (!visible.ok) return visible;
-  const submissions = await usageSubmissions(core, runResult.value.id);
-  return submissions.ok ? b3ok(usageFacts(runResult.value, submissions.value)) : submissions;
-}
-
-/** All Runtime-owned Run facts for one visible stable Agent. */
-export async function listUsageRuns(
-  core: RunsCore,
-  principal: AuthenticatedPrincipal,
-  agentId: AgentId,
-): Promise<B3Result<readonly RunUsageFacts[]>> {
-  const visible = await core.agents.getAgent(principal, agentId);
-  if (!visible.ok) return visible;
-  const runs = await core.store.list<AgentRun>('agentRun', { agentId });
-  if (!runs.ok) return runs;
-  const facts: RunUsageFacts[] = [];
-  for (const agentRun of runs.value) {
-    const submissions = await usageSubmissions(core, agentRun.id);
-    if (!submissions.ok) return submissions;
-    facts.push(usageFacts(agentRun, submissions.value));
-  }
-  return b3ok(facts);
 }
 
 export async function getAgentRun(
@@ -460,9 +409,10 @@ async function settleAbandonedOperations(
       operation.recordVersion, `op_${crypto.randomUUID()}` as never,
     );
     if (!settled.ok) return settled;
-    core.publish('runtime.recovery.required', {
+    const announced = await core.publish('runtime.recovery.required', {
       operationId: operation.id, reason: 'abandoned by a runtime that ended',
     });
+    if (!announced.ok) return b3fail(announced.error);
   }
   return b3ok(null);
 }

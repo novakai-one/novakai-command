@@ -296,7 +296,7 @@ export function supervisionNotificationDeliveryPort(
 }
 
 export interface FollowedEvents {
-  stop(): void;
+  stop(): Promise<void>;
 }
 
 /**
@@ -320,19 +320,32 @@ export function followEventsIntoSupervision(
   observer?: { observe(event: RunEvent): Promise<void> },
 ): FollowedEvents {
   let stopped = false;
+  let activeEvaluation: Promise<void> | null = null;
   void (async () => {
     for await (const frame of runs.subscribeRunEvents(streamReader, undefined)) {
       if (stopped) break;
       if (!frame.ok) continue;
       // A reducer failure is not a reason to stop watching. It is reported by
       // the record it failed to write, and the next event tries again.
-      await supervision.evaluateEvent(runtimeContext(), { event: frame.value });
-      await observer?.observe(frame.value);
+      const evaluation = (async () => {
+        await supervision.evaluateEvent(runtimeContext(), { event: frame.value });
+        await observer?.observe(frame.value);
+      })();
+      activeEvaluation = evaluation;
+      try {
+        await evaluation;
+      } finally {
+        if (activeEvaluation === evaluation) activeEvaluation = null;
+      }
     }
   })();
-  // Stopping is a flag, never a join. The published stream has no end of its
-  // own, so waiting for the loop to finish would be waiting for ever — and a
-  // shutdown that hangs on its own watcher is worse than one that stops
-  // watching a moment early.
-  return { stop: () => { stopped = true; } };
+  // The subscription itself may be waiting indefinitely for another event, so
+  // shutdown cannot join the loop. It must still join the evaluation already
+  // holding durable owner writes before the composition closes its stores.
+  return {
+    async stop() {
+      stopped = true;
+      if (activeEvaluation !== null) await activeEvaluation;
+    },
+  };
 }

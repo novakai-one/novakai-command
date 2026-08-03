@@ -267,8 +267,8 @@ export function composeProviderUsageEvidence(
         .filter((item) => item.scope.kind === 'runtime-turn-completion'
           && (filter.agentRunId === undefined || item.scope.agentRunId === filter.agentRunId)
           && (filter.providerTurnId === undefined || item.scope.providerTurnId === filter.providerTurnId)
-          && (filter.transcriptTurnCompletionId === undefined
-            || item.scope.transcriptTurnCompletionId === filter.transcriptTurnCompletionId));
+           && (filter.transcriptTurnCompletionId === undefined
+             || item.scope.transcriptTurnCompletionId === filter.transcriptTurnCompletionId));
       return keysetPage(items, filter);
     },
   };

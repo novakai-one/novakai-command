@@ -338,7 +338,29 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
     root: options.root,
     dataRoot,
     publish: (kind, payload, traceId) => {
-      runs?.publishCapabilityEvent(kind, { ...payload }, 'agents', traceId);
+      const activeRuns = runs;
+      if (activeRuns === null) return;
+      void (async () => {
+        const published = await activeRuns.publishCapabilityEvent(
+          kind, { ...payload }, 'agents', traceId,
+        );
+        if (!published.ok || kind !== 'agent.provider-usage-evidence.committed') return;
+        const providerSessionId = payload['providerSessionId'];
+        const qualifyingEvidenceRef = payload['id'];
+        if (typeof providerSessionId !== 'string'
+          || typeof qualifyingEvidenceRef !== 'string') return;
+        const source = await activeRuns.resolveUsageRunByProviderSession(
+          { id: 'sys_agent_runtime', kind: 'system', verifiedScopes: [] },
+          providerSessionId as never,
+        );
+        if (!source.ok || source.value === null) return;
+        await activeRuns.publishCapabilityEvent('agent.run.usage.changed', {
+          agentRunId: source.value.agentRunId,
+          providerSessionId: source.value.providerSessionId,
+          activityGeneration: source.value.activityGeneration,
+          qualifyingEvidenceRef,
+        }, 'agent-runtime', traceId);
+      })();
     },
     turnCompletion: {
       // eslint-disable-next-line id-length -- Contract method name is fixed as `get`.
@@ -392,6 +414,23 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
     watchRuleGeneration: watchRuleGeneration(() => runs ?? undefined),
     templates: watcherTemplates,
     driftSubmissionAuthority: driftSubmissionAuthority(terminal),
+    occurrenceRelationships: {
+      async isDirectManagedChild(principal, input) {
+        let parentAgentId = input.parentAgentId;
+        if (parentAgentId === undefined) {
+          if (input.parentAgentRunId === undefined || runs === null) return b3ok(false);
+          const parent = await runs.getAgentRun(principal, input.parentAgentRunId);
+          if (!parent.ok) return parent;
+          parentAgentId = parent.value.agent.agentId;
+        }
+        const children = await agents.listChildren(principal, parentAgentId);
+        if (!children.ok) return children;
+        return b3ok(children.value.some((relationship) =>
+          relationship.childAgentId === input.childAgentId
+          && (input.parentAgentRunId === undefined
+            || relationship.createdFromRunId === input.parentAgentRunId)));
+      },
+    },
     usage: {
       runs: {
         async getUsageRun(principal, agentRunId) {
@@ -409,6 +448,30 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
             ));
           }
           return runs.usageRuns.listUsageRuns(principal, agentId);
+        },
+        async resolveUsageRunByProviderSession(principal, providerSessionId) {
+          if (runs === null) {
+            return b3fail(b3err(
+              'RuntimeUnavailable', 'Agent Runtime is not composed', {}, true,
+            ));
+          }
+          return runs.resolveUsageRunByProviderSession(principal, providerSessionId);
+        },
+        async resolveCurrentRunByAgent(principal, agentId) {
+          if (runs === null) {
+            return b3fail(b3err(
+              'RuntimeUnavailable', 'Agent Runtime is not composed', {}, true,
+            ));
+          }
+          return runs.resolveCurrentRunByAgent(principal, agentId);
+        },
+        async getRunOccurrenceEvent(principal, eventId) {
+          if (runs === null) {
+            return b3fail(b3err(
+              'RuntimeUnavailable', 'Agent Runtime is not composed', {}, true,
+            ));
+          }
+          return runs.getRunOccurrenceEvent(principal, eventId);
         },
       },
       evidence: usageEvidence,
@@ -587,14 +650,25 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
       };
     },
   });
-  const providerTurnReconciliation = setInterval(() => {
-    void runs!.reconcileProviderTurns().then((result) => {
+  let providerTurnReconciliationInFlight: Promise<void> | null = null;
+  const reconcileProviderTurnsOnce = (): void => {
+    if (providerTurnReconciliationInFlight !== null) return;
+    const started = runs!.reconcileProviderTurns().then(async (result) => {
       if (result.ok) return;
-      runs!.publishCapabilityEvent('runtime.recovery.required', {
+      await runs!.publishCapabilityEvent('runtime.recovery.required', {
         reason: `${result.error.code}: ${result.error.message}`,
       }, 'agent-runtime');
+    }).finally(() => {
+      if (providerTurnReconciliationInFlight === started) {
+        providerTurnReconciliationInFlight = null;
+      }
     });
-  }, options.providerTurnReconciliationIntervalMs ?? 1_000);
+    providerTurnReconciliationInFlight = started;
+  };
+  const providerTurnReconciliation = setInterval(
+    reconcileProviderTurnsOnce,
+    options.providerTurnReconciliationIntervalMs ?? 1_000,
+  );
   providerTurnReconciliation.unref();
 
   // The production source: each provider's own file, read-only, found through
@@ -708,6 +782,9 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
     dataRoot,
     async close() {
       clearInterval(providerTurnReconciliation);
+      if (providerTurnReconciliationInFlight !== null) {
+        await providerTurnReconciliationInFlight;
+      }
       await watcherScheduler.stop();
       await notificationDelivery.stop();
       // First, and awaited: a pass in flight holds durable Messaging and
@@ -717,7 +794,7 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
       await runs?.inboxDelivery.stop();
       await terminal?.dispose();
       await runtime.shutdown();
-      following.stop();
+      await following.stop();
       await messaging.store.close();
     },
   };

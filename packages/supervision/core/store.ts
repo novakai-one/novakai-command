@@ -10,9 +10,10 @@ import {
   type RecordEnvelope, type RecordVersion, type ScopedStoreHandle, type StoredObject,
 } from '@novakai/foundation/contract';
 
-/** The three §18.1 rows Supervision owns, and the only kinds it may write. */
+/** Every §18.1/AMD-003 row Supervision owns, and the only kinds it may write. */
 export const SUPERVISION_KINDS: readonly ObjectKind[] = [
-  'watchRule', 'watchDeadline', 'notification',
+  'watchRule', 'watchDeadline', 'notification', 'watchEvaluation',
+  'notificationDeliveryFenceOperation',
 ];
 
 export interface SupervisionStoreOptions {
@@ -21,26 +22,26 @@ export interface SupervisionStoreOptions {
   readonly lockTimeoutMs?: number;
 }
 
-export type Persisted<Record_ extends RecordEnvelope<string, string>> =
+export type Persisted<Record_ extends RecordEnvelope<string, string, number>> =
   Omit<Record_, 'recordVersion' | 'lastMutation'>;
 
 export interface SupervisionStore {
-  create<Record_ extends RecordEnvelope<string, string>>(
+  create<Record_ extends RecordEnvelope<string, string, number>>(
     principal: B3PrincipalId,
     payload: Persisted<Record_> & Record<string, unknown>,
     clientOpId: ClientOpId,
   ): Promise<B3Result<Record_>>;
 
-  update<Record_ extends RecordEnvelope<string, string>>(
+  update<Record_ extends RecordEnvelope<string, string, number>>(
     principal: B3PrincipalId, objectId: string, patch: Record<string, unknown>,
     expectedVersion: RecordVersion, clientOpId: ClientOpId,
   ): Promise<B3Result<Record_>>;
 
-  read<Record_ extends RecordEnvelope<string, string>>(
+  read<Record_ extends RecordEnvelope<string, string, number>>(
     kind: ObjectKind, objectId: string,
   ): Promise<B3Result<Record_ | null>>;
 
-  list<Record_ extends RecordEnvelope<string, string>>(
+  list<Record_ extends RecordEnvelope<string, string, number>>(
     kind: ObjectKind, filter?: Record<string, unknown>,
   ): Promise<B3Result<readonly Record_[]>>;
 }

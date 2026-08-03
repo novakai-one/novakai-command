@@ -7,7 +7,9 @@ import type {
   IsoUtc,
   ProviderSessionId,
 } from '@novakai/foundation/contract';
-import type { ProviderUsageEvidence } from '../../contract/index.js';
+import type {
+  ProviderUsageEvidence, ProviderUsageEvidenceId, RunOccurrenceEventFacts, RunUsageFacts,
+} from '../../contract/index.js';
 
 export interface ProviderTurnSubmissionUsageFacts {
   readonly providerTurnId: import('@novakai/foundation/contract').ProviderTurnId;
@@ -36,10 +38,26 @@ export interface UsageRunReader {
     principal: AuthenticatedPrincipal,
     agentId: AgentId,
   ): Promise<B3Result<readonly UsageRunFacts[]>>;
+  resolveUsageRunByProviderSession?(
+    principal: AuthenticatedPrincipal,
+    providerSessionId: ProviderSessionId,
+  ): Promise<B3Result<RunUsageFacts | null>>;
+  resolveCurrentRunByAgent?(
+    principal: AuthenticatedPrincipal,
+    agentId: AgentId,
+  ): Promise<B3Result<RunUsageFacts | null>>;
+  getRunOccurrenceEvent?(
+    principal: AuthenticatedPrincipal,
+    eventId: string,
+  ): Promise<B3Result<RunOccurrenceEventFacts | null>>;
 }
 
 /** Composition adapter over Agents' append-only evidence query. */
 export interface UsageEvidenceReader {
+  getProviderUsageEvidence?(
+    principal: AuthenticatedPrincipal,
+    providerUsageEvidenceId: ProviderUsageEvidenceId,
+  ): Promise<B3Result<ProviderUsageEvidence | null>>;
   listProviderUsageEvidence(
     principal: AuthenticatedPrincipal,
     providerSessionId: ProviderSessionId,

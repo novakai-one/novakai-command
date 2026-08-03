@@ -21,7 +21,9 @@ import type {
   AgentControlFacts, AgentControlOutcomeFacts, AgentRelationshipFacts,
   ControlCapabilityFacts,
 } from './ports.js';
-import type { AgentRunUsage } from '../../supervision/contract/index.js';
+import type {
+  AgentRunUsage, RunOccurrenceEventFacts,
+} from '../../supervision/contract/index.js';
 import type {
   NotificationTurnSubmission, StartNotificationTurnInput,
 } from './notification-delivery.js';
@@ -235,13 +237,16 @@ export interface RunUsageFacts {
   readonly agentRunId: AgentRunId;
   readonly agentId: AgentId;
   readonly providerSessionId: ProviderSessionId;
+  readonly lifecycle: AgentRunLifecycle;
   readonly final: boolean;
+  readonly activityGeneration: ActivityGeneration;
+  readonly recordVersion: RecordVersion;
   /** Omitted means no amendment-era submission set exists for this Run. */
   readonly providerTurnSubmissions?: readonly {
     readonly providerTurnId: ProviderTurnId;
     readonly state:
       | 'queued' | 'prepared' | 'submitted-confirmed' | 'submitted-unconfirmed'
-      | 'completed' | 'rejected' | 'recovery-required' | 'completion-unproven-final';
+       | 'completed' | 'rejected' | 'recovery-required' | 'completion-unproven-final';
   }[];
 }
 
@@ -255,6 +260,18 @@ export interface RunUsageSource {
     principal: AuthenticatedPrincipal,
     agentId: AgentId,
   ): Promise<B3Result<readonly RunUsageFacts[]>>;
+  resolveUsageRunByProviderSession(
+    principal: AuthenticatedPrincipal,
+    providerSessionId: ProviderSessionId,
+  ): Promise<B3Result<RunUsageFacts | null>>;
+  resolveCurrentRunByAgent(
+    principal: AuthenticatedPrincipal,
+    agentId: AgentId,
+  ): Promise<B3Result<RunUsageFacts | null>>;
+  getRunOccurrenceEvent(
+    principal: AuthenticatedPrincipal,
+    eventId: string,
+  ): Promise<B3Result<RunOccurrenceEventFacts | null>>;
 }
 
 /** Supervision projection lookup used while Runtime assembles a public Run view. */
@@ -408,6 +425,21 @@ export interface AgentRuntimeCommands {
 }
 
 export interface AgentRuntimeQueries {
+  resolveUsageRunByProviderSession(
+    principal: AuthenticatedPrincipal,
+    providerSessionId: ProviderSessionId,
+  ): Promise<B3Result<RunUsageFacts | null>>;
+
+  getRunOccurrenceEvent(
+    principal: AuthenticatedPrincipal,
+    eventId: string,
+  ): Promise<B3Result<RunOccurrenceEventFacts | null>>;
+
+  resolveCurrentRunByAgent(
+    principal: AuthenticatedPrincipal,
+    agentId: AgentId,
+  ): Promise<B3Result<RunUsageFacts | null>>;
+
   getAgentRun(
     principal: AuthenticatedPrincipal, agentRunId: AgentRunId,
   ): Promise<B3Result<AgentRunView>>;
@@ -471,13 +503,14 @@ export interface AgentRuntimeQueries {
    * each other, and §24.4's second-host proof subscribes to exactly one. So
    * the stream is shared and the event names its real owner.
    *
-   * This publishes; it does not make Agent Runtime the writer of anything.
-   * Events are not durable records (§18.1 registers no events file).
+   * Runtime retains the exact envelope before it becomes observable so an
+   * occurrence query remains complete across restart. The source owner remains
+   * the writer of the fact; retention is evidence custody, not fact ownership.
    */
   publishCapabilityEvent(
     kind: string, payload: Readonly<Record<string, unknown>>, sourceOwner: CapabilityOwner,
     traceId?: TraceCorrelationId,
-  ): void;
+  ): Promise<B3Result<null>>;
 
   /**
    * The tree-closing fence covering this Agent, or `null` when nothing is

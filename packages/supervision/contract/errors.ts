@@ -17,6 +17,8 @@ export const SUPERVISION_ERROR_CODES = [
   'IdempotencyConflict',
   'StoreUnavailable',
   'VersionConflict',
+  'RecoveryRequired',
+  'ProviderSessionReservationConflict',
   'StaleRuntimeEpoch',
   'RuntimeUnavailable',
   'UnknownAgent',

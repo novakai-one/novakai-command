@@ -20,12 +20,15 @@ import type {
   SystemCommandContext,
   CommandContext,
 } from '@novakai/foundation/contract';
-import type { NotificationEvent, PublicEvent } from './events.js';
+import type {
+  NotificationEvent, PublicEvent, WatchRuleAdmissionEvent,
+} from './events.js';
 import type {
   DriftEpisodeId,
   NotificationId,
   NotificationInputReservationId,
   WatchDeadlineId,
+  WatchEvaluationId,
   WatchRuleId,
 } from './identifiers.js';
 import type {
@@ -34,6 +37,9 @@ import type {
   Notification,
   NotificationRecipient,
   WatchDeadline,
+  WatchEvaluationProgress,
+  WatchEvaluationRuleOutcome,
+  WatchEvaluationTrigger,
   WatchRule,
   WatchSubject,
 } from './records.js';
@@ -88,6 +94,18 @@ export interface WatcherInstallAuthority {
 /** Host identity adapter used to authorize stable-Agent watcher reads. */
 export interface WatchRuleAccess {
   agentIdFor(principal: AuthenticatedPrincipal): Promise<B3Result<AgentId | null>>;
+}
+
+/** Agents-owned immutable spawn relationship used by child-derived conditions. */
+export interface WatchOccurrenceRelationshipAuthority {
+  isDirectManagedChild(
+    principal: AuthenticatedPrincipal,
+    input: {
+      readonly parentAgentId?: AgentId;
+      readonly parentAgentRunId?: AgentRunId;
+      readonly childAgentId: AgentId;
+    },
+  ): Promise<B3Result<boolean>>;
 }
 
 /** Exact-CAS replacement of a WatchRule. */
@@ -266,6 +284,16 @@ export interface WatchRuleFilter {
   readonly limit: number;
 }
 
+/** Bounded operator scan over durable, append-only watcher progress. */
+export interface WatchEvaluationProgressFilter {
+  readonly watchRuleId?: WatchRuleId;
+  readonly triggerKind?: WatchEvaluationTrigger['kind'];
+  readonly state?: WatchEvaluationProgress['state'];
+  readonly outcomeKind?: WatchEvaluationRuleOutcome['kind'];
+  readonly cursor?: EventCursor;
+  readonly limit: number;
+}
+
 /** Existing v1 bounded-page method reused by the amended Q8 wire mapping. */
 export const SUPERVISION_NOTIFICATION_SUBSCRIBE_METHOD =
   'b3.supervision.subscribeNotifications' as const;
@@ -335,6 +363,18 @@ export interface SupervisionCommands {
 
 /** Frozen B3d Supervision read/stream surface (§12.4). */
 export interface SupervisionQueries {
+  subscribeWatchRuleAdmissionSignals(
+    principal: AuthenticatedPrincipal,
+    after?: EventCursor,
+  ): AsyncIterable<B3Result<WatchRuleAdmissionEvent>>;
+  getWatchEvaluationProgress(
+    principal: AuthenticatedPrincipal,
+    watchEvaluationId: WatchEvaluationId,
+  ): Promise<B3Result<WatchEvaluationProgress | null>>;
+  listWatchEvaluationProgress(
+    principal: AuthenticatedPrincipal,
+    filter: WatchEvaluationProgressFilter,
+  ): Promise<B3Result<B3Page<WatchEvaluationProgress>>>;
   getNotificationDeliveryAuthority(
     principal: AuthenticatedPrincipal,
     notificationId: NotificationId,

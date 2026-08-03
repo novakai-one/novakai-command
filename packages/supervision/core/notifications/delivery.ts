@@ -87,11 +87,14 @@ function validateClaim(
       notificationId: notification.id, deliveryMode: notification.deliveryMode,
     }));
   }
-  if (Number(notification.conditionGeneration) !== Number(input.expectedActivityGeneration)) {
+  const deliveryBaseline = notification.schemaVersion === 2
+    ? notification.deliveryFence?.baselineActivityGeneration ?? notification.conditionGeneration
+    : notification.conditionGeneration;
+  if (Number(deliveryBaseline) !== Number(input.expectedActivityGeneration)) {
     return b3fail(conflict('delivery activity generation does not match the notification', {
       notificationId: notification.id,
       expectedActivityGeneration: input.expectedActivityGeneration,
-      actualActivityGeneration: notification.conditionGeneration,
+      actualActivityGeneration: deliveryBaseline,
     }));
   }
   const replay = boundReservation(notification) === input.notificationInputReservationId;

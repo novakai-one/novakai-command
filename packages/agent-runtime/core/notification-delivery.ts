@@ -14,6 +14,7 @@ import type { RunsCore } from './runs-context.js';
 import { requireRun } from './runs-context.js';
 import { submitProviderTurn } from './provider-turns.js';
 import { getNotificationTurnSubmission } from './notification-delivery-state.js';
+import { recoverSemanticNotificationDelivery } from './notification-delivery-replay.js';
 
 export { getNotificationTurnSubmission };
 
@@ -53,6 +54,11 @@ export async function startNotificationTurnAtSafeBoundary(
         notificationId: input.notificationId, effectKey: input.effectKey,
       }, true));
   }
+  const recovered = await recoverSemanticNotificationDelivery(
+    core, notifications, authority.value, input,
+  );
+  if (!recovered.ok) return recovered;
+  if (recovered.value !== null) return b3ok(recovered.value);
   const runResult = await requireRun(core, input.agentRunId);
   if (!runResult.ok) return runResult;
   if (runResult.value.terminalSessionId === undefined) {

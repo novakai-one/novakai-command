@@ -99,9 +99,10 @@ export async function interruptAgentTurn(
     activeProviderTurn: { ...active, state: 'interrupting' },
   });
   if (!interrupting.ok) return interrupting;
-  core.publish('agent.run.interrupt.barrier-committed', {
+  const announced = await core.publish('agent.run.interrupt.barrier-committed', {
     agentRunId: agentRun.value.id, providerTurnId: active.providerTurnId,
   });
+  if (!announced.ok) return b3fail(announced.error);
 
   const plan = await core.agents.getLaunchPlan(context.principal, agentRun.value.launchPlanId);
   if (plan.ok) {

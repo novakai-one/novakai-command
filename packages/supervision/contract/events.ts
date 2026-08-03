@@ -2,9 +2,13 @@ import type {
   CapabilityOwner,
   EventCursor,
   IsoUtc,
+  RecordVersion,
   TraceCorrelationId,
 } from '@novakai/foundation/contract';
-import type { Notification } from './records.js';
+import type {
+  Notification, WatchCondition, WatchSubject,
+} from './records.js';
+import type { WatchEvaluationId, WatchRuleId } from './identifiers.js';
 
 /** The complete §15 event envelope. */
 export interface PublicEvent<Kind extends string, Payload> {
@@ -27,15 +31,30 @@ export const SUPERVISION_EVENT_KINDS = [
   'supervision.drift.cleared',
   'supervision.drift.detected',
   'supervision.drift.escalated',
+  'supervision.watch-rule-admission.changed',
 ] as const;
 
-/** One of the six supervision-owned event discriminants. */
+/** One of the seven supervision-owned event discriminants. */
 export type SupervisionEventKind = typeof SUPERVISION_EVENT_KINDS[number];
 
 /** §12.7 is the only clause that assigns a concrete supervision payload. */
 export type NotificationEvent = PublicEvent<
   'supervision.notification.changed',
   Notification
+>;
+
+export interface WatchRuleAdmissionSignal {
+  readonly watchEvaluationId: WatchEvaluationId;
+  readonly watchRuleId: WatchRuleId;
+  readonly evaluatedRecordVersion: RecordVersion;
+  readonly subject: WatchSubject;
+  readonly condition: WatchCondition;
+  readonly reason: string;
+}
+
+export type WatchRuleAdmissionEvent = PublicEvent<
+  'supervision.watch-rule-admission.changed',
+  WatchRuleAdmissionSignal
 >;
 
 /**
@@ -49,6 +68,7 @@ export type UnspecifiedSupervisionEvent<
 /** Executable union of all supervision-owned §15 rows without invented payloads. */
 export type SupervisionEvent =
   | NotificationEvent
+  | WatchRuleAdmissionEvent
   | UnspecifiedSupervisionEvent<'supervision.deadline.changed'>
   | UnspecifiedSupervisionEvent<'supervision.drift.ping'>
   | UnspecifiedSupervisionEvent<'supervision.drift.cleared'>

@@ -21,6 +21,7 @@ test('the frozen public event surface contains exactly the §15 supervision rows
     'supervision.drift.cleared',
     'supervision.drift.detected',
     'supervision.drift.escalated',
+    'supervision.watch-rule-admission.changed',
   ]);
 });
 

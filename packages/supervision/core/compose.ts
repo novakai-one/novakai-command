@@ -6,13 +6,16 @@
 // that agreed with itself. Lanes A/B/C fill in the members this tracer leaves
 // out; none of them has to change what is already wired.
 import {
-  b3err, b3fail, b3ok, type AuthenticatedPrincipal, type B3Result, type IsoUtc,
+  b3err, b3fail, b3ok, commandReceiptId, composeReceiptStore, deriveClientOpId,
+  mintTraceCorrelationId,
+  type AuthenticatedPrincipal, type B3Result, type IsoUtc, type PublicOperationName,
 } from '@novakai/foundation/contract';
 import type {
   Notification, NotificationEventPage, NotificationEventPageInput, NotificationId,
   SupervisionContract, WatchDeadline, WatcherTemplate, WatcherTemplateCatalogue,
   WatcherInstallAuthority,
   WatchRuleAccess,
+  WatchOccurrenceRelationshipAuthority,
 } from '../contract/index.js';
 import {
   createSupervisionStore, type SupervisionStore, type SupervisionStoreOptions,
@@ -51,6 +54,11 @@ import {
 import {
   createUsageProjection, type UsageProjection, type UsageProjectionOptions,
 } from './usage/index.js';
+import { createSupervisionOwnerLinearizer } from './owner-linearizer.js';
+import {
+  getWatchEvaluationProgress, listWatchEvaluationProgress,
+} from './watch-evaluation-progress.js';
+import { subscribeWatchRuleAdmissionSignals } from './admission-signals.js';
 
 /** The frozen members the tracer's live wire actually carries current through. */
 export type SupervisionWireSlice = Pick<
@@ -72,6 +80,8 @@ export type SupervisionWireSlice = Pick<
   // Lane A: the usage half — every Run gets an honest row.
   | 'getAgentUsage'
   | 'getRunUsage'
+  | 'getWatchEvaluationProgress' | 'listWatchEvaluationProgress'
+  | 'subscribeWatchRuleAdmissionSignals'
 >;
 
 /** Deadline detail remains a tracer host read; WatchRule listing is now frozen. */
@@ -122,6 +132,8 @@ export interface SupervisionCoreOptions extends SupervisionStoreOptions {
   readonly watchRuleGeneration?: WatchRuleGenerationPort;
   /** B3d usage authorities; absent hosts return typed unavailability. */
   readonly usage?: UsageProjectionOptions;
+  /** Agents-owned immutable spawn relationships for child occurrence validation. */
+  readonly occurrenceRelationships?: WatchOccurrenceRelationshipAuthority;
   /** Runtime/Terminal truth used to authenticate one recorded status attempt.
    *  Q2: resolves the Terminal-owned reservation/attempt before drift writes. */
   readonly driftSubmissionAuthority?: DriftSubmissionAuthority;
@@ -155,9 +167,15 @@ export function composeSupervision(options: SupervisionCoreOptions): Supervision
   const usage = options.usage === undefined
     ? USAGE_NOT_COMPOSED
     : createUsageProjection(options.usage);
+  const receipts = composeReceiptStore(options);
+  const owner = createSupervisionOwnerLinearizer(options.dataRoot ?? options.root);
   const evaluation = {
     store,
     ...(options.usage === undefined ? {} : { runs: options.usage.runs }),
+    ...(options.usage === undefined ? {} : { evidence: options.usage.evidence }),
+    ...(options.occurrenceRelationships === undefined
+      ? {}
+      : { relationships: options.occurrenceRelationships }),
     ...(options.watchRuleGeneration === undefined
       ? {}
       : { generation: options.watchRuleGeneration }),
@@ -166,10 +184,37 @@ export function composeSupervision(options: SupervisionCoreOptions): Supervision
   return {
     installRunWatchers: (context, input) => {
       const parsed = parseInstallRunWatchersInput(input);
-      return parsed.ok ? installRunWatchers(install, context, parsed.value) : Promise.resolve(parsed);
+      return parsed.ok
+        ? owner.run(() => installRunWatchers(install, context, parsed.value))
+        : Promise.resolve(parsed);
     },
-    evaluateEvent: (context, input) => evaluateEvent(evaluation, context, input),
-    evaluateDueDeadlines: (observedAt) => evaluateDueDeadlines({ store }, observedAt),
+    evaluateEvent: (context, input) => owner.run(() => receipts.runCommand(
+      context,
+      {
+        operation: 'supervision.evaluateEvent' as PublicOperationName,
+        request: input,
+        replaySafe: true,
+        retainRetryableProgress: true,
+      },
+      () => evaluateEvent(evaluation, context, input),
+    )),
+    evaluateDueDeadlines: (observedAt) => {
+      const context = {
+        principal: { id: 'sys_supervision' as const, kind: 'system' as const, verifiedScopes: [] },
+        clientOpId: deriveClientOpId(`b3v4:evaluate-due-deadlines:${String(observedAt)}`),
+        traceId: mintTraceCorrelationId(),
+        contractVersion: 1 as const,
+      };
+      const operation = 'supervision.evaluateDueDeadlines' as PublicOperationName;
+      const receiptId = commandReceiptId(
+        context.principal.id, operation, context.clientOpId,
+      );
+      return owner.run(() => receipts.runCommand(
+        context,
+        { operation, request: { observedAt }, replaySafe: true, retainRetryableProgress: true },
+        () => evaluateDueDeadlines(evaluation, observedAt, receiptId),
+      ));
+    },
     listNotifications: (_principal, filter) => listNotifications({ store }, filter),
     listWatchRules: (principal, filter) => listWatchRules(
       store, options.watchRuleAccess, principal, filter,
@@ -194,7 +239,16 @@ export function composeSupervision(options: SupervisionCoreOptions): Supervision
     claimDueDeadlines: (context, input) => {
       const parsed = parseClaimDueDeadlinesInput(input);
       return parsed.ok
-        ? claimDueDeadlines({ store, clock }, context, parsed.value)
+        ? owner.run(() => receipts.runCommand(
+            context,
+            {
+              operation: 'supervision.claimDueDeadlines' as PublicOperationName,
+              request: parsed.value,
+              replaySafe: true,
+              retainRetryableProgress: true,
+            },
+            () => claimDueDeadlines({ store, clock }, context, parsed.value),
+          ))
         : Promise.resolve(parsed);
     },
     resetDriftEpisode: (context, input) => {
@@ -206,7 +260,7 @@ export function composeSupervision(options: SupervisionCoreOptions): Supervision
     createWatchRule: (context, input) => {
       const parsed = parseCreateWatchRuleInput(input);
       if (!parsed.ok) return Promise.resolve(parsed);
-      return createWatchRule(
+      return owner.run(() => createWatchRule(
         {
           store,
           clock,
@@ -216,12 +270,12 @@ export function composeSupervision(options: SupervisionCoreOptions): Supervision
         },
         context,
         parsed.value,
-      );
+      ));
     },
     updateWatchRule: (context, input) => {
       const parsed = parseUpdateWatchRuleInput(input);
       if (!parsed.ok) return Promise.resolve(parsed);
-      return updateWatchRule(
+      return owner.run(() => updateWatchRule(
         {
           store,
           clock,
@@ -231,7 +285,7 @@ export function composeSupervision(options: SupervisionCoreOptions): Supervision
         },
         context,
         parsed.value,
-      );
+      ));
     },
     claimNotificationDelivery: (context, input) =>
       claimNotificationDelivery({ store }, context, input),
@@ -259,6 +313,12 @@ export function composeSupervision(options: SupervisionCoreOptions): Supervision
     },
     getRunUsage: (principal, agentRunId) => usage.getRunUsage(principal, agentRunId),
     getAgentUsage: (principal, agentId) => usage.getAgentUsage(principal, agentId),
+    getWatchEvaluationProgress: (principal, watchEvaluationId) =>
+      getWatchEvaluationProgress(store, principal, watchEvaluationId),
+    listWatchEvaluationProgress: (principal, filter) =>
+      listWatchEvaluationProgress(store, principal, filter),
+    subscribeWatchRuleAdmissionSignals: (principal, after) =>
+      subscribeWatchRuleAdmissionSignals(store, principal, after),
     listWatchDeadlines: () => store.list<WatchDeadline>('watchDeadline'),
   };
 }

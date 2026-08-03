@@ -13,7 +13,9 @@ import {
   type Page, type PageOptions, type QuarantineRequestOutcome, type Result,
   type ScopedStoreHandle, type StoredObject, type TraceFilter,
 } from './types.js';
-import { CURRENT_SCHEMA_VERSION, KIND_FILES, StoreEngine } from '../core/store-engine/engine.js';
+import {
+  KIND_FILES, StoreEngine, supportedSchemaVersion,
+} from '../core/store-engine/engine.js';
 import { composeEngine } from './compose.js';
 
 const ENVELOPE_FIELDS = ['kind', 'id', 'schemaVersion', 'createdAt', 'permissionLevel', 'createdBy'] as const;
@@ -48,22 +50,29 @@ function validateEnvelope(payload: unknown): { flat?: EnvelopeT & Record<string,
         { missingFields: [...ENVELOPE_FIELDS], invalidFields: [] }, false),
     };
   }
-  const obj = payload as Record<string, unknown>;
-  const missingFields = ENVELOPE_FIELDS.filter((f) => !(f in obj) || obj[f] === undefined || obj[f] === null || obj[f] === '');
-  const parsed = Envelope.safeParse(obj);
+  const payloadObject = payload as Record<string, unknown>;
+  const missingFields = ENVELOPE_FIELDS.filter(
+    (fieldName) => !(fieldName in payloadObject)
+      || payloadObject[fieldName] === undefined
+      || payloadObject[fieldName] === null
+      || payloadObject[fieldName] === '',
+  );
+  const parsed = Envelope.safeParse(payloadObject);
   const invalidFields = parsed.success
     ? []
     : parsed.error.issues
-      .filter((i) => !missingFields.includes(i.path[0] as typeof ENVELOPE_FIELDS[number]))
-      .map((i) => ({ field: i.path.join('.') || '(root)', reason: i.message }));
+      .filter((issue) => !missingFields.includes(
+        issue.path[0] as typeof ENVELOPE_FIELDS[number],
+      ))
+      .map((issue) => ({ field: issue.path.join('.') || '(root)', reason: issue.message }));
   if (missingFields.length > 0 || invalidFields.length > 0) {
     return {
       error: err('InvalidEnvelope',
-        `envelope rejected: missing [${missingFields.join(', ')}]${invalidFields.length ? `; invalid [${invalidFields.map((i) => i.field).join(', ')}]` : ''}`,
+        `envelope rejected: missing [${missingFields.join(', ')}]${invalidFields.length ? `; invalid [${invalidFields.map((issue) => issue.field).join(', ')}]` : ''}`,
         { missingFields, invalidFields }, false),
     };
   }
-  return { flat: obj as EnvelopeT & Record<string, unknown> };
+  return { flat: payloadObject as EnvelopeT & Record<string, unknown> };
 }
 
 interface PriorOp {
@@ -123,16 +132,16 @@ function provenanceOf(
   };
 }
 
-function toStoredObject<T>(engine: StoreEngine, rec: ReturnType<StoreEngine['readLatestEffective']> extends Map<string, infer R> ? R : never): StoredObject<T> {
-  const flat = { ...rec.payload, ...rec.envelope } as T & EnvelopeT;
-  const lastMutation = provenanceOf(engine, rec.opId, rec.clientOpId);
+function toStoredObject<T>(engine: StoreEngine, recordLine: ReturnType<StoreEngine['readLatestEffective']> extends Map<string, infer R> ? R : never): StoredObject<T> {
+  const flat = { ...recordLine.payload, ...recordLine.envelope } as T & EnvelopeT;
+  const lastMutation = provenanceOf(engine, recordLine.opId, recordLine.clientOpId);
   const stored: StoredObject<T> = {
     object: flat,
-    version: rec.version,
+    version: recordLine.version,
     incomplete: lastMutation.state === 'object-appended-trace-missing',
     lastMutation,
   };
-  if (rec.unsupportedVersion) stored.unsupportedVersion = true;
+  if (recordLine.unsupportedVersion) stored.unsupportedVersion = true;
   return stored;
 }
 
@@ -176,9 +185,10 @@ export async function createObject<T>(
   const kind = flat!.kind;
   const scoped = scopeCheck(handle, kind);
   if (scoped) return fail(scoped);
-  if (flat!.schemaVersion > CURRENT_SCHEMA_VERSION) {
+  const supportedVersion = supportedSchemaVersion(kind);
+  if (flat!.schemaVersion > supportedVersion) {
     return fail(err('KindUnknown',
-      `schemaVersion ${flat!.schemaVersion} is newer than this code supports (${CURRENT_SCHEMA_VERSION})`,
+      `schemaVersion ${flat!.schemaVersion} is newer than this code supports (${supportedVersion})`,
       { kind, registered: Object.keys(KIND_FILES) }, false));
   }
   // dedup FIRST (R3-10): a retry with the same clientOpId returns the prior
@@ -187,14 +197,16 @@ export async function createObject<T>(
   const prior = findPriorOp(engine, kind, clientOpId);
   if (prior) {
     if (!prior.traceComplete) {
-      const rec = engine.readLatestEffective(kind).get(prior.id);
-      if (rec) engine.completeTrace(kind, { ...rec.payload, ...rec.envelope } as EnvelopeT & Record<string, unknown>, prior.action, prior.opId, clientOpId);
+      const recordLine = engine.readLatestEffective(kind).get(prior.id);
+      if (recordLine) engine.completeTrace(kind, { ...recordLine.payload, ...recordLine.envelope } as EnvelopeT & Record<string, unknown>, prior.action, prior.opId, clientOpId);
     }
-    const rec = engine.readLatestEffective(kind).get(prior.id);
-    if (rec) return ok(toStoredObject<T>(engine, rec));
+    const recordLine = engine.readLatestEffective(kind).get(prior.id);
+    if (recordLine) return ok(toStoredObject<T>(engine, recordLine));
   }
   if (engine.isQuarantined(flat!.id)) {
-    const tombstone = engine.readTombstones().find((t) => t.quarantinedRef.id === flat!.id && t.status === 'open');
+    const tombstone = engine.readTombstones().find(
+      (candidate) => candidate.quarantinedRef.id === flat!.id && candidate.status === 'open',
+    );
     return fail(err('Quarantined', `object "${flat!.id}" is quarantined until resolveQuarantine`,
       { ref: { kind, id: flat!.id }, tombstoneId: tombstone?.id ?? '' }, false));
   }
@@ -202,9 +214,9 @@ export async function createObject<T>(
   const stamped = { ...flat!, createdBy: principalOf(handle) };
   // create-CAS runs INSIDE the engine lock (S1): a concurrent create on the
   // same id loses with CasConflict instead of double-appending.
-  const res = engine.appendMutation(kind, stamped, 'create', clientOpId, 1, undefined, { mustBeAbsent: true });
-  if (!res.ok) return fail(res.error);
-  return ok(mutationView<T>(engine, res.value, clientOpId));
+  const result = engine.appendMutation(kind, stamped, 'create', clientOpId, 1, undefined, { mustBeAbsent: true });
+  if (!result.ok) return fail(result.error);
+  return ok(mutationView<T>(engine, result.value, clientOpId));
 }
 
 export async function updateObject<T>(
@@ -217,45 +229,52 @@ export async function updateObject<T>(
   const engine = engineOf(handle);
   const bootFailure = engine.bootError();
   if (bootFailure) return fail(bootFailure);
-  const ref = Ref.safeParse(id && typeof id === 'string' ? { kind: (patch as Record<string, unknown>)?.kind, id } : {});
-  void ref;
+  const parsedRef = Ref.safeParse(id && typeof id === 'string'
+    ? { kind: (patch as Record<string, unknown>)?.kind, id } : {});
+  void parsedRef;
   // locate the object across the handle's allowed kinds (id carries its kind prefix)
-  const all = [...handle.allowedKinds];
-  let rec: ReturnType<typeof readAllRecords>[number] | undefined;
+  const allowedKinds = [...handle.allowedKinds];
+  let recordLine: ReturnType<typeof readAllRecords>[number] | undefined;
   let kind = '';
-  for (const k of all) {
-    const found = engine.readLatestEffective(k).get(id);
-    if (found) { rec = found; kind = k; break; }
+  for (const candidateKind of allowedKinds) {
+    const found = engine.readLatestEffective(candidateKind).get(id);
+    if (found) {
+      recordLine = found;
+      kind = candidateKind;
+      break;
+    }
   }
-  if (!rec) {
+  if (!recordLine) {
     return fail(err('NotFound', `no object with id "${id}"`, { ref: { kind: kind || 'unknown', id } }, false));
   }
   const scoped = scopeCheck(handle, kind);
   if (scoped) return fail(scoped);
   if (engine.isQuarantined(id)) {
-    const tombstone = engine.readTombstones().find((t) => t.quarantinedRef.id === id && t.status === 'open');
+    const tombstone = engine.readTombstones().find(
+      (candidate) => candidate.quarantinedRef.id === id && candidate.status === 'open',
+    );
     return fail(err('Quarantined', `object "${id}" is quarantined until resolveQuarantine`,
       { ref: { kind, id }, tombstoneId: tombstone?.id ?? '' }, false));
   }
   const prior = findPriorOp(engine, kind, clientOpId);
   if (prior) {
     if (!prior.traceComplete) {
-      engine.completeTrace(kind, { ...rec.payload, ...rec.envelope } as EnvelopeT & Record<string, unknown>, prior.action, prior.opId, clientOpId);
+      engine.completeTrace(kind, { ...recordLine.payload, ...recordLine.envelope } as EnvelopeT & Record<string, unknown>, prior.action, prior.opId, clientOpId);
     }
     const current = engine.readLatestEffective(kind).get(id);
     if (current) return ok(toStoredObject<T>(engine, current));
   }
   // merge: envelope identity fields are immutable; createdBy/createdAt preserved from creation
-  const currentFlat = { ...rec.payload, ...rec.envelope } as Record<string, unknown>;
+  const currentFlat = { ...recordLine.payload, ...recordLine.envelope } as Record<string, unknown>;
   const patchObj = { ...(patch as Record<string, unknown>) };
-  for (const f of ENVELOPE_FIELDS) delete patchObj[f]; // envelope identity never patched
-  const merged = { ...currentFlat, ...patchObj, schemaVersion: CURRENT_SCHEMA_VERSION };
+  for (const fieldName of ENVELOPE_FIELDS) delete patchObj[fieldName];
+  const merged = { ...currentFlat, ...patchObj, schemaVersion: currentFlat.schemaVersion };
   // CAS compare runs INSIDE the engine lock (S1): a concurrent updater at the
   // same expectedVersion loses with CasConflict; the next version derives from
   // the authoritative locked read.
-  const res = engine.appendMutation(kind, merged as EnvelopeT & Record<string, unknown>, 'update', clientOpId, rec.version + 1, undefined, { expectedVersion });
-  if (!res.ok) return fail(res.error);
-  return ok(mutationView<T>(engine, res.value, clientOpId));
+  const result = engine.appendMutation(kind, merged as EnvelopeT & Record<string, unknown>, 'update', clientOpId, recordLine.version + 1, undefined, { expectedVersion });
+  if (!result.ok) return fail(result.error);
+  return ok(mutationView<T>(engine, result.value, clientOpId));
 }
 
 // ── Queries ─────────────────────────────────────────────────────────────────
@@ -267,8 +286,8 @@ function readObject<T>(
 ): StoredObject<T> | Absent {
   if (!(kind in KIND_FILES)) return ABSENT({ kind, id });
   if (engine.isQuarantined(id)) return ABSENT({ kind, id });
-  const rec = engine.readLatestEffective(kind).get(id);
-  return rec ? toStoredObject<T>(engine, rec) : ABSENT({ kind, id });
+  const recordLine = engine.readLatestEffective(kind).get(id);
+  return recordLine ? toStoredObject<T>(engine, recordLine) : ABSENT({ kind, id });
 }
 
 export async function getObject<T>(
@@ -335,14 +354,16 @@ export async function listObjects<T>(
   }
   const skipped = engine.quarantinedIds();
   let items = readAllRecords(engine, kind)
-    .filter((r) => !skipped.has(r.envelope.id))
-    .map((r) => toStoredObject<T>(engine, r));
+    .filter((recordLine) => !skipped.has(recordLine.envelope.id))
+    .map((recordLine) => toStoredObject<T>(engine, recordLine));
   if (filter) {
     for (const [field, value] of Object.entries(filter)) {
-      items = items.filter((s) => (s.object as Record<string, unknown>)[field] === value);
+      items = items.filter(
+        (storedObject) => (storedObject.object as Record<string, unknown>)[field] === value,
+      );
     }
   }
-  items.sort((a, b) => a.object.createdAt.localeCompare(b.object.createdAt)); // R3-3: ordered by createdAt
+  items.sort((left, right) => left.object.createdAt.localeCompare(right.object.createdAt));
   return ok(paginate(items, page));
 }
 
@@ -358,11 +379,16 @@ export async function resolveRef<T>(
 export async function queryTraceBound(engine: StoreEngine, filter: TraceFilter, page?: PageOptions): Promise<Page<TraceLineT>> {
   engine.boot();
   let items = engine.readTraces();
-  if (filter.opId) items = items.filter((t) => t.opId === filter.opId);
-  if (filter.clientOpId) items = items.filter((t) => t.clientOpId === filter.clientOpId);
-  if (filter.target) items = items.filter((t) => t.target.kind === filter.target!.kind && t.target.id === filter.target!.id);
-  if (filter.since) items = items.filter((t) => t.createdAt >= filter.since!);
-  items.sort((a, b) => a.seq - b.seq);
+  if (filter.opId) items = items.filter((trace) => trace.opId === filter.opId);
+  if (filter.clientOpId) {
+    items = items.filter((trace) => trace.clientOpId === filter.clientOpId);
+  }
+  if (filter.target) {
+    items = items.filter((trace) => trace.target.kind === filter.target!.kind
+      && trace.target.id === filter.target!.id);
+  }
+  if (filter.since) items = items.filter((trace) => trace.createdAt >= filter.since!);
+  items.sort((left, right) => left.seq - right.seq);
   return paginate(items, page);
 }
 

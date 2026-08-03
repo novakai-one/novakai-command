@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { b3ok } from '@novakai/foundation/contract';
 import {
   parseNotificationEvent,
   parseNotificationPage,
@@ -82,6 +83,46 @@ test('notification Page output validates every item and omission', () => {
       retryable: 'no',
     },
   }, parseNotificationPage).ok, false);
+});
+
+test('AMD-003 #42: RecoveryRequired validates the owning Supervision operation identity', () => {
+  const parser = () => b3ok(null);
+  const operationIds = [
+    `watchEvaluation_${'a'.repeat(52)}`,
+    `notificationDeliveryFenceOperation_${'b'.repeat(52)}`,
+    `receipt_${'c'.repeat(52)}`,
+  ];
+  for (const operationId of operationIds) {
+    const parsed = parseCliOutput({
+      schemaVersion: 1,
+      ok: false,
+      command: 'nvk watch repair',
+      error: {
+        code: 'RecoveryRequired',
+        message: 'owner evidence is not yet complete',
+        details: { operationId, reason: 'owner evidence is not yet complete' },
+        retryable: true,
+      },
+    }, parser);
+    assert.equal(parsed.ok, true, parsed.ok ? '' : parsed.error.message);
+  }
+  for (const operationId of [
+    `runOperation_${'d'.repeat(52)}`,
+    `watchDeadline_${'e'.repeat(52)}`,
+    'watchEvaluation_not-a-hash',
+  ]) {
+    assert.equal(parseCliOutput({
+      schemaVersion: 1,
+      ok: false,
+      command: 'nvk watch repair',
+      error: {
+        code: 'RecoveryRequired',
+        message: 'bad operation owner',
+        details: { operationId },
+        retryable: true,
+      },
+    }, parser).ok, false);
+  }
 });
 
 test('usage-evidence event parser rejects a non-numeric provider total', () => {

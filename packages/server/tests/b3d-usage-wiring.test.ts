@@ -27,13 +27,14 @@ function unwrap<Value>(result: B3Result<Value>, what: string): Value {
 
 async function waitForThresholdNotification(
   host: Awaited<ReturnType<typeof startRuntimeHost>>,
+  minimum = 1,
 ) {
   for (let attempt = 0; attempt < 100; attempt += 1) {
     const page = unwrap(
       await host.runtime.supervision.listNotifications(PRINCIPAL, { limit: 50 }),
       'threshold notifications',
     );
-    if (page.items.length > 0) return page;
+    if (page.items.length >= minimum) return page;
     await new Promise<void>((resolve) => { setImmediate(resolve); });
   }
   return unwrap(
@@ -232,7 +233,188 @@ test('the live composition turns satisfied output-token evidence into a Notifica
       assert.equal(notifications.items.length, 1,
         'satisfied output-token evidence queued no Notification');
       assert.equal(notifications.items[0]!.watchRuleId, rule.id);
-      assert.deepEqual(notifications.items[0]!.evidenceRefs, [recorded.value.id]);
+      assert.equal(notifications.items[0]!.evidenceRefs.length, 1);
+      const runtimeUsageEventId = notifications.items[0]!.evidenceRefs[0]!;
+      const retained = unwrap(
+        await host.runtime.runs.getRunOccurrenceEvent(PRINCIPAL, runtimeUsageEventId),
+        'retained Runtime usage occurrence',
+      );
+      assert.equal(retained?.occurrenceKind, 'usage-generation');
+      if (retained?.occurrenceKind === 'usage-generation') {
+        assert.equal(retained.agentRunId, spawned.run.id);
+        assert.equal(retained.occurrence.qualifyingEvidenceRef, recorded.value.id);
+      }
+    } finally {
+      client.close();
+    }
+  } finally {
+    await host.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('C20: production composition notifies for a final historical Run with no live replacement', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'nvk-b3d-c20-final-'));
+  const host = await startRuntimeHost({
+    root, port: 0, ptyHost: createFakePtyHost(), providers: createFakeProviderAdapters(),
+  });
+  try {
+    const client = await connectRuntime({ root, port: host.port, token: host.token });
+    try {
+      const role = unwrap(await client.call<{ id: string }>(
+        'b3.agent.createRole', chatRole('c20-final-wire'), mintClientOpId(),
+      ), 'create role');
+      const spawned = unwrap(await client.call<AgentRunView>('b3.agent.spawn', {
+        roleProfileId: role.id, displayName: 'C20 Final', workingDirectory: root,
+      }, mintClientOpId()), 'spawn');
+      const rule = unwrap(await host.runtime.supervision.createWatchRule({
+        principal: PRINCIPAL,
+        clientOpId: mintClientOpId(),
+        traceId: mintTraceCorrelationId(),
+        contractVersion: 1,
+      }, {
+        subject: { kind: 'agent', agentId: spawned.agent.agentId },
+        condition: { kind: 'output-tokens-at-least', value: 1 },
+        recipient: { kind: 'human', principalId: PRINCIPAL.id },
+        deliveryMode: 'queue-only', cooldownMs: 0, status: 'active',
+      }), 'create stable-Agent threshold');
+      const stopped = await client.call('b3.agent.stop', {
+        agentId: spawned.agent.agentId,
+        expectedLiveRunId: spawned.run.id,
+        confirmation: 'stop-one',
+      }, mintClientOpId());
+      assert.equal(stopped.ok, true, stopped.ok ? '' : stopped.error.message);
+      const noCurrent = unwrap(await host.runtime.runs.resolveCurrentRunByAgent(
+        PRINCIPAL, spawned.agent.agentId,
+      ), 'current Run after stop');
+      assert.equal(noCurrent, null);
+
+      const recorded = await host.runtime.usageEvidence.recordProviderUsageEvidence({
+        principal: { id: 'sys_agents', kind: 'system', verifiedScopes: [] },
+        clientOpId: mintClientOpId(),
+        traceId: mintTraceCorrelationId(),
+        contractVersion: 1,
+      }, {
+        providerSessionId: spawned.provider.providerSessionId,
+        providerConversationId: null,
+        observedAt: '2026-08-04T04:00:00.000Z' as never,
+        source: 'transcript-derived:provider-total',
+        sourceCursor: 'line:c20-final',
+        measurement: {
+          quality: 'measured', inputTokens: 10, outputTokens: 2, cachedInputTokens: 0,
+          costMicros: 1, providerTurns: 1, limitations: [],
+          evidenceDigest: 'sha256:c20-final-wire',
+        },
+      });
+      assert.equal(recorded.ok, true, recorded.ok ? '' : recorded.error.message);
+      const page = await waitForThresholdNotification(host);
+      assert.equal(page.items.length, 1);
+      const notification = page.items[0]!;
+      assert.equal(notification.watchRuleId, rule.id);
+      assert.equal(notification.schemaVersion, 2);
+      if (notification.schemaVersion !== 2 || notification.phase !== 'condition') return;
+      assert.equal(notification.occurrenceIdentity, 'agent-run');
+      if (notification.occurrenceIdentity !== 'agent-run') return;
+      assert.equal(notification.conditionOccurrence.agentRunId, spawned.run.id);
+      assert.equal(
+        notification.conditionOccurrence.providerSessionId,
+        spawned.provider.providerSessionId,
+      );
+      assert.equal(notification.conditionOccurrence.qualifyingEvidenceRef, recorded.value.id);
+      assert.equal(notification.qualifiedAt, recorded.value.observedAt);
+    } finally {
+      client.close();
+    }
+  } finally {
+    await host.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('AMD-003 #38: a resume keeps its handle but mints a distinct Run occurrence', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'nvk-b3d-resume-occurrence-'));
+  const host = await startRuntimeHost({
+    root, port: 0, ptyHost: createFakePtyHost(), providers: createFakeProviderAdapters(),
+  });
+  try {
+    const client = await connectRuntime({ root, port: host.port, token: host.token });
+    try {
+      const role = unwrap(await client.call<{ id: string }>(
+        'b3.agent.createRole', chatRole('resume-occurrence-wire'), mintClientOpId(),
+      ), 'create role');
+      const spawned = unwrap(await client.call<AgentRunView>('b3.agent.spawn', {
+        roleProfileId: role.id, displayName: 'Resume Occurrence', workingDirectory: root,
+      }, mintClientOpId()), 'spawn');
+      const rule = unwrap(await host.runtime.supervision.createWatchRule({
+        principal: PRINCIPAL,
+        clientOpId: mintClientOpId(),
+        traceId: mintTraceCorrelationId(),
+        contractVersion: 1,
+      }, {
+        subject: { kind: 'agent', agentId: spawned.agent.agentId },
+        condition: { kind: 'output-tokens-at-least', value: 1 },
+        recipient: { kind: 'human', principalId: PRINCIPAL.id },
+        deliveryMode: 'queue-only', cooldownMs: 0, status: 'active',
+      }), 'create continuation threshold');
+      const recordUsage = async (
+        providerSessionId: AgentRunView['provider']['providerSessionId'],
+        cursor: string,
+        observedAt: string,
+      ) => host.runtime.usageEvidence.recordProviderUsageEvidence({
+        principal: { id: 'sys_agents', kind: 'system', verifiedScopes: [] },
+        clientOpId: mintClientOpId(),
+        traceId: mintTraceCorrelationId(),
+        contractVersion: 1,
+      }, {
+        providerSessionId,
+        providerConversationId: null,
+        observedAt: observedAt as never,
+        source: 'transcript-derived:provider-total',
+        sourceCursor: cursor,
+        measurement: {
+          quality: 'measured', inputTokens: 1, outputTokens: 2, cachedInputTokens: 0,
+          costMicros: 1, providerTurns: 1, limitations: [],
+          evidenceDigest: `sha256:${cursor}`,
+        },
+      });
+
+      const firstEvidence = await recordUsage(
+        spawned.provider.providerSessionId, 'resume-occurrence-first',
+        '2026-08-04T05:00:00.000Z',
+      );
+      assert.equal(firstEvidence.ok, true, firstEvidence.ok ? '' : firstEvidence.error.message);
+      await waitForThresholdNotification(host, 1);
+      const oldSession = unwrap(await host.runtime.agents.getProviderSession(
+        PRINCIPAL, spawned.provider.providerSessionId,
+      ), 'old ProviderSession');
+
+      const continued = unwrap(await client.call<AgentRunView>('b3.agent.continue', {
+        agentId: spawned.agent.agentId,
+        expectedOldRunId: spawned.run.id,
+        mode: 'resume',
+        configurationMode: 'inherit-plan',
+      }, mintClientOpId()), 'resume continuation');
+      assert.notEqual(continued.run.id, spawned.run.id);
+      assert.notEqual(continued.provider.providerSessionId, spawned.provider.providerSessionId);
+      const resumedSession = unwrap(await host.runtime.agents.getProviderSession(
+        PRINCIPAL, continued.provider.providerSessionId,
+      ), 'resumed ProviderSession');
+      assert.equal(resumedSession.providerResumeHandle, oldSession.providerConversationId);
+
+      const secondEvidence = await recordUsage(
+        continued.provider.providerSessionId, 'resume-occurrence-second',
+        '2026-08-04T05:01:00.000Z',
+      );
+      assert.equal(secondEvidence.ok, true, secondEvidence.ok ? '' : secondEvidence.error.message);
+      const page = await waitForThresholdNotification(host, 2);
+      const notifications = page.items.filter((item) => item.watchRuleId === rule.id);
+      assert.equal(notifications.length, 2);
+      assert.equal(new Set(notifications.map((item) => item.id)).size, 2);
+      assert.deepEqual(new Set(notifications.map((item) =>
+        item.schemaVersion === 2 && item.phase === 'condition'
+          && item.occurrenceIdentity === 'agent-run'
+          ? item.conditionOccurrence.agentRunId
+          : null)), new Set([spawned.run.id, continued.run.id]));
     } finally {
       client.close();
     }

@@ -22,8 +22,10 @@ import {
   parseResetDriftEpisodeInput,
   parseUpdateWatchRuleInput,
   parseWatchRuleFilter,
+  isWatchEvaluationId,
   type Notification, type NotificationEventPage, type NotificationId,
-  type WatchDeadline, type WatchRule,
+  type WatchDeadline, type WatchEvaluationId, type WatchEvaluationProgressFilter,
+  type WatchRule,
 } from '../../../supervision/contract/index.js';
 import { readAgentRunIdInput } from '../../../agent-runtime/contract/index.js';
 import type { SupervisionCore } from '../../../supervision/public/index.js';
@@ -263,6 +265,54 @@ export function buildB3SupervisionMethods(options: B3SupervisionMethodOptions): 
       const parsed = readParams(params);
       if (!parsed.ok) return parsed;
       return listWatchers(options.principalFor(session), parsed.value.payload);
+    },
+
+    'b3.supervision.getWatchEvaluationProgress': async (params, session) => {
+      const parsed = readParams(params);
+      if (!parsed.ok) return parsed;
+      const id = parsed.value.payload['watchEvaluationId'];
+      if (!isWatchEvaluationId(id)) {
+        return b3fail(b3err(
+          'ValidationFailed', 'watchEvaluationId must be a WatchEvaluationId',
+          { issues: [{ path: 'watchEvaluationId', message: 'has the wrong identifier shape' }] },
+          false,
+        ));
+      }
+      return supervision.getWatchEvaluationProgress(
+        options.principalFor(session), id as WatchEvaluationId,
+      );
+    },
+
+    'b3.supervision.listWatchEvaluationProgress': async (params, session) => {
+      const parsed = readParams(params);
+      if (!parsed.ok) return parsed;
+      const payload = parsed.value.payload;
+      const limit = Number(payload['limit'] ?? 50);
+      const triggerKind = payload['triggerKind'];
+      const state = payload['state'];
+      const outcomeKind = payload['outcomeKind'];
+      if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1_000
+        || (triggerKind !== undefined && !['event', 'deadline'].includes(String(triggerKind)))
+        || (state !== undefined
+          && !['running', 'completed', 'recovery-required'].includes(String(state)))) {
+        return b3fail(b3err(
+          'ValidationFailed', 'invalid watch evaluation progress filter',
+          { issues: [{ path: 'payload', message: 'contains an invalid filter value' }] }, false,
+        ));
+      }
+      const filter: WatchEvaluationProgressFilter = {
+        limit,
+        ...(typeof payload['watchRuleId'] === 'string'
+          ? { watchRuleId: payload['watchRuleId'] as never }
+          : {}),
+        ...(triggerKind === undefined ? {} : { triggerKind: triggerKind as never }),
+        ...(state === undefined ? {} : { state: state as never }),
+        ...(typeof outcomeKind === 'string' ? { outcomeKind: outcomeKind as never } : {}),
+        ...(typeof payload['cursor'] === 'string'
+          ? { cursor: payload['cursor'] as never }
+          : {}),
+      };
+      return supervision.listWatchEvaluationProgress(options.principalFor(session), filter);
     },
 
     'b3.supervision.listNotifications': async (

@@ -2,14 +2,18 @@ import type {
   ActivityGeneration,
   AgentId,
   AgentRunId,
+  B3ErrorCode,
   B3ClientOpId,
   B3PrincipalId,
+  CommandReceiptId,
   IsoUtc,
   ProviderSessionId,
   ProviderTurnId,
   RecordEnvelope,
+  RecordVersion,
   ResolvedLaunchPlanId,
   RuntimeEpochId,
+  RunOperationId,
   TerminalInputAttemptId,
   TraceCorrelationId,
   TranscriptTurnCompletionId,
@@ -21,6 +25,8 @@ import type {
   NotificationId,
   ProviderUsageEvidenceId,
   NotificationInputReservationId,
+  NotificationDeliveryFenceOperationId,
+  WatchEvaluationId,
   WatchDeadlineId,
   WatchRuleId,
 } from './identifiers.js';
@@ -46,6 +52,24 @@ export interface AgentRunUsage {
   readonly providerTurns: UsageValue;
   readonly observedAt: IsoUtc;
   readonly final: boolean;
+}
+
+export type AgentRunLifecycle =
+  | 'provisioning' | 'ready' | 'interrupted' | 'continuation-pending'
+  | 'stopping' | 'stopped' | 'failed' | 'recovery-required';
+
+export type AgentRunActivity =
+  | 'idle' | 'working' | 'waiting-provider' | 'waiting-input' | 'interrupting' | 'unknown';
+
+/** Complete Runtime correlation view, including final history. */
+export interface RunUsageFacts {
+  readonly agentRunId: AgentRunId;
+  readonly agentId: AgentId;
+  readonly providerSessionId: ProviderSessionId;
+  readonly lifecycle: AgentRunLifecycle;
+  readonly final: boolean;
+  readonly activityGeneration: ActivityGeneration;
+  readonly recordVersion: RecordVersion;
 }
 
 /** Aggregate projection over the `runs` returned beside it; never a synthetic Run. */
@@ -105,9 +129,11 @@ export type WatchCondition =
 
 /** Runtime-owned facts used by the exact Q6 `run-disconnected` edge mapping. */
 export interface RunConnectionSnapshot {
-  readonly final: boolean;
-  readonly activityGeneration: ActivityGeneration;
+  readonly activity: AgentRunActivity;
+  /** Sorted, duplicate-free Runtime uncertainty-code snapshot. */
   readonly uncertaintyCodes: readonly string[];
+  readonly activityGeneration: ActivityGeneration;
+  readonly observedAt: IsoUtc;
 }
 
 /** True only for a new non-final provider-session reachability-loss generation. */
@@ -116,11 +142,65 @@ export function isRunDisconnectedEdge(
   current: RunConnectionSnapshot,
 ): boolean {
   const code = 'provider-liveness-unknown';
-  return !current.final
-    && !previous.uncertaintyCodes.includes(code)
+  return !previous.uncertaintyCodes.includes(code)
     && current.uncertaintyCodes.includes(code)
+    && current.activity === 'unknown'
     && Number(current.activityGeneration) > Number(previous.activityGeneration);
 }
+
+export interface RunOccurrenceEventBase {
+  readonly eventId: string;
+  readonly occurredAt: IsoUtc;
+  readonly committedAt: IsoUtc;
+  readonly sourceOwner: 'agent-runtime';
+  readonly agentRunId: AgentRunId;
+  readonly agentId: AgentId;
+  readonly providerSessionId: ProviderSessionId;
+  readonly lifecycle: AgentRunLifecycle;
+  readonly final: boolean;
+  readonly activityGeneration: ActivityGeneration;
+  readonly canonicalPayloadDigest: string;
+}
+
+export type RunOccurrenceEventFacts = RunOccurrenceEventBase & (
+  | {
+      readonly kind: 'agent.run.usage.changed';
+      readonly occurrenceKind: 'usage-generation';
+      readonly occurrence: { readonly qualifyingEvidenceRef: ProviderUsageEvidenceId };
+    }
+  | {
+      readonly kind: 'agent.run.lifecycle.changed';
+      readonly occurrenceKind: 'run-final';
+      readonly occurrence:
+        | { readonly toLifecycle: 'stopped' | 'failed'; readonly reconciledFinal?: never }
+        | { readonly toLifecycle: 'interrupted'; readonly reconciledFinal: true };
+    }
+  | {
+      readonly kind: 'agent.run.activity.changed';
+      readonly occurrenceKind: 'run-disconnected';
+      readonly occurrence: {
+        readonly previous: RunConnectionSnapshot;
+        readonly current: RunConnectionSnapshot;
+      };
+    }
+  | {
+      readonly kind: 'runtime.recovery.required';
+      readonly occurrenceKind: 'child-needs-help';
+      readonly occurrence: {
+        readonly recoveryReason: string;
+        readonly evidenceRefs: readonly string[];
+      };
+    }
+  | {
+      readonly kind: 'agent.run.operation.stage.changed';
+      readonly occurrenceKind: 'operation-failed';
+      readonly occurrence: {
+        readonly runOperationId: RunOperationId;
+        readonly terminalState: 'failed' | 'recovery-required';
+        readonly reason: string;
+      };
+    }
+);
 
 /** Stable watcher target. */
 export type WatchSubject =
@@ -186,6 +266,10 @@ export interface WatchDeadline extends RecordEnvelope<WatchDeadlineId, 'watchDea
   readonly claimedByRuntimeEpochId?: RuntimeEpochId;
   readonly lateByMs?: number;
   readonly driftState?: DurableDriftState;
+  /** Required on every post-activation ordinary non-drift deadline. */
+  readonly creationRecordVersion?: RecordVersion;
+  /** Required and non-negative on every post-activation ordinary non-drift deadline. */
+  readonly armingOrdinal?: number;
 }
 
 /** Durable Notification lifecycle states. */
@@ -250,11 +334,170 @@ export interface NotificationBase extends RecordEnvelope<NotificationId, 'notifi
   readonly deliveryMode: WatchRule['deliveryMode'];
 }
 
-/** Durable notification, discriminated so ordinary and drift IDs cannot mix. */
-export type Notification = NotificationBase & (
-  | { readonly phase: 'condition'; readonly driftEpisodeId?: never }
+/** Authoritative occurrence provenance constructed by Supervision. */
+export type ConditionOccurrence =
   | {
-      readonly phase: 'drift-status-request' | 'drift-human-escalation';
-      readonly driftEpisodeId: DriftEpisodeId;
+      readonly kind: 'agent-run';
+      readonly agentRunId: AgentRunId;
+      readonly providerSessionId: ProviderSessionId;
+      readonly qualifyingEvidenceRef: ProviderUsageEvidenceId;
+      readonly qualifiedAt: IsoUtc;
     }
-);
+  | {
+      readonly kind: 'run-final';
+      readonly agentRunId: AgentRunId;
+      readonly providerSessionId: ProviderSessionId;
+      readonly qualifyingEvidenceRef: string;
+      readonly qualifiedAt: IsoUtc;
+    }
+  | {
+      readonly kind: 'committed-event';
+      readonly eventId: string;
+      readonly agentRunId: AgentRunId;
+      readonly providerSessionId: ProviderSessionId;
+      readonly qualifyingEvidenceRef: string;
+      readonly qualifiedAt: IsoUtc;
+    }
+  | {
+      readonly kind: 'run-operation';
+      readonly runOperationId: RunOperationId;
+      readonly agentRunId: AgentRunId;
+      readonly providerSessionId: ProviderSessionId;
+      readonly qualifyingEvidenceRef: string;
+      readonly qualifiedAt: IsoUtc;
+    };
+
+/** Per-target-Run delivery baseline; generations never compare across Runs. */
+export interface NotificationDeliveryFence {
+  readonly targetAgentRunId: AgentRunId;
+  readonly baselineActivityGeneration: ActivityGeneration;
+  readonly boundAt: IsoUtc;
+}
+
+export type NotificationV2Base = Omit<
+  NotificationBase,
+  keyof RecordEnvelope<NotificationId, 'notification', 1>
+> & RecordEnvelope<NotificationId, 'notification', 2>;
+
+/** Durable notification with exact legacy-v1 and occurrence-aware-v2 branches. */
+export type Notification =
+  | (NotificationBase & (
+      | { readonly phase: 'condition'; readonly driftEpisodeId?: never }
+      | {
+          readonly phase: 'drift-status-request' | 'drift-human-escalation';
+          readonly driftEpisodeId: DriftEpisodeId;
+        }
+    ))
+  | (NotificationV2Base & (
+      | {
+          readonly phase: 'condition';
+          readonly occurrenceIdentity: 'legacy-generation';
+          readonly conditionOccurrence?: never;
+          readonly qualifiedAt: IsoUtc;
+          readonly driftEpisodeId?: never;
+          readonly deliveryFence?: NotificationDeliveryFence;
+        }
+      | {
+          readonly phase: 'condition';
+          readonly occurrenceIdentity: 'agent-run';
+          readonly conditionOccurrence: Extract<
+            ConditionOccurrence,
+            { readonly kind: 'agent-run' | 'run-final' }
+          >;
+          readonly qualifiedAt: IsoUtc;
+          readonly driftEpisodeId?: never;
+          readonly deliveryFence?: NotificationDeliveryFence;
+        }
+      | {
+          readonly phase: 'condition';
+          readonly occurrenceIdentity: 'committed-event';
+          readonly conditionOccurrence: Extract<
+            ConditionOccurrence,
+            { readonly kind: 'committed-event' }
+          >;
+          readonly qualifiedAt: IsoUtc;
+          readonly driftEpisodeId?: never;
+          readonly deliveryFence?: NotificationDeliveryFence;
+        }
+      | {
+          readonly phase: 'condition';
+          readonly occurrenceIdentity: 'run-operation';
+          readonly conditionOccurrence: Extract<
+            ConditionOccurrence,
+            { readonly kind: 'run-operation' }
+          >;
+          readonly qualifiedAt: IsoUtc;
+          readonly driftEpisodeId?: never;
+          readonly deliveryFence?: NotificationDeliveryFence;
+        }
+    ));
+
+export type WatchEvaluationRuleOutcome =
+  | { readonly kind: 'committed'; readonly notificationId: NotificationId }
+  | { readonly kind: 'adopted'; readonly notificationId: NotificationId }
+  | { readonly kind: 'legacy-adopted'; readonly legacyIds: readonly NotificationId[] }
+  | { readonly kind: 'cooldown-suppressed'; readonly qualifiedAt: IsoUtc }
+  | { readonly kind: 'not-matching' }
+  | { readonly kind: 'inactive-current-policy' }
+  | {
+      readonly kind: 'pair-not-admitted';
+      readonly signalEventId: string;
+      readonly signalOccurredAt: IsoUtc;
+      readonly signalTraceId: TraceCorrelationId;
+      readonly subject: WatchSubject;
+      readonly condition: WatchCondition;
+      readonly reason: string;
+    }
+  | {
+      readonly kind: 'failed-non-retryable';
+      readonly code: B3ErrorCode;
+      readonly reason: string;
+      readonly details: Readonly<Record<string, unknown>>;
+    };
+
+export type WatchEvaluationTrigger =
+  | { readonly kind: 'event'; readonly eventId: string }
+  | {
+      readonly kind: 'deadline';
+      readonly watchDeadlineId: WatchDeadlineId;
+      readonly deadlineCreationRecordVersion: RecordVersion;
+    };
+
+/** Append-only per-rule progress for a resumable watcher evaluation. */
+export interface WatchEvaluationProgress extends RecordEnvelope<
+  WatchEvaluationId,
+  'watchEvaluation'
+> {
+  readonly commandReceiptId: CommandReceiptId;
+  readonly trigger: WatchEvaluationTrigger;
+  readonly orderedWatchRuleIds: readonly WatchRuleId[];
+  readonly attemptOrdinal: number;
+  readonly completed: readonly {
+    readonly attemptOrdinal: number;
+    readonly watchRuleId: WatchRuleId;
+    readonly evaluatedRecordVersion: RecordVersion;
+    readonly outcome: WatchEvaluationRuleOutcome;
+  }[];
+  readonly nextRuleIndex: number;
+  readonly state: 'running' | 'completed' | 'recovery-required';
+  readonly recovery?: {
+    readonly stage:
+      | 'occurrence-derivation'
+      | 'legacy-occurrence-adoption'
+      | 'rule-version-fence';
+    readonly reason: string;
+  };
+}
+
+/** Durable progress while an Agent-recipient Notification changes target Run. */
+export interface NotificationDeliveryFenceOperation extends RecordEnvelope<
+  NotificationDeliveryFenceOperationId,
+  'notificationDeliveryFenceOperation'
+> {
+  readonly notificationId: NotificationId;
+  readonly previousTargetAgentRunId?: AgentRunId;
+  readonly targetAgentRunId?: AgentRunId;
+  readonly triggerEventId: string;
+  readonly state: 'running' | 'queued-no-live-run' | 'completed' | 'recovery-required';
+  readonly reason?: string;
+}

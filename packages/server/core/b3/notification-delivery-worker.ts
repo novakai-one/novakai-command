@@ -3,7 +3,8 @@ import { createHash } from 'node:crypto';
 import {
   deriveClientOpId, mintProviderTurnId, mintTraceCorrelationId,
   notificationInputReservationId,
-  type ActivityGeneration, type AuthenticatedPrincipal, type SystemCommandContext,
+  type ActivityGeneration, type AgentRunId, type AuthenticatedPrincipal,
+  type SystemCommandContext,
 } from '@novakai/foundation/contract';
 import type { AgentRunsContract, ProviderPort } from '../../../agent-runtime/contract/index.js';
 import type {
@@ -28,7 +29,7 @@ type CommittedReservation = Extract<
   NotificationInputReservation, { readonly state: 'committed' }
 >;
 type DeliveryTarget = {
-  readonly agentRunId: Extract<Notification['subject'], { readonly kind: 'agent-run' }>['agentRunId'];
+  readonly agentRunId: AgentRunId;
   readonly effectKey: string;
   readonly claimGeneration: ActivityGeneration;
   readonly inputText: string;
@@ -244,11 +245,24 @@ async function deliverNextTurn(
   dependencies: NotificationDeliveryDependencies,
   notification: Notification,
 ): Promise<string | null> {
-  if (notification.subject.kind !== 'agent-run') return 'NotificationDeliveryUnsafe';
+  const occurrenceRunId = notification.schemaVersion === 2
+    && notification.occurrenceIdentity !== 'legacy-generation'
+    ? notification.conditionOccurrence.agentRunId
+    : undefined;
+  const agentRunId = notification.schemaVersion === 2
+    && notification.deliveryFence !== undefined
+    ? notification.deliveryFence.targetAgentRunId
+    : notification.subject.kind === 'agent-run'
+      ? notification.subject.agentRunId
+      : occurrenceRunId;
+  if (agentRunId === undefined) return 'NotificationDeliveryUnsafe';
   const target: DeliveryTarget = {
-    agentRunId: notification.subject.agentRunId,
+    agentRunId,
     effectKey: notification.deliveryEffectKey,
-    claimGeneration: notification.conditionGeneration as ActivityGeneration,
+    claimGeneration: (notification.schemaVersion === 2
+      ? notification.deliveryFence?.baselineActivityGeneration
+        ?? notification.conditionGeneration
+      : notification.conditionGeneration) as ActivityGeneration,
     inputText: notification.summary,
   };
   const reservation = notificationInputReservationId(

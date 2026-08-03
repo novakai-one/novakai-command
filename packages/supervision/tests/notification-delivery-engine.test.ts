@@ -81,7 +81,7 @@ function failNextUpdateFor(store: SupervisionStore, objectId: string): Supervisi
   let shouldFail = true;
   return {
     ...store,
-    async update<Record_ extends RecordEnvelope<string, string>>(
+    async update<Record_ extends RecordEnvelope<string, string, number>>(
       principal: B3PrincipalId,
       candidateId: string,
       patch: Record<string, unknown>,

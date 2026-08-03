@@ -57,6 +57,11 @@ test('an idle mirror announces nothing, so §15 kinds are not evicted by noise',
     // time stands in for several minutes of a real session.
     mirrorIntervalMs: 5,
   });
+  // The 5ms cadence accelerates only the idle-window assertion. Letting that
+  // synthetic cadence contend with the spawn saga turns setup into an I/O
+  // starvation test after AMD-002 added semantic provider-turn reconciliation.
+  // Start the accelerated pump only once the three idle bindings exist.
+  await host.runtime.mirror.stop();
   const chris = await connectRuntime({ root, port: host.port, token: host.token });
   try {
     const role = await chris.call<{ id: string }>('b3.agent.createRole', {
@@ -83,6 +88,7 @@ test('an idle mirror announces nothing, so §15 kinds are not evicted by noise',
       text: 'the one message this exchange contains', clientMessageId: 'cmid-survival',
     });
     assert.equal(sent.ok, true, sent.ok ? '' : `${sent.error.code}: ${sent.error.message}`);
+    host.runtime.mirror.start();
 
     const readStream = async (): Promise<readonly StreamEvent[]> => {
       const page = await chris.call<{ events: readonly StreamEvent[] }>(

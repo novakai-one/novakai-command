@@ -59,6 +59,8 @@ export interface FakeTerminal extends TerminalPort {
   duringNextTerminate: (() => Promise<void>) | null;
   /** Pause one Q7 reservation so a contract test can race another public Run command. */
   duringNextNotificationReservation: (() => Promise<void>) | null;
+  /** Pause one semantic provider-turn preparation so public Run commands can race it. */
+  duringNextProviderTurnPrepare: (() => Promise<void>) | null;
   /**
    * Echo like a REAL TUI: re-wrap what was typed at this width instead of
    * echoing it back line for line.
@@ -185,6 +187,7 @@ export function createFakeTerminal(): FakeTerminal {
     failTerminate: null,
     duringNextTerminate: null,
     duringNextNotificationReservation: null,
+    duringNextProviderTurnPrepare: null,
     reflowColumns: null,
     repaintAnswer: false,
     crashAfterProviderTurnPrepare: false,
@@ -336,6 +339,11 @@ export function createFakeTerminal(): FakeTerminal {
     },
 
     async prepareProviderTurnInput(input) {
+      const during = port.duringNextProviderTurnPrepare;
+      if (during !== null) {
+        port.duringNextProviderTurnPrepare = null;
+        await during();
+      }
       if (port.providerTurnPrepareBlocked) {
         return b3ok({
           kind: 'not-yet-safe' as const,
