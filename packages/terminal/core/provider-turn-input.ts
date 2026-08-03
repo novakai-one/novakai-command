@@ -3,6 +3,7 @@ import {
   b3err,
   b3fail,
   b3ok,
+  keysetPage,
   mintClientOpId,
   mintTerminalInputAttemptId,
   type B3Page,
@@ -527,18 +528,15 @@ export async function listIncompleteProviderTurnInputAttempts(
   core: TerminalCore,
   filter: IncompleteProviderTurnInputAttemptFilter,
 ): Promise<B3Result<B3Page<ProviderTurnTerminalInputAttempt>>> {
-  if (!Number.isInteger(filter.limit) || filter.limit < 1 || filter.limit > 200) {
-    return b3fail(b3err('ValidationFailed', 'limit must be from 1 through 200', {
-      issues: [{ path: 'limit', message: 'must be from 1 through 200' }],
-    }, false));
-  }
-  const attempts = await listProviderTurnAttempts(core, filter);
+  const attempts = await listProviderTurnAttempts(core, {
+    ...(filter.terminalSessionId === undefined
+      ? {} : { terminalSessionId: filter.terminalSessionId }),
+    ...(filter.agentRunId === undefined ? {} : { agentRunId: filter.agentRunId }),
+  });
   if (!attempts.ok) return attempts;
   const states = filter.states;
   const items = attempts.value
     .filter((attempt) => !attemptTerminal(attempt))
-    .filter((attempt) => states === undefined || states.includes(attempt.effectState.kind as never))
-    .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id))
-    .slice(0, filter.limit);
-  return b3ok({ items, omissions: [] });
+    .filter((attempt) => states === undefined || states.includes(attempt.effectState.kind as never));
+  return keysetPage(items, filter);
 }

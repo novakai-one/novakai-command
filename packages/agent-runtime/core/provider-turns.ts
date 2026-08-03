@@ -4,6 +4,7 @@ import {
   b3fail,
   b3ok,
   deriveClientOpId,
+  keysetPage,
   mintClientOpId,
   mintProviderTurnId,
   mintTraceCorrelationId,
@@ -482,11 +483,6 @@ export async function listProviderTurnSubmissions(
   core: RunsCore,
   filter: ProviderTurnSubmissionFilter,
 ): Promise<B3Result<ProviderTurnSubmissionPage>> {
-  if (!Number.isInteger(filter.limit) || filter.limit < 1 || filter.limit > 200) {
-    return b3fail(b3err('ValidationFailed', 'limit must be from 1 through 200', {
-      issues: [{ path: 'limit', message: 'must be from 1 through 200' }],
-    }, false));
-  }
   const listed = await core.store.list<ProviderTurnSubmission>('providerTurnSubmission', {
     ...(filter.agentRunId === undefined ? {} : { agentRunId: filter.agentRunId }),
     ...(filter.providerSessionId === undefined
@@ -497,10 +493,8 @@ export async function listProviderTurnSubmissions(
   const terminal = new Set(['completed', 'rejected', 'completion-unproven-final']);
   const items = listed.value
     .filter((item) => filter.includeTerminal || !terminal.has(item.state.kind))
-    .filter((item) => filter.states === undefined || filter.states.includes(item.state.kind))
-    .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id))
-    .slice(0, filter.limit);
-  return b3ok({ items, omissions: [] });
+    .filter((item) => filter.states === undefined || filter.states.includes(item.state.kind));
+  return keysetPage(items, filter);
 }
 
 /**

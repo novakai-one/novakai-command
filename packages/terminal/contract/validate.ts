@@ -11,11 +11,13 @@
 // prefix is rejected on purpose.
 import {
   readBoundary,
-  type B3Result, type FieldReader, type LeaseGeneration, type TerminalSessionId,
+  type AgentRunId, type B3Result, type FieldReader, type LeaseGeneration,
+  type ProviderTurnId, type TerminalSessionId,
 } from '@novakai/foundation/contract';
 import type {
   AcquireInputLeaseInput, AttachControllerInput, DetachControllerInput,
   CancelReservedNotificationInput, CommitReservedNotificationInput,
+  GetProviderTurnInputAttemptInput, IncompleteProviderTurnInputAttemptFilter,
   ListTerminalSessionsFilter, OpenManagedTerminalInput, ReadTerminalStreamInput,
   ReleaseInputLeaseInput, ReserveNotificationInput, ResizeTerminalInput,
   SetControllerDraftStateInput, WriteTerminalInput,
@@ -173,6 +175,43 @@ export function readWriteTerminalInput(payload: unknown): B3Result<WriteTerminal
     ...optional('utf8Text', typeof field.given('utf8Text') === 'string'
       ? field.given('utf8Text') as string : undefined),
   }));
+}
+
+export function readGetProviderTurnInputAttemptInput(
+  payload: unknown,
+): B3Result<GetProviderTurnInputAttemptInput> {
+  return readBoundary(payload, (field) => ({
+    terminalSessionId: field.id<TerminalSessionId>('terminalSessionId', 'terminal'),
+    providerTurnId: field.id<ProviderTurnId>('providerTurnId', 'providerTurn'),
+    submissionEffectKey: field.text('submissionEffectKey'),
+  }));
+}
+
+export function readIncompleteProviderTurnInputAttemptFilter(
+  payload: unknown,
+): B3Result<IncompleteProviderTurnInputAttemptFilter> {
+  return readBoundary(payload, (field) => {
+    const terminalSessionId = field.optionalId<TerminalSessionId>('terminalSessionId', 'terminal');
+    const agentRunId = field.optionalId<AgentRunId>('agentRunId', 'agentRun');
+    const states = field.given('states');
+    const allowed = ['prepared', 'executing', 'submitted-confirmed', 'submitted-unconfirmed'] as const;
+    const validStates = states === undefined
+      ? undefined
+      : Array.isArray(states) && states.every((state) => allowed.includes(state as never))
+        ? states as IncompleteProviderTurnInputAttemptFilter['states']
+        : undefined;
+    if (states !== undefined && validStates === undefined) {
+      field.reject('states', `must be an array of: ${allowed.join(', ')}`);
+    }
+    const cursor = field.optionalText('cursor');
+    return {
+      ...(terminalSessionId === undefined ? {} : { terminalSessionId }),
+      ...(agentRunId === undefined ? {} : { agentRunId }),
+      ...(validStates === undefined ? {} : { states: validStates }),
+      ...(cursor === undefined ? {} : { cursor: cursor as never }),
+      limit: field.count('limit', 1, 200),
+    };
+  });
 }
 
 /**

@@ -257,6 +257,18 @@ test('Agents derives one canonical partial row from an immutable Transcript comp
       ],
       evidenceDigest: completion.completionEvidenceDigest,
     });
+    const listed = await evidence.listProviderTurnCompletionEvidence(
+      { id: 'person_chris' as never, kind: 'human', verifiedScopes: [] },
+      {
+        agentRunId: completion.agentRunId,
+        providerSessionId: SESSION_ID,
+        providerTurnId,
+        transcriptTurnCompletionId: completionId,
+        limit: 1,
+      },
+    );
+    assert.equal(listed.ok, true, listed.ok ? '' : listed.error.message);
+    if (listed.ok) assert.deepEqual(listed.value.items, [first.value]);
     assert.equal(readFileSync(
       path.join(root, 'stores', 'providerUsageEvidence.jsonl'), 'utf8',
     ).trim().split('\n').length, 1);

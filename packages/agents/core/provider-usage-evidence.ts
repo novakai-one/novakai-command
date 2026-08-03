@@ -9,6 +9,7 @@ import {
   deterministicId,
   getObject,
   isAbsent,
+  keysetPage,
   listObjects,
   mintClientOpId,
   requestQuarantine,
@@ -250,6 +251,23 @@ export function composeProviderUsageEvidence(
           : { nextCursor: listed.value.nextCursor as EventCursor }),
         omissions: [],
       });
+    },
+
+    async listProviderTurnCompletionEvidence(_principal, filter) {
+      const listed = await listObjects(
+        reader, 'providerUsageEvidence', {}, { limit: 100_000 },
+      );
+      if (!listed.ok) return b3fail(storeFailure('agents', listed.error));
+      const items = listed.value.items.map((item) => publicView(item))
+        .filter((item) => item.scope.kind === 'runtime-turn-completion')
+        .filter((item) => filter.providerSessionId === undefined
+          || item.providerSessionId === filter.providerSessionId)
+        .filter((item) => item.scope.kind === 'runtime-turn-completion'
+          && (filter.agentRunId === undefined || item.scope.agentRunId === filter.agentRunId)
+          && (filter.providerTurnId === undefined || item.scope.providerTurnId === filter.providerTurnId)
+          && (filter.transcriptTurnCompletionId === undefined
+            || item.scope.transcriptTurnCompletionId === filter.transcriptTurnCompletionId));
+      return keysetPage(items, filter);
     },
   };
 }

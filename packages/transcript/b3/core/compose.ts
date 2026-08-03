@@ -3,7 +3,7 @@
  */
 
 import {
-  b3err, b3fail, b3ok, canonicalJson, deriveClientOpId, mintObservedSubagentId,
+  b3err, b3fail, b3ok, canonicalJson, deriveClientOpId, keysetPage, mintObservedSubagentId,
   mintTranscriptBindingId, nowIsoUtc, transcriptTurnCompletionId,
   type AuthenticatedPrincipal, type B3Result, type ClientOpId, type Page,
   type ProviderSessionId, type ProviderTurnBoundaryProfileId, type ProviderTurnId,
@@ -16,7 +16,7 @@ import type {
   B3TranscriptContract, BindTranscriptToRunInput, IngestTranscriptSourceInput,
   ListObservedSubagentsInput, MirrorStageHooks, PromoteMirrorWatermarkInput,
   PromoteObservedSubagentInput, PromoteObservedSubagentOutcome, TranscriptIngestOutcome,
-  TranscriptSourcePort, TranscriptTurnCompletionStatus,
+  TranscriptSourcePort, TranscriptTurnCompletionFilter, TranscriptTurnCompletionStatus,
 } from '../contract/api.js';
 import type {
   AgentId, AgentRunId, ObservedSubagent, ObservedSubagentId, TranscriptBinding,
@@ -260,6 +260,7 @@ export function composeB3Transcript(options: B3TranscriptOptions): B3TranscriptC
         kind: observed.value.kind,
         reason: observed.value.reason,
         evidenceRefs: observed.value.evidenceRefs,
+        retryable: false,
       });
       if (observed.value.submittedInputEvidenceDigest !== submission.value.inputDigest) {
         return b3fail(b3err('TranscriptCorrupt', 'adapter input evidence digest differs', {
@@ -527,6 +528,66 @@ export function composeB3Transcript(options: B3TranscriptOptions): B3TranscriptC
           transcriptTurnCompletionId: id,
         }, true))
         : b3ok(found.value);
+    },
+
+    async getTranscriptTurnCompletionStatus(_principal, providerTurnId) {
+      const completions = await store.list<TranscriptTurnCompletion>(
+        'transcriptTurnCompletion', { providerTurnId },
+      );
+      if (!completions.ok) return completions;
+      const completion = completions.value[0];
+      if (completion !== undefined) return b3ok({ kind: 'completed', completion });
+      if (options.turnCompletion === undefined) {
+        return b3ok({
+          kind: 'unavailable', reason: 'adapter-unsupported', evidenceRefs: [], retryable: false,
+        });
+      }
+      const submission = await options.turnCompletion.getSubmission(providerTurnId);
+      if (!submission.ok) return submission;
+      const binding = await bindingById(submission.value.transcriptBindingId);
+      if (binding === null) {
+        return b3ok({
+          kind: 'pending', reason: 'source-not-yet-advanced', retryable: true,
+        });
+      }
+      const session = await options.turnCompletion.getProviderSession(
+        submission.value.providerSessionId,
+      );
+      if (!session.ok) return session;
+      const observed = await options.turnCompletion.observe({
+        provider: session.value.provider,
+        providerVersion: session.value.providerVersion,
+        providerSessionId: submission.value.providerSessionId,
+        providerNativeSessionId: session.value.providerNativeSessionId,
+        transcriptBindingId: submission.value.transcriptBindingId,
+        providerTurnId,
+        inputDigest: submission.value.inputDigest,
+        startTranscriptWatermark: submission.value.startTranscriptWatermark,
+        currentTranscriptWatermark: binding.mirrorWatermark ?? null,
+      });
+      if (!observed.ok) return observed;
+      if (observed.value.kind === 'proven') {
+        return b3ok({ kind: 'pending', reason: 'ingest-not-yet-observed', retryable: true });
+      }
+      if (observed.value.kind === 'uncertain') {
+        return b3ok({ ...observed.value, retryable: false });
+      }
+      if (observed.value.reason === 'source-unavailable') {
+        return b3ok({ kind: 'pending', reason: 'source-not-yet-advanced', retryable: true });
+      }
+      return b3ok({ ...observed.value, retryable: false });
+    },
+
+    async listTranscriptTurnCompletions(
+      _principal: AuthenticatedPrincipal, filter: TranscriptTurnCompletionFilter,
+    ) {
+      const listed = await store.list<TranscriptTurnCompletion>('transcriptTurnCompletion', {
+        ...(filter.agentRunId === undefined ? {} : { agentRunId: filter.agentRunId }),
+        ...(filter.providerSessionId === undefined
+          ? {} : { providerSessionId: filter.providerSessionId }),
+        ...(filter.providerTurnId === undefined ? {} : { providerTurnId: filter.providerTurnId }),
+      });
+      return listed.ok ? keysetPage(listed.value, filter) : listed;
     },
 
     async listObservedSubagents(

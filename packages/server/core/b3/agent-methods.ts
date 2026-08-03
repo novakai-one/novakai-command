@@ -16,12 +16,17 @@ import {
   readContinueAgentInput, readDiscoverRunControlsInput, readGetAgentRunTreeInput,
   readInterruptAgentTurnInput, readListAgentRunsFilter, readPrepareStopAgentTreeInput,
   readProviderTurnIdInput, readProviderTurnSubmissionFilter,
+  readCloseProviderTurnCompletionUnprovenInput, readCompleteProviderTurnInput,
   readControllerProviderTurnSubmitInput, readRunOperationIdInput, readSpawnAgentInput,
   readStopAgentInput, readStopAgentTreeInput,
 } from '../../../agent-runtime/contract/index.js';
 import {
   readCreateRoleProfileInput, readIssueDelegationGrantInput, readUpdateRoleProfileInput,
 } from '../../../agents/b3/contract/index.js';
+import {
+  parseEnsureProviderTurnCompletionEvidenceInput,
+  parseProviderTurnCompletionEvidenceFilter,
+} from '../../../agents/contract/index.js';
 import {
   readAgentIdInput, readListGrantsFilter, readReadRunEventsInput,
 } from './agent-reads.js';
@@ -121,7 +126,7 @@ async function issuerWithinReach(
 }
 
 export function buildB3AgentMethods(options: B3AgentMethodOptions): MethodTable {
-  const { runs, agents } = options.runtime;
+  const { runs, agents, usageEvidence } = options.runtime;
 
   /**
    * Read the envelope, VALIDATE the payload, resolve the caller from the
@@ -159,6 +164,18 @@ export function buildB3AgentMethods(options: B3AgentMethodOptions): MethodTable 
 
   const noPayload = (): B3Result<Record<string, never>> => b3ok({});
 
+  const reconcilerContext = (
+    context: CommandContext, principal: AuthenticatedPrincipal,
+  ): B3Result<import('@novakai/foundation/contract').SystemCommandContext<'sys_reconciler'>> =>
+    principal.id === 'sys_reconciler' && principal.kind === 'system'
+      ? b3ok({
+          ...context,
+          principal: { id: 'sys_reconciler', kind: 'system', verifiedScopes: principal.verifiedScopes },
+        })
+      : b3fail(b3err('PermissionDenied', 'method requires authenticated sys_reconciler', {
+          principalId: principal.id,
+        }, false));
+
   return {
     'b3.agent.spawn': method(readSpawnAgentInput,
       (payload, context) => runs.spawnAgent(context, payload)),
@@ -178,6 +195,33 @@ export function buildB3AgentMethods(options: B3AgentMethodOptions): MethodTable 
 
     'b3.agent.listTurnSubmissions': method(readProviderTurnSubmissionFilter,
       (payload, _context, principal) => runs.listProviderTurnSubmissions(principal, payload)),
+
+    'b3.agent.ensureTurnCompletionEvidence': method(
+      parseEnsureProviderTurnCompletionEvidenceInput,
+      async (payload, context, principal) => {
+        const system = reconcilerContext(context, principal);
+        return system.ok ? usageEvidence.ensureProviderTurnCompletionEvidence(system.value, payload) : system;
+      },
+    ),
+
+    'b3.agent.completeProviderTurn': method(
+      readCompleteProviderTurnInput,
+      async (payload, context, principal) => {
+        const system = reconcilerContext(context, principal);
+        return system.ok ? runs.completeProviderTurn(system.value, payload) : system;
+      },
+    ),
+
+    'b3.agent.closeTurnCompletionUnproven': method(
+      readCloseProviderTurnCompletionUnprovenInput,
+      (payload, context) => runs.closeProviderTurnCompletionUnproven(context, payload),
+    ),
+
+    'b3.agent.listProviderTurnCompletionEvidence': method(
+      parseProviderTurnCompletionEvidenceFilter,
+      (payload, _context, principal) =>
+        usageEvidence.listProviderTurnCompletionEvidence(principal, payload),
+    ),
 
     'b3.agent.stop': method(readStopAgentInput,
       (payload, context) => runs.stopAgent(context, payload)),

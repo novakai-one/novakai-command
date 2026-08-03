@@ -119,6 +119,26 @@ test('Transcript commits one deterministic completion only from a proven native 
     assert.notEqual(first.value.completion.providerNativeTurnId, providerTurnId,
       'provider-native ids stay opaque and never enter the Runtime namespace');
 
+    const principal = { id: 'person_chris' as never, kind: 'human' as const, verifiedScopes: [] };
+    const status = await api.getTranscriptTurnCompletionStatus(principal, providerTurnId);
+    assert.equal(status.ok, true, status.ok ? '' : status.error.message);
+    if (status.ok) {
+      assert.equal(status.value.kind, 'completed');
+      if (status.value.kind === 'completed') {
+        assert.deepEqual(status.value.completion, first.value.completion);
+      }
+    }
+    const exact = await api.getTranscriptTurnCompletion(
+      principal, first.value.completion.id,
+    );
+    assert.equal(exact.ok, true, exact.ok ? '' : exact.error.message);
+    if (exact.ok) assert.deepEqual(exact.value, first.value.completion);
+    const page = await api.listTranscriptTurnCompletions(principal, {
+      agentRunId: RUN, providerTurnId, limit: 1,
+    });
+    assert.equal(page.ok, true, page.ok ? '' : page.error.message);
+    if (page.ok) assert.deepEqual(page.value.items, [first.value.completion]);
+
     framingDigest = 'c'.repeat(64);
     const conflicting = await api.reconcileProviderTurnCompletion(context('sys_reconciler'), {
       providerTurnId,
@@ -179,6 +199,14 @@ test('uncertain or temporarily unavailable boundary observations never create a 
       if (outcome.ok) assert.equal(
         outcome.value.kind, kind === 'unavailable' ? 'pending' : kind,
       );
+      const status = await api.getTranscriptTurnCompletionStatus(
+        { id: 'person_chris' as never, kind: 'human', verifiedScopes: [] }, providerTurnId,
+      );
+      assert.equal(status.ok, true);
+      if (status.ok) {
+        assert.equal(status.value.kind, kind === 'unavailable' ? 'pending' : kind);
+        assert.equal(status.value.retryable, kind === 'unavailable');
+      }
       const listed = await store.list('transcriptTurnCompletion');
       assert.equal(listed.ok, true);
       if (listed.ok) assert.equal(listed.value.length, 0);

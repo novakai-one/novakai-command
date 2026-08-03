@@ -1,7 +1,9 @@
 import type {
   AuthenticatedPrincipal,
+  AgentRunId,
   B3Page,
   B3Result,
+  EventCursor,
   IsoUtc,
   ProviderSessionId,
   ProviderTurnId,
@@ -15,6 +17,7 @@ import {
   b3fail,
   b3ok,
   isValidId,
+  readBoundary,
   validationFailed,
 } from '@novakai/foundation/contract';
 
@@ -69,6 +72,49 @@ export interface RecordProviderUsageEvidenceInput {
   readonly source: string;
   readonly sourceCursor?: string;
   readonly measurement: ProviderUsageMeasurement;
+}
+
+export interface ProviderTurnCompletionEvidenceFilter {
+  readonly agentRunId?: AgentRunId;
+  readonly providerSessionId?: ProviderSessionId;
+  readonly providerTurnId?: ProviderTurnId;
+  readonly transcriptTurnCompletionId?: TranscriptTurnCompletionId;
+  readonly cursor?: EventCursor;
+  readonly limit: number;
+}
+
+export function parseEnsureProviderTurnCompletionEvidenceInput(
+  value: unknown,
+): B3Result<{ readonly transcriptTurnCompletionId: TranscriptTurnCompletionId }> {
+  return readBoundary(value, (field) => ({
+    transcriptTurnCompletionId: field.id<TranscriptTurnCompletionId>(
+      'transcriptTurnCompletionId', 'transcriptTurnCompletion', 'base32sha256',
+    ),
+  }));
+}
+
+export function parseProviderTurnCompletionEvidenceFilter(
+  value: unknown,
+): B3Result<ProviderTurnCompletionEvidenceFilter> {
+  return readBoundary(value, (field) => {
+    const agentRunId = field.optionalId<AgentRunId>('agentRunId', 'agentRun');
+    const providerSessionId = field.optionalId<ProviderSessionId>(
+      'providerSessionId', 'sess', 'uuidv4',
+    );
+    const providerTurnId = field.optionalId<ProviderTurnId>('providerTurnId', 'providerTurn');
+    const transcriptTurnCompletionId = field.optionalId<TranscriptTurnCompletionId>(
+      'transcriptTurnCompletionId', 'transcriptTurnCompletion', 'base32sha256',
+    );
+    const cursor = field.optionalText('cursor');
+    return {
+      ...(agentRunId === undefined ? {} : { agentRunId }),
+      ...(providerSessionId === undefined ? {} : { providerSessionId }),
+      ...(providerTurnId === undefined ? {} : { providerTurnId }),
+      ...(transcriptTurnCompletionId === undefined ? {} : { transcriptTurnCompletionId }),
+      ...(cursor === undefined ? {} : { cursor: cursor as EventCursor }),
+      limit: field.count('limit', 1, 200),
+    };
+  });
 }
 
 /** Parse unknown command JSON before identity derivation or persistence. */
@@ -182,6 +228,10 @@ export interface ProviderUsageEvidenceContract {
   listProviderUsageEvidence(
     principal: AuthenticatedPrincipal,
     providerSessionId: ProviderSessionId,
+  ): Promise<B3Result<B3Page<ProviderUsageEvidence>>>;
+  listProviderTurnCompletionEvidence(
+    principal: AuthenticatedPrincipal,
+    filter: ProviderTurnCompletionEvidenceFilter,
   ): Promise<B3Result<B3Page<ProviderUsageEvidence>>>;
 }
 

@@ -10,7 +10,7 @@
  */
 
 import type {
-  AuthenticatedPrincipal, B3Result, EventCursor, Page, ProviderTurnId,
+  AuthenticatedPrincipal, B3Page, B3Result, EventCursor, Page, ProviderTurnId,
   ProviderTurnSubmissionId, SystemCommandContext, TranscriptTurnCompletionId,
 } from '@novakai/foundation/contract';
 import type {
@@ -27,8 +27,22 @@ export interface ReconcileTranscriptTurnCompletionInput {
 export type TranscriptTurnCompletionStatus =
   | { readonly kind: 'completed'; readonly completion: TranscriptTurnCompletion }
   | { readonly kind: 'pending'; readonly reason: string; readonly retryable: true }
-  | { readonly kind: 'uncertain'; readonly reason: string; readonly evidenceRefs: readonly string[] }
-  | { readonly kind: 'unavailable'; readonly reason: string; readonly evidenceRefs: readonly string[] };
+  | {
+      readonly kind: 'uncertain'; readonly reason: string;
+      readonly evidenceRefs: readonly string[]; readonly retryable: false;
+    }
+  | {
+      readonly kind: 'unavailable'; readonly reason: string;
+      readonly evidenceRefs: readonly string[]; readonly retryable: boolean;
+    };
+
+export interface TranscriptTurnCompletionFilter {
+  readonly agentRunId?: AgentRunId;
+  readonly providerSessionId?: ProviderSessionId;
+  readonly providerTurnId?: ProviderTurnId;
+  readonly cursor?: EventCursor;
+  readonly limit: number;
+}
 
 export interface BindTranscriptToRunInput {
   readonly agentId: AgentId;
@@ -148,10 +162,20 @@ export interface TranscriptCommands {
 }
 
 export interface TranscriptQueries {
+  getTranscriptTurnCompletionStatus(
+    principal: AuthenticatedPrincipal,
+    providerTurnId: ProviderTurnId,
+  ): Promise<B3Result<TranscriptTurnCompletionStatus>>;
+
   getTranscriptTurnCompletion(
     principal: AuthenticatedPrincipal,
     transcriptTurnCompletionId: TranscriptTurnCompletionId,
   ): Promise<B3Result<TranscriptTurnCompletion>>;
+
+  listTranscriptTurnCompletions(
+    principal: AuthenticatedPrincipal,
+    filter: TranscriptTurnCompletionFilter,
+  ): Promise<B3Result<B3Page<TranscriptTurnCompletion>>>;
   getTranscriptBinding(
     principal: AuthenticatedPrincipal, agentRunId: AgentRunId,
   ): Promise<B3Result<TranscriptBinding>>;
