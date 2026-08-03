@@ -104,6 +104,86 @@ test('public WatchRule and WatchDeadline records cross runtime validation', () =
   assert.equal(parseWatchDeadline(deadline, { conditionKind: 'activity-drift' }).ok, false);
 });
 
+test('AMD-003 #23: legacy and occurrence-aware Notifications round-trip only lawful shapes', () => {
+  const legacy = queuedNotificationEvent('queue-only').payload;
+  const legacyJson = JSON.stringify(legacy);
+  const parsedLegacy = parseNotificationRecord(JSON.parse(legacyJson));
+  assert.equal(parsedLegacy.ok, true, parsedLegacy.ok ? '' : parsedLegacy.error.message);
+  if (!parsedLegacy.ok) return;
+  assert.equal(JSON.stringify(parsedLegacy.value), legacyJson);
+  assert.equal(parseNotificationRecord({
+    ...legacy,
+    qualifiedAt: '2026-08-02T00:01:00.000Z',
+  }).ok, false, 'schema version 1 accepted occurrence time');
+
+  const commonOccurrence = {
+    agentRunId: RUN_ID,
+    providerSessionId: 'sess_123e4567-e89b-42d3-a456-426614174000',
+    qualifyingEvidenceRef: `providerUsage_${'a'.repeat(52)}`,
+    qualifiedAt: '2026-08-02T00:01:00.000Z',
+  };
+  const variants = [
+    {
+      occurrenceIdentity: 'agent-run',
+      conditionOccurrence: { ...commonOccurrence, kind: 'agent-run' },
+    },
+    {
+      occurrenceIdentity: 'committed-event',
+      conditionOccurrence: {
+        ...commonOccurrence, kind: 'committed-event', eventId: 'event_usage-100k-1',
+      },
+    },
+    {
+      occurrenceIdentity: 'run-operation',
+      conditionOccurrence: {
+        ...commonOccurrence,
+        kind: 'run-operation',
+        runOperationId: `runOperation_${'b'.repeat(52)}`,
+      },
+    },
+  ] as const;
+  for (const variant of variants) {
+    const parsed = parseNotificationRecord({
+      ...legacy,
+      schemaVersion: 2,
+      qualifiedAt: commonOccurrence.qualifiedAt,
+      ...variant,
+    });
+    assert.equal(parsed.ok, true, parsed.ok ? '' : parsed.error.message);
+  }
+
+  assert.equal(parseNotificationRecord({
+    ...legacy,
+    schemaVersion: 2,
+    occurrenceIdentity: 'legacy-generation',
+    qualifiedAt: commonOccurrence.qualifiedAt,
+    conditionOccurrence: { ...commonOccurrence, kind: 'agent-run' },
+  }).ok, false, 'legacy-generation accepted typed occurrence provenance');
+  assert.equal(parseNotificationRecord({
+    ...legacy,
+    schemaVersion: 2,
+    occurrenceIdentity: 'agent-run',
+    conditionOccurrence: { ...commonOccurrence, kind: 'agent-run' },
+  }).ok, false, 'schema version 2 accepted absent qualifiedAt');
+  assert.equal(parseNotificationRecord({
+    ...legacy,
+    schemaVersion: 2,
+    occurrenceIdentity: 'committed-event',
+    qualifiedAt: commonOccurrence.qualifiedAt,
+    conditionOccurrence: { ...commonOccurrence, kind: 'committed-event' },
+  }).ok, false, 'committed-event provenance accepted an absent eventId');
+  assert.equal(parseNotificationRecord({
+    ...legacy,
+    schemaVersion: 2,
+    occurrenceIdentity: 'run-operation',
+    qualifiedAt: commonOccurrence.qualifiedAt,
+    conditionOccurrence: {
+      ...commonOccurrence, kind: 'run-operation',
+      runOperationId: `watchEvaluation_${'c'.repeat(52)}`,
+    },
+  }).ok, false, 'operation provenance accepted a wrong identity prefix');
+});
+
 test('durable drift validation rejects a queued request with a reply deadline', () => {
   const invalid = {
     id: `watchDeadline_${'a'.repeat(52)}`,
