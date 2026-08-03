@@ -140,6 +140,16 @@ export function composeProviderUsageEvidence(
         omissions: [],
       });
     },
+
+    async getProviderUsageEvidence(_principal, providerUsageEvidenceId) {
+      const found = await getObject<ProviderUsageEvidence>(
+        reader,
+        'providerUsageEvidence',
+        providerUsageEvidenceId as unknown as ObjectId,
+      );
+      if (!found.ok) return b3fail(storeFailure('agents', found.error));
+      return b3ok(isAbsent(found.value) ? null : publicView(found.value));
+    },
   };
 }
 

@@ -11,6 +11,7 @@ import {
 import {
   deriveWatchDeadlineId, mintWatchRuleId, subjectKey, SUPERVISION_RECORD_WRITER,
   ACTIVITY_DRIFT_TEMPLATE_REF,
+  watchPairIssue,
   type InstallRunWatchersInput, type NotificationRecipient, type VersionedRef,
   type ResolvedWatcherInstall, type WatcherInstallAuthority,
   type WatchDeadline, type WatcherTemplate, type WatcherTemplateCatalogue,
@@ -271,6 +272,23 @@ export async function installRunWatchers(
     context, input, authority.value, templates.value,
   );
   if (!authorized.ok) return authorized;
+  const expandedSubject: WatchSubject = { kind: 'agent-run', agentRunId: input.agentRunId };
+  const pairIssues = templates.value.flatMap((template) => {
+    const issue = watchPairIssue(
+      expandedSubject,
+      template.payload.condition,
+      template.templateRef,
+    );
+    return issue === null ? [] : [issue];
+  });
+  if (pairIssues.length > 0) {
+    return b3fail(b3err(
+      'WatchRuleInvalid',
+      'one or more expanded watcher pairs are not admitted',
+      { issues: pairIssues },
+      false,
+    ));
+  }
   const existing = await deps.store.list<WatchRule>('watchRule');
   if (!existing.ok) return existing;
   const adopted = adoptInstalled(existing.value, input, templates.value);

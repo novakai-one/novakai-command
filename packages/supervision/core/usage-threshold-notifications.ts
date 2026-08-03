@@ -8,8 +8,8 @@ import {
   type WatchCondition, type WatchRule,
 } from '../contract/index.js';
 import { conditionNotification, queueConditionNotification } from './condition-notifications.js';
-import type { SupervisionStore } from './store.js';
-import type { UsageRunReader } from './usage/index.js';
+import type { Persisted, SupervisionStore } from './store.js';
+import type { UsageEvidenceReader, UsageRunReader } from './usage/index.js';
 import type { UsageRunFacts } from './usage/index.js';
 import type { WatchRuleGenerationPort } from './watchers/rules.js';
 
@@ -17,6 +17,7 @@ export interface UsageThresholdDependencies {
   readonly store: SupervisionStore;
   readonly runs?: UsageRunReader;
   readonly generation?: WatchRuleGenerationPort;
+  readonly evidence?: UsageEvidenceReader;
 }
 
 type ThresholdCondition = Extract<WatchCondition, {
@@ -98,12 +99,12 @@ async function resolveEvidenceRun(
   return b3ok(null);
 }
 
-async function settleRule(
+export async function usageThresholdCandidate(
   deps: Required<UsageThresholdDependencies>,
   principal: AuthenticatedPrincipal,
   rule: WatchRule,
   evidence: ProviderUsageEvidence,
-): Promise<B3Result<Notification | null>> {
+): Promise<B3Result<(Persisted<Notification> & Record<string, unknown>) | null>> {
   const condition = thresholdCondition(rule.condition);
   if (condition === null) return b3ok(null);
   const observed = observedValue(condition, evidence);
@@ -143,18 +144,48 @@ async function settleRule(
           qualifiedAt: evidence.observedAt,
         },
       };
-  return queueConditionNotification(
-    deps,
-    SUPERVISION_RECORD_WRITER,
-    conditionNotification(
+  return b3ok(conditionNotification(
       SUPERVISION_RECORD_WRITER,
       rule,
       subjectKey(rule.subject),
       generation,
       String(evidence.id),
       occurrence,
-    ),
-  );
+    ));
+}
+
+/** Parse one committed evidence event and build a candidate for one rule. */
+export async function usageThresholdCandidateForEvent(
+  deps: UsageThresholdDependencies,
+  principal: AuthenticatedPrincipal,
+  rule: WatchRule,
+  event: unknown,
+): Promise<B3Result<(Persisted<Notification> & Record<string, unknown>) | null>> {
+  if ((event as { readonly kind?: unknown } | null)?.kind
+    !== 'agent.provider-usage-evidence.committed') return b3ok(null);
+  if (thresholdCondition(rule.condition) === null) return b3ok(null);
+  const parsed = parseProviderUsageEvidenceCommittedEvent(event);
+  if (!parsed.ok) return b3fail(parsed.error);
+  if (deps.runs === undefined) {
+    return b3fail(b3err(
+      'RuntimeUnavailable', 'usage-threshold authorities are not composed in this host',
+      { reason: 'usage-thresholds-not-composed' }, true,
+    ));
+  }
+  return usageThresholdCandidate({
+    store: deps.store,
+    runs: deps.runs,
+    generation: deps.generation ?? {
+      generationFor: async () => b3fail(b3err(
+        'RuntimeUnavailable', 'watcher generationFor is not composed', {}, true,
+      )),
+    },
+    evidence: deps.evidence ?? {
+      listProviderUsageEvidence: async () => b3fail(b3err(
+        'RuntimeUnavailable', 'usage evidence authority is not composed', {}, true,
+      )),
+    },
+  }, principal, rule, parsed.value.payload as unknown as ProviderUsageEvidence);
 }
 
 /** Reduce one committed usage fact into generation-fenced threshold Notifications. */
@@ -188,9 +219,19 @@ export async function settleUsageThresholdRules(
         'RuntimeUnavailable', 'watcher generationFor is not composed', {}, true,
       )),
     },
+    evidence: deps.evidence ?? {
+      listProviderUsageEvidence: async () => b3fail(b3err(
+        'RuntimeUnavailable', 'usage evidence authority is not composed', {}, true,
+      )),
+    },
   };
   for (const rule of thresholdRules) {
-    const settled = await settleRule(complete, principal, rule, evidence);
+    const candidate = await usageThresholdCandidate(complete, principal, rule, evidence);
+    if (!candidate.ok) return b3fail(candidate.error);
+    if (candidate.value === null) continue;
+    const settled = await queueConditionNotification(
+      deps, SUPERVISION_RECORD_WRITER, candidate.value,
+    );
     if (!settled.ok) return b3fail(settled.error);
     if (settled.value !== null) queued.push(settled.value);
   }

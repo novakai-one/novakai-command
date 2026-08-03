@@ -352,6 +352,23 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
     watchRuleGeneration: watchRuleGeneration(() => runs ?? undefined),
     templates: watcherTemplates,
     driftSubmissionAuthority: driftSubmissionAuthority(terminal),
+    occurrenceRelationships: {
+      async isDirectManagedChild(principal, input) {
+        let parentAgentId = input.parentAgentId;
+        if (parentAgentId === undefined) {
+          if (input.parentAgentRunId === undefined || runs === null) return b3ok(false);
+          const parent = await runs.getAgentRun(principal, input.parentAgentRunId);
+          if (!parent.ok) return parent;
+          parentAgentId = parent.value.agent.agentId;
+        }
+        const children = await agents.listChildren(principal, parentAgentId);
+        if (!children.ok) return children;
+        return b3ok(children.value.some((relationship) =>
+          relationship.childAgentId === input.childAgentId
+          && (input.parentAgentRunId === undefined
+            || relationship.createdFromRunId === input.parentAgentRunId)));
+      },
+    },
     usage: {
       runs: {
         async getUsageRun(principal, agentRunId) {

@@ -87,6 +87,11 @@ export interface CommandDescriptor {
    * PTY or a provider — those report an uncertain effect instead of repeating.
    */
   readonly replaySafe: boolean;
+  /**
+   * Long-running fan-out commands retain retryable failures as resumable
+   * progress rather than freezing a terminal failed receipt.
+   */
+  readonly retainRetryableProgress?: boolean;
 }
 
 export interface ReceiptStore {
@@ -153,7 +158,7 @@ export function composeReceiptStore(options: ComposeReceiptsOptions): ReceiptSto
     }
 
     const result = await execute();
-    await settle(id, result);
+    await settle(id, result, descriptor);
     return result;
   }
 
@@ -216,7 +221,11 @@ export function composeReceiptStore(options: ComposeReceiptsOptions): ReceiptSto
     return b3ok(null);
   }
 
-  async function settle<T>(id: CommandReceiptId, result: B3Result<T>): Promise<void> {
+  async function settle<T>(
+    id: CommandReceiptId,
+    result: B3Result<T>,
+    descriptor: CommandDescriptor,
+  ): Promise<void> {
     const current = await getObject<CommandReceiptRecord>(handle, 'commandReceipt', id as unknown as ObjectId);
     if (!current.ok || isAbsent(current.value)) return;
     const outcome: StoredOperationOutcome = result.ok
@@ -224,9 +233,12 @@ export function composeReceiptStore(options: ComposeReceiptsOptions): ReceiptSto
       : { succeeded: false, error: result.error };
     // A failure to record the outcome must not turn a completed command into a
     // caller-visible error: the receipt is audit truth, the command already ran.
+    const remainsRunning = !result.ok
+      && result.error.retryable
+      && descriptor.retainRetryableProgress === true;
     await updateObject<CommandReceiptRecord>(
       handle, id as unknown as ObjectId,
-      { state: result.ok ? 'succeeded' : 'failed', outcome },
+      { state: result.ok ? 'succeeded' : remainsRunning ? 'running' : 'failed', outcome },
       current.value.version, mintClientOpId(),
     );
   }

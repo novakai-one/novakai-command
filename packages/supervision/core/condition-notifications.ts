@@ -3,7 +3,8 @@ import {
   type ActivityGeneration, type B3PrincipalId, type B3Result, type IsoUtc,
 } from '@novakai/foundation/contract';
 import {
-  deriveNotificationId, deriveOccurrenceNotificationId, notificationDeliveryEffectKey,
+  canonicalConditionScalar, deriveNotificationId, deriveOccurrenceNotificationId,
+  notificationDeliveryEffectKey,
   type ConditionOccurrence, type Notification, type WatchRule,
 } from '../contract/index.js';
 import type { Persisted, SupervisionStore } from './store.js';
@@ -89,6 +90,7 @@ export function conditionNotification(
     deliveryEffectKey: effectKey,
     deliveryAttempt: { state: 'queued', effectKey },
     watchRuleId: rule.id,
+    conditionScalar: canonicalConditionScalar(rule.condition),
     subject: rule.subject,
     recipient: rule.recipient,
     conditionGeneration: Number(activityGeneration),

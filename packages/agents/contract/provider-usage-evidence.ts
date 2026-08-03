@@ -152,6 +152,10 @@ export interface ProviderUsageEvidenceContract {
     principal: AuthenticatedPrincipal,
     providerSessionId: ProviderSessionId,
   ): Promise<B3Result<B3Page<ProviderUsageEvidence>>>;
+  getProviderUsageEvidence(
+    principal: AuthenticatedPrincipal,
+    providerUsageEvidenceId: ProviderUsageEvidenceId,
+  ): Promise<B3Result<ProviderUsageEvidence | null>>;
 }
 
 /** Host transport seam; the host adds its one event cursor/envelope. */

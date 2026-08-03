@@ -8,7 +8,7 @@ import type {
   ProviderSessionId,
 } from '@novakai/foundation/contract';
 import type {
-  ProviderUsageEvidence, RunOccurrenceEventFacts, RunUsageFacts,
+  ProviderUsageEvidence, ProviderUsageEvidenceId, RunOccurrenceEventFacts, RunUsageFacts,
 } from '../../contract/index.js';
 
 /** Runtime-owned facts sufficient for usage projection alone. */
@@ -32,11 +32,11 @@ export interface UsageRunReader {
   resolveUsageRunByProviderSession?(
     principal: AuthenticatedPrincipal,
     providerSessionId: ProviderSessionId,
-  ): Promise<B3Result<UsageRunFacts | null>>;
+  ): Promise<B3Result<RunUsageFacts | null>>;
   resolveCurrentRunByAgent?(
     principal: AuthenticatedPrincipal,
     agentId: AgentId,
-  ): Promise<B3Result<UsageRunFacts | null>>;
+  ): Promise<B3Result<RunUsageFacts | null>>;
   getRunOccurrenceEvent?(
     principal: AuthenticatedPrincipal,
     eventId: string,
@@ -45,6 +45,10 @@ export interface UsageRunReader {
 
 /** Composition adapter over Agents' append-only evidence query. */
 export interface UsageEvidenceReader {
+  getProviderUsageEvidence?(
+    principal: AuthenticatedPrincipal,
+    providerUsageEvidenceId: ProviderUsageEvidenceId,
+  ): Promise<B3Result<ProviderUsageEvidence | null>>;
   listProviderUsageEvidence(
     principal: AuthenticatedPrincipal,
     providerSessionId: ProviderSessionId,

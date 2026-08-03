@@ -5,25 +5,38 @@
 // holds a store and its own contract, and no way to reach a PTY. An ordinary
 // event that was already going to be published is the whole clock.
 import {
-  b3fail, b3ok, deriveClientOpId, validationFailed,
+  b3err, b3fail, b3ok, commandReceiptId, deriveClientOpId, deterministicId,
+  validationFailed,
   type B3Page, type B3PrincipalId, type B3Result, type IsoUtc,
+  type PublicOperationName,
   type SystemCommandContext,
 } from '@novakai/foundation/contract';
 import {
-  parsePublicEvent, SUPERVISION_RECORD_WRITER,
+  parsePublicEvent, SUPERVISION_RECORD_WRITER, watchPairIssue,
   type EvaluateSupervisionEventInput, type Notification, type NotificationFilter,
-  type WatchDeadline, type WatchRule,
+  type WatchDeadline, type WatchEvaluationProgress, type WatchEvaluationRuleOutcome,
+  type WatchRule,
 } from '../contract/index.js';
 import { conditionNotification, queueConditionNotification } from './condition-notifications.js';
-import { settleLifecycleEventRules } from './lifecycle-notifications.js';
+import {
+  lifecycleNotificationCandidate, settleLifecycleEventRules,
+} from './lifecycle-notifications.js';
+import { commitOrdinaryNotification } from './ordinary-notification-commit.js';
 import type { SupervisionStore } from './store.js';
 import {
-  settleUsageThresholdRules, type UsageThresholdDependencies,
+  settleUsageThresholdRules, usageThresholdCandidateForEvent,
+  type UsageThresholdDependencies,
 } from './usage-threshold-notifications.js';
 import { claimDeadline } from './watchers/deadlines.js';
+import {
+  advanceProgressRecovery, appendProgressOutcome, beginProgressAttempt,
+  finishProgress, startEventEvaluation,
+} from './watch-evaluation-progress.js';
+import type { WatchOccurrenceRelationshipAuthority } from '../contract/api.js';
 
 export interface EvaluateDependencies extends UsageThresholdDependencies {
   readonly store: SupervisionStore;
+  readonly relationships?: WatchOccurrenceRelationshipAuthority;
 }
 
 type EvaluationContext = SystemCommandContext<
@@ -173,27 +186,185 @@ export async function evaluateEvent(
   };
   const deadlineNotifications = await settleArmedDeadlines(deps, armed.value, event);
   if (!deadlineNotifications.ok) return deadlineNotifications;
-  const rules = await deps.store.list<WatchRule>('watchRule', { status: 'active' });
+  const rules = await deps.store.list<WatchRule>('watchRule');
   if (!rules.ok) return b3fail(rules.error);
-  const eventNotifications = await settleLifecycleEventRules(
-    deps, SUPERVISION_RECORD_WRITER, rules.value, {
+  const receiptId = commandReceiptId(
+    _context.principal.id,
+    'supervision.evaluateEvent' as PublicOperationName,
+    _context.clientOpId,
+  );
+  const started = await startEventEvaluation(deps.store, SUPERVISION_RECORD_WRITER, {
+    commandReceiptId: receiptId,
+    eventId: parsed.value.eventId,
+    orderedWatchRuleIds: rules.value.map((rule) => rule.id),
+  });
+  if (!started.ok) return started;
+  if (started.value.state === 'completed') {
+    return b3ok(deadlineNotifications.value);
+  }
+  const begun = await beginProgressAttempt(deps.store, SUPERVISION_RECORD_WRITER, started.value);
+  if (!begun.ok) return begun;
+  let progress = begun.value;
+  const queued: Notification[] = [...deadlineNotifications.value];
+  let isolatedRecovery: WatchEvaluationProgress['recovery'];
+  const lifecycleEvent = {
     kind: parsed.value.kind,
     payload: parsed.value.payload,
     evidenceRef: parsed.value.eventId,
     qualifiedAt: parsed.value.occurredAt,
     about: event.about,
-    },
+  };
+
+  for (const watchRuleId of progress.orderedWatchRuleIds) {
+    const priorCommit = [...progress.completed].reverse().find((entry): entry is typeof entry & {
+      readonly outcome: Extract<WatchEvaluationRuleOutcome, {
+        readonly kind: 'committed' | 'adopted' | 'legacy-adopted';
+      }>;
+    } => entry.watchRuleId === watchRuleId
+      && ['committed', 'adopted', 'legacy-adopted'].includes(entry.outcome.kind));
+    const current = await deps.store.read<WatchRule>('watchRule', watchRuleId);
+    if (!current.ok) return current;
+    if (current.value === null) continue;
+    const rule = current.value;
+    if (priorCommit !== undefined) {
+      const outcome = priorCommit.outcome.kind === 'legacy-adopted'
+        ? priorCommit.outcome
+        : { kind: 'adopted' as const, notificationId: priorCommit.outcome.notificationId };
+      if (priorCommit.outcome.kind === 'committed') {
+        const notification = await deps.store.read<Notification>(
+          'notification', priorCommit.outcome.notificationId,
+        );
+        if (!notification.ok) return notification;
+        if (notification.value !== null) queued.push(notification.value);
+      }
+      const recorded = await appendProgressOutcome(
+        deps.store, SUPERVISION_RECORD_WRITER, progress,
+        { watchRuleId, evaluatedRecordVersion: rule.recordVersion, outcome },
+      );
+      if (!recorded.ok) return recorded;
+      progress = recorded.value;
+      continue;
+    }
+    let outcome: WatchEvaluationRuleOutcome;
+    if (rule.status !== 'active') {
+      outcome = { kind: 'inactive-current-policy' };
+    } else {
+      const issue = watchPairIssue(rule.subject, rule.condition);
+      if (issue !== null) {
+        outcome = {
+          kind: 'pair-not-admitted',
+          signalEventId: deterministicId('event', [
+            'watch-rule-admission-signal', progress.id, rule.id, String(rule.recordVersion),
+          ]),
+          reason: issue.issue,
+        };
+      } else {
+        const usageCandidate = await usageThresholdCandidateForEvent(
+          deps, _context.principal, rule, parsed.value,
+        );
+        let candidate = usageCandidate;
+        if (usageCandidate.ok && usageCandidate.value === null) {
+          candidate = await lifecycleNotificationCandidate(
+            deps, _context.principal, rule, lifecycleEvent,
+          );
+        }
+        if (!candidate.ok) {
+          if (!candidate.error.retryable) {
+            outcome = {
+              kind: 'failed-non-retryable',
+              code: candidate.error.code,
+              reason: candidate.error.message,
+              details: candidate.error.details,
+            };
+          } else {
+            const details = candidate.error.details as Readonly<Record<string, unknown>>;
+            const stage = details['stage'] === 'legacy-occurrence-adoption'
+              ? 'legacy-occurrence-adoption'
+              : details['stage'] === 'rule-version-fence'
+                ? 'rule-version-fence'
+                : 'occurrence-derivation';
+            const recovery = {
+              stage,
+              reason: `${String(rule.id)}: ${candidate.error.message}`,
+            } as const;
+            const advanced = await advanceProgressRecovery(
+              deps.store, SUPERVISION_RECORD_WRITER, progress, recovery,
+            );
+            if (!advanced.ok) return advanced;
+            progress = advanced.value;
+            isolatedRecovery ??= recovery;
+            if (stage === 'legacy-occurrence-adoption') continue;
+            const finished = await finishProgress(
+              deps.store, SUPERVISION_RECORD_WRITER, progress, isolatedRecovery,
+            );
+            if (!finished.ok) return finished;
+            return b3fail(candidate.error);
+          }
+        } else if (candidate.value === null) {
+          outcome = { kind: 'not-matching' };
+        } else {
+          const committed = await commitOrdinaryNotification(
+            deps, _context.principal, rule, candidate.value, progress.id,
+          );
+          if (!committed.ok) {
+            if (!committed.error.retryable) {
+              outcome = {
+                kind: 'failed-non-retryable',
+                code: committed.error.code,
+                reason: committed.error.message,
+                details: committed.error.details,
+              };
+            } else {
+              const details = committed.error.details as Readonly<Record<string, unknown>>;
+              const stage = details['stage'] === 'legacy-occurrence-adoption'
+                ? 'legacy-occurrence-adoption'
+                : details['stage'] === 'rule-version-fence'
+                  ? 'rule-version-fence'
+                  : 'occurrence-derivation';
+              const recovery = {
+                stage,
+                reason: `${String(rule.id)}: ${committed.error.message}`,
+              } as const;
+              const advanced = await advanceProgressRecovery(
+                deps.store, SUPERVISION_RECORD_WRITER, progress, recovery,
+              );
+              if (!advanced.ok) return advanced;
+              progress = advanced.value;
+              isolatedRecovery ??= recovery;
+              if (stage === 'legacy-occurrence-adoption') continue;
+              const finished = await finishProgress(
+                deps.store, SUPERVISION_RECORD_WRITER, progress, isolatedRecovery,
+              );
+              if (!finished.ok) return finished;
+              return b3fail(committed.error);
+            }
+          } else {
+            outcome = committed.value.outcome;
+            if (committed.value.notification !== undefined) {
+              queued.push(committed.value.notification);
+            }
+          }
+        }
+      }
+    }
+    const recorded = await appendProgressOutcome(
+      deps.store, SUPERVISION_RECORD_WRITER, progress,
+      { watchRuleId, evaluatedRecordVersion: rule.recordVersion, outcome: outcome! },
+    );
+    if (!recorded.ok) return recorded;
+    progress = recorded.value;
+  }
+  const finished = await finishProgress(
+    deps.store, SUPERVISION_RECORD_WRITER, progress, isolatedRecovery,
   );
-  if (!eventNotifications.ok) return eventNotifications;
-  const thresholdNotifications = await settleUsageThresholdRules(
-    deps, _context.principal, rules.value, parsed.value,
-  );
-  if (!thresholdNotifications.ok) return thresholdNotifications;
-  return b3ok([
-    ...deadlineNotifications.value,
-    ...eventNotifications.value,
-    ...thresholdNotifications.value,
-  ]);
+  if (!finished.ok) return finished;
+  if (isolatedRecovery !== undefined) {
+    return b3fail(b3err(
+      'RecoveryRequired', isolatedRecovery.reason,
+      { operationId: progress.id, ...isolatedRecovery }, true,
+    ));
+  }
+  return b3ok(queued);
 }
 
 /**

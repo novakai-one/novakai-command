@@ -17,3 +17,4 @@ export * from './wire-validation.js';
 export * from './errors.js';
 export * from './events.js';
 export * from './cli.js';
+export * from './watch-matrix.js';

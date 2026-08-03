@@ -10,9 +10,10 @@ import {
   type RecordEnvelope, type RecordVersion, type ScopedStoreHandle, type StoredObject,
 } from '@novakai/foundation/contract';
 
-/** The three §18.1 rows Supervision owns, and the only kinds it may write. */
+/** Every §18.1/AMD-003 row Supervision owns, and the only kinds it may write. */
 export const SUPERVISION_KINDS: readonly ObjectKind[] = [
-  'watchRule', 'watchDeadline', 'notification',
+  'watchRule', 'watchDeadline', 'notification', 'watchEvaluation',
+  'notificationDeliveryFenceOperation',
 ];
 
 export interface SupervisionStoreOptions {

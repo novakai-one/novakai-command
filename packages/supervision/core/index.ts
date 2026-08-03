@@ -7,6 +7,7 @@ export * from './watchers/submission.js';
 export * from './watchers/deadlines.js';
 export * from './watchers/rules.js';
 export * from './watch-rule-query.js';
+export * from './watch-evaluation-progress.js';
 export * from './notifications.js';
 export * from './notifications/index.js';
 export * from './compose.js';

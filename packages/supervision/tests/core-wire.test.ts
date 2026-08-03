@@ -32,9 +32,11 @@ const PLAN_ID = 'launchPlan_019fd000-0000-7000-8000-0000000000a2' as ResolvedLau
 const INSTALL_TRACE_ID = 'trace_123e4567-e89b-42d3-a456-426614174000' as never;
 const INSTALL_CLIENT_OP_ID = 'op_123e4567-e89b-42d3-a456-426614174000' as never;
 
-const runtimeContext = (): SystemCommandContext<'sys_agent_runtime'> => ({
+const runtimeContext = (
+  clientOpId = INSTALL_CLIENT_OP_ID,
+): SystemCommandContext<'sys_agent_runtime'> => ({
   principal: { id: 'sys_agent_runtime', kind: 'system', verifiedScopes: [] },
-  clientOpId: INSTALL_CLIENT_OP_ID,
+  clientOpId,
   traceId: INSTALL_TRACE_ID,
   contractVersion: 1,
 });
@@ -464,15 +466,19 @@ test('an event past the deadline fires it and queues one Notification, starting 
   }
 });
 
-test('replaying the same committed event queues no second Notification', async () => {
+test('same command replays its result; a new operation adopts without a second Notification', async () => {
   const rig = createRig('2026-08-03T00:00:00.000Z');
   try {
     await rig.supervision.installRunWatchers(runtimeContext(), INSTALL);
     const event = committedEvent('2026-08-03T00:07:00.000Z', 3);
     const first = unwrap(await rig.supervision.evaluateEvent(runtimeContext(), { event }), 'first');
     const again = unwrap(await rig.supervision.evaluateEvent(runtimeContext(), { event }), 'replay');
+    const redelivery = unwrap(await rig.supervision.evaluateEvent(runtimeContext(
+      'op_123e4567-e89b-42d3-a456-426614174091' as never,
+    ), { event }), 'new-operation redelivery');
     assert.equal(first.length, 1);
-    assert.deepEqual(again, [], 'at-least-once delivery produced a second Notification');
+    assert.deepEqual(again, first, 'same receipt did not replay its stored result');
+    assert.deepEqual(redelivery, [], 'at-least-once delivery produced a second Notification');
 
     const page = unwrap(
       await rig.supervision.listNotifications(human, { limit: 50 }), 'listNotifications',
@@ -555,11 +561,15 @@ test('a run-final lifecycle event queues one Notification under replay', async (
 
     const first = unwrap(await rig.supervision.evaluateEvent(runtimeContext(), { event }), 'first');
     const replay = unwrap(await rig.supervision.evaluateEvent(runtimeContext(), { event }), 'replay');
+    const redelivery = unwrap(await rig.supervision.evaluateEvent(runtimeContext(
+      'op_123e4567-e89b-42d3-a456-426614174092' as never,
+    ), { event }), 'new-operation redelivery');
 
     assert.equal(first.length, 1);
     assert.equal(first[0]!.watchRuleId, rule.id);
     assert.equal(first[0]!.conditionGeneration, 4);
-    assert.deepEqual(replay, []);
+    assert.deepEqual(replay, first);
+    assert.deepEqual(redelivery, []);
   } finally {
     rig.close();
   }
@@ -637,7 +647,9 @@ test('a run-final Notification survives restart and absorbs transition redeliver
       cursor: 'tracer.13' as EventCursor,
     };
     const replay = unwrap(
-      await restarted.evaluateEvent(runtimeContext(), { event: redelivery }),
+      await restarted.evaluateEvent(runtimeContext(
+        'op_123e4567-e89b-42d3-a456-426614174093' as never,
+      ), { event: redelivery }),
       'transition redelivery after restart',
     );
     assert.deepEqual(replay, []);
@@ -691,11 +703,15 @@ test('a new provider-liveness loss generation queues one run-disconnected Notifi
 
     const first = unwrap(await rig.supervision.evaluateEvent(runtimeContext(), { event }), 'first');
     const replay = unwrap(await rig.supervision.evaluateEvent(runtimeContext(), { event }), 'replay');
+    const redelivery = unwrap(await rig.supervision.evaluateEvent(runtimeContext(
+      'op_123e4567-e89b-42d3-a456-426614174094' as never,
+    ), { event }), 'new-operation redelivery');
 
     assert.equal(first.length, 1);
     assert.equal(first[0]!.watchRuleId, rule.id);
     assert.equal(first[0]!.conditionGeneration, 5);
-    assert.deepEqual(replay, []);
+    assert.deepEqual(replay, first);
+    assert.deepEqual(redelivery, []);
   } finally {
     rig.close();
   }
