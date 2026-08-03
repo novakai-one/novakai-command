@@ -41,7 +41,9 @@ import { applyRunControl, discoverRunControls } from './controls.js';
 import { continueAgent } from './continue.js';
 import {
   getAgentRun, getRunLaunchPlanId, getRunOperation, listAgentRuns,
-  getUsageRun, listRunOperations, listUsageRuns, reconcileAfterRestart, runsCensus, viewOfRun,
+  getRunOccurrenceEvent, getUsageRun, listRunOperations, listUsageRuns,
+  reconcileAfterRestart, resolveCurrentRunByAgent, resolveUsageRunByProviderSession,
+  runsCensus, viewOfRun,
   observeTerminalExit,
 } from './queries.js';
 import { getAgentRunTree } from './tree.js';
@@ -211,6 +213,12 @@ export function composeAgentRuns(options: ComposeAgentRunsOptions): ComposedAgen
     usageRuns: {
       getUsageRun: (principal, agentRunId) => getUsageRun(core, principal, agentRunId),
       listUsageRuns: (principal, agentId) => listUsageRuns(core, principal, agentId),
+      resolveUsageRunByProviderSession: (principal, providerSessionId) =>
+        resolveUsageRunByProviderSession(core, principal, providerSessionId),
+      resolveCurrentRunByAgent: (principal, agentId) =>
+        resolveCurrentRunByAgent(core, principal, agentId),
+      getRunOccurrenceEvent: (principal, eventId) =>
+        getRunOccurrenceEvent(core, events, principal, eventId),
     },
 
     spawnAgent: guarded(OPERATION.spawn, async (context, input: SpawnAgentInput) => {
@@ -294,6 +302,12 @@ export function composeAgentRuns(options: ComposeAgentRunsOptions): ComposedAgen
     },
 
     getAgentRun: (principal, agentRunId) => getAgentRun(core, principal, agentRunId),
+    resolveUsageRunByProviderSession: (principal, providerSessionId) =>
+      resolveUsageRunByProviderSession(core, principal, providerSessionId),
+    resolveCurrentRunByAgent: (principal, agentId) =>
+      resolveCurrentRunByAgent(core, principal, agentId),
+    getRunOccurrenceEvent: (principal, eventId) =>
+      getRunOccurrenceEvent(core, events, principal, eventId),
     listAgentRuns: (principal, filter) => listAgentRuns(core, principal, filter),
     getAgentRunTree: (principal, input) => getAgentRunTree(core, principal, input),
     discoverRunControls: (principal, input) => discoverRunControls(core, principal, input),

@@ -63,19 +63,22 @@ test('human watcher recipients use the existing Messaging PersonId identity', ()
 
 test('run-disconnected observes only a new provider-liveness uncertainty generation', () => {
   const connected = {
-    final: false,
+    activity: 'idle' as const,
     activityGeneration: 4 as never,
     uncertaintyCodes: [] as const,
+    observedAt: '2026-08-02T00:00:04.000Z' as never,
   };
   assert.equal(isRunDisconnectedEdge(connected, {
-    final: false,
+    activity: 'unknown',
     activityGeneration: 5 as never,
     uncertaintyCodes: ['provider-liveness-unknown'],
+    observedAt: '2026-08-02T00:00:05.000Z' as never,
   }), true);
   assert.equal(isRunDisconnectedEdge(connected, {
-    final: true,
+    activity: 'idle',
     activityGeneration: 5 as never,
     uncertaintyCodes: ['provider-liveness-unknown'],
+    observedAt: '2026-08-02T00:00:05.000Z' as never,
   }), false);
   assert.equal(isRunDisconnectedEdge(connected, { ...connected }), false);
 });

@@ -370,6 +370,30 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
           }
           return runs.usageRuns.listUsageRuns(principal, agentId);
         },
+        async resolveUsageRunByProviderSession(principal, providerSessionId) {
+          if (runs === null) {
+            return b3fail(b3err(
+              'RuntimeUnavailable', 'Agent Runtime is not composed', {}, true,
+            ));
+          }
+          return runs.resolveUsageRunByProviderSession(principal, providerSessionId);
+        },
+        async resolveCurrentRunByAgent(principal, agentId) {
+          if (runs === null) {
+            return b3fail(b3err(
+              'RuntimeUnavailable', 'Agent Runtime is not composed', {}, true,
+            ));
+          }
+          return runs.resolveCurrentRunByAgent(principal, agentId);
+        },
+        async getRunOccurrenceEvent(principal, eventId) {
+          if (runs === null) {
+            return b3fail(b3err(
+              'RuntimeUnavailable', 'Agent Runtime is not composed', {}, true,
+            ));
+          }
+          return runs.getRunOccurrenceEvent(principal, eventId);
+        },
       },
       evidence: usageEvidence,
       transcript: createTranscriptUsagePort({ agents, reader: usageTranscriptReader }),

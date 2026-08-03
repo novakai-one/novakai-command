@@ -670,19 +670,21 @@ test('a new provider-liveness loss generation queues one run-disconnected Notifi
     }), 'create run-disconnected watcher');
     const event = {
       ...committedEvent('2026-08-03T00:01:00.000Z', 11),
-      kind: 'agent.run.connection.changed',
+      kind: 'agent.run.activity.changed',
       payload: {
         agentRunId: RUN_ID,
         activityGeneration: 5,
         previous: {
-          final: false,
+          activity: 'idle',
           activityGeneration: 4,
           uncertaintyCodes: [],
+          observedAt: '2026-08-03T00:00:59.000Z',
         },
         current: {
-          final: false,
+          activity: 'unknown',
           activityGeneration: 5,
           uncertaintyCodes: ['provider-liveness-unknown'],
+          observedAt: '2026-08-03T00:01:00.000Z',
         },
       },
     };

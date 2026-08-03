@@ -194,7 +194,9 @@ function notificationDeliveryAttempt(
 
 function notificationPayload(value: unknown, issues: Issue[]): void {
   const payload = objectValue(value, 'payload', issues);
-  validateRecordEnvelope(payload, 'notification', 'notification', 'base32sha256', issues);
+  validateRecordEnvelope(
+    payload, 'notification', 'notification', 'base32sha256', issues, [1, 2],
+  );
   nonEmpty(payload.deliveryEffectKey, 'payload.deliveryEffectKey', issues);
   notificationDeliveryAttempt(payload.deliveryAttempt, payload.deliveryEffectKey, issues);
   id(payload.watchRuleId, 'watchRule', 'uuidv7', 'payload.watchRuleId', issues);
@@ -213,6 +215,77 @@ function notificationPayload(value: unknown, issues: Issue[]): void {
     issues.push({ path: 'payload.deliveryMode', message: 'is not a delivery mode' });
   }
   notificationEffectKey(payload, notificationPhase(payload, issues), issues);
+  if (payload.schemaVersion === 2) {
+    exact(payload.phase, 'condition', 'payload.phase', issues);
+    isoUtc(payload.qualifiedAt, 'payload.qualifiedAt', issues);
+    if (![
+      'legacy-generation', 'agent-run', 'committed-event', 'run-operation',
+    ].includes(String(payload.occurrenceIdentity))) {
+      issues.push({
+        path: 'payload.occurrenceIdentity',
+        message: 'is not an ordinary occurrence identity',
+      });
+    }
+    if (payload.occurrenceIdentity === 'legacy-generation') {
+      if (payload.conditionOccurrence !== undefined) {
+        issues.push({
+          path: 'payload.conditionOccurrence',
+          message: 'is forbidden for legacy-generation identity',
+        });
+      }
+    } else {
+      const occurrence = objectValue(
+        payload.conditionOccurrence,
+        'payload.conditionOccurrence',
+        issues,
+      );
+      id(occurrence.agentRunId, 'agentRun', 'uuidv7', 'payload.conditionOccurrence.agentRunId', issues);
+      id(
+        occurrence.providerSessionId,
+        'sess',
+        'uuidv4',
+        'payload.conditionOccurrence.providerSessionId',
+        issues,
+      );
+      nonEmpty(
+        occurrence.qualifyingEvidenceRef,
+        'payload.conditionOccurrence.qualifyingEvidenceRef',
+        issues,
+      );
+      isoUtc(occurrence.qualifiedAt, 'payload.conditionOccurrence.qualifiedAt', issues);
+      if (occurrence.qualifiedAt !== payload.qualifiedAt) {
+        issues.push({
+          path: 'payload.conditionOccurrence.qualifiedAt',
+          message: 'must equal payload.qualifiedAt',
+        });
+      }
+      if (payload.occurrenceIdentity === 'agent-run') {
+        if (occurrence.kind !== 'agent-run' && occurrence.kind !== 'run-final') {
+          issues.push({ path: 'payload.conditionOccurrence.kind', message: 'must be agent-run or run-final' });
+        }
+      } else if (payload.occurrenceIdentity === 'committed-event') {
+        exact(occurrence.kind, 'committed-event', 'payload.conditionOccurrence.kind', issues);
+        nonEmpty(occurrence.eventId, 'payload.conditionOccurrence.eventId', issues);
+      } else if (payload.occurrenceIdentity === 'run-operation') {
+        exact(occurrence.kind, 'run-operation', 'payload.conditionOccurrence.kind', issues);
+        id(
+          occurrence.runOperationId,
+          'runOperation',
+          'base32sha256',
+          'payload.conditionOccurrence.runOperationId',
+          issues,
+        );
+      }
+    }
+  } else {
+    for (const field of [
+      'occurrenceIdentity', 'conditionOccurrence', 'qualifiedAt', 'deliveryFence',
+    ]) {
+      if (payload[field] !== undefined) {
+        issues.push({ path: `payload.${field}`, message: 'is forbidden on schema version 1' });
+      }
+    }
+  }
 }
 
 /** Parse the one §15 supervision event with a fully specified payload. */

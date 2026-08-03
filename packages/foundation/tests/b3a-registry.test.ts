@@ -65,6 +65,12 @@ const EXPECTED: ReadonlyArray<readonly [ObjectKind, string, CapabilityId]> = [
   ['watchRule', 'watchRules.jsonl', 'supervision'],
   ['watchDeadline', 'watchDeadlines.jsonl', 'supervision'],
   ['notification', 'notifications.jsonl', 'supervision'],
+  ['watchEvaluation', 'watchEvaluations.jsonl', 'supervision'],
+  [
+    'notificationDeliveryFenceOperation',
+    'notificationDeliveryFenceOperations.jsonl',
+    'supervision',
+  ],
 ];
 
 /** The three named special cases §18.1 allows to sit outside the ordinary path. */
@@ -177,6 +183,7 @@ const B3A_KINDS = new Set<string>([
 const B3D_KINDS = new Set<string>([
   'providerUsageEvidence', 'notificationInputReservation',
   'watchRule', 'watchDeadline', 'notification',
+  'watchEvaluation', 'notificationDeliveryFenceOperation',
 ]);
 
 const B3C_KINDS = new Set<string>([

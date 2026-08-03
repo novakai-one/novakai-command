@@ -7,9 +7,11 @@ import type {
   IsoUtc,
   ProviderSessionId,
 } from '@novakai/foundation/contract';
-import type { ProviderUsageEvidence } from '../../contract/index.js';
+import type {
+  ProviderUsageEvidence, RunOccurrenceEventFacts, RunUsageFacts,
+} from '../../contract/index.js';
 
-/** Runtime-owned facts sufficient to project usage without assembling a Run view. */
+/** Runtime-owned facts sufficient for usage projection alone. */
 export interface UsageRunFacts {
   readonly agentRunId: AgentRunId;
   readonly agentId: AgentId;
@@ -27,6 +29,18 @@ export interface UsageRunReader {
     principal: AuthenticatedPrincipal,
     agentId: AgentId,
   ): Promise<B3Result<readonly UsageRunFacts[]>>;
+  resolveUsageRunByProviderSession?(
+    principal: AuthenticatedPrincipal,
+    providerSessionId: ProviderSessionId,
+  ): Promise<B3Result<UsageRunFacts | null>>;
+  resolveCurrentRunByAgent?(
+    principal: AuthenticatedPrincipal,
+    agentId: AgentId,
+  ): Promise<B3Result<UsageRunFacts | null>>;
+  getRunOccurrenceEvent?(
+    principal: AuthenticatedPrincipal,
+    eventId: string,
+  ): Promise<B3Result<RunOccurrenceEventFacts | null>>;
 }
 
 /** Composition adapter over Agents' append-only evidence query. */

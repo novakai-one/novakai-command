@@ -13,7 +13,9 @@ import {
   type Page, type PageOptions, type QuarantineRequestOutcome, type Result,
   type ScopedStoreHandle, type StoredObject, type TraceFilter,
 } from './types.js';
-import { CURRENT_SCHEMA_VERSION, KIND_FILES, StoreEngine } from '../core/store-engine/engine.js';
+import {
+  KIND_FILES, StoreEngine, supportedSchemaVersion,
+} from '../core/store-engine/engine.js';
 import { composeEngine } from './compose.js';
 
 const ENVELOPE_FIELDS = ['kind', 'id', 'schemaVersion', 'createdAt', 'permissionLevel', 'createdBy'] as const;
@@ -176,9 +178,10 @@ export async function createObject<T>(
   const kind = flat!.kind;
   const scoped = scopeCheck(handle, kind);
   if (scoped) return fail(scoped);
-  if (flat!.schemaVersion > CURRENT_SCHEMA_VERSION) {
+  const supportedVersion = supportedSchemaVersion(kind);
+  if (flat!.schemaVersion > supportedVersion) {
     return fail(err('KindUnknown',
-      `schemaVersion ${flat!.schemaVersion} is newer than this code supports (${CURRENT_SCHEMA_VERSION})`,
+      `schemaVersion ${flat!.schemaVersion} is newer than this code supports (${supportedVersion})`,
       { kind, registered: Object.keys(KIND_FILES) }, false));
   }
   // dedup FIRST (R3-10): a retry with the same clientOpId returns the prior
@@ -249,7 +252,7 @@ export async function updateObject<T>(
   const currentFlat = { ...rec.payload, ...rec.envelope } as Record<string, unknown>;
   const patchObj = { ...(patch as Record<string, unknown>) };
   for (const f of ENVELOPE_FIELDS) delete patchObj[f]; // envelope identity never patched
-  const merged = { ...currentFlat, ...patchObj, schemaVersion: CURRENT_SCHEMA_VERSION };
+  const merged = { ...currentFlat, ...patchObj, schemaVersion: currentFlat.schemaVersion };
   // CAS compare runs INSIDE the engine lock (S1): a concurrent updater at the
   // same expectedVersion loses with CasConflict; the next version derives from
   // the authoritative locked read.

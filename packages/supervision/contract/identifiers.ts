@@ -22,6 +22,13 @@ export type ProviderUsageEvidenceId = B3Brand<string, 'ProviderUsageEvidenceId'>
 /** Terminal-owned deterministic reservation for one Notification delivery effect. */
 export type NotificationInputReservationId = B3Brand<string, 'NotificationInputReservationId'>;
 
+/** One resumable Supervision evaluation keyed by its committed trigger. */
+export type WatchEvaluationId = B3Brand<string, 'WatchEvaluationId'>;
+
+/** One retryable delivery-fence rebind operation. */
+export type NotificationDeliveryFenceOperationId =
+  B3Brand<string, 'NotificationDeliveryFenceOperationId'>;
+
 /** Mint a new WatchRule identity using the mandated lowercase UUIDv7 body. */
 export const mintWatchRuleId = (): WatchRuleId =>
   `watchRule_${uuidv7()}` as WatchRuleId;
@@ -53,3 +60,13 @@ export const isNotificationInputReservationId = (
   value: unknown,
 ): value is NotificationInputReservationId =>
   isValidId(value, 'notificationInput', 'base32sha256');
+
+/** Runtime guard for WatchEvaluation identities. */
+export const isWatchEvaluationId = (value: unknown): value is WatchEvaluationId =>
+  isValidId(value, 'watchEvaluation', 'base32sha256');
+
+/** Runtime guard for Notification delivery-fence operation identities. */
+export const isNotificationDeliveryFenceOperationId = (
+  value: unknown,
+): value is NotificationDeliveryFenceOperationId =>
+  isValidId(value, 'notificationDeliveryFenceOperation', 'base32sha256');

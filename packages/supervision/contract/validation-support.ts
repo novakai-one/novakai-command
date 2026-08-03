@@ -160,10 +160,11 @@ export function recordEnvelope(
   idPrefix: string,
   idFormat: IdFormat,
   issues: ValidationIssue[],
+  schemaVersions: readonly number[] = [1],
 ): void {
   identifier(record.id, idPrefix, idFormat, 'id', issues);
   exact(record.kind, expectedKind, 'kind', issues);
-  exact(record.schemaVersion, 1, 'schemaVersion', issues);
+  oneOf(record.schemaVersion, schemaVersions, 'schemaVersion', issues);
   wholeNumber(record.recordVersion, 1, 'recordVersion', issues);
   isoUtc(record.createdAt, 'createdAt', issues);
   oneOf(record.permissionLevel, ['private', 'team', 'external'], 'permissionLevel', issues);

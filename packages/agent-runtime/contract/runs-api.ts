@@ -19,7 +19,9 @@ import type {
   AgentControlFacts, AgentControlOutcomeFacts, AgentRelationshipFacts,
   ControlCapabilityFacts,
 } from './ports.js';
-import type { AgentRunUsage } from '../../supervision/contract/index.js';
+import type {
+  AgentRunUsage, RunOccurrenceEventFacts,
+} from '../../supervision/contract/index.js';
 import type {
   NotificationTurnSubmission, StartNotificationTurnInput,
 } from './notification-delivery.js';
@@ -221,7 +223,10 @@ export interface RunUsageFacts {
   readonly agentRunId: AgentRunId;
   readonly agentId: AgentId;
   readonly providerSessionId: ProviderSessionId;
+  readonly lifecycle: AgentRunLifecycle;
   readonly final: boolean;
+  readonly activityGeneration: ActivityGeneration;
+  readonly recordVersion: RecordVersion;
 }
 
 /** Narrow composition adapter from Runtime records into Supervision projections. */
@@ -234,6 +239,18 @@ export interface RunUsageSource {
     principal: AuthenticatedPrincipal,
     agentId: AgentId,
   ): Promise<B3Result<readonly RunUsageFacts[]>>;
+  resolveUsageRunByProviderSession(
+    principal: AuthenticatedPrincipal,
+    providerSessionId: ProviderSessionId,
+  ): Promise<B3Result<RunUsageFacts | null>>;
+  resolveCurrentRunByAgent(
+    principal: AuthenticatedPrincipal,
+    agentId: AgentId,
+  ): Promise<B3Result<RunUsageFacts | null>>;
+  getRunOccurrenceEvent(
+    principal: AuthenticatedPrincipal,
+    eventId: string,
+  ): Promise<B3Result<RunOccurrenceEventFacts | null>>;
 }
 
 /** Supervision projection lookup used while Runtime assembles a public Run view. */
@@ -367,6 +384,21 @@ export interface AgentRuntimeCommands {
 }
 
 export interface AgentRuntimeQueries {
+  resolveUsageRunByProviderSession(
+    principal: AuthenticatedPrincipal,
+    providerSessionId: ProviderSessionId,
+  ): Promise<B3Result<RunUsageFacts | null>>;
+
+  getRunOccurrenceEvent(
+    principal: AuthenticatedPrincipal,
+    eventId: string,
+  ): Promise<B3Result<RunOccurrenceEventFacts | null>>;
+
+  resolveCurrentRunByAgent(
+    principal: AuthenticatedPrincipal,
+    agentId: AgentId,
+  ): Promise<B3Result<RunUsageFacts | null>>;
+
   getAgentRun(
     principal: AuthenticatedPrincipal, agentRunId: AgentRunId,
   ): Promise<B3Result<AgentRunView>>;

@@ -1,6 +1,6 @@
 import {
   b3fail, b3ok, validationFailed,
-  type ActivityGeneration, type B3PrincipalId, type B3Result,
+  type ActivityGeneration, type B3PrincipalId, type B3Result, type IsoUtc,
 } from '@novakai/foundation/contract';
 import {
   isRunDisconnectedEdge, subjectKey,
@@ -17,6 +17,7 @@ export interface LifecycleEvent {
   readonly kind: string;
   readonly payload: Readonly<Record<string, unknown>>;
   readonly evidenceRef: string;
+  readonly qualifiedAt: IsoUtc;
   readonly about: string | null;
 }
 
@@ -34,14 +35,17 @@ function connectionSnapshot(candidate: unknown): RunConnectionSnapshot | null {
   const record = candidate as Readonly<Record<string, unknown>>;
   const generation = record['activityGeneration'];
   const uncertaintyCodes = record['uncertaintyCodes'];
-  if (typeof record['final'] !== 'boolean'
+  if (!['idle', 'working', 'waiting-provider', 'waiting-input', 'interrupting', 'unknown']
+    .includes(String(record['activity']))
     || !Number.isInteger(generation) || Number(generation) < 0
     || !Array.isArray(uncertaintyCodes)
-    || !uncertaintyCodes.every((code) => typeof code === 'string')) return null;
+    || !uncertaintyCodes.every((code) => typeof code === 'string')
+    || typeof record['observedAt'] !== 'string') return null;
   return {
-    final: record['final'],
+    activity: record['activity'] as RunConnectionSnapshot['activity'],
     activityGeneration: generation as ActivityGeneration,
     uncertaintyCodes,
+    observedAt: record['observedAt'] as IsoUtc,
   };
 }
 
@@ -52,7 +56,7 @@ function eventMatchesRule(event: LifecycleEvent, rule: WatchRule): boolean {
       && ['stopped', 'failed', 'interrupted'].includes(String(event.payload['toLifecycle']));
   }
   if (rule.condition.kind !== 'run-disconnected'
-    || event.kind !== 'agent.run.connection.changed') return false;
+    || event.kind !== 'agent.run.activity.changed') return false;
   const previous = connectionSnapshot(event.payload['previous']);
   const current = connectionSnapshot(event.payload['current']);
   return previous !== null && current !== null
@@ -78,7 +82,14 @@ async function settleRule(
   return queueConditionNotification(
     deps,
     principal,
-    conditionNotification(principal, rule, keyedSubject, generation, event.evidenceRef),
+    conditionNotification(
+      principal,
+      rule,
+      keyedSubject,
+      generation,
+      event.evidenceRef,
+      { occurrenceIdentity: 'legacy-generation', qualifiedAt: event.qualifiedAt },
+    ),
   );
 }
 

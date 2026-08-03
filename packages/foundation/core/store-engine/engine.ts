@@ -19,6 +19,11 @@ import { acquireLock, releaseLock, LockTimeout } from './lock.js';
 
 export const CURRENT_SCHEMA_VERSION = 1;
 
+/** Per-kind compatibility ceiling; most Foundation records remain schema v1. */
+export function supportedSchemaVersion(kind: string): number {
+  return kind === 'notification' ? 2 : CURRENT_SCHEMA_VERSION;
+}
+
 // Kind → store file (S1 kinds only; registry is extensible). 'token' lives as
 // one file per token under tokens/ and is handled by core/token, not here.
 export const KIND_FILES: Readonly<Record<Exclude<ObjectKind, 'token'>, string>> = Object.freeze({
@@ -61,6 +66,9 @@ export const KIND_FILES: Readonly<Record<Exclude<ObjectKind, 'token'>, string>> 
   watchRule: 'watchRules.jsonl',                         // B3d §9.2/§18.1
   watchDeadline: 'watchDeadlines.jsonl',                 // B3d §9.2/§18.1
   notification: 'notifications.jsonl',                   // B3d §9.2/§18.1
+  watchEvaluation: 'watchEvaluations.jsonl',             // B3V4-AMD-003 §6
+  notificationDeliveryFenceOperation:
+    'notificationDeliveryFenceOperations.jsonl',         // B3V4-AMD-003 §7
   quarantine: 'quarantine.jsonl',
   trace: 'traces.jsonl',
 });
@@ -81,7 +89,8 @@ export const RECORD_KINDS: readonly string[] = [
   'treeMutationFence', 'runOperation',
   'messagingStoreOp', 'transcriptBinding', 'observedSubagent', 'storeRouteCutover',
   'providerUsageEvidence',
-  'watchRule', 'watchDeadline', 'notification',
+  'watchRule', 'watchDeadline', 'notification', 'watchEvaluation',
+  'notificationDeliveryFenceOperation',
 ];
 
 // Lazy upgrade registry (DEC-F10): pure v_n → v_n+1 transforms per kind,
@@ -339,7 +348,7 @@ export class StoreEngine {
       let upgradedPayload = obj.payload as Record<string, unknown>;
       let upgradedEnvelope = envCheck.data;
       let unsupported = false;
-      if (envelope.schemaVersion > CURRENT_SCHEMA_VERSION) {
+      if (envelope.schemaVersion > supportedSchemaVersion(envelope.kind)) {
         unsupported = true; // §8 rule 3: surface the record flagged, never crash
       } else {
         const applied = this.applyUpgrades(
@@ -376,7 +385,8 @@ export class StoreEngine {
     let current = { ...flat };
     let v = fromVersion;
     const chain = UPGRADES[kind] ?? [];
-    while (v < CURRENT_SCHEMA_VERSION) {
+    const targetVersion = supportedSchemaVersion(kind);
+    while (v < targetVersion) {
       const step = chain[v - 1];
       if (!step) return null; // no upgrade path registered — surface as parsed
       current = step(current) as Record<string, unknown>;

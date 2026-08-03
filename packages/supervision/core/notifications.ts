@@ -59,6 +59,7 @@ async function fireDeadline(
     input.deadline.subjectKey,
     input.deadline.activityGeneration,
     evidenceRef,
+    { occurrenceIdentity: 'legacy-generation', qualifiedAt: input.deadline.dueAt },
   );
   const queued = await queueConditionNotification(deps, principal, record);
   if (!queued.ok) return queued;
@@ -167,6 +168,7 @@ export async function evaluateEvent(
   const event = {
     observedAt: parsed.value.occurredAt,
     evidenceRef: parsed.value.eventId,
+    qualifiedAt: parsed.value.occurredAt,
     about: subjectKeyOfEvent(parsed.value.payload),
   };
   const deadlineNotifications = await settleArmedDeadlines(deps, armed.value, event);
@@ -178,6 +180,7 @@ export async function evaluateEvent(
     kind: parsed.value.kind,
     payload: parsed.value.payload,
     evidenceRef: parsed.value.eventId,
+    qualifiedAt: parsed.value.occurredAt,
     about: event.about,
     },
   );

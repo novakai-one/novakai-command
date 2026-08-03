@@ -78,6 +78,8 @@ export const OBJECT_KINDS = [
   'watchRule',          // DEC-B3V4-07: supervision-owned standing watcher rule
   'watchDeadline',      // supervision-owned generation-fenced durable deadline
   'notification',       // supervision-owned queued/delivered alert
+  'watchEvaluation',    // AMD-003: supervision-owned resumable rule evaluation
+  'notificationDeliveryFenceOperation', // AMD-003: supervision-owned Run rebind progress
   'quarantine',
   'token',
   'trace',

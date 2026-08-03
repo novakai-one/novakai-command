@@ -45,6 +45,9 @@ test('C20: an Agent-scoped satisfied condition commits for its matching final Ru
         runs: {
           getUsageRun: async () => b3ok(run),
           listUsageRuns: async () => b3ok([run]),
+          resolveUsageRunByProviderSession: async () => b3ok(run),
+          resolveCurrentRunByAgent: async () => b3ok(null),
+          getRunOccurrenceEvent: async () => b3ok(null),
         },
         evidence: { listProviderUsageEvidence: async () => b3ok({ items: [], omissions: [] }) },
       },

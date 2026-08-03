@@ -23,6 +23,8 @@ export interface RunEventLog {
   ): RunEvent;
   read(after: string | undefined, limit: number): B3Result<RunEventPage>;
   subscribe(after: string | undefined): AsyncIterable<B3Result<RunEvent>>;
+  /** Exact retained-event lookup used by occurrence derivation. */
+  find(eventId: string): B3Result<RunEvent | null>;
   /** Wake every open subscription and end it — the Runtime is going away. */
   close(): void;
 }
@@ -138,6 +140,9 @@ export function createRunEventLog(capacity = DEFAULT_CAPACITY): RunEventLog {
     append,
     read,
     subscribe,
+    find(eventId) {
+      return b3ok(held.find((event) => event.eventId === eventId) ?? null);
+    },
     close() {
       open = false;
       for (const wake of waiting) wake(null);
