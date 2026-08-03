@@ -14,6 +14,7 @@ import {
   mintRuntimeEpochId, mintTraceCorrelationId,
   type AgentRunId, type AuthenticatedPrincipal, type AuthorityScope,
   type B3Result, type CommandContext, type ProviderSessionId, type RuntimeEpochId,
+  type TranscriptBindingId,
 } from '@novakai/foundation/contract';
 import type { LaunchPlanFacts, RunCredentialPort } from '../contract/ports.js';
 import {
@@ -164,6 +165,22 @@ export function createRunsRig(options: RunsRigOptions = {}): RunsRig {
     gateTimeoutMs: options.gateTimeoutMs ?? 2_000,
     ...(options.withoutB3cCapabilities === true
       ? {} : { messagingEndpoint, transcriptCustody }),
+    ...(options.withoutB3cCapabilities === true
+      ? {}
+      : {
+          async transcriptBinding(agentRunId: AgentRunId) {
+            const binding = transcriptCustody.bindings.find(
+              (item) => item.agentRunId === String(agentRunId),
+            );
+            return binding === undefined ? null : {
+              bindingId: binding.id as TranscriptBindingId,
+              bindingState: 'bound' as const,
+              ...(binding.mirrorWatermark === undefined
+                ? {}
+                : { mirrorWatermark: binding.mirrorWatermark }),
+            };
+          },
+        }),
     ...(options.watchers === undefined ? {} : { watchers: options.watchers }),
     notifications,
     ...(options.usage === undefined ? {} : { usage: options.usage }),

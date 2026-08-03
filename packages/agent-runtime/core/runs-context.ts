@@ -24,6 +24,7 @@ import type { RunsStore, Persisted } from './runs-store.js';
  * configuration, and the view says `unbound` rather than inventing a state.
  */
 export type TranscriptBindingLookup = (agentRunId: AgentRunId) => Promise<{
+  readonly bindingId: import('@novakai/foundation/contract').TranscriptBindingId;
   readonly bindingState: 'bound' | 'waiting' | 'missing' | 'corrupt';
   readonly mirrorWatermark?: string;
 } | null>;

@@ -1,0 +1,513 @@
+import { createHash } from 'node:crypto';
+import {
+  b3err,
+  b3fail,
+  b3ok,
+  deriveClientOpId,
+  mintClientOpId,
+  mintProviderTurnId,
+  providerTurnSubmissionId,
+  type ActivityGeneration,
+  type B3Result,
+  type CommandContext,
+  type IsoUtc,
+  type ProviderTurnSubmissionId,
+} from '@novakai/foundation/contract';
+import type {
+  CompleteProviderTurnOutcome,
+  ProviderTurnSubmission,
+  ProviderTurnSubmissionFilter,
+  ProviderTurnSubmissionPage,
+  ProviderTurnSubmitInput,
+  ProviderTurnSubmitOutcome,
+} from '../contract/provider-turns.js';
+import { FINAL_LIFECYCLES, type AgentRun } from '../contract/runs.js';
+import { patchRun, requireRun, type RunsCore } from './runs-context.js';
+import type { Persisted } from './runs-store.js';
+
+const digest = (value: string): string =>
+  createHash('sha256').update(value, 'utf8').digest('hex');
+
+const now = (core: RunsCore): IsoUtc => new Date(core.clock()).toISOString() as IsoUtc;
+
+const operationConflict = (
+  submission: Pick<ProviderTurnSubmission, 'id' | 'providerTurnId'>,
+  reason: string,
+) => b3fail(b3err('ProviderTurnSubmissionConflict', reason, {
+  providerTurnSubmissionId: submission.id,
+  providerTurnId: submission.providerTurnId,
+  reason,
+  evidenceRefs: [submission.id],
+}, false));
+
+async function patchSubmission(
+  core: RunsCore,
+  submission: ProviderTurnSubmission,
+  patch: Partial<Persisted<ProviderTurnSubmission>>,
+): Promise<B3Result<ProviderTurnSubmission>> {
+  return core.store.update<ProviderTurnSubmission>(
+    'sys_agent_runtime', submission.id, patch as Record<string, unknown>,
+    submission.recordVersion, mintClientOpId(),
+  );
+}
+
+function effectKey(context: CommandContext, input: ProviderTurnSubmitInput): string {
+  return input.kind === 'controller'
+    ? String(deriveClientOpId(
+      `${input.agentRunId}:controller-provider-turn-submit:${context.clientOpId}`,
+    ))
+    : input.sourceEffectKey;
+}
+
+function origin(context: CommandContext, input: ProviderTurnSubmitInput): ProviderTurnSubmission['origin'] {
+  return input.kind === 'controller'
+    ? {
+        kind: 'controller',
+        attachmentId: input.attachmentId,
+        inputLeaseId: input.inputLeaseId,
+        leaseGeneration: input.leaseGeneration,
+        inputSequence: input.expectedNextInputSequence,
+        requestingPrincipalId: context.principal.id,
+      }
+    : {
+        kind: 'runtime-effect',
+        source: input.source,
+        sourceEffectKey: input.sourceEffectKey,
+        sourceObjectRef: input.sourceObjectRef,
+        requestingSystemPrincipalId: 'sys_agent_runtime',
+      };
+}
+
+function sameResume(
+  submission: ProviderTurnSubmission,
+  input: ProviderTurnSubmitInput,
+  submissionEffectKey: string,
+  inputDigest: string,
+  expectedOrigin: ProviderTurnSubmission['origin'],
+): boolean {
+  const recoverableLogicalInput = input.kind === 'controller'
+    ? { kind: 'controller-replay-only' as const }
+    : { kind: 'runtime-effect-snapshot' as const, utf8Text: input.utf8Text };
+  return submission.agentRunId === input.agentRunId
+    && submission.terminalSessionId === input.terminalSessionId
+    && submission.transcriptBindingId === input.transcriptBindingId
+    && submission.submissionEffectKey === submissionEffectKey
+    && submission.inputDigest === inputDigest
+    && JSON.stringify(submission.recoverableLogicalInput) === JSON.stringify(recoverableLogicalInput)
+    && JSON.stringify(submission.origin) === JSON.stringify(expectedOrigin);
+}
+
+function terminalOutcome(submission: ProviderTurnSubmission): ProviderTurnSubmitOutcome | null {
+  if (submission.state.kind === 'submitted-confirmed') {
+    return {
+      kind: 'submitted-confirmed',
+      submission,
+      terminalInputAttemptId: submission.state.terminalInputAttemptId,
+      activeTuple: submission.activationTarget,
+    };
+  }
+  if (submission.state.kind === 'submitted-unconfirmed') {
+    return {
+      kind: 'submitted-unconfirmed',
+      submission,
+      terminalInputAttemptId: submission.state.terminalInputAttemptId,
+      activeTuple: submission.activationTarget,
+      retryForbidden: true,
+    };
+  }
+  if (submission.state.kind === 'completed'
+    || submission.state.kind === 'rejected'
+    || submission.state.kind === 'completion-unproven-final') {
+    return { kind: 'not-submitted', submission, effectEscaped: false };
+  }
+  return null;
+}
+
+export async function submitProviderTurn(
+  core: RunsCore,
+  context: CommandContext,
+  input: ProviderTurnSubmitInput,
+): Promise<B3Result<ProviderTurnSubmitOutcome>> {
+  const epoch = core.fence.assertActive(context.runtimeEpochId);
+  if (!epoch.ok) return epoch;
+  if (input.kind === 'runtime-effect' || context.principal.kind === 'system') {
+    if (input.kind !== 'runtime-effect' || context.principal.id !== 'sys_agent_runtime') {
+      return b3fail(b3err('PermissionDenied', 'runtime-effect submission requires sys_agent_runtime', {
+        principalId: context.principal.id,
+      }, false));
+    }
+  }
+  const runResult = await requireRun(core, input.agentRunId);
+  if (!runResult.ok) return runResult;
+  let run = runResult.value;
+  if (FINAL_LIFECYCLES.has(run.lifecycle)) {
+    return b3fail(b3err('RunFinal', 'a final Run cannot accept a provider turn', {
+      agentRunId: run.id, lifecycle: run.lifecycle,
+    }, false));
+  }
+  if (run.terminalSessionId !== input.terminalSessionId) {
+    return b3fail(b3err('ProviderTurnSubmissionConflict', 'terminal does not belong to the Run', {
+      providerTurnSubmissionId: 'uncommitted', providerTurnId: 'uncommitted',
+      reason: 'terminal-session-mismatch', evidenceRefs: [run.id],
+    }, false));
+  }
+
+  const providerSession = await core.agents.getProviderSession(
+    context.principal, run.providerSessionId,
+  );
+  if (!providerSession.ok) return providerSession;
+  const boundary = await core.providers.turnBoundaryCapability(providerSession.value.provider);
+  if (!boundary.ok
+    || boundary.value.testedProviderVersion !== providerSession.value.providerVersion) {
+    return b3fail(b3err('ProviderTurnBoundaryUnavailable',
+      'no validated provider-turn boundary matches the active executable version', {
+        provider: providerSession.value.provider,
+        activeProviderVersion: providerSession.value.providerVersion,
+        testedProviderVersion: boundary.ok ? boundary.value.testedProviderVersion : null,
+      }, false));
+  }
+  const binding = await core.transcriptBinding?.(run.id);
+  if (binding === undefined || binding === null || binding.bindingState !== 'bound'
+    || binding.bindingId !== input.transcriptBindingId) {
+    return b3fail(b3err('TranscriptSourceUnavailable',
+      'the exact Run transcript binding is not available', {
+        agentRunId: run.id, transcriptBindingId: input.transcriptBindingId,
+      }, true));
+  }
+
+  const submissionEffectKey = effectKey(context, input);
+  const inputDigest = digest(input.utf8Text);
+  const expectedOrigin = origin(context, input);
+  const id = providerTurnSubmissionId(
+    run.id,
+    expectedOrigin.kind === 'controller'
+      ? { kind: 'controller' }
+      : { kind: 'runtime-effect', source: expectedOrigin.source },
+    submissionEffectKey,
+  );
+  let found = await core.store.read<ProviderTurnSubmission>('providerTurnSubmission', id);
+  if (!found.ok) return found;
+  let submission = found.value;
+  if (submission !== null && !sameResume(
+    submission, input, submissionEffectKey, inputDigest, expectedOrigin,
+  )) return operationConflict(submission, 'immutable resume fields differ');
+
+  if (submission === null) {
+    if (run.providerTurnOperationFence !== undefined || run.activeProviderTurn !== undefined) {
+      return b3fail(b3err('ProviderTurnOperationInProgress',
+        'the Run already has an active provider-turn operation', {
+          agentRunId: run.id,
+          providerTurnId: run.activeProviderTurn?.providerTurnId
+            ?? run.providerTurnOperationFence?.providerTurnId,
+        }, true));
+    }
+    const providerTurnId = mintProviderTurnId();
+    const activationGeneration = (run.activityGeneration + 1) as ActivityGeneration;
+    const created: Persisted<ProviderTurnSubmission> = {
+      kind: 'providerTurnSubmission',
+      id,
+      schemaVersion: 1,
+      createdAt: now(core),
+      permissionLevel: 'private',
+      createdBy: context.principal.id,
+      providerTurnId,
+      agentRunId: run.id,
+      providerSessionId: run.providerSessionId,
+      providerConversationId: providerSession.value.providerConversationId,
+      terminalSessionId: input.terminalSessionId,
+      transcriptBindingId: input.transcriptBindingId,
+      runtimeEpochId: epoch.value,
+      submissionEffectKey,
+      inputDigest,
+      recoverableLogicalInput: input.kind === 'controller'
+        ? { kind: 'controller-replay-only' }
+        : { kind: 'runtime-effect-snapshot', utf8Text: input.utf8Text },
+      startTranscriptWatermark: binding.mirrorWatermark ?? null,
+      activationTarget: {
+        expectedRunRecordVersion: run.recordVersion,
+        providerTurnId,
+        activityGeneration: activationGeneration,
+      },
+      origin: expectedOrigin,
+      state: { kind: 'queued', queuedAt: now(core), deliveryAttemptOrdinal: 0 },
+    };
+    const written = await core.store.create<ProviderTurnSubmission>(
+      context.principal.id, created as Persisted<ProviderTurnSubmission> & Record<string, unknown>,
+      mintClientOpId(),
+    );
+    if (!written.ok) return written;
+    submission = written.value;
+  }
+
+  const settled = terminalOutcome(submission);
+  if (settled !== null) return b3ok(settled);
+  if (submission.state.kind !== 'queued') {
+    return b3fail(b3err('ProviderTurnOperationInProgress',
+      'the provider-turn submission requires reconciliation before resuming', {
+        providerTurnSubmissionId: submission.id,
+        state: submission.state.kind,
+      }, true));
+  }
+
+  const refreshedRun = await requireRun(core, input.agentRunId);
+  if (!refreshedRun.ok) return refreshedRun;
+  run = refreshedRun.value;
+  const queuedAt = submission.state.queuedAt;
+  const ordinal = submission.state.deliveryAttemptOrdinal + 1;
+  const activationTarget = {
+    expectedRunRecordVersion: run.recordVersion,
+    providerTurnId: submission.providerTurnId,
+    activityGeneration: (run.activityGeneration + 1) as ActivityGeneration,
+  };
+  const snapshotted = await patchSubmission(core, submission, {
+    startTranscriptWatermark: binding.mirrorWatermark ?? null,
+    activationTarget,
+    state: { kind: 'queued', queuedAt, deliveryAttemptOrdinal: ordinal },
+  });
+  if (!snapshotted.ok) return snapshotted;
+  submission = snapshotted.value;
+
+  const prepared = await core.terminal.prepareProviderTurnInput({
+    terminalSessionId: input.terminalSessionId,
+    agentRunId: run.id,
+    providerTurnSubmissionId: submission.id,
+    deliveryAttemptOrdinal: ordinal,
+    providerSessionId: submission.providerSessionId,
+    transcriptBindingId: submission.transcriptBindingId,
+    startTranscriptWatermark: submission.startTranscriptWatermark,
+    expectedRunRecordVersion: activationTarget.expectedRunRecordVersion,
+    providerTurnId: submission.providerTurnId,
+    activityGeneration: activationTarget.activityGeneration,
+    submissionEffectKey,
+    inputDigest,
+    utf8Text: input.utf8Text,
+    authority: input.kind === 'controller'
+      ? {
+          kind: 'controller',
+          attachmentId: input.attachmentId,
+          inputLeaseId: input.inputLeaseId,
+          leaseGeneration: input.leaseGeneration,
+          expectedNextInputSequence: input.expectedNextInputSequence,
+          requestingPrincipalId: context.principal.id,
+        }
+      : {
+          kind: 'runtime-safe-boundary',
+          source: input.source,
+          sourceEffectKey: input.sourceEffectKey,
+          sourceObjectRef: input.sourceObjectRef,
+          expectedNoActiveInputLease: true,
+          expectedNoControllerDraft: true,
+        },
+  });
+  if (!prepared.ok) {
+    if (input.kind === 'controller') {
+      await patchSubmission(core, submission, {
+        state: {
+          kind: 'rejected', rejectedAt: now(core), reason: prepared.error.message,
+          effectEscaped: false, evidenceRefs: [prepared.error.code],
+        },
+      });
+    }
+    return prepared;
+  }
+  if (prepared.value.kind === 'not-yet-safe') {
+    const blocked = await patchSubmission(core, submission, {
+      state: {
+        kind: 'queued',
+        queuedAt,
+        deliveryAttemptOrdinal: ordinal,
+        lastBlockingReason: prepared.value.blocking.kind,
+      },
+    });
+    if (!blocked.ok) return blocked;
+    return b3ok({
+      kind: 'queued-not-yet-safe',
+      submissionEffectKey,
+      blocking: prepared.value.blocking,
+      submission: blocked.value,
+      retryable: true,
+      providerEffectCreated: false,
+    });
+  }
+
+  const attempt = prepared.value.attempt;
+  const fenced = await patchRun(core, run, {
+    providerTurnOperationFence: {
+      providerTurnId: submission.providerTurnId,
+      providerTurnSubmissionId: submission.id,
+      terminalInputAttemptId: attempt.id,
+      commandClientOpId: context.clientOpId,
+      submissionEffectKey,
+      activityGeneration: activationTarget.activityGeneration,
+      ...(attempt.authority.kind === 'controller'
+        ? { controllerResumeDeadlineAt: attempt.authority.resumeDeadlineAt }
+        : {}),
+      acquiredAt: now(core),
+      phase: 'terminal-prepared',
+    },
+  });
+  if (!fenced.ok) {
+    await core.terminal.cancelPreparedProviderTurnInput({
+      terminalInputAttemptId: attempt.id,
+      expectedAttemptRecordVersion: attempt.recordVersion,
+      reason: 'run-target-changed',
+    });
+    return b3fail(b3err('TargetChanged', 'the Run changed before activation fencing', {
+      agentRunId: run.id,
+    }, false));
+  }
+  run = fenced.value;
+  const preparedSubmission = await patchSubmission(core, submission, {
+    state: {
+      kind: 'prepared', preparedAt: now(core), deliveryAttemptOrdinal: ordinal,
+      activation: { state: 'pending' },
+    },
+  });
+  if (!preparedSubmission.ok) return preparedSubmission;
+  submission = preparedSubmission.value;
+  const submissionFenced = await patchRun(core, run, {
+    providerTurnOperationFence: {
+      ...run.providerTurnOperationFence!, phase: 'submission-prepared',
+    },
+  });
+  if (!submissionFenced.ok) return submissionFenced;
+  run = submissionFenced.value;
+
+  const executed = await core.terminal.executeProviderTurnInput({
+    terminalInputAttemptId: attempt.id,
+    expectedAttemptRecordVersion: attempt.recordVersion,
+    submissionEffectKey,
+    providerTurnId: submission.providerTurnId,
+    activityGeneration: activationTarget.activityGeneration,
+    utf8Text: input.utf8Text,
+  });
+  if (!executed.ok) return executed;
+  if (executed.value.effectState.kind !== 'submitted-confirmed'
+    && executed.value.effectState.kind !== 'submitted-unconfirmed') {
+    return b3fail(b3err('RecoveryRequired', 'Terminal did not return a submitted state', {
+      operationId: submission.id, stage: executed.value.effectState.kind,
+      reason: 'terminal-effect-state-not-submitted',
+    }, true));
+  }
+  const submittedAt = executed.value.effectState.submittedAt;
+  const submissionState = executed.value.effectState.kind === 'submitted-confirmed'
+    ? {
+        kind: 'submitted-confirmed' as const,
+        terminalInputAttemptId: attempt.id,
+        submittedAt,
+        activation: { state: 'pending' as const },
+      }
+    : {
+        kind: 'submitted-unconfirmed' as const,
+        terminalInputAttemptId: attempt.id,
+        submittedAt,
+        uncertaintyReason: executed.value.effectState.reason,
+        activation: { state: 'pending' as const },
+      };
+  const submitted = await patchSubmission(core, submission, { state: submissionState });
+  if (!submitted.ok) return submitted;
+  submission = submitted.value;
+
+  const activatedAt = now(core);
+  const activated = await patchRun(core, run, {
+    activity: 'working',
+    activityGeneration: activationTarget.activityGeneration,
+    activeProviderTurn: {
+      providerTurnId: submission.providerTurnId,
+      activityGeneration: activationTarget.activityGeneration,
+      startedAt: activatedAt,
+      state: 'working',
+    },
+    providerTurnOperationFence: {
+      ...run.providerTurnOperationFence!, phase: 'active',
+    },
+  });
+  if (!activated.ok) return activated;
+  const committed = await patchSubmission(core, submission, {
+    state: {
+      ...submissionState,
+      activation: {
+        state: 'committed',
+        committedRunRecordVersion: activated.value.recordVersion,
+        activatedAt,
+      },
+    },
+  });
+  if (!committed.ok) return committed;
+  core.publish('agent.provider-turn.submitted', {
+    agentRunId: run.id,
+    providerTurnId: submission.providerTurnId,
+    providerTurnSubmissionId: submission.id,
+    activityGeneration: activationTarget.activityGeneration,
+    disposition: submissionState.kind,
+  }, context.traceId);
+  return b3ok(submissionState.kind === 'submitted-confirmed'
+    ? {
+        kind: 'submitted-confirmed', submission: committed.value,
+        terminalInputAttemptId: attempt.id, activeTuple: activationTarget,
+      }
+    : {
+        kind: 'submitted-unconfirmed', submission: committed.value,
+        terminalInputAttemptId: attempt.id, activeTuple: activationTarget,
+        retryForbidden: true,
+      });
+}
+
+export async function getProviderTurnSubmission(
+  core: RunsCore,
+  providerTurnId: ProviderTurnSubmission['providerTurnId'],
+): Promise<B3Result<ProviderTurnSubmission>> {
+  const listed = await core.store.list<ProviderTurnSubmission>(
+    'providerTurnSubmission', { providerTurnId },
+  );
+  if (!listed.ok) return listed;
+  const submission = listed.value[0];
+  return submission === undefined
+    ? b3fail(b3err('UnknownProviderTurnSubmission', 'no provider-turn submission exists', {
+      providerTurnId,
+    }, false))
+    : b3ok(submission);
+}
+
+export async function listProviderTurnSubmissions(
+  core: RunsCore,
+  filter: ProviderTurnSubmissionFilter,
+): Promise<B3Result<ProviderTurnSubmissionPage>> {
+  if (!Number.isInteger(filter.limit) || filter.limit < 1 || filter.limit > 200) {
+    return b3fail(b3err('ValidationFailed', 'limit must be from 1 through 200', {
+      issues: [{ path: 'limit', message: 'must be from 1 through 200' }],
+    }, false));
+  }
+  const listed = await core.store.list<ProviderTurnSubmission>('providerTurnSubmission', {
+    ...(filter.agentRunId === undefined ? {} : { agentRunId: filter.agentRunId }),
+    ...(filter.providerSessionId === undefined
+      ? {}
+      : { providerSessionId: filter.providerSessionId }),
+  });
+  if (!listed.ok) return listed;
+  const terminal = new Set(['completed', 'rejected', 'completion-unproven-final']);
+  const items = listed.value
+    .filter((item) => filter.includeTerminal || !terminal.has(item.state.kind))
+    .filter((item) => filter.states === undefined || filter.states.includes(item.state.kind))
+    .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id))
+    .slice(0, filter.limit);
+  return b3ok({ items, omissions: [] });
+}
+
+export function completedOutcome(
+  run: AgentRun,
+): CompleteProviderTurnOutcome | null {
+  const completed = run.lastCompletedProviderTurn;
+  return completed === undefined ? null : {
+    kind: 'completed',
+    agentRunId: run.id,
+    providerTurnId: completed.providerTurnId,
+    activationActivityGeneration: completed.activationActivityGeneration,
+    completionActivityGeneration: completed.completionActivityGeneration,
+    transcriptTurnCompletionId: completed.transcriptTurnCompletionId,
+    providerUsageEvidenceId: completed.providerUsageEvidenceId,
+    terminalInputAttemptId: completed.terminalInputAttemptId,
+    terminalAttemptRecordVersion: completed.terminalAttemptRecordVersion,
+    interruptDisposition: completed.interruptDisposition,
+  };
+}

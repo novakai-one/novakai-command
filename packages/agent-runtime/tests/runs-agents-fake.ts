@@ -25,7 +25,11 @@ export interface FakeAgents extends AgentsPort {
   readonly roles: Map<AgentRoleProfileId, { childRoles: readonly AgentRoleProfileId[] }>;
   readonly agents: Map<AgentId, AgentFacts & { parentAgentId?: AgentId }>;
   readonly plans: Map<ResolvedLaunchPlanId, LaunchPlanFacts>;
-  readonly sessions: Map<ProviderSessionId, { native: string; discovered: boolean }>;
+  readonly sessions: Map<ProviderSessionId, {
+    native: string;
+    discovered: boolean;
+    provider: 'claude' | 'codex' | 'kimi';
+  }>;
   readonly grantsIssued: { readonly issuerAgentRunId: AgentRunId; readonly scopes: readonly AuthorityScope[] }[];
   readonly expiredRuns: AgentRunId[];
   /** Every control that reached Agents, in order — what the Runtime forwarded. */
@@ -50,7 +54,11 @@ export function createFakeAgents(options: FakeAgentsOptions = {}): FakeAgents {
   const roles = new Map<AgentRoleProfileId, { childRoles: readonly AgentRoleProfileId[] }>();
   const agents = new Map<AgentId, AgentFacts & { parentAgentId?: AgentId }>();
   const plans = new Map<ResolvedLaunchPlanId, LaunchPlanFacts>();
-  const sessions = new Map<ProviderSessionId, { native: string; discovered: boolean }>();
+  const sessions = new Map<ProviderSessionId, {
+    native: string;
+    discovered: boolean;
+    provider: 'claude' | 'codex' | 'kimi';
+  }>();
   const grantsIssued: FakeAgents['grantsIssued'] = [];
   const expiredRuns: AgentRunId[] = [];
   const controlsApplied: FakeAgents['controlsApplied'] = [];
@@ -239,9 +247,13 @@ export function createFakeAgents(options: FakeAgentsOptions = {}): FakeAgents {
       sessions.set(input.expectedProviderSessionId, {
         native: input.providerResumeHandle ?? '',
         discovered: input.discovery.state === 'discovered',
+        provider: input.provider,
       });
       return b3ok({
         id: input.expectedProviderSessionId,
+        provider: input.provider,
+        providerConversationId: input.providerResumeHandle,
+        providerVersion: 'fake-1.0.0',
         providerNativeSessionId: input.providerResumeHandle ?? '',
         discovered: input.discovery.state === 'discovered',
       });
@@ -255,6 +267,9 @@ export function createFakeAgents(options: FakeAgentsOptions = {}): FakeAgents {
       }
       return b3ok({
         id: providerSessionId,
+        provider: held.provider,
+        providerConversationId: held.native || null,
+        providerVersion: 'fake-1.0.0',
         providerNativeSessionId: held.native,
         discovered: held.discovered,
       });

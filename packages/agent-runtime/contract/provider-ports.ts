@@ -7,7 +7,7 @@
 // Re-exported from `ports.ts`, so no consumer changes.
 import type {
   ActivityGeneration, AgentRunId, B3Result, ProviderSessionId, ProviderTurnId,
-  TerminalSessionId,
+  ProviderTurnBoundaryProfileId, TerminalSessionId,
 } from '@novakai/foundation/contract';
 import type { ContinuationMode } from './runs.js';
 import type { TurnDeliveryStep } from './types.js';
@@ -26,6 +26,10 @@ export interface ProviderLaunchFacts {
  * provider turn out to be, and how do I say something to it.
  */
 export interface ProviderPort {
+  turnBoundaryCapability(provider: 'claude' | 'codex' | 'kimi'): Promise<B3Result<{
+    readonly testedProviderVersion: string;
+    readonly profileId: ProviderTurnBoundaryProfileId;
+  }>>;
   prepareLaunch(
     input: {
       readonly launchPlan: LaunchPlanFacts;

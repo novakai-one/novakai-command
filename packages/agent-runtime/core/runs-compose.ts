@@ -26,6 +26,12 @@ import type {
   AgentsPort, MessagingEndpointPort, MessagingInboxPort, ProviderPort, RunCredentialPort,
   NotificationDeliveryPort, RunWatcherPort, TerminalPort, TranscriptCustodyPort,
 } from '../contract/ports.js';
+import type {
+  CloseProviderTurnCompletionUnprovenInput,
+  CompleteProviderTurnInput,
+  ProviderTurnSubmitInput,
+  ProviderTurnSubmitOutcome,
+} from '../contract/provider-turns.js';
 import type { RuntimeHostContract } from '../contract/types.js';
 import { createRunsStore, type RunsStore, type RunsStoreOptions } from './runs-store.js';
 import {
@@ -52,6 +58,9 @@ import {
   getNotificationTurnSubmission, startNotificationTurnAtSafeBoundary,
 } from './notification-delivery.js';
 import { RunActivityQueue } from './run-activity-queue.js';
+import {
+  getProviderTurnSubmission, listProviderTurnSubmissions, submitProviderTurn,
+} from './provider-turns.js';
 
 /**
  * What a host with no Messaging answers: there is nothing to deliver.
@@ -265,6 +274,32 @@ export function composeAgentRuns(options: ComposeAgentRunsOptions): ComposedAgen
       return asView(context, ended.value);
     }),
 
+    async submitProviderTurn(context, input: ProviderTurnSubmitInput) {
+      const version = versionGuard<ProviderTurnSubmitOutcome>(context);
+      if (version) return version;
+      return providerActivity.enqueue(String(input.agentRunId), () =>
+        core.receipts.runResumableCommand(
+          context,
+          { operation: named('agent.submitProviderTurn'), request: input, replaySafe: true },
+          () => submitProviderTurn(core, context, input),
+          (outcome) => outcome.kind === 'queued-not-yet-safe',
+        ));
+    },
+
+    completeProviderTurn: guarded('agent.completeProviderTurn', async (
+      _context, input: CompleteProviderTurnInput,
+    ) => b3fail(b3err('UnsupportedOperation',
+      'provider-turn completion composition is not installed yet', {
+        agentRunId: input.agentRunId, providerTurnId: input.providerTurnId,
+      }, true))),
+
+    closeProviderTurnCompletionUnproven: guarded('agent.closeProviderTurnCompletionUnproven', async (
+      _context, input: CloseProviderTurnCompletionUnprovenInput,
+    ) => b3fail(b3err('UnsupportedOperation',
+      'provider-turn repair composition is not installed yet', {
+        agentRunId: input.agentRunId, providerTurnId: input.providerTurnId,
+      }, true))),
+
     adoptAgent: guarded(OPERATION.adopt,
       (context, input: AdoptAgentInput) => adoptAgent(core, context, input)),
 
@@ -300,6 +335,10 @@ export function composeAgentRuns(options: ComposeAgentRunsOptions): ComposedAgen
     getRunOperation: (principal, operationId) => getRunOperation(core, principal, operationId),
     getNotificationTurnSubmission: (_principal, effectKey) =>
       getNotificationTurnSubmission(core, effectKey),
+    getProviderTurnSubmission: (_principal, providerTurnId) =>
+      getProviderTurnSubmission(core, providerTurnId),
+    listProviderTurnSubmissions: (_principal, filter) =>
+      listProviderTurnSubmissions(core, filter),
     subscribeRunEvents: (_principal, after) => events.subscribe(after),
     publishCapabilityEvent: (kind, payload, sourceOwner, traceId) => {
       const event = events.append(kind, payload, traceId, sourceOwner);

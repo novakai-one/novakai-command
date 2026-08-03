@@ -5,11 +5,12 @@
 import {
   b3err, b3fail, b3ok, mintTerminalInputAttemptId, mintTerminalSessionId,
   notificationInputReservationId, nowIsoUtc,
-  type NotificationInputReservationId, type ProviderSessionId, type TerminalSessionId,
+  type NotificationInputReservationId, type ProviderSessionId,
+  type ProviderTurnBoundaryProfileId, type RecordVersion, type TerminalSessionId,
 } from '@novakai/foundation/contract';
 import type {
   NotificationInputAttemptFacts, NotificationInputReservationFacts,
-  ProviderPort, TerminalFacts, TerminalPort,
+  ProviderPort, ProviderTurnInputAttemptFacts, TerminalFacts, TerminalPort,
 } from '../contract/ports.js';
 import type { TurnDeliveryStep } from '../contract/types.js';
 
@@ -158,6 +159,7 @@ export function createFakeTerminal(): FakeTerminal {
     NotificationInputReservationId, NotificationInputReservationFacts
   >();
   const notificationAttempts = new Map<string, NotificationInputAttemptFacts>();
+  const providerTurnAttempts = new Map<string, ProviderTurnInputAttemptFacts>();
   /** One PTY per open OPERATION, so a retry adopts instead of launching. */
   const byOperation = new Map<string, TerminalFacts>();
   const port: FakeTerminal = {
@@ -317,6 +319,116 @@ export function createFakeTerminal(): FakeTerminal {
       return b3ok(notificationAttempts.get(terminalInputAttemptId) ?? null);
     },
 
+    async prepareProviderTurnInput(input) {
+      const prior = [...providerTurnAttempts.values()].find((attempt) =>
+        attempt.providerTurnSubmissionId === input.providerTurnSubmissionId
+        && attempt.deliveryAttemptOrdinal === input.deliveryAttemptOrdinal);
+      if (prior !== undefined) return b3ok({ kind: 'prepared' as const, attempt: prior });
+      const attempt: ProviderTurnInputAttemptFacts = {
+        id: mintTerminalInputAttemptId(),
+        recordVersion: 1 as RecordVersion,
+        terminalSessionId: input.terminalSessionId,
+        agentRunId: input.agentRunId,
+        providerTurnSubmissionId: input.providerTurnSubmissionId,
+        deliveryAttemptOrdinal: input.deliveryAttemptOrdinal,
+        providerTurnId: input.providerTurnId,
+        activityGeneration: input.activityGeneration,
+        submissionEffectKey: input.submissionEffectKey,
+        providerSessionId: input.providerSessionId,
+        transcriptBindingId: input.transcriptBindingId,
+        inputSequence: 1,
+        payloadDigest: input.inputDigest,
+        authority: input.authority.kind === 'controller'
+          ? { kind: 'controller', resumeDeadlineAt: nowIsoUtc() }
+          : { kind: 'runtime-safe-boundary' },
+        effectState: { kind: 'prepared', preparedAt: nowIsoUtc() },
+        turnBarrier: { kind: 'reserved-pre-effect' },
+      };
+      providerTurnAttempts.set(attempt.id, attempt);
+      return b3ok({ kind: 'prepared' as const, attempt });
+    },
+
+    async executeProviderTurnInput(input) {
+      const attempt = providerTurnAttempts.get(input.terminalInputAttemptId);
+      if (attempt === undefined) {
+        return b3fail(b3err('ProviderTurnSubmissionConflict', 'unknown fake attempt', {}, false));
+      }
+      if (attempt.effectState.kind === 'submitted-confirmed'
+        || attempt.effectState.kind === 'submitted-unconfirmed') return b3ok(attempt);
+      const submitted: ProviderTurnInputAttemptFacts = {
+        ...attempt,
+        recordVersion: (attempt.recordVersion + 1) as RecordVersion,
+        effectState: { kind: 'submitted-confirmed', submittedAt: nowIsoUtc() },
+        turnBarrier: { kind: 'active', activatedAt: nowIsoUtc() },
+      };
+      providerTurnAttempts.set(submitted.id, submitted);
+      port.submitted.push({
+        terminalSessionId: submitted.terminalSessionId,
+        keystrokes: [{ utf8Text: input.utf8Text, pauseMsAfter: 0 }],
+        text: input.utf8Text,
+        effectKey: input.submissionEffectKey,
+      });
+      return b3ok(submitted);
+    },
+
+    async cancelPreparedProviderTurnInput(input) {
+      const attempt = providerTurnAttempts.get(input.terminalInputAttemptId);
+      if (attempt === undefined) {
+        return b3fail(b3err('ProviderTurnSubmissionConflict', 'unknown fake attempt', {}, false));
+      }
+      const rejected: ProviderTurnInputAttemptFacts = {
+        ...attempt,
+        recordVersion: (attempt.recordVersion + 1) as RecordVersion,
+        effectState: {
+          kind: 'rejected', rejectedAt: nowIsoUtc(), effectEscaped: false,
+          reason: input.reason,
+        },
+        turnBarrier: { kind: 'released-rejected', releasedAt: nowIsoUtc() },
+      };
+      providerTurnAttempts.set(rejected.id, rejected);
+      return b3ok(rejected);
+    },
+
+    async getProviderTurnInputAttempt(input) {
+      return b3ok([...providerTurnAttempts.values()].find((attempt) =>
+        attempt.terminalSessionId === input.terminalSessionId
+        && attempt.providerTurnId === input.providerTurnId
+        && attempt.submissionEffectKey === input.submissionEffectKey) ?? null);
+    },
+
+    async listIncompleteProviderTurnInputAttempts(input) {
+      return b3ok([...providerTurnAttempts.values()].filter((attempt) =>
+        (input.terminalSessionId === undefined
+          || attempt.terminalSessionId === input.terminalSessionId)
+        && (input.agentRunId === undefined || attempt.agentRunId === input.agentRunId)
+        && attempt.turnBarrier.kind !== 'completion-committed'
+        && attempt.turnBarrier.kind !== 'closed-unproven'
+        && attempt.turnBarrier.kind !== 'released-rejected'));
+    },
+
+    async settleProviderTurnCompletion(input) {
+      const attempt = providerTurnAttempts.get(input.terminalInputAttemptId);
+      if (attempt === undefined || attempt.providerTurnId !== input.providerTurnId) {
+        return b3ok({ kind: 'target-turn-not-active' as const, inputLeaseChanged: false as const });
+      }
+      const settled: ProviderTurnInputAttemptFacts = {
+        ...attempt,
+        recordVersion: (attempt.recordVersion + 1) as RecordVersion,
+        turnBarrier: {
+          kind: 'completion-committed',
+          transcriptTurnCompletionId: input.transcriptTurnCompletionId,
+          providerUsageEvidenceId: input.providerUsageEvidenceId,
+          interruptDisposition: 'no-barrier',
+        },
+      };
+      providerTurnAttempts.set(settled.id, settled);
+      return b3ok({
+        kind: 'completion-barrier-committed' as const,
+        attemptRecordVersion: settled.recordVersion,
+        interruptDisposition: 'no-barrier' as const,
+      });
+    },
+
     async readOutputSoFar() { return b3ok(port.output); },
     async beginProviderTurn() { return b3ok(null); },
     async endProviderTurn() { return b3ok(null); },
@@ -369,6 +481,13 @@ export function createFakeProviders(): FakeProviders {
     substituteSessionId: null,
     discoveryFails: null,
     nativeSessionId: 'native-session',
+
+    async turnBoundaryCapability() {
+      return b3ok({
+        testedProviderVersion: 'fake-1.0.0',
+        profileId: 'turnBoundaryProfile_fake' as ProviderTurnBoundaryProfileId,
+      });
+    },
 
     async prepareLaunch(input) {
       const authorityRef = `authority:${input.agentRunId}`;

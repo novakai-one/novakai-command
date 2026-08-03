@@ -23,6 +23,18 @@ import type { AgentRunUsage } from '../../supervision/contract/index.js';
 import type {
   NotificationTurnSubmission, StartNotificationTurnInput,
 } from './notification-delivery.js';
+import type {
+  CloseProviderTurnCompletionUnprovenInput,
+  CloseProviderTurnCompletionUnprovenOutcome,
+  CompleteProviderTurnInput,
+  CompleteProviderTurnOutcome,
+  ControllerProviderTurnSubmitInput,
+  ProviderTurnSubmission,
+  ProviderTurnSubmissionFilter,
+  ProviderTurnSubmissionPage,
+  ProviderTurnSubmitOutcome,
+  SystemProviderTurnSubmitInput,
+} from './provider-turns.js';
 
 export type {
   NotificationTurnSubmission, StartNotificationTurnInput,
@@ -352,6 +364,26 @@ export interface AgentRuntimeCommands {
     input: { readonly agentRunId: AgentRunId; readonly providerTurnId: ProviderTurnId },
   ): Promise<B3Result<AgentRunView>>;
 
+  submitProviderTurn(
+    context: CommandContext,
+    input: ControllerProviderTurnSubmitInput,
+  ): Promise<B3Result<ProviderTurnSubmitOutcome>>;
+
+  submitProviderTurn(
+    context: SystemCommandContext<'sys_agent_runtime'>,
+    input: SystemProviderTurnSubmitInput,
+  ): Promise<B3Result<ProviderTurnSubmitOutcome>>;
+
+  completeProviderTurn(
+    context: SystemCommandContext<'sys_reconciler'>,
+    input: CompleteProviderTurnInput,
+  ): Promise<B3Result<CompleteProviderTurnOutcome>>;
+
+  closeProviderTurnCompletionUnproven(
+    context: CommandContext,
+    input: CloseProviderTurnCompletionUnprovenInput,
+  ): Promise<B3Result<CloseProviderTurnCompletionUnprovenOutcome>>;
+
   /** Resume an operation an earlier attempt left in the middle (§20). */
   repairRunOperation(
     context: CommandContext, operationId: RunOperationId,
@@ -391,6 +423,16 @@ export interface AgentRuntimeQueries {
   getNotificationTurnSubmission(
     principal: AuthenticatedPrincipal, effectKey: string,
   ): Promise<B3Result<NotificationTurnSubmission>>;
+
+  getProviderTurnSubmission(
+    principal: AuthenticatedPrincipal,
+    providerTurnId: ProviderTurnId,
+  ): Promise<B3Result<ProviderTurnSubmission>>;
+
+  listProviderTurnSubmissions(
+    principal: AuthenticatedPrincipal,
+    filter: ProviderTurnSubmissionFilter,
+  ): Promise<B3Result<ProviderTurnSubmissionPage>>;
 
   /**
    * §12.2's event subscription: every event after `after`, live, until the

@@ -14,7 +14,9 @@ import type {
   B3Result, CommandContext, ControlReplacementPlanId, DelegationGrantId,
   HumanPrincipalId, ProviderSessionId, ProviderTurnId, ActivityGeneration, IsoUtc,
   NotificationId, NotificationInputReservationId, RecordVersion,
-  ResolvedLaunchPlanId, RuntimeEpochId, TerminalInputAttemptId, TerminalSessionId,
+  ResolvedLaunchPlanId, RuntimeEpochId, TerminalInputAttemptId, TerminalInputLeaseId,
+  TerminalSessionId, TranscriptBindingId, TranscriptTurnCompletionId,
+  ProviderTurnSubmissionId, ProviderUsageEvidenceId, ProviderTurnBoundaryProfileId,
 } from '@novakai/foundation/contract';
 import type { ContinuationMode, LaunchConfigurationMode, LaunchSurface } from './runs.js';
 import type { TurnDeliveryStep } from './types.js';
@@ -56,6 +58,9 @@ export interface SpawnAuthorityFacts {
 
 export interface ProviderSessionFacts {
   readonly id: ProviderSessionId;
+  readonly provider: 'claude' | 'codex' | 'kimi';
+  readonly providerConversationId: string | null;
+  readonly providerVersion: string;
   readonly providerNativeSessionId: string;
   readonly discovered: boolean;
 }
@@ -244,6 +249,46 @@ export interface NotificationInputAttemptFacts {
   readonly submittedAt: IsoUtc;
 }
 
+export interface ProviderTurnInputAttemptFacts {
+  readonly id: TerminalInputAttemptId;
+  readonly recordVersion: RecordVersion;
+  readonly terminalSessionId: TerminalSessionId;
+  readonly agentRunId: AgentRunId;
+  readonly providerTurnSubmissionId: ProviderTurnSubmissionId;
+  readonly deliveryAttemptOrdinal: number;
+  readonly providerTurnId: ProviderTurnId;
+  readonly activityGeneration: ActivityGeneration;
+  readonly submissionEffectKey: string;
+  readonly providerSessionId: ProviderSessionId;
+  readonly transcriptBindingId: TranscriptBindingId;
+  readonly inputSequence: number;
+  readonly payloadDigest: string;
+  readonly authority:
+    | {
+        readonly kind: 'controller';
+        readonly resumeDeadlineAt: IsoUtc;
+      }
+    | { readonly kind: 'runtime-safe-boundary' };
+  readonly effectState:
+    | { readonly kind: 'prepared'; readonly preparedAt: IsoUtc }
+    | { readonly kind: 'executing'; readonly executionStartedAt: IsoUtc }
+    | { readonly kind: 'submitted-confirmed'; readonly submittedAt: IsoUtc }
+    | { readonly kind: 'submitted-unconfirmed'; readonly submittedAt: IsoUtc; readonly reason: string }
+    | { readonly kind: 'rejected'; readonly rejectedAt: IsoUtc; readonly effectEscaped: false; readonly reason: string };
+  readonly turnBarrier:
+    | { readonly kind: 'reserved-pre-effect' }
+    | { readonly kind: 'active'; readonly activatedAt: IsoUtc }
+    | { readonly kind: 'interrupt-committed'; readonly barrierCommittedAt: IsoUtc }
+    | {
+        readonly kind: 'completion-committed';
+        readonly transcriptTurnCompletionId: TranscriptTurnCompletionId;
+        readonly providerUsageEvidenceId: ProviderUsageEvidenceId;
+        readonly interruptDisposition: 'no-barrier' | 'barrier-won-before-completion';
+      }
+    | { readonly kind: 'released-rejected'; readonly releasedAt: IsoUtc }
+    | { readonly kind: 'closed-unproven'; readonly closedAt: IsoUtc };
+}
+
 /**
  * Terminal, seen through the one hole the Runtime needs: open a managed PTY,
  * type into it under the Runtime's own authority, read what came back, name the
@@ -305,6 +350,93 @@ export interface TerminalPort {
   getNotificationInputAttempt(
     terminalInputAttemptId: TerminalInputAttemptId,
   ): Promise<B3Result<NotificationInputAttemptFacts | null>>;
+
+  prepareProviderTurnInput(input: {
+    readonly terminalSessionId: TerminalSessionId;
+    readonly agentRunId: AgentRunId;
+    readonly providerTurnSubmissionId: ProviderTurnSubmissionId;
+    readonly deliveryAttemptOrdinal: number;
+    readonly providerSessionId: ProviderSessionId;
+    readonly transcriptBindingId: TranscriptBindingId;
+    readonly startTranscriptWatermark: string | null;
+    readonly expectedRunRecordVersion: RecordVersion;
+    readonly providerTurnId: ProviderTurnId;
+    readonly activityGeneration: ActivityGeneration;
+    readonly submissionEffectKey: string;
+    readonly inputDigest: string;
+    readonly utf8Text: string;
+    readonly authority:
+      | {
+          readonly kind: 'controller';
+          readonly attachmentId: import('@novakai/foundation/contract').ControllerAttachmentId;
+          readonly inputLeaseId: TerminalInputLeaseId;
+          readonly leaseGeneration: import('@novakai/foundation/contract').LeaseGeneration;
+          readonly expectedNextInputSequence: number;
+          readonly requestingPrincipalId: import('@novakai/foundation/contract').B3PrincipalId;
+        }
+      | {
+          readonly kind: 'runtime-safe-boundary';
+          readonly source: import('@novakai/foundation/contract').ProviderTurnSubmissionSource;
+          readonly sourceEffectKey: string;
+          readonly sourceObjectRef: string;
+          readonly expectedNoActiveInputLease: true;
+          readonly expectedNoControllerDraft: true;
+        };
+  }): Promise<B3Result<
+    | { readonly kind: 'prepared'; readonly attempt: ProviderTurnInputAttemptFacts }
+    | {
+        readonly kind: 'not-yet-safe';
+        readonly blocking:
+          | { readonly kind: 'active-input-lease'; readonly leaseId: TerminalInputLeaseId }
+          | { readonly kind: 'controller-draft' }
+          | { readonly kind: 'active-provider-turn' };
+        readonly retryable: true;
+        readonly attemptCreated: false;
+        readonly inputChanged: false;
+      }
+  >>;
+
+  executeProviderTurnInput(input: {
+    readonly terminalInputAttemptId: TerminalInputAttemptId;
+    readonly expectedAttemptRecordVersion: RecordVersion;
+    readonly submissionEffectKey: string;
+    readonly providerTurnId: ProviderTurnId;
+    readonly activityGeneration: ActivityGeneration;
+    readonly utf8Text: string;
+  }): Promise<B3Result<ProviderTurnInputAttemptFacts>>;
+
+  cancelPreparedProviderTurnInput(input: {
+    readonly terminalInputAttemptId: TerminalInputAttemptId;
+    readonly expectedAttemptRecordVersion: RecordVersion;
+    readonly reason: 'run-target-changed' | 'runtime-preparation-rejected';
+  }): Promise<B3Result<ProviderTurnInputAttemptFacts>>;
+
+  getProviderTurnInputAttempt(input: {
+    readonly terminalSessionId: TerminalSessionId;
+    readonly providerTurnId: ProviderTurnId;
+    readonly submissionEffectKey: string;
+  }): Promise<B3Result<ProviderTurnInputAttemptFacts | null>>;
+
+  listIncompleteProviderTurnInputAttempts(input: {
+    readonly terminalSessionId?: TerminalSessionId;
+    readonly agentRunId?: AgentRunId;
+  }): Promise<B3Result<readonly ProviderTurnInputAttemptFacts[]>>;
+
+  settleProviderTurnCompletion(input: {
+    readonly terminalInputAttemptId: TerminalInputAttemptId;
+    readonly agentRunId: AgentRunId;
+    readonly providerTurnId: ProviderTurnId;
+    readonly activityGeneration: ActivityGeneration;
+    readonly transcriptTurnCompletionId: TranscriptTurnCompletionId;
+    readonly providerUsageEvidenceId: ProviderUsageEvidenceId;
+  }): Promise<B3Result<
+    | {
+        readonly kind: 'completion-barrier-committed' | 'already-settled-same-completion';
+        readonly attemptRecordVersion: RecordVersion;
+        readonly interruptDisposition: 'no-barrier' | 'barrier-won-before-completion';
+      }
+    | { readonly kind: 'target-turn-not-active'; readonly inputLeaseChanged: false }
+  >>;
 
   /** Everything the session has printed, for the gate to read its reply from. */
   readOutputSoFar(
