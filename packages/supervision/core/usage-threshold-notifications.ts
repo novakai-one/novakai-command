@@ -1,11 +1,11 @@
 import {
-  b3err, b3fail, b3ok,
+  b3err, b3fail, b3ok, canonicalRequestHash,
   type ActivityGeneration, type AuthenticatedPrincipal, type B3Result,
 } from '@novakai/foundation/contract';
 import {
   parseProviderUsageEvidenceCommittedEvent, subjectKey, SUPERVISION_RECORD_WRITER,
   type Notification, type ProviderUsageEvidence, type RunUsageFacts,
-  type WatchCondition, type WatchRule,
+  type WatchCondition, type WatchOccurrenceRelationshipAuthority, type WatchRule,
 } from '../contract/index.js';
 import { conditionNotification, queueConditionNotification } from './condition-notifications.js';
 import type { Persisted, SupervisionStore } from './store.js';
@@ -18,6 +18,7 @@ export interface UsageThresholdDependencies {
   readonly runs?: UsageRunReader;
   readonly generation?: WatchRuleGenerationPort;
   readonly evidence?: UsageEvidenceReader;
+  readonly relationships?: WatchOccurrenceRelationshipAuthority;
 }
 
 type ThresholdCondition = Extract<WatchCondition, {
@@ -54,21 +55,23 @@ function observedValue(
 }
 
 async function resolveEvidenceRun(
-  runs: UsageRunReader,
+  deps: Pick<UsageThresholdDependencies, 'runs' | 'relationships'> & {
+    readonly runs: UsageRunReader;
+  },
   principal: AuthenticatedPrincipal,
   rule: WatchRule,
   evidence: ProviderUsageEvidence,
 ): Promise<B3Result<RunUsageFacts | UsageRunFacts | null>> {
-  const resolved = runs.resolveUsageRunByProviderSession === undefined
+  const resolved = deps.runs.resolveUsageRunByProviderSession === undefined
     ? rule.subject.kind === 'agent-run'
-      ? await runs.getUsageRun(principal, rule.subject.agentRunId)
-      : await runs.listUsageRuns(principal, rule.subject.agentId)
+      ? await deps.runs.getUsageRun(principal, rule.subject.agentRunId)
+      : await deps.runs.listUsageRuns(principal, rule.subject.agentId)
         .then((listed) => listed.ok
           ? b3ok(listed.value.find(
               (run) => run.providerSessionId === evidence.providerSessionId,
             ) ?? null)
           : listed)
-    : await runs.resolveUsageRunByProviderSession(principal, evidence.providerSessionId);
+    : await deps.runs.resolveUsageRunByProviderSession(principal, evidence.providerSessionId);
   if (!resolved.ok) return resolved;
   if (resolved.value === null) {
     return b3fail(b3err(
@@ -96,20 +99,54 @@ async function resolveEvidenceRun(
   if (rule.subject.kind === 'agent') {
     return b3ok(run.agentId === rule.subject.agentId ? run : null);
   }
-  return b3ok(null);
+  if (deps.relationships === undefined) {
+    return b3fail(b3err(
+      'RuntimeUnavailable', 'managed-child usage authority is not composed',
+      { stage: 'occurrence-derivation' }, true,
+    ));
+  }
+  const related = await deps.relationships.isDirectManagedChild(principal, {
+    parentAgentId: rule.subject.agentId,
+    childAgentId: run.agentId,
+  });
+  if (!related.ok) return related;
+  return b3ok(related.value ? run : null);
 }
 
 export async function usageThresholdCandidate(
-  deps: Required<UsageThresholdDependencies>,
+  deps: UsageThresholdDependencies & Required<Pick<
+    UsageThresholdDependencies, 'store' | 'runs' | 'generation' | 'evidence'
+  >>,
   principal: AuthenticatedPrincipal,
   rule: WatchRule,
   evidence: ProviderUsageEvidence,
 ): Promise<B3Result<(Persisted<Notification> & Record<string, unknown>) | null>> {
   const condition = thresholdCondition(rule.condition);
   if (condition === null) return b3ok(null);
-  const observed = observedValue(condition, evidence);
+  if (deps.evidence.getProviderUsageEvidence === undefined) {
+    return b3fail(b3err(
+      'RuntimeUnavailable', 'the Agents-owned usage evidence lookup is not composed',
+      { stage: 'occurrence-derivation', providerUsageEvidenceId: evidence.id }, true,
+    ));
+  }
+  const owned = await deps.evidence.getProviderUsageEvidence(principal, evidence.id);
+  if (!owned.ok) return owned;
+  if (owned.value === null) {
+    return b3fail(b3err(
+      'RuntimeUnavailable', 'the committed usage evidence is not visible from Agents',
+      { stage: 'occurrence-derivation', providerUsageEvidenceId: evidence.id }, true,
+    ));
+  }
+  if (canonicalRequestHash(owned.value) !== canonicalRequestHash(evidence)) {
+    return b3fail(b3err(
+      'RecoveryRequired', 'caller usage evidence disagrees with Agents-owned truth',
+      { stage: 'occurrence-derivation', providerUsageEvidenceId: evidence.id }, true,
+    ));
+  }
+  const authoritativeEvidence = owned.value;
+  const observed = observedValue(condition, authoritativeEvidence);
   if (observed === undefined || observed < condition.value) return b3ok(null);
-  const resolved = await resolveEvidenceRun(deps.runs, principal, rule, evidence);
+  const resolved = await resolveEvidenceRun(deps, principal, rule, authoritativeEvidence);
   if (!resolved.ok) return b3fail(resolved.error);
   if (resolved.value === null) return b3ok(null);
   let generation: ActivityGeneration;
@@ -131,17 +168,17 @@ export async function usageThresholdCandidate(
   const occurrence = rule.subject.kind === 'agent-run'
     ? {
         occurrenceIdentity: 'legacy-generation' as const,
-        qualifiedAt: evidence.observedAt,
+        qualifiedAt: authoritativeEvidence.observedAt,
       }
     : {
         occurrenceIdentity: 'agent-run' as const,
-        qualifiedAt: evidence.observedAt,
+        qualifiedAt: authoritativeEvidence.observedAt,
         conditionOccurrence: {
           kind: 'agent-run' as const,
           agentRunId: resolved.value.agentRunId,
           providerSessionId: resolved.value.providerSessionId,
-          qualifyingEvidenceRef: evidence.id,
-          qualifiedAt: evidence.observedAt,
+          qualifyingEvidenceRef: authoritativeEvidence.id,
+          qualifiedAt: authoritativeEvidence.observedAt,
         },
       };
   return b3ok(conditionNotification(
@@ -149,7 +186,7 @@ export async function usageThresholdCandidate(
       rule,
       subjectKey(rule.subject),
       generation,
-      String(evidence.id),
+      String(authoritativeEvidence.id),
       occurrence,
     ));
 }
@@ -224,6 +261,7 @@ export async function settleUsageThresholdRules(
         'RuntimeUnavailable', 'usage evidence authority is not composed', {}, true,
       )),
     },
+    ...(deps.relationships === undefined ? {} : { relationships: deps.relationships }),
   };
   for (const rule of thresholdRules) {
     const candidate = await usageThresholdCandidate(complete, principal, rule, evidence);

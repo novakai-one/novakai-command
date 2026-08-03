@@ -7,6 +7,7 @@ import {
   b3err, b3fail, b3ok, mintClientOpId, mintTraceCorrelationId,
 } from '@novakai/foundation/contract';
 import { composeSupervision } from '../core/index.js';
+import type { ProviderUsageEvidence } from '../contract/index.js';
 import { usageEvidenceEvent } from './fixtures.js';
 
 const RUN_ID = 'agentRun_019fd000-0000-7000-8000-0000000000a1' as never;
@@ -17,6 +18,7 @@ const HUMAN = { id: 'person_chris' as never, kind: 'human' as const, verifiedSco
 test('C20: an Agent-scoped satisfied condition commits for its matching final Run', async () => {
   const root = mkdtempSync(path.join(tmpdir(), 'nvk-c20-occurrence-'));
   try {
+    let ownedEvidence: ProviderUsageEvidence | null = null;
     const run = {
       agentRunId: RUN_ID,
       agentId: AGENT_ID,
@@ -49,7 +51,10 @@ test('C20: an Agent-scoped satisfied condition commits for its matching final Ru
           resolveCurrentRunByAgent: async () => b3ok(null),
           getRunOccurrenceEvent: async () => b3ok(null),
         },
-        evidence: { listProviderUsageEvidence: async () => b3ok({ items: [], omissions: [] }) },
+        evidence: {
+          getProviderUsageEvidence: async () => b3ok(ownedEvidence),
+          listProviderUsageEvidence: async () => b3ok({ items: [], omissions: [] }),
+        },
       },
     });
     const created = await supervision.createWatchRule({
@@ -77,6 +82,7 @@ test('C20: an Agent-scoped satisfied condition commits for its matching final Ru
       limitations: [],
       evidenceDigest: 'sha256:c20-final-run',
     });
+    ownedEvidence = event.payload as unknown as ProviderUsageEvidence;
     const evaluated = await supervision.evaluateEvent({
       principal: { id: 'sys_agents', kind: 'system', verifiedScopes: [] },
       clientOpId: mintClientOpId(),

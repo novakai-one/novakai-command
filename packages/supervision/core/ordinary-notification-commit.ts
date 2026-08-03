@@ -4,9 +4,10 @@ import {
 } from '@novakai/foundation/contract';
 import {
   deriveNotificationId, isProviderUsageEvidenceId, subjectKey, watchOccurrenceFamily,
-  type ConditionOccurrence, type Notification, type ProviderUsageEvidence,
+  type ConditionOccurrence, type Notification,
   type RunOccurrenceEventFacts,
-  type WatchEvaluationId, type WatchEvaluationRuleOutcome, type WatchRule,
+  type WatchEvaluationId, type WatchEvaluationRuleOutcome,
+  type WatchOccurrenceRelationshipAuthority, type WatchRule,
 } from '../contract/index.js';
 import type { Persisted, SupervisionStore } from './store.js';
 import type { UsageEvidenceReader, UsageRunReader } from './usage/index.js';
@@ -15,6 +16,7 @@ export interface OrdinaryCommitDependencies {
   readonly store: SupervisionStore;
   readonly runs?: UsageRunReader;
   readonly evidence?: UsageEvidenceReader;
+  readonly relationships?: WatchOccurrenceRelationshipAuthority;
 }
 
 export interface OrdinaryCommitResult {
@@ -74,17 +76,6 @@ function eventOccurrenceKey(
   return null;
 }
 
-async function usageEvidence(
-  deps: OrdinaryCommitDependencies,
-  principal: AuthenticatedPrincipal,
-  ref: string,
-): Promise<B3Result<ProviderUsageEvidence | null>> {
-  if (!isProviderUsageEvidenceId(ref) || deps.evidence?.getProviderUsageEvidence === undefined) {
-    return b3ok(null);
-  }
-  return deps.evidence.getProviderUsageEvidence(principal, ref);
-}
-
 /** Owner-validate one immutable legacy row; no createdAt/query-time fallback. */
 async function resolveLegacy(
   deps: OrdinaryCommitDependencies,
@@ -103,15 +94,38 @@ async function resolveLegacy(
     ));
   }
 
-  for (const ref of references) {
-    const evidence = await usageEvidence(deps, principal, ref);
-    if (!evidence.ok) return evidence;
-    if (evidence.value !== null) {
-      if (deps.runs?.resolveUsageRunByProviderSession === undefined) {
+  const usageCondition = [
+    'turn-count-at-least', 'input-tokens-at-least',
+    'output-tokens-at-least', 'cost-micros-at-least',
+  ].includes(rule.condition.kind);
+  if (usageCondition) {
+    if (deps.runs?.resolveUsageRunByProviderSession === undefined
+      || deps.evidence?.getProviderUsageEvidence === undefined) {
+      return b3fail(recovery(
+        operationId,
+        'legacy-occurrence-adoption',
+        `legacy usage Notification ${String(legacy.id)} lacks composed owner lookups`,
+      ));
+    }
+    let resolvedSession: string | undefined;
+    let resolvedRun: string | undefined;
+    let resolvedAgent: string | undefined;
+    let qualifiedAt: string | undefined;
+    for (const ref of references) {
+      if (!isProviderUsageEvidenceId(ref)) {
         return b3fail(recovery(
           operationId,
           'legacy-occurrence-adoption',
-          `legacy usage Notification ${String(legacy.id)} cannot resolve its ProviderSession`,
+          `legacy usage Notification ${String(legacy.id)} has non-usage evidence ${ref}`,
+        ));
+      }
+      const evidence = await deps.evidence.getProviderUsageEvidence(principal, ref);
+      if (!evidence.ok) return evidence;
+      if (evidence.value === null) {
+        return b3fail(recovery(
+          operationId,
+          'legacy-occurrence-adoption',
+          `legacy usage Notification ${String(legacy.id)} cannot validate evidence ${ref}`,
         ));
       }
       const source = await deps.runs.resolveUsageRunByProviderSession(
@@ -123,26 +137,84 @@ async function resolveLegacy(
         return b3fail(recovery(
           operationId,
           'legacy-occurrence-adoption',
-          `legacy usage Notification ${String(legacy.id)} names no retained Run`,
+          `legacy usage Notification ${String(legacy.id)} names no retained Run for ${ref}`,
         ));
       }
-      const expectedLegacyId = deriveNotificationId({
-        watchRuleId: rule.id,
-        subjectKey: subjectKey(rule.subject),
-        condition: rule.condition,
-        activityGeneration: source.value.activityGeneration as never,
-        phase: 'condition',
-      });
-      return b3ok({
-        qualifiedAt: evidence.value.observedAt,
-        activityGeneration: Number(source.value.activityGeneration),
-        occurrenceKey: family === 'AR'
-          ? `AR:${String(source.value.agentRunId)}`
-          : `L:${String(source.value.activityGeneration)}`,
-        sameCondition: expectedLegacyId === legacy.id,
-      });
+      if ((resolvedSession !== undefined
+          && resolvedSession !== evidence.value.providerSessionId)
+        || (resolvedRun !== undefined && resolvedRun !== source.value.agentRunId)
+        || (resolvedAgent !== undefined && resolvedAgent !== source.value.agentId)
+        || (qualifiedAt !== undefined && qualifiedAt !== evidence.value.observedAt)) {
+        return b3fail(recovery(
+          operationId,
+          'legacy-occurrence-adoption',
+          `legacy usage Notification ${String(legacy.id)} has contradictory `
+            + 'ProviderSession, Run, or evidence-time provenance',
+        ));
+      }
+      resolvedSession = evidence.value.providerSessionId;
+      resolvedRun = source.value.agentRunId;
+      resolvedAgent = source.value.agentId;
+      qualifiedAt = evidence.value.observedAt;
     }
+    if (resolvedRun === undefined || qualifiedAt === undefined) {
+      return b3fail(recovery(
+        operationId,
+        'legacy-occurrence-adoption',
+        `legacy usage Notification ${String(legacy.id)} has absent owner provenance/time`,
+      ));
+    }
+    const subjectMatches = rule.subject.kind === 'agent-run'
+      ? resolvedRun === rule.subject.agentRunId
+      : rule.subject.kind === 'agent'
+        ? resolvedAgent === rule.subject.agentId
+        : undefined;
+    if (subjectMatches === false) {
+      return b3fail(recovery(
+        operationId,
+        'legacy-occurrence-adoption',
+        `legacy usage Notification ${String(legacy.id)} provenance does not match its subject`,
+      ));
+    }
+    if (rule.subject.kind === 'children-of') {
+      if (deps.relationships === undefined || resolvedAgent === undefined) {
+        return b3fail(recovery(
+          operationId,
+          'legacy-occurrence-adoption',
+          `legacy usage Notification ${String(legacy.id)} lacks managed-child authority`,
+        ));
+      }
+      const related = await deps.relationships.isDirectManagedChild(principal, {
+        parentAgentId: rule.subject.agentId,
+        childAgentId: resolvedAgent as never,
+      });
+      if (!related.ok) return related;
+      if (!related.value) {
+        return b3fail(recovery(
+          operationId,
+          'legacy-occurrence-adoption',
+          `legacy usage Notification ${String(legacy.id)} provenance names a non-child Run`,
+        ));
+      }
+    }
+    const expectedLegacyId = deriveNotificationId({
+      watchRuleId: rule.id,
+      subjectKey: subjectKey(rule.subject),
+      condition: rule.condition,
+      activityGeneration: legacy.conditionGeneration as never,
+      phase: 'condition',
+    });
+    return b3ok({
+      qualifiedAt,
+      activityGeneration: legacy.conditionGeneration,
+      occurrenceKey: family === 'AR'
+        ? `AR:${resolvedRun}`
+        : `L:${String(legacy.conditionGeneration)}`,
+      sameCondition: expectedLegacyId === legacy.id,
+    });
+  }
 
+  for (const ref of references) {
     if (deps.runs?.getRunOccurrenceEvent !== undefined) {
       const source = await deps.runs.getRunOccurrenceEvent(principal, ref);
       if (!source.ok) return source;

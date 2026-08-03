@@ -309,7 +309,14 @@ export async function getRunOccurrenceEvent(
 ): Promise<B3Result<RunOccurrenceEventFacts | null>> {
   const found = events.find(eventId);
   if (!found.ok) return b3fail(found.error);
-  if (found.value === null) return b3ok(null);
+  if (found.value === null) {
+    return b3fail(b3err(
+      'RuntimeUnavailable',
+      'the exact occurrence event is not retained; absence cannot be proven after eviction or restart',
+      { stage: 'occurrence-derivation', eventId, reason: 'retained-event-completeness-unproven' },
+      true,
+    ));
+  }
   const event = found.value;
   if (event.sourceOwner !== 'agent-runtime') return b3ok(null);
   let runId = eventRunId(event);
@@ -323,6 +330,16 @@ export async function getRunOccurrenceEvent(
   if (runId === null) return b3ok(null);
   const run = await getUsageRun(core, principal, runId);
   if (!run.ok) return run;
+  const payloadGeneration = event.payload['activityGeneration'];
+  const immutableGeneration = Number.isSafeInteger(payloadGeneration)
+    && Number(payloadGeneration) >= 0
+    ? payloadGeneration as ActivityGeneration
+    : event.kind === 'agent.run.activity.changed'
+      && event.payload['current'] !== null
+      && typeof event.payload['current'] === 'object'
+      && Number.isSafeInteger((event.payload['current'] as Record<string, unknown>)['activityGeneration'])
+      ? (event.payload['current'] as Record<string, unknown>)['activityGeneration'] as ActivityGeneration
+      : null;
   const base = {
     eventId: event.eventId,
     occurredAt: event.occurredAt,
@@ -333,7 +350,11 @@ export async function getRunOccurrenceEvent(
     providerSessionId: run.value.providerSessionId,
     lifecycle: run.value.lifecycle,
     final: run.value.final,
-    activityGeneration: run.value.activityGeneration,
+    // L-family replay must use the generation frozen by the committed event,
+    // never the Run's mutable query-time generation. EV/OP rows retain this as
+    // provenance only and may fall back to the same-Run current snapshot when
+    // their old event shape did not carry a generation.
+    activityGeneration: immutableGeneration ?? run.value.activityGeneration,
     canonicalPayloadDigest: canonicalRequestHash(event.payload),
   };
   if (event.kind === 'agent.run.lifecycle.changed') {
@@ -342,6 +363,12 @@ export async function getRunOccurrenceEvent(
       return b3ok(null);
     }
     if (!run.value.final || run.value.lifecycle !== toLifecycle) return b3ok(null);
+    if (immutableGeneration === null) {
+      return b3fail(b3err(
+        'RecoveryRequired', 'the retained final event lacks its immutable activity generation',
+        { stage: 'occurrence-derivation', eventId }, true,
+      ));
+    }
     return b3ok({
       ...base,
       kind: event.kind,
@@ -355,7 +382,15 @@ export async function getRunOccurrenceEvent(
     const previous = event.payload['previous'];
     const current = event.payload['current'];
     if (previous === null || typeof previous !== 'object'
-      || current === null || typeof current !== 'object') return b3ok(null);
+      || current === null || typeof current !== 'object'
+      || immutableGeneration === null
+      || Number((current as Record<string, unknown>)['activityGeneration'])
+        !== Number(immutableGeneration)) {
+      return b3fail(b3err(
+        'RecoveryRequired', 'the retained activity event has corrupt occurrence snapshots',
+        { stage: 'occurrence-derivation', eventId }, true,
+      ));
+    }
     return b3ok({
       ...base,
       kind: event.kind,

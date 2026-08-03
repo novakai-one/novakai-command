@@ -12,7 +12,7 @@ import {
   type SupervisionCore, type SupervisionCoreOptions, type UsageRunReader,
 } from '../core/index.js';
 import {
-  deriveNotificationId, subjectKey, type WatchCondition,
+  deriveNotificationId, subjectKey, type ProviderUsageEvidence, type WatchCondition,
 } from '../contract/index.js';
 import { usageEvidenceEvent } from './fixtures.js';
 
@@ -21,6 +21,7 @@ const AGENT_ID = 'agent_123e4567-e89b-42d3-a456-426614174000' as never;
 const SESSION_ID = 'sess_123e4567-e89b-42d3-a456-426614174000' as never;
 const GENERATION = 4 as never;
 const HUMAN = { id: 'person_chris' as never, kind: 'human' as const, verifiedScopes: [] };
+const ownedEvidence = new Map<string, ProviderUsageEvidence>();
 
 const usageContext = (): SystemCommandContext<'sys_agents'> => ({
   principal: { id: 'sys_agents', kind: 'system', verifiedScopes: [] },
@@ -54,6 +55,9 @@ function options(root: string): SupervisionCoreOptions {
     usage: {
       runs,
       evidence: {
+        getProviderUsageEvidence: async (_principal, id) => b3ok(
+          ownedEvidence.get(String(id)) ?? null,
+        ),
         listProviderUsageEvidence: async () => b3ok({ items: [], omissions: [] }),
       },
     },
@@ -95,6 +99,9 @@ test('usage threshold notification identity absorbs replay and restart redeliver
       evidenceDigest: 'sha256:usage-100k',
     };
     const event = usageEvidenceEvent(measurement);
+    ownedEvidence.set(
+      String(event.payload.id), event.payload as unknown as ProviderUsageEvidence,
+    );
 
     const first = unwrap(
       await supervision.evaluateEvent(usageContext(), { event }),
@@ -120,6 +127,10 @@ test('usage threshold notification identity absorbs replay and restart redeliver
       store: createSupervisionStore(configured),
     });
     const equivalentNewEvent = usageEvidenceEvent(measurement, 2);
+    ownedEvidence.set(
+      String(equivalentNewEvent.payload.id),
+      equivalentNewEvent.payload as unknown as ProviderUsageEvidence,
+    );
     const redelivery = unwrap(
       await restarted.evaluateEvent(usageContext(), { event: equivalentNewEvent }),
       'post-restart equivalent redelivery',
@@ -164,6 +175,9 @@ test('usage threshold evaluation compares every at-least condition inclusively',
       limitations: [],
       evidenceDigest: 'sha256:usage-all-thresholds',
     });
+    ownedEvidence.set(
+      String(event.payload.id), event.payload as unknown as ProviderUsageEvidence,
+    );
 
     const queued = unwrap(
       await supervision.evaluateEvent(usageContext(), { event }),

@@ -128,3 +128,47 @@ test('subscribing from a cursor yields the events that follow it', async () => {
     assert.equal(received.length, 3, 'the subscription delivered nothing after the cursor');
   });
 });
+
+test('occurrence lookup retains event generation and fails when completeness is unproven', async () => {
+  await withRig(async (rig) => {
+    const role = rig.agents.defineRole('occurrence-role');
+    const spawned = await rig.runtime.spawnAgent(rig.human(), spawnInput(role, 'Occurrence'));
+    assert.equal(spawned.ok, true, spawned.ok ? '' : spawned.error.message);
+    if (!spawned.ok) return;
+    rig.runtime.publishCapabilityEvent('agent.run.activity.changed', {
+      agentRunId: spawned.value.run.id,
+      activityGeneration: 12,
+      previous: {
+        activity: 'idle', activityGeneration: 11, uncertaintyCodes: [],
+        observedAt: '2026-08-04T00:00:11.000Z',
+      },
+      current: {
+        activity: 'unknown', activityGeneration: 12,
+        uncertaintyCodes: ['provider-liveness-unknown'],
+        observedAt: '2026-08-04T00:00:12.000Z',
+      },
+    }, 'agent-runtime');
+    const page = await rig.runtime.readRunEvents(rig.principal(), { limit: 100 });
+    assert.equal(page.ok, true);
+    if (!page.ok) return;
+    const event = [...page.value.events].reverse().find(
+      (candidate) => candidate.kind === 'agent.run.activity.changed',
+    )!;
+    const occurrence = await rig.runtime.getRunOccurrenceEvent(
+      rig.principal(), event.eventId,
+    );
+    assert.equal(occurrence.ok, true, occurrence.ok ? '' : occurrence.error.message);
+    if (!occurrence.ok || occurrence.value === null) return;
+    assert.equal(occurrence.value.occurrenceKind, 'run-disconnected');
+    assert.equal(occurrence.value.activityGeneration, 12);
+
+    const missing = await rig.runtime.getRunOccurrenceEvent(
+      rig.principal(), 'event_not-retained',
+    );
+    assert.equal(missing.ok, false);
+    if (!missing.ok) {
+      assert.equal(missing.error.code, 'RuntimeUnavailable');
+      assert.equal(missing.error.details['reason'], 'retained-event-completeness-unproven');
+    }
+  });
+});
