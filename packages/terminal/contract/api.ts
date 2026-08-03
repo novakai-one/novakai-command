@@ -6,8 +6,8 @@
 import type {
   ActivityGeneration, AgentRunId, AuthenticatedPrincipal, AuthorityScope,
   B3ContractError, B3Result, CommandContext, ControllerAttachmentId, LeaseGeneration,
-  ProviderTurnId, RuntimeEpochId, SystemCommandContext, TerminalInputLeaseId,
-  TerminalSessionId,
+  NotificationId, NotificationInputReservationId, ProviderTurnId, RuntimeEpochId,
+  SystemCommandContext, TerminalInputAttemptId, TerminalInputLeaseId, TerminalSessionId,
 } from '@novakai/foundation/contract';
 
 /**
@@ -28,7 +28,7 @@ export const TERMINAL_TAKEOVER_SCOPE = 'terminal.takeover' as AuthorityScope;
 export const DEFAULT_STALE_AFTER_MS = 120_000;
 import type {
   ControllerAttachment, ControllerKind, TerminalInputAttempt, TerminalInputKind,
-  TerminalInputLease, TerminalSession, TerminalSessionOwner,
+  NotificationInputReservation, TerminalInputLease, TerminalSession, TerminalSessionOwner,
 } from './records.js';
 
 export interface OpenManagedTerminalInput {
@@ -67,6 +67,43 @@ export interface ReleaseInputLeaseInput {
   readonly attachmentId: ControllerAttachmentId;
   readonly leaseId: TerminalInputLeaseId;
   readonly generation: LeaseGeneration;
+}
+
+export interface ReserveNotificationInput {
+  readonly terminalSessionId: TerminalSessionId;
+  readonly agentRunId: AgentRunId;
+  readonly notificationId: NotificationId;
+  readonly effectKey: string;
+  readonly expectedActivityGeneration: ActivityGeneration;
+  readonly inputTextDigest: string;
+  readonly providerTurnId: ProviderTurnId;
+}
+
+export interface CommitReservedNotificationInput {
+  readonly notificationInputReservationId: NotificationInputReservationId;
+  readonly effectKey: string;
+  /** Provider-framed bytes; digest validation excludes the final submit CR. */
+  readonly utf8Text: string;
+}
+
+export interface CancelReservedNotificationInput {
+  readonly notificationInputReservationId: NotificationInputReservationId;
+  readonly effectKey: string;
+  readonly reason: 'supervision-claim-rejected' | 'runtime-compensation';
+}
+
+export interface NotificationInputCommitOutcome {
+  readonly reservation: NotificationInputReservation & {
+    readonly state: 'committed';
+    readonly terminalInputAttemptId: TerminalInputAttemptId;
+  };
+  readonly attempt: Extract<TerminalInputAttempt, { readonly source: 'system-notification' }>;
+}
+
+export interface SetControllerDraftStateInput {
+  readonly attachmentId: ControllerAttachmentId;
+  readonly expectedDraftGeneration: number;
+  readonly state: 'empty' | 'present';
 }
 
 export interface WriteTerminalInput {
@@ -233,6 +270,26 @@ export interface TerminalCommands {
     context: CommandContext, input: ReleaseInputLeaseInput,
   ): Promise<B3Result<TerminalInputLease>>;
 
+  reserveNotificationInput(
+    context: SystemCommandContext<'sys_agent_runtime'>,
+    input: ReserveNotificationInput,
+  ): Promise<B3Result<NotificationInputReservation>>;
+
+  commitReservedNotificationInput(
+    context: SystemCommandContext<'sys_agent_runtime'>,
+    input: CommitReservedNotificationInput,
+  ): Promise<B3Result<NotificationInputCommitOutcome>>;
+
+  cancelReservedNotificationInput(
+    context: SystemCommandContext<'sys_agent_runtime'>,
+    input: CancelReservedNotificationInput,
+  ): Promise<B3Result<NotificationInputReservation>>;
+
+  setControllerDraftState(
+    context: CommandContext,
+    input: SetControllerDraftStateInput,
+  ): Promise<B3Result<ControllerAttachment>>;
+
   writeInput(
     context: CommandContext, input: WriteTerminalInput,
   ): Promise<B3Result<TerminalInputAttempt>>;
@@ -309,6 +366,16 @@ export interface TerminalQueries {
   listControllerAttachments(
     principal: AuthenticatedPrincipal, terminalSessionId: TerminalSessionId,
   ): Promise<B3Result<readonly ControllerAttachment[]>>;
+
+  getTerminalInputAttempt(
+    principal: AuthenticatedPrincipal,
+    terminalInputAttemptId: TerminalInputAttemptId,
+  ): Promise<B3Result<TerminalInputAttempt>>;
+
+  getNotificationInputReservation(
+    principal: AuthenticatedPrincipal,
+    notificationInputReservationId: NotificationInputReservationId,
+  ): Promise<B3Result<NotificationInputReservation>>;
 
   readTerminalStream(
     principal: AuthenticatedPrincipal, input: ReadTerminalStreamInput,

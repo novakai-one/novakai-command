@@ -113,12 +113,16 @@ function resolveTemplates(
  * How long a rule waits before it is due, or `null` when the rule is not the
  * kind that waits on a clock at all.
  *
- * Only `idle-for-ms` arms here. An activity-drift deadline additionally carries
- * the durable §9.2 drift state, and its exact 1–9 algorithm is lane B's; arming
- * one without that state would write a record its own frozen parser refuses.
+ * Timed idle and activity-drift rules arm here. An activity-drift deadline
+ * additionally carries the durable §9.2 drift state; arming one without that
+ * state would write a record its own frozen parser refuses.
  */
 function waitMsOf(rule: WatchRule): number | null {
-  return rule.condition.kind === 'idle-for-ms' ? rule.condition.value : null;
+  switch (rule.condition.kind) {
+    case 'idle-for-ms': return rule.condition.value;
+    case 'activity-drift': return rule.condition.intervalMs;
+    default: return null;
+  }
 }
 
 function deadlineRecord(
@@ -142,12 +146,21 @@ function deadlineRecord(
     activityGeneration: generation,
     dueAt,
     state: 'armed',
+    ...(rule.condition.kind === 'activity-drift' ? {
+      driftState: {
+        kind: 'activity-drift' as const,
+        episodeOrdinal: 0,
+        phase: 'observing' as const,
+        quietIntervals: 0 as const,
+        consecutiveUnansweredChecks: 0 as const,
+      },
+    } : {}),
   };
 }
 
 /** Arm one rule's deadline, or report that this rule waits on nothing. */
-async function armDeadline(
-  deps: InstallDependencies,
+export async function armDeadline(
+  deps: Pick<InstallDependencies, 'store' | 'clock'>,
   principal: B3PrincipalId,
   rule: WatchRule,
   generation: ActivityGeneration,

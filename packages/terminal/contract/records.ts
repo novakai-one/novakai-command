@@ -4,8 +4,9 @@
 // scoped handle. It never opens a JSONL file (§18.2).
 import type {
   ActivityGeneration, AgentRunId, B3PrincipalId, CommandReceiptId,
-  ControllerAttachmentId, IsoUtc, LeaseGeneration, ProviderTurnId, RecordEnvelope,
-  RuntimeEpochId, TerminalInputAttemptId, TerminalInputLeaseId, TerminalSessionId,
+  ControllerAttachmentId, IsoUtc, LeaseGeneration, NotificationId,
+  NotificationInputReservationId, ProviderTurnId, RecordEnvelope, RuntimeEpochId,
+  TerminalInputAttemptId, TerminalInputLeaseId, TerminalSessionId,
 } from '@novakai/foundation/contract';
 
 export type TerminalSessionStatus =
@@ -66,6 +67,9 @@ export interface ControllerAttachment
   readonly focused: boolean;
   readonly viewport?: { readonly columns: number; readonly rows: number };
   readonly state: 'attached' | 'detached' | 'stale';
+  /** Controller-owned composer truth; a present draft fences system delivery. */
+  readonly draftState: 'empty' | 'present';
+  readonly draftGeneration: number;
 }
 
 export type LeaseEndedReason =
@@ -88,17 +92,67 @@ export type TerminalInputKind = typeof TERMINAL_INPUT_KINDS[number];
 export type TerminalInputOutcome =
   | 'accepted' | 'submitted-confirmed' | 'submitted-unconfirmed' | 'rejected';
 
-export interface TerminalInputAttempt
-  extends RecordEnvelope<TerminalInputAttemptId, 'terminalInputAttempt'> {
+export type TerminalInputAttempt = RecordEnvelope<
+  TerminalInputAttemptId, 'terminalInputAttempt'
+> & (
+  | {
+      readonly source: 'controller';
+      readonly terminalSessionId: TerminalSessionId;
+      readonly attachmentId: ControllerAttachmentId;
+      readonly leaseGeneration: LeaseGeneration;
+      readonly inputSequence: number;
+      /** The bytes themselves are never durable: terminal input is not chat. */
+      readonly payloadDigest: string;
+      readonly kindOfInput: TerminalInputKind;
+      readonly outcome: TerminalInputOutcome;
+    }
+  | {
+      readonly source: 'system-notification';
+      readonly terminalSessionId: TerminalSessionId;
+      readonly notificationInputReservationId: NotificationInputReservationId;
+      readonly deliveryEffectKey: string;
+      readonly providerTurnId: ProviderTurnId;
+      readonly attachmentId?: never;
+      readonly leaseGeneration?: never;
+      readonly inputSequence: number;
+      readonly payloadDigest: string;
+      readonly kindOfInput: 'message-delivery';
+      readonly outcome: 'submitted-confirmed' | 'submitted-unconfirmed';
+      readonly submittedAt: IsoUtc;
+    }
+);
+
+/** Terminal's durable keyboard fence for one deterministic Notification effect. */
+export type NotificationInputReservation = RecordEnvelope<
+  NotificationInputReservationId, 'notificationInputReservation'
+> & {
   readonly terminalSessionId: TerminalSessionId;
-  readonly attachmentId: ControllerAttachmentId;
-  readonly leaseGeneration: LeaseGeneration;
-  readonly inputSequence: number;
-  /** The bytes themselves are never durable: terminal input is not chat. */
-  readonly payloadDigest: string;
-  readonly kindOfInput: TerminalInputKind;
-  readonly outcome: TerminalInputOutcome;
-}
+  readonly agentRunId: AgentRunId;
+  readonly notificationId: NotificationId;
+  readonly deliveryEffectKey: string;
+  readonly expectedActivityGeneration: ActivityGeneration;
+  readonly inputTextDigest: string;
+  readonly providerTurnId: ProviderTurnId;
+} & (
+  | {
+      readonly state: 'reserved';
+      readonly terminalInputAttemptId?: never;
+      readonly endedAt?: never;
+      readonly cancelReason?: never;
+    }
+  | {
+      readonly state: 'cancelled';
+      readonly terminalInputAttemptId?: never;
+      readonly endedAt: IsoUtc;
+      readonly cancelReason: 'supervision-claim-rejected' | 'runtime-compensation';
+    }
+  | {
+      readonly state: 'committed';
+      readonly terminalInputAttemptId: TerminalInputAttemptId;
+      readonly endedAt: IsoUtc;
+      readonly cancelReason?: never;
+    }
+);
 
 /**
  * The turn a lifecycle interrupt may target. Terminal does not own Run

@@ -13,6 +13,7 @@ export * from './validate.js';
 export * from './runs.js';
 export * from './runs-api.js';
 export * from './ports.js';
+export * from './notification-delivery.js';
 export {
   composeAgentRuns, type ComposeAgentRunsOptions, type ComposedAgentRuns,
 } from '../core/runs-compose.js';

@@ -43,6 +43,8 @@ export async function attachController(
     focused: true,
     viewport: { columns: input.columns, rows: input.rows },
     state: 'attached',
+    draftState: 'empty',
+    draftGeneration: 0,
   };
   const written = await core.store.create<ControllerAttachment>(
     context.principal.id, record, mintClientOpId(),

@@ -83,6 +83,7 @@ export function createMockServices(opts: { seeded?: boolean } = {}): ShellServic
       emit((l) => { const c = convos.find((x) => x.id === id); if (c) l.onConversation?.(c); });
     },
     async getMessages(conversationId) { return messages.get(conversationId) ?? []; },
+    async listWatchers() { return { rules: [], deadlines: [], omissions: [] }; },
     publishFocus(f) { focus = f; },
     async sendMessage(conversationId, text, clientOpId) {
       // SHL-008: the send-time snapshot attaches to every human-composed message.

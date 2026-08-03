@@ -8,7 +8,8 @@
 // Agent Runtime is the sole writer of all five (§3.3).
 import type {
   ActivityGeneration, AgentId, AgentRunId, CommandReceiptId, HumanPrincipalId,
-  IsoUtc, ProviderSessionId, ProviderTurnId, RecordEnvelope, ResolvedLaunchPlanId,
+  IsoUtc, NotificationId, NotificationInputReservationId, ProviderSessionId,
+  ProviderTurnId, RecordEnvelope, ResolvedLaunchPlanId,
   RunContinuationId, RunOperationId, RuntimeEpochId, SupervisionAssignmentId,
   TerminalSessionId, TraceCorrelationId, TreeMutationFenceId, B3PrincipalId,
 } from '@novakai/foundation/contract';
@@ -139,7 +140,7 @@ export interface TreeMutationFence
 // ── The recoverable journal (§6.3) ──────────────────────────────────────────
 
 export const RUN_OPERATION_KINDS = [
-  'spawn', 'continue', 'stop-one', 'stop-tree', 'adopt',
+  'spawn', 'continue', 'stop-one', 'stop-tree', 'adopt', 'deliver-notification',
 ] as const;
 export type RunOperationKind = typeof RUN_OPERATION_KINDS[number];
 
@@ -156,7 +157,9 @@ export const RUN_OPERATION_STAGES = [
   'skills-gate-confirmed', 'supervised-work-released', 'watchers-installed',
   'run-ready', 'old-run-fenced', 'old-endpoint-drained', 'old-transcript-finalised',
   'old-usage-finalised', 'endpoint-transferred', 'compensating', 'completed',
-  'recovery-required',
+  'recovery-required', 'notification-delivery-reserved', 'terminal-input-reserved',
+  'supervision-delivery-claimed', 'terminal-input-submitted',
+  'supervision-delivery-recorded',
 ] as const;
 export type RunOperationStage = typeof RUN_OPERATION_STAGES[number];
 
@@ -198,6 +201,10 @@ export interface RunOperation extends RecordEnvelope<RunOperationId, 'runOperati
    * minting a second provider session (§5.4, §20).
    */
   readonly reservedProviderSessionId?: ProviderSessionId;
+  readonly notificationId?: NotificationId;
+  readonly notificationDeliveryEffectKey?: string;
+  readonly notificationInputReservationId?: NotificationInputReservationId;
+  readonly notificationProviderTurnId?: ProviderTurnId;
   readonly currentStage: RunOperationStage;
   readonly completedStages: readonly RunOperationStageOutcome[];
   readonly compensation: readonly CompensationOutcome[];

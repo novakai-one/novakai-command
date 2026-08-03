@@ -22,9 +22,10 @@ import {
   type ClaimNotificationDeliveryInput, type Notification,
   type NotificationDeliveryAuthority, type NotificationDeliveryClaim,
   type NotificationId, type RecordNotificationDeliveryOutcomeInput,
-  type WatchRule,
+  type WatchDeadline, type WatchRule,
 } from '../../contract/index.js';
 import type { SupervisionStore } from '../store.js';
+import { claimDriftDeadline } from './drift-delivery-claim.js';
 
 export interface DeliveryDependencies {
   readonly store: SupervisionStore;
@@ -78,6 +79,62 @@ function boundReservation(notification: Notification): string | null {
   return attempt.state === 'queued' ? null : attempt.notificationInputReservationId;
 }
 
+function validateClaim(
+  notification: Notification, input: ClaimNotificationDeliveryInput,
+): B3Result<{ readonly replay: boolean }> {
+  if (!ATTEMPTED_MODES.includes(notification.deliveryMode)) {
+    return b3fail(unsafe('queue-only notifications have no provider delivery effect', {
+      notificationId: notification.id, deliveryMode: notification.deliveryMode,
+    }));
+  }
+  if (Number(notification.conditionGeneration) !== Number(input.expectedActivityGeneration)) {
+    return b3fail(conflict('delivery activity generation does not match the notification', {
+      notificationId: notification.id,
+      expectedActivityGeneration: input.expectedActivityGeneration,
+      actualActivityGeneration: notification.conditionGeneration,
+    }));
+  }
+  const replay = boundReservation(notification) === input.notificationInputReservationId;
+  if (!replay
+    && Number(notification.recordVersion) !== Number(input.expectedNotificationRecordVersion)) {
+    return b3fail(versionConflict(
+      notification.id,
+      Number(input.expectedNotificationRecordVersion),
+      Number(notification.recordVersion),
+    ));
+  }
+  if (!replay && notification.deliveryAttempt.state !== 'queued') {
+    return b3fail(conflict('notification delivery is already claimed by another reservation', {
+      notificationId: notification.id,
+      heldBy: boundReservation(notification),
+      requestedBy: input.notificationInputReservationId,
+    }));
+  }
+  return b3ok({ replay });
+}
+
+type DriftClaim = {
+  readonly deadline: WatchDeadline;
+  readonly claimedAt: ReturnType<typeof nowIsoUtc>;
+};
+
+async function reconcileDriftClaim(
+  deps: DeliveryDependencies,
+  notification: Notification,
+  input: ClaimNotificationDeliveryInput,
+): Promise<B3Result<DriftClaim | null>> {
+  if (notification.phase !== 'drift-status-request') return b3ok(null);
+  return claimDriftDeadline(deps.store, notification, input);
+}
+
+function claimResult(
+  notification: Notification, drift: DriftClaim | null,
+): NotificationDeliveryClaim {
+  return drift === null
+    ? { notification }
+    : { notification, watchDeadline: drift.deadline };
+}
+
 /**
  * Bind one queued Notification to one Terminal reservation, exactly once.
  *
@@ -96,32 +153,16 @@ export async function claimNotificationDelivery(
   const loaded = await loadForEffect(deps, input.notificationId, input.expectedEffectKey);
   if (!loaded.ok) return b3fail(loaded.error);
   const notification = loaded.value;
+  const validated = validateClaim(notification, input);
+  if (!validated.ok) return validated;
 
-  if (!ATTEMPTED_MODES.includes(notification.deliveryMode)) {
-    return b3fail(unsafe('queue-only notifications have no provider delivery effect', {
-      notificationId: notification.id, deliveryMode: notification.deliveryMode,
-    }));
-  }
+  const drift = await reconcileDriftClaim(deps, notification, input);
+  if (!drift.ok) return drift;
 
-  // Same reservation, any version: this is the same delivery, replayed.
-  if (boundReservation(notification) === input.notificationInputReservationId) {
-    return b3ok({ notification });
-  }
-
-  if (Number(notification.recordVersion) !== Number(input.expectedNotificationRecordVersion)) {
-    return b3fail(versionConflict(
-      notification.id,
-      Number(input.expectedNotificationRecordVersion),
-      Number(notification.recordVersion),
-    ));
-  }
-
-  if (notification.deliveryAttempt.state !== 'queued') {
-    return b3fail(conflict('notification delivery is already claimed by another reservation', {
-      notificationId: notification.id,
-      heldBy: boundReservation(notification),
-      requestedBy: input.notificationInputReservationId,
-    }));
+  // Same reservation, any version: this is the same delivery, replayed. Drift
+  // reconciliation still ran first so either half of the sequential claim heals.
+  if (validated.value.replay) {
+    return b3ok(claimResult(notification, drift.value));
   }
 
   const written = await deps.store.update<Notification>(
@@ -132,7 +173,7 @@ export async function claimNotificationDelivery(
       deliveryAttempt: {
         state: 'delivery-claimed',
         effectKey: notification.deliveryEffectKey,
-        claimedAt: nowIsoUtc(),
+        claimedAt: drift.value?.claimedAt ?? nowIsoUtc(),
         notificationInputReservationId: input.notificationInputReservationId,
       },
     },
@@ -142,7 +183,7 @@ export async function claimNotificationDelivery(
     ),
   );
   if (!written.ok) return b3fail(written.error);
-  return b3ok({ notification: written.value });
+  return b3ok(claimResult(written.value, drift.value));
 }
 
 /** True when this outcome has already been durably recorded, verbatim. */

@@ -19,6 +19,7 @@ import { applyAuthoritativeViewport } from './controllers.js';
 import { FIRST_INPUT_SEQUENCE } from './live.js';
 import type { Persisted } from './store.js';
 import { OPERATION, requireLiveSession, type TerminalCore } from './context.js';
+import { activeNotificationReservation } from './notification-input.js';
 
 async function attachedController(
   core: TerminalCore, terminalSessionId: string, attachmentId: string,
@@ -35,6 +36,21 @@ async function attachedController(
   return b3ok(found.value);
 }
 
+async function requireNoNotificationReservation(
+  core: TerminalCore, terminalSessionId: AcquireInputLeaseInput['terminalSessionId'],
+): Promise<B3Result<null>> {
+  const reservation = await activeNotificationReservation(core, terminalSessionId);
+  if (!reservation.ok) return reservation;
+  if (reservation.value !== null) {
+    return b3fail(b3err('InputLeaseBusy',
+      'a reserved Notification input holds the terminal boundary', {
+        reason: 'notification-input-reserved',
+        notificationInputReservationId: reservation.value.id,
+      }, true));
+  }
+  return b3ok(null);
+}
+
 export async function acquireInputLease(
   core: TerminalCore, context: CommandContext, input: AcquireInputLeaseInput,
 ): Promise<B3Result<TerminalInputLease>> {
@@ -46,6 +62,9 @@ export async function acquireInputLease(
   if (!controller.ok) return controller;
   const allowed = requireOwnAttachment(context, controller.value, OPERATION.acquire);
   if (!allowed.ok) return allowed;
+
+  const available = await requireNoNotificationReservation(core, input.terminalSessionId);
+  if (!available.ok) return available;
 
   const active = await settleAndFindActive(core, input.terminalSessionId);
   if (!active.ok) return active;
@@ -186,6 +205,7 @@ export async function writeInput(
     createdAt: nowIsoUtc(),
     permissionLevel: 'private',
     createdBy: context.principal.id,
+    source: 'controller',
     terminalSessionId: input.terminalSessionId,
     attachmentId: input.attachmentId,
     leaseGeneration: input.leaseGeneration,

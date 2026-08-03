@@ -9,6 +9,7 @@ import type {
   ControlReplacementPlanId, EventCursor, HumanPrincipalId, IsoUtc,
   ProviderSessionId, ProviderTurnId, ActivityGeneration, RecordVersion,
   AgentRoleProfileId, ResolvedLaunchPlanId, RunOperationId, TraceCorrelationId,
+  SystemCommandContext,
 } from '@novakai/foundation/contract';
 import type {
   AgentRun, AgentRunLifecycle, ContinuationMode, LaunchConfigurationMode,
@@ -19,6 +20,13 @@ import type {
   ControlCapabilityFacts,
 } from './ports.js';
 import type { AgentRunUsage } from '../../supervision/contract/index.js';
+import type {
+  NotificationTurnSubmission, StartNotificationTurnInput,
+} from './notification-delivery.js';
+
+export type {
+  NotificationTurnSubmission, StartNotificationTurnInput,
+} from './notification-delivery.js';
 
 // ── Inputs ──────────────────────────────────────────────────────────────────
 
@@ -348,6 +356,14 @@ export interface AgentRuntimeCommands {
   repairRunOperation(
     context: CommandContext, operationId: RunOperationId,
   ): Promise<B3Result<RunOperationView>>;
+
+  startNotificationTurnAtSafeBoundary(
+    context: SystemCommandContext<'sys_supervision'>,
+    input: StartNotificationTurnInput,
+  ): Promise<B3Result<Extract<
+    NotificationTurnSubmission,
+    { readonly state: 'submitted-confirmed' | 'submitted-unconfirmed' }
+  >>>;
 }
 
 export interface AgentRuntimeQueries {
@@ -371,6 +387,10 @@ export interface AgentRuntimeQueries {
   getRunOperation(
     principal: AuthenticatedPrincipal, operationId: RunOperationId,
   ): Promise<B3Result<RunOperationView>>;
+
+  getNotificationTurnSubmission(
+    principal: AuthenticatedPrincipal, effectKey: string,
+  ): Promise<B3Result<NotificationTurnSubmission>>;
 
   /**
    * §12.2's event subscription: every event after `after`, live, until the

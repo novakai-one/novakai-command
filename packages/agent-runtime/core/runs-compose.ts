@@ -12,17 +12,19 @@
 import {
   b3err, b3fail, b3ok, composeReceiptStore, mintClientOpId, mintTraceCorrelationId,
   type AuthenticatedPrincipal, type B3Result, type CommandContext,
-  type PublicOperationName, type ReceiptStore, type RunOperationId,
+  type PublicOperationName, type ReceiptStore, type RunOperationId, type TerminalSessionId,
 } from '@novakai/foundation/contract';
 import type {
   AdoptAgentInput, AgentRunsContract, AgentRunView, ApplyRunControlInput,
   ContinueAgentInput,
   InterruptAgentTurnInput, PrepareStopAgentTreeInput, RunOperationView,
-  RunUsageLookup, RunUsageSource, SpawnAgentInput, StopAgentInput, StopAgentTreeInput,
+  NotificationTurnSubmission, RunUsageLookup, RunUsageSource,
+  SpawnAgentInput, StartNotificationTurnInput,
+  StopAgentInput, StopAgentTreeInput,
 } from '../contract/runs-api.js';
 import type {
   AgentsPort, MessagingEndpointPort, MessagingInboxPort, ProviderPort, RunCredentialPort,
-  RunWatcherPort, TerminalPort, TranscriptCustodyPort,
+  NotificationDeliveryPort, RunWatcherPort, TerminalPort, TranscriptCustodyPort,
 } from '../contract/ports.js';
 import type { RuntimeHostContract } from '../contract/types.js';
 import { createRunsStore, type RunsStore, type RunsStoreOptions } from './runs-store.js';
@@ -40,11 +42,16 @@ import { continueAgent } from './continue.js';
 import {
   getAgentRun, getRunLaunchPlanId, getRunOperation, listAgentRuns,
   getUsageRun, listRunOperations, listUsageRuns, reconcileAfterRestart, runsCensus, viewOfRun,
+  observeTerminalExit,
 } from './queries.js';
 import { getAgentRunTree } from './tree.js';
 import { repairRunOperation } from './repair.js';
 import { createRunEventLog } from './events.js';
 import { createInboxDeliveryPump, type InboxDeliveryPump } from './inbox-delivery.js';
+import {
+  getNotificationTurnSubmission, startNotificationTurnAtSafeBoundary,
+} from './notification-delivery.js';
+import { RunActivityQueue } from './run-activity-queue.js';
 
 /**
  * What a host with no Messaging answers: there is nothing to deliver.
@@ -95,6 +102,8 @@ export interface ComposeAgentRunsOptions extends RunsStoreOptions {
   readonly inboxDeliveryIntervalMs?: number;
   /** B3d §13.5's watcher rung, through Supervision's frozen contract. */
   readonly watchers?: RunWatcherPort;
+  /** Q7's Supervision owner seam for Runtime-executed Notification delivery. */
+  readonly notifications?: NotificationDeliveryPort;
   /** B3d §19.1 usage projection, through Supervision's frozen contract. */
   readonly usage?: RunUsageLookup;
 }
@@ -111,6 +120,8 @@ export type ComposedAgentRuns = AgentRunsContract & {
   readonly inboxDelivery: InboxDeliveryPump;
   /** Composition-only raw Run facts for Supervision; never a second public Run API. */
   readonly usageRuns: RunUsageSource;
+  /** Composition-only sink for Terminal's unexpected managed-process exit fact. */
+  observeTerminalExit(terminalSessionId: TerminalSessionId): Promise<B3Result<null>>;
 };
 
 /** Generous, because a real model reading its skills is not instant. */
@@ -137,6 +148,7 @@ export function composeAgentRuns(options: ComposeAgentRunsOptions): ComposedAgen
   // cursors — not two views of "something happened" that can disagree.
   const events = createRunEventLog();
   const publish = options.publish;
+  const providerActivity = new RunActivityQueue();
 
   const core: RunsCore = {
     store: options.store ?? createRunsStore(options),
@@ -160,6 +172,7 @@ export function composeAgentRuns(options: ComposeAgentRunsOptions): ComposedAgen
     ...(options.transcriptCustody === undefined
       ? {} : { transcriptCustody: options.transcriptCustody }),
     ...(options.watchers === undefined ? {} : { watchers: options.watchers }),
+    ...(options.notifications === undefined ? {} : { notifications: options.notifications }),
     ...(options.usage === undefined ? {} : { usage: options.usage }),
   };
 
@@ -194,6 +207,7 @@ export function composeAgentRuns(options: ComposeAgentRunsOptions): ComposedAgen
 
   return {
     inboxDelivery,
+    observeTerminalExit: (terminalSessionId) => observeTerminalExit(core, terminalSessionId),
     usageRuns: {
       getUsageRun: (principal, agentRunId) => getUsageRun(core, principal, agentRunId),
       listUsageRuns: (principal, agentId) => listUsageRuns(core, principal, agentId),
@@ -236,11 +250,11 @@ export function composeAgentRuns(options: ComposeAgentRunsOptions): ComposedAgen
     beginProviderTurn: guarded('agent.beginTurn', async (context, input: {
       agentRunId: Parameters<typeof beginProviderTurn>[2]['agentRunId'];
       expectedRecordVersion: Parameters<typeof beginProviderTurn>[2]['expectedRecordVersion'];
-    }) => {
+    }) => providerActivity.enqueue(String(input.agentRunId), async () => {
       const started = await beginProviderTurn(core, context, input);
       if (!started.ok) return started;
       return asView(context, started.value);
-    }),
+    })),
 
     endProviderTurn: guarded('agent.endTurn', async (context, input: {
       agentRunId: Parameters<typeof endProviderTurn>[2]['agentRunId'];
@@ -267,11 +281,25 @@ export function composeAgentRuns(options: ComposeAgentRunsOptions): ComposedAgen
       return repairRunOperation(core, context, operationId);
     },
 
+    async startNotificationTurnAtSafeBoundary(context, input: StartNotificationTurnInput) {
+      const version = versionGuard<Extract<
+        NotificationTurnSubmission,
+        { readonly state: 'submitted-confirmed' | 'submitted-unconfirmed' }
+      >>(context);
+      if (version) return version;
+      return providerActivity.enqueue(
+        String(input.agentRunId),
+        () => startNotificationTurnAtSafeBoundary(core, context, input),
+      );
+    },
+
     getAgentRun: (principal, agentRunId) => getAgentRun(core, principal, agentRunId),
     listAgentRuns: (principal, filter) => listAgentRuns(core, principal, filter),
     getAgentRunTree: (principal, input) => getAgentRunTree(core, principal, input),
     discoverRunControls: (principal, input) => discoverRunControls(core, principal, input),
     getRunOperation: (principal, operationId) => getRunOperation(core, principal, operationId),
+    getNotificationTurnSubmission: (_principal, effectKey) =>
+      getNotificationTurnSubmission(core, effectKey),
     subscribeRunEvents: (_principal, after) => events.subscribe(after),
     publishCapabilityEvent: (kind, payload, sourceOwner, traceId) => {
       const event = events.append(kind, payload, traceId, sourceOwner);

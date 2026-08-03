@@ -13,6 +13,7 @@ import {
 
 export const TERMINAL_KINDS: readonly ObjectKind[] = [
   'terminalSession', 'controllerAttachment', 'terminalInputLease', 'terminalInputAttempt',
+  'notificationInputReservation',
 ];
 
 export interface TerminalStoreOptions {

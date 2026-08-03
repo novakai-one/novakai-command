@@ -19,6 +19,8 @@ export interface TerminalCore {
   readonly clock: Clock;
   readonly receipts: ReceiptStore;
   readonly replayBytes: number;
+  /** Host observation of a PTY exit that Terminal did not authorise. */
+  readonly onUnexpectedExit?: (terminalSessionId: TerminalSessionId) => void;
   /** How long a controller may go unseen before it is `stale` (§13.4). */
   readonly staleAfterMs: number;
 }
@@ -30,6 +32,10 @@ export const OPERATION = {
   acquire: 'terminal.acquireInputLease' as PublicOperationName,
   release: 'terminal.releaseInputLease' as PublicOperationName,
   write: 'terminal.writeInput' as PublicOperationName,
+  reserveNotification: 'terminal.reserveNotificationInput' as PublicOperationName,
+  commitNotification: 'terminal.commitReservedNotificationInput' as PublicOperationName,
+  cancelNotification: 'terminal.cancelReservedNotificationInput' as PublicOperationName,
+  draft: 'terminal.setControllerDraftState' as PublicOperationName,
   resize: 'terminal.resizeTerminal' as PublicOperationName,
   interrupt: 'terminal.interruptTerminalTurn' as PublicOperationName,
   terminate: 'terminal.terminateTerminal' as PublicOperationName,

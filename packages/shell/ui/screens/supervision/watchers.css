@@ -1,0 +1,41 @@
+/* Watchers read as an operator ledger: identity left, current operational
+   state right. Existing Shell tokens carry every colour and type decision. */
+
+.nv-watchers {
+  gap: 12px;
+  padding: 12px 14px;
+}
+
+.nv-watchers__scroll {
+  flex: 1;
+}
+
+.nv-watchers__rows .k-row {
+  align-items: baseline;
+  border-bottom: 1px solid var(--hairline);
+  border-radius: 0;
+}
+
+.nv-watchers__rows .k-row:last-child {
+  border-bottom: 0;
+}
+
+.nv-watchers__rows .k-row__label {
+  font-family: var(--mono);
+}
+
+.nv-watchers__rows .k-row__meta {
+  max-width: 62%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.nv-watchers__omission {
+  color: var(--ink-3);
+  font-size: var(--text-3);
+  margin: 0;
+  padding: 0 8px;
+}

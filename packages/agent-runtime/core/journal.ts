@@ -13,7 +13,8 @@ import {
   b3fail, b3ok, commandReceiptId, mintClientOpId, mintProviderSessionId, mintRunOperationId,
   nowIsoUtc,
   type AgentId, type AgentRunId, type B3Result, type CommandContext,
-  type CommandReceiptId, type ProviderSessionId, type RuntimeEpochId,
+  type CommandReceiptId, type NotificationId, type NotificationInputReservationId,
+  type ProviderSessionId, type ProviderTurnId, type RuntimeEpochId,
 } from '@novakai/foundation/contract';
 import {
   FINAL_LIFECYCLES,
@@ -56,6 +57,12 @@ export async function openOperation(
     readonly agentId?: AgentId;
     readonly oldRunId?: AgentRunId;
     readonly reserveProviderSession: boolean;
+    readonly notification?: {
+      readonly notificationId: NotificationId;
+      readonly effectKey: string;
+      readonly reservationId: NotificationInputReservationId;
+      readonly providerTurnId: ProviderTurnId;
+    };
   },
 ): Promise<B3Result<OpenedOperation>> {
   const receiptId = commandReceiptId(
@@ -80,6 +87,12 @@ export async function openOperation(
     ...(input.oldRunId === undefined ? {} : { oldRunId: input.oldRunId }),
     ...(input.reserveProviderSession
       ? { reservedProviderSessionId: mintProviderSessionId() } : {}),
+    ...(input.notification === undefined ? {} : {
+      notificationId: input.notification.notificationId,
+      notificationDeliveryEffectKey: input.notification.effectKey,
+      notificationInputReservationId: input.notification.reservationId,
+      notificationProviderTurnId: input.notification.providerTurnId,
+    }),
     currentStage: 'receipt-accepted',
     completedStages: [],
     compensation: [],
@@ -276,6 +289,7 @@ const OPERATION_NAMES: Readonly<Record<RunOperationKind, string>> = {
   'stop-one': 'agent.stop',
   'stop-tree': 'agent.stopTree',
   adopt: 'agent.adopt',
+  'deliver-notification': 'agent.deliverNotification',
 };
 
 export function operationNameOf(kind: RunOperationKind): string {
