@@ -154,3 +154,43 @@ test('nvk watch update replaces one watcher behind its current version fence', a
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('nvk watch remove retires its watcher instead of deleting it', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'nvk-b3d-watch-remove-'));
+  const host = await startRuntimeHost({
+    root,
+    port: 0,
+    ptyHost: createFakePtyHost(),
+    providers: createFakeProviderAdapters(),
+  });
+  const where = ['--root', root, '--port', String(host.port), '--json'];
+  try {
+    const added = await runNvk([
+      'watch', 'add',
+      '--subject', 'agentRun_019fd000-0000-7000-8000-0000000000a1',
+      '--when', 'run-final',
+      '--notify', 'human',
+      '--delivery', 'queue-only',
+      ...where,
+    ]);
+    assert.equal(added.code, 0, added.out);
+    const created = JSON.parse(added.out) as { readonly value: { readonly id: string } };
+
+    const removed = await runNvk(['watch', 'remove', created.value.id, ...where]);
+    assert.equal(removed.code, 0, removed.out);
+    const retired = JSON.parse(removed.out) as {
+      readonly value: { readonly id: string; readonly status: string };
+    };
+    assert.equal(retired.value.id, created.value.id);
+    assert.equal(retired.value.status, 'retired');
+
+    const listed = await runNvk(['watch', 'list', ...where]);
+    const page = JSON.parse(listed.out) as {
+      readonly value: { readonly rules: readonly { readonly status: string }[] };
+    };
+    assert.equal(page.value.rules[0]?.status, 'retired');
+  } finally {
+    await host.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
