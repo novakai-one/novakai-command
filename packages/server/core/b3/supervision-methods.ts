@@ -11,13 +11,15 @@
 // its rules now come through frozen `listWatchRules`; deadline detail remains
 // the tracer's additive read until a public deadline query is required.
 import {
-  b3err, b3fail, b3ok,
+  b3err, b3fail, b3ok, mintClientOpId, mintTraceCorrelationId,
   type ActivityGeneration, type AgentRunId, type AuthenticatedPrincipal, type B3Result,
 } from '@novakai/foundation/contract';
 import {
   parseNotificationFilter,
+  parseNotificationId,
   parseWatchRuleFilter,
-  type Notification, type WatchDeadline, type WatchRule,
+  type Notification, type NotificationEventPage, type NotificationId,
+  type WatchDeadline, type WatchRule,
 } from '../../../supervision/contract/index.js';
 import type { SupervisionCore } from '../../../supervision/public/index.js';
 import type { CallerSession, MethodTable } from '../../contract/protocol.js';
@@ -112,6 +114,50 @@ export function buildB3SupervisionMethods(options: B3SupervisionMethodOptions): 
       const filter = parseNotificationFilter(parsed.value.payload);
       if (!filter.ok) return filter;
       return supervision.listNotifications(options.principalFor(session), filter.value);
+    },
+
+    // LANE C. Settling a Notification is a mutation, so the id is parsed by the
+    // frozen guard rather than trusted: an unknown-shaped id must come back as
+    // a typed ValidationFailed, not reach the store as a lookup miss.
+    'b3.supervision.acknowledge': async (
+      params, session,
+    ): Promise<B3Result<Notification>> => {
+      const parsed = readParams(params);
+      if (!parsed.ok) return parsed;
+      const notificationId = parseNotificationId(parsed.value.payload['notificationId']);
+      if (!notificationId.ok) return notificationId;
+      return supervision.acknowledgeNotification(
+        {
+          principal: options.principalFor(session),
+          clientOpId: mintClientOpId(),
+          traceId: mintTraceCorrelationId(),
+          contractVersion: 1,
+        },
+        // The frozen guard proves the shape; it returns `unknown` because it is
+        // a boolean test wearing a Result, so the brand is applied here.
+        notificationId.value as NotificationId,
+      );
+    },
+
+    // LANE C. Q8: the subscription IS this bounded page on the existing v1
+    // request/response frame. Asking again from `after` is the subscription;
+    // not asking again is the cancellation. Nothing is held server-side.
+    'b3.supervision.subscribeNotifications': async (
+      params, session,
+    ): Promise<B3Result<NotificationEventPage>> => {
+      const parsed = readParams(params);
+      if (!parsed.ok) return parsed;
+      const payload = parsed.value.payload;
+      const limit = Number(payload['limit'] ?? 50);
+      if (!Number.isInteger(limit) || limit < 1 || limit > 500) {
+        return b3fail(b3err('ValidationFailed', 'limit must be an integer from 1 through 500',
+          { issues: [{ path: 'limit', message: 'out of range' }] }, false));
+      }
+      const after = payload['after'];
+      return supervision.notificationEventPage(options.principalFor(session), {
+        limit,
+        ...(typeof after === 'string' ? { after: after as never } : {}),
+      });
     },
   };
 }

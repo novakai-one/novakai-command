@@ -3,12 +3,12 @@
 //
 //   nvk watch list           the standing watcher rules and their deadlines
 //   nvk watch notifications  the durable Notification queue
+//   nvk watch acknowledge    settle one Notification you have actually seen
 //
-// Both take --json (§17.2). TRACER SCOPE: §17.1 names seven verbs, and these
-// are the two reads the B3d wire needs to be VISIBLE. `add`, `update`,
-// `remove`, `acknowledge` and `reset-drift` are mutations belonging to lanes B
-// and C, and a stub that pretended to perform one would be worse than its
-// absence — an operator would believe a watcher was retired when it was not.
+// All take --json (§17.2). `add`, `update`, `remove` and `reset-drift` remain
+// absent on purpose: they are lane B mutations, and a stub that pretended to
+// perform one would be worse than its absence — an operator would believe a
+// watcher was retired when it was not.
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { b3err, b3fail, type B3Result } from '@novakai/foundation/contract';
@@ -70,6 +70,10 @@ function describeNotifications(page: { readonly items: readonly Notification[] }
     + `  ${item.id} · ${item.phase} · ${item.deliveryMode}`).join('\n');
 }
 
+function describeAcknowledgement(item: Notification): string {
+  return `${item.state}  ${item.summary}\n  ${item.id}`;
+}
+
 const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
   async list(argFlags) {
     const limit = Number(argFlags.value('limit') ?? 50);
@@ -84,6 +88,21 @@ const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
       readonly items: readonly Notification[];
     }>((client) => client.call('b3.supervision.listNotifications', { limit })),
     describeNotifications);
+  },
+
+  async acknowledge(argFlags) {
+    // Positional first, so `nvk watch acknowledge <id>` reads the way §17.1
+    // writes it; --id stays available for scripts that would rather be explicit.
+    const notificationId = argFlags.value('id') ?? rest[0];
+    if (notificationId === undefined || notificationId.startsWith('--')) {
+      emit('watch acknowledge', argFlags, b3fail(b3err('ValidationFailed',
+        'usage: nvk watch acknowledge <notificationId>',
+        { issues: [{ path: 'notificationId', message: 'is required' }] }, false)),
+      describeAcknowledgement);
+    }
+    emit('watch acknowledge', argFlags, await withClient<Notification>(
+      (client) => client.call('b3.supervision.acknowledge', { notificationId }),
+    ), describeAcknowledgement);
   },
 };
 

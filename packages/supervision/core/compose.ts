@@ -7,6 +7,7 @@
 // out; none of them has to change what is already wired.
 import type { AuthenticatedPrincipal, B3Result } from '@novakai/foundation/contract';
 import type {
+  NotificationEventPage, NotificationEventPageInput,
   SupervisionContract, WatchDeadline, WatcherTemplate, WatcherTemplateCatalogue,
   WatcherInstallAuthority,
   WatchRuleAccess,
@@ -21,7 +22,8 @@ import { listWatchRules } from './watch-rule-query.js';
 import { evaluateEvent, listNotifications } from './notifications.js';
 import {
   acknowledgeNotification, claimNotificationDelivery,
-  getNotificationDeliveryAuthority, recordNotificationDeliveryOutcome,
+  getNotificationDeliveryAuthority, notificationEventPage,
+  recordNotificationDeliveryOutcome, subscribeNotifications,
 } from './notifications/index.js';
 
 /** The frozen members the tracer's live wire actually carries current through. */
@@ -31,6 +33,7 @@ export type SupervisionWireSlice = Pick<
   // Lane C: the delivery half of the Notification seam.
   | 'claimNotificationDelivery' | 'recordNotificationDeliveryOutcome'
   | 'acknowledgeNotification' | 'getNotificationDeliveryAuthority'
+  | 'subscribeNotifications'
 >;
 
 /** Deadline detail remains a tracer host read; WatchRule listing is now frozen. */
@@ -40,7 +43,17 @@ export interface SupervisionWatcherReads {
   ): Promise<B3Result<readonly WatchDeadline[]>>;
 }
 
-export type SupervisionCore = SupervisionWireSlice & SupervisionWatcherReads;
+/** Q8's bounded page, which the transport uses in place of a held stream. */
+export interface SupervisionNotificationReads {
+  notificationEventPage(
+    principal: AuthenticatedPrincipal,
+    input: NotificationEventPageInput,
+  ): Promise<B3Result<NotificationEventPage>>;
+}
+
+export type SupervisionCore = SupervisionWireSlice
+  & SupervisionWatcherReads
+  & SupervisionNotificationReads;
 
 export interface SupervisionCoreOptions extends SupervisionStoreOptions {
   /** Required: installs are refused unless Agents + Runtime facts can be re-read. */
@@ -85,6 +98,8 @@ export function composeSupervision(options: SupervisionCoreOptions): Supervision
       acknowledgeNotification({ store }, context, notificationId),
     getNotificationDeliveryAuthority: (principal, notificationId) =>
       getNotificationDeliveryAuthority({ store }, principal, notificationId),
+    subscribeNotifications: (_principal, after) => subscribeNotifications({ store }, after),
+    notificationEventPage: (_principal, input) => notificationEventPage({ store }, input),
     listWatchDeadlines: () => store.list<WatchDeadline>('watchDeadline'),
   };
 }

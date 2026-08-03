@@ -20,10 +20,11 @@ import {
 import {
   composeSupervision, createSupervisionStore, type SupervisionStore,
   acknowledgeNotification, claimNotificationDelivery,
-  getNotificationDeliveryAuthority, recordNotificationDeliveryOutcome,
+  getNotificationDeliveryAuthority, notificationEventPage,
+  recordNotificationDeliveryOutcome,
 } from '../core/index.js';
 import {
-  notificationDeliveryEffectKey, parseNotificationRecord,
+  notificationDeliveryEffectKey, parseNotificationEvent, parseNotificationRecord,
   type Notification, type NotificationId,
   type NotificationInputReservationId, type WatchRule, type WatchRuleId,
 } from '../contract/index.js';
@@ -124,6 +125,34 @@ async function seedQueued(
   } as never, deriveClientOpId(`lane-c:notification:${deliveryMode}:${state}`));
   assert.equal(written.ok, true, written.ok ? '' : written.error.message);
   return written.value;
+}
+
+/** Several distinct queued notifications, for paging. */
+async function seedNotificationWithId(
+  store: SupervisionStore,
+  id: NotificationId,
+): Promise<void> {
+  const effectKey = notificationDeliveryEffectKey(id);
+  const written = await store.create<Notification>('sys_supervision', {
+    kind: 'notification',
+    id,
+    schemaVersion: 1,
+    createdAt: '2026-08-03T00:01:00.000Z' as never,
+    permissionLevel: 'private',
+    createdBy: 'sys_supervision',
+    deliveryEffectKey: effectKey,
+    deliveryAttempt: { state: 'queued', effectKey },
+    watchRuleId: RULE_ID,
+    subject: { kind: 'agent-run', agentRunId: RUN_ID },
+    recipient: { kind: 'human', principalId: 'person_chris' as never },
+    conditionGeneration: 1,
+    summary: 'Output token threshold reached',
+    evidenceRefs: ['event_lane_c_1'],
+    state: 'queued',
+    deliveryMode: 'queue-only',
+    phase: 'condition',
+  } as never, deriveClientOpId(`lane-c:page:${id}`));
+  assert.equal(written.ok, true, written.ok ? '' : written.error.message);
 }
 
 const claimInput = (
@@ -549,4 +578,39 @@ test('the composed capability carries current from a queued Notification to a se
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+// ---------------------------------------------------------------------------
+// Q8's bounded, cursor-resumable notification stream.
+// ---------------------------------------------------------------------------
+
+test('the notification event page is bounded, ordered and resumable from its cursor', async () => {
+  const { store, cleanup } = rig();
+  try {
+    await seedRule(store, 'queue-only');
+    for (const suffix of ['d', 'e', 'f']) {
+      await seedNotificationWithId(store, `notification_${suffix.repeat(52)}` as NotificationId);
+    }
+
+    const first = await notificationEventPage({ store }, { limit: 2 });
+    assert.equal(first.ok, true, first.ok ? '' : first.error.message);
+    if (!first.ok) return;
+    assert.equal(first.value.items.length, 2, 'limit must bound the page, not be advisory');
+    for (const event of first.value.items) {
+      assert.equal(event.kind, 'supervision.notification.changed');
+      assert.equal(event.sourceOwner, 'supervision');
+      const parsed = parseNotificationEvent(event);
+      assert.equal(parsed.ok, true, parsed.ok ? '' : parsed.error.message);
+    }
+
+    assert.notEqual(first.value.nextCursor, undefined, 'a bounded page must say how to resume');
+    const rest = await notificationEventPage(
+      { store }, { limit: 2, after: first.value.nextCursor as never },
+    );
+    assert.equal(rest.ok, true, rest.ok ? '' : rest.error.message);
+    if (!rest.ok) return;
+    assert.equal(rest.value.items.length, 1, 'resuming must not repeat what the first page carried');
+    const seen = [...first.value.items, ...rest.value.items].map((event) => event.payload.id);
+    assert.equal(new Set(seen).size, 3, 'no notification may appear on two pages');
+  } finally { cleanup(); }
 });
