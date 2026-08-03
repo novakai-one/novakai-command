@@ -11,6 +11,7 @@ import { createFakeProviderAdapters } from '../../agents/b3/contract/index.js';
 import { createFakePtyHost, type FakePty } from '../../terminal/adapters/pty-host/fake.js';
 import { composeSupervision } from '../../supervision/public/index.js';
 import { buildB3SupervisionMethods } from '../core/b3/supervision-methods.js';
+import { clientOpIdFrom } from '../core/b3/cli-shared.js';
 import { startRuntimeHost } from '../core/b3/host.js';
 import { connectRuntime } from '../core/b3/client.js';
 import type { MethodTable } from '../contract/protocol.js';
@@ -61,6 +62,17 @@ function answerGate(ptyHost: ReturnType<typeof createFakePtyHost>): void {
   }, 5);
   timer.unref();
 }
+
+test('watcher mutations accept deterministic UUIDv5 ClientOpIds', () => {
+  const clientOpId = 'op_123e4567-e89b-52d3-a456-426614174020';
+  const parsed = clientOpIdFrom({
+    json: true,
+    positional: [],
+    value: (name) => name === 'client-op-id' ? clientOpId : undefined,
+  });
+  assert.equal(parsed.ok, true);
+  if (parsed.ok) assert.equal(parsed.value, clientOpId);
+});
 
 test('b3.supervision.createWatch creates one event watcher through the frozen command', async () => {
   const root = mkdtempSync(path.join(tmpdir(), 'nvk-b3d-watch-mutation-'));
