@@ -47,7 +47,8 @@ import {
   type RecordDriftStatusSubmissionInput, type WatcherTemplate,
 } from '../../../supervision/contract/index.js';
 import {
-  followEventsIntoSupervision, supervisionWatcherPort, watcherInstallAuthority, watchRuleAccess,
+  followEventsIntoSupervision, supervisionNotificationDeliveryPort,
+  supervisionWatcherPort, watcherInstallAuthority, watchRuleAccess,
 } from './supervision-ports.js';
 import { notificationTranscriptObserver } from './notification-transcript-port.js';
 import { createUsageReader } from '../supervision/usage.js';
@@ -400,6 +401,7 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
     ...(options.inboxDeliveryIntervalMs === undefined
       ? {} : { inboxDeliveryIntervalMs: options.inboxDeliveryIntervalMs }),
     watchers: supervisionWatcherPort(supervision),
+    notifications: supervisionNotificationDeliveryPort(supervision),
     usage: (principal, agentRunId) => supervision.getRunUsage(principal, agentRunId),
     transcriptCustody: transcriptCustodyPort(() => transcript),
     async transcriptBinding(agentRunId) {

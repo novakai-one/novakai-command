@@ -5,12 +5,12 @@
 // asks one question through a narrow port; Supervision answers it through its
 // FROZEN contract, and this file is the translation between the two.
 import {
-  b3err, b3fail, b3ok, mintClientOpId, mintTraceCorrelationId,
+  b3err, b3fail, b3ok, deriveClientOpId, mintClientOpId, mintTraceCorrelationId,
   type AgentRunId, type AuthenticatedPrincipal, type ResolvedLaunchPlanId,
   type SystemCommandContext,
 } from '@novakai/foundation/contract';
 import type {
-  AgentRunsContract, RunEvent, RunWatcherPort,
+  AgentRunsContract, NotificationDeliveryPort, RunEvent, RunWatcherPort,
 } from '../../../agent-runtime/contract/index.js';
 import type { GovernedAgentsContract } from '../../../agents/b3/contract/index.js';
 import type { SupervisionCore } from '../../../supervision/public/index.js';
@@ -134,6 +134,83 @@ export function supervisionWatcherPort(supervision: SupervisionCore): RunWatcher
           ? 'implicit-activity-drift' as const
           : 'explicit' as const,
       })));
+    },
+  };
+}
+
+/** Q7's Supervision owner seam, narrowed for Agent Runtime delivery. */
+export function supervisionNotificationDeliveryPort(
+  supervision: SupervisionCore,
+): NotificationDeliveryPort {
+  const contextFor = (effectKey: string, step: string) => runtimeContext({
+    clientOpId: deriveClientOpId(`${effectKey}:${step}`),
+    traceId: mintTraceCorrelationId(),
+  });
+  return {
+    async getAuthority(principal, notificationId) {
+      const authority = await supervision.getNotificationDeliveryAuthority(
+        principal, notificationId,
+      );
+      return authority.ok ? b3ok(authority.value) : authority;
+    },
+
+    async claim(input) {
+      const claimed = await supervision.claimNotificationDelivery(
+        contextFor(input.expectedEffectKey, 'claim'), input,
+      );
+      if (!claimed.ok) return claimed;
+      const notification = claimed.value.notification;
+      if (notification.phase !== 'drift-status-request') {
+        return b3ok({
+          phase: 'ordinary',
+          notificationRecordVersion: notification.recordVersion,
+        });
+      }
+      const deadline = claimed.value.watchDeadline;
+      if (deadline === undefined) {
+        return b3fail(b3err(
+          'WatcherConflict', 'a drift Notification claim returned no WatchDeadline',
+          { notificationId: notification.id }, true,
+        ));
+      }
+      return b3ok({
+        phase: 'drift-status-request',
+        notificationRecordVersion: notification.recordVersion,
+        watchDeadlineId: deadline.id,
+        watchDeadlineRecordVersion: deadline.recordVersion,
+        driftEpisodeId: notification.driftEpisodeId,
+      });
+    },
+
+    async recordSubmission(input) {
+      if (input.claim.phase === 'drift-status-request') {
+        const recorded = await supervision.recordDriftStatusSubmission(
+          contextFor(input.effectKey, 'record-drift-outcome'),
+          {
+            watchDeadlineId: input.claim.watchDeadlineId as never,
+            expectedRecordVersion: input.claim.watchDeadlineRecordVersion,
+            expectedEpisodeId: input.claim.driftEpisodeId as never,
+            expectedEffectKey: input.effectKey,
+            expectedNotificationId: input.notificationId,
+            expectedNotificationInputReservationId: input.notificationInputReservationId,
+            expectedTerminalInputAttemptId: input.terminalInputAttemptId,
+            submission: input.outcome,
+          },
+        );
+        return recorded.ok ? b3ok(null) : recorded;
+      }
+      const recorded = await supervision.recordNotificationDeliveryOutcome(
+        contextFor(input.effectKey, 'record-outcome'),
+        {
+          notificationId: input.notificationId,
+          expectedRecordVersion: input.claim.notificationRecordVersion,
+          expectedEffectKey: input.effectKey,
+          notificationInputReservationId: input.notificationInputReservationId,
+          terminalInputAttemptId: input.terminalInputAttemptId,
+          outcome: input.outcome,
+        },
+      );
+      return recorded.ok ? b3ok(null) : recorded;
     },
   };
 }

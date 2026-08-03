@@ -57,6 +57,17 @@ function runtimeContext(
   };
 }
 
+function supervisionContext(
+  effectKey: string,
+): SystemCommandContext<'sys_supervision'> {
+  return {
+    principal: { id: 'sys_supervision', kind: 'system', verifiedScopes: [] },
+    clientOpId: deriveClientOpId(`${effectKey}:start-notification-turn`),
+    traceId: mintTraceCorrelationId(),
+    contractVersion: 1,
+  };
+}
+
 const logicalDigest = (text: string): string =>
   createHash('sha256').update(text, 'utf8').digest('hex');
 
@@ -87,32 +98,26 @@ export function createNotificationDeliveryPump(
     // authority; next-turn-context gains execution authority only after the
     // Run's activity generation proves another turn happened first.
     if (notification.deliveryMode === 'queue-only') return null;
-    let target: {
-      readonly agentRunId: AgentRunId;
-      readonly effectKey: string;
-      readonly claimGeneration: ActivityGeneration;
-      readonly inputText: string;
-    };
     if (notification.deliveryMode === 'start-turn') {
-      const authority = await options.supervision.getNotificationDeliveryAuthority(
-        reader, notification.id,
-      );
-      if (!authority.ok) return authority.error.code;
-      target = {
-        agentRunId: authority.value.agentRunId,
-        effectKey: authority.value.deliveryEffectKey,
-        claimGeneration: authority.value.activityGeneration,
-        inputText: authority.value.inputText,
-      };
-    } else {
       if (notification.subject.kind !== 'agent-run') return 'NotificationDeliveryUnsafe';
-      target = {
-        agentRunId: notification.subject.agentRunId,
-        effectKey: notification.deliveryEffectKey,
-        claimGeneration: notification.conditionGeneration as ActivityGeneration,
-        inputText: notification.summary,
-      };
+      const outcome = await options.runs.startNotificationTurnAtSafeBoundary(
+        supervisionContext(notification.deliveryEffectKey),
+        {
+          notificationId: notification.id,
+          agentRunId: notification.subject.agentRunId,
+          effectKey: notification.deliveryEffectKey,
+          expectedActivityGeneration: notification.conditionGeneration as ActivityGeneration,
+        },
+      );
+      return outcome.ok ? '' : outcome.error.code;
     }
+    if (notification.subject.kind !== 'agent-run') return 'NotificationDeliveryUnsafe';
+    const target = {
+      agentRunId: notification.subject.agentRunId,
+      effectKey: notification.deliveryEffectKey,
+      claimGeneration: notification.conditionGeneration as ActivityGeneration,
+      inputText: notification.summary,
+    };
 
     const run = await options.runs.getAgentRun(reader, target.agentRunId);
     if (!run.ok) return run.error.code;
@@ -123,10 +128,7 @@ export function createNotificationDeliveryPump(
       || runTruth.terminalSessionId === undefined) {
       return null;
     }
-    if (notification.deliveryMode === 'start-turn'
-      && Number(runTruth.activityGeneration) !== Number(target.claimGeneration)) return null;
-    if (notification.deliveryMode === 'next-turn-context'
-      && Number(runTruth.activityGeneration) <= Number(target.claimGeneration)) return null;
+    if (Number(runTruth.activityGeneration) <= Number(target.claimGeneration)) return null;
 
     const terminal = await options.terminal.getTerminalSession(
       reader, runTruth.terminalSessionId,
