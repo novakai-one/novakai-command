@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
   b3ok,
+  deriveClientOpId,
   type AgentRunId,
   type IsoUtc,
   type SystemCommandContext,
@@ -17,6 +18,7 @@ import {
 } from '../core/index.js';
 import {
   deriveDriftEpisodeId,
+  deriveNotificationInputReservationId,
   DRIFT_STATUS_PROMPT,
   type CheckRunDriftInput,
   type DriftCheckOutcome,
@@ -88,6 +90,7 @@ test('identical free evidence establishes a baseline then opens one quiet episod
         evidenceRefs: [`sample-${String(++sample)}`],
       }),
     },
+    driftSubmissionAuthority: { verify: async () => b3ok(null) },
   } as SupervisionCoreOptions & {
     readonly driftEvidence: {
       observe(agentRunId: AgentRunId): Promise<ReturnType<typeof b3ok<{
@@ -229,6 +232,92 @@ test('identical free evidence establishes a baseline then opens one quiet episod
       await store.list<Notification>('notification'),
     )[0]!;
     assert.equal(cancelledNotification.state, 'expired');
+
+    now = new Date('2026-08-03T00:30:00.000Z');
+    unwrap(await supervision.checkRunDrift(supervisionContext(), input()));
+    deadline = unwrap(await store.list<WatchDeadline>('watchDeadline'))[0]!;
+    now = new Date('2026-08-03T00:35:00.000Z');
+    const secondQueued = unwrap(
+      await supervision.checkRunDrift(supervisionContext(), input()),
+    );
+    assert.equal(secondQueued.kind, 'status-turn-queued');
+    if (secondQueued.kind !== 'status-turn-queued') throw new Error('second status not queued');
+    deadline = unwrap(await store.list<WatchDeadline>('watchDeadline'))[0]!;
+    const secondNotification = unwrap(
+      await store.list<Notification>('notification'),
+    ).find((item) => item.id === secondQueued.notificationId)!;
+    const reservationId = deriveNotificationInputReservationId(secondQueued.effectKey);
+    const terminalInputAttemptId =
+      'terminalInput_019fd000-0000-7000-8000-0000000000b3' as never;
+    const providerTurnId = 'providerTurn_019fd000-0000-7000-8000-0000000000b4' as never;
+    const outstanding = deadline.driftState?.outstandingStatus;
+    assert.equal(outstanding?.state, 'queued');
+    if (outstanding?.state !== 'queued') throw new Error('expected queued drift status');
+    deadline = unwrap(await store.update<WatchDeadline>(
+      'sys_supervision',
+      deadline.id,
+      {
+        driftState: {
+          ...deadline.driftState,
+          outstandingStatus: {
+            ...outstanding,
+            state: 'delivery-claimed',
+            claimedAt: '2026-08-03T00:35:30.000Z',
+            notificationInputReservationId: reservationId,
+          },
+        },
+      },
+      deadline.recordVersion,
+      deriveClientOpId(`test:claim-drift:${deadline.id}`),
+    ));
+    unwrap(await store.update<Notification>(
+      'sys_supervision',
+      secondNotification.id,
+      {
+        state: 'offered-to-endpoint',
+        deliveryAttempt: {
+          state: 'delivery-claimed',
+          effectKey: secondQueued.effectKey,
+          claimedAt: '2026-08-03T00:35:30.000Z',
+          notificationInputReservationId: reservationId,
+        },
+      },
+      secondNotification.recordVersion,
+      deriveClientOpId(`test:claim-notification:${secondNotification.id}`),
+    ));
+
+    const submissionInput = {
+      watchDeadlineId: deadline.id,
+      expectedRecordVersion: deadline.recordVersion,
+      expectedEpisodeId: deadline.driftState!.episodeId!,
+      expectedEffectKey: secondQueued.effectKey,
+      expectedNotificationId: secondQueued.notificationId,
+      expectedNotificationInputReservationId: reservationId,
+      expectedTerminalInputAttemptId: terminalInputAttemptId,
+      submission: {
+        state: 'submitted-confirmed' as const,
+        submittedAt: '2026-08-03T00:36:00.000Z' as IsoUtc,
+        providerTurnId,
+      },
+    };
+    const submitted = unwrap(await supervision.recordDriftStatusSubmission(
+      runtimeContext(), submissionInput,
+    ));
+    assert.equal(submitted.dueAt, '2026-08-03T00:41:00.000Z');
+    assert.equal(submitted.driftState?.outstandingStatus?.state, 'submitted-confirmed');
+    assert.equal(submitted.driftState?.outstandingStatus?.replyDueAt,
+      '2026-08-03T00:41:00.000Z');
+    assert.equal(submitted.driftState?.outstandingStatus?.providerTurnId, providerTurnId);
+    const submittedNotification = unwrap(
+      await store.read<Notification>('notification', secondQueued.notificationId),
+    )!;
+    assert.equal(submittedNotification.deliveryAttempt.state, 'submitted-confirmed');
+    assert.equal(submittedNotification.state, 'offered-to-endpoint');
+
+    const replayed = unwrap(await supervision.recordDriftStatusSubmission(
+      runtimeContext(), submissionInput,
+    ));
+    assert.deepEqual(replayed, submitted, 'submission replay changed durable state');
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

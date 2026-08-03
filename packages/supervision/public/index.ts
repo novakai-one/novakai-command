@@ -29,3 +29,4 @@ export {
   type DriftEvidenceObservation,
   type DriftEvidencePort,
 } from '../core/watchers/drift.js';
+export type { DriftSubmissionAuthority } from '../core/watchers/submission.js';

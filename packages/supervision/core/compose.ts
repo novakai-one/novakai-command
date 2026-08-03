@@ -24,12 +24,17 @@ import { evaluateEvent, listNotifications } from './notifications.js';
 import {
   checkRunDrift, type DriftEvidencePort,
 } from './watchers/drift.js';
+import {
+  recordDriftStatusSubmission, type DriftSubmissionAuthority,
+} from './watchers/submission.js';
+import { parseRecordDriftStatusSubmissionInput } from '../contract/input-validation.js';
 
 /** The frozen members the tracer's live wire actually carries current through. */
 export type SupervisionWireSlice = Pick<
   SupervisionContract,
   'installRunWatchers' | 'evaluateEvent' | 'listNotifications' | 'listWatchRules'
   | 'checkRunDrift'
+  | 'recordDriftStatusSubmission'
 >;
 
 /** Deadline detail remains a tracer host read; WatchRule listing is now frozen. */
@@ -56,6 +61,8 @@ export interface SupervisionCoreOptions extends SupervisionStoreOptions {
   readonly clock?: () => Date;
   /** Required at check time; omitted hosts receive a typed RuntimeUnavailable. */
   readonly driftEvidence?: DriftEvidencePort;
+  /** Runtime/Terminal truth used to authenticate one recorded status attempt. */
+  readonly driftSubmissionAuthority?: DriftSubmissionAuthority;
 }
 
 export function composeSupervision(options: SupervisionCoreOptions): SupervisionCore {
@@ -84,6 +91,18 @@ export function composeSupervision(options: SupervisionCoreOptions): Supervision
         'RuntimeUnavailable', 'activity-drift evidence is not composed', {}, true,
       )))
       : checkRunDrift({ store, evidence: options.driftEvidence, clock }, context, input),
+    recordDriftStatusSubmission: (context, input) => {
+      const parsed = parseRecordDriftStatusSubmissionInput(input);
+      if (!parsed.ok) return Promise.resolve(parsed);
+      if (options.driftSubmissionAuthority === undefined) {
+        return Promise.resolve(b3fail(b3err(
+          'RuntimeUnavailable', 'drift submission authority is not composed', {}, true,
+        )));
+      }
+      return recordDriftStatusSubmission(
+        { store, authority: options.driftSubmissionAuthority }, context, parsed.value,
+      );
+    },
     listWatchDeadlines: () => store.list<WatchDeadline>('watchDeadline'),
   };
 }
