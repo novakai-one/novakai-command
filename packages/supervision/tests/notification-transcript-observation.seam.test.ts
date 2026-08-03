@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   b3ok,
+  b3err,
+  b3fail,
   type SystemCommandContext,
 } from '@novakai/foundation/contract';
 import type {
@@ -12,6 +14,48 @@ import type {
   TranscriptDeliveryEvidence,
   TranscriptDeliveryNonObservationEvidence,
 } from '../contract/index.js';
+import {
+  assertNotificationTranscriptObservationProviderContract,
+  assertNotificationTranscriptObservationConsumerContract,
+  type NotificationTranscriptObservationConsumerHarness,
+  type NotificationTranscriptObservationProviderHarness,
+} from '../contract/testkit/index.js';
+import { isDeepStrictEqual } from 'node:util';
+import { queuedNotificationEvent } from './fixtures.js';
+
+const OBSERVATION_INPUT: RecordNotificationTranscriptObservationInput = {
+  notificationId: `notification_${'a'.repeat(52)}` as never,
+  expectedRecordVersion: 3 as never,
+  expectedEffectKey: 'b3v4:notification-delivery:q11-positive',
+  terminalInputAttemptId:
+    'terminalInput_018f0f8a-4f7b-7abc-8def-0123456789ab' as never,
+  evidence: {
+    bindingId: `transcriptBinding_${'b'.repeat(52)}` as never,
+    transcriptLineId: `transcriptLine_${'c'.repeat(64)}` as never,
+    agentRunId: 'agentRun_018f0f8a-4f7b-7abc-8def-0123456789ab' as never,
+    providerSessionId: 'sess_123e4567-e89b-42d3-a456-426614174000' as never,
+    providerTurnId: 'providerTurn_018f0f8a-4f7b-7abc-8def-0123456789ab' as never,
+    sourcePosition: '0000000042',
+    sourceDigest: 'sha256:provider-source-line',
+    logicalInputDigest: 'sha256:exact-logical-utf8-input',
+  },
+};
+
+const OBSERVED_NOTIFICATION: Notification = {
+  ...queuedNotificationEvent('start-turn').payload,
+  id: OBSERVATION_INPUT.notificationId,
+  recordVersion: 4 as never,
+  deliveryEffectKey: OBSERVATION_INPUT.expectedEffectKey,
+  deliveryAttempt: {
+    state: 'submitted-confirmed',
+    effectKey: OBSERVATION_INPUT.expectedEffectKey,
+    submittedAt: '2026-08-03T00:00:00.000Z' as never,
+    notificationInputReservationId: `notificationInput_${'e'.repeat(52)}` as never,
+    terminalInputAttemptId: OBSERVATION_INPUT.terminalInputAttemptId,
+    providerTurnId: OBSERVATION_INPUT.evidence.providerTurnId,
+  },
+  state: 'transcript-observed',
+};
 
 const q11CommandSurface: Pick<
   SupervisionCommands,
@@ -39,4 +83,33 @@ test('Q11 publishes the two Transcript-owned commands and their evidence types',
     'recordNotificationTranscriptNonObservation',
   ]);
   assert.equal(typeof evidenceSurface, 'function');
+});
+
+test('Transcript provider preserves the complete positive delivery evidence tuple', async () => {
+  const provider: NotificationTranscriptObservationProviderHarness = {
+    readNotificationTranscriptObservation: async () => OBSERVATION_INPUT,
+  };
+  await assertNotificationTranscriptObservationProviderContract(
+    provider,
+    OBSERVATION_INPUT,
+  );
+});
+
+test('Supervision promotes only exact positive evidence and replays it idempotently', async () => {
+  const consumer: NotificationTranscriptObservationConsumerHarness = {
+    recordNotificationTranscriptObservation: async (_context, input) => {
+      return isDeepStrictEqual(input, OBSERVATION_INPUT)
+        ? b3ok(OBSERVED_NOTIFICATION)
+        : b3fail(b3err(
+          'WatcherConflict',
+          'observation evidence conflicts',
+          {},
+          false,
+        ));
+    },
+  };
+  await assertNotificationTranscriptObservationConsumerContract(
+    consumer,
+    OBSERVATION_INPUT,
+  );
 });
