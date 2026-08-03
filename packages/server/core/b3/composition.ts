@@ -24,6 +24,9 @@ import {
   composeGovernedAgents, createProviderAdapters,
   type GovernedAgentsContract, type ProviderAdapterRegistry,
 } from '../../../agents/b3/contract/index.js';
+import {
+  composeProviderUsageEvidence, type ProviderUsageEvidenceContract,
+} from '../../../agents/contract/index.js';
 import { agentsPort, createRunCredentials, terminalPort } from './run-ports.js';
 import { createProviderPort } from './provider-port.js';
 import { composeB3Messaging, composeB3TranscriptFor } from './messaging-composition.js';
@@ -46,6 +49,8 @@ import {
   followEventsIntoSupervision, supervisionWatcherPort, watcherInstallAuthority, watchRuleAccess,
   watchRuleGeneration,
 } from './supervision-ports.js';
+import { createUsageReader } from '../supervision/usage.js';
+import { createTranscriptUsagePort } from './usage-transcript-port.js';
 
 export interface B3RuntimeOptions {
   /** `.novakai/` root. Domain records live in `<root>/stores`. */
@@ -99,6 +104,7 @@ export interface B3Runtime {
   readonly runtime: RuntimeHostContract;
   readonly terminal: TerminalContract;
   readonly agents: GovernedAgentsContract;
+  readonly usageEvidence: ProviderUsageEvidenceContract;
   readonly runs: AgentRunsContract;
   readonly credentials: ReturnType<typeof createRunCredentials>;
   readonly messaging: AgentMessagingContract & { readonly store: { close(): Promise<void> } };
@@ -246,6 +252,20 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
         ?? null,
     },
   });
+  const usageEvidence = composeProviderUsageEvidence({
+    root: options.root,
+    dataRoot,
+    publish: (kind, payload, traceId) => {
+      runs?.publishCapabilityEvent(kind, { ...payload }, 'agents', traceId);
+    },
+  });
+  const usageTranscriptReader = createUsageReader({
+    ...(options.providerHome === undefined ? {} : { home: options.providerHome }),
+    transcriptRoot: path.join(options.root, 'transcripts'),
+    // A usage query is a request for current evidence. A five-minute manifest
+    // would render the first completed provider turn unavailable until later.
+    discoveryIntervalMs: 0,
+  });
   const credentials = createRunCredentials(options.root);
   // Late-bound on purpose: Transcript is composed AFTER Runs (it needs the
   // Messaging capability, which needs the store this root opens). The closure
@@ -267,6 +287,28 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
     watchRuleAccess: watchRuleAccess(() => runs ?? undefined),
     watchRuleGeneration: watchRuleGeneration(() => runs ?? undefined),
     templates: watcherTemplates,
+    usage: {
+      runs: {
+        async getUsageRun(principal, agentRunId) {
+          if (runs === null) {
+            return b3fail(b3err(
+              'RuntimeUnavailable', 'Agent Runtime is not composed', {}, true,
+            ));
+          }
+          return runs.usageRuns.getUsageRun(principal, agentRunId);
+        },
+        async listUsageRuns(principal, agentId) {
+          if (runs === null) {
+            return b3fail(b3err(
+              'RuntimeUnavailable', 'Agent Runtime is not composed', {}, true,
+            ));
+          }
+          return runs.usageRuns.listUsageRuns(principal, agentId);
+        },
+      },
+      evidence: usageEvidence,
+      transcript: createTranscriptUsagePort({ agents, reader: usageTranscriptReader }),
+    },
   });
 
   const emit = (owner: 'messaging' | 'transcript') =>
@@ -315,6 +357,7 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
     ...(options.inboxDeliveryIntervalMs === undefined
       ? {} : { inboxDeliveryIntervalMs: options.inboxDeliveryIntervalMs }),
     watchers: supervisionWatcherPort(supervision),
+    usage: (principal, agentRunId) => supervision.getRunUsage(principal, agentRunId),
     transcriptCustody: transcriptCustodyPort(() => transcript),
     async transcriptBinding(agentRunId) {
       if (transcript === null) return null;
@@ -378,6 +421,7 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
     runtime,
     terminal,
     agents,
+    usageEvidence,
     runs,
     credentials,
     messaging,

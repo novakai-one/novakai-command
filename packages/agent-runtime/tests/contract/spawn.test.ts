@@ -40,7 +40,7 @@ test('a supervised spawn reaches ready with its whole ladder recorded', async ()
     assert.equal(spawned.value.launch.requestedBy, CHRIS);
     assert.equal(spawned.value.family.supervisor.kind, 'human',
       'a root Agent is supervised by its root human');
-    assert.equal(spawned.value.usage.quality, 'unavailable',
+    assert.equal(spawned.value.usage.inputTokens.quality, 'unavailable',
       'red gate 13: an unmeasured usage is named, never rendered as zero');
 
     const operations = await rig.runtime.listRunOperations(rig.principal());

@@ -9,6 +9,7 @@ import {
   b3err, b3fail, type AuthenticatedPrincipal, type B3Result,
 } from '@novakai/foundation/contract';
 import type {
+  NotificationEventPage, NotificationEventPageInput,
   SupervisionContract, WatchDeadline, WatcherTemplate, WatcherTemplateCatalogue,
   WatcherInstallAuthority,
   WatchRuleAccess,
@@ -38,6 +39,16 @@ import {
 import {
   parseCreateWatchRuleInput, parseUpdateWatchRuleInput,
 } from '../contract/index.js';
+import {
+  acknowledgeNotification, claimNotificationDelivery,
+  getNotificationDeliveryAuthority, notificationEventPage,
+  recordNotificationDeliveryOutcome,
+  recordNotificationTranscriptNonObservation,
+  recordNotificationTranscriptObservation, subscribeNotifications,
+} from './notifications/index.js';
+import {
+  createUsageProjection, type UsageProjection, type UsageProjectionOptions,
+} from './usage/index.js';
 
 /** The frozen members the tracer's live wire actually carries current through. */
 export type SupervisionWireSlice = Pick<
@@ -48,6 +59,16 @@ export type SupervisionWireSlice = Pick<
   | 'claimDueDeadlines'
   | 'resetDriftEpisode'
   | 'createWatchRule' | 'updateWatchRule'
+  // Lane C: the delivery half of the Notification seam.
+  | 'claimNotificationDelivery' | 'recordNotificationDeliveryOutcome'
+  | 'acknowledgeNotification' | 'getNotificationDeliveryAuthority'
+  | 'subscribeNotifications'
+  // Lane C, Q11: the transcript half — the only path past `offered-to-endpoint`.
+  | 'recordNotificationTranscriptObservation'
+  | 'recordNotificationTranscriptNonObservation'
+  // Lane A: the usage half — every Run gets an honest row.
+  | 'getAgentUsage'
+  | 'getRunUsage'
 >;
 
 /** Deadline detail remains a tracer host read; WatchRule listing is now frozen. */
@@ -57,7 +78,17 @@ export interface SupervisionWatcherReads {
   ): Promise<B3Result<readonly WatchDeadline[]>>;
 }
 
-export type SupervisionCore = SupervisionWireSlice & SupervisionWatcherReads;
+/** Q8's bounded page, which the transport uses in place of a held stream. */
+export interface SupervisionNotificationReads {
+  notificationEventPage(
+    principal: AuthenticatedPrincipal,
+    input: NotificationEventPageInput,
+  ): Promise<B3Result<NotificationEventPage>>;
+}
+
+export type SupervisionCore = SupervisionWireSlice
+  & SupervisionWatcherReads
+  & SupervisionNotificationReads;
 
 export interface SupervisionCoreOptions extends SupervisionStoreOptions {
   /** Required: installs are refused unless Agents + Runtime facts can be re-read. */
@@ -78,7 +109,24 @@ export interface SupervisionCoreOptions extends SupervisionStoreOptions {
   readonly driftSubmissionAuthority?: DriftSubmissionAuthority;
   /** Required for manual timed rules; there is deliberately no default generation. */
   readonly watchRuleGeneration?: WatchRuleGenerationPort;
+  /** B3d usage authorities; absent hosts return typed unavailability. */
+  readonly usage?: UsageProjectionOptions;
 }
+
+const USAGE_NOT_COMPOSED: UsageProjection = {
+  getRunUsage: async () => b3fail(b3err(
+    'RuntimeUnavailable',
+    'usage projection authorities are not composed in this host',
+    { reason: 'usage-not-composed' },
+    true,
+  )),
+  getAgentUsage: async () => b3fail(b3err(
+    'RuntimeUnavailable',
+    'usage projection authorities are not composed in this host',
+    { reason: 'usage-not-composed' },
+    true,
+  )),
+};
 
 export function composeSupervision(options: SupervisionCoreOptions): SupervisionCore {
   const store = options.store ?? createSupervisionStore(options);
@@ -90,6 +138,9 @@ export function composeSupervision(options: SupervisionCoreOptions): Supervision
     clock: options.clock ?? ((): Date => new Date()),
   };
   const clock = options.clock ?? ((): Date => new Date());
+  const usage = options.usage === undefined
+    ? USAGE_NOT_COMPOSED
+    : createUsageProjection(options.usage);
 
   return {
     installRunWatchers: (context, input) => {
@@ -160,6 +211,22 @@ export function composeSupervision(options: SupervisionCoreOptions): Supervision
         parsed.value,
       );
     },
+    claimNotificationDelivery: (context, input) =>
+      claimNotificationDelivery({ store }, context, input),
+    recordNotificationDeliveryOutcome: (context, input) =>
+      recordNotificationDeliveryOutcome({ store }, context, input),
+    acknowledgeNotification: (context, notificationId) =>
+      acknowledgeNotification({ store }, context, notificationId),
+    getNotificationDeliveryAuthority: (principal, notificationId) =>
+      getNotificationDeliveryAuthority({ store }, principal, notificationId),
+    recordNotificationTranscriptObservation: (context, input) =>
+      recordNotificationTranscriptObservation({ store }, context, input),
+    recordNotificationTranscriptNonObservation: (context, input) =>
+      recordNotificationTranscriptNonObservation({ store }, context, input),
+    subscribeNotifications: (_principal, after) => subscribeNotifications({ store }, after),
+    notificationEventPage: (_principal, input) => notificationEventPage({ store }, input),
+    getRunUsage: (principal, agentRunId) => usage.getRunUsage(principal, agentRunId),
+    getAgentUsage: (principal, agentId) => usage.getAgentUsage(principal, agentId),
     listWatchDeadlines: () => store.list<WatchDeadline>('watchDeadline'),
   };
 }

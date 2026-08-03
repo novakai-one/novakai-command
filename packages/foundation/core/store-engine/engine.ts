@@ -56,6 +56,7 @@ export const KIND_FILES: Readonly<Record<Exclude<ObjectKind, 'token'>, string>> 
   transcriptBinding: 'transcriptBindings.jsonl',         // B3c DEC-B3V4-24
   observedSubagent: 'observedSubagents.jsonl',           // B3c DEC-B3V4-18
   storeRouteCutover: 'storeRouteCutovers.jsonl',         // B3c DEC-B3V4-25
+  providerUsageEvidence: 'providerUsageEvidence.jsonl',  // B3d §5.5/§18.1
   watchRule: 'watchRules.jsonl',                         // B3d §9.2/§18.1
   watchDeadline: 'watchDeadlines.jsonl',                 // B3d §9.2/§18.1
   notification: 'notifications.jsonl',                   // B3d §9.2/§18.1
@@ -77,6 +78,7 @@ export const RECORD_KINDS: readonly string[] = [
   'agentRun', 'runContinuation', 'supervisionAssignment',
   'treeMutationFence', 'runOperation',
   'messagingStoreOp', 'transcriptBinding', 'observedSubagent', 'storeRouteCutover',
+  'providerUsageEvidence',
   'watchRule', 'watchDeadline', 'notification',
 ];
 

@@ -4,6 +4,7 @@
 //   nvk watch add            create one active watcher rule
 //   nvk watch list           the standing watcher rules and their deadlines
 //   nvk watch notifications  the durable Notification queue
+//   nvk watch acknowledge    settle one Notification you have actually seen
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -118,6 +119,10 @@ async function currentDeadline(
     : b3ok(found);
 }
 
+function describeAcknowledgement(item: Notification): string {
+  return `${item.state}  ${item.summary}\n  ${item.id}`;
+}
+
 const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
   [ADD_COMMAND]: async function addWatcher(argFlags) {
     const input = addWatchInput(argFlags);
@@ -189,6 +194,21 @@ const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
       readonly items: readonly Notification[];
     }>((client) => client.call('b3.supervision.listNotifications', { limit })),
     describeNotifications);
+  },
+
+  async acknowledge(argFlags) {
+    // Positional first, so `nvk watch acknowledge <id>` reads the way §17.1
+    // writes it; --id stays available for scripts that would rather be explicit.
+    const notificationId = argFlags.value('id') ?? rest[0];
+    if (notificationId === undefined || notificationId.startsWith('--')) {
+      emit('watch acknowledge', argFlags, b3fail(b3err('ValidationFailed',
+        'usage: nvk watch acknowledge <notificationId>',
+        { issues: [{ path: 'notificationId', message: 'is required' }] }, false)),
+      describeAcknowledgement);
+    }
+    emit('watch acknowledge', argFlags, await withClient<Notification>(
+      (client) => client.call('b3.supervision.acknowledge', { notificationId }),
+    ), describeAcknowledgement);
   },
 };
 

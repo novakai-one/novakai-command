@@ -5,8 +5,9 @@ import type { AgentEvent, LayoutRecord, PresenceSource, SettingsRecord } from '.
 import type { SetSettingError } from './settings.js';
 import type { PersistFailedError } from './errors.js';
 import type { ScreenContext } from './context.js';
-import type { UsageTableView } from './usage.js';
+import type { RunUsageTableView, UsageTableView } from './usage.js';
 import type { WatcherListView } from './watchers.js';
+import type { NotificationInboxView } from './notifications.js';
 
 /**
  * S2a: shell-side view of an agent definition v2 (plain data — the browser
@@ -87,6 +88,14 @@ export interface MessagingEvents {
    * never call it.
    */
   onUsage?(table: UsageTableView): void;
+  /**
+   * B3d lane C: the supervision notification inbox. Pushed whenever a
+   * Notification's durable state moves, so the ONE row that is the exception
+   * follows the capability rather than a poll interval.
+   */
+  onNotifications?(inbox: NotificationInboxView): void;
+  /** A committed Agents evidence event says the rebuildable Run rows may have moved. */
+  onRunUsageChanged?(): void;
 }
 
 export interface ShellServices {
@@ -147,4 +156,18 @@ export interface ShellServices {
 
   /** Current watcher rules joined to their generation-fenced deadlines. */
   listWatchers?(): Promise<WatcherListView>;
+  /**
+   * B3d lane C supervision surface: the current notification inbox, pulled once
+   * so the screen is never blank while it waits for the next push. Absent on
+   * hosts with no supervision engine — the screen draws that.
+   */
+  getNotificationInbox?(): Promise<NotificationInboxView>;
+  /**
+   * Settle one Notification. The ONLY mutation this surface offers, because the
+   * frozen state machine accepts an acknowledgement from `transcript-observed`
+   * and from nothing else. Resolves when the durable state has moved.
+   */
+  acknowledgeNotification?(notificationId: string): Promise<void>;
+  /** B3d Run usage read from Runtime views; older hosts omit or refuse it. */
+  getRunUsageTable?(): Promise<RunUsageTableView>;
 }

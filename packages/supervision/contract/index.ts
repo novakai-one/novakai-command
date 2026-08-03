@@ -5,6 +5,7 @@ export * from './policy.js';
 export * from './shared.js';
 export * from './drift.js';
 export * from './records.js';
+export * from './transcript-observation.js';
 export * from './api.js';
 export * from './validation.js';
 export * from './input-validation.js';

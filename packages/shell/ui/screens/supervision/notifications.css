@@ -1,0 +1,51 @@
+/* Notification inbox — the attention surface, and therefore the calmest one.
+   Grayscale + spacing + weight carry everything; no accent token appears here
+   at all (the composed viewport owns its single signal, SHL-010). */
+
+.nv-inbox__scroll {
+  flex: 1;
+}
+
+.nv-inbox {
+  gap: 14px;
+  padding: 12px 14px;
+}
+
+.nv-inbox__rows {
+  gap: 0;
+}
+
+/* The one exception. Separated by air and a hairline, not by colour — the row
+   reads as raised out of the list rather than shouted over it. */
+.nv-inbox__row--attention {
+  border-left: 2px solid var(--ink-muted, #a2a2aa);
+  background: var(--panel-2, #1b1b1e);
+}
+
+.nv-inbox__row--attention .k-presence {
+  margin-right: 8px;
+}
+
+/* Finished rows stay in place and stop competing. Calm = slow: the release of
+   the mark is a settle, not a flick. */
+.nv-inbox__row {
+  transition: opacity 700ms ease, background 700ms ease, border-color 700ms ease;
+  border-left: 2px solid transparent;
+}
+
+.nv-inbox__row--settled {
+  opacity: 0.55;
+}
+
+/* A row that cannot be settled must not LOOK settleable. The kit's row is a
+   button everywhere, so a notification nobody can act on would otherwise
+   light up under the pointer and read as an affordance that isn't there.
+   Keyboard focus is left alone — :focus-visible still draws its ring. */
+.nv-inbox__row:not(.nv-inbox__row--attention) .k-row {
+  cursor: default;
+}
+
+.nv-inbox__row:not(.nv-inbox__row--attention) .k-row:hover {
+  background: transparent;
+  color: var(--ink-2);
+}

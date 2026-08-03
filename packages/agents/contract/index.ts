@@ -1,6 +1,12 @@
 // packages/agents/contract — the ONLY legal import surface for consumers.
 export * from './schemas.js';
 export * from './errors.js';
+export * from './provider-usage-evidence.js';
+export {
+  composeProviderUsageEvidence,
+  providerUsageEvidenceId,
+  type ComposeProviderUsageEvidenceOptions,
+} from '../core/provider-usage-evidence.js';
 export { composeAgents, mockOf, type AgentsContext, type ComposeAgentsOptions } from '../core/composition.js';
 export { createAgentsContract, type AgentsContract } from '../core/contract.js';
 export { createMockAdapter, type MockTerminalAdapter } from '../core/providers/mock.js';

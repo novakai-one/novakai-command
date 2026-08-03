@@ -6,6 +6,7 @@ import {
   type SystemCommandContext, type TraceCorrelationId,
 } from '@novakai/foundation/contract';
 import type { RuntimeHostContract } from '../contract/types.js';
+import type { RunUsageLookup } from '../contract/runs-api.js';
 import type {
   AgentsPort, MessagingEndpointPort, ProviderPort, RunCredentialPort, TerminalPort,
   RunWatcherPort, TranscriptCustodyPort,
@@ -52,6 +53,8 @@ export interface RunsCore {
   readonly transcriptCustody?: TranscriptCustodyPort;
   /** B3d §13.5's watcher rung. Optional for the same reason as the two above. */
   readonly watchers?: RunWatcherPort;
+  /** B3d §19.1 usage projection, read through Supervision's public contract. */
+  readonly usage?: RunUsageLookup;
   /** Emitted after a commit, never before it (§15). */
   readonly publish: (
     kind: string,

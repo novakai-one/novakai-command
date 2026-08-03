@@ -8,6 +8,7 @@
 //   nvk-agent list [--state live|final|all]
 //   nvk-agent tree <agentId>
 //   nvk-agent inspect <agentRunId>
+//   nvk-agent usage <agentId|agentRunId>
 //   nvk-agent attach <agentRunId>
 //   nvk-agent controls <agentRunId>
 //   nvk-agent control <agentRunId> --set model=<id>|effort=<v>|provider-setting=<v>
@@ -39,11 +40,14 @@ import type {
   TreeMutationFence,
 } from '../../agent-runtime/contract/index.js';
 import type { AgentRoleProfile, DelegationGrant } from '../../agents/b3/contract/index.js';
+import type { AgentRunUsage, AgentUsageSummary } from '../../supervision/contract/index.js';
 import { connectRuntime, type RuntimeClient } from '../core/b3/client.js';
 import {
   clientOpIdFrom, emit, fail, parseFlags, type Flags,
 } from '../core/b3/cli-shared.js';
-import { describeControls, describeList, describeRun, describeTree } from './agent-describe.js';
+import {
+  describeControls, describeList, describeRun, describeTree, describeUsage,
+} from './agent-describe.js';
 import { roleFromFile, roleIdFor } from './agent-roles.js';
 import { messageCommands } from './agent-messages.js';
 import { observeCommands } from './agent-observe.js';
@@ -192,6 +196,16 @@ const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
     emit('agent inspect', argFlags, await withClient<AgentRunView>(
       (client) => client.call('b3.agent.getRun', { agentRunId }),
     ), describeRun);
+  },
+
+  async usage(argFlags) {
+    const target = argFlags.positional[0];
+    if (!target) return usage('agent usage', argFlags, '<agentId|agentRunId>');
+    emit('agent usage', argFlags, await withClient<AgentRunUsage | AgentUsageSummary>(
+      (client) => target.startsWith('agentRun_')
+        ? client.call('b3.supervision.getRunUsage', { agentRunId: target })
+        : client.call('b3.supervision.getAgentUsage', { agentId: target }),
+    ), describeUsage);
   },
 
   async interrupt(argFlags) {

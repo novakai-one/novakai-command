@@ -18,7 +18,7 @@ import type {
   AdoptAgentInput, AgentRunsContract, AgentRunView, ApplyRunControlInput,
   ContinueAgentInput,
   InterruptAgentTurnInput, PrepareStopAgentTreeInput, RunOperationView,
-  SpawnAgentInput, StopAgentInput, StopAgentTreeInput,
+  RunUsageLookup, RunUsageSource, SpawnAgentInput, StopAgentInput, StopAgentTreeInput,
 } from '../contract/runs-api.js';
 import type {
   AgentsPort, MessagingEndpointPort, MessagingInboxPort, ProviderPort, RunCredentialPort,
@@ -39,7 +39,7 @@ import { applyRunControl, discoverRunControls } from './controls.js';
 import { continueAgent } from './continue.js';
 import {
   getAgentRun, getRunLaunchPlanId, getRunOperation, listAgentRuns,
-  listRunOperations, reconcileAfterRestart, runsCensus, viewOfRun,
+  getUsageRun, listRunOperations, listUsageRuns, reconcileAfterRestart, runsCensus, viewOfRun,
 } from './queries.js';
 import { getAgentRunTree } from './tree.js';
 import { repairRunOperation } from './repair.js';
@@ -95,6 +95,8 @@ export interface ComposeAgentRunsOptions extends RunsStoreOptions {
   readonly inboxDeliveryIntervalMs?: number;
   /** B3d §13.5's watcher rung, through Supervision's frozen contract. */
   readonly watchers?: RunWatcherPort;
+  /** B3d §19.1 usage projection, through Supervision's frozen contract. */
+  readonly usage?: RunUsageLookup;
 }
 
 /**
@@ -107,6 +109,8 @@ export interface ComposeAgentRunsOptions extends RunsStoreOptions {
  */
 export type ComposedAgentRuns = AgentRunsContract & {
   readonly inboxDelivery: InboxDeliveryPump;
+  /** Composition-only raw Run facts for Supervision; never a second public Run API. */
+  readonly usageRuns: RunUsageSource;
 };
 
 /** Generous, because a real model reading its skills is not instant. */
@@ -156,6 +160,7 @@ export function composeAgentRuns(options: ComposeAgentRunsOptions): ComposedAgen
     ...(options.transcriptCustody === undefined
       ? {} : { transcriptCustody: options.transcriptCustody }),
     ...(options.watchers === undefined ? {} : { watchers: options.watchers }),
+    ...(options.usage === undefined ? {} : { usage: options.usage }),
   };
 
   // A host with no Messaging gets a pump over an inbox that answers "nothing",
@@ -189,6 +194,10 @@ export function composeAgentRuns(options: ComposeAgentRunsOptions): ComposedAgen
 
   return {
     inboxDelivery,
+    usageRuns: {
+      getUsageRun: (principal, agentRunId) => getUsageRun(core, principal, agentRunId),
+      listUsageRuns: (principal, agentId) => listUsageRuns(core, principal, agentId),
+    },
 
     spawnAgent: guarded(OPERATION.spawn, async (context, input: SpawnAgentInput) => {
       const spawned = await spawnAgent(core, context, input);
@@ -264,8 +273,8 @@ export function composeAgentRuns(options: ComposeAgentRunsOptions): ComposedAgen
     discoverRunControls: (principal, input) => discoverRunControls(core, principal, input),
     getRunOperation: (principal, operationId) => getRunOperation(core, principal, operationId),
     subscribeRunEvents: (_principal, after) => events.subscribe(after),
-    publishCapabilityEvent: (kind, payload, sourceOwner) => {
-      const event = events.append(kind, payload, undefined, sourceOwner);
+    publishCapabilityEvent: (kind, payload, sourceOwner, traceId) => {
+      const event = events.append(kind, payload, traceId, sourceOwner);
       publish?.(kind, { ...payload, cursor: event.cursor, eventId: event.eventId });
     },
     readRunEvents: async (_principal, input) => events.read(input.after, input.limit ?? 200),

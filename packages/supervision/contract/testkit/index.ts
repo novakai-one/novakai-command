@@ -3,3 +3,4 @@ export * from './usage-evidence.js';
 export * from './notification-delivery.js';
 export * from './safe-boundary-status.js';
 export * from './spawn-install-watchers.js';
+export * from './notification-transcript-observation.js';
