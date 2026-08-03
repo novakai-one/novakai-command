@@ -4,14 +4,15 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import {
-  b3ok, commandReceiptId, deriveClientOpId, mintClientOpId, mintTraceCorrelationId,
+  b3err, b3fail, b3ok, commandReceiptId, deriveClientOpId, mintClientOpId,
+  mintTraceCorrelationId,
   type ActivityGeneration, type AgentRunId, type IsoUtc, type PublicOperationName,
   type SystemCommandContext,
 } from '@novakai/foundation/contract';
 import {
-  deriveDeadlineWatchEvaluationId,
+  deriveDeadlineWatchEvaluationId, deriveNotificationId, notificationDeliveryEffectKey,
   SUPERVISION_RECORD_WRITER,
-  type CreateWatchRuleInput, type WatchDeadline, type WatchRule,
+  type CreateWatchRuleInput, type Notification, type WatchDeadline, type WatchRule,
 } from '../contract/index.js';
 import { composeSupervision } from '../core/compose.js';
 import { createSupervisionStore } from '../core/store.js';
@@ -242,6 +243,83 @@ test('ordinary deadline arming cycles keep immutable identity and isolated progr
     assert.equal(resumedDeadline.armingOrdinal, 2);
     assert.notEqual(resumedDeadline.id, shortenedDeadline.id);
 
+    const cancelled = await supervision.updateWatchRule(humanContext(), {
+      watchRuleId: firstRule.id,
+      expectedRecordVersion: resumed.value.recordVersion,
+      replacement: {
+        ...idleRule(60_000),
+        condition: { kind: 'run-final' },
+      },
+    });
+    assert.equal(cancelled.ok, true);
+    if (!cancelled.ok) return;
+    deadlines = await supervision.listWatchDeadlines(operator);
+    assert.equal(deadlines.ok, true);
+    if (!deadlines.ok) return;
+    assert.equal(deadlines.value.find((item) => item.id === resumedDeadline.id)?.state, 'superseded');
+
+    const rearmContext = humanContext();
+    const rearmed = await supervision.updateWatchRule(rearmContext, {
+      watchRuleId: firstRule.id,
+      expectedRecordVersion: cancelled.value.recordVersion,
+      replacement: idleRule(60_000),
+    });
+    assert.equal(rearmed.ok, true);
+    if (!rearmed.ok) return;
+    const rearmReplay = await supervision.updateWatchRule(rearmContext, {
+      watchRuleId: firstRule.id,
+      expectedRecordVersion: cancelled.value.recordVersion,
+      replacement: idleRule(60_000),
+    });
+    assert.equal(rearmReplay.ok, true);
+    deadlines = await supervision.listWatchDeadlines(operator);
+    assert.equal(deadlines.ok, true);
+    if (!deadlines.ok) return;
+    const cancellationRearm = deadlines.value.find((deadline) =>
+      deadline.watchRuleId === firstRule.id && deadline.state === 'armed')!;
+    assert.equal(cancellationRearm.armingOrdinal, 3);
+    assert.equal(deadlines.value.filter((deadline) =>
+      deadline.watchRuleId === firstRule.id && deadline.armingOrdinal === 3).length, 1);
+
+    const activityAt = new Date(now.getTime() + 1_000).toISOString() as IsoUtc;
+    const activity = await supervision.evaluateEvent({
+      principal: { id: 'sys_agent_runtime', kind: 'system', verifiedScopes: [] },
+      clientOpId: mintClientOpId(),
+      traceId: mintTraceCorrelationId(),
+      contractVersion: 1,
+    }, {
+      event: {
+        eventId: 'event_ordinary_activity_generation_4',
+        kind: 'agent.run.activity.changed',
+        schemaVersion: 1,
+        occurredAt: activityAt,
+        committedAt: activityAt,
+        sourceOwner: 'agent-runtime',
+        traceId: mintTraceCorrelationId(),
+        cursor: 'ordinary-activity-generation-4' as never,
+        payload: { agentRunId: RUN_ID, activityGeneration: 4 },
+      },
+    });
+    assert.equal(activity.ok, true, activity.ok ? '' : activity.error.message);
+    deadlines = await supervision.listWatchDeadlines(operator);
+    assert.equal(deadlines.ok, true);
+    if (!deadlines.ok) return;
+    const activityRearm = deadlines.value.find((deadline) =>
+      deadline.watchRuleId === firstRule.id && deadline.state === 'armed')!;
+    assert.equal(activityRearm.activityGeneration, 4);
+    assert.equal(activityRearm.armingOrdinal, 0);
+    assert.equal(
+      deadlines.value.find((deadline) => deadline.id === cancellationRearm.id)?.state,
+      'superseded',
+    );
+    assert.notEqual(activityRearm.id, cancellationRearm.id);
+    assert.notEqual(
+      deriveDeadlineWatchEvaluationId(activityRearm.id, activityRearm.creationRecordVersion!),
+      deriveDeadlineWatchEvaluationId(
+        cancellationRearm.id, cancellationRearm.creationRecordVersion!,
+      ),
+    );
+
     const progressAfterFire = await supervision.listWatchEvaluationProgress(operator, {
       watchRuleId: firstRule.id,
       triggerKind: 'deadline',
@@ -341,6 +419,93 @@ test('AMD-003 #15: a pre-amendment deadline breach is record-scoped within its c
     const notifications = await supervision.listNotifications(human, { limit: 20 });
     assert.equal(notifications.ok, true);
     if (notifications.ok) assert.equal(notifications.value.items.length, 0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('AMD-003 #46: deadline non-retryable failure is operator-discoverable', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'nvk-deadline-terminal-failure-'));
+  try {
+    const store = createSupervisionStore({ root, dataRoot: path.join(root, 'stores') });
+    const supervision = composeSupervision({
+      root,
+      dataRoot: path.join(root, 'stores'),
+      store,
+      clock: () => new Date('2026-08-04T00:10:00.000Z'),
+      installAuthority: { resolve: async () => { throw new Error('not used'); } },
+      watchRuleAccess: { agentIdFor: async () => b3ok(null) },
+      watchRuleGeneration: { generationFor: async () => b3ok(3 as ActivityGeneration) },
+      usage: {
+        runs: {
+          getUsageRun: async () => b3fail(b3err(
+            'ProviderSessionReservationConflict', 'corrupt Runtime binding', {}, false,
+          )),
+          listUsageRuns: async () => b3ok([]),
+          resolveUsageRunByProviderSession: async () => b3ok(null),
+          resolveCurrentRunByAgent: async () => b3ok(null),
+          getRunOccurrenceEvent: async () => b3fail(b3err(
+            'ProviderSessionReservationConflict', 'corrupt Runtime binding', {
+              conflictingAgentRunIds: [RUN_ID],
+            }, false,
+          )),
+        },
+        evidence: {
+          getProviderUsageEvidence: async () => b3ok(null),
+          listProviderUsageEvidence: async () => b3ok({ items: [], omissions: [] }),
+        },
+      },
+    });
+    const created = await supervision.createWatchRule(humanContext(), idleRule(300_000));
+    assert.equal(created.ok, true);
+    if (!created.ok) return;
+    const id = deriveNotificationId({
+      watchRuleId: created.value.id,
+      subjectKey: `agent-run:${String(RUN_ID)}`,
+      condition: created.value.condition,
+      activityGeneration: 2 as ActivityGeneration,
+      phase: 'condition',
+    });
+    const effectKey = notificationDeliveryEffectKey(id);
+    const seeded = await store.create<Notification>(SUPERVISION_RECORD_WRITER, {
+      id,
+      kind: 'notification',
+      schemaVersion: 1,
+      createdAt: '2026-08-03T00:00:00.000Z' as never,
+      permissionLevel: 'private',
+      createdBy: SUPERVISION_RECORD_WRITER,
+      deliveryEffectKey: effectKey,
+      deliveryAttempt: { state: 'queued', effectKey },
+      watchRuleId: created.value.id,
+      subject: created.value.subject,
+      recipient: created.value.recipient,
+      conditionGeneration: 2,
+      summary: 'legacy idle threshold',
+      evidenceRefs: ['event_corrupt_runtime_owner'],
+      state: 'queued',
+      deliveryMode: created.value.deliveryMode,
+      phase: 'condition',
+    }, deriveClientOpId(`test:seed-terminal-deadline-failure:${String(id)}`));
+    assert.equal(seeded.ok, true);
+
+    const evaluated = await supervision.evaluateDueDeadlines(
+      '2026-08-04T00:20:00.000Z' as IsoUtc,
+    );
+    assert.deepEqual(evaluated, b3ok([]));
+    const progress = await supervision.listWatchEvaluationProgress(operator, {
+      watchRuleId: created.value.id,
+      triggerKind: 'deadline',
+      outcomeKind: 'failed-non-retryable',
+      limit: 20,
+    });
+    assert.equal(progress.ok, true);
+    if (!progress.ok) return;
+    assert.equal(progress.value.items.length, 1);
+    assert.equal(progress.value.items[0]!.state, 'completed');
+    assert.equal(progress.value.items[0]!.completed[0]!.outcome.kind, 'failed-non-retryable');
+    const deadlines = await supervision.listWatchDeadlines(operator);
+    assert.equal(deadlines.ok, true);
+    if (deadlines.ok) assert.equal(deadlines.value[0]!.state, 'fired');
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

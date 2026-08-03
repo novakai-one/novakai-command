@@ -113,6 +113,26 @@ async function fireDeadline(
       progress.id,
     );
     if (!committed.ok) {
+      if (!committed.error.retryable) {
+        const recorded = await appendProgressOutcome(
+          deps.store,
+          principal,
+          progress,
+          {
+            watchRuleId: input.rule.id,
+            evaluatedRecordVersion: input.rule.recordVersion,
+            outcome: {
+              kind: 'failed-non-retryable',
+              code: committed.error.code,
+              reason: committed.error.message,
+              details: committed.error.details,
+            },
+          },
+        );
+        if (!recorded.ok) return recorded;
+        const finished = await finishProgress(deps.store, principal, recorded.value);
+        if (!finished.ok) return finished;
+      } else {
       const details = committed.error.details as Readonly<Record<string, unknown>>;
       const stage = details['stage'] === 'legacy-occurrence-adoption'
         ? 'legacy-occurrence-adoption'
@@ -122,21 +142,23 @@ async function fireDeadline(
       const recovery = { stage, reason: committed.error.message } as const;
       const finished = await finishProgress(deps.store, principal, progress, recovery);
       return finished.ok ? b3fail(committed.error) : finished;
+      }
+    } else {
+      queued = committed.value.notification ?? null;
+      const recorded = await appendProgressOutcome(
+        deps.store,
+        principal,
+        progress,
+        {
+          watchRuleId: input.rule.id,
+          evaluatedRecordVersion: input.rule.recordVersion,
+          outcome: committed.value.outcome,
+        },
+      );
+      if (!recorded.ok) return recorded;
+      const finished = await finishProgress(deps.store, principal, recorded.value);
+      if (!finished.ok) return finished;
     }
-    queued = committed.value.notification ?? null;
-    const recorded = await appendProgressOutcome(
-      deps.store,
-      principal,
-      progress,
-      {
-        watchRuleId: input.rule.id,
-        evaluatedRecordVersion: input.rule.recordVersion,
-        outcome: committed.value.outcome,
-      },
-    );
-    if (!recorded.ok) return recorded;
-    const finished = await finishProgress(deps.store, principal, recorded.value);
-    if (!finished.ok) return finished;
   }
   const claimed = await claimDeadline({
     store: deps.store,

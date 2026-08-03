@@ -212,7 +212,7 @@ export function composeSupervision(options: SupervisionCoreOptions): Supervision
       return owner.run(() => receipts.runCommand(
         context,
         { operation, request: { observedAt }, replaySafe: true, retainRetryableProgress: true },
-        () => evaluateDueDeadlines({ store }, observedAt, receiptId),
+        () => evaluateDueDeadlines(evaluation, observedAt, receiptId),
       ));
     },
     listNotifications: (_principal, filter) => listNotifications({ store }, filter),
