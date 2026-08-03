@@ -5,17 +5,26 @@
 // asks one question through a narrow port; Supervision answers it through its
 // FROZEN contract, and this file is the translation between the two.
 import {
+<<<<<<< HEAD
   b3err, b3fail, b3ok, deriveClientOpId, mintClientOpId, mintTraceCorrelationId,
   type AgentRunId, type AuthenticatedPrincipal, type ResolvedLaunchPlanId,
+=======
+  b3err, b3fail, b3ok, mintClientOpId, mintTraceCorrelationId,
+  type ActivityGeneration, type AgentRunId, type AuthenticatedPrincipal, type B3Result,
+  type ResolvedLaunchPlanId,
+>>>>>>> kimi/b3-runtime
   type SystemCommandContext,
 } from '@novakai/foundation/contract';
 import type {
   AgentRunsContract, NotificationDeliveryPort, RunEvent, RunWatcherPort,
 } from '../../../agent-runtime/contract/index.js';
 import type { GovernedAgentsContract } from '../../../agents/b3/contract/index.js';
-import type { SupervisionCore } from '../../../supervision/public/index.js';
+import type {
+  SupervisionCore, WatchRuleGenerationPort,
+} from '../../../supervision/public/index.js';
 import type {
   NotificationRecipient, VersionedRef, WatcherInstallAuthority, WatchRuleAccess,
+  WatchSubject,
 } from '../../../supervision/contract/index.js';
 import { ACTIVITY_DRIFT_TEMPLATE_REF } from '../../../supervision/contract/index.js';
 
@@ -100,6 +109,57 @@ export function watchRuleAccess(
       }
       const runView = await runtime.getAgentRun(principal, principal.agentRunId);
       return runView.ok ? b3ok(runView.value.agent.agentId) : runView;
+    },
+  };
+}
+
+const generationConflict = (
+  subject: WatchSubject,
+  message: string,
+  count?: number,
+): B3Result<ActivityGeneration> => b3fail(b3err(
+  'WatcherConflict', message,
+  { subject, ...(count === undefined ? {} : { matchingLiveRuns: count }) },
+  true,
+));
+
+/** Runtime-owned activity generation for manually-created timed rules. */
+export function watchRuleGeneration(
+  runs: () => AgentRunsContract | undefined,
+): WatchRuleGenerationPort {
+  return {
+    async generationFor(principal, subject) {
+      const runtime = runs();
+      if (runtime === undefined) {
+        return b3fail(b3err('RuntimeUnavailable', 'Agent Runtime is not composed', {}, true));
+      }
+      if (subject.kind === 'agent-run') {
+        const view = await runtime.getAgentRun(principal, subject.agentRunId);
+        return view.ok ? b3ok(view.value.run.activityGeneration) : view;
+      }
+      if (subject.kind === 'children-of') {
+        return b3fail(b3err(
+          'WatchRuleInvalid',
+          'a timed children-of watcher has no single authoritative activity generation',
+          { subject }, false,
+        ));
+      }
+      const page = await runtime.listAgentRuns(principal, {
+        agentId: subject.agentId,
+        includeFinal: false,
+        limit: 2,
+      });
+      if (!page.ok) return page;
+      if (page.value.items.length !== 1) {
+        return generationConflict(
+          subject,
+          page.value.items.length === 0
+            ? 'the Agent has no live Run to supply an activity generation'
+            : 'the Agent has multiple live Runs; target an AgentRun explicitly',
+          page.value.items.length,
+        );
+      }
+      return b3ok(page.value.items[0]!.run.activityGeneration);
     },
   };
 }

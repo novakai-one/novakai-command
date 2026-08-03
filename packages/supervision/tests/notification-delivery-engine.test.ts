@@ -24,7 +24,7 @@ import {
   getNotificationDeliveryAuthority, notificationEventPage,
   recordNotificationDeliveryOutcome,
 } from '../core/index.js';
-import { recordDriftStatusSubmission } from '../core/watchers/drift-submission.js';
+import { recordDriftStatusSubmission } from '../core/watchers/submission.js';
 import {
   notificationDeliveryEffectKey, parseNotificationEvent, parseNotificationRecord,
   DRIFT_FREE_EVIDENCE, DRIFT_STATUS_PROMPT,

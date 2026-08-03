@@ -248,6 +248,24 @@ test('required activity drift is injected beside explicit launch-plan refs', asy
       await rig.supervision.installRunWatchers(runtimeContext(), INSTALL), 'install with drift',
     );
     assert.deepEqual(rules.map((rule) => rule.condition.kind), ['activity-drift', 'idle-for-ms']);
+    const driftRule = rules[0]!;
+    const deadlines = unwrap(
+      await rig.supervision.listWatchDeadlines(human), 'activity-drift deadline',
+    );
+    const deadline = deadlines.find((item) => item.watchRuleId === driftRule.id);
+    assert.ok(deadline, 'required activity drift must be armed at spawn');
+    assert.equal(deadline.dueAt, '2026-08-03T00:05:00.000Z');
+    assert.deepEqual(deadline.driftState, {
+      kind: 'activity-drift',
+      episodeOrdinal: 0,
+      phase: 'observing',
+      quietIntervals: 0,
+      consecutiveUnansweredChecks: 0,
+    });
+    assertContractShaped(
+      parseWatchDeadline(deadline, { conditionKind: 'activity-drift' }),
+      'the armed activity-drift deadline',
+    );
   } finally {
     rig.close();
   }
@@ -461,6 +479,221 @@ test('replaying the same committed event queues no second Notification', async (
     );
     assert.equal(page.items.length, 1, 'the durable store holds a duplicate Notification');
     assert.equal(page.items[0]!.id, first[0]!.id);
+  } finally {
+    rig.close();
+  }
+});
+
+test('ordinary event evaluation never fires an activity-drift deadline', async () => {
+  const rig = createRig('2026-08-03T00:00:00.000Z', 'required', []);
+  try {
+    await rig.supervision.installRunWatchers(runtimeContext(), {
+      ...INSTALL,
+      requiredTemplateRefs: [],
+    });
+    const queued = unwrap(await rig.supervision.evaluateEvent(runtimeContext(), {
+      event: committedEvent('2026-08-03T00:07:00.000Z', 4),
+    }), 'evaluateEvent');
+    assert.deepEqual(queued, [], 'generic event evaluation bypassed checkRunDrift');
+
+    const deadlines = unwrap(await rig.supervision.listWatchDeadlines(human), 'deadlines');
+    assert.equal(deadlines.length, 1);
+    assert.equal(deadlines[0]!.state, 'armed');
+    assert.equal(deadlines[0]!.driftState?.phase, 'observing');
+  } finally {
+    rig.close();
+  }
+});
+
+test('manual event watcher creation does not invent or require a generation', async () => {
+  const rig = createRig('2026-08-03T00:00:00.000Z');
+  try {
+    const created = unwrap(await rig.supervision.createWatchRule({
+      principal: human,
+      clientOpId: 'op_123e4567-e89b-42d3-a456-426614174010' as never,
+      traceId: 'trace_123e4567-e89b-42d3-a456-426614174010' as never,
+      contractVersion: 1,
+    }, {
+      subject: { kind: 'agent-run', agentRunId: RUN_ID },
+      condition: { kind: 'run-final' },
+      recipient: { kind: 'human', principalId: 'person_chris' as never },
+      deliveryMode: 'queue-only',
+      cooldownMs: 0,
+      status: 'active',
+    }), 'createWatchRule');
+    assert.equal(created.condition.kind, 'run-final');
+    assert.equal(unwrap(await rig.store.list('watchDeadline'), 'deadlines').length, 0);
+  } finally {
+    rig.close();
+  }
+});
+
+test('a run-final lifecycle event queues one Notification under replay', async () => {
+  const rig = createRig('2026-08-03T00:00:00.000Z');
+  try {
+    const rule = unwrap(await rig.supervision.createWatchRule({
+      principal: human,
+      clientOpId: 'op_123e4567-e89b-42d3-a456-426614174011' as never,
+      traceId: 'trace_123e4567-e89b-42d3-a456-426614174011' as never,
+      contractVersion: 1,
+    }, {
+      subject: { kind: 'agent-run', agentRunId: RUN_ID },
+      condition: { kind: 'run-final' },
+      recipient: { kind: 'human', principalId: 'person_chris' as never },
+      deliveryMode: 'queue-only',
+      cooldownMs: 0,
+      status: 'active',
+    }), 'create run-final watcher');
+    const event = {
+      ...committedEvent('2026-08-03T00:01:00.000Z', 10),
+      payload: {
+        agentRunId: RUN_ID,
+        toLifecycle: 'stopped',
+        activityGeneration: 4,
+      },
+    };
+
+    const first = unwrap(await rig.supervision.evaluateEvent(runtimeContext(), { event }), 'first');
+    const replay = unwrap(await rig.supervision.evaluateEvent(runtimeContext(), { event }), 'replay');
+
+    assert.equal(first.length, 1);
+    assert.equal(first[0]!.watchRuleId, rule.id);
+    assert.equal(first[0]!.conditionGeneration, 4);
+    assert.deepEqual(replay, []);
+  } finally {
+    rig.close();
+  }
+});
+
+test('a run-final Notification survives restart and absorbs transition redelivery', async () => {
+  const rig = createRig('2026-08-03T00:00:00.000Z');
+  try {
+    const rule = unwrap(await rig.supervision.createWatchRule({
+      principal: human,
+      clientOpId: 'op_123e4567-e89b-42d3-a456-426614174013' as never,
+      traceId: 'trace_123e4567-e89b-42d3-a456-426614174013' as never,
+      contractVersion: 1,
+    }, {
+      subject: { kind: 'agent-run', agentRunId: RUN_ID },
+      condition: { kind: 'run-final' },
+      recipient: { kind: 'human', principalId: 'person_chris' as never },
+      deliveryMode: 'queue-only',
+      cooldownMs: 0,
+      status: 'active',
+    }), 'create restart-safe run-final watcher');
+    const transition = {
+      ...committedEvent('2026-08-03T00:01:00.000Z', 12),
+      payload: {
+        agentRunId: RUN_ID,
+        fromLifecycle: 'ready',
+        toLifecycle: 'stopped',
+        activityGeneration: 4,
+      },
+    };
+    const first = unwrap(
+      await rig.supervision.evaluateEvent(runtimeContext(), { event: transition }),
+      'first lifecycle evaluation',
+    );
+    assert.equal(first.length, 1);
+
+    // A fresh composition owns no in-memory evaluator state. Its only memory is
+    // the same durable store a restarted Runtime would reopen.
+    const restartedStore = createSupervisionStore({
+      root: rig.root,
+      dataRoot: path.join(rig.root, 'stores'),
+    });
+    const restarted = composeSupervision({
+      root: rig.root,
+      dataRoot: path.join(rig.root, 'stores'),
+      store: restartedStore,
+      installAuthority: {
+        resolve: async () => b3ok({
+          agentRunId: RUN_ID,
+          launchPlanId: PLAN_ID,
+          activityDrift: 'disabled-explicitly' as const,
+          requiredTemplateRefs: [IDLE_WATCH_TEMPLATE.templateRef],
+          parentNotificationMode: 'queue-only' as const,
+          recipient: { kind: 'human' as const, principalId: 'person_chris' as never },
+          activityGeneration: 4 as never,
+          watchStartTurnAuthorized: false,
+          requestProvenance: {
+            requestedBy: 'person_chris' as never,
+            traceId: INSTALL_TRACE_ID,
+          },
+        }),
+      },
+      watchRuleAccess: { agentIdFor: async () => b3ok(null) },
+    });
+    const beforeReplay = unwrap(
+      await restarted.listNotifications(human, { limit: 50 }),
+      'restart read',
+    );
+    assert.equal(beforeReplay.items.length, 1);
+    assert.equal(beforeReplay.items[0]!.watchRuleId, rule.id);
+
+    const redelivery = {
+      ...transition,
+      eventId: 'event_tracer_13',
+      cursor: 'tracer.13' as EventCursor,
+    };
+    const replay = unwrap(
+      await restarted.evaluateEvent(runtimeContext(), { event: redelivery }),
+      'transition redelivery after restart',
+    );
+    assert.deepEqual(replay, []);
+    const afterReplay = unwrap(
+      await restarted.listNotifications(human, { limit: 50 }),
+      'post-replay read',
+    );
+    assert.equal(afterReplay.items.length, 1);
+    assert.equal(afterReplay.items[0]!.id, beforeReplay.items[0]!.id);
+  } finally {
+    rig.close();
+  }
+});
+
+test('a new provider-liveness loss generation queues one run-disconnected Notification', async () => {
+  const rig = createRig('2026-08-03T00:00:00.000Z');
+  try {
+    const rule = unwrap(await rig.supervision.createWatchRule({
+      principal: human,
+      clientOpId: 'op_123e4567-e89b-42d3-a456-426614174012' as never,
+      traceId: 'trace_123e4567-e89b-42d3-a456-426614174012' as never,
+      contractVersion: 1,
+    }, {
+      subject: { kind: 'agent-run', agentRunId: RUN_ID },
+      condition: { kind: 'run-disconnected' },
+      recipient: { kind: 'human', principalId: 'person_chris' as never },
+      deliveryMode: 'queue-only',
+      cooldownMs: 0,
+      status: 'active',
+    }), 'create run-disconnected watcher');
+    const event = {
+      ...committedEvent('2026-08-03T00:01:00.000Z', 11),
+      kind: 'agent.run.connection.changed',
+      payload: {
+        agentRunId: RUN_ID,
+        activityGeneration: 5,
+        previous: {
+          final: false,
+          activityGeneration: 4,
+          uncertaintyCodes: [],
+        },
+        current: {
+          final: false,
+          activityGeneration: 5,
+          uncertaintyCodes: ['provider-liveness-unknown'],
+        },
+      },
+    };
+
+    const first = unwrap(await rig.supervision.evaluateEvent(runtimeContext(), { event }), 'first');
+    const replay = unwrap(await rig.supervision.evaluateEvent(runtimeContext(), { event }), 'replay');
+
+    assert.equal(first.length, 1);
+    assert.equal(first[0]!.watchRuleId, rule.id);
+    assert.equal(first[0]!.conditionGeneration, 5);
+    assert.deepEqual(replay, []);
   } finally {
     rig.close();
   }

@@ -6,6 +6,7 @@ import type { SetSettingError } from './settings.js';
 import type { PersistFailedError } from './errors.js';
 import type { ScreenContext } from './context.js';
 import type { RunUsageTableView, UsageTableView } from './usage.js';
+import type { WatcherListView } from './watchers.js';
 import type { NotificationInboxView } from './notifications.js';
 
 /**
@@ -152,6 +153,9 @@ export interface ShellServices {
    * Absent on hosts with no supervision engine — the screen draws that.
    */
   getUsageTable?(): Promise<UsageTableView>;
+
+  /** Current watcher rules joined to their generation-fenced deadlines. */
+  listWatchers?(): Promise<WatcherListView>;
   /**
    * B3d lane C supervision surface: the current notification inbox, pulled once
    * so the screen is never blank while it waits for the next push. Absent on

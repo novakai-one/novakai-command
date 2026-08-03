@@ -268,11 +268,16 @@ export async function patchRun(
       agentRunId: agentRun.id,
       fromLifecycle: agentRun.lifecycle,
       toLifecycle: patch.lifecycle,
+      activityGeneration: written.value.activityGeneration,
+      uncertaintyCodes: written.value.uncertainty.map((item) => item.code),
+      final: FINAL_LIFECYCLES.has(written.value.lifecycle),
     });
   }
   if (patch.activity !== undefined && patch.activity !== agentRun.activity) {
     core.publish('agent.run.activity.changed', {
-      agentRunId: agentRun.id, activity: patch.activity,
+      agentRunId: agentRun.id,
+      activity: patch.activity,
+      activityGeneration: written.value.activityGeneration,
     });
   }
   return written;

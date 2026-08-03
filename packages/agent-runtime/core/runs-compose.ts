@@ -12,7 +12,7 @@
 import {
   b3err, b3fail, b3ok, composeReceiptStore, mintClientOpId, mintTraceCorrelationId,
   type AuthenticatedPrincipal, type B3Result, type CommandContext,
-  type PublicOperationName, type ReceiptStore, type RunOperationId,
+  type PublicOperationName, type ReceiptStore, type RunOperationId, type TerminalSessionId,
 } from '@novakai/foundation/contract';
 import type {
   AdoptAgentInput, AgentRunsContract, AgentRunView, ApplyRunControlInput,
@@ -42,6 +42,7 @@ import { continueAgent } from './continue.js';
 import {
   getAgentRun, getRunLaunchPlanId, getRunOperation, listAgentRuns,
   getUsageRun, listRunOperations, listUsageRuns, reconcileAfterRestart, runsCensus, viewOfRun,
+  observeTerminalExit,
 } from './queries.js';
 import { getAgentRunTree } from './tree.js';
 import { repairRunOperation } from './repair.js';
@@ -119,6 +120,8 @@ export type ComposedAgentRuns = AgentRunsContract & {
   readonly inboxDelivery: InboxDeliveryPump;
   /** Composition-only raw Run facts for Supervision; never a second public Run API. */
   readonly usageRuns: RunUsageSource;
+  /** Composition-only sink for Terminal's unexpected managed-process exit fact. */
+  observeTerminalExit(terminalSessionId: TerminalSessionId): Promise<B3Result<null>>;
 };
 
 /** Generous, because a real model reading its skills is not instant. */
@@ -204,6 +207,7 @@ export function composeAgentRuns(options: ComposeAgentRunsOptions): ComposedAgen
 
   return {
     inboxDelivery,
+    observeTerminalExit: (terminalSessionId) => observeTerminalExit(core, terminalSessionId),
     usageRuns: {
       getUsageRun: (principal, agentRunId) => getUsageRun(core, principal, agentRunId),
       listUsageRuns: (principal, agentId) => listUsageRuns(core, principal, agentId),

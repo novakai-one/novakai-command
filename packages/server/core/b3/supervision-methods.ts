@@ -11,12 +11,16 @@
 // its rules now come through frozen `listWatchRules`; deadline detail remains
 // the tracer's additive read until a public deadline query is required.
 import {
-  b3err, b3fail, b3ok, mintClientOpId, mintTraceCorrelationId,
+  b3err, b3fail, b3ok, isValidClientOpId, mintClientOpId, mintTraceCorrelationId,
   type ActivityGeneration, type AgentRunId, type AuthenticatedPrincipal, type B3Result,
+  type B3ContractError, type CommandContext,
 } from '@novakai/foundation/contract';
 import {
+  parseCreateWatchRuleInput,
   parseNotificationFilter,
   parseNotificationId,
+  parseResetDriftEpisodeInput,
+  parseUpdateWatchRuleInput,
   parseWatchRuleFilter,
   type Notification, type NotificationEventPage, type NotificationId,
   type WatchDeadline, type WatchRule,
@@ -34,6 +38,7 @@ export interface B3SupervisionMethodOptions {
 
 interface WireParams {
   readonly contractVersion: 1;
+  readonly clientOpId?: string;
   readonly payload: Readonly<Record<string, unknown>>;
 }
 
@@ -60,6 +65,101 @@ function readParams(candidate: unknown): B3Result<WireParams> {
       { received: params.contractVersion, supported: [1] }, false));
   }
   return b3ok(params as WireParams);
+}
+
+function commandContext(
+  params: WireParams,
+  principal: AuthenticatedPrincipal,
+): B3Result<CommandContext> {
+  const clientOpId = params.clientOpId ?? mintClientOpId();
+  if (!isValidClientOpId(clientOpId)) {
+    return b3fail(b3err(
+      'ValidationFailed', 'clientOpId must be an op identifier',
+      { issues: [{ path: 'clientOpId', message: 'must be op_<uuid>' }] }, false,
+    ));
+  }
+  return b3ok({
+    principal,
+    clientOpId,
+    traceId: mintTraceCorrelationId(),
+    contractVersion: 1,
+  });
+}
+
+function resolveAuthenticatedHuman(
+  payload: Readonly<Record<string, unknown>>,
+  principal: AuthenticatedPrincipal,
+): B3Result<Readonly<Record<string, unknown>>> {
+  if (payload.recipient !== 'authenticated-human') return b3ok(payload);
+  if (principal.kind !== 'human') {
+    return b3fail(b3err(
+      'PermissionDenied', 'only a human connection can use the human CLI recipient',
+      { operation: 'createWatch' }, false,
+    ));
+  }
+  return b3ok({
+    ...payload,
+    recipient: { kind: 'human', principalId: principal.id },
+  });
+}
+
+function completePublishedDriftPolicy(
+  payload: Readonly<Record<string, unknown>>,
+): Readonly<Record<string, unknown>> {
+  if (typeof payload.condition !== 'object' || payload.condition === null
+    || (payload.condition as { readonly kind?: unknown }).kind !== 'activity-drift'
+    || typeof payload.driftPolicy !== 'object' || payload.driftPolicy === null) {
+    return payload;
+  }
+  const driftPolicy = payload.driftPolicy as Readonly<Record<string, unknown>>;
+  return {
+    ...payload,
+    driftPolicy: {
+      ...driftPolicy,
+      statusRecipient: driftPolicy.statusRecipient ?? 'subject-agent',
+      statusDeliveryMode: driftPolicy.statusDeliveryMode ?? 'start-turn',
+    },
+  };
+}
+
+const FIXED_DRIFT_TEMPLATE_PATHS = new Set([
+  'condition.staleAfterIntervals',
+  'condition.escalateAfterConsecutive',
+  'driftPolicy',
+]);
+
+function watchRuleParseFailure<T>(error: B3ContractError): B3Result<T> {
+  const rawIssues = error.details.issues;
+  const hasFixedTemplateIssue = error.code === 'ValidationFailed'
+    && Array.isArray(rawIssues)
+    && rawIssues.some((issue) => typeof issue === 'object' && issue !== null
+      && FIXED_DRIFT_TEMPLATE_PATHS.has(
+        String((issue as { readonly path?: unknown }).path),
+      ));
+  return hasFixedTemplateIssue
+    ? b3fail(b3err(
+      'WatchRuleInvalid',
+      'activity-drift uses a fixed policy template',
+      { issues: rawIssues },
+      false,
+    ))
+    : b3fail(error);
+}
+
+function resolveUpdateAuthenticatedHuman(
+  payload: Readonly<Record<string, unknown>>,
+  principal: AuthenticatedPrincipal,
+): B3Result<Readonly<Record<string, unknown>>> {
+  if (typeof payload.replacement !== 'object' || payload.replacement === null) {
+    return b3ok(payload);
+  }
+  const resolved = resolveAuthenticatedHuman(
+    payload.replacement as Readonly<Record<string, unknown>>,
+    principal,
+  );
+  return resolved.ok
+    ? b3ok({ ...payload, replacement: resolved.value })
+    : resolved;
 }
 
 export interface WatcherListing {
@@ -100,6 +200,45 @@ export function buildB3SupervisionMethods(options: B3SupervisionMethodOptions): 
   }
 
   return {
+    'b3.supervision.createWatch': async (params, session) => {
+      const parsed = readParams(params);
+      if (!parsed.ok) return parsed;
+      const principal = options.principalFor(session);
+      const resolved = resolveAuthenticatedHuman(parsed.value.payload, principal);
+      if (!resolved.ok) return resolved;
+      const input = parseCreateWatchRuleInput(completePublishedDriftPolicy(resolved.value));
+      if (!input.ok) return watchRuleParseFailure(input.error);
+      const context = commandContext(parsed.value, principal);
+      return context.ok
+        ? supervision.createWatchRule(context.value, input.value)
+        : context;
+    },
+
+    'b3.supervision.updateWatch': async (params, session) => {
+      const parsed = readParams(params);
+      if (!parsed.ok) return parsed;
+      const principal = options.principalFor(session);
+      const resolved = resolveUpdateAuthenticatedHuman(parsed.value.payload, principal);
+      if (!resolved.ok) return resolved;
+      const input = parseUpdateWatchRuleInput(resolved.value);
+      if (!input.ok) return input;
+      const context = commandContext(parsed.value, principal);
+      return context.ok
+        ? supervision.updateWatchRule(context.value, input.value)
+        : context;
+    },
+
+    'b3.supervision.resetDrift': async (params, session) => {
+      const parsed = readParams(params);
+      if (!parsed.ok) return parsed;
+      const input = parseResetDriftEpisodeInput(parsed.value.payload);
+      if (!input.ok) return input;
+      const context = commandContext(parsed.value, options.principalFor(session));
+      return context.ok
+        ? supervision.resetDriftEpisode(context.value, input.value)
+        : context;
+    },
+
     'b3.supervision.getRunUsage': async (params, session) => {
       const parsed = readParams(params);
       if (!parsed.ok) return parsed;

@@ -7,7 +7,7 @@
 // state machine belong to lanes A, B and C.
 //
 //   boot → spawn a governed agent → role watchers installed AT SPAWN
-//        → an idle deadline ARMS → an ordinary committed event FIRES it
+//        → an idle deadline ARMS → the Runtime scheduler FIRES it when due
 //        → a Notification QUEUES → `nvk watch list` / `nvk watch notifications`
 //
 // The one thing it asserts about depth is the §25-B3d exit condition every
@@ -15,7 +15,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -36,7 +36,7 @@ const repoRoot = path.resolve(here, '..', '..', '..');
  * actually outlive. It resolves through the REAL catalogue seam by ref and
  * digest — a shorter window, not a different mechanism.
  */
-const IDLE_MS = 3_000;
+const IDLE_MS = 1_000;
 const FAST_IDLE = createIdleWatchTemplate({ version: 99, idleMs: IDLE_MS });
 
 const opId = (): ClientOpId => mintClientOpId();
@@ -157,6 +157,18 @@ function runNvk(args: readonly string[]): Promise<{ code: number | null; out: st
   });
 }
 
+function deadlineStates(root: string, deadlineId: string): readonly string[] {
+  const lines = readFileSync(path.join(root, 'stores', 'watchDeadlines.jsonl'), 'utf8')
+    .trim().split('\n').map((line) => JSON.parse(line) as {
+      readonly envelope: { readonly id: string };
+      readonly payload: { readonly state: string };
+    });
+  const states = lines
+    .filter((line) => line.envelope.id === deadlineId)
+    .map((line) => line.payload.state);
+  return states.filter((state, index) => index === 0 || state !== states[index - 1]);
+}
+
 test('the B3d wire carries current from spawn to a queued Notification', async () => {
   const rig = await createRig();
   try {
@@ -202,16 +214,13 @@ test('the B3d wire carries current from spawn to a queued Notification', async (
       'watcher provenance was detached from the initiating spawn command');
     assert.equal(watchers.rules[0]?.installation?.requestedBy, 'person_chris');
 
-    // 3. Let the idle window pass, then let something ordinary happen. The
-    //    watcher is not polling: an event that was going to be published
-    //    anyway is the only clock it has.
+    // 3. Let the idle window pass without manufacturing activity. A silent Run
+    //    must still wake the durable scheduler; requiring another event here
+    //    would make a truly idle Runtime impossible to supervise.
     const turnsBeforeFiring = rig.ptyHost.started[0]?.turns.length ?? 0;
     assert.equal(turnsBeforeFiring, 2,
       'a governed launch is exactly two submitted turns: the question and the work');
-    await new Promise((resume) => { setTimeout(resume, IDLE_MS + 200); });
-    await anUnrelatedRuntimeEvent(rig);
-
-    // 4. The deadline fired and queued a Notification, durably.
+    // 4. The deadline fires and queues one Notification, durably.
     const queued = await until('the queued Notification', async () => {
       const page = await rig.chris.call<{ items: readonly Notification[] }>(
         'b3.supervision.listNotifications', { limit: 50 }, opId(),
@@ -225,10 +234,21 @@ test('the B3d wire carries current from spawn to a queued Notification', async (
       'a Notification reached delivery before it was durably queued');
     assert.equal(queued.watchRuleId, watchers.rules[0]?.id);
 
+    await new Promise((resume) => { setTimeout(resume, IDLE_MS + 200); });
+    const once = unwrap(await rig.chris.call<{ items: readonly Notification[] }>(
+      'b3.supervision.listNotifications', { limit: 50 }, opId(),
+    ), 'listNotifications after another idle window');
+    assert.equal(once.items.length, 1, 'one idle deadline queued more than one Notification');
+
     const fired = unwrap(await rig.chris.call<{
       deadlines: readonly WatchDeadline[];
     }>('b3.supervision.listWatchers', {}, opId()), 'listWatchers after firing');
     assert.equal(fired.deadlines[0]?.state, 'fired');
+    assert.deepEqual(
+      deadlineStates(rig.root, fired.deadlines[0]!.id),
+      ['armed', 'claimed', 'fired'],
+      'the durable scheduler skipped a published deadline state',
+    );
 
     // 5. §25-B3d's binding exit, measured rather than asserted: the watched
     //    Run's PTY received not one turn between arming and queueing. A
