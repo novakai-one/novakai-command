@@ -208,7 +208,11 @@ test('the B3d wire carries current from spawn to a queued Notification', async (
       kind: 'agent-run', agentRunId: agent.agentRunId,
     });
     assert.equal(watchers.deadlines.length, 1);
-    assert.equal(watchers.deadlines[0]?.state, 'armed');
+    assert.equal(
+      deadlineStates(rig.root, watchers.deadlines[0]!.id)[0],
+      'armed',
+      'the installed watcher never persisted its initial armed state',
+    );
     assert.equal(watchers.deadlines[0]?.watchRuleId, watchers.rules[0]?.id);
     assert.equal(watchers.rules[0]?.installation?.requestClientOpId, agent.spawnClientOpId,
       'watcher provenance was detached from the initiating spawn command');
