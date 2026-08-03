@@ -22,7 +22,6 @@ import type {
   TranscriptBindingId,
   TranscriptTurnCompletionId,
 } from '@novakai/foundation/contract';
-import type { AgentRunLifecycle } from './runs.js';
 
 export type ProviderTurnSubmissionOrigin =
   | {
@@ -308,7 +307,7 @@ export type CompleteProviderTurnOutcome =
   | {
       readonly kind: 'run-final';
       readonly agentRunId: AgentRunId;
-      readonly lifecycle: Extract<AgentRunLifecycle, 'stopped' | 'failed' | 'interrupted'>;
+      readonly lifecycle: 'stopped' | 'failed' | 'interrupted';
       readonly retryable: false;
     };
 
