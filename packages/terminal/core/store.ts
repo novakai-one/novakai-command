@@ -6,9 +6,10 @@
 import {
   b3fail,
   composeHandle, createObject, getObject, isAbsent, listObjects, updateObject,
-  storeFailure, b3ok, b3err,
+  requestQuarantine, storeFailure, b3ok, b3err,
   type B3PrincipalId, type B3Result, type ClientOpId, type ObjectId, type ObjectKind,
   type RecordEnvelope, type RecordVersion, type ScopedStoreHandle, type StoredObject,
+  type TraceCorrelationId,
 } from '@novakai/foundation/contract';
 
 export const TERMINAL_KINDS: readonly ObjectKind[] = [
@@ -44,6 +45,11 @@ export interface TerminalStore {
   list<T extends RecordEnvelope<string, string>>(
     kind: ObjectKind, filter?: Record<string, unknown>,
   ): Promise<B3Result<readonly T[]>>;
+
+  quarantine(
+    principal: B3PrincipalId, kind: ObjectKind, id: string,
+    clientOpId: ClientOpId, traceId: TraceCorrelationId,
+  ): Promise<B3Result<null>>;
 }
 
 export function createTerminalStore(options: TerminalStoreOptions): TerminalStore {
@@ -84,6 +90,13 @@ export function createTerminalStore(options: TerminalStoreOptions): TerminalStor
       const page = await listObjects(reader, kind, filter, { limit: 100_000 });
       if (!page.ok) return b3fail(storeFailure('terminal', page.error));
       return b3ok(page.value.items.map((item) => viewOf(item)));
+    },
+
+    async quarantine(principal, kind, id, clientOpId, traceId) {
+      const requested = await requestQuarantine(handleFor(principal), {
+        target: { kind, id: id as ObjectId }, clientOpId, traceId,
+      });
+      return requested.ok ? b3ok(null) : b3fail(storeFailure('terminal', requested.error));
     },
   };
 }

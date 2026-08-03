@@ -170,7 +170,7 @@ export function readWriteTerminalInput(payload: unknown): B3Result<WriteTerminal
     inputLeaseId: field.id('inputLeaseId', 'terminalInputLease'),
     leaseGeneration: field.count('leaseGeneration', 1, SEQUENCE_LIMIT) as LeaseGeneration,
     ...optional('expectedNextInputSequence', readSequenceClaim(field)),
-    kindOfInput: field.choice('kindOfInput', TERMINAL_INPUT_KINDS),
+    kindOfInput: field.choice('kindOfInput', [...TERMINAL_INPUT_KINDS, 'provider-turn-submit']),
     // Bytes are not validated for content — a terminal accepts what you type.
     ...optional('utf8Text', typeof field.given('utf8Text') === 'string'
       ? field.given('utf8Text') as string : undefined),

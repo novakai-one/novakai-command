@@ -125,6 +125,9 @@ test('exact owner facts complete one tuple once and an old replay cannot mutate 
     assert.equal(completed.value.run.activeProviderTurn, undefined);
     assert.equal(completed.value.run.lastCompletedProviderTurn?.providerTurnId,
       submission.providerTurnId);
+    assert.equal(rig.events.filter((event) =>
+      event.kind === 'agent.run.provider-turn.completed').length, 1);
+    assert.equal(rig.events.some((event) => event.kind === 'agent.provider-turn.completed'), false);
 
     const second = await rig.runtime.submitProviderTurn({
       ...runtimeContext, clientOpId: mintClientOpId(),

@@ -238,7 +238,8 @@ export interface WriteTerminalInput {
    * that IS tracking the position keeps the optimistic check by sending it.
    */
   readonly expectedNextInputSequence?: number;
-  readonly kindOfInput: TerminalInputKind;
+  /** `provider-turn-submit` is accepted only so this generic route can reject it semantically. */
+  readonly kindOfInput: TerminalInputKind | 'provider-turn-submit';
   readonly utf8Text?: string;
 }
 
@@ -459,6 +460,14 @@ export interface TerminalCommands {
  * caller surface: Shell, CLI and external controllers never see it.
  */
 export interface TerminalSystemSeam {
+  quarantineProviderTurnInputAttempt(
+    context: SystemCommandContext<'sys_agent_runtime'>,
+    input: {
+      readonly terminalInputAttemptId: TerminalInputAttemptId;
+      readonly evidenceRefs: readonly string[];
+    },
+  ): Promise<B3Result<null>>;
+
   beginProviderTurn(
     context: SystemCommandContext<'sys_agent_runtime'>,
     input: {

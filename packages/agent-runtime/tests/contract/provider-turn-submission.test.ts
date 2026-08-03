@@ -48,6 +48,13 @@ test('one semantic system submission durably activates one exact Run tuple', asy
       spawned.value.run.activityGeneration + 1,
     );
     assert.equal(rig.terminal.submitted.length, 1);
+    const stateEvents = rig.events.filter((event) =>
+      event.kind === 'agent.run.provider-turn-submission.changed');
+    assert.deepEqual(stateEvents.map((event) =>
+      (event.payload.state as { kind: string }).kind), [
+      'queued', 'queued', 'prepared', 'submitted-confirmed', 'submitted-confirmed',
+    ]);
+    assert.equal(rig.events.some((event) => event.kind === 'agent.provider-turn.submitted'), false);
 
     const current = await rig.runtime.getAgentRun(rig.principal(), spawned.value.run.id);
     assert.equal(current.ok, true);

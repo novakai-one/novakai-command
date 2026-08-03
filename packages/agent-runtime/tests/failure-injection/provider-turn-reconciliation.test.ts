@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  mintClientOpId, mintControllerAttachmentId, mintTerminalInputLeaseId,
+  mintClientOpId, mintControllerAttachmentId, mintProviderSessionId,
+  mintProviderTurnId, mintTerminalInputLeaseId, providerTurnSubmissionId,
   type CommandContext, type SystemCommandContext, type TranscriptBindingId,
 } from '@novakai/foundation/contract';
 import { createRunsRig } from '../runs-harness.js';
@@ -183,6 +184,94 @@ test('startup cancels a prepared reservation and clears its Run fence before rej
     const run = await rig.runtime.getAgentRun(rig.principal(), prepared!.agentRunId);
     assert.equal(run.ok, true);
     if (run.ok) assert.equal(run.value.run.providerTurnOperationFence, undefined);
+  } finally {
+    rig.close();
+  }
+});
+
+test('reconciliation quarantines a Terminal attempt with no Runtime submission identity', async () => {
+  const { rig, input } = await seededSystemRig();
+  try {
+    const providerTurnId = mintProviderTurnId();
+    const orphanSubmissionId = providerTurnSubmissionId(
+      input.agentRunId,
+      { kind: 'runtime-effect', source: 'agent-inbox-delivery' },
+      'orphan-terminal-attempt',
+    );
+    const prepared = await rig.terminal.prepareProviderTurnInput({
+      terminalSessionId: input.terminalSessionId,
+      agentRunId: input.agentRunId,
+      providerTurnSubmissionId: orphanSubmissionId,
+      deliveryAttemptOrdinal: 1,
+      providerSessionId: mintProviderSessionId(),
+      transcriptBindingId: input.transcriptBindingId,
+      startTranscriptWatermark: null,
+      expectedRunRecordVersion: 1 as never,
+      providerTurnId,
+      activityGeneration: 2 as never,
+      submissionEffectKey: 'orphan-terminal-attempt',
+      inputDigest: 'a'.repeat(64),
+      utf8Text: 'orphan',
+      authority: {
+        kind: 'runtime-safe-boundary', source: 'agent-inbox-delivery',
+        sourceEffectKey: 'orphan-terminal-attempt', sourceObjectRef: 'orphan',
+        expectedNoActiveInputLease: true, expectedNoControllerDraft: true,
+      },
+    });
+    assert.equal(prepared.ok, true);
+    if (!prepared.ok || prepared.value.kind !== 'prepared') return;
+    const reconciled = await rig.runtime.reconcileProviderTurns();
+    assert.equal(reconciled.ok, true, reconciled.ok ? '' : reconciled.error.message);
+    assert.deepEqual(rig.terminal.quarantinedProviderTurnAttemptIds, [prepared.value.attempt.id]);
+    const remaining = await rig.terminal.listIncompleteProviderTurnInputAttempts({});
+    assert.equal(remaining.ok, true);
+    if (remaining.ok) assert.equal(remaining.value.length, 0);
+  } finally {
+    rig.close();
+  }
+});
+
+test('an executing attempt without Runtime prepared state and fence is quarantined', async () => {
+  const { rig, context, input } = await seededSystemRig();
+  try {
+    rig.terminal.crashAfterProviderTurnPrepare = true;
+    await assert.rejects(
+      () => rig.runtime.submitProviderTurn(context, input),
+      /injected crash after durable Terminal provider-turn prepare/u,
+    );
+    const submissions = await rig.runtime.listProviderTurnSubmissions(rig.principal(), {
+      includeTerminal: true, limit: 20,
+    });
+    assert.equal(submissions.ok, true);
+    if (!submissions.ok) return;
+    const queued = submissions.value.items.find((item) =>
+      item.origin.kind === 'runtime-effect'
+      && item.origin.sourceEffectKey === input.sourceEffectKey);
+    assert.ok(queued);
+    const attempt = await rig.terminal.getProviderTurnInputAttempt({
+      terminalSessionId: queued!.terminalSessionId,
+      providerTurnId: queued!.providerTurnId,
+      submissionEffectKey: queued!.submissionEffectKey,
+    });
+    assert.equal(attempt.ok, true);
+    if (!attempt.ok || attempt.value === null) return;
+    rig.terminal.crashAfterProviderTurnExecutionStarted = true;
+    await assert.rejects(() => rig.terminal.executeProviderTurnInput({
+      terminalInputAttemptId: attempt.value!.id,
+      expectedAttemptRecordVersion: attempt.value!.recordVersion,
+      submissionEffectKey: queued!.submissionEffectKey,
+      providerTurnId: queued!.providerTurnId,
+      activityGeneration: queued!.activationTarget.activityGeneration,
+      utf8Text: input.utf8Text,
+    }), /injected crash after Terminal provider-turn execution began/u);
+
+    const reconciled = await rig.runtime.reconcileProviderTurns();
+    assert.equal(reconciled.ok, true, reconciled.ok ? '' : reconciled.error.message);
+    assert.deepEqual(rig.terminal.quarantinedProviderTurnAttemptIds, [attempt.value.id]);
+    const held = await rig.runtime.getProviderTurnSubmission(rig.principal(), queued!.providerTurnId);
+    assert.equal(held.ok, true);
+    if (held.ok) assert.equal(held.value.state.kind, 'recovery-required');
+    assert.equal(rig.terminal.submitted.length, 0);
   } finally {
     rig.close();
   }

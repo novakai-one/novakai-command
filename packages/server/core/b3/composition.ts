@@ -278,6 +278,9 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
     dataRoot,
     ptyHost,
     epochFence: runtime.fence,
+    publish: (kind, payload) => {
+      runs?.publishCapabilityEvent(kind, payload, 'terminal');
+    },
     onUnexpectedExit: (terminalSessionId) => {
       const activeRuns = runs;
       if (activeRuns === null) return;

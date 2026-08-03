@@ -91,6 +91,7 @@ export interface FakeTerminal extends TerminalPort {
   crashAfterProviderTurnExecutionStarted: boolean;
   /** Safe-boundary denial before any provider attempt exists. */
   providerTurnPrepareBlocked: boolean;
+  readonly quarantinedProviderTurnAttemptIds: string[];
 }
 
 /**
@@ -188,6 +189,7 @@ export function createFakeTerminal(): FakeTerminal {
     crashOnProviderTurnExecute: false,
     crashAfterProviderTurnExecutionStarted: false,
     providerTurnPrepareBlocked: false,
+    quarantinedProviderTurnAttemptIds: [],
 
     async openManagedTerminal(context, input) {
       if (port.failOpen) {
@@ -464,6 +466,12 @@ export function createFakeTerminal(): FakeTerminal {
         && attempt.turnBarrier.kind !== 'completion-committed'
         && attempt.turnBarrier.kind !== 'closed-unproven'
         && attempt.turnBarrier.kind !== 'released-rejected'));
+    },
+
+    async quarantineProviderTurnInputAttempt(input) {
+      port.quarantinedProviderTurnAttemptIds.push(String(input.terminalInputAttemptId));
+      providerTurnAttempts.delete(input.terminalInputAttemptId);
+      return b3ok(null);
     },
 
     async settleProviderTurnCompletion(input) {

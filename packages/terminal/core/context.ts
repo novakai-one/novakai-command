@@ -5,7 +5,7 @@ import type {
 } from '@novakai/foundation/contract';
 import { b3err, b3fail, b3ok } from '@novakai/foundation/contract';
 import type { Clock, PtyHost, RuntimeEpochFence } from '../contract/ports.js';
-import type { TerminalSession } from '../contract/records.js';
+import type { ProviderTurnTerminalInputAttempt, TerminalSession } from '../contract/records.js';
 import type { LiveSessions } from './live.js';
 import type { SessionQueue } from './serialize.js';
 import type { TerminalStore } from './store.js';
@@ -28,6 +28,7 @@ export interface TerminalCore {
     providerSessionId: import('@novakai/foundation/contract').ProviderSessionId,
     utf8Text: string,
   ) => Promise<readonly { readonly utf8Text: string; readonly pauseMsAfter: number }[]>;
+  readonly publish?: (kind: string, payload: Readonly<Record<string, unknown>>) => void;
 }
 
 export const OPERATION = {
@@ -99,6 +100,18 @@ export function versionOf(record: { readonly recordVersion: RecordVersion }): Re
  */
 export function clockIso(core: TerminalCore): IsoUtc {
   return new Date(core.clock.nowMs()).toISOString() as IsoUtc;
+}
+
+export function publishProviderTurnBarrier(
+  core: TerminalCore, attempt: ProviderTurnTerminalInputAttempt,
+): void {
+  core.publish?.('terminal.provider-turn-barrier.changed', {
+    terminalSessionId: attempt.terminalSessionId,
+    agentRunId: attempt.agentRunId,
+    providerTurnId: attempt.providerTurnId,
+    terminalInputAttemptId: attempt.id,
+    turnBarrier: attempt.turnBarrier,
+  });
 }
 
 /** Positive-integer viewport guard: a zero-column terminal is not a viewport. */

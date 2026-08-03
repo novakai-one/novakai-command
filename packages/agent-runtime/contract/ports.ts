@@ -423,6 +423,11 @@ export interface TerminalPort {
     readonly agentRunId?: AgentRunId;
   }): Promise<B3Result<readonly ProviderTurnInputAttemptFacts[]>>;
 
+  quarantineProviderTurnInputAttempt(input: {
+    readonly terminalInputAttemptId: TerminalInputAttemptId;
+    readonly evidenceRefs: readonly string[];
+  }): Promise<B3Result<null>>;
+
   settleProviderTurnCompletion(input: {
     readonly terminalInputAttemptId: TerminalInputAttemptId;
     readonly agentRunId: AgentRunId;

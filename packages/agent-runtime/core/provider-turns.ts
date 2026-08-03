@@ -52,10 +52,24 @@ async function patchSubmission(
   submission: ProviderTurnSubmission,
   patch: Partial<Persisted<ProviderTurnSubmission>>,
 ): Promise<B3Result<ProviderTurnSubmission>> {
-  return core.store.update<ProviderTurnSubmission>(
+  const written = await core.store.update<ProviderTurnSubmission>(
     'sys_agent_runtime', submission.id, patch as Record<string, unknown>,
     submission.recordVersion, mintClientOpId(),
   );
+  if (written.ok && patch.state !== undefined) publishSubmissionChanged(core, written.value);
+  return written;
+}
+
+function publishSubmissionChanged(
+  core: RunsCore, submission: ProviderTurnSubmission,
+  traceId?: import('@novakai/foundation/contract').TraceCorrelationId,
+): void {
+  core.publish('agent.run.provider-turn-submission.changed', {
+    agentRunId: submission.agentRunId,
+    providerTurnId: submission.providerTurnId,
+    providerTurnSubmissionId: submission.id,
+    state: submission.state,
+  }, traceId);
 }
 
 function effectKey(context: CommandContext, input: ProviderTurnSubmitInput): string {
@@ -237,6 +251,7 @@ export async function submitProviderTurn(
     );
     if (!written.ok) return written;
     submission = written.value;
+    publishSubmissionChanged(core, submission, context.traceId);
   }
 
   const settled = terminalOutcome(submission);
@@ -444,13 +459,6 @@ export async function submitProviderTurn(
     },
   });
   if (!committed.ok) return committed;
-  core.publish('agent.provider-turn.submitted', {
-    agentRunId: run.id,
-    providerTurnId: submission.providerTurnId,
-    providerTurnSubmissionId: submission.id,
-    activityGeneration: activationTarget.activityGeneration,
-    disposition: submissionState.kind,
-  }, context.traceId);
   return b3ok(submissionState.kind === 'submitted-confirmed'
     ? {
         kind: 'submitted-confirmed', submission: committed.value,
@@ -835,6 +843,57 @@ export async function reconcileAllProviderTurnSubmissions(
   core: RunsCore,
   mode: 'startup' | 'periodic',
 ): Promise<B3Result<readonly ProviderTurnSubmissionId[]>> {
+  const inventory = await core.store.list<ProviderTurnSubmission>('providerTurnSubmission');
+  if (!inventory.ok) return inventory;
+  const byId = new Map(inventory.value.map((submission) => [submission.id, submission]));
+  const attempts = await core.terminal.listIncompleteProviderTurnInputAttempts({});
+  if (!attempts.ok) return attempts;
+  for (const attempt of attempts.value) {
+    const submission = byId.get(attempt.providerTurnSubmissionId);
+    const immutableMismatch = submission !== undefined
+      && !attemptMatchesSubmission(attempt, submission);
+    let executingMismatch = false;
+    if (submission !== undefined && attempt.effectState.kind === 'executing') {
+      const runResult = await requireRun(core, attempt.agentRunId);
+      if (!runResult.ok) return runResult;
+      const fence = runResult.value.providerTurnOperationFence;
+      executingMismatch = submission.state.kind !== 'prepared'
+        || fence?.providerTurnSubmissionId !== submission.id
+        || fence.terminalInputAttemptId !== attempt.id
+        || fence.phase !== 'submission-prepared';
+    }
+    if (submission !== undefined && !immutableMismatch && !executingMismatch) continue;
+    const evidenceRefs = [
+      attempt.id,
+      attempt.providerTurnSubmissionId,
+      submission === undefined ? 'runtime-submission-absent' : 'runtime-terminal-lineage-mismatch',
+    ];
+    const quarantined = await core.terminal.quarantineProviderTurnInputAttempt({
+      terminalInputAttemptId: attempt.id,
+      evidenceRefs,
+    });
+    if (!quarantined.ok) return quarantined;
+    if (submission !== undefined) {
+      const held = await holdForRecovery(core, submission,
+        executingMismatch
+          ? 'executing Terminal attempt lacks trace-complete Runtime prepared state/fence'
+          : 'Terminal attempt immutable lineage differs from Runtime submission',
+        evidenceRefs, attempt);
+      if (!held.ok) return held;
+      continue;
+    }
+    const runResult = await requireRun(core, attempt.agentRunId);
+    if (runResult.ok) {
+      const fence = runResult.value.providerTurnOperationFence;
+      if (fence?.terminalInputAttemptId === attempt.id && fence.phase !== 'recovery-required') {
+        const held = await patchRun(core, runResult.value, {
+          providerTurnOperationFence: { ...fence, phase: 'recovery-required' },
+        });
+        if (!held.ok) return held;
+      }
+    }
+  }
+
   const controller = await reconcileControllerPreEffectSubmissions(core, mode);
   if (!controller.ok) return controller;
   const reconciled = [...controller.value];
@@ -1490,7 +1549,7 @@ export async function completeProviderTurn(
   submission = completedSubmission.value;
   const cleared = await patchRun(core, run, { providerTurnOperationFence: undefined });
   if (!cleared.ok) return cleared;
-  core.publish('agent.provider-turn.completed', {
+  core.publish('agent.run.provider-turn.completed', {
     agentRunId: run.id,
     providerTurnId: input.providerTurnId,
     providerTurnSubmissionId: submission.id,

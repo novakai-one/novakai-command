@@ -11,7 +11,9 @@ import type { InterruptTerminalTurnInput, InterruptTerminalTurnOutcome } from '.
 import type { ProviderTurnTerminalInputAttempt } from '../contract/records.js';
 import { endLease, leasesOf, nextGeneration, settleAndFindActive } from './leases.js';
 import { CONTROL_C } from './input.js';
-import { clockIso, requireLiveSession, type TerminalCore } from './context.js';
+import {
+  clockIso, publishProviderTurnBarrier, requireLiveSession, type TerminalCore,
+} from './context.js';
 import { listProviderTurnAttempts } from './provider-turn-input.js';
 
 export async function interruptTerminalTurn(
@@ -95,6 +97,7 @@ export async function interruptTerminalTurn(
       }
       return barrier;
     }
+    publishProviderTurnBarrier(core, barrier.value);
   }
 
   // Step 10: the target turn may have finished DURING the barrier commit above.

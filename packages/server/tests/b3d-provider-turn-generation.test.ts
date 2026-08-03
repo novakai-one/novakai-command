@@ -233,6 +233,23 @@ test('a completed real-composition provider turn advances ActivityGeneration', a
     });
     assert.equal(deniedReconcile.ok, false);
     if (!deniedReconcile.ok) assert.equal(deniedReconcile.error.code, 'PermissionDenied');
+
+    const eventPage = await client.call<{
+      events: Array<{ kind: string; sourceOwner: string }>;
+    }>('b3.agent.subscribeEvents', { limit: 200 });
+    assert.equal(eventPage.ok, true, eventPage.ok ? '' : eventPage.error.message);
+    if (eventPage.ok) {
+      const kinds = new Set(eventPage.value.events.map((event) => event.kind));
+      for (const required of [
+        'agent.run.provider-turn-submission.changed',
+        'transcript.provider-turn.completed',
+        'agent.run.provider-turn.completed',
+        'terminal.provider-turn-barrier.changed',
+        'agent.provider-usage-evidence.committed',
+      ]) assert.equal(kinds.has(required), true, `missing public event ${required}`);
+      assert.equal(kinds.has('agent.provider-turn.submitted'), false);
+      assert.equal(kinds.has('agent.provider-turn.completed'), false);
+    }
   } finally {
     clearInterval(attach);
     client.close();

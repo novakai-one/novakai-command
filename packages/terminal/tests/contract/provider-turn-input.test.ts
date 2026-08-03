@@ -25,7 +25,15 @@ const digest = (value: string): string =>
   createHash('sha256').update(value, 'utf8').digest('hex');
 
 test('runtime semantic input is prepared before bytes and executes at most once', async () => {
-  const rig = createRig();
+  const events: Array<{ kind: string; barrier: string }> = [];
+  const rig = createRig({
+    publish(kind, payload) {
+      events.push({
+        kind,
+        barrier: (payload.turnBarrier as { kind: string }).kind,
+      });
+    },
+  });
   try {
     const session = unwrap(await openMockManagedSession(rig), 'open managed session');
     const providerTurnId = mintProviderTurnId();
@@ -86,6 +94,10 @@ test('runtime semantic input is prepared before bytes and executes at most once'
     }), 'replay semantic input');
     assert.equal(replay.id, executed.id);
     assert.deepEqual(rig.ptyHost.latest().written, [TEXT, '\r'], 'retry submitted a second turn');
+    assert.deepEqual(events, [
+      { kind: 'terminal.provider-turn-barrier.changed', barrier: 'reserved-pre-effect' },
+      { kind: 'terminal.provider-turn-barrier.changed', barrier: 'active' },
+    ]);
   } finally {
     await rig.dispose();
   }
@@ -263,6 +275,57 @@ test('unknown semantic attempts are typed conflicts', async () => {
       submissionEffectKey: 'absent',
     });
     assert.equal(expectError(result, 'missing attempt').code, 'ProviderTurnSubmissionConflict');
+  } finally {
+    await rig.dispose();
+  }
+});
+
+test('Terminal quarantines a corrupt provider-turn attempt through Foundation', async () => {
+  const rig = createRig();
+  try {
+    const session = unwrap(await openMockManagedSession(rig), 'open managed session');
+    const providerTurnId = mintProviderTurnId();
+    const submissionEffectKey = 'b3d:test:orphan-quarantine';
+    const prepared = unwrap(await rig.terminal.prepareProviderTurnInput(runtimeContext(), {
+      terminalSessionId: session.id,
+      agentRunId: someAgentRunId,
+      providerTurnSubmissionId: providerTurnSubmissionId(
+        someAgentRunId,
+        { kind: 'runtime-effect', source: 'agent-inbox-delivery' },
+        submissionEffectKey,
+      ),
+      deliveryAttemptOrdinal: 1,
+      providerSessionId: mintProviderSessionId(),
+      transcriptBindingId: deterministicId(
+        'transcriptBinding', ['terminal-orphan-quarantine'],
+      ) as TranscriptBindingId,
+      startTranscriptWatermark: null,
+      expectedRunRecordVersion: RUN_VERSION,
+      providerTurnId,
+      activityGeneration: GENERATION,
+      submissionEffectKey,
+      inputDigest: digest(TEXT),
+      utf8Text: TEXT,
+      authority: {
+        kind: 'runtime-safe-boundary', source: 'agent-inbox-delivery',
+        sourceEffectKey: submissionEffectKey, sourceObjectRef: 'orphan:test',
+        expectedNoActiveInputLease: true, expectedNoControllerDraft: true,
+      },
+    }), 'prepare orphan');
+    assert.equal(prepared.kind, 'prepared');
+    if (prepared.kind !== 'prepared') return;
+    const quarantined = await rig.terminal.system.quarantineProviderTurnInputAttempt(
+      runtimeContext(), {
+        terminalInputAttemptId: prepared.attempt.id,
+        evidenceRefs: ['runtime-submission-absent'],
+      },
+    );
+    assert.equal(quarantined.ok, true, quarantined.ok ? '' : quarantined.error.message);
+    const listed = await rig.terminal.listIncompleteProviderTurnInputAttempts(
+      humanPrincipal(), { terminalSessionId: session.id, limit: 20 },
+    );
+    assert.equal(listed.ok, true);
+    if (listed.ok) assert.equal(listed.value.items.length, 0);
   } finally {
     await rig.dispose();
   }

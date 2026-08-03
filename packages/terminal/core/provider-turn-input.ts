@@ -26,7 +26,9 @@ import type {
   ProviderTurnTerminalInputAttempt,
 } from '../contract/records.js';
 import { settleAndFindActive } from './leases.js';
-import { clockIso, requireLiveSession, type TerminalCore } from './context.js';
+import {
+  clockIso, publishProviderTurnBarrier, requireLiveSession, type TerminalCore,
+} from './context.js';
 import type { Persisted } from './store.js';
 
 const digest = (value: string): string =>
@@ -260,7 +262,9 @@ export async function prepareProviderTurnInput(
   const written = await core.store.create<ProviderTurnTerminalInputAttempt>(
     'sys_terminal', record, mintClientOpId(),
   );
-  return written.ok ? b3ok({ kind: 'prepared', attempt: written.value }) : written;
+  if (!written.ok) return written;
+  publishProviderTurnBarrier(core, written.value);
+  return b3ok({ kind: 'prepared', attempt: written.value });
 }
 
 export async function executeProviderTurnInput(
@@ -283,7 +287,7 @@ export async function executeProviderTurnInput(
   if (attempt.effectState.kind === 'submitted-confirmed'
     || attempt.effectState.kind === 'submitted-unconfirmed') return b3ok(attempt);
   if (attempt.effectState.kind === 'executing') {
-    return core.store.update<ProviderTurnTerminalInputAttempt>(
+    const recovered = await core.store.update<ProviderTurnTerminalInputAttempt>(
       'sys_terminal', 'terminalInputAttempt', attempt.id,
       {
         effectState: {
@@ -296,6 +300,8 @@ export async function executeProviderTurnInput(
       attempt.recordVersion,
       mintClientOpId(),
     );
+    if (recovered.ok) publishProviderTurnBarrier(core, recovered.value);
+    return recovered;
   }
   if (attempt.payloadDigest !== digest(input.utf8Text)) {
     return conflict('provider-turn execute digest does not match preparation', {
@@ -322,7 +328,7 @@ export async function executeProviderTurnInput(
   attempt = executing.value;
   const live = core.live.lookup(attempt.terminalSessionId);
   if (live === undefined) {
-    return core.store.update<ProviderTurnTerminalInputAttempt>(
+    const uncertain = await core.store.update<ProviderTurnTerminalInputAttempt>(
       'sys_terminal', 'terminalInputAttempt', attempt.id,
       {
         effectState: {
@@ -335,6 +341,8 @@ export async function executeProviderTurnInput(
       attempt.recordVersion,
       mintClientOpId(),
     );
+    if (uncertain.ok) publishProviderTurnBarrier(core, uncertain.value);
+    return uncertain;
   }
   let confirmed = true;
   try {
@@ -355,7 +363,7 @@ export async function executeProviderTurnInput(
     agentRunId: attempt.agentRunId,
   };
   const submittedAt = clockIso(core);
-  return core.store.update<ProviderTurnTerminalInputAttempt>(
+  const submitted = await core.store.update<ProviderTurnTerminalInputAttempt>(
     'sys_terminal', 'terminalInputAttempt', attempt.id,
     {
       effectState: confirmed
@@ -366,6 +374,8 @@ export async function executeProviderTurnInput(
     attempt.recordVersion,
     mintClientOpId(),
   );
+  if (submitted.ok) publishProviderTurnBarrier(core, submitted.value);
+  return submitted;
 }
 
 export async function cancelPreparedProviderTurnInput(
@@ -388,7 +398,7 @@ export async function cancelPreparedProviderTurnInput(
     });
   }
   const now = clockIso(core);
-  return core.store.update<ProviderTurnTerminalInputAttempt>(
+  const cancelled = await core.store.update<ProviderTurnTerminalInputAttempt>(
     'sys_terminal', 'terminalInputAttempt', attempt.id,
     {
       effectState: { kind: 'rejected', rejectedAt: now, effectEscaped: false, reason: input.reason },
@@ -397,6 +407,8 @@ export async function cancelPreparedProviderTurnInput(
     attempt.recordVersion,
     mintClientOpId(),
   );
+  if (cancelled.ok) publishProviderTurnBarrier(core, cancelled.value);
+  return cancelled;
 }
 
 export async function settleProviderTurnCompletion(
@@ -449,6 +461,7 @@ export async function settleProviderTurnCompletion(
     mintClientOpId(),
   );
   if (!written.ok) return written;
+  publishProviderTurnBarrier(core, written.value);
   const live = core.live.lookup(attempt.terminalSessionId);
   if (live?.activeTurn?.providerTurnId === attempt.providerTurnId) live.activeTurn = null;
   return b3ok({
@@ -486,7 +499,7 @@ export async function closeProviderTurnBarrierUnproven(
     });
   }
   const now = clockIso(core);
-  return core.store.update<ProviderTurnTerminalInputAttempt>(
+  const closed = await core.store.update<ProviderTurnTerminalInputAttempt>(
     'sys_terminal', 'terminalInputAttempt', attempt.id,
     {
       turnBarrier: {
@@ -504,6 +517,8 @@ export async function closeProviderTurnBarrierUnproven(
     attempt.recordVersion,
     mintClientOpId(),
   );
+  if (closed.ok) publishProviderTurnBarrier(core, closed.value);
+  return closed;
 }
 
 export async function getProviderTurnInputAttempt(

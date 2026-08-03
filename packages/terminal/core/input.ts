@@ -180,6 +180,13 @@ export async function writeInput(
 ): Promise<B3Result<Extract<ExistingTerminalInputAttempt, { readonly source: 'controller' }>>> {
   const session = await requireLiveSession(core, input.terminalSessionId);
   if (!session.ok) return session;
+  if (input.kindOfInput === 'provider-turn-submit') {
+    return b3fail(b3err('SemanticSubmitRequired',
+      'a managed provider activation must use submitProviderTurn', {
+        terminalSessionId: input.terminalSessionId,
+        kindOfInput: input.kindOfInput,
+      }, false));
+  }
   // §22: writing terminal input needs an ACTIVE ATTACHMENT and the lease. The
   // attachment is checked first, so a stolen lease id alone types nothing.
   const controller = await attachedController(core, input.terminalSessionId, input.attachmentId);

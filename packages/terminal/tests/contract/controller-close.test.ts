@@ -264,6 +264,34 @@ test('a mock managed session survives every controller close case too', async ()
   }
 });
 
+test('generic input cannot activate a managed provider turn', async () => {
+  const rig = createRig();
+  try {
+    const session = unwrap(await openMockManagedSession(rig), 'open managed');
+    const attachment = unwrap(await rig.terminal.attachController(humanContext(), {
+      terminalSessionId: session.id, controllerKind: 'novakai-shell', columns: 100, rows: 30,
+    }), 'attach');
+    const lease = unwrap(await rig.terminal.acquireInputLease(humanContext(), {
+      terminalSessionId: session.id, attachmentId: attachment.id,
+      mode: 'acquire-if-free', ttlMs: 30_000,
+    }), 'acquire');
+    const refused = await rig.terminal.writeInput(humanContext(), {
+      terminalSessionId: session.id, attachmentId: attachment.id,
+      inputLeaseId: lease.id, leaseGeneration: lease.generation,
+      expectedNextInputSequence: 1,
+      kindOfInput: 'provider-turn-submit', utf8Text: 'bypass attempt',
+    });
+    const error = expectError(refused, 'semantic submit bypass');
+    assert.equal(error.code, 'SemanticSubmitRequired');
+    assert.deepEqual(error.details, {
+      terminalSessionId: session.id, kindOfInput: 'provider-turn-submit',
+    });
+    assert.equal(rig.ptyHost.latest().written.length, 0);
+  } finally {
+    await rig.dispose();
+  }
+});
+
 test('stopping a session requires Runtime lifecycle authority, not a controller', async () => {
   const rig = createRig();
   try {

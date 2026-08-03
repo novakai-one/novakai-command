@@ -19,7 +19,8 @@ import {
   type TerminalInputAttemptId,
 } from '@novakai/foundation/contract';
 import type {
-  AgentsPort, ProviderPort, RunCredentialPort, TerminalPort, TurnDeliveryStep,
+  AgentsPort, ProviderPort, ProviderTurnInputAttemptFacts, RunCredentialPort,
+  TerminalPort, TurnDeliveryStep,
 } from '../../../agent-runtime/contract/index.js';
 import type { GovernedAgentsContract } from '../../../agents/b3/contract/index.js';
 import type { TerminalContract } from '../../../terminal/contract/index.js';
@@ -221,11 +222,23 @@ export function terminalPort(
     },
 
     async listIncompleteProviderTurnInputAttempts(input) {
-      const listed = await terminal.listIncompleteProviderTurnInputAttempts(
-        systemContext().principal, { ...input, limit: 200 },
-      );
-      return listed.ok ? b3ok(listed.value.items) : listed;
+      const items: ProviderTurnInputAttemptFacts[] = [];
+      let cursor: import('@novakai/foundation/contract').EventCursor | undefined;
+      do {
+        const listed = await terminal.listIncompleteProviderTurnInputAttempts(
+          systemContext().principal, {
+            ...input, ...(cursor === undefined ? {} : { cursor }), limit: 200,
+          },
+        );
+        if (!listed.ok) return listed;
+        items.push(...listed.value.items);
+        cursor = listed.value.nextCursor;
+      } while (cursor !== undefined);
+      return b3ok(items);
     },
+
+    quarantineProviderTurnInputAttempt: (input) =>
+      terminal.system.quarantineProviderTurnInputAttempt(systemContext(), input),
 
     async settleProviderTurnCompletion(input) {
       return terminal.settleProviderTurnCompletion(systemContext(), input);

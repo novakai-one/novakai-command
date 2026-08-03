@@ -70,6 +70,7 @@ export interface ComposeTerminalOptions extends TerminalStoreOptions {
   /** How long a controller may go unseen before it is `stale` (§13.4). */
   readonly staleAfterMs?: number;
   readonly providerTurnDelivery?: TerminalCore['providerTurnDelivery'];
+  readonly publish?: TerminalCore['publish'];
 }
 
 export function composeTerminal(options: ComposeTerminalOptions): TerminalContract {
@@ -91,6 +92,7 @@ export function composeTerminal(options: ComposeTerminalOptions): TerminalContra
         { utf8Text, pauseMsAfter: 250 },
         { utf8Text: '\r', pauseMsAfter: 0 },
       ]),
+    ...(options.publish === undefined ? {} : { publish: options.publish }),
   };
 
   /**
@@ -352,6 +354,17 @@ export function composeTerminal(options: ComposeTerminalOptions): TerminalContra
       readTerminalStream(core, principal, input),
 
     system: {
+      async quarantineProviderTurnInputAttempt(context, input) {
+        const authorised = requireSystemAuthority(
+          context, 'sys_agent_runtime', OPERATION.reconcile,
+        );
+        if (!authorised.ok) return authorised;
+        void input.evidenceRefs;
+        return core.store.quarantine(
+          'sys_terminal', 'terminalInputAttempt', input.terminalInputAttemptId,
+          context.clientOpId, context.traceId,
+        );
+      },
       async beginProviderTurn(context, input) {
         void context;
         const live = core.live.lookup(input.terminalSessionId);
