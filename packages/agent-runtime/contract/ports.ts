@@ -187,6 +187,7 @@ export interface AgentsPort {
       readonly provider: 'claude' | 'codex' | 'kimi';
       readonly providerConversationId: string | null;
       readonly providerResumeHandle: string | null;
+      readonly providerVersion: string;
       readonly discovery:
         | { readonly state: 'discovered' }
         | { readonly state: 'failed-before-discovery'; readonly reason: string };

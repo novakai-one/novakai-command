@@ -5,7 +5,7 @@
 // transports — it owns no Runtime or Terminal domain fact (DEC-B3V4-22).
 import path from 'node:path';
 import {
-  b3err, b3fail, b3ok,
+  b3err, b3fail, b3ok, deriveClientOpId,
   type B3Result, type SystemCommandContext, type TerminalSessionId,
 } from '@novakai/foundation/contract';
 import {
@@ -316,11 +316,36 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
         ?? null,
     },
   });
+  // Late-bound because Transcript is composed after Messaging and Runs.
+  let transcript: B3TranscriptContract | null = null;
   const usageEvidence = composeProviderUsageEvidence({
     root: options.root,
     dataRoot,
     publish: (kind, payload, traceId) => {
       runs?.publishCapabilityEvent(kind, { ...payload }, 'agents', traceId);
+    },
+    turnCompletion: {
+      async get(id) {
+        if (transcript === null) {
+          return b3fail(b3err('TranscriptSourceUnavailable',
+            'Transcript completion owner is not composed yet', {
+              transcriptTurnCompletionId: id,
+            }, true));
+        }
+        return transcript.getTranscriptTurnCompletion(
+          { id: 'sys_agents', kind: 'system', verifiedScopes: [] }, id,
+        );
+      },
+      async getProviderSession(providerSessionId) {
+        const found = await agents.getProviderSession(
+          { id: 'sys_agents', kind: 'system', verifiedScopes: [] }, providerSessionId,
+        );
+        if (!found.ok) return found;
+        return b3ok({
+          id: found.value.id,
+          providerConversationId: found.value.providerConversationId,
+        });
+      },
     },
   });
   const usageTranscriptReader = createUsageReader({
@@ -335,8 +360,6 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
   // Messaging capability, which needs the store this root opens). The closure
   // reads whatever is wired by the time somebody asks, and answers `null`
   // before that — which the view renders as `unbound`, not as a lie.
-  let transcript: B3TranscriptContract | null = null;
-
   // Messaging and Transcript publish their committed facts into the ONE event
   // stream the Runtime already owns (§15, §24.4). They do not write each
   // other's stores and neither writes the Runtime's — the only thing crossing
@@ -425,6 +448,86 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
     notifications: supervisionNotificationDeliveryPort(supervision),
     usage: (principal, agentRunId) => supervision.getRunUsage(principal, agentRunId),
     transcriptCustody: transcriptCustodyPort(() => transcript),
+    providerTurnCompletionEvidence: {
+      async getTranscriptCompletion(id) {
+        if (transcript === null) {
+          return b3fail(b3err('TranscriptSourceUnavailable',
+            'Transcript completion owner is not composed yet', {
+              transcriptTurnCompletionId: id,
+            }, true));
+        }
+        return transcript.getTranscriptTurnCompletion(
+          { id: 'sys_agent_runtime', kind: 'system', verifiedScopes: [] }, id,
+        );
+      },
+      getUsageEvidence: (id) => usageEvidence.getProviderUsageEvidence(
+        { id: 'sys_agent_runtime', kind: 'system', verifiedScopes: [] }, id,
+      ),
+    },
+    async providerTurnCompletionCoordinator(input) {
+      if (transcript === null || runs === null) {
+        return b3fail(b3err('RuntimeUnavailable',
+          'provider-turn completion owners are not composed yet', {
+            reason: 'completion-owners-not-composed',
+          }, true));
+      }
+      const principal = { id: 'sys_reconciler' as const, kind: 'system' as const, verifiedScopes: [] };
+      const base = {
+        principal,
+        traceId: input.traceId,
+        contractVersion: 1 as const,
+      };
+      const reconciled = await transcript.reconcileProviderTurnCompletion({
+        ...base,
+        clientOpId: deriveClientOpId(
+          `transcript.reconcileProviderTurnCompletion:${input.providerTurnId}`,
+        ),
+      }, {
+        providerTurnId: input.providerTurnId,
+        expectedProviderTurnSubmissionId: input.providerTurnSubmissionId,
+      });
+      if (!reconciled.ok) return reconciled;
+      if (reconciled.value.kind !== 'completed') {
+        if (reconciled.value.kind === 'pending') {
+          return b3ok({
+            kind: 'evidence-not-yet-available', missing: ['transcript'], retryable: true,
+          });
+        }
+        return b3ok({
+          kind: 'completion-boundary-unproven',
+          status: reconciled.value.kind,
+          reason: reconciled.value.reason,
+          evidenceRefs: reconciled.value.evidenceRefs,
+          retryable: reconciled.value.kind === 'uncertain',
+        });
+      }
+      const evidence = await usageEvidence.ensureProviderTurnCompletionEvidence({
+        ...base,
+        clientOpId: deriveClientOpId(
+          `agents.ensureProviderTurnCompletionEvidence:${reconciled.value.completion.id}`,
+        ),
+      }, { transcriptTurnCompletionId: reconciled.value.completion.id });
+      if (!evidence.ok) return evidence;
+      return runs.completeProviderTurn({
+        ...base,
+        clientOpId: deriveClientOpId([
+          'agent.completeProviderTurn', input.agentRunId, input.providerTurnId,
+          reconciled.value.completion.id, evidence.value.id,
+        ].join(':')),
+        ...(runtime.fence.activeEpochId() === null
+          ? {}
+          : { runtimeEpochId: runtime.fence.activeEpochId()! }),
+      }, {
+        agentRunId: input.agentRunId,
+        providerTurnId: input.providerTurnId,
+        expectedActiveTuple: {
+          providerTurnId: input.providerTurnId,
+          activityGeneration: input.activityGeneration,
+        },
+        transcriptTurnCompletionId: reconciled.value.completion.id,
+        providerUsageEvidenceId: evidence.value.id,
+      });
+    },
     async transcriptBinding(agentRunId) {
       if (transcript === null) return null;
       const found = await transcript.getTranscriptBinding(
@@ -433,6 +536,7 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
       );
       if (!found.ok) return null;
       return {
+        bindingId: found.value.id,
         bindingState: found.value.sourceDiscoveryState,
         ...(found.value.mirrorWatermark === undefined
           ? {} : { mirrorWatermark: found.value.mirrorWatermark }),
@@ -490,6 +594,39 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
     messaging,
     emit: emit('transcript'),
     source,
+    turnCompletion: {
+      async getSubmission(providerTurnId) {
+        const found = await runs!.getProviderTurnSubmission(
+          { id: 'sys_transcript', kind: 'system', verifiedScopes: [] }, providerTurnId,
+        );
+        if (!found.ok) return found;
+        return b3ok({
+          id: found.value.id,
+          providerTurnId: found.value.providerTurnId,
+          agentRunId: found.value.agentRunId,
+          providerSessionId: found.value.providerSessionId,
+          providerConversationId: found.value.providerConversationId,
+          transcriptBindingId: found.value.transcriptBindingId,
+          inputDigest: found.value.inputDigest,
+          startTranscriptWatermark: found.value.startTranscriptWatermark,
+        });
+      },
+      async getProviderSession(providerSessionId) {
+        const found = await agents.getProviderSession(
+          { id: 'sys_transcript', kind: 'system', verifiedScopes: [] }, providerSessionId,
+        );
+        if (!found.ok) return found;
+        return b3ok({
+          provider: found.value.provider,
+          providerConversationId: found.value.providerConversationId,
+          providerNativeSessionId: found.value.providerResumeHandle ?? '',
+          providerVersion: found.value.providerVersion ?? 'unknown',
+        });
+      },
+      observe(input) {
+        return providerAdapters[input.provider].observeProviderTurnBoundary(input);
+      },
+    },
     ...(options.mirrorIntervalMs === undefined
       ? {} : { mirrorIntervalMs: options.mirrorIntervalMs }),
   });

@@ -4,10 +4,12 @@ import type {
   B3Result,
   IsoUtc,
   ProviderSessionId,
+  ProviderTurnId,
   ProviderUsageEvidenceId,
   RecordEnvelope,
   SystemCommandContext,
   TraceCorrelationId,
+  TranscriptTurnCompletionId,
 } from '@novakai/foundation/contract';
 import {
   b3fail,
@@ -34,6 +36,15 @@ export interface ProviderUsageMeasurement {
   readonly evidenceDigest: string;
 }
 
+export type ProviderUsageEvidenceScope =
+  | { readonly kind: 'provider-session-cumulative' }
+  | {
+      readonly kind: 'runtime-turn-completion';
+      readonly agentRunId: import('@novakai/foundation/contract').AgentRunId;
+      readonly providerTurnId: ProviderTurnId;
+      readonly transcriptTurnCompletionId: TranscriptTurnCompletionId;
+    };
+
 /** Append-only evidence retained by Agents; Supervision only projects it. */
 export interface ProviderUsageEvidence extends RecordEnvelope<
   ProviderUsageEvidenceId,
@@ -41,6 +52,7 @@ export interface ProviderUsageEvidence extends RecordEnvelope<
 > {
   readonly providerSessionId: ProviderSessionId;
   readonly providerConversationId: string | null;
+  readonly scope: ProviderUsageEvidenceScope;
   readonly observedAt: IsoUtc;
   readonly source: string;
   readonly sourceCursor?: string;
@@ -51,6 +63,8 @@ export interface ProviderUsageEvidence extends RecordEnvelope<
 export interface RecordProviderUsageEvidenceInput {
   readonly providerSessionId: ProviderSessionId;
   readonly providerConversationId: string | null;
+  /** Omitted is the contract-v1 cumulative scope. */
+  readonly scope?: Extract<ProviderUsageEvidenceScope, { readonly kind: 'provider-session-cumulative' }>;
   readonly observedAt: IsoUtc;
   readonly source: string;
   readonly sourceCursor?: string;
@@ -102,8 +116,18 @@ export function parseRecordProviderUsageEvidenceInput(
   }
   tupleText(measurement.evidenceDigest, 'measurement.evidenceDigest', issues);
 
+  if (input.scope !== undefined) {
+    const scope = objectValue(input.scope, 'scope', issues);
+    if (scope.kind !== 'provider-session-cumulative') {
+      issues.push({ path: 'scope.kind', message: 'generic evidence accepts cumulative scope only' });
+    }
+  }
+
   return issues.length === 0
-    ? b3ok(candidate as RecordProviderUsageEvidenceInput)
+    ? b3ok({
+        ...(candidate as RecordProviderUsageEvidenceInput),
+        scope: { kind: 'provider-session-cumulative' },
+      })
     : b3fail(validationFailed(issues));
 }
 
@@ -146,6 +170,14 @@ export interface ProviderUsageEvidenceContract {
   recordProviderUsageEvidence(
     context: SystemCommandContext<'sys_agents'>,
     input: RecordProviderUsageEvidenceInput,
+  ): Promise<B3Result<ProviderUsageEvidence>>;
+  ensureProviderTurnCompletionEvidence(
+    context: SystemCommandContext<'sys_reconciler'>,
+    input: { readonly transcriptTurnCompletionId: TranscriptTurnCompletionId },
+  ): Promise<B3Result<ProviderUsageEvidence>>;
+  getProviderUsageEvidence(
+    principal: AuthenticatedPrincipal,
+    providerUsageEvidenceId: ProviderUsageEvidenceId,
   ): Promise<B3Result<ProviderUsageEvidence>>;
   listProviderUsageEvidence(
     principal: AuthenticatedPrincipal,

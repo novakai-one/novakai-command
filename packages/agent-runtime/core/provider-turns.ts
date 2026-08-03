@@ -14,7 +14,9 @@ import {
   type ProviderTurnSubmissionId,
 } from '@novakai/foundation/contract';
 import type {
+  CompleteProviderTurnInput,
   CompleteProviderTurnOutcome,
+  CompletedProviderTurnOutcome,
   ProviderTurnSubmission,
   ProviderTurnSubmissionFilter,
   ProviderTurnSubmissionPage,
@@ -167,7 +169,8 @@ export async function submitProviderTurn(
       }, false));
   }
   const binding = await core.transcriptBinding?.(run.id);
-  if (binding === undefined || binding === null || binding.bindingState !== 'bound'
+  if (binding === undefined || binding === null
+    || binding.bindingState === 'missing' || binding.bindingState === 'corrupt'
     || binding.bindingId !== input.transcriptBindingId) {
     return b3fail(b3err('TranscriptSourceUnavailable',
       'the exact Run transcript binding is not available', {
@@ -494,9 +497,300 @@ export async function listProviderTurnSubmissions(
   return b3ok({ items, omissions: [] });
 }
 
+const sameCompletion = (
+  run: AgentRun,
+  input: CompleteProviderTurnInput,
+): boolean => run.lastCompletedProviderTurn?.providerTurnId === input.providerTurnId
+  && run.lastCompletedProviderTurn.transcriptTurnCompletionId
+    === input.transcriptTurnCompletionId
+  && run.lastCompletedProviderTurn.providerUsageEvidenceId === input.providerUsageEvidenceId;
+
+const targetChanged = (
+  run: AgentRun,
+  input: CompleteProviderTurnInput,
+): B3Result<CompleteProviderTurnOutcome> => b3ok({
+  kind: 'target-changed',
+  expectedTuple: input.expectedActiveTuple,
+  actualTuple: {
+    ...(run.activeProviderTurn === undefined
+      ? {}
+      : { providerTurnId: run.activeProviderTurn.providerTurnId }),
+    activityGeneration: run.activityGeneration,
+  },
+  inputLeaseChanged: false,
+  retryable: false,
+});
+
+function lineageMismatch(
+  owner: 'runtime' | 'transcript' | 'agents',
+  expected: Readonly<Record<string, string>>,
+  actual: Readonly<Record<string, string | null>>,
+): B3Result<CompleteProviderTurnOutcome> {
+  return b3ok({ kind: 'lineage-evidence-mismatch', owner, expected, actual, retryable: false });
+}
+
+/**
+ * The sole activity-completion mutation. Transcript proves the provider end,
+ * Agents attests that exact immutable fact, and Terminal orders completion
+ * against interrupt before Runtime moves generation.
+ */
+export async function completeProviderTurn(
+  core: RunsCore,
+  context: CommandContext,
+  input: CompleteProviderTurnInput,
+): Promise<B3Result<CompleteProviderTurnOutcome>> {
+  if (context.principal.id !== 'sys_reconciler') {
+    return b3fail(b3err('PermissionDenied',
+      'provider-turn completion requires sys_reconciler', {
+        principalId: context.principal.id,
+      }, false));
+  }
+  const epoch = core.fence.assertActive(context.runtimeEpochId);
+  if (!epoch.ok) return epoch;
+
+  const submissionResult = await getProviderTurnSubmission(core, input.providerTurnId);
+  if (!submissionResult.ok) return submissionResult;
+  let submission = submissionResult.value;
+  if (submission.agentRunId !== input.agentRunId) {
+    return lineageMismatch('runtime', {
+      agentRunId: String(input.agentRunId), providerTurnId: String(input.providerTurnId),
+    }, {
+      agentRunId: String(submission.agentRunId), providerTurnId: String(submission.providerTurnId),
+    });
+  }
+
+  const runResult = await requireRun(core, input.agentRunId);
+  if (!runResult.ok) return runResult;
+  let run = runResult.value;
+  if (sameCompletion(run, input)) {
+    const original = completedOutcome(run)!;
+    if (submission.state.kind !== 'completed') {
+      const completed = run.lastCompletedProviderTurn!;
+      const priorState = submission.state;
+      if (priorState.kind !== 'submitted-confirmed' && priorState.kind !== 'submitted-unconfirmed') {
+        return operationConflict(submission,
+          'Run records completion but the submission has no submitted disposition');
+      }
+      const repaired = await patchSubmission(core, submission, {
+        state: {
+          kind: 'completed',
+          terminalInputAttemptId: completed.terminalInputAttemptId,
+          submissionDisposition: priorState.kind,
+          activationActivityGeneration: completed.activationActivityGeneration,
+          completionActivityGeneration: completed.completionActivityGeneration,
+          transcriptTurnCompletionId: completed.transcriptTurnCompletionId,
+          providerUsageEvidenceId: completed.providerUsageEvidenceId,
+          terminalAttemptRecordVersion: completed.terminalAttemptRecordVersion,
+          interruptDisposition: completed.interruptDisposition,
+          completedRunRecordVersion: run.recordVersion,
+          completedAt: completed.completedAt,
+        },
+      });
+      if (!repaired.ok) return repaired;
+      submission = repaired.value;
+    }
+    if (run.providerTurnOperationFence?.providerTurnId === input.providerTurnId) {
+      const cleared = await patchRun(core, run, { providerTurnOperationFence: undefined });
+      if (!cleared.ok) return cleared;
+      run = cleared.value;
+    }
+    return b3ok({ kind: 'already-completed-by-same-evidence', original });
+  }
+  if (FINAL_LIFECYCLES.has(run.lifecycle)) {
+    return b3ok({
+      kind: 'run-final', agentRunId: run.id,
+      lifecycle: run.lifecycle as 'stopped' | 'failed' | 'interrupted', retryable: false,
+    });
+  }
+
+  const owners = core.providerTurnCompletionEvidence;
+  if (owners === undefined) {
+    return b3ok({
+      kind: 'evidence-not-yet-available', missing: ['transcript', 'agents'], retryable: true,
+    });
+  }
+  const [transcriptResult, usageResult] = await Promise.all([
+    owners.getTranscriptCompletion(input.transcriptTurnCompletionId),
+    owners.getUsageEvidence(input.providerUsageEvidenceId),
+  ]);
+  const missing: Array<'transcript' | 'agents'> = [];
+  if (!transcriptResult.ok && transcriptResult.error.retryable) missing.push('transcript');
+  if (!usageResult.ok && usageResult.error.retryable) missing.push('agents');
+  if (missing.length > 0) {
+    return b3ok({ kind: 'evidence-not-yet-available', missing, retryable: true });
+  }
+  if (!transcriptResult.ok) return transcriptResult;
+  if (!usageResult.ok) return usageResult;
+  const completion = transcriptResult.value;
+  const evidence = usageResult.value;
+
+  const transcriptExpected = {
+    transcriptTurnCompletionId: String(input.transcriptTurnCompletionId),
+    providerTurnId: String(submission.providerTurnId),
+    agentRunId: String(submission.agentRunId),
+    providerSessionId: String(submission.providerSessionId),
+    providerConversationId: submission.providerConversationId ?? '',
+    transcriptBindingId: String(submission.transcriptBindingId),
+  };
+  const transcriptActual = {
+    transcriptTurnCompletionId: String(completion.id),
+    providerTurnId: String(completion.providerTurnId),
+    agentRunId: String(completion.agentRunId),
+    providerSessionId: String(completion.providerSessionId),
+    providerConversationId: completion.providerConversationId,
+    transcriptBindingId: String(completion.transcriptBindingId),
+  };
+  if (transcriptExpected.transcriptTurnCompletionId !== transcriptActual.transcriptTurnCompletionId
+    || transcriptExpected.providerTurnId !== transcriptActual.providerTurnId
+    || transcriptExpected.agentRunId !== transcriptActual.agentRunId
+    || transcriptExpected.providerSessionId !== transcriptActual.providerSessionId
+    || transcriptExpected.providerConversationId !== (transcriptActual.providerConversationId ?? '')
+    || transcriptExpected.transcriptBindingId !== transcriptActual.transcriptBindingId) {
+    return lineageMismatch('transcript', transcriptExpected, transcriptActual);
+  }
+  const evidenceScope = evidence.scope.kind === 'runtime-turn-completion'
+    ? evidence.scope : null;
+  const agentsExpected = {
+    providerUsageEvidenceId: String(input.providerUsageEvidenceId),
+    providerSessionId: String(submission.providerSessionId),
+    providerConversationId: submission.providerConversationId ?? '',
+    agentRunId: String(submission.agentRunId),
+    providerTurnId: String(submission.providerTurnId),
+    transcriptTurnCompletionId: String(completion.id),
+    sourceCursor: completion.completionTranscriptWatermark,
+    evidenceDigest: completion.completionEvidenceDigest,
+  };
+  const agentsActual = {
+    providerUsageEvidenceId: String(evidence.id),
+    providerSessionId: String(evidence.providerSessionId),
+    providerConversationId: evidence.providerConversationId,
+    agentRunId: evidenceScope === null ? null : String(evidenceScope.agentRunId),
+    providerTurnId: evidenceScope === null ? null : String(evidenceScope.providerTurnId),
+    transcriptTurnCompletionId: evidenceScope === null
+      ? null : String(evidenceScope.transcriptTurnCompletionId),
+    sourceCursor: evidence.sourceCursor ?? null,
+    evidenceDigest: evidence.measurement.evidenceDigest,
+  };
+  if (agentsExpected.providerUsageEvidenceId !== agentsActual.providerUsageEvidenceId
+    || agentsExpected.providerSessionId !== agentsActual.providerSessionId
+    || agentsExpected.providerConversationId !== (agentsActual.providerConversationId ?? '')
+    || agentsExpected.agentRunId !== agentsActual.agentRunId
+    || agentsExpected.providerTurnId !== agentsActual.providerTurnId
+    || agentsExpected.transcriptTurnCompletionId !== agentsActual.transcriptTurnCompletionId
+    || agentsExpected.sourceCursor !== agentsActual.sourceCursor
+    || agentsExpected.evidenceDigest !== agentsActual.evidenceDigest
+    || evidence.source !== 'transcript-turn-completion'
+    || evidence.observedAt !== completion.observedAt
+    || evidence.measurement.quality !== 'partial'
+    || evidence.measurement.providerTurns !== 1) {
+    return lineageMismatch('agents', agentsExpected, agentsActual);
+  }
+
+  if (input.expectedActiveTuple.providerTurnId !== input.providerTurnId
+    || run.activeProviderTurn?.providerTurnId !== input.providerTurnId
+    || run.activeProviderTurn.activityGeneration !== input.expectedActiveTuple.activityGeneration
+    || run.activityGeneration !== input.expectedActiveTuple.activityGeneration) {
+    return targetChanged(run, input);
+  }
+  const fence = run.providerTurnOperationFence;
+  if (fence === undefined
+    || fence.providerTurnId !== input.providerTurnId
+    || fence.providerTurnSubmissionId !== submission.id
+    || fence.activityGeneration !== input.expectedActiveTuple.activityGeneration) {
+    return targetChanged(run, input);
+  }
+  if (submission.state.kind !== 'submitted-confirmed'
+    && submission.state.kind !== 'submitted-unconfirmed') {
+    return operationConflict(submission, 'completion requires a submitted disposition');
+  }
+  const submittedState = submission.state;
+  if (fence.phase !== 'completing' && fence.phase !== 'completion-barrier-committed') {
+    const completing = await patchRun(core, run, {
+      providerTurnOperationFence: { ...fence, phase: 'completing' },
+    });
+    if (!completing.ok) return completing;
+    run = completing.value;
+  }
+
+  const settled = await core.terminal.settleProviderTurnCompletion({
+    terminalInputAttemptId: submittedState.terminalInputAttemptId,
+    agentRunId: run.id,
+    providerTurnId: input.providerTurnId,
+    activityGeneration: input.expectedActiveTuple.activityGeneration,
+    transcriptTurnCompletionId: input.transcriptTurnCompletionId,
+    providerUsageEvidenceId: input.providerUsageEvidenceId,
+  });
+  if (!settled.ok) return settled;
+  if (settled.value.kind === 'target-turn-not-active') return targetChanged(run, input);
+
+  const refreshed = await requireRun(core, run.id);
+  if (!refreshed.ok) return refreshed;
+  run = refreshed.value;
+  if (run.activeProviderTurn?.providerTurnId !== input.providerTurnId
+    || run.activityGeneration !== input.expectedActiveTuple.activityGeneration
+    || run.providerTurnOperationFence?.terminalInputAttemptId
+      !== submittedState.terminalInputAttemptId) {
+    return targetChanged(run, input);
+  }
+  const completedAt = now(core);
+  const completionActivityGeneration = (run.activityGeneration + 1) as ActivityGeneration;
+  const disposition = {
+    providerTurnId: input.providerTurnId,
+    activationActivityGeneration: input.expectedActiveTuple.activityGeneration,
+    completionActivityGeneration,
+    transcriptTurnCompletionId: input.transcriptTurnCompletionId,
+    providerUsageEvidenceId: input.providerUsageEvidenceId,
+    terminalInputAttemptId: submittedState.terminalInputAttemptId,
+    terminalAttemptRecordVersion: settled.value.attemptRecordVersion,
+    interruptDisposition: settled.value.interruptDisposition,
+    completedAt,
+  };
+  const completedRun = await patchRun(core, run, {
+    activity: 'idle',
+    activityGeneration: completionActivityGeneration,
+    activeProviderTurn: undefined,
+    lastCompletedProviderTurn: disposition,
+    providerTurnOperationFence: {
+      ...run.providerTurnOperationFence!, phase: 'completion-barrier-committed',
+    },
+  });
+  if (!completedRun.ok) return completedRun;
+  run = completedRun.value;
+  const completedSubmission = await patchSubmission(core, submission, {
+    state: {
+      kind: 'completed',
+      terminalInputAttemptId: submittedState.terminalInputAttemptId,
+      submissionDisposition: submittedState.kind,
+      activationActivityGeneration: input.expectedActiveTuple.activityGeneration,
+      completionActivityGeneration,
+      transcriptTurnCompletionId: input.transcriptTurnCompletionId,
+      providerUsageEvidenceId: input.providerUsageEvidenceId,
+      terminalAttemptRecordVersion: settled.value.attemptRecordVersion,
+      interruptDisposition: settled.value.interruptDisposition,
+      completedRunRecordVersion: run.recordVersion,
+      completedAt,
+    },
+  });
+  if (!completedSubmission.ok) return completedSubmission;
+  submission = completedSubmission.value;
+  const cleared = await patchRun(core, run, { providerTurnOperationFence: undefined });
+  if (!cleared.ok) return cleared;
+  core.publish('agent.provider-turn.completed', {
+    agentRunId: run.id,
+    providerTurnId: input.providerTurnId,
+    providerTurnSubmissionId: submission.id,
+    activationActivityGeneration: input.expectedActiveTuple.activityGeneration,
+    completionActivityGeneration,
+    transcriptTurnCompletionId: input.transcriptTurnCompletionId,
+    providerUsageEvidenceId: input.providerUsageEvidenceId,
+    interruptDisposition: settled.value.interruptDisposition,
+  }, context.traceId);
+  return b3ok({ kind: 'completed', agentRunId: run.id, ...disposition });
+}
+
 export function completedOutcome(
   run: AgentRun,
-): CompleteProviderTurnOutcome | null {
+): CompletedProviderTurnOutcome | null {
   const completed = run.lastCompletedProviderTurn;
   return completed === undefined ? null : {
     kind: 'completed',

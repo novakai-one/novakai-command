@@ -10,12 +10,25 @@
  */
 
 import type {
-  AuthenticatedPrincipal, B3Result, EventCursor, Page, SystemCommandContext,
+  AuthenticatedPrincipal, B3Result, EventCursor, Page, ProviderTurnId,
+  ProviderTurnSubmissionId, SystemCommandContext, TranscriptTurnCompletionId,
 } from '@novakai/foundation/contract';
 import type {
   AgentId, AgentRunId, ObservedSubagent, ObservedSubagentId, ProviderKind,
   ProviderSessionId, TranscriptBinding, TranscriptBindingId, TranscriptLineId,
+  TranscriptTurnCompletion,
 } from './records.js';
+
+export interface ReconcileTranscriptTurnCompletionInput {
+  readonly providerTurnId: ProviderTurnId;
+  readonly expectedProviderTurnSubmissionId: ProviderTurnSubmissionId;
+}
+
+export type TranscriptTurnCompletionStatus =
+  | { readonly kind: 'completed'; readonly completion: TranscriptTurnCompletion }
+  | { readonly kind: 'pending'; readonly reason: string; readonly retryable: true }
+  | { readonly kind: 'uncertain'; readonly reason: string; readonly evidenceRefs: readonly string[] }
+  | { readonly kind: 'unavailable'; readonly reason: string; readonly evidenceRefs: readonly string[] };
 
 export interface BindTranscriptToRunInput {
   readonly agentId: AgentId;
@@ -113,6 +126,10 @@ export type PromoteObservedSubagentOutcome =
     };
 
 export interface TranscriptCommands {
+  reconcileProviderTurnCompletion(
+    ctx: SystemCommandContext<'sys_reconciler'>,
+    input: ReconcileTranscriptTurnCompletionInput,
+  ): Promise<B3Result<TranscriptTurnCompletionStatus>>;
   bindTranscriptToRun(
     ctx: SystemCommandContext<'sys_agent_runtime'>, input: BindTranscriptToRunInput,
   ): Promise<B3Result<TranscriptBinding>>;
@@ -131,6 +148,10 @@ export interface TranscriptCommands {
 }
 
 export interface TranscriptQueries {
+  getTranscriptTurnCompletion(
+    principal: AuthenticatedPrincipal,
+    transcriptTurnCompletionId: TranscriptTurnCompletionId,
+  ): Promise<B3Result<TranscriptTurnCompletion>>;
   getTranscriptBinding(
     principal: AuthenticatedPrincipal, agentRunId: AgentRunId,
   ): Promise<B3Result<TranscriptBinding>>;

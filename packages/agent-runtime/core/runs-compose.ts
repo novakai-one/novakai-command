@@ -10,7 +10,8 @@
 // happened and queries them by key instead of repeating them (§13.5). Refusing
 // at the receipt layer would put that recovery permanently out of reach.
 import {
-  b3err, b3fail, b3ok, composeReceiptStore, mintClientOpId, mintTraceCorrelationId,
+  b3err, b3fail, b3ok, composeReceiptStore, deriveClientOpId, mintClientOpId,
+  mintTraceCorrelationId,
   type AuthenticatedPrincipal, type B3Result, type CommandContext,
   type PublicOperationName, type ReceiptStore, type RunOperationId, type TerminalSessionId,
 } from '@novakai/foundation/contract';
@@ -35,7 +36,8 @@ import type {
 import type { RuntimeHostContract } from '../contract/types.js';
 import { createRunsStore, type RunsStore, type RunsStoreOptions } from './runs-store.js';
 import {
-  OPERATION, versionGuard, type RunsCore, type TranscriptBindingLookup,
+  OPERATION, versionGuard, type ProviderTurnCompletionCoordinator,
+  type ProviderTurnCompletionEvidenceLookup, type RunsCore, type TranscriptBindingLookup,
 } from './runs-context.js';
 import { spawnAgent } from './spawn.js';
 import {
@@ -59,7 +61,8 @@ import {
 } from './notification-delivery.js';
 import { RunActivityQueue } from './run-activity-queue.js';
 import {
-  getProviderTurnSubmission, listProviderTurnSubmissions, submitProviderTurn,
+  completeProviderTurn, getProviderTurnSubmission, listProviderTurnSubmissions,
+  submitProviderTurn,
 } from './provider-turns.js';
 
 /**
@@ -97,6 +100,10 @@ export interface ComposeAgentRunsOptions extends RunsStoreOptions {
   readonly clock?: () => number;
   /** §19.1's transcript section, read through Transcript's contract. */
   readonly transcriptBinding?: TranscriptBindingLookup;
+  /** Exact Transcript and Agents facts used by the sole completion mutation. */
+  readonly providerTurnCompletionEvidence?: ProviderTurnCompletionEvidenceLookup;
+  /** Composition-root saga across Transcript -> Agents -> Runtime. */
+  readonly providerTurnCompletionCoordinator?: ProviderTurnCompletionCoordinator;
   /** §13.5 rows 6/10 and §13.6's cutover, through Messaging's contract. */
   readonly messagingEndpoint?: MessagingEndpointPort;
   /** §13.5 row 9 and §13.6's watermark, through Transcript's contract. */
@@ -176,6 +183,12 @@ export function composeAgentRuns(options: ComposeAgentRunsOptions): ComposedAgen
     clock: options.clock ?? (() => Date.now()),
     ...(options.transcriptBinding === undefined
       ? {} : { transcriptBinding: options.transcriptBinding }),
+    ...(options.providerTurnCompletionEvidence === undefined
+      ? {}
+      : { providerTurnCompletionEvidence: options.providerTurnCompletionEvidence }),
+    ...(options.providerTurnCompletionCoordinator === undefined
+      ? {}
+      : { providerTurnCompletionCoordinator: options.providerTurnCompletionCoordinator }),
     ...(options.messagingEndpoint === undefined
       ? {} : { messagingEndpoint: options.messagingEndpoint }),
     ...(options.transcriptCustody === undefined
@@ -286,12 +299,24 @@ export function composeAgentRuns(options: ComposeAgentRunsOptions): ComposedAgen
         ));
     },
 
-    completeProviderTurn: guarded('agent.completeProviderTurn', async (
-      _context, input: CompleteProviderTurnInput,
-    ) => b3fail(b3err('UnsupportedOperation',
-      'provider-turn completion composition is not installed yet', {
-        agentRunId: input.agentRunId, providerTurnId: input.providerTurnId,
-      }, true))),
+    async completeProviderTurn(context, input: CompleteProviderTurnInput) {
+      const version = versionGuard<import('../contract/provider-turns.js').CompleteProviderTurnOutcome>(context);
+      if (version) return version;
+      const completionContext = {
+        ...context,
+        clientOpId: deriveClientOpId([
+          'agent.completeProviderTurn', input.agentRunId, input.providerTurnId,
+          input.transcriptTurnCompletionId, input.providerUsageEvidenceId,
+        ].join(':')),
+      };
+      return providerActivity.enqueue(String(input.agentRunId), () =>
+        core.receipts.runResumableCommand(
+          completionContext,
+          { operation: named('agent.completeProviderTurn'), request: input, replaySafe: true },
+          () => completeProviderTurn(core, completionContext, input),
+          (outcome) => outcome.kind === 'evidence-not-yet-available',
+        ));
+    },
 
     closeProviderTurnCompletionUnproven: guarded('agent.closeProviderTurnCompletionUnproven', async (
       _context, input: CloseProviderTurnCompletionUnprovenInput,

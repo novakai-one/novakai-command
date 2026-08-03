@@ -33,6 +33,7 @@ import { everyCapability } from './claude.js';
 import {
   codexSessionIdFrom, mergedEnvironment, newestSessionSince, probeVersion, resolveCli,
 } from './cli-probe.js';
+import { boundaryProfile, unavailableBoundary } from './turn-boundary.js';
 
 const NO_MODEL_FLAG = new Set(['cli-default', 'codex-cli', '']);
 
@@ -85,6 +86,7 @@ export function createCodexAdapter(
       if (executable === '') {
         return everyCapability('codex', tested, claims('unavailable', 'the codex CLI is not on PATH'));
       }
+      const profile = boundaryProfile('codex', tested);
       return {
         provider: 'codex',
         testedProviderVersion: tested,
@@ -110,8 +112,12 @@ export function createCodexAdapter(
         usage: claims('unavailable', 'per-Run usage is B3d'),
         screenContext: claims('unsupported', 'no screen-context channel at this version'),
         nativeSubagentObservation: claims('unavailable', 'native subagent observation is B3c'),
+        turnBoundary: claims('native', `exact-version boundary profile ${profile.id}`),
+        turnBoundaryProfile: profile,
       };
     },
+
+    async observeProviderTurnBoundary() { return b3ok(unavailableBoundary()); },
 
     async buildLaunch(
       plan: ResolvedLaunchPlan, input: ProviderLaunchInput,

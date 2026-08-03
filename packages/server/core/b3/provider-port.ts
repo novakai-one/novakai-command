@@ -81,6 +81,21 @@ export function createProviderPort(
   ): InteractiveProviderAdapter => adapters[provider];
 
   return {
+    async turnBoundaryCapability(provider) {
+      const report = await adapterFor(provider).discoverCapabilities();
+      if (report.turnBoundary.support !== 'native' || report.turnBoundaryProfile === null) {
+        return b3fail({
+          code: 'ProviderTurnBoundaryUnavailable',
+          message: `no native provider-turn boundary for ${provider}`,
+          details: { provider, testedProviderVersion: report.testedProviderVersion },
+          retryable: false,
+        });
+      }
+      return b3ok({
+        testedProviderVersion: report.testedProviderVersion,
+        profileId: report.turnBoundaryProfile.id,
+      });
+    },
     async prepareLaunch(input) {
       const adapter = adapterFor(input.launchPlan.provider);
       const built = await adapter.buildLaunch(planFor(input.launchPlan), {
@@ -146,9 +161,11 @@ export function createProviderPort(
         launchFingerprint: input.launchFingerprint,
       });
       if (!found.ok) return found;
+      const report = await adapterFor(input.provider).discoverCapabilities();
       return b3ok({
         providerSessionId: found.value.providerSessionId,
         providerNativeSessionId: found.value.providerNativeSessionId,
+        providerVersion: report.testedProviderVersion,
         live: found.value.live,
       });
     },

@@ -4,6 +4,7 @@ export * from './errors.js';
 export * from './provider-usage-evidence.js';
 export {
   composeProviderUsageEvidence,
+  providerTurnCompletionEvidenceId,
   providerUsageEvidenceId,
   type ComposeProviderUsageEvidenceOptions,
 } from '../core/provider-usage-evidence.js';

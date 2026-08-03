@@ -364,10 +364,18 @@ export function createFakeTerminal(): FakeTerminal {
       providerTurnAttempts.set(submitted.id, submitted);
       port.submitted.push({
         terminalSessionId: submitted.terminalSessionId,
-        keystrokes: [{ utf8Text: input.utf8Text, pauseMsAfter: 0 }],
-        text: input.utf8Text,
+        keystrokes: [
+          { utf8Text: input.utf8Text, pauseMsAfter: 0 },
+          { utf8Text: '\r', pauseMsAfter: 0 },
+        ],
+        text: `${input.utf8Text}\r`,
         effectKey: input.submissionEffectKey,
       });
+      port.output = `${port.output}${input.utf8Text}\r\n`;
+      if (input.utf8Text.includes('do NOT begin it yet')) {
+        const answer = scriptedConfirmation(port.pinnedTokens, port.reply);
+        if (answer !== null) port.output = `${port.output}${answer}\n`;
+      }
       return b3ok(submitted);
     },
 
@@ -517,6 +525,7 @@ export function createFakeProviders(): FakeProviders {
       return b3ok({
         providerSessionId: port.substituteSessionId ?? input.expectedProviderSessionId,
         providerNativeSessionId: port.nativeSessionId,
+        providerVersion: 'fake-1.0.0',
         live: 'live',
       });
     },

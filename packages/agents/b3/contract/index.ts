@@ -6,6 +6,7 @@
 export * from './records.js';
 export * from './api.js';
 export * from './providers.js';
+export { boundaryProfile } from '../adapters/providers/turn-boundary.js';
 export {
   readAgentControl, readAuthoriseSpawnInput, readCreateAgentFromRoleInput,
   readCreateRoleProfileInput, readIssueDelegationGrantInput,

@@ -33,6 +33,7 @@ import { everyCapability } from './claude.js';
 import {
   kimiSessionIdFrom, mergedEnvironment, newestSessionSince, probeVersion, resolveCli,
 } from './cli-probe.js';
+import { boundaryProfile, unavailableBoundary } from './turn-boundary.js';
 
 /** Legacy seed values that are NOT model names and must never reach the CLI. */
 const NO_MODEL_FLAG = new Set(['cli-default', 'kimi-cli', '']);
@@ -76,6 +77,7 @@ export function createKimiAdapter(
       if (executable === '') {
         return everyCapability('kimi', tested, claims('unavailable', 'the kimi CLI is not on PATH'));
       }
+      const profile = boundaryProfile('kimi', tested);
       return {
         provider: 'kimi',
         testedProviderVersion: tested,
@@ -102,8 +104,12 @@ export function createKimiAdapter(
           + 'usage is B3d'),
         screenContext: claims('unsupported', 'no screen-context channel at this version'),
         nativeSubagentObservation: claims('unavailable', 'native subagent observation is B3c'),
+        turnBoundary: claims('native', `exact-version boundary profile ${profile.id}`),
+        turnBoundaryProfile: profile,
       };
     },
+
+    async observeProviderTurnBoundary() { return b3ok(unavailableBoundary()); },
 
     async buildLaunch(
       plan: ResolvedLaunchPlan, input: ProviderLaunchInput,

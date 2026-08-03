@@ -3,10 +3,12 @@
  */
 
 import {
-  b3err, b3fail, b3ok, deriveClientOpId, mintObservedSubagentId, mintTranscriptBindingId,
-  nowIsoUtc,
+  b3err, b3fail, b3ok, canonicalJson, deriveClientOpId, mintObservedSubagentId,
+  mintTranscriptBindingId, nowIsoUtc, transcriptTurnCompletionId,
   type AuthenticatedPrincipal, type B3Result, type ClientOpId, type Page,
-  type SystemCommandContext,
+  type ProviderSessionId, type ProviderTurnBoundaryProfileId, type ProviderTurnId,
+  type ProviderTurnSubmissionId, type SystemCommandContext, type TranscriptLineId,
+  type TranscriptTurnCompletionId,
 } from '@novakai/foundation/contract';
 import { createHash } from 'node:crypto';
 
@@ -14,11 +16,11 @@ import type {
   B3TranscriptContract, BindTranscriptToRunInput, IngestTranscriptSourceInput,
   ListObservedSubagentsInput, MirrorStageHooks, PromoteMirrorWatermarkInput,
   PromoteObservedSubagentInput, PromoteObservedSubagentOutcome, TranscriptIngestOutcome,
-  TranscriptSourcePort,
+  TranscriptSourcePort, TranscriptTurnCompletionStatus,
 } from '../contract/api.js';
 import type {
   AgentId, AgentRunId, ObservedSubagent, ObservedSubagentId, TranscriptBinding,
-  TranscriptBindingId,
+  TranscriptBindingId, TranscriptTurnCompletion,
 } from '../contract/records.js';
 import { ingestTranscriptSource, type MessagingMirrorPort } from './mirror.js';
 import { requireDurableOutcomes } from './watermark-outcomes.js';
@@ -36,6 +38,57 @@ export interface B3TranscriptOptions {
    * root owns the stream, so one cursor covers every capability (§24.4).
    */
   readonly emit?: CapabilityEventEmitter;
+  /** Exact cross-owner reads plus provider-owned framing observation. */
+  readonly turnCompletion?: TranscriptTurnCompletionPort;
+}
+
+export interface TranscriptTurnCompletionSubmissionFacts {
+  readonly id: ProviderTurnSubmissionId;
+  readonly providerTurnId: ProviderTurnId;
+  readonly agentRunId: AgentRunId;
+  readonly providerSessionId: ProviderSessionId;
+  readonly providerConversationId: string | null;
+  readonly transcriptBindingId: TranscriptBindingId;
+  readonly inputDigest: string;
+  readonly startTranscriptWatermark: string | null;
+}
+
+export interface TranscriptTurnCompletionPort {
+  getSubmission(providerTurnId: ProviderTurnId): Promise<B3Result<TranscriptTurnCompletionSubmissionFacts>>;
+  getProviderSession(providerSessionId: ProviderSessionId): Promise<B3Result<{
+    readonly provider: 'claude' | 'codex' | 'kimi';
+    readonly providerConversationId: string | null;
+    readonly providerNativeSessionId: string;
+    readonly providerVersion: string;
+  }>>;
+  observe(input: {
+    readonly provider: 'claude' | 'codex' | 'kimi';
+    readonly providerVersion: string;
+    readonly providerSessionId: ProviderSessionId;
+    readonly providerNativeSessionId: string;
+    readonly transcriptBindingId: TranscriptBindingId;
+    readonly providerTurnId: ProviderTurnId;
+    readonly inputDigest: string;
+    readonly startTranscriptWatermark: string | null;
+    readonly currentTranscriptWatermark: string | null;
+  }): Promise<B3Result<
+    | {
+        readonly kind: 'proven';
+        readonly providerCorrelationId: string;
+        readonly providerNativeTurnId?: string;
+        readonly submittedInputSourcePosition: string;
+        readonly completionSourcePosition: string;
+        readonly completionSourceCommittedAt: import('@novakai/foundation/contract').IsoUtc;
+        readonly submittedInputEvidenceDigest: string;
+        readonly sourceLineIds: readonly [TranscriptLineId, ...TranscriptLineId[]];
+        readonly resultingWatermark: string;
+        readonly turnBoundaryProfileId: ProviderTurnBoundaryProfileId;
+        readonly framingEvidenceDigest: string;
+        readonly limitations: readonly string[];
+      }
+    | { readonly kind: 'uncertain'; readonly reason: string; readonly evidenceRefs: readonly string[] }
+    | { readonly kind: 'unavailable'; readonly reason: string; readonly evidenceRefs: readonly string[] }
+  >>;
 }
 
 export type CapabilityEventEmitter = (
@@ -65,6 +118,32 @@ const keyFor = (effect: string): ClientOpId => deriveClientOpId(`transcript:${ef
 
 const bindingEvent = 'transcript.binding.changed';
 const subagentEvent = 'transcript.observed-subagent.changed';
+const completionEvent = 'transcript.provider-turn.completed';
+
+const completionDigest = (
+  completion: Omit<TranscriptTurnCompletion, 'id' | 'kind' | 'schemaVersion' | 'recordVersion'
+    | 'createdAt' | 'permissionLevel' | 'createdBy' | 'lastMutation' | 'completionEvidenceDigest'>,
+): string => createHash('sha256').update(canonicalJson([
+  'b3v4-transcript-turn-completion',
+  completion.providerTurnId,
+  completion.agentRunId,
+  completion.providerSessionId,
+  completion.providerConversationId,
+  completion.transcriptBindingId,
+  completion.startTranscriptWatermark,
+  completion.completionTranscriptWatermark,
+  completion.submittedInputSourcePosition,
+  completion.completionSourcePosition,
+  completion.sourceLineIds,
+  completion.providerCorrelationId,
+  completion.providerNativeTurnId ?? null,
+  completion.providerKind,
+  completion.testedProviderVersion,
+  completion.turnBoundaryProfileId,
+  completion.submittedInputEvidenceDigest,
+  completion.framingEvidenceDigest,
+  completion.observedAt,
+]), 'utf8').digest('hex');
 
 /**
  * Did this pass write a durable outcome anyone can act on?
@@ -113,6 +192,130 @@ export function composeB3Transcript(options: B3TranscriptOptions): B3TranscriptC
   }
 
   return {
+    async reconcileProviderTurnCompletion(context, input) {
+      if (context.principal.id !== 'sys_reconciler' || options.turnCompletion === undefined) {
+        return b3fail(b3err('PermissionDenied',
+          'provider-turn completion reconciliation requires sys_reconciler and its owner ports', {
+            principalId: context.principal.id,
+          }, false));
+      }
+      const submission = await options.turnCompletion.getSubmission(input.providerTurnId);
+      if (!submission.ok) return submission;
+      if (submission.value.id !== input.expectedProviderTurnSubmissionId
+        || submission.value.providerTurnId !== input.providerTurnId) {
+        return b3fail(b3err('ProviderTurnSubmissionConflict',
+          'Transcript reconciliation submission identity does not match', {
+            providerTurnSubmissionId: input.expectedProviderTurnSubmissionId,
+            providerTurnId: input.providerTurnId,
+            reason: 'submission-id-mismatch', evidenceRefs: [submission.value.id],
+          }, false));
+      }
+      const binding = await bindingById(submission.value.transcriptBindingId);
+      if (binding === null) {
+        return b3ok<TranscriptTurnCompletionStatus>({
+          kind: 'pending', reason: 'transcript binding is not available', retryable: true,
+        });
+      }
+      if (binding.agentRunId !== submission.value.agentRunId
+        || binding.providerSessionId !== submission.value.providerSessionId) {
+        return b3fail(b3err('TranscriptCorrupt', 'binding lineage differs from Runtime submission', {
+          bindingId: binding.id,
+          sourcePosition: binding.mirrorWatermark ?? '',
+          expectedDigest: submission.value.id,
+          actualDigest: binding.id,
+        }, false));
+      }
+      const session = await options.turnCompletion.getProviderSession(
+        submission.value.providerSessionId,
+      );
+      if (!session.ok) return session;
+      if (session.value.providerConversationId !== submission.value.providerConversationId) {
+        return b3fail(b3err('TranscriptCorrupt', 'provider conversation lineage differs', {
+          bindingId: binding.id,
+          sourcePosition: binding.mirrorWatermark ?? '',
+          expectedDigest: submission.value.providerConversationId ?? '',
+          actualDigest: session.value.providerConversationId ?? '',
+        }, false));
+      }
+      const observed = await options.turnCompletion.observe({
+        provider: session.value.provider,
+        providerVersion: session.value.providerVersion,
+        providerSessionId: submission.value.providerSessionId,
+        providerNativeSessionId: session.value.providerNativeSessionId,
+        transcriptBindingId: binding.id,
+        providerTurnId: submission.value.providerTurnId,
+        inputDigest: submission.value.inputDigest,
+        startTranscriptWatermark: submission.value.startTranscriptWatermark,
+        currentTranscriptWatermark: binding.mirrorWatermark ?? null,
+      });
+      if (!observed.ok) return observed;
+      if (observed.value.kind !== 'proven') return b3ok({
+        kind: observed.value.kind,
+        reason: observed.value.reason,
+        evidenceRefs: observed.value.evidenceRefs,
+      });
+      if (observed.value.submittedInputEvidenceDigest !== submission.value.inputDigest) {
+        return b3fail(b3err('TranscriptCorrupt', 'adapter input evidence digest differs', {
+          bindingId: binding.id,
+          sourcePosition: observed.value.submittedInputSourcePosition,
+          expectedDigest: submission.value.inputDigest,
+          actualDigest: observed.value.submittedInputEvidenceDigest,
+        }, false));
+      }
+      const id = transcriptTurnCompletionId(binding.id, submission.value.providerTurnId);
+      const body = {
+        providerTurnId: submission.value.providerTurnId,
+        agentRunId: submission.value.agentRunId,
+        providerSessionId: submission.value.providerSessionId,
+        providerConversationId: submission.value.providerConversationId,
+        transcriptBindingId: binding.id,
+        startTranscriptWatermark: submission.value.startTranscriptWatermark,
+        completionTranscriptWatermark: observed.value.resultingWatermark,
+        submittedInputSourcePosition: observed.value.submittedInputSourcePosition,
+        completionSourcePosition: observed.value.completionSourcePosition,
+        submittedInputEvidenceDigest: observed.value.submittedInputEvidenceDigest,
+        sourceLineIds: observed.value.sourceLineIds,
+        providerCorrelationId: observed.value.providerCorrelationId,
+        ...(observed.value.providerNativeTurnId === undefined
+          ? {}
+          : { providerNativeTurnId: observed.value.providerNativeTurnId }),
+        providerKind: session.value.provider,
+        testedProviderVersion: session.value.providerVersion,
+        turnBoundaryProfileId: observed.value.turnBoundaryProfileId,
+        framingEvidenceDigest: observed.value.framingEvidenceDigest,
+        observedAt: observed.value.completionSourceCommittedAt,
+      };
+      const completionEvidenceDigest = completionDigest(body);
+      const existing = await store.read<TranscriptTurnCompletion>('transcriptTurnCompletion', id);
+      if (!existing.ok) return existing;
+      if (existing.value !== null) {
+        if (existing.value.completionEvidenceDigest !== completionEvidenceDigest) {
+          await store.quarantine('transcriptTurnCompletion', id,
+            keyFor(`quarantine-completion:${id}`), context.traceId);
+          return b3fail(b3err('TranscriptCorrupt', 'completion identity has conflicting evidence', {
+            bindingId: binding.id,
+            sourcePosition: observed.value.completionSourcePosition,
+            expectedDigest: existing.value.completionEvidenceDigest,
+            actualDigest: completionEvidenceDigest,
+          }, false));
+        }
+        return b3ok({ kind: 'completed', completion: existing.value });
+      }
+      const written = await store.create<TranscriptTurnCompletion>({
+        kind: 'transcriptTurnCompletion',
+        id,
+        schemaVersion: 1,
+        createdAt: observed.value.completionSourceCommittedAt,
+        permissionLevel: 'private',
+        createdBy: 'sys_transcript',
+        ...body,
+        completionEvidenceDigest,
+      } as never, keyFor(`provider-turn-completion:${id}`));
+      if (!written.ok) return written;
+      emit(completionEvent, { ...written.value });
+      return b3ok({ kind: 'completed', completion: written.value });
+    },
+
     async bindTranscriptToRun(
       _ctx: SystemCommandContext<'sys_agent_runtime'>, input: BindTranscriptToRunInput,
     ) {
@@ -307,6 +510,16 @@ export function composeB3Transcript(options: B3TranscriptOptions): B3TranscriptC
           `no transcript binding for Run ${agentRunId}`, { agentRunId }, false));
       }
       return b3ok(found);
+    },
+
+    async getTranscriptTurnCompletion(_principal, id: TranscriptTurnCompletionId) {
+      const found = await store.read<TranscriptTurnCompletion>('transcriptTurnCompletion', id);
+      if (!found.ok) return found;
+      return found.value === null
+        ? b3fail(b3err('TranscriptSourceUnavailable', 'no Transcript completion fact exists', {
+          transcriptTurnCompletionId: id,
+        }, true))
+        : b3ok(found.value);
     },
 
     async listObservedSubagents(

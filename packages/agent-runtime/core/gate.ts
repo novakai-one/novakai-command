@@ -16,13 +16,15 @@
 // provider hook — a hook is something a role can forget to install.
 import { createHash } from 'node:crypto';
 import {
-  b3err, b3fail, b3ok,
+  b3err, b3fail, b3ok, deriveClientOpId,
   type B3Result, type CommandContext,
 } from '@novakai/foundation/contract';
 import type { LaunchPlanFacts } from '../contract/ports.js';
 import type { AgentRun, RunOperation } from '../contract/runs.js';
 import { advance, completed, effectKeyFor } from './journal.js';
 import type { RunsCore } from './runs-context.js';
+import { requireRun } from './runs-context.js';
+import { submitProviderTurn } from './provider-turns.js';
 import { maybeAskAgain, noteStillness, startVigil } from './gate-vigil.js';
 import {
   bearsFingerprint, plainText, sinceTheQuestion, withoutOurOwnWords,
@@ -123,10 +125,44 @@ export async function runSkillsGate(
   if (!sent.ok) return sent;
   let operation = sent.value.operation;
 
-  const confirmed = await awaitConfirmation(core, context, input, sent.value.paintedBefore);
+  const gateInput = { ...input, agentRun: sent.value.agentRun };
+  const confirmed = await awaitConfirmation(core, context, gateInput, sent.value.paintedBefore);
   if (!confirmed.ok) {
-    const failed = await failGate(core, input, confirmed.error.message);
+    const failed = await failGate(core, gateInput, confirmed.error.message);
     return failed.ok ? confirmed : failed;
+  }
+
+  let completedGateRun = gateInput.agentRun;
+  if (core.providerTurnCompletionCoordinator !== undefined) {
+    const active = gateInput.agentRun.activeProviderTurn;
+    const fence = gateInput.agentRun.providerTurnOperationFence;
+    if (active === undefined || fence === undefined
+      || active.providerTurnId !== fence.providerTurnId) {
+      return b3fail(b3err('RecoveryRequired',
+        'the confirmed gate turn has no exact semantic completion tuple', {
+          operationId: operation.id, stage: 'skills-gate-confirmed',
+          reason: 'missing-active-provider-turn',
+        }, true));
+    }
+    const completedTurn = await core.providerTurnCompletionCoordinator({
+      agentRunId: gateInput.agentRun.id,
+      providerTurnId: active.providerTurnId,
+      providerTurnSubmissionId: fence.providerTurnSubmissionId,
+      activityGeneration: active.activityGeneration,
+      traceId: context.traceId,
+    });
+    if (!completedTurn.ok) return completedTurn;
+    if (completedTurn.value.kind !== 'completed'
+      && completedTurn.value.kind !== 'already-completed-by-same-evidence') {
+      return b3fail(b3err('RecoveryRequired',
+        'the confirmed gate turn is not durably completed', {
+          operationId: operation.id, stage: 'skills-gate-confirmed',
+          reason: completedTurn.value.kind,
+        }, true));
+    }
+    const refreshed = await requireRun(core, gateInput.agentRun.id);
+    if (!refreshed.ok) return refreshed;
+    completedGateRun = refreshed.value;
   }
 
   const passed = await advance(core, operation, {
@@ -138,9 +174,14 @@ export async function runSkillsGate(
     agentRunId: input.agentRun.id, skills: canonicalTokens(input.plan),
   });
 
-  const released = await releaseWorkTurn(core, context, { ...input, operation });
+  const released = await releaseWorkTurn(core, context, {
+    ...gateInput, agentRun: completedGateRun, operation,
+  });
   if (!released.ok) return released;
-  return b3ok({ agentRun: input.agentRun, operation: released.value });
+  const current = await requireRun(core, gateInput.agentRun.id);
+  return current.ok
+    ? b3ok({ agentRun: current.value, operation: released.value })
+    : current;
 }
 
 async function recordSkipped(
@@ -160,6 +201,7 @@ async function recordSkipped(
 
 interface SentTurn {
   readonly operation: RunOperation;
+  readonly agentRun: AgentRun;
   /**
    * How much had been painted before turn 1 went out.
    *
@@ -181,7 +223,10 @@ async function sendConfirmationTurn(
 ): Promise<B3Result<SentTurn>> {
   if (completed(input.operation, 'skills-gate-prompt-sent') !== null) {
     // An earlier attempt asked; its echo is the only anchor available now.
-    return b3ok({ operation: input.operation, paintedBefore: 0 });
+    const current = await requireRun(core, input.agentRun.id);
+    return current.ok
+      ? b3ok({ operation: input.operation, agentRun: current.value, paintedBefore: 0 })
+      : current;
   }
   const terminalSessionId = input.agentRun.terminalSessionId;
   if (terminalSessionId === undefined) {
@@ -202,23 +247,65 @@ async function sendConfirmationTurn(
     const advanced = await advance(core, input.operation, {
       stage: 'skills-gate-prompt-sent', owner: 'terminal', ownerObjectId: terminalSessionId,
     });
-    return advanced.ok ? b3ok({ operation: advanced.value, paintedBefore: 0 }) : advanced;
+    if (!advanced.ok) return advanced;
+    const current = await requireRun(core, input.agentRun.id);
+    return current.ok
+      ? b3ok({ operation: advanced.value, agentRun: current.value, paintedBefore: 0 })
+      : current;
   }
 
   const paintedBefore = before.value.length;
-  const submitted = await core.terminal.submitRuntimeInput(context, {
+  const binding = await core.transcriptBinding?.(input.agentRun.id);
+  if (binding === undefined || binding === null) {
+    const legacy = await core.terminal.submitRuntimeInput(context, {
+      terminalSessionId,
+      keystrokes: core.providers.deliverTurn(
+        input.plan.provider,
+        confirmationPrompt(input.plan, input.brief, turnRefFor(effectKey)),
+      ),
+      effectKey,
+    });
+    if (!legacy.ok) return legacy;
+    const advanced = await advance(core, input.operation, {
+      stage: 'skills-gate-prompt-sent', owner: 'terminal', ownerObjectId: terminalSessionId,
+    });
+    return advanced.ok
+      ? b3ok({ operation: advanced.value, agentRun: input.agentRun, paintedBefore })
+      : advanced;
+  }
+  const submitted = await submitProviderTurn(core, {
+    principal: { id: 'sys_agent_runtime', kind: 'system', verifiedScopes: [] },
+    clientOpId: deriveClientOpId(effectKey),
+    traceId: context.traceId,
+    contractVersion: 1,
+    ...(core.fence.activeEpochId() === null
+      ? {}
+      : { runtimeEpochId: core.fence.activeEpochId()! }),
+  }, {
+    kind: 'runtime-effect',
+    source: 'skills-gate',
+    sourceEffectKey: effectKey,
+    sourceObjectRef: input.operation.id,
+    agentRunId: input.agentRun.id,
     terminalSessionId,
-    keystrokes: core.providers.deliverTurn(
-      input.plan.provider,
-      confirmationPrompt(input.plan, input.brief, turnRefFor(effectKey)),
-    ),
-    effectKey,
+    transcriptBindingId: binding.bindingId,
+    utf8Text: confirmationPrompt(input.plan, input.brief, turnRefFor(effectKey)),
   });
   if (!submitted.ok) return submitted;
+  if (submitted.value.kind === 'queued-not-yet-safe') {
+    return b3fail(b3err('ProviderTurnOperationInProgress',
+      'the skills gate semantic turn is waiting for a safe input boundary', {
+        agentRunId: input.agentRun.id, blocking: submitted.value.blocking,
+      }, true));
+  }
   const advanced = await advance(core, input.operation, {
     stage: 'skills-gate-prompt-sent', owner: 'terminal', ownerObjectId: terminalSessionId,
   });
-  return advanced.ok ? b3ok({ operation: advanced.value, paintedBefore }) : advanced;
+  if (!advanced.ok) return advanced;
+  const current = await requireRun(core, input.agentRun.id);
+  return current.ok
+    ? b3ok({ operation: advanced.value, agentRun: current.value, paintedBefore })
+    : current;
 }
 
 /**
@@ -340,6 +427,38 @@ async function releaseWorkTurn(
 ): Promise<B3Result<RunOperation>> {
   if (completed(input.operation, 'supervised-work-released') !== null) {
     return b3ok(input.operation);
+  }
+  const binding = await core.transcriptBinding?.(input.agentRun.id);
+  if (binding !== undefined && binding !== null
+    && core.providerTurnCompletionCoordinator !== undefined) {
+    const effectKey = effectKeyFor(input.operation.id, 'supervised-work-released');
+    const submitted = await submitProviderTurn(core, {
+      principal: { id: 'sys_agent_runtime', kind: 'system', verifiedScopes: [] },
+      clientOpId: deriveClientOpId(effectKey),
+      traceId: context.traceId,
+      contractVersion: 1,
+      ...(core.fence.activeEpochId() === null
+        ? {}
+        : { runtimeEpochId: core.fence.activeEpochId()! }),
+    }, {
+      kind: 'runtime-effect', source: 'supervised-work-release',
+      sourceEffectKey: effectKey, sourceObjectRef: input.operation.id,
+      agentRunId: input.agentRun.id,
+      terminalSessionId: input.agentRun.terminalSessionId!,
+      transcriptBindingId: binding.bindingId,
+      utf8Text: workPrompt(input.brief),
+    });
+    if (!submitted.ok) return submitted;
+    if (submitted.value.kind === 'queued-not-yet-safe') {
+      return b3fail(b3err('ProviderTurnOperationInProgress',
+        'the supervised work turn is waiting for a safe input boundary', {
+          agentRunId: input.agentRun.id, blocking: submitted.value.blocking,
+        }, true));
+    }
+    return advance(core, input.operation, {
+      stage: 'supervised-work-released', owner: 'terminal',
+      ownerObjectId: input.agentRun.terminalSessionId,
+    });
   }
   const submitted = await core.terminal.submitRuntimeInput(context, {
     terminalSessionId: input.agentRun.terminalSessionId!,

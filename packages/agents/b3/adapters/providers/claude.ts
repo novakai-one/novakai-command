@@ -27,6 +27,7 @@ import type {
 import type { ResolvedLaunchPlan } from '../../contract/records.js';
 import { deliverTurn, findMarkerLine } from './turn-delivery.js';
 import { mergedEnvironment, probeVersion, resolveCli, uuidOf } from './cli-probe.js';
+import { boundaryProfile, unavailableBoundary } from './turn-boundary.js';
 
 /** Values that mean "pass no --model flag; let the CLI decide" (carried from B1). */
 const NO_MODEL_FLAG = new Set(['cli-default', 'claude-cli', '']);
@@ -86,6 +87,7 @@ export function createClaudeAdapter(
       if (!installed) {
         return everyCapability('claude', tested, absent);
       }
+      const profile = boundaryProfile('claude', tested);
       return {
         provider: 'claude',
         testedProviderVersion: tested,
@@ -112,8 +114,12 @@ export function createClaudeAdapter(
         screenContext: claims('unsupported', 'no screen-context channel at this version'),
         nativeSubagentObservation: claims('unavailable',
           'native subagent observation is B3c'),
+        turnBoundary: claims('native', `exact-version boundary profile ${profile.id}`),
+        turnBoundaryProfile: profile,
       };
     },
+
+    async observeProviderTurnBoundary() { return b3ok(unavailableBoundary()); },
 
     async buildLaunch(
       plan: ResolvedLaunchPlan, input: ProviderLaunchInput,
@@ -239,5 +245,7 @@ export function everyCapability(
     usage: answer,
     screenContext: answer,
     nativeSubagentObservation: answer,
+    turnBoundary: answer,
+    turnBoundaryProfile: null,
   };
 }

@@ -8,8 +8,9 @@
 // Everything private stays private: executable paths, argv, environment, PIDs,
 // resume handles and native session ids never appear in a public contract.
 import type {
-  ActivityGeneration, AgentRunId, B3Result, ProviderSessionId, ProviderTurnId,
-  TerminalSessionId,
+  ActivityGeneration, AgentRunId, B3Result, IsoUtc, ProviderSessionId,
+  ProviderTurnBoundaryProfileId, ProviderTurnId, TerminalSessionId,
+  TranscriptBindingId, TranscriptLineId,
 } from '@novakai/foundation/contract';
 import type {
   AgentControl, ContinuationMode, ProviderKind, ResolvedLaunchPlan, SupportLevel,
@@ -36,7 +37,81 @@ export interface ProviderCapabilityReport {
   readonly usage: ProviderCapability;
   readonly screenContext: ProviderCapability;
   readonly nativeSubagentObservation: ProviderCapability;
+  readonly turnBoundary: ProviderCapability;
+  readonly turnBoundaryProfile: ProviderTurnBoundaryProfile | null;
 }
+
+export interface ProviderTurnBoundaryProfile {
+  readonly id: ProviderTurnBoundaryProfileId;
+  readonly provider: ProviderKind;
+  readonly executableVersion: string;
+  readonly sourceFormatSchemaDigest: string;
+  readonly inputFrame: {
+    readonly discriminatorPath: string;
+    readonly discriminatorValue: string;
+    readonly logicalUtf8TextPath: string;
+    readonly providerNativeSessionIdPath: string;
+    readonly providerNativeTurnIdPath?: string;
+  };
+  readonly completionFrame: {
+    readonly discriminatorPath: string;
+    readonly terminalDiscriminatorValues: readonly [string, ...string[]];
+    readonly providerNativeSessionIdPath: string;
+    readonly providerNativeTurnIdPath?: string;
+    readonly terminalSemanticsEvidenceDigest: string;
+  };
+  readonly correlation:
+    | { readonly mode: 'shared-provider-native-turn-id'; readonly inputAndCompletionPathsRequired: true }
+    | {
+        readonly mode: 'explicit-response-envelope';
+        readonly correlationIdPath: string;
+        readonly phasePath: string;
+        readonly inputStartPhaseValue: string;
+        readonly completionTerminalPhaseValue: string;
+      };
+  readonly ordering: {
+    readonly mode: 'strict-monotonic-source-position';
+    readonly intermediateToolFramesMustShareCorrelation: true;
+    readonly sourceGapInvalidatesProof: true;
+  };
+  readonly evidenceDigestRecipe: 'sha256(canonical-json(profileId,providerNativeSessionId,providerNativeTurnIdOrCorrelationId,inputPosition,completionPosition,inputSourceDigest,completionSourceDigest,orderedIntermediateSourceDigests))';
+}
+
+export interface ProviderTurnBoundaryInput {
+  readonly providerSessionId: ProviderSessionId;
+  readonly providerNativeSessionId: string;
+  readonly transcriptBindingId: TranscriptBindingId;
+  readonly providerTurnId: ProviderTurnId;
+  readonly inputDigest: string;
+  readonly startTranscriptWatermark: string | null;
+  readonly currentTranscriptWatermark: string | null;
+}
+
+export type ProviderTurnBoundaryObservation =
+  | {
+      readonly kind: 'proven';
+      readonly providerCorrelationId: string;
+      readonly providerNativeTurnId?: string;
+      readonly submittedInputSourcePosition: string;
+      readonly completionSourcePosition: string;
+      readonly completionSourceCommittedAt: IsoUtc;
+      readonly submittedInputEvidenceDigest: string;
+      readonly sourceLineIds: readonly [TranscriptLineId, ...TranscriptLineId[]];
+      readonly resultingWatermark: string;
+      readonly turnBoundaryProfileId: ProviderTurnBoundaryProfileId;
+      readonly framingEvidenceDigest: string;
+      readonly limitations: readonly string[];
+    }
+  | {
+      readonly kind: 'uncertain';
+      readonly reason: 'input-frame-ambiguous' | 'end-frame-ambiguous' | 'source-gap' | 'provider-version-unsupported';
+      readonly evidenceRefs: readonly string[];
+    }
+  | {
+      readonly kind: 'unavailable';
+      readonly reason: 'no-authoritative-turn-framing' | 'source-unavailable' | 'adapter-unsupported';
+      readonly evidenceRefs: readonly string[];
+    };
 
 export interface ProviderLaunchInput {
   readonly workingDirectory: string;
@@ -141,6 +216,10 @@ export interface InteractiveProviderAdapter {
   readonly provider: ProviderKind;
 
   discoverCapabilities(): Promise<ProviderCapabilityReport>;
+
+  observeProviderTurnBoundary(
+    input: ProviderTurnBoundaryInput,
+  ): Promise<B3Result<ProviderTurnBoundaryObservation>>;
 
   buildLaunch(
     plan: ResolvedLaunchPlan, input: ProviderLaunchInput,

@@ -15,6 +15,7 @@ import type {
 } from '../../contract/providers.js';
 import type { ResolvedLaunchPlan } from '../../contract/records.js';
 import { deliverTurn, findMarkerLine } from './turn-delivery.js';
+import { boundaryProfile, fakeBoundaryObservation } from './turn-boundary.js';
 
 const capability = (support: ProviderCapability['support'], evidence: string): ProviderCapability =>
   ({ support, evidence, limitations: [] });
@@ -66,6 +67,7 @@ function scriptedSession(provider: ProviderKind, plan: ResolvedLaunchPlan): stri
 export function createFakeProviderAdapter(
   provider: ProviderKind, options: FakeProviderOptions = {},
 ): InteractiveProviderAdapter {
+  const profile = boundaryProfile(provider, `${provider}-fake-1.0.0`);
   const report: ProviderCapabilityReport = {
     provider,
     testedProviderVersion: `${provider}-fake-1.0.0`,
@@ -80,6 +82,8 @@ export function createFakeProviderAdapter(
     usage: capability('unavailable', 'usage arrives in B3d'),
     screenContext: capability('unsupported', 'fake adapter'),
     nativeSubagentObservation: capability('unavailable', 'fake adapter'),
+    turnBoundary: capability('native', `synthetic profile ${profile.id}`),
+    turnBoundaryProfile: profile,
     ...options.capabilities,
   };
 
@@ -87,6 +91,9 @@ export function createFakeProviderAdapter(
     provider,
 
     async discoverCapabilities() { return report; },
+    async observeProviderTurnBoundary(input) {
+      return b3ok(fakeBoundaryObservation(profile, input));
+    },
 
     async buildLaunch(
       plan: ResolvedLaunchPlan, input: ProviderLaunchInput,

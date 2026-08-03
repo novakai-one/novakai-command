@@ -88,7 +88,7 @@ export function composeTerminal(options: ComposeTerminalOptions): TerminalContra
     staleAfterMs: options.staleAfterMs ?? DEFAULT_STALE_AFTER_MS,
     providerTurnDelivery: options.providerTurnDelivery
       ?? (async (_providerSessionId, utf8Text) => [
-        { utf8Text, pauseMsAfter: 0 },
+        { utf8Text, pauseMsAfter: 250 },
         { utf8Text: '\r', pauseMsAfter: 0 },
       ]),
   };

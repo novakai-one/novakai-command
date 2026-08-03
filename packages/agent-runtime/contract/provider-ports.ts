@@ -66,6 +66,7 @@ export interface ProviderPort {
   ): Promise<B3Result<{
     readonly providerSessionId: ProviderSessionId;
     readonly providerNativeSessionId: string;
+    readonly providerVersion: string;
     readonly live: 'live' | 'final' | 'unknown';
   }>>;
 

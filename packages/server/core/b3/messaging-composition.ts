@@ -14,6 +14,7 @@ import {
   composeB3Transcript, createMirrorPump, createTranscriptStore,
   type B3TranscriptContract, type MessagingMirrorPort, type MirrorPump,
   type TranscriptBinding, type TranscriptSourcePort,
+  type TranscriptTurnCompletionPort,
 } from '../../../transcript/b3/contract/index.js';
 
 export type CapabilityEmit = (
@@ -80,6 +81,7 @@ export interface B3TranscriptCompositionOptions {
    * neither choice can be made by forgetting.
    */
   readonly source: TranscriptSourcePort;
+  readonly turnCompletion?: TranscriptTurnCompletionPort;
   /** How often the mirror looks. Tests shorten it; production takes the default. */
   readonly mirrorIntervalMs?: number;
 }
@@ -142,6 +144,9 @@ export function composeB3TranscriptFor(
     source: options.source,
     messaging: mirror,
     emit: options.emit,
+    ...(options.turnCompletion === undefined
+      ? {}
+      : { turnCompletion: options.turnCompletion }),
   });
 
   return {

@@ -209,7 +209,8 @@ const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
         }, operationId());
         return written;
       },
-    ), (attempt) => `input #${attempt.inputSequence} ${attempt.outcome}`);
+    ), (attempt) => `input #${attempt.inputSequence} ${
+      attempt.source === 'provider-turn' ? attempt.effectState.kind : attempt.outcome}`);
   },
 
   async read(argFlags) {

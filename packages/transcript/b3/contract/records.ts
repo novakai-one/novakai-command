@@ -17,6 +17,8 @@
 
 import type {
   AgentId as FoundationAgentId, AgentRunId as FoundationAgentRunId,
+  IsoUtc, ProviderTurnBoundaryProfileId, ProviderTurnId,
+  TranscriptTurnCompletionId,
   ObservedSubagentId as FoundationObservedSubagentId, ProviderSessionId as FoundationProviderSessionId,
   RecordEnvelope, TranscriptBindingId as FoundationTranscriptBindingId,
   TranscriptLineId as FoundationTranscriptLineId,
@@ -84,4 +86,29 @@ export interface ObservedSubagent
   readonly promotedAgentId?: AgentId;
   /** Recorded when promotion was refused, so the refusal is inspectable. */
   readonly unsupportedReason?: string;
+}
+
+export interface TranscriptTurnCompletion extends RecordEnvelope<
+  TranscriptTurnCompletionId,
+  'transcriptTurnCompletion'
+> {
+  readonly providerTurnId: ProviderTurnId;
+  readonly agentRunId: AgentRunId;
+  readonly providerSessionId: ProviderSessionId;
+  readonly providerConversationId: string | null;
+  readonly transcriptBindingId: TranscriptBindingId;
+  readonly startTranscriptWatermark: string | null;
+  readonly completionTranscriptWatermark: string;
+  readonly submittedInputSourcePosition: string;
+  readonly completionSourcePosition: string;
+  readonly submittedInputEvidenceDigest: string;
+  readonly sourceLineIds: readonly [TranscriptLineId, ...TranscriptLineId[]];
+  readonly providerCorrelationId: string;
+  readonly providerNativeTurnId?: string;
+  readonly providerKind: ProviderKind;
+  readonly testedProviderVersion: string;
+  readonly turnBoundaryProfileId: ProviderTurnBoundaryProfileId;
+  readonly framingEvidenceDigest: string;
+  readonly completionEvidenceDigest: string;
+  readonly observedAt: IsoUtc;
 }
