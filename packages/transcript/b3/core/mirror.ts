@@ -24,8 +24,6 @@ import {
   type B3Result, type ClientOpId,
 } from '@novakai/foundation/contract';
 
-import { createHash } from 'node:crypto';
-
 import type {
   CommittedInputLine, IngestTranscriptSourceInput, MirrorStage, MirrorStageHooks,
   SourceLine, TranscriptIngestOutcome, TranscriptSourcePort,
@@ -39,6 +37,7 @@ import {
   mirrorLedgerId, recordLedger,
   type MirrorLedgerEntry,
 } from './ledger.js';
+import { committedInputOf } from './committed-input.js';
 import { classifyTurn } from './noise.js';
 import { verifyCommittedPrefix } from './prefix-guard.js';
 import type { TranscriptStore } from './store.js';
@@ -347,20 +346,7 @@ async function mirrorOne(
   if (await halted(deps, 'before-watermark-advance', { position: line.position })) {
     return { kind: 'halt' };
   }
-  // B3d: a committed HUMAN turn is announced with the facts that identify it,
-  // because something outside Transcript may have caused it and has no other
-  // way to recognise its own input in the provider's own words. An assistant
-  // turn is nobody's input, so it carries no such fact.
-  if (role !== 'human') return { kind: 'mirrored' };
-  return {
-    kind: 'mirrored',
-    committedInput: {
-      transcriptLineId: ledgerId,
-      sourcePosition: line.position,
-      sourceDigest: line.digest,
-      textDigest: createHash('sha256').update(text, 'utf8').digest('hex'),
-    },
-  };
+  return { kind: 'mirrored', ...committedInputOf(role, line, ledgerId, text) };
 }
 
 /**

@@ -22,7 +22,7 @@
 // error. That is why this file can be read in one sitting and still be right.
 import {
   mintClientOpId, mintTraceCorrelationId,
-  type AgentRunId, type AuthenticatedPrincipal, type ProviderSessionId,
+  type AgentRunId, type ProviderSessionId,
   type ProviderTurnId, type SystemCommandContext, type TerminalInputAttemptId,
   type TranscriptBindingId, type TranscriptLineId,
 } from '@novakai/foundation/contract';
@@ -47,7 +47,7 @@ const AWAITING: readonly Notification['state'][] = ['offered-to-endpoint', 'deli
 /** How many waiting Notifications one committed pass will consider. */
 const CANDIDATE_LIMIT = 100;
 
-const READER: AuthenticatedPrincipal = {
+const READER: SystemCommandContext<'sys_transcript'>['principal'] = {
   id: 'sys_transcript', kind: 'system', verifiedScopes: [],
 };
 
@@ -140,6 +140,59 @@ export interface NotificationTranscriptObserver {
   observe(event: RunEvent): Promise<void>;
 }
 
+/**
+ * Is this waiting Notification even about the Run this pass belongs to, and did
+ * its input effect produce a durable turn to name? Both are facts already
+ * written down; neither is a judgement about the turn itself.
+ */
+function pairableWith(
+  notification: Notification, pass: CommittedPass,
+): ReturnType<typeof submittedTurnOf> {
+  // The Run a line belongs to is Transcript's own fact, read off the binding —
+  // not something the pairing gets to assume.
+  if (notification.subject.kind !== 'agent-run') return null;
+  if (String(notification.subject.agentRunId) !== String(pass.agentRunId)) return null;
+  return submittedTurnOf(notification);
+}
+
+/**
+ * Offer every line of this pass to the frozen command until one is accepted.
+ *
+ * One line promotes it or none does — the rest of the pass cannot also be the
+ * same turn. A refusal means "not this line" and is the ordinary answer; the law
+ * that produced it lives in the command, which is the point of this whole file.
+ */
+async function offerPass(
+  supervision: SupervisionCore, notification: Notification, pass: CommittedPass,
+  submitted: NonNullable<ReturnType<typeof submittedTurnOf>>,
+): Promise<void> {
+  for (const line of pass.lines) {
+    const observed = await supervision.recordNotificationTranscriptObservation(
+      transcriptContext(),
+      {
+        notificationId: notification.id,
+        expectedRecordVersion: notification.recordVersion,
+        expectedEffectKey: notification.deliveryEffectKey,
+        terminalInputAttemptId: submitted.terminalInputAttemptId,
+        evidence: {
+          bindingId: pass.bindingId,
+          transcriptLineId: line.transcriptLineId,
+          agentRunId: pass.agentRunId,
+          providerSessionId: pass.providerSessionId,
+          providerTurnId: submitted.providerTurnId,
+          sourcePosition: line.sourcePosition,
+          sourceDigest: line.sourceDigest,
+          // The same `sha256:<hex>` shape Supervision computes over the input it
+          // authorised. Equality of these two is the whole difference between
+          // "our turn" and "a turn".
+          logicalInputDigest: `sha256:${line.textDigest}`,
+        },
+      },
+    );
+    if (observed.ok) return;
+  }
+}
+
 export function notificationTranscriptObserver(
   supervision: SupervisionCore,
 ): NotificationTranscriptObserver {
@@ -154,41 +207,8 @@ export function notificationTranscriptObserver(
       if (!waiting.ok) return;
 
       for (const notification of waiting.value.items) {
-        // The Run this line belongs to is Transcript's own fact, read off the
-        // binding — not something the pairing gets to assume.
-        if (notification.subject.kind !== 'agent-run') continue;
-        if (String(notification.subject.agentRunId) !== String(pass.agentRunId)) continue;
-        const submitted = submittedTurnOf(notification);
-        if (submitted === null) continue;
-
-        for (const line of pass.lines) {
-          const observed = await supervision.recordNotificationTranscriptObservation(
-            transcriptContext(),
-            {
-              notificationId: notification.id,
-              expectedRecordVersion: notification.recordVersion,
-              expectedEffectKey: notification.deliveryEffectKey,
-              terminalInputAttemptId: submitted.terminalInputAttemptId,
-              evidence: {
-                bindingId: pass.bindingId,
-                transcriptLineId: line.transcriptLineId,
-                agentRunId: pass.agentRunId,
-                providerSessionId: pass.providerSessionId,
-                providerTurnId: submitted.providerTurnId,
-                sourcePosition: line.sourcePosition,
-                sourceDigest: line.sourceDigest,
-                // The same `sha256:<hex>` shape Supervision computes over the
-                // input it authorised. Equality of these two is the whole
-                // difference between "our turn" and "a turn".
-                logicalInputDigest: `sha256:${line.textDigest}`,
-              },
-            },
-          );
-          // One line promotes it or none does; the rest of this pass cannot
-          // also be the same turn. A refusal means "not this line" and is the
-          // ordinary answer — the law that produced it lives in the command.
-          if (observed.ok) break;
-        }
+        const submitted = pairableWith(notification, pass);
+        if (submitted !== null) await offerPass(supervision, notification, pass, submitted);
       }
     },
   };
