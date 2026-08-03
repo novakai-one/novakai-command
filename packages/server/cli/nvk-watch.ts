@@ -1,22 +1,23 @@
 #!/usr/bin/env -S npx tsx
-// nvk-watch — see what is watching, and what it has queued (§17.1).
+// nvk-watch — create and inspect durable watcher rules (§17.1).
 //
+//   nvk watch add            create one active watcher rule
 //   nvk watch list           the standing watcher rules and their deadlines
 //   nvk watch notifications  the durable Notification queue
-//
-// Both take --json (§17.2). TRACER SCOPE: §17.1 names seven verbs, and these
-// are the two reads the B3d wire needs to be VISIBLE. `add`, `update`,
-// `remove`, `acknowledge` and `reset-drift` are mutations belonging to lanes B
-// and C, and a stub that pretended to perform one would be worse than its
-// absence — an operator would believe a watcher was retired when it was not.
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { b3err, b3fail, type B3Result } from '@novakai/foundation/contract';
+import {
+  b3err, b3fail, b3ok, isValidId, validationFailed,
+  type B3Result,
+} from '@novakai/foundation/contract';
 import type {
-  Notification, WatchDeadline, WatchRule,
+  Notification, WatchCondition, WatchDeadline, WatchRule, WatchSubject,
 } from '../../supervision/contract/index.js';
+import { ACTIVITY_DRIFT_TEMPLATE } from '../../supervision/contract/index.js';
 import { connectRuntime, type RuntimeClient } from '../core/b3/client.js';
-import { emit, parseFlags, type Flags } from '../core/b3/cli-shared.js';
+import {
+  clientOpIdFrom, emit, parseFlags, type Flags,
+} from '../core/b3/cli-shared.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '..', '..', '..');
@@ -70,7 +71,130 @@ function describeNotifications(page: { readonly items: readonly Notification[] }
     + `  ${item.id} · ${item.phase} · ${item.deliveryMode}`).join('\n');
 }
 
+const missingFlag = (name: string): B3Result<never> => b3fail(validationFailed([{
+  path: name,
+  message: `--${name} is required`,
+}]));
+
+function parseSubject(value: string | undefined): B3Result<WatchSubject> {
+  if (value === undefined) return missingFlag('subject');
+  if (value.startsWith('children:')) {
+    const agentId = value.slice('children:'.length);
+    return isValidId(agentId, 'agent', 'uuidv4')
+      ? b3ok({ kind: 'children-of', agentId: agentId as never })
+      : b3fail(validationFailed([{ path: 'subject', message: 'has an invalid AgentId' }]));
+  }
+  if (isValidId(value, 'agentRun', 'uuidv7')) {
+    return b3ok({ kind: 'agent-run', agentRunId: value as never });
+  }
+  if (isValidId(value, 'agent', 'uuidv4')) {
+    return b3ok({ kind: 'agent', agentId: value as never });
+  }
+  return b3fail(validationFailed([{
+    path: 'subject',
+    message: 'must be an AgentId, AgentRunId, or children:<AgentId>',
+  }]));
+}
+
+interface ParsedCondition {
+  readonly condition: WatchCondition;
+  readonly driftPolicy?: typeof ACTIVITY_DRIFT_TEMPLATE.driftPolicy;
+}
+
+const NUMERIC_CONDITIONS = new Set<WatchCondition['kind']>([
+  'turn-count-at-least', 'input-tokens-at-least', 'output-tokens-at-least',
+  'cost-micros-at-least', 'idle-for-ms',
+]);
+const EVENT_CONDITIONS = new Set<WatchCondition['kind']>([
+  'run-disconnected', 'run-final', 'child-needs-help', 'operation-failed',
+]);
+
+function parseConditionJson(value: string): B3Result<ParsedCondition> {
+  try {
+    return b3ok({ condition: JSON.parse(value) as WatchCondition });
+  } catch {
+    return b3fail(validationFailed([{
+      path: 'when', message: 'must be a WatchCondition JSON object or kind[:value]',
+    }]));
+  }
+}
+
+function parseCondition(value: string | undefined): B3Result<ParsedCondition> {
+  if (value === undefined) return missingFlag('when');
+  if (value.startsWith('{')) return parseConditionJson(value);
+  if (value === 'activity-drift') {
+    return b3ok({
+      condition: ACTIVITY_DRIFT_TEMPLATE.condition,
+      driftPolicy: ACTIVITY_DRIFT_TEMPLATE.driftPolicy,
+    });
+  }
+  const separator = value.indexOf(':');
+  const kind = separator === -1 ? value : value.slice(0, separator);
+  const scalar = separator === -1 ? undefined : Number(value.slice(separator + 1));
+  if (NUMERIC_CONDITIONS.has(kind as WatchCondition['kind'])
+    && scalar !== undefined && Number.isInteger(scalar) && scalar >= 0) {
+    return b3ok({ condition: { kind, value: scalar } as WatchCondition });
+  }
+  if (EVENT_CONDITIONS.has(kind as WatchCondition['kind']) && scalar === undefined) {
+    return b3ok({ condition: { kind } as WatchCondition });
+  }
+  return b3fail(validationFailed([{
+    path: 'when', message: 'must be an event kind, activity-drift, or numeric kind:value',
+  }]));
+}
+
+function parseRecipient(value: string | undefined): B3Result<unknown> {
+  if (value === undefined) return missingFlag('notify');
+  if (value === 'human') return b3ok('authenticated-human');
+  return isValidId(value, 'agent', 'uuidv4')
+    ? b3ok({ kind: 'agent', agentId: value })
+    : b3fail(validationFailed([{
+      path: 'notify', message: 'must be human or an AgentId',
+    }]));
+}
+
+function addInput(argFlags: Flags): B3Result<Readonly<Record<string, unknown>>> {
+  const subject = parseSubject(argFlags.value('subject'));
+  if (!subject.ok) return subject;
+  const condition = parseCondition(argFlags.value('when'));
+  if (!condition.ok) return condition;
+  const recipient = parseRecipient(argFlags.value('notify'));
+  if (!recipient.ok) return recipient;
+  const deliveryMode = argFlags.value('delivery');
+  if (!['queue-only', 'next-turn-context', 'start-turn'].includes(deliveryMode ?? '')) {
+    return b3fail(validationFailed([{
+      path: 'delivery',
+      message: 'must be queue-only, next-turn-context, or start-turn',
+    }]));
+  }
+  return b3ok({
+    subject: subject.value,
+    condition: condition.value.condition,
+    recipient: recipient.value,
+    deliveryMode,
+    cooldownMs: 0,
+    status: 'active',
+    ...(condition.value.driftPolicy === undefined
+      ? {}
+      : { driftPolicy: condition.value.driftPolicy }),
+  });
+}
+
+const ADD_COMMAND = 'add';
+
 const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
+  [ADD_COMMAND]: async function addWatcher(argFlags) {
+    const input = addInput(argFlags);
+    if (!input.ok) emit('watch add', argFlags, input, () => '');
+    const clientOpId = clientOpIdFrom(argFlags);
+    if (!clientOpId.ok) emit('watch add', argFlags, clientOpId, () => '');
+    emit('watch add', argFlags, await withClient<WatchRule>(
+      (client) => client.call(
+        'b3.supervision.createWatch', input.value, clientOpId.value,
+      ),
+    ), (rule) => `Watching ${JSON.stringify(rule.subject)} for ${rule.condition.kind}.`);
+  },
+
   async list(argFlags) {
     const limit = Number(argFlags.value('limit') ?? 50);
     emit('watch list', argFlags, await withClient<WatcherListing>(
@@ -91,7 +215,7 @@ const chosen = COMMANDS[command];
 if (chosen === undefined) {
   process.stderr.write(`${JSON.stringify({
     code: 'Usage',
-    message: `usage: nvk watch ${Object.keys(COMMANDS).join('|')} [--json] [--limit <n>]`,
+    message: `usage: nvk watch ${Object.keys(COMMANDS).join('|')} [options] [--json]`,
   })}\n`);
   process.exitCode = 2;
 } else {
