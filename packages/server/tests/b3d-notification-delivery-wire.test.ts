@@ -52,6 +52,21 @@ const TEMPLATE: WatcherTemplate = {
   payload: PAYLOAD,
 };
 
+const NEXT_PAYLOAD = {
+  ...PAYLOAD,
+  id: 'watch-template/c7-next-turn-context',
+  deliveryBinding: 'next-turn-context',
+} as const;
+
+const NEXT_TEMPLATE: WatcherTemplate = {
+  templateRef: {
+    id: NEXT_PAYLOAD.id,
+    version: NEXT_PAYLOAD.version,
+    digest: templateDigest(NEXT_PAYLOAD),
+  },
+  payload: NEXT_PAYLOAD,
+};
+
 function unwrap<Value>(result: B3Result<Value>, label: string): Value {
   if (!result.ok) throw new Error(`${label}: ${result.error.code} — ${result.error.message}`);
   return result.value;
@@ -133,6 +148,89 @@ test('Runtime advances a queued start-turn Notification without a delivery calle
       'a queued start-turn Notification never left queued: Runtime has no delivery caller');
     assert.equal(ptyHost.latest().turns.length, 1,
       'one Notification delivery must cause exactly one provider-visible turn');
+    assert.equal(ptyHost.latest().turns[0], delivered?.summary);
+  } finally {
+    chris.close();
+    await host.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('Runtime delivers next-turn-context only after a separately caused turn', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'nvk-b3d-c7-next-turn-'));
+  const ptyHost = createFakePtyHost({ composer: true });
+  const host = await startRuntimeHost({
+    root,
+    port: 0,
+    ptyHost,
+    providers: createFakeProviderAdapters(),
+    watcherTemplates: [NEXT_TEMPLATE],
+  });
+  const chris = await connectRuntime({ root, port: host.port, token: host.token });
+  try {
+    const role = unwrap(await chris.call<{ id: string }>('b3.agent.createRole', {
+      ...chatRole('c7-next-turn-context'),
+      supervisionPolicy: {
+        activityDrift: 'disabled-explicitly',
+        requiredWatcherTemplates: [NEXT_TEMPLATE.templateRef],
+        parentNotificationMode: 'queue-only',
+      },
+    }), 'create role');
+    const spawned = unwrap(await chris.call<{ run: { id: string } }>('b3.agent.spawn', {
+      roleProfileId: role.id,
+      displayName: 'C7 Next Turn Context',
+      workingDirectory: root,
+    }), 'spawn');
+    const deadlines = unwrap(
+      await host.runtime.supervision.listWatchDeadlines(PRINCIPAL), 'list deadlines',
+    );
+    const armed = deadlines.find((deadline: WatchDeadline) =>
+      deadline.subjectKey === `agent-run:${spawned.run.id}` && deadline.state === 'armed');
+    assert.notEqual(armed, undefined);
+    const firedAt = new Date(new Date(armed!.dueAt).getTime() + 1).toISOString();
+    unwrap(await host.runtime.supervision.evaluateEvent(runtimeContext(), {
+      event: {
+        eventId: 'evt_c7_next_turn',
+        kind: 'agent.run.changed',
+        schemaVersion: 1,
+        occurredAt: firedAt as never,
+        committedAt: firedAt as never,
+        sourceOwner: 'agent-runtime',
+        traceId: mintTraceCorrelationId(),
+        cursor: 'c7-next-turn' as never,
+        payload: { agentRunId: spawned.run.id },
+      },
+    }), 'queue notification');
+
+    await new Promise((resolve) => { setTimeout(resolve, 750); });
+    assert.equal(ptyHost.latest().turns.length, 0,
+      'next-turn-context started a provider turn before another cause existed');
+
+    const before = unwrap(await host.runtime.runs.getAgentRun(
+      PRINCIPAL, spawned.run.id as never,
+    ), 'read run');
+    const begun = unwrap(await host.runtime.runs.beginProviderTurn(runtimeContext(), {
+      agentRunId: spawned.run.id as never,
+      expectedRecordVersion: before.run.recordVersion,
+    }), 'begin separately caused turn');
+    assert.notEqual(begun.run.activeProviderTurn, undefined);
+    unwrap(await host.runtime.runs.endProviderTurn(runtimeContext(), {
+      agentRunId: spawned.run.id as never,
+      providerTurnId: begun.run.activeProviderTurn!.providerTurnId,
+    }), 'end separately caused turn');
+
+    const delivered = await until(async () => {
+      const listed = await host.runtime.supervision.listNotifications(PRINCIPAL, { limit: 50 });
+      if (!listed.ok) return null;
+      return listed.value.items.find((notification: Notification) =>
+        notification.subject.kind === 'agent-run'
+          && notification.subject.agentRunId === spawned.run.id
+          && (notification.deliveryAttempt.state === 'submitted-confirmed'
+            || notification.deliveryAttempt.state === 'submitted-unconfirmed')) ?? null;
+    });
+    assert.notEqual(delivered, null,
+      'a separately caused turn never released its queued next-turn context');
+    assert.equal(ptyHost.latest().turns.length, 1);
     assert.equal(ptyHost.latest().turns[0], delivered?.summary);
   } finally {
     chris.close();
