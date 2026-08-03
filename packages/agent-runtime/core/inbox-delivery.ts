@@ -22,13 +22,14 @@
 //     delivery is the same effect rather than a second one.
 
 import {
-  mintClientOpId, mintTraceCorrelationId,
+  deriveClientOpId, mintTraceCorrelationId,
   type AgentId, type B3Result, type CommandContext, type TerminalSessionId,
 } from '@novakai/foundation/contract';
 
 import type { MessagingInboxPort } from '../contract/ports.js';
 import type { AgentRun } from '../contract/runs.js';
 import type { RunsCore } from './runs-context.js';
+import { submitProviderTurn } from './provider-turns.js';
 
 export interface InboxDeliveryPass {
   readonly considered: number;
@@ -52,9 +53,9 @@ const DEFAULT_INTERVAL_MS = 500;
 
 const EMPTY: InboxDeliveryPass = { considered: 0, delivered: 0, failures: [] };
 
-const deliveryContext = (): CommandContext => ({
+const deliveryContext = (effectKey: string): CommandContext => ({
   principal: { id: 'sys_agent_runtime', kind: 'system', verifiedScopes: [] },
-  clientOpId: mintClientOpId(),
+  clientOpId: deriveClientOpId(`agent-inbox-delivery:${effectKey}`),
   traceId: mintTraceCorrelationId(),
   contractVersion: 1,
 });
@@ -67,7 +68,8 @@ const deliveryContext = (): CommandContext => ({
  * has no PTY this Runtime may type into.
  */
 function deliverable(agentRun: AgentRun): boolean {
-  return agentRun.lifecycle === 'ready' && agentRun.terminalSessionId !== undefined;
+  return agentRun.lifecycle === 'ready'
+    && agentRun.terminalSessionId !== undefined;
 }
 
 export function createInboxDeliveryPump(options: InboxDeliveryOptions): InboxDeliveryPump {
@@ -80,41 +82,58 @@ export function createInboxDeliveryPump(options: InboxDeliveryOptions): InboxDel
   async function deliverTo(
     agentRun: AgentRun,
   ): Promise<{ delivered: boolean; failure?: { inboxItemId: string; code: string } }> {
-    // The provider lives on the launch plan, not on the Run — read BEFORE the
-    // claim, so a plan this host cannot resolve leaves the item `queued` for
-    // the next pass rather than `claimed` with nowhere to go.
-    const plan = await core.agents.getLaunchPlan(
-      { id: 'sys_agent_runtime', kind: 'system', verifiedScopes: [] }, agentRun.launchPlanId,
-    );
-    if (!plan.ok) return { delivered: false };
-
-    const claimed = await inbox.claimNext(agentRun.agentId as AgentId);
-    if (!claimed.ok) {
-      return { delivered: false, failure: { inboxItemId: '', code: claimed.error.code } };
+    const pending = await inbox.peekNext(agentRun.agentId as AgentId);
+    if (!pending.ok) {
+      return { delivered: false, failure: { inboxItemId: '', code: pending.error.code } };
     }
-    if (claimed.value === null) return { delivered: false };
-    const item = claimed.value;
+    if (pending.value === null) return { delivered: false };
+    const item = pending.value;
+    const binding = await core.transcriptBinding?.(agentRun.id);
+    if (binding === undefined || binding === null) {
+      return {
+        delivered: false,
+        failure: { inboxItemId: item.inboxItemId, code: 'TranscriptSourceUnavailable' },
+      };
+    }
+    const effectKey = `inbox-delivery:${item.inboxItemId}`;
 
-    const submitted = await core.terminal.submitRuntimeInput(deliveryContext(), {
+    const submitted = await submitProviderTurn(core, deliveryContext(effectKey), {
+      kind: 'runtime-effect',
+      source: 'agent-inbox-delivery',
+      sourceEffectKey: effectKey,
+      sourceObjectRef: item.inboxItemId,
+      agentRunId: agentRun.id,
       terminalSessionId: agentRun.terminalSessionId as TerminalSessionId,
-      keystrokes: core.providers.deliverTurn(plan.value.provider, item.text),
-      // Derived from the item, so a repeat of THIS delivery is recognised as
-      // the same effect rather than typed a second time.
-      effectKey: `inbox-delivery:${item.inboxItemId}`,
+      transcriptBindingId: binding.bindingId,
+      utf8Text: item.text,
     });
 
     if (!submitted.ok) {
-      const recorded = await inbox.recordSubmission({
-        inboxItemId: item.inboxItemId,
-        outcome: 'failed',
-        failureReason: `${submitted.error.code}: ${submitted.error.message}`,
-      });
       return {
         delivered: false,
-        failure: {
-          inboxItemId: item.inboxItemId,
-          code: recorded.ok ? submitted.error.code : recorded.error.code,
-        },
+        failure: { inboxItemId: item.inboxItemId, code: submitted.error.code },
+      };
+    }
+    if (submitted.value.kind === 'queued-not-yet-safe') return { delivered: false };
+    if (submitted.value.kind === 'not-submitted') {
+      return {
+        delivered: false,
+        failure: { inboxItemId: item.inboxItemId, code: 'ProviderTurnSubmissionConflict' },
+      };
+    }
+
+    // Claim only after the semantic owner has crossed the provider boundary.
+    // A blocked turn therefore leaves the Messaging item queued exactly where
+    // its owner can retry it; a crash here replays the same Runtime submission.
+    const claimed = await inbox.claimNext(agentRun.agentId as AgentId);
+    if (!claimed.ok) {
+      return { delivered: false, failure: { inboxItemId: item.inboxItemId, code: claimed.error.code } };
+    }
+    if (claimed.value === null || claimed.value.inboxItemId !== item.inboxItemId
+      || claimed.value.messageId !== item.messageId || claimed.value.text !== item.text) {
+      return {
+        delivered: false,
+        failure: { inboxItemId: item.inboxItemId, code: 'ProviderTurnSubmissionConflict' },
       };
     }
 
@@ -123,7 +142,8 @@ export function createInboxDeliveryPump(options: InboxDeliveryOptions): InboxDel
     // would be convenient.
     const recorded = await inbox.recordSubmission({
       inboxItemId: item.inboxItemId,
-      outcome: submitted.value.confirmed ? 'submitted-confirmed' : 'submitted-unconfirmed',
+      outcome: submitted.value.kind,
+      terminalInputAttemptId: submitted.value.terminalInputAttemptId,
     });
     if (!recorded.ok) {
       return { delivered: false, failure: { inboxItemId: item.inboxItemId, code: recorded.error.code } };

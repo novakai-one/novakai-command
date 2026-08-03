@@ -4,11 +4,16 @@ import {
   type AgentId, type AgentRunId, type AuthorityScope, type B3Result,
   type CommandContext, type ReceiptStore, type RecordVersion,
   type SystemCommandContext, type TraceCorrelationId,
+  type TranscriptTurnCompletionId, type ProviderUsageEvidenceId,
+  type ProviderTurnId, type ProviderSessionId, type TranscriptBindingId,
+  type IsoUtc,
+  type ProviderTurnSubmissionId, type ActivityGeneration,
 } from '@novakai/foundation/contract';
+import type { CompleteProviderTurnOutcome } from '../contract/provider-turns.js';
 import type { RuntimeHostContract } from '../contract/types.js';
 import type { RunEvent, RunUsageLookup } from '../contract/runs-api.js';
 import type {
-  AgentsPort, MessagingEndpointPort, ProviderPort, RunCredentialPort, TerminalPort,
+  AgentsPort, MessagingEndpointPort, MessagingInboxPort, ProviderPort, RunCredentialPort, TerminalPort,
   NotificationDeliveryPort, RunWatcherPort, TranscriptCustodyPort,
 } from '../contract/ports.js';
 import {
@@ -24,9 +29,54 @@ import type { RunsStore, Persisted } from './runs-store.js';
  * configuration, and the view says `unbound` rather than inventing a state.
  */
 export type TranscriptBindingLookup = (agentRunId: AgentRunId) => Promise<{
+  readonly bindingId: import('@novakai/foundation/contract').TranscriptBindingId;
   readonly bindingState: 'bound' | 'waiting' | 'missing' | 'corrupt';
   readonly mirrorWatermark?: string;
 } | null>;
+
+/** Exact immutable owner facts Runtime must correlate before generation moves. */
+export interface ProviderTurnCompletionEvidenceLookup {
+  getTranscriptCompletion(id: TranscriptTurnCompletionId): Promise<B3Result<{
+    readonly id: TranscriptTurnCompletionId;
+    readonly providerTurnId: ProviderTurnId;
+    readonly agentRunId: AgentRunId;
+    readonly providerSessionId: ProviderSessionId;
+    readonly providerConversationId: string | null;
+    readonly transcriptBindingId: TranscriptBindingId;
+    readonly completionTranscriptWatermark: string;
+    readonly completionEvidenceDigest: string;
+    readonly observedAt: IsoUtc;
+  }>>;
+  getUsageEvidence(id: ProviderUsageEvidenceId): Promise<B3Result<{
+    readonly id: ProviderUsageEvidenceId;
+    readonly providerSessionId: ProviderSessionId;
+    readonly providerConversationId: string | null;
+    readonly observedAt: IsoUtc;
+    readonly source: string;
+    readonly sourceCursor?: string;
+    readonly scope:
+      | { readonly kind: 'provider-session-cumulative' }
+      | {
+          readonly kind: 'runtime-turn-completion';
+          readonly agentRunId: AgentRunId;
+          readonly providerTurnId: ProviderTurnId;
+          readonly transcriptTurnCompletionId: TranscriptTurnCompletionId;
+        };
+    readonly measurement: {
+      readonly quality: 'measured' | 'estimated' | 'partial' | 'unavailable';
+      readonly providerTurns?: number;
+      readonly evidenceDigest: string;
+    };
+  }>>;
+}
+
+export type ProviderTurnCompletionCoordinator = (input: {
+  readonly agentRunId: AgentRunId;
+  readonly providerTurnId: ProviderTurnId;
+  readonly providerTurnSubmissionId: ProviderTurnSubmissionId;
+  readonly activityGeneration: ActivityGeneration;
+  readonly traceId: TraceCorrelationId;
+}) => Promise<B3Result<CompleteProviderTurnOutcome>>;
 
 export interface RunsCore {
   readonly store: RunsStore;
@@ -38,6 +88,8 @@ export interface RunsCore {
   readonly fence: RuntimeHostContract['fence'];
   /** §19.1's transcript section. Absent means no Transcript is composed. */
   readonly transcriptBinding?: TranscriptBindingLookup;
+  readonly providerTurnCompletionEvidence?: ProviderTurnCompletionEvidenceLookup;
+  readonly providerTurnCompletionCoordinator?: ProviderTurnCompletionCoordinator;
   /**
    * §13.5 rows 6/10 and §13.6's endpoint cutover.
    *
@@ -49,6 +101,8 @@ export interface RunsCore {
    * takes that branch (see `b3c-production-lifecycle.test.ts`).
    */
   readonly messagingEndpoint?: MessagingEndpointPort;
+  /** Messaging-owned inbox source facts used by the semantic delivery route. */
+  readonly messagingInbox?: MessagingInboxPort;
   /** §13.5 row 9 and §13.6's final watermark. Optional for the same reason. */
   readonly transcriptCustody?: TranscriptCustodyPort;
   /** B3d §13.5's watcher rung. Optional for the same reason as the two above. */

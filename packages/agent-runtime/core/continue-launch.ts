@@ -145,12 +145,15 @@ async function bindReplacementSession(
   input: { readonly operation: RunOperation; readonly providerNativeSessionId: string },
 ): Promise<B3Result<RunOperation>> {
   const native = input.providerNativeSessionId === '' ? null : input.providerNativeSessionId;
+  const boundary = await core.providers.turnBoundaryCapability(work.plan.provider);
+  if (!boundary.ok) return boundary;
   const bound = await core.agents.registerProviderSession({
     expectedProviderSessionId: work.reserved,
     agentId: work.input.agentId,
     provider: work.plan.provider,
     providerConversationId: native,
     providerResumeHandle: native,
+    providerVersion: boundary.value.testedProviderVersion,
     discovery: { state: 'discovered' },
   });
   if (!bound.ok) return bound;

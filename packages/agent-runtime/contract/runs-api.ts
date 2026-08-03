@@ -1,3 +1,5 @@
+/* eslint-disable max-lines -- The public Runs capability surface remains co-located. */
+
 // The Agent Runtime public contract (B3V4-P2 §12.2). This is the only door.
 //
 // One spawn operation serves human, Agent and script (DEC-B3V4-04). One
@@ -25,6 +27,18 @@ import type {
 import type {
   NotificationTurnSubmission, StartNotificationTurnInput,
 } from './notification-delivery.js';
+import type {
+  CloseProviderTurnCompletionUnprovenInput,
+  CloseProviderTurnCompletionUnprovenOutcome,
+  CompleteProviderTurnInput,
+  CompleteProviderTurnOutcome,
+  ControllerProviderTurnSubmitInput,
+  ProviderTurnSubmission,
+  ProviderTurnSubmissionFilter,
+  ProviderTurnSubmissionPage,
+  ProviderTurnSubmitOutcome,
+  SystemProviderTurnSubmitInput,
+} from './provider-turns.js';
 
 export type {
   NotificationTurnSubmission, StartNotificationTurnInput,
@@ -227,6 +241,13 @@ export interface RunUsageFacts {
   readonly final: boolean;
   readonly activityGeneration: ActivityGeneration;
   readonly recordVersion: RecordVersion;
+  /** Omitted means no amendment-era submission set exists for this Run. */
+  readonly providerTurnSubmissions?: readonly {
+    readonly providerTurnId: ProviderTurnId;
+    readonly state:
+      | 'queued' | 'prepared' | 'submitted-confirmed' | 'submitted-unconfirmed'
+       | 'completed' | 'rejected' | 'recovery-required' | 'completion-unproven-final';
+  }[];
 }
 
 /** Narrow composition adapter from Runtime records into Supervision projections. */
@@ -369,6 +390,26 @@ export interface AgentRuntimeCommands {
     input: { readonly agentRunId: AgentRunId; readonly providerTurnId: ProviderTurnId },
   ): Promise<B3Result<AgentRunView>>;
 
+  submitProviderTurn(
+    context: CommandContext,
+    input: ControllerProviderTurnSubmitInput,
+  ): Promise<B3Result<ProviderTurnSubmitOutcome>>;
+
+  submitProviderTurn(
+    context: SystemCommandContext<'sys_agent_runtime'>,
+    input: SystemProviderTurnSubmitInput,
+  ): Promise<B3Result<ProviderTurnSubmitOutcome>>;
+
+  completeProviderTurn(
+    context: SystemCommandContext<'sys_reconciler'>,
+    input: CompleteProviderTurnInput,
+  ): Promise<B3Result<CompleteProviderTurnOutcome>>;
+
+  closeProviderTurnCompletionUnproven(
+    context: CommandContext,
+    input: CloseProviderTurnCompletionUnprovenInput,
+  ): Promise<B3Result<CloseProviderTurnCompletionUnprovenOutcome>>;
+
   /** Resume an operation an earlier attempt left in the middle (§20). */
   repairRunOperation(
     context: CommandContext, operationId: RunOperationId,
@@ -423,6 +464,16 @@ export interface AgentRuntimeQueries {
   getNotificationTurnSubmission(
     principal: AuthenticatedPrincipal, effectKey: string,
   ): Promise<B3Result<NotificationTurnSubmission>>;
+
+  getProviderTurnSubmission(
+    principal: AuthenticatedPrincipal,
+    providerTurnId: ProviderTurnId,
+  ): Promise<B3Result<ProviderTurnSubmission>>;
+
+  listProviderTurnSubmissions(
+    principal: AuthenticatedPrincipal,
+    filter: ProviderTurnSubmissionFilter,
+  ): Promise<B3Result<ProviderTurnSubmissionPage>>;
 
   /**
    * §12.2's event subscription: every event after `after`, live, until the

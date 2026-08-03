@@ -6,7 +6,10 @@ import type {
   ActivityGeneration, AgentRunId, B3PrincipalId, CommandReceiptId,
   ControllerAttachmentId, IsoUtc, LeaseGeneration, NotificationId,
   NotificationInputReservationId, ProviderTurnId, RecordEnvelope, RuntimeEpochId,
-  TerminalInputAttemptId, TerminalInputLeaseId, TerminalSessionId,
+  ProviderSessionId, ProviderTurnSubmissionId, ProviderTurnSubmissionSource,
+  ProviderUsageEvidenceId, RecordVersion, TerminalInputAttemptId,
+  TerminalInputLeaseId, TerminalSessionId, TranscriptBindingId,
+  TranscriptTurnCompletionId,
 } from '@novakai/foundation/contract';
 
 export type TerminalSessionStatus =
@@ -92,7 +95,7 @@ export type TerminalInputKind = typeof TERMINAL_INPUT_KINDS[number];
 export type TerminalInputOutcome =
   | 'accepted' | 'submitted-confirmed' | 'submitted-unconfirmed' | 'rejected';
 
-export type TerminalInputAttempt = RecordEnvelope<
+export type ExistingTerminalInputAttempt = RecordEnvelope<
   TerminalInputAttemptId, 'terminalInputAttempt'
 > & (
   | {
@@ -119,8 +122,88 @@ export type TerminalInputAttempt = RecordEnvelope<
       readonly kindOfInput: 'message-delivery';
       readonly outcome: 'submitted-confirmed' | 'submitted-unconfirmed';
       readonly submittedAt: IsoUtc;
-    }
+  }
 );
+
+export type ProviderTurnAttemptAuthority =
+  | {
+      readonly kind: 'controller';
+      readonly attachmentId: ControllerAttachmentId;
+      readonly inputLeaseId: TerminalInputLeaseId;
+      readonly leaseGeneration: LeaseGeneration;
+      readonly resumeDeadlineAt: IsoUtc;
+      readonly requestingPrincipalId: B3PrincipalId;
+    }
+  | {
+      readonly kind: 'runtime-safe-boundary';
+      readonly source: ProviderTurnSubmissionSource;
+      readonly sourceEffectKey: string;
+      readonly sourceObjectRef: string;
+      readonly expectedNoActiveInputLease: true;
+      readonly expectedNoControllerDraft: true;
+    };
+
+export type ProviderTurnAttemptEffectState =
+  | { readonly kind: 'prepared'; readonly preparedAt: IsoUtc }
+  | { readonly kind: 'executing'; readonly executionStartedAt: IsoUtc }
+  | { readonly kind: 'submitted-confirmed'; readonly submittedAt: IsoUtc }
+  | { readonly kind: 'submitted-unconfirmed'; readonly submittedAt: IsoUtc; readonly reason: string }
+  | { readonly kind: 'rejected'; readonly rejectedAt: IsoUtc; readonly effectEscaped: false; readonly reason: string };
+
+export interface ProviderTurnInterruptBarrier {
+  readonly barrierCommittedAt: IsoUtc;
+  readonly revokedLeaseGeneration?: LeaseGeneration;
+  readonly newLeaseGeneration: LeaseGeneration;
+}
+
+export type ProviderTurnBarrierState =
+  | { readonly kind: 'reserved-pre-effect' }
+  | { readonly kind: 'active'; readonly activatedAt: IsoUtc }
+  | ({ readonly kind: 'interrupt-committed' } & ProviderTurnInterruptBarrier)
+  | {
+      readonly kind: 'completion-committed';
+      readonly committedAt: IsoUtc;
+      readonly transcriptTurnCompletionId: TranscriptTurnCompletionId;
+      readonly providerUsageEvidenceId: ProviderUsageEvidenceId;
+      readonly interruptDisposition: 'no-barrier' | 'barrier-won-before-completion';
+      readonly interruptBarrier?: ProviderTurnInterruptBarrier;
+    }
+  | {
+      readonly kind: 'closed-unproven';
+      readonly closedAt: IsoUtc;
+      readonly terminalFinalEvidenceRefs: readonly string[];
+      readonly interruptDisposition: 'no-barrier' | 'barrier-won-before-unproven-close';
+      readonly interruptBarrier?: ProviderTurnInterruptBarrier;
+    }
+  | { readonly kind: 'released-rejected'; readonly releasedAt: IsoUtc };
+
+export interface ProviderTurnTerminalInputAttempt extends RecordEnvelope<
+  TerminalInputAttemptId,
+  'terminalInputAttempt'
+> {
+  readonly source: 'provider-turn';
+  readonly terminalSessionId: TerminalSessionId;
+  readonly inputSequence: number;
+  readonly payloadDigest: string;
+  readonly kindOfInput: 'provider-turn-submit';
+  readonly agentRunId: AgentRunId;
+  readonly providerTurnSubmissionId: ProviderTurnSubmissionId;
+  readonly deliveryAttemptOrdinal: number;
+  readonly providerTurnId: ProviderTurnId;
+  readonly activityGeneration: ActivityGeneration;
+  readonly submissionEffectKey: string;
+  readonly providerSessionId: ProviderSessionId;
+  readonly transcriptBindingId: TranscriptBindingId;
+  readonly startTranscriptWatermark: string | null;
+  readonly expectedRunRecordVersion: RecordVersion;
+  readonly authority: ProviderTurnAttemptAuthority;
+  readonly effectState: ProviderTurnAttemptEffectState;
+  readonly turnBarrier: ProviderTurnBarrierState;
+}
+
+export type TerminalInputAttempt =
+  | ExistingTerminalInputAttempt
+  | ProviderTurnTerminalInputAttempt;
 
 /** Terminal's durable keyboard fence for one deterministic Notification effect. */
 export type NotificationInputReservation = RecordEnvelope<

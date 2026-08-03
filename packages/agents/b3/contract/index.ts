@@ -7,6 +7,10 @@ export * from './records.js';
 export * from './api.js';
 export * from './providers.js';
 export {
+  boundaryProfile, boundaryProfileValid, observeProviderBoundarySource,
+  productionBoundaryProfile, SUPPORTED_PROVIDER_BOUNDARY_VERSIONS,
+} from '../adapters/providers/turn-boundary.js';
+export {
   readAgentControl, readAuthoriseSpawnInput, readCreateAgentFromRoleInput,
   readCreateRoleProfileInput, readIssueDelegationGrantInput,
   readRecordRelationshipInput, readRegisterProviderSessionInput,

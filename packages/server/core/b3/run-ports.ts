@@ -1,3 +1,5 @@
+/* eslint-disable max-lines -- Narrow Runtime adapters stay grouped at the composition seam. */
+
 // Where Agent Runtime's ports meet the real capabilities.
 //
 // This is the only place the three of them are in the same file, and that is
@@ -19,7 +21,8 @@ import {
   type TerminalInputAttemptId,
 } from '@novakai/foundation/contract';
 import type {
-  AgentsPort, ProviderPort, RunCredentialPort, TerminalPort, TurnDeliveryStep,
+  AgentsPort, ProviderPort, ProviderTurnInputAttemptFacts, RunCredentialPort,
+  TerminalPort, TurnDeliveryStep,
 } from '../../../agent-runtime/contract/index.js';
 import type { GovernedAgentsContract } from '../../../agents/b3/contract/index.js';
 import type { TerminalContract } from '../../../terminal/contract/index.js';
@@ -81,6 +84,9 @@ export function agentsPort(agents: GovernedAgentsContract): AgentsPort {
       if (!registered.ok) return registered;
       return b3ok({
         id: registered.value.id,
+        provider: registered.value.provider,
+        providerConversationId: registered.value.providerConversationId,
+        providerVersion: registered.value.providerVersion ?? 'unknown',
         providerNativeSessionId: registered.value.providerResumeHandle ?? '',
         discovered: registered.value.discovery.state === 'discovered',
       });
@@ -91,6 +97,9 @@ export function agentsPort(agents: GovernedAgentsContract): AgentsPort {
       if (!found.ok) return found;
       return b3ok({
         id: found.value.id,
+        provider: found.value.provider,
+        providerConversationId: found.value.providerConversationId,
+        providerVersion: found.value.providerVersion ?? 'unknown',
         providerNativeSessionId: found.value.providerResumeHandle ?? '',
         discovered: found.value.discovery.state === 'discovered',
       });
@@ -191,6 +200,54 @@ export function terminalPort(
         attachmentId: attached.value.id,
       });
       return submitted;
+    },
+
+    async prepareProviderTurnInput(input) {
+      const prepared = await terminal.prepareProviderTurnInput(systemContext(), input);
+      return prepared.ok ? b3ok(prepared.value) : prepared;
+    },
+
+    async executeProviderTurnInput(input) {
+      const executed = await terminal.executeProviderTurnInput(systemContext(), input);
+      return executed.ok ? b3ok(executed.value) : executed;
+    },
+
+    async cancelPreparedProviderTurnInput(input) {
+      const cancelled = await terminal.cancelPreparedProviderTurnInput(systemContext(), input);
+      return cancelled.ok ? b3ok(cancelled.value) : cancelled;
+    },
+
+    async getProviderTurnInputAttempt(input) {
+      const found = await terminal.getProviderTurnInputAttempt(systemContext().principal, input);
+      if (!found.ok && found.error.code === 'ProviderTurnSubmissionConflict') return b3ok(null);
+      return found.ok ? b3ok(found.value) : found;
+    },
+
+    async listIncompleteProviderTurnInputAttempts(input) {
+      const items: ProviderTurnInputAttemptFacts[] = [];
+      let cursor: import('@novakai/foundation/contract').EventCursor | undefined;
+      do {
+        const listed = await terminal.listIncompleteProviderTurnInputAttempts(
+          systemContext().principal, {
+            ...input, ...(cursor === undefined ? {} : { cursor }), limit: 200,
+          },
+        );
+        if (!listed.ok) return listed;
+        items.push(...listed.value.items);
+        cursor = listed.value.nextCursor;
+      } while (cursor !== undefined);
+      return b3ok(items);
+    },
+
+    quarantineProviderTurnInputAttempt: (input) =>
+      terminal.system.quarantineProviderTurnInputAttempt(systemContext(), input),
+
+    async settleProviderTurnCompletion(input) {
+      return terminal.settleProviderTurnCompletion(systemContext(), input);
+    },
+
+    async closeProviderTurnBarrierUnproven(input) {
+      return terminal.closeProviderTurnBarrierUnproven(systemContext(), input);
     },
 
     async readOutputSoFar(principal, terminalSessionId) {

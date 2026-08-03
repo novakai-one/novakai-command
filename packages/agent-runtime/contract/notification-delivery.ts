@@ -52,6 +52,7 @@ export interface NotificationDeliveryAuthorityFacts {
   readonly activityGeneration: ActivityGeneration;
   readonly deliveryMode: 'start-turn';
   readonly inputText: string;
+  readonly semanticSource: 'watcher-status-request' | 'notification-start-turn';
   readonly authoritySource:
     | { readonly kind: 'watch-rule'; readonly watchRuleId: string }
     | { readonly kind: 'launch-plan'; readonly launchPlanId: ResolvedLaunchPlanId };

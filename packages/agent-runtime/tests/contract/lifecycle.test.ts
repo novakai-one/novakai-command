@@ -91,13 +91,18 @@ test('interrupting a turn leaves the Run live and its children untouched', async
 
 test('interrupting a Run that is not working changes nothing at all', async () => {
   await withRig(async (rig) => {
-    const family = await threeGenerations(rig);
-    const view = await rig.runtime.getAgentRun(rig.principal(), family.manager.runId);
+    const role = rig.agents.defineRole('interactive');
+    const spawned = await rig.runtime.spawnAgent(rig.human(), {
+      roleProfileId: role, displayName: 'Idle', workingDirectory: '/tmp/work',
+    });
+    assert.equal(spawned.ok, true, spawned.ok ? '' : spawned.error.message);
+    if (!spawned.ok) return;
+    const view = await rig.runtime.getAgentRun(rig.principal(), spawned.value.run.id);
     assert.equal(view.ok, true);
     if (!view.ok) return;
 
     const outcome = await rig.runtime.interruptAgentTurn(rig.human(), {
-      agentRunId: family.manager.runId,
+      agentRunId: spawned.value.run.id,
       expectedRecordVersion: view.value.run.recordVersion,
     });
     assert.equal(outcome.ok, true);

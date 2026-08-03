@@ -7,9 +7,11 @@
 
 export * from './api.js';
 export * from './records.js';
+export * from './validate.js';
 export {
   composeB3Transcript, recordObservedSubagent,
   type B3TranscriptOptions, type CapabilityEventEmitter, type SubagentPromotionPort,
+  type TranscriptTurnCompletionPort,
 } from '../core/compose.js';
 export { createTranscriptStore, TRANSCRIPT_KINDS, type TranscriptStore } from '../core/store.js';
 export {

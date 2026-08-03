@@ -13,6 +13,10 @@ import type {
   RunContinuationId, RunOperationId, RuntimeEpochId, SupervisionAssignmentId,
   TerminalSessionId, TraceCorrelationId, TreeMutationFenceId, B3PrincipalId,
 } from '@novakai/foundation/contract';
+import type {
+  CompletedProviderTurnDisposition,
+  ProviderTurnOperationFence,
+} from './provider-turns.js';
 
 // ── The Run (§6.1) ──────────────────────────────────────────────────────────
 
@@ -68,6 +72,8 @@ export interface AgentRun extends RecordEnvelope<AgentRunId, 'agentRun'> {
   readonly activity: AgentRunActivity;
   readonly activityGeneration: ActivityGeneration;
   readonly activeProviderTurn?: ActiveProviderTurn;
+  readonly providerTurnOperationFence?: ProviderTurnOperationFence;
+  readonly lastCompletedProviderTurn?: CompletedProviderTurnDisposition;
   /** Historical truth. Never inferred from who is attached now (red gate 4). */
   readonly launchSurface: LaunchSurface;
   readonly requestedBy: B3PrincipalId;

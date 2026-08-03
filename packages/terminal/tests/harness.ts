@@ -80,7 +80,11 @@ export function runtimeContext(epochId?: RuntimeEpochId): SystemCommandContext<'
   };
 }
 
-export function createRig(options: { replayBytes?: number; staleAfterMs?: number } = {}): Rig {
+export function createRig(options: {
+  replayBytes?: number;
+  staleAfterMs?: number;
+  publish?: (kind: string, payload: Readonly<Record<string, unknown>>) => void;
+} = {}): Rig {
   const root = mkdtempSync(path.join(tmpdir(), 'nvk-terminal-'));
   const ptyHost = createFakePtyHost();
   const clock = movableClock();
@@ -110,6 +114,7 @@ export function createRig(options: { replayBytes?: number; staleAfterMs?: number
     root, ptyHost, epochFence, clock,
     ...(options.replayBytes === undefined ? {} : { replayBytes: options.replayBytes }),
     ...(options.staleAfterMs === undefined ? {} : { staleAfterMs: options.staleAfterMs }),
+    ...(options.publish === undefined ? {} : { publish: options.publish }),
   });
 
   return {

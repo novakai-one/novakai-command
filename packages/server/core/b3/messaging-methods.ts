@@ -17,6 +17,12 @@ import {
 } from '@novakai/foundation/contract';
 import type { AgentMessagingContract } from '../../../messaging/b3/contract/index.js';
 import type { B3TranscriptContract } from '../../../transcript/b3/contract/index.js';
+import {
+  readReconcileTranscriptTurnCompletionInput,
+  readTranscriptCompletionStatusInput,
+  readTranscriptTurnCompletionFilter,
+  readTranscriptTurnCompletionIdInput,
+} from '../../../transcript/b3/contract/index.js';
 import type { CallerSession, MethodTable } from '../../contract/protocol.js';
 import {
   readEnsureDirectThreadInput, readEnsureGroupThreadInput, readGetAgentEndpointInput,
@@ -109,6 +115,18 @@ export function buildB3MessagingMethods(options: B3MessagingMethodOptions): Meth
     principal: { id: 'sys_transcript', kind: 'system', verifiedScopes: [] },
   });
 
+  const reconcilerSystem = (
+    context: CommandContext, principal: AuthenticatedPrincipal,
+  ): B3Result<SystemCommandContext<'sys_reconciler'>> =>
+    principal.id === 'sys_reconciler' && principal.kind === 'system'
+      ? b3ok({
+          ...context,
+          principal: { id: 'sys_reconciler', kind: 'system', verifiedScopes: principal.verifiedScopes },
+        })
+      : b3fail(b3err('PermissionDenied', 'method requires authenticated sys_reconciler', {
+          principalId: principal.id,
+        }, false));
+
   const denied = (what: string): B3Result<never> => b3fail(b3err('PermissionDenied',
     `an Agent Run may not ${what}`,
     { required: 'human', held: 'agent-run' }, false));
@@ -185,6 +203,33 @@ export function buildB3MessagingMethods(options: B3MessagingMethodOptions): Meth
     'b3.transcript.getBinding': method(readTranscriptBindingLookup,
       (payload, _context, principal) =>
         transcript.getTranscriptBinding(principal, payload.agentRunId)),
+
+    'b3.transcript.reconcileTurnCompletion': method(
+      readReconcileTranscriptTurnCompletionInput,
+      async (payload, context, principal) => {
+        const system = reconcilerSystem(context, principal);
+        return system.ok
+          ? transcript.reconcileProviderTurnCompletion(system.value, payload)
+          : system;
+      },
+    ),
+
+    'b3.transcript.getTurnCompletionStatus': method(
+      readTranscriptCompletionStatusInput,
+      (payload, _context, principal) =>
+        transcript.getTranscriptTurnCompletionStatus(principal, payload.providerTurnId),
+    ),
+
+    'b3.transcript.getTurnCompletion': method(
+      readTranscriptTurnCompletionIdInput,
+      (payload, _context, principal) =>
+        transcript.getTranscriptTurnCompletion(principal, payload.transcriptTurnCompletionId),
+    ),
+
+    'b3.transcript.listTurnCompletions': method(
+      readTranscriptTurnCompletionFilter,
+      (payload, _context, principal) => transcript.listTranscriptTurnCompletions(principal, payload),
+    ),
 
     'b3.transcript.listObservedSubagents': method(readListObservedSubagentsInput,
       (payload, _context, principal) => transcript.listObservedSubagents(principal, payload)),

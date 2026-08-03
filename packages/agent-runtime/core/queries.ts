@@ -22,6 +22,7 @@ import {
 } from './runs-context.js';
 import { recoveryRequired, unknownRun } from './runs-store.js';
 import { completed } from './journal.js';
+import { reconcileAllProviderTurnSubmissions } from './provider-turns.js';
 
 /**
  * §19.1 names this view field `run`. It is a compatibility contract — the CLI
@@ -170,6 +171,7 @@ export async function observeTerminalExit(
   return reconciled.ok ? b3ok(null) : b3fail(reconciled.error);
 }
 
+// eslint-disable-next-line sonarjs/cognitive-complexity -- View projection retains explicit custody states.
 export async function viewOfRun(
   core: RunsCore, principal: AuthenticatedPrincipal, stale: AgentRun,
 ): Promise<B3Result<AgentRunView>> {
@@ -331,9 +333,15 @@ export async function getRunLaunchPlanId(
  * `interrupted` with the uncertainty stated, never a silent revival and never a
  * cheerful `stopped` that implies somebody chose it.
  */
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Startup custody passes are deliberately explicit.
 export async function reconcileAfterRestart(
   core: RunsCore, activeEpochId: string,
 ): Promise<B3Result<{ readonly reconciledRunIds: readonly AgentRunId[] }>> {
+  // R3 N2-L1/L2: settle dead controller operations while Terminal can still
+  // prove and cancel their pre-effect reservations. Marking the Run final first
+  // would erase the only safe opportunity to do this owner-ordered cleanup.
+  const providerTurns = await reconcileAllProviderTurnSubmissions(core, 'startup');
+  if (!providerTurns.ok) return providerTurns;
   const runs = await core.store.list<AgentRun>('agentRun');
   if (!runs.ok) return runs;
   const operations = await core.store.list<RunOperation>('runOperation');

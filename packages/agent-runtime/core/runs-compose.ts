@@ -10,7 +10,8 @@
 // happened and queries them by key instead of repeating them (§13.5). Refusing
 // at the receipt layer would put that recovery permanently out of reach.
 import {
-  b3err, b3fail, b3ok, composeReceiptStore, mintClientOpId, mintTraceCorrelationId,
+  b3err, b3fail, b3ok, composeReceiptStore, deriveClientOpId, mintClientOpId,
+  mintTraceCorrelationId,
   type AuthenticatedPrincipal, type B3Result, type CommandContext,
   type CapabilityOwner, type PublicOperationName, type ReceiptStore, type RunOperationId,
   type TerminalSessionId, type TraceCorrelationId,
@@ -27,10 +28,17 @@ import type {
   AgentsPort, MessagingEndpointPort, MessagingInboxPort, ProviderPort, RunCredentialPort,
   NotificationDeliveryPort, RunWatcherPort, TerminalPort, TranscriptCustodyPort,
 } from '../contract/ports.js';
+import type {
+  CloseProviderTurnCompletionUnprovenInput,
+  CompleteProviderTurnInput,
+  ProviderTurnSubmitInput,
+  ProviderTurnSubmitOutcome,
+} from '../contract/provider-turns.js';
 import type { RuntimeHostContract } from '../contract/types.js';
 import { createRunsStore, type RunsStore, type RunsStoreOptions } from './runs-store.js';
 import {
-  OPERATION, versionGuard, type RunsCore, type TranscriptBindingLookup,
+  OPERATION, versionGuard, type ProviderTurnCompletionCoordinator,
+  type ProviderTurnCompletionEvidenceLookup, type RunsCore, type TranscriptBindingLookup,
 } from './runs-context.js';
 import { spawnAgent } from './spawn.js';
 import {
@@ -59,6 +67,11 @@ import {
 } from './notification-delivery.js';
 import { RunActivityQueue } from './run-activity-queue.js';
 import { retainRunOccurrenceEvent } from './occurrence-event-retention.js';
+import {
+  closeProviderTurnCompletionUnproven, completeProviderTurn,
+  getProviderTurnSubmission, listProviderTurnSubmissions,
+  reconcileAllProviderTurnSubmissions, submitProviderTurn,
+} from './provider-turns.js';
 
 /**
  * What a host with no Messaging answers: there is nothing to deliver.
@@ -68,6 +81,8 @@ import { retainRunOccurrenceEvent } from './occurrence-event-retention.js';
  * reached by an item this same object never handed out.
  */
 const NO_INBOX: MessagingInboxPort = {
+  async getSource() { return b3ok(null); },
+  async peekNext() { return b3ok(null); },
   async claimNext() { return b3ok(null); },
   async recordSubmission() {
     return b3fail(b3err('RuntimeUnavailable',
@@ -95,6 +110,10 @@ export interface ComposeAgentRunsOptions extends RunsStoreOptions {
   readonly clock?: () => number;
   /** §19.1's transcript section, read through Transcript's contract. */
   readonly transcriptBinding?: TranscriptBindingLookup;
+  /** Exact Transcript and Agents facts used by the sole completion mutation. */
+  readonly providerTurnCompletionEvidence?: ProviderTurnCompletionEvidenceLookup;
+  /** Composition-root saga across Transcript -> Agents -> Runtime. */
+  readonly providerTurnCompletionCoordinator?: ProviderTurnCompletionCoordinator;
   /** §13.5 rows 6/10 and §13.6's cutover, through Messaging's contract. */
   readonly messagingEndpoint?: MessagingEndpointPort;
   /** §13.5 row 9 and §13.6's watermark, through Transcript's contract. */
@@ -129,6 +148,8 @@ export type ComposedAgentRuns = AgentRunsContract & {
   readonly usageRuns: RunUsageSource;
   /** Composition-only sink for Terminal's unexpected managed-process exit fact. */
   observeTerminalExit(terminalSessionId: TerminalSessionId): Promise<B3Result<null>>;
+  /** One periodic owner-ordered provider-turn repair pass. */
+  reconcileProviderTurns(): Promise<B3Result<readonly import('@novakai/foundation/contract').ProviderTurnSubmissionId[]>>;
 };
 
 /** Generous, because a real model reading its skills is not instant. */
@@ -186,8 +207,16 @@ export function composeAgentRuns(options: ComposeAgentRunsOptions): ComposedAgen
     clock: options.clock ?? (() => Date.now()),
     ...(options.transcriptBinding === undefined
       ? {} : { transcriptBinding: options.transcriptBinding }),
+    ...(options.providerTurnCompletionEvidence === undefined
+      ? {}
+      : { providerTurnCompletionEvidence: options.providerTurnCompletionEvidence }),
+    ...(options.providerTurnCompletionCoordinator === undefined
+      ? {}
+      : { providerTurnCompletionCoordinator: options.providerTurnCompletionCoordinator }),
     ...(options.messagingEndpoint === undefined
       ? {} : { messagingEndpoint: options.messagingEndpoint }),
+    ...(options.messagingInbox === undefined
+      ? {} : { messagingInbox: options.messagingInbox }),
     ...(options.transcriptCustody === undefined
       ? {} : { transcriptCustody: options.transcriptCustody }),
     ...(options.watchers === undefined ? {} : { watchers: options.watchers }),
@@ -290,6 +319,44 @@ export function composeAgentRuns(options: ComposeAgentRunsOptions): ComposedAgen
       return asView(context, ended.value);
     }),
 
+    async submitProviderTurn(context, input: ProviderTurnSubmitInput) {
+      const version = versionGuard<ProviderTurnSubmitOutcome>(context);
+      if (version) return version;
+      return providerActivity.enqueue(String(input.agentRunId), () =>
+        core.receipts.runResumableCommand(
+          context,
+          { operation: named('agent.submitProviderTurn'), request: input, replaySafe: true },
+          () => submitProviderTurn(core, context, input),
+          (outcome) => outcome.kind === 'queued-not-yet-safe',
+        ));
+    },
+
+    async completeProviderTurn(context, input: CompleteProviderTurnInput) {
+      const version = versionGuard<import('../contract/provider-turns.js').CompleteProviderTurnOutcome>(context);
+      if (version) return version;
+      const completionContext = {
+        ...context,
+        clientOpId: deriveClientOpId([
+          'agent.completeProviderTurn', input.agentRunId, input.providerTurnId,
+          input.transcriptTurnCompletionId, input.providerUsageEvidenceId,
+        ].join(':')),
+      };
+      return providerActivity.enqueue(String(input.agentRunId), () =>
+        core.receipts.runResumableCommand(
+          completionContext,
+          { operation: named('agent.completeProviderTurn'), request: input, replaySafe: true },
+          () => completeProviderTurn(core, completionContext, input),
+          (outcome) => outcome.kind === 'evidence-not-yet-available',
+        ));
+    },
+
+    closeProviderTurnCompletionUnproven: guarded(
+      'agent.closeProviderTurnCompletionUnproven',
+      (context, input: CloseProviderTurnCompletionUnprovenInput) =>
+        providerActivity.enqueue(String(input.agentRunId), () =>
+          closeProviderTurnCompletionUnproven(core, context, input)),
+    ),
+
     adoptAgent: guarded(OPERATION.adopt,
       (context, input: AdoptAgentInput) => adoptAgent(core, context, input)),
 
@@ -331,6 +398,10 @@ export function composeAgentRuns(options: ComposeAgentRunsOptions): ComposedAgen
     getRunOperation: (principal, operationId) => getRunOperation(core, principal, operationId),
     getNotificationTurnSubmission: (_principal, effectKey) =>
       getNotificationTurnSubmission(core, effectKey),
+    getProviderTurnSubmission: (_principal, providerTurnId) =>
+      getProviderTurnSubmission(core, providerTurnId),
+    listProviderTurnSubmissions: (_principal, filter) =>
+      listProviderTurnSubmissions(core, filter),
     subscribeRunEvents: (_principal, after) => events.subscribe(after),
     publishCapabilityEvent: async (kind, payload, sourceOwner, traceId) => {
       const retained = await retainAndPublish(kind, payload, sourceOwner, traceId);
@@ -346,6 +417,9 @@ export function composeAgentRuns(options: ComposeAgentRunsOptions): ComposedAgen
       listRunOperations(core, principal, filter),
     getRunLaunchPlanId: (principal, agentRunId) =>
       getRunLaunchPlanId(core, principal, agentRunId),
+
+    reconcileProviderTurns: () =>
+      reconcileAllProviderTurnSubmissions(core, 'periodic'),
 
     async reconcileAfterRestart() {
       const active = core.fence.activeEpochId();

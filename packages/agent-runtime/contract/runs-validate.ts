@@ -1,3 +1,5 @@
+/* eslint-disable max-lines -- Runs wire validators stay beside their public payloads. */
+
 // Runtime validators for every Run boundary payload (§4.2 MUST).
 //
 // A cast is erased and a brand proves nothing at runtime, so every payload that
@@ -8,12 +10,21 @@ import {
   type AgentId, type AgentRunId, type B3Result, type ControlReplacementPlanId,
   type FieldReader, type HumanPrincipalId, type RecordVersion, type RunOperationId,
   type AgentRoleProfileId,
+  type ControllerAttachmentId, type LeaseGeneration, type ProviderSessionId,
+  type ProviderTurnId, type ProviderUsageEvidenceId, type TerminalInputAttemptId,
+  type TerminalInputLeaseId, type TerminalSessionId, type TranscriptBindingId,
+  type TranscriptTurnCompletionId,
 } from '@novakai/foundation/contract';
 import type {
   AdoptAgentInput, ApplyRunControlInput, ContinueAgentInput, DiscoverRunControlsInput,
   GetAgentRunTreeInput, InterruptAgentTurnInput, ListAgentRunsFilter,
   PrepareStopAgentTreeInput, SpawnAgentInput, StopAgentInput, StopAgentTreeInput,
 } from './runs-api.js';
+import type {
+  CloseProviderTurnCompletionUnprovenInput, CompleteProviderTurnInput,
+  ControllerProviderTurnSubmitInput, ProviderTurnSubmissionFilter,
+  ProviderTurnSubmissionState,
+} from './provider-turns.js';
 import {
   AGENT_RUN_LIFECYCLES, CONTINUATION_MODES, LAUNCH_CONFIGURATION_MODES, LAUNCH_SURFACES,
   type AgentRunLifecycle, type LaunchSurface,
@@ -23,6 +34,10 @@ const PROVIDERS = ['claude', 'codex', 'kimi'] as const;
 /** Restated rather than imported: the Runtime carries controls, Agents owns them. */
 const AGENT_CONTROL_NAMES = ['model', 'effort', 'provider-setting'] as const;
 const TREE_DIRECTIONS = ['ancestors', 'descendants', 'both'] as const;
+const PROVIDER_TURN_STATES = [
+  'queued', 'prepared', 'submitted-confirmed', 'submitted-unconfirmed', 'completed',
+  'rejected', 'recovery-required', 'completion-unproven-final',
+] as const satisfies readonly ProviderTurnSubmissionState['kind'][];
 
 function flag(field: FieldReader, path: string): boolean {
   const value = field.given(path);
@@ -208,6 +223,122 @@ export function readAgentRunIdInput(
   return readBoundary(candidate, (field) => ({
     agentRunId: field.id<AgentRunId>('agentRunId', 'agentRun'),
   }));
+}
+
+export function readControllerProviderTurnSubmitInput(
+  candidate: unknown,
+): B3Result<ControllerProviderTurnSubmitInput> {
+  return readBoundary(candidate, (field) => ({
+    kind: field.choice('kind', ['controller'] as const),
+    agentRunId: field.id<AgentRunId>('agentRunId', 'agentRun'),
+    terminalSessionId: field.id<TerminalSessionId>('terminalSessionId', 'terminal'),
+    transcriptBindingId: field.id<TranscriptBindingId>(
+      'transcriptBindingId', 'transcriptBinding', 'base32sha256',
+    ),
+    attachmentId: field.id<ControllerAttachmentId>('attachmentId', 'controller'),
+    inputLeaseId: field.id<TerminalInputLeaseId>('inputLeaseId', 'terminalInputLease'),
+    leaseGeneration: field.count('leaseGeneration', 1, Number.MAX_SAFE_INTEGER) as LeaseGeneration,
+    expectedNextInputSequence: field.count(
+      'expectedNextInputSequence', 1, Number.MAX_SAFE_INTEGER,
+    ),
+    utf8Text: field.text('utf8Text'),
+  }));
+}
+
+export function readProviderTurnIdInput(
+  candidate: unknown,
+): B3Result<{ readonly providerTurnId: ProviderTurnId }> {
+  return readBoundary(candidate, (field) => ({
+    providerTurnId: field.id<ProviderTurnId>('providerTurnId', 'providerTurn'),
+  }));
+}
+
+export function readProviderTurnSubmissionFilter(
+  candidate: unknown,
+): B3Result<ProviderTurnSubmissionFilter> {
+  return readBoundary(candidate, (field) => {
+    const agentRunId = field.optionalId<AgentRunId>('agentRunId', 'agentRun');
+    const providerSessionId = field.optionalId<ProviderSessionId>(
+      'providerSessionId', 'sess', 'uuidv4',
+    );
+    const states = field.given('states');
+    const validStates = states === undefined
+      ? undefined
+      : Array.isArray(states) && states.every((state) =>
+          PROVIDER_TURN_STATES.includes(state as ProviderTurnSubmissionState['kind']))
+        ? states as ProviderTurnSubmissionState['kind'][]
+        : undefined;
+    if (states !== undefined && validStates === undefined) {
+      field.reject('states', `must be an array of: ${PROVIDER_TURN_STATES.join(', ')}`);
+    }
+    const cursor = field.optionalText('cursor');
+    return {
+      ...(agentRunId === undefined ? {} : { agentRunId }),
+      ...(providerSessionId === undefined ? {} : { providerSessionId }),
+      ...(validStates === undefined ? {} : { states: validStates }),
+      includeTerminal: flag(field, 'includeTerminal'),
+      ...(cursor === undefined ? {} : { cursor: cursor as never }),
+      limit: field.count('limit', 1, 200),
+    };
+  });
+}
+
+export function readCompleteProviderTurnInput(
+  candidate: unknown,
+): B3Result<CompleteProviderTurnInput> {
+  return readBoundary(candidate, (field) => {
+    const tuple = field.nested('expectedActiveTuple');
+    return {
+      agentRunId: field.id<AgentRunId>('agentRunId', 'agentRun'),
+      providerTurnId: field.id<ProviderTurnId>('providerTurnId', 'providerTurn'),
+      expectedActiveTuple: {
+        providerTurnId: tuple.id<ProviderTurnId>('providerTurnId', 'providerTurn'),
+        activityGeneration: tuple.count(
+          'activityGeneration', 1, Number.MAX_SAFE_INTEGER,
+        ) as never,
+      },
+      transcriptTurnCompletionId: field.id<TranscriptTurnCompletionId>(
+        'transcriptTurnCompletionId', 'transcriptTurnCompletion', 'base32sha256',
+      ),
+      providerUsageEvidenceId: field.id<ProviderUsageEvidenceId>(
+        'providerUsageEvidenceId', 'providerUsage', 'base32sha256',
+      ),
+    };
+  });
+}
+
+export function readCloseProviderTurnCompletionUnprovenInput(
+  candidate: unknown,
+): B3Result<CloseProviderTurnCompletionUnprovenInput> {
+  return readBoundary(candidate, (field) => {
+    const tupleGiven = field.given('expectedActiveTuple');
+    const tuple = tupleGiven === undefined ? undefined : field.nested('expectedActiveTuple');
+    const attemptId = field.optionalId<TerminalInputAttemptId>(
+      'terminalInputAttemptId', 'terminalInputAttempt', 'uuidv7',
+    );
+    const refs = field.given('completionEvidenceRefs');
+    const completionEvidenceRefs = Array.isArray(refs) && refs.length > 0
+      && refs.every((reference) => typeof reference === 'string' && reference.trim() !== '')
+      ? refs as [string, ...string[]] : undefined;
+    if (completionEvidenceRefs === undefined) {
+      field.reject('completionEvidenceRefs', 'must be a non-empty array of non-empty strings');
+    }
+    return {
+      agentRunId: field.id<AgentRunId>('agentRunId', 'agentRun'),
+      providerTurnId: field.id<ProviderTurnId>('providerTurnId', 'providerTurn'),
+      ...(tuple === undefined ? {} : {
+        expectedActiveTuple: {
+          providerTurnId: tuple.id<ProviderTurnId>('providerTurnId', 'providerTurn'),
+          activityGeneration: tuple.count(
+            'activityGeneration', 1, Number.MAX_SAFE_INTEGER,
+          ) as never,
+        },
+      }),
+      ...(attemptId === undefined ? {} : { terminalInputAttemptId: attemptId }),
+      reason: field.text('reason'),
+      completionEvidenceRefs: completionEvidenceRefs ?? ['invalid'],
+    };
+  });
 }
 
 export function readRunOperationIdInput(

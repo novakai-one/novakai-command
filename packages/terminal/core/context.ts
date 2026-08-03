@@ -5,7 +5,7 @@ import type {
 } from '@novakai/foundation/contract';
 import { b3err, b3fail, b3ok } from '@novakai/foundation/contract';
 import type { Clock, PtyHost, RuntimeEpochFence } from '../contract/ports.js';
-import type { TerminalSession } from '../contract/records.js';
+import type { ProviderTurnTerminalInputAttempt, TerminalSession } from '../contract/records.js';
 import type { LiveSessions } from './live.js';
 import type { SessionQueue } from './serialize.js';
 import type { TerminalStore } from './store.js';
@@ -23,6 +23,12 @@ export interface TerminalCore {
   readonly onUnexpectedExit?: (terminalSessionId: TerminalSessionId) => void;
   /** How long a controller may go unseen before it is `stale` (§13.4). */
   readonly staleAfterMs: number;
+  /** Provider-owned framing, injected at composition; logical bytes stay authoritative. */
+  readonly providerTurnDelivery: (
+    providerSessionId: import('@novakai/foundation/contract').ProviderSessionId,
+    utf8Text: string,
+  ) => Promise<readonly { readonly utf8Text: string; readonly pauseMsAfter: number }[]>;
+  readonly publish?: (kind: string, payload: Readonly<Record<string, unknown>>) => void;
 }
 
 export const OPERATION = {
@@ -41,6 +47,11 @@ export const OPERATION = {
   terminate: 'terminal.terminateTerminal' as PublicOperationName,
   observe: 'terminal.observeControllers' as PublicOperationName,
   reconcile: 'terminal.reconcileAfterRestart' as PublicOperationName,
+  prepareProviderTurn: 'terminal.prepareProviderTurnInput' as PublicOperationName,
+  executeProviderTurn: 'terminal.executeProviderTurnInput' as PublicOperationName,
+  cancelProviderTurn: 'terminal.cancelPreparedProviderTurnInput' as PublicOperationName,
+  settleProviderTurn: 'terminal.settleProviderTurnCompletion' as PublicOperationName,
+  closeProviderTurn: 'terminal.closeProviderTurnBarrierUnproven' as PublicOperationName,
 } as const;
 
 export const FINAL_STATUSES = new Set(['exited', 'failed']);
@@ -89,6 +100,18 @@ export function versionOf(record: { readonly recordVersion: RecordVersion }): Re
  */
 export function clockIso(core: TerminalCore): IsoUtc {
   return new Date(core.clock.nowMs()).toISOString() as IsoUtc;
+}
+
+export function publishProviderTurnBarrier(
+  core: TerminalCore, attempt: ProviderTurnTerminalInputAttempt,
+): void {
+  core.publish?.('terminal.provider-turn-barrier.changed', {
+    terminalSessionId: attempt.terminalSessionId,
+    agentRunId: attempt.agentRunId,
+    providerTurnId: attempt.providerTurnId,
+    terminalInputAttemptId: attempt.id,
+    turnBarrier: attempt.turnBarrier,
+  });
 }
 
 /** Positive-integer viewport guard: a zero-column terminal is not a viewport. */

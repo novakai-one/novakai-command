@@ -18,6 +18,34 @@ export function governedTokens(
     .sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
 }
 
+/**
+ * Synthetic providers whose first observed boundary completes and whose later
+ * turns stay pending. Governed launch tests use it when the skills answer is
+ * complete but the released work turn is intentionally silent.
+ */
+export function fakeProvidersWithCompletionLimit(limit: number): ProviderAdapterRegistry {
+  const base = createFakeProviderAdapters();
+  const built = {} as Record<ProviderKind, InteractiveProviderAdapter>;
+  for (const [provider, adapter] of Object.entries(base) as [
+    ProviderKind, InteractiveProviderAdapter,
+  ][]) {
+    let observed = 0;
+    built[provider] = {
+      ...adapter,
+      async observeProviderTurnBoundary(input) {
+        observed += 1;
+        if (observed <= limit) return adapter.observeProviderTurnBoundary(input);
+        return b3ok({
+          kind: 'unavailable',
+          reason: 'source-unavailable',
+          evidenceRefs: ['the synthetic provider has not completed this turn'],
+        });
+      },
+    };
+  }
+  return built;
+}
+
 /** A role that is actually governed: a real two-turn gate over real pinned skills. */
 export function governedRole(
   name: string,
@@ -72,3 +100,8 @@ export function chatRole(
     skillsConfirmationGate: { mode: 'disabled', allowedFor: 'interactive-chat-only' },
   };
 }
+import { b3ok } from '@novakai/foundation/contract';
+import {
+  createFakeProviderAdapters,
+  type InteractiveProviderAdapter, type ProviderAdapterRegistry, type ProviderKind,
+} from '../../agents/b3/contract/index.js';

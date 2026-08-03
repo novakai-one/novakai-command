@@ -1,10 +1,11 @@
 // Durable owner-reconciled query for one Q7 delivery operation.
 import {
-  b3err, b3fail, b3ok,
+  b3err, b3fail, b3ok, notificationInputReservationId,
   type AuthenticatedPrincipal, type B3Result, type NotificationId,
   type NotificationInputReservationId,
 } from '@novakai/foundation/contract';
 import type { NotificationTurnSubmission } from '../contract/notification-delivery.js';
+import type { ProviderTurnSubmission } from '../contract/provider-turns.js';
 import type { NotificationInputAttemptFacts } from '../contract/ports.js';
 import type { RunOperation } from '../contract/runs.js';
 import type { RunsCore } from './runs-context.js';
@@ -117,9 +118,51 @@ async function committedState(
   return b3ok(submittedOutcome(attempt.value));
 }
 
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Exhaustive durable delivery-state reducer.
 export async function getNotificationTurnSubmission(
   core: RunsCore, effectKey: string,
 ): Promise<B3Result<NotificationTurnSubmission>> {
+  const semantic = await core.store.list<ProviderTurnSubmission>('providerTurnSubmission');
+  if (!semantic.ok) return semantic;
+  const correlated = semantic.value.find((submission) =>
+    submission.submissionEffectKey === effectKey
+    && submission.origin.kind === 'runtime-effect'
+    && (submission.origin.source === 'watcher-status-request'
+      || submission.origin.source === 'notification-start-turn'));
+  if (correlated !== undefined) {
+    if (correlated.state.kind === 'submitted-confirmed') {
+      return b3ok({
+        state: 'submitted-confirmed', submittedAt: correlated.state.submittedAt,
+        providerTurnId: correlated.providerTurnId,
+      });
+    }
+    if (correlated.state.kind === 'submitted-unconfirmed') {
+      return b3ok({
+        state: 'submitted-unconfirmed', submittedAt: correlated.state.submittedAt,
+        providerTurnId: correlated.providerTurnId,
+      });
+    }
+    if (correlated.state.kind === 'completed') {
+      return b3ok({
+        state: correlated.state.submissionDisposition,
+        submittedAt: correlated.state.completedAt,
+        providerTurnId: correlated.providerTurnId,
+      });
+    }
+    if (correlated.state.kind === 'rejected') {
+      return b3ok({
+        state: 'cancelled-not-submitted',
+        notificationInputReservationId: correlated.origin.kind === 'runtime-effect'
+          ? notificationInputReservationId(correlated.origin.sourceEffectKey)
+          : notificationInputReservationId(effectKey),
+        cancelledAt: correlated.state.rejectedAt,
+      });
+    }
+    return b3ok({
+      state: 'reserved-not-claimed',
+      notificationInputReservationId: notificationInputReservationId(effectKey),
+    });
+  }
   const found = await notificationOperationFor(core, effectKey);
   if (!found.ok) return found;
   const operation = found.value;

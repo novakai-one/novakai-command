@@ -64,6 +64,8 @@ export const KIND_FILES: Readonly<Record<Exclude<ObjectKind, 'token'>, string>> 
   observedSubagent: 'observedSubagents.jsonl',           // B3c DEC-B3V4-18
   storeRouteCutover: 'storeRouteCutovers.jsonl',         // B3c DEC-B3V4-25
   providerUsageEvidence: 'providerUsageEvidence.jsonl',  // B3d §5.5/§18.1
+  providerTurnSubmission: 'providerTurnSubmissions.jsonl', // B3V4-AMD-002 §2
+  transcriptTurnCompletion: 'transcriptTurnCompletions.jsonl', // B3V4-AMD-002 §2
   watchRule: 'watchRules.jsonl',                         // B3d §9.2/§18.1
   watchDeadline: 'watchDeadlines.jsonl',                 // B3d §9.2/§18.1
   notification: 'notifications.jsonl',                   // B3d §9.2/§18.1
@@ -90,6 +92,7 @@ export const RECORD_KINDS: readonly string[] = [
   'treeMutationFence', 'runOperation', 'runOccurrenceEvent',
   'messagingStoreOp', 'transcriptBinding', 'observedSubagent', 'storeRouteCutover',
   'providerUsageEvidence',
+  'providerTurnSubmission', 'transcriptTurnCompletion',
   'watchRule', 'watchDeadline', 'notification', 'watchEvaluation',
   'notificationDeliveryFenceOperation',
 ];

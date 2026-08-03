@@ -201,6 +201,9 @@ async function crashBootAndRetry(writes: number): Promise<BootedRetry> {
     const restarted = createRunsRig({
       root, gateTimeoutMs: 400,
       agents: dying.agents, terminal: dying.terminal, providers: dying.providers,
+      messagingEndpoint: dying.messagingEndpoint,
+      transcriptCustody: dying.transcriptCustody,
+      notifications: dying.notifications,
     });
     // The real thing the host does before it accepts a command (§13.1.6).
     const booted = await restarted.runtime.reconcileAfterRestart();

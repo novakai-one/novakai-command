@@ -43,6 +43,10 @@ export type TerminalSessionId = B3Brand<string, 'TerminalSessionId'>;
 export type ControllerAttachmentId = B3Brand<string, 'ControllerAttachmentId'>;
 export type TerminalInputLeaseId = B3Brand<string, 'TerminalInputLeaseId'>;
 export type TerminalInputAttemptId = B3Brand<string, 'TerminalInputAttemptId'>;
+export type ProviderTurnSubmissionId = B3Brand<string, 'ProviderTurnSubmissionId'>;
+export type TranscriptTurnCompletionId = B3Brand<string, 'TranscriptTurnCompletionId'>;
+export type ProviderTurnBoundaryProfileId = B3Brand<string, 'ProviderTurnBoundaryProfileId'>;
+export type ProviderUsageEvidenceId = B3Brand<string, 'ProviderUsageEvidenceId'>;
 /** Terminal-owned deterministic fence for one Supervision delivery effect (Q7). */
 export type NotificationInputReservationId =
   B3Brand<string, 'NotificationInputReservationId'>;
@@ -175,6 +179,43 @@ export const notificationInputReservationId = (
 ) as NotificationInputReservationId;
 export const mintAgentRunId = (): AgentRunId => `agentRun_${uuidv7()}` as AgentRunId;
 export const mintProviderTurnId = (): ProviderTurnId => `providerTurn_${uuidv7()}` as ProviderTurnId;
+export type ProviderTurnSubmissionSource =
+  | 'skills-gate'
+  | 'supervised-work-release'
+  | 'agent-inbox-delivery'
+  | 'watcher-status-request'
+  | 'notification-start-turn';
+
+export type ProviderTurnSubmissionIdentityOrigin =
+  | { readonly kind: 'controller' }
+  | { readonly kind: 'runtime-effect'; readonly source: ProviderTurnSubmissionSource };
+
+/** One mutable Runtime correlation record per declared semantic submit operation. */
+export const providerTurnSubmissionId = (
+  agentRunId: AgentRunId,
+  origin: ProviderTurnSubmissionIdentityOrigin,
+  submissionEffectKey: string,
+): ProviderTurnSubmissionId => deterministicId(
+  'providerTurnSubmission',
+  origin.kind === 'controller'
+    ? [agentRunId, 'controller', submissionEffectKey]
+    : [agentRunId, 'runtime-effect', origin.source, submissionEffectKey],
+) as ProviderTurnSubmissionId;
+
+/** One immutable Transcript completion fact per binding and Runtime turn. */
+export const transcriptTurnCompletionId = (
+  transcriptBindingId: TranscriptBindingId,
+  providerTurnId: ProviderTurnId,
+): TranscriptTurnCompletionId => deterministicId(
+  'transcriptTurnCompletion', [transcriptBindingId, providerTurnId],
+) as TranscriptTurnCompletionId;
+
+/** Digest identity for the complete canonical provider boundary profile payload. */
+export const providerTurnBoundaryProfileId = (
+  canonicalProfilePayload: string,
+): ProviderTurnBoundaryProfileId => deterministicId(
+  'turnBoundaryProfile', [canonicalProfilePayload],
+) as ProviderTurnBoundaryProfileId;
 export const mintAgentRoleProfileId = (): AgentRoleProfileId => `agentRole_${uuidv7()}` as AgentRoleProfileId;
 export const mintResolvedLaunchPlanId = (): ResolvedLaunchPlanId => `launchPlan_${uuidv7()}` as ResolvedLaunchPlanId;
 export const mintDelegationGrantId = (): DelegationGrantId => `delegationGrant_${uuidv7()}` as DelegationGrantId;
@@ -262,7 +303,8 @@ export const nowIsoUtc = (): IsoUtc => new Date().toISOString() as IsoUtc;
 
 export type B3SystemPrincipalId =
   | 'sys_foundation' | 'sys_agents' | 'sys_agent_runtime' | 'sys_terminal'
-  | 'sys_messaging' | 'sys_transcript' | 'sys_supervision' | 'sys_shell';
+  | 'sys_messaging' | 'sys_transcript' | 'sys_supervision' | 'sys_shell'
+  | 'sys_reconciler';
 
 export type B3PrincipalId =
   | HumanPrincipalId | AgentRunPrincipalId | ScriptPrincipalId
@@ -356,6 +398,9 @@ export type B3ErrorCode =
   | 'SupervisorIneligible' | 'UnknownTerminalSession' | 'TerminalNotLive'
   | 'InputLeaseBusy' | 'InputLeaseGenerationChanged' | 'TargetTurnNotActive'
   | 'InputSubmittedUnconfirmed' | 'Backpressure' | 'CursorExpired'
+  | 'SemanticSubmitRequired' | 'UnknownProviderTurnSubmission'
+  | 'ProviderTurnSubmissionConflict' | 'ProviderTurnOperationInProgress'
+  | 'ProviderTurnBoundaryUnavailable'
   | 'EndpointClaimConflict' | 'ExactRunEndpointClosed'
   | 'TranscriptSourceUnavailable' | 'TranscriptCorrupt' | 'UsageUnavailable'
   | 'WatchRuleInvalid' | 'WatcherConflict' | 'NotificationDeliveryUnsafe'

@@ -100,6 +100,13 @@ export interface ReceiptStore {
     descriptor: CommandDescriptor,
     execute: () => Promise<B3Result<T>>,
   ): Promise<B3Result<T>>;
+  /** Keep a successful prerequisite-wait outcome resumable under the same receipt. */
+  runResumableCommand<T>(
+    context: CommandContext,
+    descriptor: CommandDescriptor,
+    execute: () => Promise<B3Result<T>>,
+    keepRunning: (value: T) => boolean,
+  ): Promise<B3Result<T>>;
   /** @internal proofs read receipts directly; production callers use runCommand(). */
   readReceipt(id: CommandReceiptId): Promise<CommandReceiptRecord | null>;
 }
@@ -130,6 +137,24 @@ export function composeReceiptStore(options: ComposeReceiptsOptions): ReceiptSto
     descriptor: CommandDescriptor,
     execute: () => Promise<B3Result<T>>,
   ): Promise<B3Result<T>> {
+    return runWithSettlement(context, descriptor, execute, () => false);
+  }
+
+  async function runResumableCommand<T>(
+    context: CommandContext,
+    descriptor: CommandDescriptor,
+    execute: () => Promise<B3Result<T>>,
+    keepRunning: (value: T) => boolean,
+  ): Promise<B3Result<T>> {
+    return runWithSettlement(context, descriptor, execute, keepRunning);
+  }
+
+  async function runWithSettlement<T>(
+    context: CommandContext,
+    descriptor: CommandDescriptor,
+    execute: () => Promise<B3Result<T>>,
+    keepRunning: (value: T) => boolean,
+  ): Promise<B3Result<T>> {
     const id = commandReceiptId(context.principal.id, descriptor.operation, context.clientOpId);
     const hash = canonicalRequestHash(descriptor.request);
     const prior = await readReceipt(id);
@@ -158,7 +183,7 @@ export function composeReceiptStore(options: ComposeReceiptsOptions): ReceiptSto
     }
 
     const result = await execute();
-    await settle(id, result, descriptor);
+    if (!result.ok || !keepRunning(result.value)) await settle(id, result, descriptor);
     return result;
   }
 
@@ -243,7 +268,7 @@ export function composeReceiptStore(options: ComposeReceiptsOptions): ReceiptSto
     );
   }
 
-  return { runCommand, readReceipt };
+  return { runCommand, runResumableCommand, readReceipt };
 }
 
 /** Whether the stored failure was one the caller was invited to retry. */

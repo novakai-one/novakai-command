@@ -1,27 +1,31 @@
 import type {
   AuthenticatedPrincipal,
-  B3Brand,
+  AgentRunId,
   B3Page,
   B3Result,
+  EventCursor,
   IsoUtc,
   ProviderSessionId,
+  ProviderTurnId,
+  ProviderUsageEvidenceId,
   RecordEnvelope,
   SystemCommandContext,
   TraceCorrelationId,
+  TranscriptTurnCompletionId,
 } from '@novakai/foundation/contract';
 import {
   b3fail,
   b3ok,
   isValidId,
+  readBoundary,
   validationFailed,
 } from '@novakai/foundation/contract';
+
+export type { ProviderUsageEvidenceId } from '@novakai/foundation/contract';
 
 /** Agents-owned committed fact consumed by Supervision and external hosts. */
 export const PROVIDER_USAGE_EVIDENCE_COMMITTED_EVENT =
   'agent.provider-usage-evidence.committed' as const;
-
-/** One deterministic Agents-owned provider measurement record. */
-export type ProviderUsageEvidenceId = B3Brand<string, 'ProviderUsageEvidenceId'>;
 
 /** Provider-native totals with explicit measurement uncertainty. */
 export interface ProviderUsageMeasurement {
@@ -35,6 +39,15 @@ export interface ProviderUsageMeasurement {
   readonly evidenceDigest: string;
 }
 
+export type ProviderUsageEvidenceScope =
+  | { readonly kind: 'provider-session-cumulative' }
+  | {
+      readonly kind: 'runtime-turn-completion';
+      readonly agentRunId: import('@novakai/foundation/contract').AgentRunId;
+      readonly providerTurnId: ProviderTurnId;
+      readonly transcriptTurnCompletionId: TranscriptTurnCompletionId;
+    };
+
 /** Append-only evidence retained by Agents; Supervision only projects it. */
 export interface ProviderUsageEvidence extends RecordEnvelope<
   ProviderUsageEvidenceId,
@@ -42,6 +55,7 @@ export interface ProviderUsageEvidence extends RecordEnvelope<
 > {
   readonly providerSessionId: ProviderSessionId;
   readonly providerConversationId: string | null;
+  readonly scope: ProviderUsageEvidenceScope;
   readonly observedAt: IsoUtc;
   readonly source: string;
   readonly sourceCursor?: string;
@@ -52,10 +66,55 @@ export interface ProviderUsageEvidence extends RecordEnvelope<
 export interface RecordProviderUsageEvidenceInput {
   readonly providerSessionId: ProviderSessionId;
   readonly providerConversationId: string | null;
+  /** Omitted is the contract-v1 cumulative scope. */
+  readonly scope?: Extract<ProviderUsageEvidenceScope, { readonly kind: 'provider-session-cumulative' }>;
   readonly observedAt: IsoUtc;
   readonly source: string;
   readonly sourceCursor?: string;
   readonly measurement: ProviderUsageMeasurement;
+}
+
+export interface ProviderTurnCompletionEvidenceFilter {
+  readonly agentRunId?: AgentRunId;
+  readonly providerSessionId?: ProviderSessionId;
+  readonly providerTurnId?: ProviderTurnId;
+  readonly transcriptTurnCompletionId?: TranscriptTurnCompletionId;
+  readonly cursor?: EventCursor;
+  readonly limit: number;
+}
+
+export function parseEnsureProviderTurnCompletionEvidenceInput(
+  value: unknown,
+): B3Result<{ readonly transcriptTurnCompletionId: TranscriptTurnCompletionId }> {
+  return readBoundary(value, (field) => ({
+    transcriptTurnCompletionId: field.id<TranscriptTurnCompletionId>(
+      'transcriptTurnCompletionId', 'transcriptTurnCompletion', 'base32sha256',
+    ),
+  }));
+}
+
+export function parseProviderTurnCompletionEvidenceFilter(
+  value: unknown,
+): B3Result<ProviderTurnCompletionEvidenceFilter> {
+  return readBoundary(value, (field) => {
+    const agentRunId = field.optionalId<AgentRunId>('agentRunId', 'agentRun');
+    const providerSessionId = field.optionalId<ProviderSessionId>(
+      'providerSessionId', 'sess', 'uuidv4',
+    );
+    const providerTurnId = field.optionalId<ProviderTurnId>('providerTurnId', 'providerTurn');
+    const transcriptTurnCompletionId = field.optionalId<TranscriptTurnCompletionId>(
+      'transcriptTurnCompletionId', 'transcriptTurnCompletion', 'base32sha256',
+    );
+    const cursor = field.optionalText('cursor');
+    return {
+      ...(agentRunId === undefined ? {} : { agentRunId }),
+      ...(providerSessionId === undefined ? {} : { providerSessionId }),
+      ...(providerTurnId === undefined ? {} : { providerTurnId }),
+      ...(transcriptTurnCompletionId === undefined ? {} : { transcriptTurnCompletionId }),
+      ...(cursor === undefined ? {} : { cursor: cursor as EventCursor }),
+      limit: field.count('limit', 1, 200),
+    };
+  });
 }
 
 /** Parse unknown command JSON before identity derivation or persistence. */
@@ -103,8 +162,18 @@ export function parseRecordProviderUsageEvidenceInput(
   }
   tupleText(measurement.evidenceDigest, 'measurement.evidenceDigest', issues);
 
+  if (input.scope !== undefined) {
+    const scope = objectValue(input.scope, 'scope', issues);
+    if (scope.kind !== 'provider-session-cumulative') {
+      issues.push({ path: 'scope.kind', message: 'generic evidence accepts cumulative scope only' });
+    }
+  }
+
   return issues.length === 0
-    ? b3ok(candidate as RecordProviderUsageEvidenceInput)
+    ? b3ok({
+        ...(candidate as RecordProviderUsageEvidenceInput),
+        scope: { kind: 'provider-session-cumulative' },
+      })
     : b3fail(validationFailed(issues));
 }
 
@@ -148,6 +217,14 @@ export interface ProviderUsageEvidenceContract {
     context: SystemCommandContext<'sys_agents'>,
     input: RecordProviderUsageEvidenceInput,
   ): Promise<B3Result<ProviderUsageEvidence>>;
+  ensureProviderTurnCompletionEvidence(
+    context: SystemCommandContext<'sys_reconciler'>,
+    input: { readonly transcriptTurnCompletionId: TranscriptTurnCompletionId },
+  ): Promise<B3Result<ProviderUsageEvidence>>;
+  getProviderUsageEvidence(
+    principal: AuthenticatedPrincipal,
+    providerUsageEvidenceId: ProviderUsageEvidenceId,
+  ): Promise<B3Result<ProviderUsageEvidence>>;
   listProviderUsageEvidence(
     principal: AuthenticatedPrincipal,
     providerSessionId: ProviderSessionId,
@@ -156,6 +233,10 @@ export interface ProviderUsageEvidenceContract {
     principal: AuthenticatedPrincipal,
     providerUsageEvidenceId: ProviderUsageEvidenceId,
   ): Promise<B3Result<ProviderUsageEvidence | null>>;
+  listProviderTurnCompletionEvidence(
+    principal: AuthenticatedPrincipal,
+    filter: ProviderTurnCompletionEvidenceFilter,
+  ): Promise<B3Result<B3Page<ProviderUsageEvidence>>>;
 }
 
 /** Host transport seam; the host adds its one event cursor/envelope. */

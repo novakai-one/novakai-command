@@ -1,3 +1,5 @@
+/* eslint-disable max-lines -- Supervision's public capability surface remains co-located. */
+
 import type {
   ActivityGeneration,
   AgentId,
@@ -177,6 +179,7 @@ export interface NotificationDeliveryAuthority {
   readonly activityGeneration: ActivityGeneration;
   readonly deliveryMode: 'start-turn';
   readonly inputText: string;
+  readonly semanticSource: 'watcher-status-request' | 'notification-start-turn';
   readonly authoritySource:
     | { readonly kind: 'watch-rule'; readonly watchRuleId: WatchRuleId }
     | { readonly kind: 'launch-plan'; readonly launchPlanId: ResolvedLaunchPlanId };

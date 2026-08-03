@@ -3,10 +3,14 @@ import {
   type AgentId, type AuthenticatedPrincipal, type B3Result, type ProviderSessionId,
 } from '@novakai/foundation/contract';
 import type { RunUsageFacts } from '../contract/runs-api.js';
+import type { ProviderTurnSubmission } from '../contract/provider-turns.js';
 import { FINAL_LIFECYCLES, type AgentRun } from '../contract/runs.js';
 import type { RunsCore } from './runs-context.js';
 
-export function usageFacts(agentRun: AgentRun): RunUsageFacts {
+export function usageFacts(
+  agentRun: AgentRun,
+  submissions: readonly ProviderTurnSubmission[] = [],
+): RunUsageFacts {
   return {
     agentRunId: agentRun.id,
     agentId: agentRun.agentId,
@@ -15,6 +19,12 @@ export function usageFacts(agentRun: AgentRun): RunUsageFacts {
     final: FINAL_LIFECYCLES.has(agentRun.lifecycle),
     activityGeneration: agentRun.activityGeneration,
     recordVersion: agentRun.recordVersion,
+    ...(submissions.length === 0 ? {} : {
+      providerTurnSubmissions: submissions.map((submission) => ({
+        providerTurnId: submission.providerTurnId,
+        state: submission.state.kind,
+      })),
+    }),
   };
 }
 

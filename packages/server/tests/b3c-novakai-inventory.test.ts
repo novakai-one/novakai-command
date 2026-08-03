@@ -182,6 +182,7 @@ test('every B3c record lands under .novakai/stores, and Messaging owns exactly o
       'resolvedLaunchPlans.jsonl', 'agentRelationships.jsonl', 'delegationGrants.jsonl',
       'controlReplacementPlans.jsonl', 'providerSessions.jsonl',
       'providerSessionCutovers.jsonl', 'providerUsageEvidence.jsonl', 'agentRuns.jsonl',
+      'providerTurnSubmissions.jsonl', 'transcriptTurnCompletions.jsonl',
       'runContinuations.jsonl', 'supervisionAssignments.jsonl', 'treeMutationFences.jsonl',
       'runOperations.jsonl', 'runOccurrenceEvents.jsonl',
       'terminalSessions.jsonl', 'controllerAttachments.jsonl',

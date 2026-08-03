@@ -5,7 +5,7 @@
 // transports — it owns no Runtime or Terminal domain fact (DEC-B3V4-22).
 import path from 'node:path';
 import {
-  b3err, b3fail, b3ok,
+  b3err, b3fail, b3ok, deriveClientOpId,
   type B3Result, type SystemCommandContext, type TerminalSessionId,
 } from '@novakai/foundation/contract';
 import {
@@ -101,6 +101,8 @@ export interface B3RuntimeOptions {
   readonly notificationDeliveryIntervalMs?: number;
   /** How often the Runtime scans durable watcher deadlines. */
   readonly watcherIntervalMs?: number;
+  /** How often Runtime reconciles incomplete semantic provider turns. */
+  readonly providerTurnReconciliationIntervalMs?: number;
   /**
    * B3d: extra pinned watcher templates this host's role catalogue offers, on
    * top of the ones Supervision ships. The frozen catalogue seam is owned by
@@ -273,11 +275,25 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
     capabilities: [capability, runsCapability],
   });
 
+  // Terminal owns delivery and asks only for framing. The provider session's
+  // provider is Agents-owned, so this is deliberately late-bound across the
+  // composition root instead of inferred from bytes or ids.
+  let agents!: GovernedAgentsContract;
   terminal = composeTerminal({
     root: options.root,
     dataRoot,
     ptyHost,
     epochFence: runtime.fence,
+    providerTurnDelivery: async (providerSessionId, utf8Text) => {
+      const session = await agents.getProviderSession(
+        { id: 'sys_terminal', kind: 'system', verifiedScopes: [] }, providerSessionId,
+      );
+      if (!session.ok) throw new Error(`${session.error.code}: ${session.error.message}`);
+      return providerAdapters[session.value.provider].deliverTurn(utf8Text);
+    },
+    publish: (kind, payload) => {
+      runs?.publishCapabilityEvent(kind, payload, 'terminal');
+    },
     onUnexpectedExit: (terminalSessionId) => {
       const activeRuns = runs;
       if (activeRuns === null) return;
@@ -299,7 +315,7 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
   // Agents owns roles, family and grants; Agent Runtime owns Runs. They meet
   // ONLY through the narrow ports in `run-ports.ts` — neither imports the other.
   const watcherTemplates = createTemplateCatalogue(options.watcherTemplates ?? []);
-  const agents = composeGovernedAgents({
+  agents = composeGovernedAgents({
     root: options.root,
     dataRoot,
     providers: providerAdapters,
@@ -316,6 +332,8 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
         ?? null,
     },
   });
+  // Late-bound because Transcript is composed after Messaging and Runs.
+  let transcript: B3TranscriptContract | null = null;
   const usageEvidence = composeProviderUsageEvidence({
     root: options.root,
     dataRoot,
@@ -344,6 +362,30 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
         }, 'agent-runtime', traceId);
       })();
     },
+    turnCompletion: {
+      // eslint-disable-next-line id-length -- Contract method name is fixed as `get`.
+      async get(id) {
+        if (transcript === null) {
+          return b3fail(b3err('TranscriptSourceUnavailable',
+            'Transcript completion owner is not composed yet', {
+              transcriptTurnCompletionId: id,
+            }, true));
+        }
+        return transcript.getTranscriptTurnCompletion(
+          { id: 'sys_agents', kind: 'system', verifiedScopes: [] }, id,
+        );
+      },
+      async getProviderSession(providerSessionId) {
+        const found = await agents.getProviderSession(
+          { id: 'sys_agents', kind: 'system', verifiedScopes: [] }, providerSessionId,
+        );
+        if (!found.ok) return found;
+        return b3ok({
+          id: found.value.id,
+          providerConversationId: found.value.providerConversationId,
+        });
+      },
+    },
   });
   const usageTranscriptReader = createUsageReader({
     ...(options.providerHome === undefined ? {} : { home: options.providerHome }),
@@ -357,8 +399,6 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
   // Messaging capability, which needs the store this root opens). The closure
   // reads whatever is wired by the time somebody asks, and answers `null`
   // before that — which the view renders as `unbound`, not as a lie.
-  let transcript: B3TranscriptContract | null = null;
-
   // Messaging and Transcript publish their committed facts into the ONE event
   // stream the Runtime already owns (§15, §24.4). They do not write each
   // other's stores and neither writes the Runtime's — the only thing crossing
@@ -488,6 +528,87 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
     notifications: supervisionNotificationDeliveryPort(supervision),
     usage: (principal, agentRunId) => supervision.getRunUsage(principal, agentRunId),
     transcriptCustody: transcriptCustodyPort(() => transcript),
+    providerTurnCompletionEvidence: {
+      async getTranscriptCompletion(id) {
+        if (transcript === null) {
+          return b3fail(b3err('TranscriptSourceUnavailable',
+            'Transcript completion owner is not composed yet', {
+              transcriptTurnCompletionId: id,
+            }, true));
+        }
+        return transcript.getTranscriptTurnCompletion(
+          { id: 'sys_agent_runtime', kind: 'system', verifiedScopes: [] }, id,
+        );
+      },
+      getUsageEvidence: (id) => usageEvidence.getProviderUsageEvidence(
+        { id: 'sys_agent_runtime', kind: 'system', verifiedScopes: [] }, id,
+      ),
+    },
+    async providerTurnCompletionCoordinator(input) {
+      if (transcript === null || runs === null) {
+        return b3fail(b3err('RuntimeUnavailable',
+          'provider-turn completion owners are not composed yet', {
+            reason: 'completion-owners-not-composed',
+          }, true));
+      }
+      const principal = { id: 'sys_reconciler' as const, kind: 'system' as const, verifiedScopes: [] };
+      const base = {
+        principal,
+        traceId: input.traceId,
+        contractVersion: 1 as const,
+      };
+      const reconciled = await transcript.reconcileProviderTurnCompletion({
+        ...base,
+        clientOpId: deriveClientOpId(
+          `transcript.reconcileProviderTurnCompletion:${input.providerTurnId}`,
+        ),
+      }, {
+        providerTurnId: input.providerTurnId,
+        expectedProviderTurnSubmissionId: input.providerTurnSubmissionId,
+      });
+      if (!reconciled.ok) return reconciled;
+      if (reconciled.value.kind !== 'completed') {
+        if (reconciled.value.kind === 'pending') {
+          return b3ok({
+            kind: 'evidence-not-yet-available', missing: ['transcript'], retryable: true,
+          });
+        }
+        return b3ok({
+          kind: 'completion-boundary-unproven',
+          status: reconciled.value.kind,
+          reason: reconciled.value.reason,
+          evidenceRefs: reconciled.value.evidenceRefs,
+          retryable: false,
+        });
+      }
+      const evidence = await usageEvidence.ensureProviderTurnCompletionEvidence({
+        ...base,
+        clientOpId: deriveClientOpId(
+          `agents.ensureProviderTurnCompletionEvidence:${reconciled.value.completion.id}`,
+        ),
+      }, { transcriptTurnCompletionId: reconciled.value.completion.id });
+      if (!evidence.ok) return evidence;
+      return runs.completeProviderTurn({
+        ...base,
+        clientOpId: deriveClientOpId([
+          'agent.completeProviderTurn', input.agentRunId, input.providerTurnId,
+          reconciled.value.completion.id, evidence.value.id,
+        ].join(':')),
+        ...(runtime.fence.activeEpochId() === null
+          ? {}
+          : { runtimeEpochId: runtime.fence.activeEpochId()! }),
+      }, {
+        agentRunId: input.agentRunId,
+        providerTurnId: input.providerTurnId,
+        expectedActiveTuple: {
+          providerTurnId: input.providerTurnId,
+          activityGeneration: input.activityGeneration,
+        },
+        transcriptTurnCompletionId: reconciled.value.completion.id,
+        providerUsageEvidenceId: evidence.value.id,
+      });
+    },
+    // eslint-disable-next-line sonarjs/cognitive-complexity -- Exact owner cursor lookup is exhaustive.
     async transcriptBinding(agentRunId) {
       if (transcript === null) return null;
       const found = await transcript.getTranscriptBinding(
@@ -495,13 +616,49 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
         agentRunId,
       );
       if (!found.ok) return null;
+      // A completion boundary advances the semantic source cursor without
+      // claiming that the Message mirror ingested every line through it. The
+      // next submitted turn must start after that boundary or an old reply can
+      // be reused as its completion. Read the immutable completion owner facts
+      // and expose only their latest cursor through Runtime's narrow lookup.
+      let completionWatermark: string | undefined;
+      let latestObservedAt = '';
+      let cursor: import('@novakai/foundation/contract').EventCursor | undefined;
+      do {
+        const page = await transcript.listTranscriptTurnCompletions(
+          { id: 'sys_agent_runtime', kind: 'system', verifiedScopes: [] }, {
+            agentRunId,
+            ...(cursor === undefined ? {} : { cursor }),
+            limit: 200,
+          },
+        );
+        if (!page.ok) return null;
+        for (const completion of page.value.items) {
+          if (completion.observedAt >= latestObservedAt) {
+            latestObservedAt = completion.observedAt;
+            completionWatermark = completion.completionTranscriptWatermark;
+          }
+        }
+        cursor = page.value.nextCursor;
+      } while (cursor !== undefined);
       return {
+        bindingId: found.value.id,
         bindingState: found.value.sourceDiscoveryState,
-        ...(found.value.mirrorWatermark === undefined
-          ? {} : { mirrorWatermark: found.value.mirrorWatermark }),
+        ...(completionWatermark === undefined && found.value.mirrorWatermark === undefined
+          ? {}
+          : { mirrorWatermark: completionWatermark ?? found.value.mirrorWatermark! }),
       };
     },
   });
+  const providerTurnReconciliation = setInterval(() => {
+    void runs!.reconcileProviderTurns().then((result) => {
+      if (result.ok) return;
+      runs!.publishCapabilityEvent('runtime.recovery.required', {
+        reason: `${result.error.code}: ${result.error.message}`,
+      }, 'agent-runtime');
+    });
+  }, options.providerTurnReconciliationIntervalMs ?? 1_000);
+  providerTurnReconciliation.unref();
 
   // The production source: each provider's own file, read-only, found through
   // the NATIVE session id that Agents recorded at discovery. A binding whose
@@ -553,6 +710,39 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
     messaging,
     emit: emit('transcript'),
     source,
+    turnCompletion: {
+      async getSubmission(providerTurnId) {
+        const found = await runs!.getProviderTurnSubmission(
+          { id: 'sys_transcript', kind: 'system', verifiedScopes: [] }, providerTurnId,
+        );
+        if (!found.ok) return found;
+        return b3ok({
+          id: found.value.id,
+          providerTurnId: found.value.providerTurnId,
+          agentRunId: found.value.agentRunId,
+          providerSessionId: found.value.providerSessionId,
+          providerConversationId: found.value.providerConversationId,
+          transcriptBindingId: found.value.transcriptBindingId,
+          inputDigest: found.value.inputDigest,
+          startTranscriptWatermark: found.value.startTranscriptWatermark,
+        });
+      },
+      async getProviderSession(providerSessionId) {
+        const found = await agents.getProviderSession(
+          { id: 'sys_transcript', kind: 'system', verifiedScopes: [] }, providerSessionId,
+        );
+        if (!found.ok) return found;
+        return b3ok({
+          provider: found.value.provider,
+          providerConversationId: found.value.providerConversationId,
+          providerNativeSessionId: found.value.providerResumeHandle ?? '',
+          providerVersion: found.value.providerVersion ?? 'unknown',
+        });
+      },
+      observe(input) {
+        return providerAdapters[input.provider].observeProviderTurnBoundary(input);
+      },
+    },
     ...(options.mirrorIntervalMs === undefined
       ? {} : { mirrorIntervalMs: options.mirrorIntervalMs }),
   });
@@ -580,6 +770,7 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
     supervision,
     dataRoot,
     async close() {
+      clearInterval(providerTurnReconciliation);
       await watcherScheduler.stop();
       await notificationDelivery.stop();
       // First, and awaited: a pass in flight holds durable Messaging and

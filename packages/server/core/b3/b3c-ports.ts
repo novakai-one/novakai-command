@@ -25,8 +25,8 @@ import type {
   MessagingStore, TerminalSessionId as MessagingTerminalSessionId,
 } from '../../../messaging/b3/contract/index.js';
 
-/** The one read the delivery port makes: what did this Message say. */
-type MessagingReadPort = Pick<MessagingStore, 'getMessage'>;
+/** The exact owner reads the semantic delivery port makes. */
+type MessagingReadPort = Pick<MessagingStore, 'getMessage' | 'getAgentInboxItem'>;
 import type { B3TranscriptContract } from '../../../transcript/b3/contract/index.js';
 
 const runtimeSystem = (): SystemCommandContext<'sys_agent_runtime'> => ({
@@ -142,15 +142,61 @@ export function messagingEndpointPort(
 export function messagingInboxPort(
   messaging: AgentMessagingContract & { readonly store: MessagingReadPort },
 ): MessagingInboxPort {
+  async function sourceFact(item: {
+    readonly id: string;
+    readonly messageId: string;
+  }): Promise<B3Result<{
+    readonly inboxItemId: string;
+    readonly messageId: string;
+    readonly text: string;
+  }>> {
+    const message = await messaging.store.getMessage(item.messageId as never);
+    if (message.kind !== 'ok') {
+      return b3fail({
+        code: 'StoreUnavailable',
+        message: `no Message ${item.messageId} for an inbox item`,
+        details: { owner: 'messaging', cause: 'message-unreadable' },
+        retryable: true,
+      });
+    }
+    return b3ok({
+      inboxItemId: String(item.id),
+      messageId: String(item.messageId),
+      text: message.value.body.text,
+    });
+  }
+
   return {
+    async getSource(inboxItemId: string) {
+      const item = await messaging.store.getAgentInboxItem(inboxItemId as never);
+      if (item.kind === 'error') {
+        return b3fail({
+          code: 'StoreUnavailable', message: 'Messaging inbox source is unavailable',
+          details: { owner: 'messaging', inboxItemId }, retryable: true,
+        });
+      }
+      return item.value === null ? b3ok(null) : sourceFact(item.value);
+    },
+
+    async peekNext(agentId: AgentId) {
+      const listed = await messaging.listAgentInbox(runtimeSystem().principal, {
+        agentId: agentId as string as MessagingAgentId,
+        states: ['queued'],
+        limit: 1,
+      });
+      if (!listed.ok) return listed;
+      const next = listed.value.items[0];
+      return next === undefined ? b3ok(null) : sourceFact(next);
+    },
+
     async claimNext(agentId: AgentId) {
       const claimed = await messaging.claimNextInboxItem(
         runtimeSystem(), agentId as string as MessagingAgentId,
       );
       if (!claimed.ok) return claimed;
       if (claimed.value === null) return b3ok(null);
-      const message = await messaging.store.getMessage(claimed.value.messageId);
-      if (message.kind !== 'ok') {
+      const fact = await sourceFact(claimed.value);
+      if (!fact.ok) {
         // The item is already `claimed` and there is nothing to type. Saying so
         // is what keeps it off the queue and in front of a human, rather than
         // silently re-offered on the next pass for ever.
@@ -159,18 +205,9 @@ export function messagingInboxPort(
           outcome: 'failed',
           failureReason: `the accepted Message ${claimed.value.messageId} could not be read back`,
         });
-        return b3fail({
-          code: 'StoreUnavailable',
-          message: `no Message ${claimed.value.messageId} for a claimed inbox item`,
-          details: { owner: 'messaging', cause: 'message-unreadable' },
-          retryable: true,
-        });
+        return fact;
       }
-      return b3ok({
-        inboxItemId: String(claimed.value.id),
-        messageId: String(claimed.value.messageId),
-        text: message.value.body.text,
-      });
+      return fact;
     },
 
     async recordSubmission(input) {

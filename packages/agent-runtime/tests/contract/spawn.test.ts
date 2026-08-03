@@ -236,7 +236,11 @@ test('a host with no Messaging or Transcript says so, naming the absent capabili
   // composition — which composes both — can never produce it.
   await withRig(async (rig) => {
     const role = rig.agents.defineRole('builder');
-    const spawned = await rig.runtime.spawnAgent(rig.human(), supervisedSpawn(rig, role));
+    const spawned = await rig.runtime.spawnAgent(rig.human(), {
+      roleProfileId: role,
+      displayName: 'Builder',
+      workingDirectory: '/tmp/work',
+    });
     assert.equal(spawned.ok, true, spawned.ok ? '' : spawned.error.message);
 
     const operation = await onlyOperation(rig);

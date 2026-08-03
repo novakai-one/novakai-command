@@ -62,6 +62,8 @@ const EXPECTED: ReadonlyArray<readonly [ObjectKind, string, CapabilityId]> = [
   ['storeRouteCutover', 'storeRouteCutovers.jsonl', 'foundation'],
   // ── B3d additions ──────────────────────────────────────────────────────
   ['providerUsageEvidence', 'providerUsageEvidence.jsonl', 'agents'],
+  ['providerTurnSubmission', 'providerTurnSubmissions.jsonl', 'agent-runtime'],
+  ['transcriptTurnCompletion', 'transcriptTurnCompletions.jsonl', 'transcript'],
   ['notificationInputReservation', 'notificationInputReservations.jsonl', 'terminal'],
   ['watchRule', 'watchRules.jsonl', 'supervision'],
   ['watchDeadline', 'watchDeadlines.jsonl', 'supervision'],
@@ -157,6 +159,8 @@ test('a B3a kind is refused through every foreign handle', async () => {
       ['supervision', 'watchRule', 'agentRun'],
       ['agent-runtime', 'agentRun', 'watchRule'],
       ['agent-runtime', 'agentRun', 'notification'],
+      ['agent-runtime', 'providerTurnSubmission', 'transcriptTurnCompletion'],
+      ['transcript', 'transcriptTurnCompletion', 'providerTurnSubmission'],
       ['messaging', 'messagingStoreOp', 'watchDeadline'],
     ];
     for (const [capability, granted, forbidden] of cases) {
@@ -182,7 +186,8 @@ const B3A_KINDS = new Set<string>([
 ]);
 
 const B3D_KINDS = new Set<string>([
-  'providerUsageEvidence', 'notificationInputReservation',
+  'providerUsageEvidence', 'providerTurnSubmission', 'transcriptTurnCompletion',
+  'notificationInputReservation',
   'watchRule', 'watchDeadline', 'notification',
   'watchEvaluation', 'notificationDeliveryFenceOperation',
 ]);

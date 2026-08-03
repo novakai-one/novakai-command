@@ -4,6 +4,7 @@ import {
   type B3Result,
 } from '@novakai/foundation/contract';
 import type { RunEvent, RunUsageFacts } from '../contract/runs-api.js';
+import type { ProviderTurnSubmission } from '../contract/provider-turns.js';
 import type {
   RunConnectionSnapshot, RunOccurrenceEventBase, RunOccurrenceEventFacts,
 } from '../../supervision/contract/index.js';
@@ -14,6 +15,13 @@ import {
 import { requireRun, type RunsCore } from './runs-context.js';
 import { findRetainedRunOccurrenceEvent } from './occurrence-event-retention.js';
 import { usageFacts } from './usage-run-resolution.js';
+
+async function usageSubmissions(
+  core: RunsCore,
+  agentRunId: AgentRunId,
+): Promise<B3Result<readonly ProviderTurnSubmission[]>> {
+  return core.store.list('providerTurnSubmission', { agentRunId });
+}
 
 async function eventRunId(core: RunsCore, event: RunEvent): Promise<B3Result<AgentRunId | null>> {
   const directRunId = event.payload['agentRunId'];
@@ -298,7 +306,9 @@ export async function getUsageRun(
   const agentRun = await requireRun(core, agentRunId);
   if (!agentRun.ok) return agentRun;
   const visible = await core.agents.getAgent(principal, agentRun.value.agentId);
-  return visible.ok ? b3ok(usageFacts(agentRun.value)) : visible;
+  if (!visible.ok) return visible;
+  const submissions = await usageSubmissions(core, agentRun.value.id);
+  return submissions.ok ? b3ok(usageFacts(agentRun.value, submissions.value)) : submissions;
 }
 
 /** All Runtime-owned Run facts for one visible stable Agent. */
@@ -310,5 +320,12 @@ export async function listUsageRuns(
   const visible = await core.agents.getAgent(principal, agentId);
   if (!visible.ok) return visible;
   const storedRuns = await core.store.list<AgentRun>('agentRun', { agentId });
-  return storedRuns.ok ? b3ok(storedRuns.value.map(usageFacts)) : storedRuns;
+  if (!storedRuns.ok) return storedRuns;
+  const facts: RunUsageFacts[] = [];
+  for (const agentRun of storedRuns.value) {
+    const submissions = await usageSubmissions(core, agentRun.id);
+    if (!submissions.ok) return submissions;
+    facts.push(usageFacts(agentRun, submissions.value));
+  }
+  return b3ok(facts);
 }
