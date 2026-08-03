@@ -15,8 +15,10 @@ import {
 } from '@novakai/foundation/contract';
 import type {
   AcquireInputLeaseInput, AttachControllerInput, DetachControllerInput,
+  CancelReservedNotificationInput, CommitReservedNotificationInput,
   ListTerminalSessionsFilter, OpenManagedTerminalInput, ReadTerminalStreamInput,
-  ReleaseInputLeaseInput, ResizeTerminalInput, WriteTerminalInput,
+  ReleaseInputLeaseInput, ReserveNotificationInput, ResizeTerminalInput,
+  SetControllerDraftStateInput, WriteTerminalInput,
 } from './api.js';
 import {
   CONTROLLER_KINDS, TERMINAL_INPUT_KINDS, type TerminalSessionOwner,
@@ -30,6 +32,9 @@ const SEQUENCE_LIMIT = Number.MAX_SAFE_INTEGER;
 const LEASE_MODES = ['acquire-if-free', 'renew', 'explicit-takeover'] as const;
 const LIST_STATES = ['live', 'final', 'all'] as const;
 const OWNER_KINDS = ['plain-shell', 'agent-run'] as const;
+const CANCEL_REASONS = ['supervision-claim-rejected', 'runtime-compensation'] as const;
+const DRAFT_STATES = ['empty', 'present'] as const;
+const SHA256 = /^[0-9a-f]{64}$/u;
 
 /** The owner is a union, so its tag decides which id has to be valid. */
 function readOwner(field: FieldReader): TerminalSessionOwner {
@@ -94,6 +99,65 @@ export function readReleaseInputLeaseInput(payload: unknown): B3Result<ReleaseIn
     attachmentId: field.id('attachmentId', 'controller'),
     leaseId: field.id('leaseId', 'terminalInputLease'),
     generation: field.count('generation', 1, SEQUENCE_LIMIT) as LeaseGeneration,
+  }));
+}
+
+function sha256(field: FieldReader, name: string): string {
+  const value = field.given(name);
+  if (typeof value !== 'string' || !SHA256.test(value)) {
+    field.reject(name, 'must be 64 lowercase hexadecimal characters');
+    return '';
+  }
+  return value;
+}
+
+export function readReserveNotificationInput(
+  payload: unknown,
+): B3Result<ReserveNotificationInput> {
+  return readBoundary(payload, (field) => ({
+    terminalSessionId: field.id('terminalSessionId', 'terminal'),
+    agentRunId: field.id('agentRunId', 'agentRun'),
+    notificationId: field.id('notificationId', 'notification', 'base32sha256'),
+    effectKey: field.text('effectKey'),
+    expectedActivityGeneration: field.count(
+      'expectedActivityGeneration', 0, SEQUENCE_LIMIT,
+    ) as never,
+    inputTextDigest: sha256(field, 'inputTextDigest'),
+    providerTurnId: field.id('providerTurnId', 'providerTurn'),
+  }));
+}
+
+export function readCommitReservedNotificationInput(
+  payload: unknown,
+): B3Result<CommitReservedNotificationInput> {
+  return readBoundary(payload, (field) => ({
+    notificationInputReservationId: field.id(
+      'notificationInputReservationId', 'notificationInput', 'base32sha256',
+    ),
+    effectKey: field.text('effectKey'),
+    utf8Text: field.text('utf8Text'),
+  }));
+}
+
+export function readCancelReservedNotificationInput(
+  payload: unknown,
+): B3Result<CancelReservedNotificationInput> {
+  return readBoundary(payload, (field) => ({
+    notificationInputReservationId: field.id(
+      'notificationInputReservationId', 'notificationInput', 'base32sha256',
+    ),
+    effectKey: field.text('effectKey'),
+    reason: field.choice('reason', CANCEL_REASONS),
+  }));
+}
+
+export function readSetControllerDraftStateInput(
+  payload: unknown,
+): B3Result<SetControllerDraftStateInput> {
+  return readBoundary(payload, (field) => ({
+    attachmentId: field.id('attachmentId', 'controller'),
+    expectedDraftGeneration: field.count('expectedDraftGeneration', 0, SEQUENCE_LIMIT),
+    state: field.choice('state', DRAFT_STATES),
   }));
 }
 

@@ -6,10 +6,10 @@
 // that agreed with itself. Lanes A/B/C fill in the members this tracer leaves
 // out; none of them has to change what is already wired.
 import {
-  b3err, b3fail, type AuthenticatedPrincipal, type B3Result, type IsoUtc,
+  b3err, b3fail, b3ok, type AuthenticatedPrincipal, type B3Result, type IsoUtc,
 } from '@novakai/foundation/contract';
 import type {
-  Notification, NotificationEventPage, NotificationEventPageInput,
+  Notification, NotificationEventPage, NotificationEventPageInput, NotificationId,
   SupervisionContract, WatchDeadline, WatcherTemplate, WatcherTemplateCatalogue,
   WatcherInstallAuthority,
   WatchRuleAccess,
@@ -63,6 +63,7 @@ export type SupervisionWireSlice = Pick<
   | 'createWatchRule' | 'updateWatchRule'
   // Lane C: the delivery half of the Notification seam.
   | 'claimNotificationDelivery' | 'recordNotificationDeliveryOutcome'
+  | 'recordDriftStatusSubmission'
   | 'acknowledgeNotification' | 'getNotificationDeliveryAuthority'
   | 'subscribeNotifications'
   // Lane C, Q11: the transcript half — the only path past `offered-to-endpoint`.
@@ -86,6 +87,10 @@ export interface SupervisionNotificationReads {
     principal: AuthenticatedPrincipal,
     input: NotificationEventPageInput,
   ): Promise<B3Result<NotificationEventPage>>;
+  getNotificationDeliveryState(
+    principal: AuthenticatedPrincipal,
+    notificationId: NotificationId,
+  ): Promise<B3Result<Notification['deliveryAttempt']>>;
 }
 
 /** Embedded Runtime clock seam; deliberately absent from the human wire. */
@@ -113,12 +118,13 @@ export interface SupervisionCoreOptions extends SupervisionStoreOptions {
   readonly clock?: () => Date;
   /** Required at check time; omitted hosts receive a typed RuntimeUnavailable. */
   readonly driftEvidence?: DriftEvidencePort;
-  /** Runtime/Terminal truth used to authenticate one recorded status attempt. */
-  readonly driftSubmissionAuthority?: DriftSubmissionAuthority;
   /** Runtime generation authority for manual timed and generation-fenced rules. */
   readonly watchRuleGeneration?: WatchRuleGenerationPort;
   /** B3d usage authorities; absent hosts return typed unavailability. */
   readonly usage?: UsageProjectionOptions;
+  /** Runtime/Terminal truth used to authenticate one recorded status attempt.
+   *  Q2: resolves the Terminal-owned reservation/attempt before drift writes. */
+  readonly driftSubmissionAuthority?: DriftSubmissionAuthority;
 }
 
 const USAGE_NOT_COMPOSED: UsageProjection = {
@@ -241,6 +247,16 @@ export function composeSupervision(options: SupervisionCoreOptions): Supervision
       recordNotificationTranscriptNonObservation({ store }, context, input),
     subscribeNotifications: (_principal, after) => subscribeNotifications({ store }, after),
     notificationEventPage: (_principal, input) => notificationEventPage({ store }, input),
+    async getNotificationDeliveryState(_principal, notificationId) {
+      const found = await store.read<Notification>('notification', notificationId);
+      if (!found.ok) return found;
+      if (found.value === null) {
+        return b3fail(b3err(
+          'ValidationFailed', 'unknown notification', { notificationId }, false,
+        ));
+      }
+      return b3ok(found.value.deliveryAttempt);
+    },
     getRunUsage: (principal, agentRunId) => usage.getRunUsage(principal, agentRunId),
     getAgentUsage: (principal, agentId) => usage.getAgentUsage(principal, agentId),
     listWatchDeadlines: () => store.list<WatchDeadline>('watchDeadline'),

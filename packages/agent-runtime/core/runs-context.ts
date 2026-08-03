@@ -9,7 +9,7 @@ import type { RuntimeHostContract } from '../contract/types.js';
 import type { RunUsageLookup } from '../contract/runs-api.js';
 import type {
   AgentsPort, MessagingEndpointPort, ProviderPort, RunCredentialPort, TerminalPort,
-  RunWatcherPort, TranscriptCustodyPort,
+  NotificationDeliveryPort, RunWatcherPort, TranscriptCustodyPort,
 } from '../contract/ports.js';
 import {
   FINAL_LIFECYCLES, type AgentRun, type SupervisionAssignment,
@@ -53,6 +53,8 @@ export interface RunsCore {
   readonly transcriptCustody?: TranscriptCustodyPort;
   /** B3d §13.5's watcher rung. Optional for the same reason as the two above. */
   readonly watchers?: RunWatcherPort;
+  /** Q7 delivery owner seam; absent hosts cannot start Notification turns. */
+  readonly notifications?: NotificationDeliveryPort;
   /** B3d §19.1 usage projection, read through Supervision's public contract. */
   readonly usage?: RunUsageLookup;
   /** Emitted after a commit, never before it (§15). */
