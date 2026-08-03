@@ -3,7 +3,7 @@
 // (Absence is drawn, not described — but the app must never look dead.)
 import type {
   ChatMessage, ConversationSummary, MessagingEvents, SettingsRecord, ShellServices,
-  AgentEvent, LayoutRecord,
+  AgentEvent, LayoutRecord, NotificationRowView,
 } from '../contract/index.js';
 import { defaultLayoutRecord } from '../contract/layout.js';
 import { validateSetting } from '../contract/settings.js';
@@ -24,6 +24,30 @@ export function createMockServices(opts: { seeded?: boolean } = {}): ShellServic
     version: 1,
   };
   const emit = (fn: (l: MessagingEvents) => void) => listeners.forEach(fn);
+
+  // B3d lane C: a notification inbox covering every durable state, so the ONE
+  // attention row and its release are drivable without a supervision engine.
+  let notifications: NotificationRowView[] = [
+    { id: 'notification_seen_2', summary: 'Kimi has not answered the supervision check-in',
+      state: 'transcript-observed', deliveryMode: 'start-turn', recipient: 'Chris',
+      subject: 'agent_kimi', at: '2026-08-03T10:40:00.000Z' },
+    { id: 'notification_seen_1', summary: 'Output token threshold reached',
+      state: 'transcript-observed', deliveryMode: 'start-turn', recipient: 'Chris',
+      subject: 'agent_fable', at: '2026-08-03T10:20:00.000Z' },
+    { id: 'notification_uncertain', summary: 'Build room reply never appeared in the transcript',
+      state: 'delivery-uncertain', deliveryMode: 'next-turn-context', recipient: 'Chris',
+      subject: 'agent_codex', at: '2026-08-03T10:10:00.000Z' },
+    { id: 'notification_sent', summary: 'Deadline armed for the nightly gate',
+      state: 'offered-to-endpoint', deliveryMode: 'next-turn-context', recipient: 'Chris',
+      subject: 'agent_kimi', at: '2026-08-03T09:50:00.000Z' },
+    { id: 'notification_queued', summary: 'Disk usage crossed 80% on the build host',
+      state: 'queued', deliveryMode: 'queue-only', recipient: 'Chris',
+      subject: 'host_build', at: '2026-08-03T09:30:00.000Z' },
+    { id: 'notification_settled', summary: 'Nightly gate passed',
+      state: 'acknowledged', deliveryMode: 'queue-only', recipient: 'Chris',
+      subject: 'agent_codex', at: '2026-08-03T08:00:00.000Z' },
+  ];
+  const inboxView = () => ({ at: new Date().toISOString(), rows: notifications.map((r) => ({ ...r })) });
 
   // S2b context bus: the mock holds focus like the bridge does (host authority).
   let focus: ScreenContext = { app: 'messaging', ref: 'none' };
@@ -144,6 +168,16 @@ export function createMockServices(opts: { seeded?: boolean } = {}): ShellServic
         async listSkills() { return skills.map((s) => ({ ...s })); },
       };
     })(),
+    async getNotificationInbox() { return inboxView(); },
+    async acknowledgeNotification(notificationId: string) {
+      // The mock enforces the same law the capability does: only a Notification
+      // the provider was observed to receive can be settled.
+      notifications = notifications.map((r) =>
+        (r.id === notificationId && r.state === 'transcript-observed'
+          ? { ...r, state: 'acknowledged' as const }
+          : r));
+      emit((l) => l.onNotifications?.(inboxView()));
+    },
     presence: {
       subscribeAgentEvents(handler) {
         presenceHandlers.add(handler);

@@ -32,3 +32,16 @@
 .nv-inbox__row--settled {
   opacity: 0.55;
 }
+
+/* A row that cannot be settled must not LOOK settleable. The kit's row is a
+   button everywhere, so a notification nobody can act on would otherwise
+   light up under the pointer and read as an affordance that isn't there.
+   Keyboard focus is left alone — :focus-visible still draws its ring. */
+.nv-inbox__row:not(.nv-inbox__row--attention) .k-row {
+  cursor: default;
+}
+
+.nv-inbox__row:not(.nv-inbox__row--attention) .k-row:hover {
+  background: transparent;
+  color: var(--ink-2);
+}
