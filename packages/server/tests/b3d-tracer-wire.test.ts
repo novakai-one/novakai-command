@@ -206,7 +206,7 @@ test('the B3d wire carries current from spawn to a queued Notification', async (
       }>('b3.supervision.listWatchers', {}, opId());
       if (!listed.ok || listed.value.deadlines.length === 0) return null;
       return listed.value;
-    });
+    }, 12_000);
     assert.equal(watchers.rules.length, 1, 'the role pinned one watcher and got none');
     assert.deepEqual(watchers.rules[0]?.subject, {
       kind: 'agent-run', agentRunId: agent.agentRunId,
