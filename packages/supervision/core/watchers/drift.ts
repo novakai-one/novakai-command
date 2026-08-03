@@ -4,305 +4,46 @@
 // so adapters cannot accidentally count record ids, timestamps, or audit refs
 // as movement. It owns no provider/Terminal command and therefore cannot start
 // a turn while deciding whether evidence moved.
-import { createHash } from 'node:crypto';
 import {
-  b3err,
   b3fail,
   b3ok,
-  deriveClientOpId,
-  type ActivityGeneration,
-  type AgentId,
-  type AgentRunId,
   type B3Result,
   type IsoUtc,
   type SystemCommandContext,
 } from '@novakai/foundation/contract';
 import {
   deriveDriftEpisodeId,
-  deriveNotificationId,
-  DRIFT_STATUS_PROMPT,
-  notificationDeliveryEffectKey,
-  SUPERVISION_RECORD_WRITER,
   type CheckRunDriftInput,
   type ClosedDriftStatus,
   type DriftCheckOutcome,
   type DriftEvidenceCheckpoint,
   type DurableDriftState,
-  type Notification,
   type WatchDeadline,
   type WatchRule,
 } from '../../contract/index.js';
-import type { Persisted, SupervisionStore } from '../store.js';
+import {
+  ensureHumanEscalation,
+  ensureStatusNotification,
+  expireQueuedNotification,
+} from './drift-notifications.js';
+import {
+  evidenceCheckpoint,
+  loadCurrentDrift,
+  movementEvidenceRef,
+  persistDrift,
+  watcherConflict,
+  type CurrentDrift,
+  type DriftDependencies,
+  type DriftEvidenceObservation,
+} from './drift-support.js';
 
-/** Activity-bearing facts read from their owning capabilities at check time. */
-export interface DriftEvidenceObservation {
-  /** Stable Agent identity resolved with the Run; status requests target this. */
-  readonly agentId: AgentId;
-  readonly terminalLiveness: 'live' | 'exited' | 'unknown';
-  readonly terminalActivityGeneration: ActivityGeneration;
-  readonly transcriptWatermark?: string;
-  readonly usageActivityDigest?: string;
-  readonly usageSourceCursor?: string;
-  readonly evidenceRefs: readonly string[];
-  /** Positive evidence that a causally later provider reply was committed. */
-  readonly replyEvidenceRef?: string;
-}
-
-/** Host seam joining Terminal, Transcript, and usage truth without private imports. */
-export interface DriftEvidencePort {
-  observe(agentRunId: AgentRunId): Promise<B3Result<DriftEvidenceObservation>>;
-}
-
-export interface DriftDependencies {
-  readonly store: SupervisionStore;
-  readonly evidence: DriftEvidencePort;
-  readonly clock: () => Date;
-}
+export {
+  driftEvidenceFingerprint,
+  type DriftEvidenceObservation,
+  type DriftEvidencePort,
+} from './drift-support.js';
 
 type DriftContext = SystemCommandContext<'sys_supervision'>;
-
-const watcherConflict = (
-  message: string,
-  details: Readonly<Record<string, unknown>>,
-) => b3err('WatcherConflict', message, details, true);
-
-/** Stable scalar over only the activity-bearing fields named by §9.2 step 1. */
-export function driftEvidenceFingerprint(
-  evidence: Omit<DriftEvidenceObservation, 'agentId' | 'evidenceRefs' | 'replyEvidenceRef'>,
-): string {
-  const scalar = [
-    'b3v4',
-    'activity-drift-evidence',
-    evidence.terminalLiveness,
-    String(evidence.terminalActivityGeneration),
-    evidence.transcriptWatermark ?? '-',
-    evidence.usageActivityDigest ?? '-',
-    evidence.usageSourceCursor ?? '-',
-  ].join('\u001f');
-  return createHash('sha256').update(scalar, 'utf8').digest('hex');
-}
-
-function statusNotificationRecord(
-  current: { readonly rule: WatchRule; readonly deadline: WatchDeadline },
-  observed: DriftEvidenceObservation,
-  episodeId: NonNullable<DurableDriftState['episodeId']>,
-  createdAt: IsoUtc,
-): Persisted<Notification> & Record<string, unknown> {
-  const notificationId = deriveNotificationId({
-    watchRuleId: current.rule.id,
-    subjectKey: current.deadline.subjectKey,
-    condition: current.rule.condition,
-    activityGeneration: current.deadline.activityGeneration,
-    episodeId,
-    phase: 'drift-status-request',
-  });
-  const effectKey = notificationDeliveryEffectKey(notificationId, episodeId);
-  return {
-    kind: 'notification',
-    id: notificationId,
-    schemaVersion: 1,
-    createdAt,
-    permissionLevel: 'private',
-    createdBy: SUPERVISION_RECORD_WRITER,
-    deliveryEffectKey: effectKey,
-    deliveryAttempt: { state: 'queued', effectKey },
-    watchRuleId: current.rule.id,
-    subject: current.rule.subject,
-    recipient: { kind: 'agent', agentId: observed.agentId },
-    conditionGeneration: Number(current.deadline.activityGeneration),
-    summary: DRIFT_STATUS_PROMPT,
-    evidenceRefs: observed.evidenceRefs,
-    state: 'queued',
-    deliveryMode: 'start-turn',
-    phase: 'drift-status-request',
-    driftEpisodeId: episodeId,
-  };
-}
-
-/** Queue-before-deadline transition; deterministic identity absorbs crash replay. */
-async function ensureStatusNotification(
-  deps: DriftDependencies,
-  current: { readonly rule: WatchRule; readonly deadline: WatchDeadline },
-  observed: DriftEvidenceObservation,
-  episodeId: NonNullable<DurableDriftState['episodeId']>,
-  createdAt: IsoUtc,
-): Promise<B3Result<Notification>> {
-  const record = statusNotificationRecord(current, observed, episodeId, createdAt);
-  const existing = await deps.store.read<Notification>('notification', record.id);
-  if (!existing.ok) return b3fail(existing.error);
-  if (existing.value !== null) {
-    const matches = existing.value.phase === 'drift-status-request'
-      && existing.value.driftEpisodeId === episodeId
-      && existing.value.deliveryEffectKey === record.deliveryEffectKey;
-    return matches
-      ? b3ok(existing.value)
-      : b3fail(watcherConflict('the drift status notification identity is occupied', {
-        notificationId: record.id,
-        episodeId,
-      }));
-  }
-  return deps.store.create<Notification>(
-    SUPERVISION_RECORD_WRITER,
-    record,
-    deriveClientOpId(`b3v4:queue-drift-status:${record.id}`),
-  );
-}
-
-function humanEscalationRecord(
-  current: { readonly rule: WatchRule; readonly deadline: WatchDeadline },
-  episodeId: NonNullable<DurableDriftState['episodeId']>,
-  evidenceRefs: readonly string[],
-  createdAt: IsoUtc,
-): Persisted<Notification> & Record<string, unknown> {
-  const notificationId = deriveNotificationId({
-    watchRuleId: current.rule.id,
-    subjectKey: current.deadline.subjectKey,
-    condition: current.rule.condition,
-    activityGeneration: current.deadline.activityGeneration,
-    episodeId,
-    phase: 'drift-human-escalation',
-  });
-  const effectKey = notificationDeliveryEffectKey(notificationId, episodeId);
-  return {
-    kind: 'notification',
-    id: notificationId,
-    schemaVersion: 1,
-    createdAt,
-    permissionLevel: 'private',
-    createdBy: SUPERVISION_RECORD_WRITER,
-    deliveryEffectKey: effectKey,
-    deliveryAttempt: { state: 'queued', effectKey },
-    watchRuleId: current.rule.id,
-    subject: current.rule.subject,
-    recipient: current.rule.recipient,
-    conditionGeneration: Number(current.deadline.activityGeneration),
-    summary: 'Activity drift requires human attention for ' + current.deadline.subjectKey,
-    evidenceRefs,
-    state: 'queued',
-    deliveryMode: current.rule.deliveryMode,
-    phase: 'drift-human-escalation',
-    driftEpisodeId: episodeId,
-  };
-}
-
-async function ensureHumanEscalation(
-  deps: DriftDependencies,
-  current: { readonly rule: WatchRule; readonly deadline: WatchDeadline },
-  episodeId: NonNullable<DurableDriftState['episodeId']>,
-  evidenceRefs: readonly string[],
-  createdAt: IsoUtc,
-): Promise<B3Result<Notification>> {
-  const record = humanEscalationRecord(current, episodeId, evidenceRefs, createdAt);
-  const existing = await deps.store.read<Notification>('notification', record.id);
-  if (!existing.ok) return b3fail(existing.error);
-  if (existing.value !== null) {
-    const matches = existing.value.phase === 'drift-human-escalation'
-      && existing.value.driftEpisodeId === episodeId
-      && existing.value.deliveryEffectKey === record.deliveryEffectKey;
-    return matches
-      ? b3ok(existing.value)
-      : b3fail(watcherConflict('the human escalation identity is occupied', {
-        notificationId: record.id,
-        episodeId,
-      }));
-  }
-  return deps.store.create<Notification>(
-    SUPERVISION_RECORD_WRITER,
-    record,
-    deriveClientOpId('b3v4:queue-drift-human-escalation:' + record.id),
-  );
-}
-
-function checkpoint(
-  observation: DriftEvidenceObservation,
-  checkedAt: IsoUtc,
-): DriftEvidenceCheckpoint {
-  return {
-    fingerprint: driftEvidenceFingerprint(observation),
-    terminalLiveness: observation.terminalLiveness,
-    terminalActivityGeneration: observation.terminalActivityGeneration,
-    ...(observation.transcriptWatermark === undefined
-      ? {}
-      : { transcriptWatermark: observation.transcriptWatermark }),
-    ...(observation.usageActivityDigest === undefined
-      ? {}
-      : { usageActivityDigest: observation.usageActivityDigest }),
-    ...(observation.usageSourceCursor === undefined
-      ? {}
-      : { usageSourceCursor: observation.usageSourceCursor }),
-    evidenceRefs: observation.evidenceRefs,
-    checkedAt,
-  };
-}
-
-async function loadCurrent(
-  deps: DriftDependencies,
-  input: CheckRunDriftInput,
-): Promise<B3Result<{ readonly rule: WatchRule; readonly deadline: WatchDeadline }>> {
-  const [rule, deadline] = await Promise.all([
-    deps.store.read<WatchRule>('watchRule', input.watchRuleId),
-    deps.store.read<WatchDeadline>('watchDeadline', input.dueDeadlineId),
-  ]);
-  if (!rule.ok) return b3fail(rule.error);
-  if (!deadline.ok) return b3fail(deadline.error);
-  if (rule.value === null || deadline.value === null) {
-    return b3fail(watcherConflict('the drift rule or deadline no longer exists', {
-      watchRuleId: input.watchRuleId,
-      watchDeadlineId: input.dueDeadlineId,
-    }));
-  }
-  const current = deadline.value;
-  const subjectMatches = rule.value.subject.kind === 'agent-run'
-    && rule.value.subject.agentRunId === input.agentRunId;
-  const matches = current.watchRuleId === input.watchRuleId
-    && subjectMatches
-    && current.activityGeneration === input.expectedActivityGeneration
-    && Number(current.recordVersion) === Number(input.expectedDeadlineRecordVersion)
-    && rule.value.condition.kind === 'activity-drift'
-    && current.driftState !== undefined
-    && current.state !== 'fired'
-    && current.state !== 'superseded';
-  if (!matches) {
-    return b3fail(watcherConflict('the drift check fence does not match current durable truth', {
-      watchRuleId: input.watchRuleId,
-      watchDeadlineId: input.dueDeadlineId,
-      expectedActivityGeneration: input.expectedActivityGeneration,
-      actualActivityGeneration: current.activityGeneration,
-      expectedRecordVersion: input.expectedDeadlineRecordVersion,
-      actualRecordVersion: current.recordVersion,
-    }));
-  }
-  return b3ok({ rule: rule.value, deadline: current });
-}
-
-function rearmedDueAt(now: Date, rule: WatchRule): IsoUtc {
-  if (rule.condition.kind !== 'activity-drift') {
-    throw new TypeError('activity-drift reducer received a non-drift rule');
-  }
-  return new Date(now.getTime() + rule.condition.intervalMs).toISOString() as IsoUtc;
-}
-
-async function persistDrift(
-  deps: DriftDependencies,
-  current: { readonly rule: WatchRule; readonly deadline: WatchDeadline },
-  state: DurableDriftState,
-  now: Date,
-  dueAt: IsoUtc = rearmedDueAt(now, current.rule),
-): Promise<B3Result<WatchDeadline>> {
-  return deps.store.update<WatchDeadline>(
-    SUPERVISION_RECORD_WRITER,
-    current.deadline.id,
-    {
-      state: 'armed',
-      dueAt,
-      driftState: state,
-    },
-    current.deadline.recordVersion,
-    deriveClientOpId(
-      `b3v4:check-run-drift:${current.deadline.id}:${String(current.deadline.recordVersion)}`,
-    ),
-  );
-}
 
 /** Establish the first sample or clear an observing episode when evidence moves. */
 async function recordMovement(
@@ -425,53 +166,6 @@ async function closeSubmittedMovement(
       providerTurnsStartedThisEvaluation: 0,
       evidenceRefs: observed.evidenceRefs,
     });
-}
-
-function movementEvidenceRef(
-  observed: DriftEvidenceObservation,
-  nextEvidence: DriftEvidenceCheckpoint,
-): string {
-  return observed.replyEvidenceRef
-    ?? observed.evidenceRefs[0]
-    ?? `drift-fingerprint:${nextEvidence.fingerprint}`;
-}
-
-async function expireQueuedNotification(
-  deps: DriftDependencies,
-  outstanding: Extract<
-    Extract<DurableDriftState, { readonly phase: 'status-outstanding' }>['outstandingStatus'],
-    { readonly state: 'queued' }
-  >,
-): Promise<B3Result<Notification>> {
-  const stored = await deps.store.read<Notification>('notification', outstanding.notificationId);
-  if (!stored.ok) return b3fail(stored.error);
-  if (stored.value === null) {
-    return b3fail(watcherConflict('the queued drift status notification is missing', {
-      notificationId: outstanding.notificationId,
-      effectKey: outstanding.effectKey,
-    }));
-  }
-  if (stored.value.state === 'expired') return b3ok(stored.value);
-  const stillQueued = stored.value.deliveryEffectKey === outstanding.effectKey
-    && stored.value.deliveryAttempt.state === 'queued'
-    && stored.value.state === 'queued';
-  if (!stillQueued) {
-    return b3fail(watcherConflict(
-      'the status request was claimed while movement was being recorded',
-      {
-        notificationId: outstanding.notificationId,
-        notificationState: stored.value.state,
-        deliveryState: stored.value.deliveryAttempt.state,
-      },
-    ));
-  }
-  return deps.store.update<Notification>(
-    SUPERVISION_RECORD_WRITER,
-    stored.value.id,
-    { state: 'expired' },
-    stored.value.recordVersion,
-    deriveClientOpId(`b3v4:cancel-queued-drift-status:${stored.value.id}`),
-  );
 }
 
 async function cancelQueuedStatus(
@@ -675,7 +369,7 @@ export async function checkRunDrift(
   _context: DriftContext,
   input: CheckRunDriftInput,
 ): Promise<B3Result<DriftCheckOutcome>> {
-  const current = await loadCurrent(deps, input);
+  const current = await loadCurrentDrift(deps, input);
   if (!current.ok) return b3fail(current.error);
   const now = deps.clock();
   if (now.getTime() < Date.parse(current.value.deadline.dueAt)) {
@@ -693,7 +387,7 @@ export async function checkRunDrift(
       observedActivityGeneration: observed.value.terminalActivityGeneration,
     }));
   }
-  const nextEvidence = checkpoint(observed.value, now.toISOString() as IsoUtc);
+  const nextEvidence = evidenceCheckpoint(observed.value, now.toISOString() as IsoUtc);
   const priorState = current.value.deadline.driftState!;
   const moved = priorState.lastEvidence === undefined
     || priorState.lastEvidence.fingerprint !== nextEvidence.fingerprint;
