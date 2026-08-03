@@ -6,10 +6,10 @@
 // that agreed with itself. Lanes A/B/C fill in the members this tracer leaves
 // out; none of them has to change what is already wired.
 import {
-  b3err, b3fail, type AuthenticatedPrincipal, type B3Result,
+  b3err, b3fail, b3ok, type AuthenticatedPrincipal, type B3Result,
 } from '@novakai/foundation/contract';
 import type {
-  NotificationEventPage, NotificationEventPageInput,
+  Notification, NotificationEventPage, NotificationEventPageInput, NotificationId,
   SupervisionContract, WatchDeadline, WatcherTemplate, WatcherTemplateCatalogue,
   WatcherInstallAuthority,
   WatchRuleAccess,
@@ -67,6 +67,10 @@ export interface SupervisionNotificationReads {
     principal: AuthenticatedPrincipal,
     input: NotificationEventPageInput,
   ): Promise<B3Result<NotificationEventPage>>;
+  getNotificationDeliveryState(
+    principal: AuthenticatedPrincipal,
+    notificationId: NotificationId,
+  ): Promise<B3Result<Notification['deliveryAttempt']>>;
 }
 
 export type SupervisionCore = SupervisionWireSlice
@@ -158,6 +162,16 @@ export function composeSupervision(options: SupervisionCoreOptions): Supervision
       recordNotificationTranscriptNonObservation({ store }, context, input),
     subscribeNotifications: (_principal, after) => subscribeNotifications({ store }, after),
     notificationEventPage: (_principal, input) => notificationEventPage({ store }, input),
+    async getNotificationDeliveryState(_principal, notificationId) {
+      const found = await store.read<Notification>('notification', notificationId);
+      if (!found.ok) return found;
+      if (found.value === null) {
+        return b3fail(b3err(
+          'ValidationFailed', 'unknown notification', { notificationId }, false,
+        ));
+      }
+      return b3ok(found.value.deliveryAttempt);
+    },
     getRunUsage: (principal, agentRunId) => usage.getRunUsage(principal, agentRunId),
     getAgentUsage: (principal, agentId) => usage.getAgentUsage(principal, agentId),
     listWatchDeadlines: () => store.list<WatchDeadline>('watchDeadline'),

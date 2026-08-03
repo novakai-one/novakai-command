@@ -381,10 +381,27 @@ export type NotificationDeliveryClaimFacts =
       readonly driftEpisodeId: string;
     };
 
+export type NotificationDeliveryStateFacts =
+  | { readonly state: 'queued' }
+  | {
+      readonly state:
+        | 'delivery-claimed' | 'submitted-confirmed' | 'submitted-unconfirmed';
+      readonly notificationInputReservationId: NotificationInputReservationId;
+    };
+
 export interface NotificationDeliveryPort {
   getAuthority(
     principal: AuthenticatedPrincipal, notificationId: NotificationId,
   ): Promise<B3Result<NotificationDeliveryAuthorityFacts>>;
+
+  getDeliveryState(
+    principal: AuthenticatedPrincipal,
+    input: {
+      readonly notificationId: NotificationId;
+      readonly effectKey: string;
+      readonly notificationInputReservationId: NotificationInputReservationId;
+    },
+  ): Promise<B3Result<NotificationDeliveryStateFacts>>;
 
   claim(input: {
     readonly notificationId: NotificationId;

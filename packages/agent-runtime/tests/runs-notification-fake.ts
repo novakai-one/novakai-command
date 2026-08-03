@@ -20,6 +20,12 @@ export interface FakeNotificationDelivery extends NotificationDeliveryPort {
 
 export function createFakeNotificationDelivery(): FakeNotificationDelivery {
   const authorities = new Map<NotificationId, NotificationDeliveryAuthorityFacts>();
+  const states = new Map<NotificationId, {
+    readonly state: 'queued' | 'delivery-claimed' | 'submitted-confirmed' | 'submitted-unconfirmed';
+    readonly notificationInputReservationId?: Parameters<
+      NotificationDeliveryPort['claim']
+    >[0]['notificationInputReservationId'];
+  }>();
   const fake: FakeNotificationDelivery = {
     claims: [],
     submissions: [],
@@ -37,12 +43,29 @@ export function createFakeNotificationDelivery(): FakeNotificationDelivery {
           kind: 'watch-rule', watchRuleId: 'watchRule_fake-notification-delivery',
         },
       });
+      states.set(input.notificationId, { state: 'queued' });
     },
     async getAuthority(_principal, notificationId) {
       const authority = authorities.get(notificationId);
       return authority === undefined
         ? b3fail(b3err('ValidationFailed', 'unknown fake Notification', { notificationId }, false))
         : b3ok(authority);
+    },
+    async getDeliveryState(_principal, input) {
+      const state = states.get(input.notificationId);
+      if (state === undefined) {
+        return b3fail(b3err('ValidationFailed', 'unknown fake Notification', {}, false));
+      }
+      if (state.state === 'queued') return b3ok({ state: 'queued' });
+      if (state.notificationInputReservationId !== input.notificationInputReservationId) {
+        return b3fail(b3err(
+          'IdempotencyConflict', 'fake Notification belongs to another reservation', {}, false,
+        ));
+      }
+      return b3ok({
+        state: state.state,
+        notificationInputReservationId: state.notificationInputReservationId,
+      });
     },
     async claim(input) {
       const authority = authorities.get(input.notificationId);
@@ -52,6 +75,10 @@ export function createFakeNotificationDelivery(): FakeNotificationDelivery {
         ));
       }
       fake.claims.push(input.expectedEffectKey);
+      states.set(input.notificationId, {
+        state: 'delivery-claimed',
+        notificationInputReservationId: input.notificationInputReservationId,
+      });
       return b3ok({
         phase: 'ordinary' as const,
         notificationRecordVersion: 2 as never,
@@ -59,6 +86,10 @@ export function createFakeNotificationDelivery(): FakeNotificationDelivery {
     },
     async recordSubmission(input) {
       fake.submissions.push(input.effectKey);
+      states.set(input.notificationId, {
+        state: input.outcome.state,
+        notificationInputReservationId: input.notificationInputReservationId,
+      });
       return b3ok(null);
     },
   };

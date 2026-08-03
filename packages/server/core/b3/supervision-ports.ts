@@ -154,6 +154,31 @@ export function supervisionNotificationDeliveryPort(
       return authority.ok ? b3ok(authority.value) : authority;
     },
 
+    async getDeliveryState(principal, input) {
+      const attempt = await supervision.getNotificationDeliveryState(
+        principal, input.notificationId,
+      );
+      if (!attempt.ok) return attempt;
+      if (attempt.value.effectKey !== input.effectKey) {
+        return b3fail(b3err(
+          'IdempotencyConflict', 'Notification effect key does not match Runtime operation',
+          { notificationId: input.notificationId }, false,
+        ));
+      }
+      if (attempt.value.state === 'queued') return b3ok({ state: 'queued' });
+      if (attempt.value.notificationInputReservationId
+        !== input.notificationInputReservationId) {
+        return b3fail(b3err(
+          'IdempotencyConflict', 'Notification is held by another Terminal reservation',
+          { notificationId: input.notificationId }, false,
+        ));
+      }
+      return b3ok({
+        state: attempt.value.state,
+        notificationInputReservationId: attempt.value.notificationInputReservationId,
+      });
+    },
+
     async claim(input) {
       const claimed = await supervision.claimNotificationDelivery(
         contextFor(input.expectedEffectKey, 'claim'), input,

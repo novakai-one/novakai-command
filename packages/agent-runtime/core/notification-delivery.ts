@@ -98,9 +98,26 @@ export async function getNotificationTurnSubmission(
     });
   }
   if (reservation.value.state === 'reserved') {
-    const claimed = operation.completedStages.some(
-      (stage) => stage.stage === 'supervision-delivery-claimed');
-    return b3ok(claimed
+    if (core.notifications === undefined) {
+      return b3fail(b3err(
+        'RuntimeUnavailable', 'Supervision notification delivery is not composed',
+        { reason: 'notification-delivery-not-composed' }, true,
+      ));
+    }
+    const ownerState = await core.notifications.getDeliveryState(reader, {
+      notificationId: operation.notificationId!,
+      effectKey,
+      notificationInputReservationId: reservationId,
+    });
+    if (!ownerState.ok) return ownerState;
+    if (ownerState.value.state === 'submitted-confirmed'
+      || ownerState.value.state === 'submitted-unconfirmed') {
+      return b3fail(b3err(
+        'RecoveryRequired', 'Supervision records submission before Terminal committed it',
+        { notificationId: operation.notificationId, effectKey }, true,
+      ));
+    }
+    return b3ok(ownerState.value.state === 'delivery-claimed'
       ? {
           state: 'claimed-pending-submission',
           notificationInputReservationId: reservationId,
