@@ -2,6 +2,7 @@
 export * from './store.js';
 export * from './templates.js';
 export * from './watchers.js';
+export * from './watchers/drift.js';
 export * from './watch-rule-query.js';
 export * from './notifications.js';
 export * from './compose.js';

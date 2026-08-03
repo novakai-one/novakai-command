@@ -24,3 +24,8 @@ export {
   type WatcherTemplate,
   type WatcherTemplatePort,
 } from '../core/index.js';
+export {
+  driftEvidenceFingerprint,
+  type DriftEvidenceObservation,
+  type DriftEvidencePort,
+} from '../core/watchers/drift.js';

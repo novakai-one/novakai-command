@@ -5,7 +5,9 @@
 // that drifts from the freeze stops compiling here rather than passing a test
 // that agreed with itself. Lanes A/B/C fill in the members this tracer leaves
 // out; none of them has to change what is already wired.
-import type { AuthenticatedPrincipal, B3Result } from '@novakai/foundation/contract';
+import {
+  b3err, b3fail, type AuthenticatedPrincipal, type B3Result,
+} from '@novakai/foundation/contract';
 import type {
   SupervisionContract, WatchDeadline, WatcherTemplate, WatcherTemplateCatalogue,
   WatcherInstallAuthority,
@@ -19,11 +21,15 @@ import { installRunWatchers } from './watchers.js';
 import { parseInstallRunWatchersInput } from '../contract/input-validation.js';
 import { listWatchRules } from './watch-rule-query.js';
 import { evaluateEvent, listNotifications } from './notifications.js';
+import {
+  checkRunDrift, type DriftEvidencePort,
+} from './watchers/drift.js';
 
 /** The frozen members the tracer's live wire actually carries current through. */
 export type SupervisionWireSlice = Pick<
   SupervisionContract,
   'installRunWatchers' | 'evaluateEvent' | 'listNotifications' | 'listWatchRules'
+  | 'checkRunDrift'
 >;
 
 /** Deadline detail remains a tracer host read; WatchRule listing is now frozen. */
@@ -48,6 +54,8 @@ export interface SupervisionCoreOptions extends SupervisionStoreOptions {
   readonly templates?: WatcherTemplateCatalogue;
   readonly extraTemplates?: readonly WatcherTemplate[];
   readonly clock?: () => Date;
+  /** Required at check time; omitted hosts receive a typed RuntimeUnavailable. */
+  readonly driftEvidence?: DriftEvidencePort;
 }
 
 export function composeSupervision(options: SupervisionCoreOptions): SupervisionCore {
@@ -59,6 +67,7 @@ export function composeSupervision(options: SupervisionCoreOptions): Supervision
     authority: options.installAuthority,
     clock: options.clock ?? ((): Date => new Date()),
   };
+  const clock = options.clock ?? ((): Date => new Date());
 
   return {
     installRunWatchers: (context, input) => {
@@ -70,6 +79,11 @@ export function composeSupervision(options: SupervisionCoreOptions): Supervision
     listWatchRules: (principal, filter) => listWatchRules(
       store, options.watchRuleAccess, principal, filter,
     ),
+    checkRunDrift: (context, input) => options.driftEvidence === undefined
+      ? Promise.resolve(b3fail(b3err(
+        'RuntimeUnavailable', 'activity-drift evidence is not composed', {}, true,
+      )))
+      : checkRunDrift({ store, evidence: options.driftEvidence, clock }, context, input),
     listWatchDeadlines: () => store.list<WatchDeadline>('watchDeadline'),
   };
 }
