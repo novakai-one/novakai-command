@@ -17,8 +17,10 @@ import {
 } from '../core/index.js';
 import {
   deriveDriftEpisodeId,
+  DRIFT_STATUS_PROMPT,
   type CheckRunDriftInput,
   type DriftCheckOutcome,
+  type Notification,
   type SupervisionContract,
   type WatchDeadline,
 } from '../contract/index.js';
@@ -78,6 +80,7 @@ test('identical free evidence establishes a baseline then opens one quiet episod
       observe: async () => b3ok({
         terminalLiveness: 'live' as const,
         terminalActivityGeneration: 4 as never,
+        agentId: 'agent_123e4567-e89b-42d3-a456-426614174000' as never,
         transcriptWatermark: 'transcript.42',
         usageActivityDigest: 'usage:in=10;out=20;turns=2',
         usageSourceCursor: 'usage.7',
@@ -89,6 +92,7 @@ test('identical free evidence establishes a baseline then opens one quiet episod
       observe(agentRunId: AgentRunId): Promise<ReturnType<typeof b3ok<{
         readonly terminalLiveness: 'live';
         readonly terminalActivityGeneration: never;
+        readonly agentId: never;
         readonly transcriptWatermark: string;
         readonly usageActivityDigest: string;
         readonly usageSourceCursor: string;
@@ -158,6 +162,43 @@ test('identical free evidence establishes a baseline then opens one quiet episod
       fingerprint: fingerprint!,
       episodeOrdinal: 1,
     }));
+
+    now = new Date('2026-08-03T00:15:00.000Z');
+    const queued: DriftCheckOutcome = unwrap(
+      await supervision.checkRunDrift(supervisionContext(), input()),
+    );
+    assert.equal(queued.kind, 'status-turn-queued');
+    assert.equal(queued.providerTurnsStartedThisEvaluation, 0);
+    if (queued.kind !== 'status-turn-queued') throw new Error('status request was not queued');
+    deadline = unwrap(await store.list<WatchDeadline>('watchDeadline'))[0]!;
+    assert.equal(deadline.dueAt, '2026-08-03T00:20:00.000Z');
+    assert.equal(deadline.driftState?.phase, 'status-outstanding');
+    assert.equal(deadline.driftState?.consecutiveUnansweredChecks, 0);
+    assert.equal(deadline.driftState?.outstandingStatus?.state, 'queued');
+    assert.equal('replyDueAt' in deadline.driftState!.outstandingStatus!, false);
+    const notifications = unwrap(await store.list<Notification>('notification'));
+    assert.equal(notifications.length, 1);
+    assert.equal(notifications[0]!.id, queued.notificationId);
+    assert.equal(notifications[0]!.phase, 'drift-status-request');
+    assert.deepEqual(notifications[0]!.recipient, {
+      kind: 'agent', agentId: 'agent_123e4567-e89b-42d3-a456-426614174000',
+    });
+    assert.equal(notifications[0]!.deliveryMode, 'start-turn');
+    assert.equal(notifications[0]!.summary, DRIFT_STATUS_PROMPT);
+    assert.equal(notifications[0]!.state, 'queued');
+    assert.equal(notifications[0]!.deliveryAttempt.state, 'queued');
+
+    now = new Date('2026-08-03T00:20:00.000Z');
+    const stillQueued: DriftCheckOutcome = unwrap(
+      await supervision.checkRunDrift(supervisionContext(), input()),
+    );
+    assert.equal(stillQueued.kind, 'status-turn-queued');
+    assert.equal(stillQueued.providerTurnsStartedThisEvaluation, 0);
+    deadline = unwrap(await store.list<WatchDeadline>('watchDeadline'))[0]!;
+    assert.equal(deadline.driftState?.consecutiveUnansweredChecks, 0,
+      'a queued status request aged into an unanswered check');
+    assert.equal(unwrap(await store.list('notification')).length, 1,
+      'the same quiet episode queued another status turn');
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

@@ -11,6 +11,7 @@ import {
   b3ok,
   deriveClientOpId,
   type ActivityGeneration,
+  type AgentId,
   type AgentRunId,
   type B3Result,
   type IsoUtc,
@@ -18,18 +19,24 @@ import {
 } from '@novakai/foundation/contract';
 import {
   deriveDriftEpisodeId,
+  deriveNotificationId,
+  DRIFT_STATUS_PROMPT,
+  notificationDeliveryEffectKey,
   SUPERVISION_RECORD_WRITER,
   type CheckRunDriftInput,
   type DriftCheckOutcome,
   type DriftEvidenceCheckpoint,
   type DurableDriftState,
+  type Notification,
   type WatchDeadline,
   type WatchRule,
 } from '../../contract/index.js';
-import type { SupervisionStore } from '../store.js';
+import type { Persisted, SupervisionStore } from '../store.js';
 
 /** Activity-bearing facts read from their owning capabilities at check time. */
 export interface DriftEvidenceObservation {
+  /** Stable Agent identity resolved with the Run; status requests target this. */
+  readonly agentId: AgentId;
   readonly terminalLiveness: 'live' | 'exited' | 'unknown';
   readonly terminalActivityGeneration: ActivityGeneration;
   readonly transcriptWatermark?: string;
@@ -60,7 +67,7 @@ const watcherConflict = (
 
 /** Stable scalar over only the activity-bearing fields named by §9.2 step 1. */
 export function driftEvidenceFingerprint(
-  evidence: Omit<DriftEvidenceObservation, 'evidenceRefs' | 'replyEvidenceRef'>,
+  evidence: Omit<DriftEvidenceObservation, 'agentId' | 'evidenceRefs' | 'replyEvidenceRef'>,
 ): string {
   const scalar = [
     'b3v4',
@@ -72,6 +79,72 @@ export function driftEvidenceFingerprint(
     evidence.usageSourceCursor ?? '-',
   ].join('\u001f');
   return createHash('sha256').update(scalar, 'utf8').digest('hex');
+}
+
+function statusNotificationRecord(
+  current: { readonly rule: WatchRule; readonly deadline: WatchDeadline },
+  observed: DriftEvidenceObservation,
+  episodeId: NonNullable<DurableDriftState['episodeId']>,
+  createdAt: IsoUtc,
+): Persisted<Notification> & Record<string, unknown> {
+  const notificationId = deriveNotificationId({
+    watchRuleId: current.rule.id,
+    subjectKey: current.deadline.subjectKey,
+    condition: current.rule.condition,
+    activityGeneration: current.deadline.activityGeneration,
+    episodeId,
+    phase: 'drift-status-request',
+  });
+  const effectKey = notificationDeliveryEffectKey(notificationId, episodeId);
+  return {
+    kind: 'notification',
+    id: notificationId,
+    schemaVersion: 1,
+    createdAt,
+    permissionLevel: 'private',
+    createdBy: SUPERVISION_RECORD_WRITER,
+    deliveryEffectKey: effectKey,
+    deliveryAttempt: { state: 'queued', effectKey },
+    watchRuleId: current.rule.id,
+    subject: current.rule.subject,
+    recipient: { kind: 'agent', agentId: observed.agentId },
+    conditionGeneration: Number(current.deadline.activityGeneration),
+    summary: DRIFT_STATUS_PROMPT,
+    evidenceRefs: observed.evidenceRefs,
+    state: 'queued',
+    deliveryMode: 'start-turn',
+    phase: 'drift-status-request',
+    driftEpisodeId: episodeId,
+  };
+}
+
+/** Queue-before-deadline transition; deterministic identity absorbs crash replay. */
+async function ensureStatusNotification(
+  deps: DriftDependencies,
+  current: { readonly rule: WatchRule; readonly deadline: WatchDeadline },
+  observed: DriftEvidenceObservation,
+  episodeId: NonNullable<DurableDriftState['episodeId']>,
+  createdAt: IsoUtc,
+): Promise<B3Result<Notification>> {
+  const record = statusNotificationRecord(current, observed, episodeId, createdAt);
+  const existing = await deps.store.read<Notification>('notification', record.id);
+  if (!existing.ok) return b3fail(existing.error);
+  if (existing.value !== null) {
+    const matches = existing.value.phase === 'drift-status-request'
+      && existing.value.driftEpisodeId === episodeId
+      && existing.value.deliveryEffectKey === record.deliveryEffectKey;
+    return matches
+      ? b3ok(existing.value)
+      : b3fail(watcherConflict('the drift status notification identity is occupied', {
+        notificationId: record.id,
+        episodeId,
+      }));
+  }
+  return deps.store.create<Notification>(
+    SUPERVISION_RECORD_WRITER,
+    record,
+    deriveClientOpId(`b3v4:queue-drift-status:${record.id}`),
+  );
 }
 
 function checkpoint(
@@ -193,6 +266,73 @@ async function recordMovement(
   });
 }
 
+async function queueStatusTurn(
+  deps: DriftDependencies,
+  current: { readonly rule: WatchRule; readonly deadline: WatchDeadline },
+  observed: DriftEvidenceObservation,
+  nextEvidence: DriftEvidenceCheckpoint,
+  now: Date,
+  episodeId: NonNullable<DurableDriftState['episodeId']>,
+): Promise<B3Result<DriftCheckOutcome>> {
+  const queued = await ensureStatusNotification(
+    deps, current, observed, episodeId, now.toISOString() as IsoUtc,
+  );
+  if (!queued.ok) return b3fail(queued.error);
+  const state: DurableDriftState = {
+    kind: 'activity-drift',
+    episodeOrdinal: current.deadline.driftState!.episodeOrdinal,
+    phase: 'status-outstanding',
+    quietIntervals: 2,
+    episodeId,
+    consecutiveUnansweredChecks: 0,
+    lastEvidence: nextEvidence,
+    outstandingStatus: {
+      episodeId,
+      effectKey: queued.value.deliveryEffectKey,
+      notificationId: queued.value.id,
+      state: 'queued',
+      requestedAt: queued.value.createdAt,
+    },
+  };
+  const written = await persistDrift(deps, current, state, now);
+  if (!written.ok) return b3fail(written.error);
+  return b3ok({
+    kind: 'status-turn-queued',
+    providerTurnsStartedThisEvaluation: 0,
+    staleIntervals: 2,
+    notificationId: queued.value.id,
+    effectKey: queued.value.deliveryEffectKey,
+  });
+}
+
+async function keepQueuedStatus(
+  deps: DriftDependencies,
+  current: { readonly rule: WatchRule; readonly deadline: WatchDeadline },
+  priorState: Extract<DurableDriftState, { readonly phase: 'status-outstanding' }>,
+  nextEvidence: DriftEvidenceCheckpoint,
+  now: Date,
+): Promise<B3Result<DriftCheckOutcome>> {
+  const outstanding = priorState.outstandingStatus;
+  if (outstanding.state !== 'queued' && outstanding.state !== 'delivery-claimed') {
+    return b3fail(b3err(
+      'UnsupportedOperation',
+      'submitted reply windows are not implemented by the current vertical slice',
+      { state: outstanding.state },
+      false,
+    ));
+  }
+  const state: DurableDriftState = { ...priorState, lastEvidence: nextEvidence };
+  const written = await persistDrift(deps, current, state, now);
+  if (!written.ok) return b3fail(written.error);
+  return b3ok({
+    kind: 'status-turn-queued',
+    providerTurnsStartedThisEvaluation: 0,
+    staleIntervals: 2,
+    notificationId: outstanding.notificationId,
+    effectKey: outstanding.effectKey,
+  });
+}
+
 /** §9.2 steps 1–3: fingerprint, movement reset, and first quiet interval. */
 export async function checkRunDrift(
   deps: DriftDependencies,
@@ -252,6 +392,19 @@ export async function checkRunDrift(
       providerTurnsStartedThisEvaluation: 0,
       staleIntervals: 1,
     });
+  }
+  if (priorState.phase === 'observing' && priorState.quietIntervals === 1) {
+    return queueStatusTurn(
+      deps,
+      current.value,
+      observed.value,
+      nextEvidence,
+      now,
+      priorState.episodeId,
+    );
+  }
+  if (priorState.phase === 'status-outstanding') {
+    return keepQueuedStatus(deps, current.value, priorState, nextEvidence, now);
   }
   return b3fail(b3err(
     'UnsupportedOperation',
