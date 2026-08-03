@@ -51,6 +51,7 @@ import {
 } from './supervision-ports.js';
 import { createUsageReader } from '../supervision/usage.js';
 import { createTranscriptUsagePort } from './usage-transcript-port.js';
+import { startWatcherScheduler } from './watcher-scheduler.js';
 
 export interface B3RuntimeOptions {
   /** `.novakai/` root. Domain records live in `<root>/stores`. */
@@ -92,6 +93,8 @@ export interface B3RuntimeOptions {
   readonly mirrorIntervalMs?: number;
   /** How often the inbox delivery loop looks. Same reason as the mirror's. */
   readonly inboxDeliveryIntervalMs?: number;
+  /** How often the Runtime scans durable watcher deadlines. */
+  readonly watcherIntervalMs?: number;
   /**
    * B3d: extra pinned watcher templates this host's role catalogue offers, on
    * top of the ones Supervision ships. The frozen catalogue seam is owned by
@@ -397,6 +400,10 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
   // already owns. It is the whole watcher clock — no timer, no poll, and no
   // second event identity invented on the side.
   const following = followEventsIntoSupervision(runs, supervision);
+  const watcherScheduler = startWatcherScheduler(supervision, {
+    ...(options.watcherIntervalMs === undefined
+      ? {} : { intervalMs: options.watcherIntervalMs }),
+  });
 
   const composedTranscript = composeB3TranscriptFor({
     root: options.root,
@@ -430,6 +437,7 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
     supervision,
     dataRoot,
     async close() {
+      await watcherScheduler.stop();
       // First, and awaited: a pass in flight holds durable Messaging and
       // Transcript writes, and closing the stores under it is the one way to
       // manufacture the torn outcome §13.9's watermark law exists to survive.

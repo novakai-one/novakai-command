@@ -15,6 +15,7 @@ import {
   type WatchDeadline, type WatchRule,
 } from '../contract/index.js';
 import type { Persisted, SupervisionStore } from './store.js';
+import { claimDeadline } from './watchers/deadlines.js';
 
 export interface EvaluateDependencies {
   readonly store: SupervisionStore;
@@ -93,12 +94,17 @@ async function fireDeadline(
     if (!written.ok) return b3fail(written.error);
     queued = written.value;
   }
+  const claimed = await claimDeadline({
+    store: deps.store,
+    clock: () => new Date(observedAt),
+  }, input.deadline);
+  if (!claimed.ok) return b3fail(claimed.error);
   const lateByMs = Math.max(
     0, new Date(observedAt).getTime() - new Date(input.deadline.dueAt).getTime(),
   );
   const fired = await deps.store.update<WatchDeadline>(
-    principal, input.deadline.id, { state: 'fired', lateByMs },
-    input.deadline.recordVersion, deriveClientOpId(`b3v4:fire-deadline:${input.deadline.id}`),
+    principal, claimed.value.id, { state: 'fired', lateByMs },
+    claimed.value.recordVersion, deriveClientOpId(`b3v4:fire-deadline:${claimed.value.id}`),
   );
   if (!fired.ok) return b3fail(fired.error);
   return b3ok(queued);
@@ -184,6 +190,36 @@ export async function evaluateEvent(
   const queued: Notification[] = [];
   for (const deadline of armed.value) {
     const settled = await settleOne(deps, SUPERVISION_RECORD_WRITER, deadline, event);
+    if (!settled.ok) return b3fail(settled.error);
+    if (settled.value !== null) queued.push(settled.value);
+  }
+  return b3ok(queued);
+}
+
+/**
+ * Settle clock-driven idle work even when the Runtime is otherwise silent.
+ *
+ * This is an embedded-host seam, not another public command. The durable
+ * deadline remains the authority: every pass re-reads armed rows, claims the
+ * exact record version, and the deterministic Notification absorbs replay.
+ */
+export async function evaluateDueDeadlines(
+  deps: EvaluateDependencies,
+  observedAt: IsoUtc,
+): Promise<B3Result<readonly Notification[]>> {
+  const armed = await deps.store.list<WatchDeadline>('watchDeadline', { state: 'armed' });
+  if (!armed.ok) return b3fail(armed.error);
+  const due = armed.value
+    .filter((deadline) => String(deadline.dueAt) <= String(observedAt))
+    .sort((left, right) => String(left.dueAt).localeCompare(String(right.dueAt))
+      || String(left.id).localeCompare(String(right.id)));
+  const queued: Notification[] = [];
+  for (const deadline of due) {
+    const settled = await settleOne(deps, SUPERVISION_RECORD_WRITER, deadline, {
+      observedAt,
+      evidenceRef: `watch-deadline:${String(deadline.id)}:due:${String(deadline.dueAt)}`,
+      about: null,
+    });
     if (!settled.ok) return b3fail(settled.error);
     if (settled.value !== null) queued.push(settled.value);
   }

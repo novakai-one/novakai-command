@@ -23,6 +23,25 @@ export interface DeadlineDependencies {
   readonly clock: () => Date;
 }
 
+/** Move one armed deadline onto the durable scheduler claim rung. */
+export async function claimDeadline(
+  deps: DeadlineDependencies,
+  deadline: WatchDeadline,
+): Promise<B3Result<WatchDeadline>> {
+  return deps.store.update<WatchDeadline>(
+    SUPERVISION_RECORD_WRITER,
+    deadline.id,
+    {
+      state: 'claimed',
+      lateByMs: Math.max(0, deps.clock().getTime() - Date.parse(deadline.dueAt)),
+    },
+    deadline.recordVersion,
+    deriveClientOpId(
+      'b3v4:claim-watch-deadline:' + deadline.id + ':' + deadline.recordVersion,
+    ),
+  );
+}
+
 /** Human exact-CAS release of one escalated drift episode. */
 export async function resetDriftEpisode(
   deps: DeadlineDependencies,
@@ -111,18 +130,7 @@ export async function claimDueDeadlines(
     .slice(0, input.limit);
   const claimed: WatchDeadline[] = [];
   for (const deadline of dueDeadlines) {
-    const written = await deps.store.update<WatchDeadline>(
-      SUPERVISION_RECORD_WRITER,
-      deadline.id,
-      {
-        state: 'claimed',
-        lateByMs: Math.max(0, deps.clock().getTime() - Date.parse(deadline.dueAt)),
-      },
-      deadline.recordVersion,
-      deriveClientOpId(
-        'b3v4:claim-watch-deadline:' + deadline.id + ':' + deadline.recordVersion,
-      ),
-    );
+    const written = await claimDeadline(deps, deadline);
     if (!written.ok) return b3fail(written.error);
     claimed.push(written.value);
   }

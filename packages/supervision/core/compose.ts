@@ -6,10 +6,10 @@
 // that agreed with itself. Lanes A/B/C fill in the members this tracer leaves
 // out; none of them has to change what is already wired.
 import {
-  b3err, b3fail, type AuthenticatedPrincipal, type B3Result,
+  b3err, b3fail, type AuthenticatedPrincipal, type B3Result, type IsoUtc,
 } from '@novakai/foundation/contract';
 import type {
-  NotificationEventPage, NotificationEventPageInput,
+  Notification, NotificationEventPage, NotificationEventPageInput,
   SupervisionContract, WatchDeadline, WatcherTemplate, WatcherTemplateCatalogue,
   WatcherInstallAuthority,
   WatchRuleAccess,
@@ -21,7 +21,9 @@ import { createTemplateCatalogue } from './templates.js';
 import { installRunWatchers } from './watchers.js';
 import { parseInstallRunWatchersInput } from '../contract/input-validation.js';
 import { listWatchRules } from './watch-rule-query.js';
-import { evaluateEvent, listNotifications } from './notifications.js';
+import {
+  evaluateDueDeadlines, evaluateEvent, listNotifications,
+} from './notifications.js';
 import {
   checkRunDrift, type DriftEvidencePort,
 } from './watchers/drift.js';
@@ -86,9 +88,15 @@ export interface SupervisionNotificationReads {
   ): Promise<B3Result<NotificationEventPage>>;
 }
 
+/** Embedded Runtime clock seam; deliberately absent from the human wire. */
+export interface SupervisionDeadlineScheduler {
+  evaluateDueDeadlines(observedAt: IsoUtc): Promise<B3Result<readonly Notification[]>>;
+}
+
 export type SupervisionCore = SupervisionWireSlice
   & SupervisionWatcherReads
-  & SupervisionNotificationReads;
+  & SupervisionNotificationReads
+  & SupervisionDeadlineScheduler;
 
 export interface SupervisionCoreOptions extends SupervisionStoreOptions {
   /** Required: installs are refused unless Agents + Runtime facts can be re-read. */
@@ -148,6 +156,7 @@ export function composeSupervision(options: SupervisionCoreOptions): Supervision
       return parsed.ok ? installRunWatchers(install, context, parsed.value) : Promise.resolve(parsed);
     },
     evaluateEvent: (context, input) => evaluateEvent({ store }, context, input),
+    evaluateDueDeadlines: (observedAt) => evaluateDueDeadlines({ store }, observedAt),
     listNotifications: (_principal, filter) => listNotifications({ store }, filter),
     listWatchRules: (principal, filter) => listWatchRules(
       store, options.watchRuleAccess, principal, filter,
