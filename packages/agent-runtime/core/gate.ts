@@ -1,3 +1,5 @@
+/* eslint-disable max-lines -- Gate orchestration is one atomic safe-boundary policy. */
+
 // The carried-forward two-turn skills gate (B1-CF-001, §6.3, AMD-001 A-03).
 //
 // Chris's rule, from Build 1: an agent must confirm it has its skills BEFORE it
@@ -112,6 +114,7 @@ function marker(plan: LaunchPlanFacts): string {
     ? plan.skillsConfirmationGate.confirmationMarker : 'SKILLS-CONFIRMED:';
 }
 
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Explicit frozen gate state transitions.
 export async function runSkillsGate(
   core: RunsCore, context: CommandContext, input: GateInput,
 ): Promise<B3Result<GateOutcome>> {
@@ -218,6 +221,7 @@ interface SentTurn {
  * key, so a retry that already sent it does not send it again (§13.5's "retry
  * observes transcript before sending again").
  */
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Preserves ordered prepare/execute/settle cuts.
 async function sendConfirmationTurn(
   core: RunsCore, context: CommandContext, input: GateInput,
 ): Promise<B3Result<SentTurn>> {

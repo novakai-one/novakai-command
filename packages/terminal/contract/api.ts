@@ -1,3 +1,5 @@
+/* eslint-disable max-lines -- Terminal authority commands remain one public capability contract. */
+
 // The Terminal public contract (B3V4-P2 §12.3). This is the only door.
 //
 // Callers never learn a PID, a socket path, or how replay is buffered. What

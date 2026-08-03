@@ -1,3 +1,5 @@
+/* eslint-disable max-lines -- Transcript composition owns ingestion and immutable completion facts. */
+
 /**
  * The B3c Transcript capability, composed — §12.5, §13.9, DEC-B3V4-18.
  */
@@ -192,6 +194,7 @@ export function composeB3Transcript(options: B3TranscriptOptions): B3TranscriptC
   }
 
   return {
+    // eslint-disable-next-line sonarjs/cognitive-complexity -- Exact completion proof refusals are explicit.
     async reconcileProviderTurnCompletion(context, input) {
       if (context.principal.id !== 'sys_reconciler' || options.turnCompletion === undefined) {
         return b3fail(b3err('PermissionDenied',

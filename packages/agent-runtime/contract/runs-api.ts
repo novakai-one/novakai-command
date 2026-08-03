@@ -1,3 +1,5 @@
+/* eslint-disable max-lines -- The public Runs capability surface remains co-located. */
+
 // The Agent Runtime public contract (B3V4-P2 §12.2). This is the only door.
 //
 // One spawn operation serves human, Agent and script (DEC-B3V4-04). One

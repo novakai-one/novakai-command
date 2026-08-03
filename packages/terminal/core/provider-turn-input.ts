@@ -1,3 +1,5 @@
+/* eslint-disable max-lines -- Terminal owns the complete prepare/execute/barrier state machine. */
+
 import { createHash } from 'node:crypto';
 import {
   b3err,
@@ -195,6 +197,7 @@ async function runtimeAuthority(
   return b3ok({ ...input.authority });
 }
 
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Explicit pre-effect authority matrix.
 export async function prepareProviderTurnInput(
   core: TerminalCore,
   context: SystemCommandContext<'sys_agent_runtime'>,
@@ -232,12 +235,12 @@ export async function prepareProviderTurnInput(
       terminalSessionId: input.terminalSessionId,
     }, false));
   }
-  const now = clockIso(core);
+  const observedAt = clockIso(core);
   const record: Persisted<ProviderTurnTerminalInputAttempt> = {
     kind: 'terminalInputAttempt',
     id: mintTerminalInputAttemptId(),
     schemaVersion: 1,
-    createdAt: now,
+    createdAt: observedAt,
     permissionLevel: 'private',
     createdBy: 'sys_terminal',
     source: 'provider-turn',
@@ -256,7 +259,7 @@ export async function prepareProviderTurnInput(
     startTranscriptWatermark: input.startTranscriptWatermark,
     expectedRunRecordVersion: input.expectedRunRecordVersion,
     authority: authority.value,
-    effectState: { kind: 'prepared', preparedAt: now },
+    effectState: { kind: 'prepared', preparedAt: observedAt },
     turnBarrier: { kind: 'reserved-pre-effect' },
   };
   const written = await core.store.create<ProviderTurnTerminalInputAttempt>(
@@ -267,6 +270,7 @@ export async function prepareProviderTurnInput(
   return b3ok({ kind: 'prepared', attempt: written.value });
 }
 
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Durable write/effect uncertainty cuts are explicit.
 export async function executeProviderTurnInput(
   core: TerminalCore,
   input: ExecuteProviderTurnInputInput,
@@ -397,12 +401,14 @@ export async function cancelPreparedProviderTurnInput(
       terminalInputAttemptId: attempt.id,
     });
   }
-  const now = clockIso(core);
+  const observedAt = clockIso(core);
   const cancelled = await core.store.update<ProviderTurnTerminalInputAttempt>(
     'sys_terminal', 'terminalInputAttempt', attempt.id,
     {
-      effectState: { kind: 'rejected', rejectedAt: now, effectEscaped: false, reason: input.reason },
-      turnBarrier: { kind: 'released-rejected', releasedAt: now },
+      effectState: {
+        kind: 'rejected', rejectedAt: observedAt, effectEscaped: false, reason: input.reason,
+      },
+      turnBarrier: { kind: 'released-rejected', releasedAt: observedAt },
     },
     attempt.recordVersion,
     mintClientOpId(),
@@ -411,6 +417,7 @@ export async function cancelPreparedProviderTurnInput(
   return cancelled;
 }
 
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Exact tuple and interrupt ordering is explicit.
 export async function settleProviderTurnCompletion(
   core: TerminalCore,
   input: SettleTerminalProviderTurnCompletionInput,
@@ -442,13 +449,13 @@ export async function settleProviderTurnCompletion(
   const interruptDisposition = attempt.turnBarrier.kind === 'interrupt-committed'
     ? 'barrier-won-before-completion' as const
     : 'no-barrier' as const;
-  const now = clockIso(core);
+  const observedAt = clockIso(core);
   const written = await core.store.update<ProviderTurnTerminalInputAttempt>(
     'sys_terminal', 'terminalInputAttempt', attempt.id,
     {
       turnBarrier: {
         kind: 'completion-committed',
-        committedAt: now,
+        committedAt: observedAt,
         transcriptTurnCompletionId: input.transcriptTurnCompletionId,
         providerUsageEvidenceId: input.providerUsageEvidenceId,
         interruptDisposition,
@@ -498,13 +505,13 @@ export async function closeProviderTurnBarrierUnproven(
       turnBarrier: attempt.turnBarrier.kind,
     });
   }
-  const now = clockIso(core);
+  const observedAt = clockIso(core);
   const closed = await core.store.update<ProviderTurnTerminalInputAttempt>(
     'sys_terminal', 'terminalInputAttempt', attempt.id,
     {
       turnBarrier: {
         kind: 'closed-unproven',
-        closedAt: now,
+        closedAt: observedAt,
         terminalFinalEvidenceRefs: input.terminalFinalEvidenceRefs,
         interruptDisposition: attempt.turnBarrier.kind === 'interrupt-committed'
           ? 'barrier-won-before-unproven-close'

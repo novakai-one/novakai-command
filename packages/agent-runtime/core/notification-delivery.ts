@@ -22,6 +22,7 @@ type Submitted = Extract<
   { readonly state: 'submitted-confirmed' | 'submitted-unconfirmed' }
 >;
 
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Ordered authority and replay checks are intentional.
 export async function startNotificationTurnAtSafeBoundary(
   core: RunsCore,
   context: SystemCommandContext<'sys_supervision'>,
@@ -52,9 +53,9 @@ export async function startNotificationTurnAtSafeBoundary(
         notificationId: input.notificationId, effectKey: input.effectKey,
       }, true));
   }
-  const run = await requireRun(core, input.agentRunId);
-  if (!run.ok) return run;
-  if (run.value.terminalSessionId === undefined) {
+  const runResult = await requireRun(core, input.agentRunId);
+  if (!runResult.ok) return runResult;
+  if (runResult.value.terminalSessionId === undefined) {
     return b3fail(b3err('NotificationDeliveryUnsafe',
       'the target Run has no managed Terminal session', {
         notificationId: input.notificationId, agentRunId: input.agentRunId,
@@ -102,7 +103,7 @@ export async function startNotificationTurnAtSafeBoundary(
     sourceEffectKey: input.effectKey,
     sourceObjectRef: input.notificationId,
     agentRunId: input.agentRunId,
-    terminalSessionId: run.value.terminalSessionId,
+    terminalSessionId: runResult.value.terminalSessionId,
     transcriptBindingId: binding.bindingId,
     utf8Text: authority.value.inputText,
   });

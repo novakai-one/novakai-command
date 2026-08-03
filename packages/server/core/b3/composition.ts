@@ -341,6 +341,7 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
       runs?.publishCapabilityEvent(kind, { ...payload }, 'agents', traceId);
     },
     turnCompletion: {
+      // eslint-disable-next-line id-length -- Contract method name is fixed as `get`.
       async get(id) {
         if (transcript === null) {
           return b3fail(b3err('TranscriptSourceUnavailable',
@@ -544,6 +545,7 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
         providerUsageEvidenceId: evidence.value.id,
       });
     },
+    // eslint-disable-next-line sonarjs/cognitive-complexity -- Exact owner cursor lookup is exhaustive.
     async transcriptBinding(agentRunId) {
       if (transcript === null) return null;
       const found = await transcript.getTranscriptBinding(

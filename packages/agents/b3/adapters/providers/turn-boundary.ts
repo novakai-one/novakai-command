@@ -1,3 +1,6 @@
+/* eslint-disable id-length -- Row-oriented names mirror provider-native JSONL records. */
+/* eslint-disable max-lines -- Exact-version provider parsers share one conformance boundary. */
+
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
@@ -163,6 +166,7 @@ function sourceLineId(bindingId: string, position: string): TranscriptLineId {
     .digest('hex')}` as TranscriptLineId;
 }
 
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Exact native-frame state machine.
 function claudeMatch(
   rows: readonly SourceRow[], input: ProviderTurnBoundaryInput,
 ): BoundaryMatch | 'input-ambiguous' | 'end-ambiguous' | 'source-gap' | null {
@@ -224,6 +228,7 @@ function codexInputText(value: Record<string, unknown>): string | null {
     : null;
 }
 
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Exact native-frame state machine.
 function codexMatch(
   rows: readonly SourceRow[], input: ProviderTurnBoundaryInput,
 ): BoundaryMatch | 'input-ambiguous' | 'end-ambiguous' | 'source-gap' | null {
@@ -283,6 +288,7 @@ function kimiPromptText(value: Record<string, unknown>): string | null {
   return value.type === 'turn.prompt' ? logicalText(value.input) : null;
 }
 
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Exact native-frame state machine.
 function kimiMatch(
   rows: readonly SourceRow[], input: ProviderTurnBoundaryInput,
 ): BoundaryMatch | 'input-ambiguous' | 'end-ambiguous' | 'source-gap' | null {
@@ -383,16 +389,25 @@ export function observeProviderBoundarySource(
   };
 }
 
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Bounded provider-specific source discovery.
 function walkForNative(
   root: string, nativeId: string, provider: ProviderKind, depth = 0,
 ): string | null {
   if (depth > 6 || !existsSync(root)) return null;
   let entries: readonly string[];
-  try { entries = readdirSync(root); } catch { return null; }
+  try {
+    entries = readdirSync(root);
+  } catch {
+    return null;
+  }
   for (const entry of entries) {
     const full = path.join(root, entry);
     let directory = false;
-    try { directory = statSync(full).isDirectory(); } catch { continue; }
+    try {
+      directory = statSync(full).isDirectory();
+    } catch {
+      continue;
+    }
     if (directory) {
       if (provider === 'kimi' && entry === `session_${nativeId}`) {
         const wire = path.join(full, 'agents', 'main', 'wire.jsonl');

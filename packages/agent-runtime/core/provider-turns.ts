@@ -1,3 +1,6 @@
+/* eslint-disable id-length -- `run` is the AgentRun aggregate; `now` is its clock sample. */
+/* eslint-disable max-lines -- Frozen submission, recovery, and completion form one aggregate owner. */
+
 import { createHash } from 'node:crypto';
 import {
   b3err,
@@ -144,6 +147,7 @@ function terminalOutcome(submission: ProviderTurnSubmission): ProviderTurnSubmit
   return null;
 }
 
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Frozen transaction cut ordering is explicit here.
 export async function submitProviderTurn(
   core: RunsCore,
   context: CommandContext,
@@ -511,6 +515,7 @@ export async function listProviderTurnSubmissions(
  * operation only after Terminal proves no effect began. A prepared reservation
  * is cancelled before either the Run fence or submission is released.
  */
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Exhaustive R3 pre-effect recovery matrix.
 export async function reconcileControllerPreEffectSubmissions(
   core: RunsCore,
   mode: 'startup' | 'periodic',
@@ -653,6 +658,7 @@ function systemReplayContext(core: RunsCore, submission: ProviderTurnSubmission)
   };
 }
 
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Durable recovery phases must remain visibly ordered.
 async function recoverAttemptedSubmission(
   core: RunsCore,
   submission: ProviderTurnSubmission,
@@ -839,6 +845,7 @@ async function recoverAttemptedSubmission(
 }
 
 /** Owner-ordered recovery for every nonterminal submission, oldest first. */
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Owner-first reconciliation matrix is exhaustive.
 export async function reconcileAllProviderTurnSubmissions(
   core: RunsCore,
   mode: 'startup' | 'periodic',
@@ -1028,6 +1035,7 @@ function terminalLiveness(status: Awaited<ReturnType<RunsCore['terminal']['getTe
 }
 
 /** Governed repair for a named unproven completion; it never invents completion. */
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Dual-liveness closure preserves every refusal branch.
 export async function closeProviderTurnCompletionUnproven(
   core: RunsCore,
   context: CommandContext,
@@ -1321,6 +1329,7 @@ function lineageMismatch(
  * Agents attests that exact immutable fact, and Terminal orders completion
  * against interrupt before Runtime moves generation.
  */
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Sole completion CAS keeps lineage checks explicit.
 export async function completeProviderTurn(
   core: RunsCore,
   context: CommandContext,

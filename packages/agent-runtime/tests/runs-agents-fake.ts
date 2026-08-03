@@ -1,3 +1,5 @@
+/* eslint-disable max-lines -- Shared fake exposes the complete Agents custody seam. */
+
 // The Agents fake.
 //
 // It is not a stub: it enforces the rules the Runtime actually depends on —

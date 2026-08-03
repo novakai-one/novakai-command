@@ -1,3 +1,5 @@
+/* eslint-disable max-lines -- Terminal composition exposes one cohesive authority boundary. */
+
 // The Terminal composition root.
 //
 // Every public mutation goes through the same three guards, in the same order:

@@ -1,3 +1,5 @@
+/* eslint-disable max-lines -- Runs wire validators stay beside their public payloads. */
+
 // Runtime validators for every Run boundary payload (§4.2 MUST).
 //
 // A cast is erased and a brand proves nothing at runtime, so every payload that
@@ -316,7 +318,7 @@ export function readCloseProviderTurnCompletionUnprovenInput(
     );
     const refs = field.given('completionEvidenceRefs');
     const completionEvidenceRefs = Array.isArray(refs) && refs.length > 0
-      && refs.every((ref) => typeof ref === 'string' && ref.trim() !== '')
+      && refs.every((reference) => typeof reference === 'string' && reference.trim() !== '')
       ? refs as [string, ...string[]] : undefined;
     if (completionEvidenceRefs === undefined) {
       field.reject('completionEvidenceRefs', 'must be a non-empty array of non-empty strings');

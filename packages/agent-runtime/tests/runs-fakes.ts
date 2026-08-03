@@ -1,3 +1,5 @@
+/* eslint-disable max-lines -- Failure-injection fake keeps durable cut controls together. */
+
 // The Terminal and provider fakes.
 //
 // Split from `runs-harness.ts` so that file is the RIG and this one is what the

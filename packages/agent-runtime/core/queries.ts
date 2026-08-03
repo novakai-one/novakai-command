@@ -165,6 +165,7 @@ export async function observeTerminalExit(
   return reconciled.ok ? b3ok(null) : b3fail(reconciled.error);
 }
 
+// eslint-disable-next-line sonarjs/cognitive-complexity -- View projection retains explicit custody states.
 export async function viewOfRun(
   core: RunsCore, principal: AuthenticatedPrincipal, stale: AgentRun,
 ): Promise<B3Result<AgentRunView>> {
@@ -262,12 +263,12 @@ export async function getUsageRun(
   principal: AuthenticatedPrincipal,
   agentRunId: AgentRunId,
 ): Promise<B3Result<RunUsageFacts>> {
-  const run = await requireRun(core, agentRunId);
-  if (!run.ok) return run;
-  const visible = await core.agents.getAgent(principal, run.value.agentId);
+  const runResult = await requireRun(core, agentRunId);
+  if (!runResult.ok) return runResult;
+  const visible = await core.agents.getAgent(principal, runResult.value.agentId);
   if (!visible.ok) return visible;
-  const submissions = await usageSubmissions(core, run.value.id);
-  return submissions.ok ? b3ok(usageFacts(run.value, submissions.value)) : submissions;
+  const submissions = await usageSubmissions(core, runResult.value.id);
+  return submissions.ok ? b3ok(usageFacts(runResult.value, submissions.value)) : submissions;
 }
 
 /** All Runtime-owned Run facts for one visible stable Agent. */
@@ -281,10 +282,10 @@ export async function listUsageRuns(
   const runs = await core.store.list<AgentRun>('agentRun', { agentId });
   if (!runs.ok) return runs;
   const facts: RunUsageFacts[] = [];
-  for (const run of runs.value) {
-    const submissions = await usageSubmissions(core, run.id);
+  for (const agentRun of runs.value) {
+    const submissions = await usageSubmissions(core, agentRun.id);
     if (!submissions.ok) return submissions;
-    facts.push(usageFacts(run, submissions.value));
+    facts.push(usageFacts(agentRun, submissions.value));
   }
   return b3ok(facts);
 }
@@ -383,6 +384,7 @@ export async function getRunLaunchPlanId(
  * `interrupted` with the uncertainty stated, never a silent revival and never a
  * cheerful `stopped` that implies somebody chose it.
  */
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Startup custody passes are deliberately explicit.
 export async function reconcileAfterRestart(
   core: RunsCore, activeEpochId: string,
 ): Promise<B3Result<{ readonly reconciledRunIds: readonly AgentRunId[] }>> {

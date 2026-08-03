@@ -1,3 +1,5 @@
+/* eslint-disable max-lines -- The frozen provider-turn aggregate is specified as one contract. */
+
 import type {
   ActivityGeneration,
   AgentRunId,

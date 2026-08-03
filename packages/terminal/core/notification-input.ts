@@ -201,6 +201,7 @@ export async function cancelReservedNotificationInput(
   );
 }
 
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Draft/reservation refusal states are exhaustive.
 export async function setControllerDraftState(
   core: TerminalCore, context: CommandContext, input: SetControllerDraftStateInput,
 ): Promise<B3Result<ControllerAttachment>> {

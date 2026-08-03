@@ -118,6 +118,7 @@ async function committedState(
   return b3ok(submittedOutcome(attempt.value));
 }
 
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Exhaustive durable delivery-state reducer.
 export async function getNotificationTurnSubmission(
   core: RunsCore, effectKey: string,
 ): Promise<B3Result<NotificationTurnSubmission>> {

@@ -1,3 +1,5 @@
+/* eslint-disable max-lines -- Canonical usage custody and normalization remain one owner module. */
+
 import {
   b3fail,
   b3err,

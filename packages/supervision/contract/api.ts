@@ -1,3 +1,5 @@
+/* eslint-disable max-lines -- Supervision's public capability surface remains co-located. */
+
 import type {
   ActivityGeneration,
   AgentId,

@@ -1,3 +1,5 @@
+/* eslint-disable max-lines -- Frozen custody ports remain one owner-facing contract. */
+
 // The seams Agent Runtime genuinely varies at.
 //
 // Agent Runtime never imports Agents or Terminal. It states the NARROW thing it

@@ -16,6 +16,7 @@ import {
 } from './context.js';
 import { listProviderTurnAttempts } from './provider-turn-input.js';
 
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Durable interrupt/turn ordering is exhaustive.
 export async function interruptTerminalTurn(
   core: TerminalCore,
   context: SystemCommandContext<'sys_agent_runtime'>,

@@ -1,3 +1,5 @@
+/* eslint-disable max-lines -- Narrow Runtime adapters stay grouped at the composition seam. */
+
 // Where Agent Runtime's ports meet the real capabilities.
 //
 // This is the only place the three of them are in the same file, and that is
