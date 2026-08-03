@@ -12,13 +12,13 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
-  deriveClientOpId,
+  b3err, b3fail, b3ok, deriveClientOpId,
   type AgentRunId, type AuthenticatedPrincipal, type CommandContext,
   type ProviderTurnId, type RecordVersion, type SystemCommandContext,
   type TerminalInputAttemptId,
 } from '@novakai/foundation/contract';
 import {
-  createSupervisionStore, type SupervisionStore,
+  composeSupervision, createSupervisionStore, type SupervisionStore,
   acknowledgeNotification, claimNotificationDelivery,
   getNotificationDeliveryAuthority, recordNotificationDeliveryOutcome,
 } from '../core/index.js';
@@ -479,5 +479,74 @@ test('no delivery authority exists for queue-only or next-turn-context', async (
       assert.equal(authority.ok, false, `${deliveryMode} must publish no start-turn authority`);
       assert.equal(authority.ok ? '' : authority.error.code, 'NotificationDeliveryUnsafe');
     } finally { cleanup(); }
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Connect-first: the same behaviour, reached through the live composition seam.
+// ---------------------------------------------------------------------------
+
+test('the composed capability carries current from a queued Notification to a settled one', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'nvk-lane-c-wire-'));
+  try {
+    const store = createSupervisionStore({ root, dataRoot: path.join(root, 'stores') });
+    const supervision = composeSupervision({
+      root,
+      dataRoot: path.join(root, 'stores'),
+      store,
+      installAuthority: {
+        resolve: async () => b3fail(
+          b3err('UnsupportedOperation', 'not exercised by this test', {}, false),
+        ),
+      },
+      watchRuleAccess: { agentIdFor: async () => b3ok(null) },
+    });
+    await seedRule(store, 'start-turn');
+    const queued = await seedQueued(store, 'start-turn');
+
+    // Runtime asks whether it may speak, and for what text.
+    const authority = await supervision.getNotificationDeliveryAuthority(human, queued.id);
+    assert.equal(authority.ok, true, authority.ok ? '' : authority.error.message);
+    if (!authority.ok) return;
+
+    // It binds its reservation at a safe boundary...
+    const claimed = await supervision.claimNotificationDelivery(runtime(), {
+      notificationId: queued.id,
+      expectedNotificationRecordVersion: queued.recordVersion,
+      expectedEffectKey: authority.value.deliveryEffectKey,
+      notificationInputReservationId: RESERVATION,
+      expectedActivityGeneration: authority.value.activityGeneration,
+    });
+    assert.equal(claimed.ok, true, claimed.ok ? '' : claimed.error.message);
+    if (!claimed.ok) return;
+
+    // ...reports what Terminal saw...
+    const recorded = await supervision.recordNotificationDeliveryOutcome(runtime(), {
+      notificationId: queued.id,
+      expectedRecordVersion: claimed.value.notification.recordVersion,
+      expectedEffectKey: authority.value.deliveryEffectKey,
+      notificationInputReservationId: RESERVATION,
+      terminalInputAttemptId: ATTEMPT_ID,
+      outcome: {
+        state: 'submitted-confirmed',
+        submittedAt: '2026-08-03T00:03:00.000Z' as never,
+        providerTurnId: TURN_ID,
+      },
+    });
+    assert.equal(recorded.ok, true, recorded.ok ? '' : recorded.error.message);
+    if (!recorded.ok) return;
+
+    // ...and the reader sees an offered notification, NOT an observed one.
+    const listed = await supervision.listNotifications(human, { limit: 10 });
+    assert.equal(listed.ok, true, listed.ok ? '' : listed.error.message);
+    if (!listed.ok) return;
+    assert.equal(listed.value.items.length, 1);
+    assert.equal(listed.value.items[0]?.state, 'offered-to-endpoint');
+
+    // A person cannot settle it while nothing has observed the delivery.
+    const premature = await supervision.acknowledgeNotification(humanContext(), queued.id);
+    assert.equal(premature.ok, false, 'ack must not outrun delivery evidence on the live wire');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });

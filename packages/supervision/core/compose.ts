@@ -19,11 +19,18 @@ import { installRunWatchers } from './watchers.js';
 import { parseInstallRunWatchersInput } from '../contract/input-validation.js';
 import { listWatchRules } from './watch-rule-query.js';
 import { evaluateEvent, listNotifications } from './notifications.js';
+import {
+  acknowledgeNotification, claimNotificationDelivery,
+  getNotificationDeliveryAuthority, recordNotificationDeliveryOutcome,
+} from './notifications/index.js';
 
 /** The frozen members the tracer's live wire actually carries current through. */
 export type SupervisionWireSlice = Pick<
   SupervisionContract,
   'installRunWatchers' | 'evaluateEvent' | 'listNotifications' | 'listWatchRules'
+  // Lane C: the delivery half of the Notification seam.
+  | 'claimNotificationDelivery' | 'recordNotificationDeliveryOutcome'
+  | 'acknowledgeNotification' | 'getNotificationDeliveryAuthority'
 >;
 
 /** Deadline detail remains a tracer host read; WatchRule listing is now frozen. */
@@ -70,6 +77,14 @@ export function composeSupervision(options: SupervisionCoreOptions): Supervision
     listWatchRules: (principal, filter) => listWatchRules(
       store, options.watchRuleAccess, principal, filter,
     ),
+    claimNotificationDelivery: (context, input) =>
+      claimNotificationDelivery({ store }, context, input),
+    recordNotificationDeliveryOutcome: (context, input) =>
+      recordNotificationDeliveryOutcome({ store }, context, input),
+    acknowledgeNotification: (context, notificationId) =>
+      acknowledgeNotification({ store }, context, notificationId),
+    getNotificationDeliveryAuthority: (principal, notificationId) =>
+      getNotificationDeliveryAuthority({ store }, principal, notificationId),
     listWatchDeadlines: () => store.list<WatchDeadline>('watchDeadline'),
   };
 }
