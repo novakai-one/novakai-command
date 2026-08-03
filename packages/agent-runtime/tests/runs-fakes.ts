@@ -69,6 +69,41 @@ export interface FakeTerminal extends TerminalPort {
    * on it (NVK-KIMI-030 N-1). `null` keeps the old faithful echo.
    */
   reflowColumns: number | null;
+  /**
+   * Paint the ANSWER the way a real TUI repaints a row it has already drawn:
+   * jump the cursor over the columns that are already correct, and emit only
+   * the runs that changed.
+   *
+   * `reflowColumns` above simulates the screen a reader sees AFTER the escape
+   * sequences have been taken out — it emits no escapes at all — so the step
+   * that reads them was never under test, and NVK-048 class 6 lived there for
+   * the whole of B3: a verbatim-correct confirmation rejected ~1 spawn in 3
+   * because the read deleted a character the provider had no need to send
+   * twice (`nvk048-skll@v1#d0`, from `p10`'s own failure record).
+   */
+  repaintAnswer: boolean;
+}
+
+/**
+ * One row, drawn and then redrawn — the second pass stepping over a column that
+ * is already correct.
+ *
+ * The grammar is copied off a real claude PTY capture, where the Runtime's own
+ * sentence came back as `then a\x1b[26GJSON\x1b[32Grray of the\x1b[44Gt\x1b[46Gkens`
+ * for a screen reading `then a JSON array of the tokens`
+ * (`packages/agents/b3/tests/fixtures/claude-gate-screen.txt`). The character
+ * stepped over is inside the token, which is what makes it fatal rather than
+ * cosmetic.
+ */
+export function repaint(said: string, steppedOver: number): string {
+  const column = 2;
+  const column0 = (zeroBased: number): string => `[${String(zeroBased + 1)}G`;
+  return [
+    '\r\n', column0(column), said.slice(0, steppedOver + 1),
+    '\r', column0(column), said.slice(0, steppedOver),
+    column0(column + steppedOver + 1), said.slice(steppedOver + 1),
+    '[K\r\n',
+  ].join('');
 }
 
 /**
@@ -138,6 +173,7 @@ export function createFakeTerminal(): FakeTerminal {
     duringNextTerminate: null,
     duringNextNotificationReservation: null,
     reflowColumns: null,
+    repaintAnswer: false,
 
     async openManagedTerminal(context, input) {
       if (port.failOpen) {
@@ -185,7 +221,14 @@ export function createFakeTerminal(): FakeTerminal {
       // releases it and is never answered.
       if (input.effectKey.endsWith('skills-gate-prompt-sent')) {
         const answer = scriptedConfirmation(port.pinnedTokens, port.reply);
-        if (answer !== null) port.output = `${port.output}\nthinking...\n${answer}\n`;
+        if (answer !== null) {
+          port.output = `${port.output}\nthinking...\n${
+            port.repaintAnswer
+              // Stepped over mid-token — inside the digest, where the
+              // fixture's own drops landed — rather than on a space.
+              ? repaint(answer, answer.indexOf('#') + 1)
+              : `${answer}\n`}`;
+        }
       }
       return b3ok({ confirmed: true, ...attempted });
     },
