@@ -50,6 +50,7 @@ import { createInboxDeliveryPump, type InboxDeliveryPump } from './inbox-deliver
 import {
   getNotificationTurnSubmission, startNotificationTurnAtSafeBoundary,
 } from './notification-delivery.js';
+import { RunActivityQueue } from './run-activity-queue.js';
 
 /**
  * What a host with no Messaging answers: there is nothing to deliver.
@@ -144,6 +145,7 @@ export function composeAgentRuns(options: ComposeAgentRunsOptions): ComposedAgen
   // cursors — not two views of "something happened" that can disagree.
   const events = createRunEventLog();
   const publish = options.publish;
+  const providerActivity = new RunActivityQueue();
 
   const core: RunsCore = {
     store: options.store ?? createRunsStore(options),
@@ -244,11 +246,11 @@ export function composeAgentRuns(options: ComposeAgentRunsOptions): ComposedAgen
     beginProviderTurn: guarded('agent.beginTurn', async (context, input: {
       agentRunId: Parameters<typeof beginProviderTurn>[2]['agentRunId'];
       expectedRecordVersion: Parameters<typeof beginProviderTurn>[2]['expectedRecordVersion'];
-    }) => {
+    }) => providerActivity.enqueue(String(input.agentRunId), async () => {
       const started = await beginProviderTurn(core, context, input);
       if (!started.ok) return started;
       return asView(context, started.value);
-    }),
+    })),
 
     endProviderTurn: guarded('agent.endTurn', async (context, input: {
       agentRunId: Parameters<typeof endProviderTurn>[2]['agentRunId'];
@@ -281,7 +283,10 @@ export function composeAgentRuns(options: ComposeAgentRunsOptions): ComposedAgen
         { readonly state: 'submitted-confirmed' | 'submitted-unconfirmed' }
       >>(context);
       if (version) return version;
-      return startNotificationTurnAtSafeBoundary(core, context, input);
+      return providerActivity.enqueue(
+        String(input.agentRunId),
+        () => startNotificationTurnAtSafeBoundary(core, context, input),
+      );
     },
 
     getAgentRun: (principal, agentRunId) => getAgentRun(core, principal, agentRunId),
