@@ -72,8 +72,23 @@ export interface ComposeTerminalOptions extends TerminalStoreOptions {
   /** How long a controller may go unseen before it is `stale` (§13.4). */
   readonly staleAfterMs?: number;
   readonly providerTurnDelivery?: TerminalCore['providerTurnDelivery'];
+  readonly providerInputReady?: TerminalCore['providerInputReady'];
+  readonly inputReadinessDeadlineMs?: number;
+  readonly inputReadinessPollMs?: number;
   readonly publish?: TerminalCore['publish'];
 }
+
+/**
+ * How long a first write waits for proof that the provider is reading.
+ *
+ * Measured need against real CLIs is 0.6–1.8 s (`input-readiness.ts`); 15 s is
+ * roughly ten times the slowest observed and an eighth of the gate's own 120 s
+ * deadline, so a session that has not painted a composer by then has a problem
+ * no amount of further waiting fixes.
+ */
+const DEFAULT_INPUT_READINESS_DEADLINE_MS = 15_000;
+
+const DEFAULT_INPUT_READINESS_POLL_MS = 100;
 
 export function composeTerminal(options: ComposeTerminalOptions): TerminalContract {
   const core: TerminalCore = {
@@ -94,6 +109,12 @@ export function composeTerminal(options: ComposeTerminalOptions): TerminalContra
         { utf8Text, pauseMsAfter: 250 },
         { utf8Text: '\r', pauseMsAfter: 0 },
       ]),
+    // A host that composed no adapter registry has no provider vocabulary to
+    // ask, and Terminal will not invent one: it writes as it always did.
+    providerInputReady: options.providerInputReady ?? (async () => true),
+    inputReadinessDeadlineMs:
+      options.inputReadinessDeadlineMs ?? DEFAULT_INPUT_READINESS_DEADLINE_MS,
+    inputReadinessPollMs: options.inputReadinessPollMs ?? DEFAULT_INPUT_READINESS_POLL_MS,
     ...(options.publish === undefined ? {} : { publish: options.publish }),
   };
 

@@ -168,6 +168,24 @@ export function createFakeProviderAdapter(
     findConfirmationLine(observation: ProviderReplyObservation, marker: string) {
       return findMarkerLine(observation.text, marker);
     },
+
+    /**
+     * Always ready, and deliberately so.
+     *
+     * The readiness gate exists for one thing: a real CLI that fires terminal
+     * capability queries at startup and eats input until it has parsed the
+     * answers. A scripted `sh` double has no handshake, no composer, and
+     * nothing to paint — it is reading stdin from its first instruction. A fake
+     * that pretended otherwise would be asserting a delay it does not have, and
+     * every suite built on it would be measuring the fake.
+     *
+     * What the gate DOES is proven against real binaries
+     * (`input-readiness.ts`) and against scripted PTYs that emit a real
+     * capability burst (`terminal/tests/.../provider-input-readiness.test.ts`).
+     */
+    inputReadyOn() {
+      return true;
+    },
   };
 }
 

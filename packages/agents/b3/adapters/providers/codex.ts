@@ -29,6 +29,7 @@ import type {
 } from '../../contract/providers.js';
 import type { ResolvedLaunchPlan } from '../../contract/records.js';
 import { deliverTurn, findMarkerLine } from './turn-delivery.js';
+import { codexInputReadyOn } from './input-readiness.js';
 import { everyCapability } from './claude.js';
 import {
   codexSessionIdFrom, mergedEnvironment, newestSessionSince, probeVersion, resolveCli,
@@ -243,6 +244,8 @@ export function createCodexAdapter(
     findConfirmationLine(observation: ProviderReplyObservation, marker: string) {
       return findMarkerLine(observation.text, marker);
     },
+
+    inputReadyOn: codexInputReadyOn,
   };
 }
 

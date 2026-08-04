@@ -291,6 +291,15 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
       if (!session.ok) throw new Error(`${session.error.code}: ${session.error.message}`);
       return providerAdapters[session.value.provider].deliverTurn(utf8Text);
     },
+    // Same late binding, same reason: only the adapter knows what its CLI
+    // paints when it starts reading (NVK-KIMI-079).
+    providerInputReady: async (providerSessionId, screen) => {
+      const session = await agents.getProviderSession(
+        { id: 'sys_terminal', kind: 'system', verifiedScopes: [] }, providerSessionId,
+      );
+      if (!session.ok) throw new Error(`${session.error.code}: ${session.error.message}`);
+      return providerAdapters[session.value.provider].inputReadyOn(screen);
+    },
     publish: (kind, payload) => {
       runs?.publishCapabilityEvent(kind, payload, 'terminal');
     },

@@ -28,6 +28,7 @@ import type {
 } from '../../contract/providers.js';
 import type { ResolvedLaunchPlan } from '../../contract/records.js';
 import { deliverTurn, findMarkerLine } from './turn-delivery.js';
+import { claudeInputReadyOn } from './input-readiness.js';
 import { mergedEnvironment, probeVersion, resolveCli, uuidOf } from './cli-probe.js';
 import {
   observeProviderBoundaryFile, productionBoundaryProfile,
@@ -234,6 +235,9 @@ export function createClaudeAdapter(
     findConfirmationLine(observation: ProviderReplyObservation, marker: string) {
       return findMarkerLine(observation.text, marker);
     },
+
+    // The composer box exists — see input-readiness.ts for the boot capture.
+    inputReadyOn: claudeInputReadyOn,
   };
 }
 

@@ -401,6 +401,7 @@ export type B3ErrorCode =
   | 'SemanticSubmitRequired' | 'UnknownProviderTurnSubmission'
   | 'ProviderTurnSubmissionConflict' | 'ProviderTurnOperationInProgress'
   | 'ProviderTurnBoundaryUnavailable'
+  | 'ProviderInputNotReady' | 'ProviderTurnNeverStarted'
   | 'EndpointClaimConflict' | 'ExactRunEndpointClosed'
   | 'TranscriptSourceUnavailable' | 'TranscriptCorrupt' | 'UsageUnavailable'
   | 'WatchRuleInvalid' | 'WatcherConflict' | 'NotificationDeliveryUnsafe'

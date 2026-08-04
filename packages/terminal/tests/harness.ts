@@ -7,7 +7,8 @@ import path from 'node:path';
 import {
   b3fail, b3ok, mintClientOpId, mintRuntimeEpochId, mintTraceCorrelationId,
   type AgentRunId, type AuthenticatedPrincipal, type B3Result, type CommandContext,
-  type HumanPrincipalId, type RuntimeEpochId, type SystemCommandContext,
+  type HumanPrincipalId, type ProviderSessionId, type RuntimeEpochId,
+  type SystemCommandContext,
 } from '@novakai/foundation/contract';
 import {
   composeTerminal, type Clock, type RuntimeEpochFence, type TerminalContract,
@@ -84,9 +85,15 @@ export function createRig(options: {
   replayBytes?: number;
   staleAfterMs?: number;
   publish?: (kind: string, payload: Readonly<Record<string, unknown>>) => void;
+  /** The provider's own "is it reading yet" predicate; default ready always. */
+  providerInputReady?: (providerSessionId: ProviderSessionId, screen: string) => Promise<boolean>;
+  inputReadinessDeadlineMs?: number;
+  inputReadinessPollMs?: number;
+  /** Model the PTY as a TUI composer, so a whole SUBMITTED turn is observable. */
+  composer?: boolean;
 } = {}): Rig {
   const root = mkdtempSync(path.join(tmpdir(), 'nvk-terminal-'));
-  const ptyHost = createFakePtyHost();
+  const ptyHost = createFakePtyHost(options.composer === true ? { composer: true } : {});
   const clock = movableClock();
   const epochId = mintRuntimeEpochId();
   let active: RuntimeEpochId | null = epochId;
@@ -115,6 +122,12 @@ export function createRig(options: {
     ...(options.replayBytes === undefined ? {} : { replayBytes: options.replayBytes }),
     ...(options.staleAfterMs === undefined ? {} : { staleAfterMs: options.staleAfterMs }),
     ...(options.publish === undefined ? {} : { publish: options.publish }),
+    ...(options.providerInputReady === undefined
+      ? {} : { providerInputReady: options.providerInputReady }),
+    ...(options.inputReadinessDeadlineMs === undefined
+      ? {} : { inputReadinessDeadlineMs: options.inputReadinessDeadlineMs }),
+    ...(options.inputReadinessPollMs === undefined
+      ? {} : { inputReadinessPollMs: options.inputReadinessPollMs }),
   });
 
   return {
