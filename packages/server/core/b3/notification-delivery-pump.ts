@@ -21,7 +21,7 @@ export interface NotificationDeliveryPumpOptions extends NotificationDeliveryDep
   readonly intervalMs?: number;
   /** Reported per pass, because a skip nobody can read is a defect nobody can find. */
   readonly reportFailure?: (message: string) => void;
-  readonly now?: () => number;
+  readonly clock?: () => number;
 }
 
 interface DeliveryWork {
@@ -71,19 +71,19 @@ function needsDriftOutcomeReconcile(
 }
 
 /** Is this delivery recent enough that transcript observation could still land? */
-function observationStillPossible(notification: Notification, now: number): boolean {
+function observationStillPossible(notification: Notification, nowMs: number): boolean {
   const attempt = notification.deliveryAttempt;
   if (attempt.state !== 'submitted-confirmed' && attempt.state !== 'submitted-unconfirmed') {
     return true;
   }
   const submittedAt = Date.parse(String(attempt.submittedAt));
-  return Number.isNaN(submittedAt) || now - submittedAt < OBSERVATION_GRACE_MS;
+  return Number.isNaN(submittedAt) || nowMs - submittedAt < OBSERVATION_GRACE_MS;
 }
 
 function workFrom(
   notifications: readonly Notification[],
   claimedEffects: ReadonlySet<string>,
-  now: number,
+  nowMs: number,
 ): DeliveryWork {
   const candidates = notifications.filter((notification) =>
     pending(notification) || needsDriftOutcomeReconcile(notification, claimedEffects));
@@ -91,7 +91,7 @@ function workFrom(
     !pending(notification)
       && !needsDriftOutcomeReconcile(notification, claimedEffects)
       && notification.subject.kind === 'agent-run'
-      && observationStillPossible(notification, now)
+      && observationStillPossible(notification, nowMs)
       ? [String(notification.subject.agentRunId)] : []));
   return { candidates, awaitingRuns };
 }
@@ -174,10 +174,10 @@ async function runPass(
     report(`listWatchDeadlines refused: ${deadlines.error.code}`);
     return { ...EMPTY, failures: [{ notificationId: '', code: deadlines.error.code }] };
   }
-  const now = (options.now ?? Date.now)();
+  const nowMs = (options.clock ?? Date.now)();
   return deliverWork(
     options,
-    workFrom(listed.value.items, claimedDriftEffects(deadlines.value), now),
+    workFrom(listed.value.items, claimedDriftEffects(deadlines.value), nowMs),
     report,
   );
 }

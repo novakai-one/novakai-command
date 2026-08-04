@@ -134,7 +134,7 @@ test('an unobserved delivery stops fencing its Run once observation is not comin
     const reported: string[] = [];
     // The pass clock is injected so "long enough that observation is not
     // coming" is a decision this test makes, not a sleep it waits out.
-    let now = Date.now();
+    let nowMs = Date.now();
     const pump = createNotificationDeliveryPump({
       supervision: host.runtime.supervision,
       runs: host.runtime.runs,
@@ -143,7 +143,7 @@ test('an unobserved delivery stops fencing its Run once observation is not comin
         deliverTurn: (provider: 'claude' | 'codex' | 'kimi', text: string) =>
           adapters[provider].deliverTurn(text),
       } as ProviderPort,
-      now: () => now,
+      clock: () => nowMs,
       reportFailure: (message) => { reported.push(message); },
     });
 
@@ -177,7 +177,7 @@ test('an unobserved delivery stops fencing its Run once observation is not comin
     );
 
     // Past the window, observation is not coming and the queue must move.
-    now += 10 * 60_000;
+    nowMs += 10 * 60_000;
     const released = await pump.deliverOnce();
     assert.equal(released.delivered, 1,
       'an unobserved delivery starved the Run forever: the second Notification never left queued');
