@@ -19,6 +19,9 @@ export interface NotificationDeliveryPump {
 
 export interface NotificationDeliveryPumpOptions extends NotificationDeliveryDependencies {
   readonly intervalMs?: number;
+  /** Reported per pass, because a skip nobody can read is a defect nobody can find. */
+  readonly reportFailure?: (message: string) => void;
+  readonly now?: () => number;
 }
 
 interface DeliveryWork {
@@ -28,6 +31,17 @@ interface DeliveryWork {
 
 const DEFAULT_INTERVAL_MS = 500;
 const LIMIT = 100;
+/**
+ * How long a delivered-but-unobserved Notification may fence its own Run.
+ *
+ * `offered-to-endpoint` has exactly one exit — Q11 transcript observation — and
+ * that evidence provably may never arrive for a real provider turn. An
+ * unbounded fence therefore starved every later Notification on that Run for
+ * the life of the process. Past this window the delivery is treated as no
+ * longer in flight; the Run's own generation fence and the Terminal input
+ * boundary still decide whether the next one may actually land.
+ */
+const OBSERVATION_GRACE_MS = 300_000;
 const EMPTY: NotificationDeliveryPass = { considered: 0, delivered: 0, failures: [] };
 const reader: AuthenticatedPrincipal = {
   id: 'sys_agent_runtime', kind: 'system', verifiedScopes: [],
@@ -56,8 +70,20 @@ function needsDriftOutcomeReconcile(
     && claimedEffects.has(notification.deliveryEffectKey);
 }
 
+/** Is this delivery recent enough that transcript observation could still land? */
+function observationStillPossible(notification: Notification, now: number): boolean {
+  const attempt = notification.deliveryAttempt;
+  if (attempt.state !== 'submitted-confirmed' && attempt.state !== 'submitted-unconfirmed') {
+    return true;
+  }
+  const submittedAt = Date.parse(String(attempt.submittedAt));
+  return Number.isNaN(submittedAt) || now - submittedAt < OBSERVATION_GRACE_MS;
+}
+
 function workFrom(
-  notifications: readonly Notification[], claimedEffects: ReadonlySet<string>,
+  notifications: readonly Notification[],
+  claimedEffects: ReadonlySet<string>,
+  now: number,
 ): DeliveryWork {
   const candidates = notifications.filter((notification) =>
     pending(notification) || needsDriftOutcomeReconcile(notification, claimedEffects));
@@ -65,6 +91,7 @@ function workFrom(
     !pending(notification)
       && !needsDriftOutcomeReconcile(notification, claimedEffects)
       && notification.subject.kind === 'agent-run'
+      && observationStillPossible(notification, now)
       ? [String(notification.subject.agentRunId)] : []));
   return { candidates, awaitingRuns };
 }
@@ -78,6 +105,16 @@ interface DeliveryAttempt {
   readonly delivered: boolean;
   readonly runKey: string;
   readonly failure?: { readonly notificationId: string; readonly code: string };
+  /** Why a considered Notification did not move. Never silent. */
+  readonly skipped?: string;
+}
+
+function blockedBy(
+  work: DeliveryWork, attemptedRuns: ReadonlySet<string>, runKey: string,
+): string | null {
+  if (runKey === '') return null;
+  if (attemptedRuns.has(runKey)) return 'run-already-delivered-this-pass';
+  return work.awaitingRuns.has(runKey) ? 'awaiting-transcript-observation' : null;
 }
 
 async function attemptNotification(
@@ -87,48 +124,61 @@ async function attemptNotification(
   notification: Notification,
 ): Promise<DeliveryAttempt> {
   const runKey = runKeyOf(notification);
-  const blockedByRun = runKey !== ''
-    && (work.awaitingRuns.has(runKey) || attemptedRuns.has(runKey));
-  if (blockedByRun) return { delivered: false, runKey };
+  const blocked = blockedBy(work, attemptedRuns, runKey);
+  if (blocked !== null) return { delivered: false, runKey, skipped: blocked };
   const code = await deliverNotification(dependencies, notification);
   if (code === '') return { delivered: true, runKey };
   return code === null
-    ? { delivered: false, runKey }
+    ? { delivered: false, runKey, skipped: 'not-deliverable-yet' }
     : { delivered: false, runKey, failure: { notificationId: notification.id, code } };
 }
 
 async function deliverWork(
-  dependencies: NotificationDeliveryDependencies, work: DeliveryWork,
+  options: NotificationDeliveryPumpOptions,
+  work: DeliveryWork,
+  report: (message: string) => void,
 ): Promise<NotificationDeliveryPass> {
   let delivered = 0;
   const failures: { notificationId: string; code: string }[] = [];
   const attemptedRuns = new Set<string>();
   for (const notification of work.candidates) {
-    const attempt = await attemptNotification(dependencies, work, attemptedRuns, notification);
+    const attempt = await attemptNotification(options, work, attemptedRuns, notification);
     if (attempt.delivered) {
       delivered += 1;
       if (attempt.runKey !== '') attemptedRuns.add(attempt.runKey);
     }
-    if (attempt.failure !== undefined) failures.push(attempt.failure);
+    if (attempt.failure !== undefined) {
+      failures.push(attempt.failure);
+      report(`${notification.id} refused: ${attempt.failure.code}`);
+    }
+    if (attempt.skipped !== undefined) {
+      report(`${notification.id} skipped: ${attempt.skipped}`);
+    }
   }
   return { considered: work.candidates.length, delivered, failures };
 }
 
 async function runPass(
   options: NotificationDeliveryPumpOptions,
+  report: (message: string) => void,
 ): Promise<NotificationDeliveryPass> {
   const listed = await options.supervision.listNotifications(reader, {
     state: ['queued', 'offered-to-endpoint', 'delivery-uncertain'], limit: LIMIT,
   });
   if (!listed.ok) {
+    report(`listNotifications refused: ${listed.error.code}`);
     return { ...EMPTY, failures: [{ notificationId: '', code: listed.error.code }] };
   }
   const deadlines = await options.supervision.listWatchDeadlines(reader);
   if (!deadlines.ok) {
+    report(`listWatchDeadlines refused: ${deadlines.error.code}`);
     return { ...EMPTY, failures: [{ notificationId: '', code: deadlines.error.code }] };
   }
+  const now = (options.now ?? Date.now)();
   return deliverWork(
-    options, workFrom(listed.value.items, claimedDriftEffects(deadlines.value)),
+    options,
+    workFrom(listed.value.items, claimedDriftEffects(deadlines.value), now),
+    report,
   );
 }
 
@@ -137,12 +187,15 @@ export function createNotificationDeliveryPump(
   options: NotificationDeliveryPumpOptions,
 ): NotificationDeliveryPump {
   const intervalMs = options.intervalMs ?? DEFAULT_INTERVAL_MS;
+  const report = options.reportFailure ?? ((message: string) => {
+    console.error(`[notification-delivery] ${message}`);
+  });
   let timer: ReturnType<typeof setInterval> | null = null;
   let inFlight: Promise<NotificationDeliveryPass> | null = null;
 
   async function deliverOnce(): Promise<NotificationDeliveryPass> {
     if (inFlight !== null) return inFlight;
-    const pass = runPass(options).finally(() => { inFlight = null; });
+    const pass = runPass(options, report).finally(() => { inFlight = null; });
     inFlight = pass;
     return pass;
   }
