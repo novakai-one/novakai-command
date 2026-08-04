@@ -100,7 +100,6 @@ function workFrom(
   return { candidates, awaitingRuns };
 }
 
-
 interface DeliveryAttempt {
   readonly delivered: boolean;
   readonly runKey: string;
