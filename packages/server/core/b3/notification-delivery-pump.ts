@@ -145,6 +145,8 @@ interface OutcomeAnnouncer {
   refused(notification: Notification, code: string): Promise<void>;
   passRefused(stage: string, code: string): Promise<void>;
   delivered(notification: Notification): void;
+  /** Forget every Notification this pass no longer considers. */
+  retain(considered: ReadonlySet<string>): void;
 }
 
 function createOutcomeAnnouncer(
@@ -181,6 +183,14 @@ function createOutcomeAnnouncer(
       `pass:${stage}`, `refused:${code}`, REFUSED_EVENT, { stage, code },
     ),
     delivered: (notification) => { announced.delete(notification.id); },
+    // Outcome memory is per-Notification, and this loop runs for the life of
+    // the process. A Notification that leaves the pump's window is done with
+    // it, so its entry goes too rather than accumulating for ever.
+    retain: (considered) => {
+      for (const subject of announced.keys()) {
+        if (!subject.startsWith('pass:') && !considered.has(subject)) announced.delete(subject);
+      }
+    },
   };
 }
 
@@ -241,6 +251,7 @@ async function deliverWork(
       await announcer.skipped(notification, attempt.skipped);
     }
   }
+  announcer.retain(new Set(work.candidates.map((notification) => notification.id)));
   return { considered: work.candidates.length, delivered, failures };
 }
 

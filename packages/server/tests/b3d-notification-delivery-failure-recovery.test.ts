@@ -19,9 +19,12 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
-  b3err, b3fail, mintClientOpId, mintTraceCorrelationId,
-  type AuthenticatedPrincipal, type B3Result, type SystemCommandContext,
+  b3err, b3fail, b3ok, mintClientOpId, mintTraceCorrelationId,
+  type AgentRunId, type AuthenticatedPrincipal, type B3Result, type NotificationId,
+  type SystemCommandContext,
 } from '@novakai/foundation/contract';
+import type { AgentRunsContract } from '../../agent-runtime/contract/index.js';
+import type { Notification } from '../../supervision/contract/index.js';
 import { createFakePtyHost } from '../../terminal/adapters/pty-host/fake.js';
 import { createFakeProviderAdapters } from '../../agents/b3/contract/index.js';
 import { templateDigest, type WatcherTemplate } from '../../supervision/public/index.js';
@@ -406,5 +409,63 @@ test('a skip is published when its reason changes, not once per pass', async () 
     await pump.stop();
   } finally {
     await rig.close();
+  }
+});
+
+test('a Notification that leaves the pump window is reported afresh when it returns', async () => {
+  // Outcome memory bounds a loop that runs for the life of the process, so it
+  // may not accumulate an entry per Notification for ever. Held at the seam
+  // where that is observable: forgetting and re-reporting are the same law.
+  const agentRunId = `agentRun_${'a'.repeat(52)}` as AgentRunId;
+  const nowMs = Date.parse('2026-08-05T00:00:00.000Z');
+  const notification = (suffix: string, state: string): Notification => ({
+    id: `notification_${suffix.repeat(52)}` as NotificationId,
+    recordVersion: 1,
+    phase: 'policy-trigger',
+    subject: { kind: 'agent-run', agentRunId },
+    deliveryMode: 'next-turn-context',
+    deliveryEffectKey: `b3v4:notification-delivery:${suffix}:next-turn`,
+    conditionGeneration: 3,
+    summary: 'context',
+    deliveryAttempt: state === 'queued'
+      ? { state: 'queued' }
+      : { state, submittedAt: new Date(nowMs).toISOString() },
+  } as unknown as Notification);
+
+  // The queued one is fenced behind a delivery that transcript observation
+  // could still land on, so it skips without ever reaching Terminal.
+  const window = [notification('b', 'queued'), notification('c', 'submitted-confirmed')];
+  let listed: readonly Notification[] = window;
+  const published: string[] = [];
+  const pump = createNotificationDeliveryPump({
+    supervision: {
+      listNotifications: async () => b3ok({ items: listed }),
+      listWatchDeadlines: async () => b3ok([]),
+    } as unknown as SupervisionCore,
+    runs: {
+      publishCapabilityEvent: async (kind: string) => {
+        published.push(kind);
+        return b3ok(null);
+      },
+    } as unknown as AgentRunsContract,
+    terminal: {} as TerminalContract,
+    providers: {} as ProviderPort,
+    clock: () => nowMs,
+    reportFailure: () => {},
+  });
+  try {
+    await pump.deliverOnce();
+    assert.equal(published.length, 1, 'the fenced skip was never published');
+    await pump.deliverOnce();
+    assert.equal(published.length, 1, 'an unchanged outcome must not be republished');
+
+    listed = [];
+    await pump.deliverOnce();
+    listed = window;
+    await pump.deliverOnce();
+    assert.equal(published.length, 2,
+      'the pump still remembers a Notification it no longer considers');
+  } finally {
+    await pump.stop();
   }
 });
