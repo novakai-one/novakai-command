@@ -22,9 +22,10 @@ import {
   type B3Result, type CommandContext,
 } from '@novakai/foundation/contract';
 import type { LaunchPlanFacts } from '../contract/ports.js';
+import type { CompleteProviderTurnOutcome } from '../contract/provider-turns.js';
 import type { AgentRun, RunOperation } from '../contract/runs.js';
 import { advance, completed, effectKeyFor } from './journal.js';
-import type { RunsCore } from './runs-context.js';
+import type { ProviderTurnCompletionCoordinator, RunsCore } from './runs-context.js';
 import { requireRun } from './runs-context.js';
 import { submitProviderTurn } from './provider-turns.js';
 import { maybeAskAgain, noteStillness, startVigil } from './gate-vigil.js';
@@ -155,7 +156,7 @@ export async function runSkillsGate(
           reason: 'missing-active-provider-turn',
         }, true));
     }
-    const completedTurn = await core.providerTurnCompletionCoordinator({
+    const completedTurn = await settledCompletion(core, core.providerTurnCompletionCoordinator, {
       agentRunId: gateInput.agentRun.id,
       providerTurnId: active.providerTurnId,
       providerTurnSubmissionId: fence.providerTurnSubmissionId,
@@ -194,6 +195,54 @@ export async function runSkillsGate(
   return current.ok
     ? b3ok({ agentRun: current.value, operation: released.value })
     : current;
+}
+
+/**
+ * How often the gate re-asks whether its confirmed turn has completed.
+ *
+ * The reconciler that commits the completion runs on its own ~1 s cadence, so
+ * anything much finer is asking a question whose answer cannot have changed;
+ * anything much coarser adds latency to a spawn that is otherwise done.
+ */
+const COMPLETION_POLL_MS = 250;
+
+/** Could a later ask still turn this outcome into a completion? */
+function stillSettling(outcome: CompleteProviderTurnOutcome): boolean {
+  return outcome.kind !== 'completed'
+    && outcome.kind !== 'already-completed-by-same-evidence'
+    && outcome.retryable;
+}
+
+/**
+ * The completion this gate turn already caused, waited for within a budget.
+ *
+ * Asking once was a race the gate could only lose. Durable completion is
+ * committed by the reconciler, on its own cadence and after its own evidence
+ * arrives — measured at 1–15 s from confirmation in the live spawn this fixes.
+ * The gate asked on the tick the confirmation landed, got "the evidence has not
+ * arrived", and refused `RecoveryRequired` — throwing away a spawn that had
+ * already reached a real provider and got the exact canonical token set back,
+ * because a clock had not caught up yet.
+ *
+ * What it does NOT do is wait out an outcome that says it is final.
+ * `lineage-evidence-mismatch`, `target-changed` and `run-final` declare
+ * themselves non-retryable, and re-asking them would only spend the budget
+ * before reporting the answer already given. Only a self-declared retryable
+ * outcome is worth another ask; when the budget runs out on one, it is refused
+ * exactly as it was before, naming the outcome it gave up on.
+ */
+async function settledCompletion(
+  core: RunsCore,
+  coordinate: ProviderTurnCompletionCoordinator,
+  request: Parameters<ProviderTurnCompletionCoordinator>[0],
+): Promise<B3Result<CompleteProviderTurnOutcome>> {
+  const deadline = core.clock() + core.gateCompletionBudgetMs;
+  for (;;) {
+    const outcome = await coordinate(request);
+    if (!outcome.ok || !stillSettling(outcome.value)) return outcome;
+    if (core.clock() >= deadline) return outcome;
+    await new Promise((settle) => { setTimeout(settle, COMPLETION_POLL_MS); });
+  }
 }
 
 async function recordSkipped(

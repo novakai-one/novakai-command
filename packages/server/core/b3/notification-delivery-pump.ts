@@ -1,6 +1,7 @@
 // Bounded Runtime scanner for durable Supervision Notification work.
 import type { AuthenticatedPrincipal } from '@novakai/foundation/contract';
 import type { Notification, WatchDeadline } from '../../../supervision/contract/index.js';
+import type { NotificationDeliveryDiagnosis } from './notification-delivery-diagnosis.js';
 import {
   deliverNotification, type NotificationDeliveryDependencies,
 } from './notification-delivery-worker.js';
@@ -127,7 +128,7 @@ function runKeyOf(notification: Notification): string {
  * on would be worse than the silence it replaces.
  */
 function deliveryReport(
-  notification: Notification, outcome: Readonly<Record<string, string>>,
+  notification: Notification, outcome: Readonly<Record<string, unknown>>,
 ): Readonly<Record<string, unknown>> {
   const runKey = runKeyOf(notification);
   return {
@@ -141,8 +142,10 @@ function deliveryReport(
 /** Both channels a pump outcome travels: the dev console and the event stream. */
 interface OutcomeAnnouncer {
   report(message: string): void;
-  skipped(notification: Notification, reason: string): Promise<void>;
-  refused(notification: Notification, code: string): Promise<void>;
+  skipped(notification: Notification, diagnosis: NotificationDeliveryDiagnosis): Promise<void>;
+  refused(
+    notification: Notification, code: string, diagnosis?: NotificationDeliveryDiagnosis,
+  ): Promise<void>;
   passRefused(stage: string, code: string): Promise<void>;
   delivered(notification: Notification): void;
   /** Forget every Notification this pass no longer considers. */
@@ -172,12 +175,19 @@ function createOutcomeAnnouncer(
 
   return {
     report,
-    skipped: (notification, reason) => announce(
-      notification.id, `skipped:${reason}`, SKIPPED_EVENT,
-      deliveryReport(notification, { reason }),
+    // Keyed on the sub-reason, not the snapshot: the reason is the diagnosis,
+    // and a key that included changing generations would publish the clock.
+    skipped: (notification, diagnosis) => announce(
+      notification.id, `skipped:${diagnosis.reason}`, SKIPPED_EVENT,
+      deliveryReport(notification, { reason: diagnosis.reason, observed: diagnosis.snapshot }),
     ),
-    refused: (notification, code) => announce(
-      notification.id, `refused:${code}`, REFUSED_EVENT, deliveryReport(notification, { code }),
+    refused: (notification, code, diagnosis) => announce(
+      notification.id, `refused:${code}`, REFUSED_EVENT, deliveryReport(notification, {
+        code,
+        ...(diagnosis === undefined
+          ? {}
+          : { reason: diagnosis.reason, observed: diagnosis.snapshot }),
+      }),
     ),
     passRefused: (stage, code) => announce(
       `pass:${stage}`, `refused:${code}`, REFUSED_EVENT, { stage, code },
@@ -198,16 +208,22 @@ interface DeliveryAttempt {
   readonly delivered: boolean;
   readonly runKey: string;
   readonly failure?: { readonly notificationId: string; readonly code: string };
-  /** Why a considered Notification did not move. Never silent. */
-  readonly skipped?: string;
+  /** Why a considered Notification did not move. Never silent, never a bucket. */
+  readonly skipped?: NotificationDeliveryDiagnosis;
+  /** What a refusal code alone would not have said. */
+  readonly refusalDiagnosis?: NotificationDeliveryDiagnosis;
 }
 
 function blockedBy(
   work: DeliveryWork, attemptedRuns: ReadonlySet<string>, runKey: string,
-): string | null {
+): NotificationDeliveryDiagnosis | null {
   if (runKey === '') return null;
-  if (attemptedRuns.has(runKey)) return 'run-already-delivered-this-pass';
-  return work.awaitingRuns.has(runKey) ? 'awaiting-transcript-observation' : null;
+  if (attemptedRuns.has(runKey)) {
+    return { reason: 'run-already-delivered-this-pass', snapshot: { targetAgentRunId: runKey } };
+  }
+  return work.awaitingRuns.has(runKey)
+    ? { reason: 'awaiting-transcript-observation', snapshot: { targetAgentRunId: runKey } }
+    : null;
 }
 
 async function attemptNotification(
@@ -219,11 +235,42 @@ async function attemptNotification(
   const runKey = runKeyOf(notification);
   const blocked = blockedBy(work, attemptedRuns, runKey);
   if (blocked !== null) return { delivered: false, runKey, skipped: blocked };
-  const code = await deliverNotification(dependencies, notification);
-  if (code === '') return { delivered: true, runKey };
-  return code === null
-    ? { delivered: false, runKey, skipped: 'not-deliverable-yet' }
-    : { delivered: false, runKey, failure: { notificationId: notification.id, code } };
+  const outcome = await deliverNotification(dependencies, notification);
+  if (outcome.kind === 'delivered') return { delivered: true, runKey };
+  if (outcome.kind === 'skipped') {
+    return { delivered: false, runKey, skipped: outcome.diagnosis };
+  }
+  return {
+    delivered: false,
+    runKey,
+    failure: { notificationId: notification.id, code: outcome.code },
+    ...(outcome.diagnosis === undefined ? {} : { refusalDiagnosis: outcome.diagnosis }),
+  };
+}
+
+/** One diagnosis as one console line — the reason first, so a grep finds it. */
+function said(diagnosis: NotificationDeliveryDiagnosis): string {
+  return `${diagnosis.reason} ${JSON.stringify(diagnosis.snapshot)}`;
+}
+
+/** Say what one attempt did, on both channels. The three cases are exclusive. */
+async function announceAttempt(
+  announcer: OutcomeAnnouncer, notification: Notification, attempt: DeliveryAttempt,
+): Promise<void> {
+  if (attempt.delivered) {
+    announcer.delivered(notification);
+    return;
+  }
+  if (attempt.failure !== undefined) {
+    announcer.report(`${notification.id} refused: ${attempt.failure.code}${
+      attempt.refusalDiagnosis === undefined ? '' : ` ${said(attempt.refusalDiagnosis)}`}`);
+    await announcer.refused(notification, attempt.failure.code, attempt.refusalDiagnosis);
+    return;
+  }
+  if (attempt.skipped !== undefined) {
+    announcer.report(`${notification.id} skipped: ${said(attempt.skipped)}`);
+    await announcer.skipped(notification, attempt.skipped);
+  }
 }
 
 async function deliverWork(
@@ -239,17 +286,9 @@ async function deliverWork(
     if (attempt.delivered) {
       delivered += 1;
       if (attempt.runKey !== '') attemptedRuns.add(attempt.runKey);
-      announcer.delivered(notification);
     }
-    if (attempt.failure !== undefined) {
-      failures.push(attempt.failure);
-      announcer.report(`${notification.id} refused: ${attempt.failure.code}`);
-      await announcer.refused(notification, attempt.failure.code);
-    }
-    if (attempt.skipped !== undefined) {
-      announcer.report(`${notification.id} skipped: ${attempt.skipped}`);
-      await announcer.skipped(notification, attempt.skipped);
-    }
+    if (attempt.failure !== undefined) failures.push(attempt.failure);
+    await announceAttempt(announcer, notification, attempt);
   }
   announcer.retain(new Set(work.candidates.map((notification) => notification.id)));
   return { considered: work.candidates.length, delivered, failures };

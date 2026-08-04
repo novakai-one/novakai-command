@@ -101,6 +101,7 @@ export interface RunsRigOptions extends FakeAgentsOptions {
   readonly watchers?: RunWatcherPort;
   readonly usage?: RunUsageLookup;
   readonly gateTimeoutMs?: number;
+  readonly gateCompletionBudgetMs?: number;
   /**
    * Stop accepting durable writes after N of them — a crash, modelled as what a
    * crash actually looks like from inside the operation. A rig built on the
@@ -140,6 +141,17 @@ export interface RunsRigOptions extends FakeAgentsOptions {
   readonly notifications?: FakeNotificationDelivery;
   readonly providerTurnCompletionEvidence?: ComposeAgentRunsOptions['providerTurnCompletionEvidence'];
   readonly providerTurnCompletionCoordinator?: ComposeAgentRunsOptions['providerTurnCompletionCoordinator'];
+  /**
+   * Put something IN FRONT of the rig's own completion coordinator, keeping it
+   * as the inner call.
+   *
+   * Replacing the coordinator outright cannot model the live race: durable
+   * completion really does land, just later than the caller asked, so a test
+   * about "later" needs the real settle behind whatever delays it.
+   */
+  readonly delayCompletionCoordinator?: (
+    inner: ProviderTurnCompletionCoordinator,
+  ) => ProviderTurnCompletionCoordinator;
 }
 
 export function createRunsRig(options: RunsRigOptions = {}): RunsRig {
@@ -257,6 +269,8 @@ export function createRunsRig(options: RunsRigOptions = {}): RunsRig {
     fence,
     publish: (kind, payload) => { events.push({ kind, payload }); },
     gateTimeoutMs: options.gateTimeoutMs ?? 2_000,
+    ...(options.gateCompletionBudgetMs === undefined
+      ? {} : { gateCompletionBudgetMs: options.gateCompletionBudgetMs }),
     ...(options.withoutB3cCapabilities === true
       ? {} : { messagingEndpoint, transcriptCustody }),
     ...(options.withoutB3cCapabilities === true
@@ -281,7 +295,9 @@ export function createRunsRig(options: RunsRigOptions = {}): RunsRig {
     providerTurnCompletionEvidence:
       options.providerTurnCompletionEvidence ?? syntheticCompletionEvidence,
     providerTurnCompletionCoordinator:
-      options.providerTurnCompletionCoordinator ?? syntheticCompletionCoordinator,
+      options.providerTurnCompletionCoordinator
+      ?? options.delayCompletionCoordinator?.(syntheticCompletionCoordinator)
+      ?? syntheticCompletionCoordinator,
   });
 
   const envelope = (principal: AuthenticatedPrincipal): CommandContext => ({

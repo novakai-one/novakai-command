@@ -107,6 +107,7 @@ export interface ComposeAgentRunsOptions extends RunsStoreOptions {
   readonly publish?: (kind: string, payload: Readonly<Record<string, unknown>>) => void;
   readonly defaultViewport?: { readonly columns: number; readonly rows: number };
   readonly gateTimeoutMs?: number;
+  readonly gateCompletionBudgetMs?: number;
   readonly clock?: () => number;
   /** §19.1's transcript section, read through Transcript's contract. */
   readonly transcriptBinding?: TranscriptBindingLookup;
@@ -154,6 +155,17 @@ export type ComposedAgentRuns = AgentRunsContract & {
 
 /** Generous, because a real model reading its skills is not instant. */
 const DEFAULT_GATE_TIMEOUT_MS = 120_000;
+/**
+ * How long a CONFIRMED gate turn may take to become durably completed.
+ *
+ * Completion is committed by the reconciler on its own ~1 s cadence, and the
+ * live spawn that exposed this measured 1–15 s from confirmation to commit.
+ * Fifteen seconds therefore covers the slowest settle observed, and is an
+ * eighth of the gate's own 120 s — long enough that no healthy reconciler loses
+ * the race, short enough that a completion which is never coming is a bounded
+ * refusal rather than a hang.
+ */
+const DEFAULT_GATE_COMPLETION_BUDGET_MS = 15_000;
 
 /**
  * How wide a managed agent's terminal is opened.
@@ -204,6 +216,8 @@ export function composeAgentRuns(options: ComposeAgentRunsOptions): ComposedAgen
     ),
     defaultViewport: options.defaultViewport ?? MANAGED_VIEWPORT,
     gateTimeoutMs: options.gateTimeoutMs ?? DEFAULT_GATE_TIMEOUT_MS,
+    gateCompletionBudgetMs:
+      options.gateCompletionBudgetMs ?? DEFAULT_GATE_COMPLETION_BUDGET_MS,
     clock: options.clock ?? (() => Date.now()),
     ...(options.transcriptBinding === undefined
       ? {} : { transcriptBinding: options.transcriptBinding }),

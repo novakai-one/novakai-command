@@ -120,6 +120,14 @@ export interface RunsCore {
   readonly defaultViewport: { readonly columns: number; readonly rows: number };
   /** How long the gate waits for turn 1's confirmation before failing it. */
   readonly gateTimeoutMs: number;
+  /**
+   * How long the gate waits for the CONFIRMED turn's durable completion.
+   *
+   * Separate from `gateTimeoutMs` because it answers a different question. That
+   * one bounds an agent's silence; this one bounds a reconciler's cadence, and
+   * the two are neither the same length nor the same failure.
+   */
+  readonly gateCompletionBudgetMs: number;
   readonly clock: () => number;
 }
 
