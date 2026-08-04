@@ -145,6 +145,7 @@ interface OutcomeAnnouncer {
   skipped(notification: Notification, diagnosis: NotificationDeliveryDiagnosis): Promise<void>;
   refused(
     notification: Notification, code: string, diagnosis?: NotificationDeliveryDiagnosis,
+    cause?: string,
   ): Promise<void>;
   passRefused(stage: string, code: string): Promise<void>;
   delivered(notification: Notification): void;
@@ -164,13 +165,49 @@ function createOutcomeAnnouncer(
   // changes.
   const announced = new Map<string, string>();
 
+  /**
+   * Put one outcome on the durable stream, or say why it is not there.
+   *
+   * A publish that refuses is reported and NOT thrown: the pump's job is to
+   * keep delivering. A publish that THREW used to travel all the way out of
+   * the candidate loop, so every Notification after it lost the pass without
+   * publishing anything at all — the loudest possible failure producing the
+   * quietest possible record.
+   */
+  async function publish(
+    kind: string, payload: Readonly<Record<string, unknown>>, subject: string,
+  ): Promise<boolean> {
+    try {
+      const published = await options.runs.publishCapabilityEvent(kind, payload, 'server');
+      if (published.ok) return true;
+      report(`${subject} outcome event refused: ${published.error.code}`);
+    } catch (error) {
+      report(`${subject} outcome event threw: ${String(error)}`);
+    }
+    return false;
+  }
+
+  /**
+   * The dedupe entry is what makes a steady block cost one event instead of
+   * one per pass — so an entry written for an event that never landed is the
+   * difference between "published once" and "published never".
+   *
+   * The live defect marked it BEFORE the publish. One transient refusal at the
+   * moment a Notification's window opened therefore suppressed every later
+   * pass for as long as that outcome held: no skip, no refusal, no delivery,
+   * for the whole ~90 second window. The mark now happens only once the event
+   * is durably accepted, so an unrecorded outcome is retried on the next pass
+   * instead of being remembered as recorded.
+   *
+   * The previous entry is left alone rather than cleared: it names what the
+   * stream actually last carried for this subject, and re-publishing that
+   * would be a duplicate of a fact already there.
+   */
   async function announce(
     subject: string, outcome: string, kind: string, payload: Readonly<Record<string, unknown>>,
   ): Promise<void> {
     if (announced.get(subject) === outcome) return;
-    announced.set(subject, outcome);
-    const published = await options.runs.publishCapabilityEvent(kind, payload, 'server');
-    if (!published.ok) report(`${subject} outcome event refused: ${published.error.code}`);
+    if (await publish(kind, payload, subject)) announced.set(subject, outcome);
   }
 
   return {
@@ -181,12 +218,16 @@ function createOutcomeAnnouncer(
       notification.id, `skipped:${diagnosis.reason}`, SKIPPED_EVENT,
       deliveryReport(notification, { reason: diagnosis.reason, observed: diagnosis.snapshot }),
     ),
-    refused: (notification, code, diagnosis) => announce(
+    // Keyed on the code alone, `cause` included: the key stays stable across
+    // passes while the message a reader needs to act on still reaches the
+    // stream. A key carrying the message would publish whatever varies in it.
+    refused: (notification, code, diagnosis, cause) => announce(
       notification.id, `refused:${code}`, REFUSED_EVENT, deliveryReport(notification, {
         code,
         ...(diagnosis === undefined
           ? {}
           : { reason: diagnosis.reason, observed: diagnosis.snapshot }),
+        ...(cause === undefined ? {} : { cause }),
       }),
     ),
     passRefused: (stage, code) => announce(
@@ -212,6 +253,8 @@ interface DeliveryAttempt {
   readonly skipped?: NotificationDeliveryDiagnosis;
   /** What a refusal code alone would not have said. */
   readonly refusalDiagnosis?: NotificationDeliveryDiagnosis;
+  /** The thrown text behind an unexpected failure, which has no diagnosis. */
+  readonly failureCause?: string;
 }
 
 function blockedBy(
@@ -248,6 +291,37 @@ async function attemptNotification(
   };
 }
 
+/**
+ * The same attempt, with an unexpected throw turned into a recorded refusal.
+ *
+ * `deliverNotification` was called bare inside the candidate loop, so ONE
+ * Notification throwing ended the pass for every Notification after it — and
+ * those lost their pass silently, because a candidate the loop never reached
+ * publishes nothing at all. A throw is a delivery failure like any other: it
+ * gets a code, a cause and its own event, and the loop goes on.
+ *
+ * `RecoveryRequired` and not a retryable code: nothing in a bounded pass can
+ * know whether the next one will do better, and the honest reading of an
+ * unhandled throw inside delivery is that something needs looking at.
+ */
+async function guardedAttempt(
+  dependencies: NotificationDeliveryDependencies,
+  work: DeliveryWork,
+  attemptedRuns: ReadonlySet<string>,
+  notification: Notification,
+): Promise<DeliveryAttempt> {
+  try {
+    return await attemptNotification(dependencies, work, attemptedRuns, notification);
+  } catch (error) {
+    return {
+      delivered: false,
+      runKey: runKeyOf(notification),
+      failure: { notificationId: notification.id, code: 'RecoveryRequired' },
+      failureCause: String(error),
+    };
+  }
+}
+
 /** One diagnosis as one console line — the reason first, so a grep finds it. */
 function said(diagnosis: NotificationDeliveryDiagnosis): string {
   return `${diagnosis.reason} ${JSON.stringify(diagnosis.snapshot)}`;
@@ -263,8 +337,11 @@ async function announceAttempt(
   }
   if (attempt.failure !== undefined) {
     announcer.report(`${notification.id} refused: ${attempt.failure.code}${
-      attempt.refusalDiagnosis === undefined ? '' : ` ${said(attempt.refusalDiagnosis)}`}`);
-    await announcer.refused(notification, attempt.failure.code, attempt.refusalDiagnosis);
+      attempt.refusalDiagnosis === undefined ? '' : ` ${said(attempt.refusalDiagnosis)}`}${
+      attempt.failureCause === undefined ? '' : ` ${attempt.failureCause}`}`);
+    await announcer.refused(
+      notification, attempt.failure.code, attempt.refusalDiagnosis, attempt.failureCause,
+    );
     return;
   }
   if (attempt.skipped !== undefined) {
@@ -282,7 +359,7 @@ async function deliverWork(
   const failures: { notificationId: string; code: string }[] = [];
   const attemptedRuns = new Set<string>();
   for (const notification of work.candidates) {
-    const attempt = await attemptNotification(options, work, attemptedRuns, notification);
+    const attempt = await guardedAttempt(options, work, attemptedRuns, notification);
     if (attempt.delivered) {
       delivered += 1;
       if (attempt.runKey !== '') attemptedRuns.add(attempt.runKey);
