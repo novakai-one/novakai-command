@@ -42,6 +42,21 @@ const LIMIT = 100;
  * boundary still decide whether the next one may actually land.
  */
 const OBSERVATION_GRACE_MS = 300_000;
+/**
+ * The durable half of "no skip is silent".
+ *
+ * `reportFailure` defaults to `console.error`, which is exactly as readable as
+ * nothing at all to anything diagnosing this after the process is gone — the
+ * live defect cost two full runs for that reason. Every outcome therefore also
+ * lands on the ONE run event stream, which Runtime retains as a durable
+ * `runOccurrenceEvent` before any consumer can observe it.
+ *
+ * `sourceOwner` is `server`, not `supervision`: the pump makes this decision,
+ * and `SUPERVISION_EVENT_KINDS` is the closed set of §15 rows Supervision
+ * itself publishes.
+ */
+const SKIPPED_EVENT = 'supervision.notification.delivery-skipped';
+const REFUSED_EVENT = 'supervision.notification.delivery-refused';
 const EMPTY: NotificationDeliveryPass = { considered: 0, delivered: 0, failures: [] };
 const reader: AuthenticatedPrincipal = {
   id: 'sys_agent_runtime', kind: 'system', verifiedScopes: [],
@@ -101,6 +116,73 @@ function runKeyOf(notification: Notification): string {
     ? String(notification.subject.agentRunId) : '';
 }
 
+/**
+ * What one outcome event says about one Notification.
+ *
+ * The Run is named `targetAgentRunId`, deliberately NOT `agentRunId`:
+ * Supervision's reducer reads a top-level `agentRunId` as evidence ABOUT that
+ * Run (`packages/supervision/core/notifications.ts:49`) and re-arms its armed
+ * deadlines. This is a report about a delivery pass, never evidence that the
+ * Agent did anything, and a pump that suppressed the idle watchers it reports
+ * on would be worse than the silence it replaces.
+ */
+function deliveryReport(
+  notification: Notification, outcome: Readonly<Record<string, string>>,
+): Readonly<Record<string, unknown>> {
+  const runKey = runKeyOf(notification);
+  return {
+    notificationId: notification.id,
+    deliveryEffectKey: notification.deliveryEffectKey,
+    ...(runKey === '' ? {} : { targetAgentRunId: runKey }),
+    ...outcome,
+  };
+}
+
+/** Both channels a pump outcome travels: the dev console and the event stream. */
+interface OutcomeAnnouncer {
+  report(message: string): void;
+  skipped(notification: Notification, why: string): Promise<void>;
+  refused(notification: Notification, code: string): Promise<void>;
+  passRefused(stage: string, code: string): Promise<void>;
+  delivered(notification: Notification): void;
+}
+
+function createOutcomeAnnouncer(
+  options: NotificationDeliveryPumpOptions,
+): OutcomeAnnouncer {
+  const report = options.reportFailure ?? ((message: string) => {
+    console.error(`[notification-delivery] ${message}`);
+  });
+  // A fenced Notification skips on EVERY pass, twice a second by default. One
+  // event per pass would be a durable record of the clock, not of the defect,
+  // so an outcome is published when it becomes true and again only when it
+  // changes.
+  const announced = new Map<string, string>();
+
+  async function announce(
+    key: string, outcome: string, kind: string, payload: Readonly<Record<string, unknown>>,
+  ): Promise<void> {
+    if (announced.get(key) === outcome) return;
+    announced.set(key, outcome);
+    const published = await options.runs.publishCapabilityEvent(kind, payload, 'server');
+    if (!published.ok) report(`${key} outcome event refused: ${published.error.code}`);
+  }
+
+  return {
+    report,
+    skipped: (notification, why) => announce(
+      notification.id, `skipped:${why}`, SKIPPED_EVENT, deliveryReport(notification, { why }),
+    ),
+    refused: (notification, code) => announce(
+      notification.id, `refused:${code}`, REFUSED_EVENT, deliveryReport(notification, { code }),
+    ),
+    passRefused: (stage, code) => announce(
+      `pass:${stage}`, `refused:${code}`, REFUSED_EVENT, { stage, code },
+    ),
+    delivered: (notification) => { announced.delete(notification.id); },
+  };
+}
+
 interface DeliveryAttempt {
   readonly delivered: boolean;
   readonly runKey: string;
@@ -136,7 +218,7 @@ async function attemptNotification(
 async function deliverWork(
   options: NotificationDeliveryPumpOptions,
   work: DeliveryWork,
-  report: (message: string) => void,
+  announcer: OutcomeAnnouncer,
 ): Promise<NotificationDeliveryPass> {
   let delivered = 0;
   const failures: { notificationId: string; code: string }[] = [];
@@ -146,13 +228,16 @@ async function deliverWork(
     if (attempt.delivered) {
       delivered += 1;
       if (attempt.runKey !== '') attemptedRuns.add(attempt.runKey);
+      announcer.delivered(notification);
     }
     if (attempt.failure !== undefined) {
       failures.push(attempt.failure);
-      report(`${notification.id} refused: ${attempt.failure.code}`);
+      announcer.report(`${notification.id} refused: ${attempt.failure.code}`);
+      await announcer.refused(notification, attempt.failure.code);
     }
     if (attempt.skipped !== undefined) {
-      report(`${notification.id} skipped: ${attempt.skipped}`);
+      announcer.report(`${notification.id} skipped: ${attempt.skipped}`);
+      await announcer.skipped(notification, attempt.skipped);
     }
   }
   return { considered: work.candidates.length, delivered, failures };
@@ -160,25 +245,27 @@ async function deliverWork(
 
 async function runPass(
   options: NotificationDeliveryPumpOptions,
-  report: (message: string) => void,
+  announcer: OutcomeAnnouncer,
 ): Promise<NotificationDeliveryPass> {
   const listed = await options.supervision.listNotifications(reader, {
     state: ['queued', 'offered-to-endpoint', 'delivery-uncertain'], limit: LIMIT,
   });
   if (!listed.ok) {
-    report(`listNotifications refused: ${listed.error.code}`);
+    announcer.report(`listNotifications refused: ${listed.error.code}`);
+    await announcer.passRefused('list-notifications', listed.error.code);
     return { ...EMPTY, failures: [{ notificationId: '', code: listed.error.code }] };
   }
   const deadlines = await options.supervision.listWatchDeadlines(reader);
   if (!deadlines.ok) {
-    report(`listWatchDeadlines refused: ${deadlines.error.code}`);
+    announcer.report(`listWatchDeadlines refused: ${deadlines.error.code}`);
+    await announcer.passRefused('list-watch-deadlines', deadlines.error.code);
     return { ...EMPTY, failures: [{ notificationId: '', code: deadlines.error.code }] };
   }
   const nowMs = (options.clock ?? Date.now)();
   return deliverWork(
     options,
     workFrom(listed.value.items, claimedDriftEffects(deadlines.value), nowMs),
-    report,
+    announcer,
   );
 }
 
@@ -187,15 +274,15 @@ export function createNotificationDeliveryPump(
   options: NotificationDeliveryPumpOptions,
 ): NotificationDeliveryPump {
   const intervalMs = options.intervalMs ?? DEFAULT_INTERVAL_MS;
-  const report = options.reportFailure ?? ((message: string) => {
-    console.error(`[notification-delivery] ${message}`);
-  });
+  // Held across passes, because "has this outcome changed?" is a question only
+  // something that outlives one pass can answer.
+  const announcer = createOutcomeAnnouncer(options);
   let timer: ReturnType<typeof setInterval> | null = null;
   let inFlight: Promise<NotificationDeliveryPass> | null = null;
 
   async function deliverOnce(): Promise<NotificationDeliveryPass> {
     if (inFlight !== null) return inFlight;
-    const pass = runPass(options, report).finally(() => { inFlight = null; });
+    const pass = runPass(options, announcer).finally(() => { inFlight = null; });
     inFlight = pass;
     return pass;
   }

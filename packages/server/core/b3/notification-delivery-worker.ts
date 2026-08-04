@@ -4,7 +4,7 @@ import {
   deriveClientOpId, mintProviderTurnId, mintTraceCorrelationId,
   notificationInputReservationId,
   type ActivityGeneration, type AgentRunId, type AuthenticatedPrincipal,
-  type SystemCommandContext,
+  type B3ContractError, type B3Result, type SystemCommandContext,
 } from '@novakai/foundation/contract';
 import type { AgentRunsContract, ProviderPort } from '../../../agent-runtime/contract/index.js';
 import type {
@@ -118,8 +118,8 @@ async function claim(
   notification: Notification,
   target: DeliveryTarget,
   reservation: NotificationInputReservationId,
-): Promise<NotificationDeliveryClaim | string> {
-  const claimed = await dependencies.supervision.claimNotificationDelivery(
+): Promise<B3Result<NotificationDeliveryClaim>> {
+  return dependencies.supervision.claimNotificationDelivery(
     runtimeContext(target.effectKey, 'claim'),
     {
       notificationId: notification.id,
@@ -129,7 +129,35 @@ async function claim(
       expectedActivityGeneration: target.claimGeneration,
     },
   );
-  return claimed.ok ? claimed.value : claimed.error.code;
+}
+
+/**
+ * Release the Terminal input fence, but ONLY for a failure that can never
+ * succeed.
+ *
+ * The reservation id is derived from the delivery effect key, so it is
+ * permanent: a cancelled reservation is met again by every later pass and
+ * turned into `IdempotencyConflict` for ever. Cancelling on a RETRYABLE
+ * failure therefore converts one transient refusal into a Notification no pass
+ * can ever deliver. Leaving a NON-retryable one reserved is the opposite
+ * defect: `requireAvailableBoundary` then refuses every other Notification on
+ * that terminal session with `InputLeaseBusy` for the life of the process.
+ *
+ * The error's own `retryable` flag is the only thing that separates the two,
+ * and it is already carried by every refusal in the vocabulary.
+ */
+async function releaseDeadEndReservation(
+  dependencies: NotificationDeliveryDependencies,
+  target: DeliveryTarget,
+  reservation: NotificationInputReservationId,
+  error: B3ContractError,
+  reason: 'supervision-claim-rejected' | 'runtime-compensation',
+): Promise<void> {
+  if (error.retryable) return;
+  await dependencies.terminal.cancelReservedNotificationInput(
+    runtimeContext(target.effectKey, 'cancel-terminal-input'),
+    { notificationInputReservationId: reservation, effectKey: target.effectKey, reason },
+  );
 }
 
 function committedTupleMatches(
@@ -166,8 +194,8 @@ async function replayCommitted(
   if (!attempt.ok) return attempt.error.code;
   if (!attemptMatches(attempt.value, reservation, target)) return 'IdempotencyConflict';
   const claimed = await claim(dependencies, notification, target, reservation);
-  if (typeof claimed === 'string') return claimed;
-  return recordOutcome(dependencies, notification, claimed, reservation, attempt.value);
+  if (!claimed.ok) return claimed.error.code;
+  return recordOutcome(dependencies, notification, claimed.value, reservation, attempt.value);
 }
 
 function runCanCarryContext(
@@ -216,16 +244,11 @@ async function submitNextTurn(
   if (!reserved.ok) return reserved.error.code;
   if (reserved.value.state === 'cancelled') return 'IdempotencyConflict';
   const claimed = await claim(dependencies, notification, target, reservation);
-  if (typeof claimed === 'string') {
-    await dependencies.terminal.cancelReservedNotificationInput(
-      runtimeContext(target.effectKey, 'cancel-terminal-input'),
-      {
-        notificationInputReservationId: reservation,
-        effectKey: target.effectKey,
-        reason: 'supervision-claim-rejected',
-      },
+  if (!claimed.ok) {
+    await releaseDeadEndReservation(
+      dependencies, target, reservation, claimed.error, 'supervision-claim-rejected',
     );
-    return claimed;
+    return claimed.error.code;
   }
   const submitted = await dependencies.terminal.commitReservedNotificationInput(
     runtimeContext(target.effectKey, 'commit-terminal-input'),
@@ -237,8 +260,15 @@ async function submitNextTurn(
       ).map((step) => step.utf8Text).join(''),
     },
   );
-  if (!submitted.ok) return submitted.error.code;
-  return recordOutcome(dependencies, notification, claimed, reservation, submitted.value.attempt);
+  if (!submitted.ok) {
+    await releaseDeadEndReservation(
+      dependencies, target, reservation, submitted.error, 'runtime-compensation',
+    );
+    return submitted.error.code;
+  }
+  return recordOutcome(
+    dependencies, notification, claimed.value, reservation, submitted.value.attempt,
+  );
 }
 
 async function deliverNextTurn(
