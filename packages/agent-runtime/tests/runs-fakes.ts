@@ -160,6 +160,20 @@ const MARKER = 'SKILLS-CONFIRMED:';
  * (NVK-KIMI-028 finding 4): every gate test passed while a silent, echoing
  * session confirmed itself in production.
  */
+/**
+ * What the session paints when a semantic turn is written at it: the echo a
+ * real tty gives back, and the scripted agent's answer to turn 1.
+ *
+ * Empty for `destroyed` — the write happened and reached nobody, so there is
+ * nothing to echo and nobody to answer.
+ */
+function paintOf(port: FakeTerminal, utf8Text: string): string {
+  if (port.reply === 'destroyed') return '';
+  const answer = utf8Text.includes('do NOT begin it yet')
+    ? scriptedConfirmation(port.pinnedTokens, port.reply) : null;
+  return `${utf8Text}\r\n${answer === null ? '' : `${answer}\n`}`;
+}
+
 function scriptedConfirmation(
   tokens: readonly string[], reply: ScriptedReply,
 ): string | null {
@@ -450,14 +464,7 @@ export function createFakeTerminal(): FakeTerminal {
         text: `${input.utf8Text}\r`,
         effectKey: input.submissionEffectKey,
       });
-      // See `destroyed` on ScriptedReply: the write happened and reached nobody.
-      if (port.reply !== 'destroyed') {
-        port.output = `${port.output}${input.utf8Text}\r\n`;
-        if (input.utf8Text.includes('do NOT begin it yet')) {
-          const answer = scriptedConfirmation(port.pinnedTokens, port.reply);
-          if (answer !== null) port.output = `${port.output}${answer}\n`;
-        }
-      }
+      port.output += paintOf(port, input.utf8Text);
       return b3ok(submitted);
     },
 
