@@ -530,12 +530,24 @@ export async function reconcileControllerPreEffectSubmissions(
       || left.id.localeCompare(right.id));
   for (const stale of candidates) {
     let submission = stale;
+    const initialRunResult = await requireRun(core, submission.agentRunId);
+    if (!initialRunResult.ok) return initialRunResult;
+    if (FINAL_LIFECYCLES.has(initialRunResult.value.lifecycle)) {
+      reconciled.push(submission.id);
+      continue;
+    }
     const attemptResult = await core.terminal.getProviderTurnInputAttempt({
       terminalSessionId: submission.terminalSessionId,
       providerTurnId: submission.providerTurnId,
       submissionEffectKey: submission.submissionEffectKey,
     });
     if (!attemptResult.ok) return attemptResult;
+    const currentRunResult = await requireRun(core, submission.agentRunId);
+    if (!currentRunResult.ok) return currentRunResult;
+    if (FINAL_LIFECYCLES.has(currentRunResult.value.lifecycle)) {
+      reconciled.push(submission.id);
+      continue;
+    }
     const attempt = attemptResult.value;
     if (attempt !== null && (attempt.effectState.kind !== 'prepared'
       || attempt.turnBarrier.kind !== 'reserved-pre-effect')) {
@@ -545,9 +557,7 @@ export async function reconcileControllerPreEffectSubmissions(
       continue;
     }
     if (mode === 'periodic') {
-      const runResult = await requireRun(core, submission.agentRunId);
-      if (!runResult.ok) return runResult;
-      const deadline = runResult.value.providerTurnOperationFence?.controllerResumeDeadlineAt;
+      const deadline = currentRunResult.value.providerTurnOperationFence?.controllerResumeDeadlineAt;
       // A merely queued controller operation has no owner deadline proving its
       // authenticated root command stopped resuming. Startup is R3 N2-L1's
       // deterministic bound; the periodic pass therefore leaves that row.
@@ -853,23 +863,27 @@ export async function reconcileAllProviderTurnSubmissions(
   const inventory = await core.store.list<ProviderTurnSubmission>('providerTurnSubmission');
   if (!inventory.ok) return inventory;
   const byId = new Map(inventory.value.map((submission) => [submission.id, submission]));
+  const reconciled: ProviderTurnSubmissionId[] = [];
   const attempts = await core.terminal.listIncompleteProviderTurnInputAttempts({});
   if (!attempts.ok) return attempts;
   for (const attempt of attempts.value) {
-    if (mode === 'periodic') {
-      const runResult = await requireRun(core, attempt.agentRunId);
-      if (!runResult.ok) return runResult;
+    const submission = byId.get(attempt.providerTurnSubmissionId);
+    const runResult = await requireRun(core, attempt.agentRunId);
+    if (!runResult.ok && submission !== undefined) return runResult;
+    if (runResult.ok) {
+      if (submission !== undefined && FINAL_LIFECYCLES.has(runResult.value.lifecycle)) {
+        reconciled.push(submission.id);
+        continue;
+      }
       // A live command owns this Run until provisioning commits. Periodic
       // recovery must not race that owner through the same intermediate states;
       // startup recovery is different because the former owner is gone.
-      if (runResult.value.lifecycle === 'provisioning') continue;
+      if (mode === 'periodic' && runResult.value.lifecycle === 'provisioning') continue;
     }
-    const submission = byId.get(attempt.providerTurnSubmissionId);
     const immutableMismatch = submission !== undefined
       && !attemptMatchesSubmission(attempt, submission);
     let executingMismatch = false;
     if (submission !== undefined && attempt.effectState.kind === 'executing') {
-      const runResult = await requireRun(core, attempt.agentRunId);
       if (!runResult.ok) return runResult;
       const fence = runResult.value.providerTurnOperationFence;
       executingMismatch = submission.state.kind !== 'prepared'
@@ -897,8 +911,7 @@ export async function reconcileAllProviderTurnSubmissions(
       if (!held.ok) return held;
       continue;
     }
-    const runResult = await requireRun(core, attempt.agentRunId);
-    if (runResult.ok) {
+    if (runResult.ok && !FINAL_LIFECYCLES.has(runResult.value.lifecycle)) {
       const fence = runResult.value.providerTurnOperationFence;
       if (fence?.terminalInputAttemptId === attempt.id && fence.phase !== 'recovery-required') {
         const held = await patchRun(core, runResult.value, {
@@ -911,7 +924,7 @@ export async function reconcileAllProviderTurnSubmissions(
 
   const controller = await reconcileControllerPreEffectSubmissions(core, mode);
   if (!controller.ok) return controller;
-  const reconciled = [...controller.value];
+  reconciled.push(...controller.value);
   const listed = await core.store.list<ProviderTurnSubmission>('providerTurnSubmission');
   if (!listed.ok) return listed;
   const terminalStates = new Set(['rejected', 'completion-unproven-final']);
@@ -922,14 +935,14 @@ export async function reconcileAllProviderTurnSubmissions(
 
   for (const initial of submissions) {
     let submission = initial;
-    if (mode === 'periodic') {
-      const runResult = await requireRun(core, submission.agentRunId);
-      if (!runResult.ok) return runResult;
-      if (runResult.value.lifecycle === 'provisioning') continue;
+    const runResult = await requireRun(core, submission.agentRunId);
+    if (!runResult.ok) return runResult;
+    if (FINAL_LIFECYCLES.has(runResult.value.lifecycle)) {
+      reconciled.push(submission.id);
+      continue;
     }
+    if (mode === 'periodic' && runResult.value.lifecycle === 'provisioning') continue;
     if (submission.state.kind === 'completed') {
-      const runResult = await requireRun(core, submission.agentRunId);
-      if (!runResult.ok) return runResult;
       const run = runResult.value;
       const fence = run.providerTurnOperationFence;
       if (fence?.providerTurnSubmissionId === submission.id) {
@@ -955,6 +968,12 @@ export async function reconcileAllProviderTurnSubmissions(
       submissionEffectKey: submission.submissionEffectKey,
     });
     if (!attemptResult.ok) return attemptResult;
+    const currentRunResult = await requireRun(core, submission.agentRunId);
+    if (!currentRunResult.ok) return currentRunResult;
+    if (FINAL_LIFECYCLES.has(currentRunResult.value.lifecycle)) {
+      reconciled.push(submission.id);
+      continue;
+    }
     const attempt = attemptResult.value;
     if (attempt === null) {
       if (submission.origin.kind === 'runtime-effect' && submission.state.kind === 'queued') {
