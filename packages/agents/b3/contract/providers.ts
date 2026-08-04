@@ -260,6 +260,28 @@ export interface InteractiveProviderAdapter {
   findConfirmationLine(
     observation: ProviderReplyObservation, marker: string,
   ): string | null;
+
+  /**
+   * Whether this session has painted enough to be READING its input yet.
+   *
+   * `live` means the process was spawned. It does not mean the process is
+   * listening, and the gap between the two is where turn 1 died: a CLI opens by
+   * firing terminal-capability queries and parsing the answers, and bytes
+   * written into that window are consumed by the parser rather than by the
+   * composer. The turn never becomes a provider turn and no transcript is
+   * written at all — measured 7 times out of 7 against real claude
+   * (NVK-KIMI-078).
+   *
+   * Provider-declared, for the same reason `deliverTurn` and
+   * `findConfirmationLine` are: what a composer looks like is a fact about one
+   * CLI's paint. It is not a duration either — two arms writing at an identical
+   * 1.2 s went opposite ways — so an adapter must answer from the SCREEN.
+   *
+   * The argument is the session's raw paint, escape sequences included. See
+   * `adapters/providers/input-readiness.ts` for what each CLI draws, when, and
+   * which captures say so.
+   */
+  inputReadyOn(screen: string): boolean;
 }
 
 export type ProviderAdapterRegistry = Readonly<

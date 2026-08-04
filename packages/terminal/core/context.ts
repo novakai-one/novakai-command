@@ -28,6 +28,20 @@ export interface TerminalCore {
     providerSessionId: import('@novakai/foundation/contract').ProviderSessionId,
     utf8Text: string,
   ) => Promise<readonly { readonly utf8Text: string; readonly pauseMsAfter: number }[]>;
+  /**
+   * Provider-owned answer to "is this session reading its input yet", injected
+   * at composition beside the framing for the same reason: what a composer
+   * looks like is a fact about one CLI's paint, and Terminal owns the write,
+   * not the vocabulary (§14, NVK-KIMI-079).
+   */
+  readonly providerInputReady: (
+    providerSessionId: import('@novakai/foundation/contract').ProviderSessionId,
+    screen: string,
+  ) => Promise<boolean>;
+  /** How long a first write may wait for that proof before it is refused. */
+  readonly inputReadinessDeadlineMs: number;
+  /** How often the session's paint is re-read while waiting. */
+  readonly inputReadinessPollMs: number;
   readonly publish?: (kind: string, payload: Readonly<Record<string, unknown>>) => void;
 }
 

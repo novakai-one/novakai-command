@@ -29,6 +29,7 @@ import type {
 } from '../../contract/providers.js';
 import type { ResolvedLaunchPlan } from '../../contract/records.js';
 import { deliverTurn, findMarkerLine } from './turn-delivery.js';
+import { kimiInputReadyOn } from './input-readiness.js';
 import { everyCapability } from './claude.js';
 import {
   kimiSessionIdFrom, mergedEnvironment, newestSessionSince, probeVersion, resolveCli,
@@ -227,6 +228,8 @@ export function createKimiAdapter(
     findConfirmationLine(observation: ProviderReplyObservation, marker: string) {
       return findMarkerLine(observation.text, marker);
     },
+
+    inputReadyOn: kimiInputReadyOn,
   };
 }
 

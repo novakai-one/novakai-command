@@ -270,6 +270,68 @@ export async function prepareProviderTurnInput(
   return b3ok({ kind: 'prepared', attempt: written.value });
 }
 
+/**
+ * Wait until the provider has PROVEN it is reading, or say so and write nothing.
+ *
+ * `live` means Terminal spawned a process. It does not mean the process has
+ * attached an input reader, and the distance between those two facts is where
+ * turn 1 died: a CLI opens by firing terminal-capability queries — bracketed
+ * paste, Kitty keyboard, OSC 11, two Primary Device Attributes, XTVERSION — and
+ * then parses the answers. Bytes written into that window are consumed by that
+ * parser. Nothing reaches the composer, no provider turn opens, the provider
+ * writes no transcript at all, and the skills gate then polls a screen that
+ * will never change until its 120 s deadline expires — and blames the agent.
+ * Seven times out of seven against real claude 2.1.219 (NVK-KIMI-078).
+ *
+ * The predicate is the ADAPTER's, injected at composition, because what a
+ * composer looks like is a fact about one CLI's paint. It is deliberately not a
+ * sleep: two probe arms writing at an identical 1.2 s went opposite ways, so
+ * this is a state and no duration can stand in for it.
+ *
+ * The loop is bounded twice — by the clock and by a poll count — because the
+ * clock here is injected, and a test that freezes it must not turn a bounded
+ * wait into a hang.
+ */
+async function proveInputReady(
+  core: TerminalCore,
+  attempt: ProviderTurnTerminalInputAttempt,
+  live: { inputProven: boolean; readonly replay: { painted: () => string } },
+): Promise<boolean> {
+  if (live.inputProven) return true;
+  const pollMs = Math.max(1, core.inputReadinessPollMs);
+  const deadline = core.clock.nowMs() + core.inputReadinessDeadlineMs;
+  const polls = Math.max(1, Math.ceil(core.inputReadinessDeadlineMs / pollMs));
+  for (let poll = 0; poll <= polls; poll += 1) {
+    if (await core.providerInputReady(attempt.providerSessionId, live.replay.painted())) {
+      live.inputProven = true;
+      return true;
+    }
+    if (core.clock.nowMs() >= deadline) break;
+    await new Promise<void>((resolve) => { setTimeout(resolve, pollMs); });
+  }
+  return false;
+}
+
+/**
+ * The refusal. `retryable` is exact rather than optimistic: this is returned
+ * from the PREPARED state, before the effect marker is written, so the same
+ * request with the same ClientOpId may be re-issued against the same intact
+ * reservation. Nothing was typed at the provider.
+ */
+function notReady(
+  core: TerminalCore, attempt: ProviderTurnTerminalInputAttempt, painted: number,
+): B3Result<never> {
+  return b3fail(b3err('ProviderInputNotReady',
+    'the provider has not proven it is reading its input; nothing was written', {
+      terminalSessionId: attempt.terminalSessionId,
+      terminalInputAttemptId: attempt.id,
+      providerSessionId: attempt.providerSessionId,
+      providerTurnId: attempt.providerTurnId,
+      waitedMs: core.inputReadinessDeadlineMs,
+      paintedBytes: painted,
+    }, true));
+}
+
 // eslint-disable-next-line sonarjs/cognitive-complexity -- Durable write/effect uncertainty cuts are explicit.
 export async function executeProviderTurnInput(
   core: TerminalCore,
@@ -320,6 +382,14 @@ export async function executeProviderTurnInput(
       effectState: attempt.effectState.kind,
       turnBarrier: attempt.turnBarrier.kind,
     });
+  }
+  // BEFORE the effect marker, so a refusal leaves a reservation that provably
+  // never fired. Gating after it would strand the attempt in `executing`, which
+  // the recovery branch above reads as "the write may have escaped" — the exact
+  // lie this gate exists to prevent.
+  const waiting = core.live.lookup(attempt.terminalSessionId);
+  if (waiting !== undefined && !await proveInputReady(core, attempt, waiting)) {
+    return notReady(core, attempt, waiting.replay.painted().length);
   }
   const startedAt = clockIso(core);
   const executing = await core.store.update<ProviderTurnTerminalInputAttempt>(

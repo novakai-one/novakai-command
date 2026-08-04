@@ -199,7 +199,15 @@ test('an unsubmitted turn cannot pass the gate, however correct the reply', asyn
     assert.equal(spawned.ok, false,
       'the gate passed without the turn ever being submitted');
     if (spawned.ok) return;
-    assert.equal(spawned.error.code, 'SkillsConfirmationFailed');
+    // `ProviderTurnNeverStarted`, not `SkillsConfirmationFailed` (NVK-KIMI-079).
+    // The property this test names is unchanged and still asserted below — the
+    // gate did not pass, and the work turn was not released. What changed is
+    // WHO the failure is attributed to. This session's turn sat in a composer
+    // and was never sent, so the agent was never asked anything; recording it
+    // as a failed skills confirmation convicted a session that never spoke,
+    // which is the misattribution NVK-KIMI-078 found in production.
+    assert.equal(spawned.error.code, 'ProviderTurnNeverStarted');
+    assert.equal(spawned.error.details['attribution'], 'delivery');
     assert.equal(provider.submitted(), 0,
       'the composer registered a submitted turn from an inline Enter');
     const typed = rig.ptyHost.latest().written.join('');

@@ -39,6 +39,18 @@ export class ReplayBuffer {
     }
   }
 
+  /**
+   * Everything still held, as one string — the session's paint so far.
+   *
+   * Decoded once over the joined buffer rather than per chunk, because a PTY
+   * splits wherever the read happened and a multi-byte character straddling two
+   * chunks would decode as two replacement characters. The composer borders
+   * this is read for are box-drawing characters, so that is not cosmetic.
+   */
+  painted(): string {
+    return Buffer.concat(this.chunks.map((chunk) => chunk.bytes)).toString('utf8');
+  }
+
   /** Oldest sequence still replayable; 0 while nothing has been produced. */
   earliestSequence(): number {
     return this.chunks[0]?.sequence ?? this.earliestDropped;

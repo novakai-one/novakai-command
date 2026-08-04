@@ -26,6 +26,16 @@ export class LiveSession {
   /** Next input sequence a writer must claim. Starts at 1. */
   nextInputSequence: number = FIRST_INPUT_SEQUENCE;
   activeTurn: ActiveProviderTurn | null = null;
+  /**
+   * Whether this session has ever been PROVEN to be reading its input.
+   *
+   * Latched, and never unlatched: a CLI that has answered a turn does not
+   * un-attach its stdin reader, and re-polling before every later turn would
+   * charge every turn in the session for a race that only exists at startup.
+   * Lost on restart, like everything else here — which is honest, because a
+   * recovering Runtime did not watch this process attach either.
+   */
+  inputProven = false;
   exit: PtyExit | null = null;
   appliedViewport: { columns: number; rows: number };
   private readonly listeners = new Set<FrameListener>();
