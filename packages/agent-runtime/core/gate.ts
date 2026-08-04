@@ -129,9 +129,17 @@ export async function runSkillsGate(
   let operation = sent.value.operation;
 
   const gateInput = { ...input, agentRun: sent.value.agentRun };
-  const confirmed = await awaitConfirmation(core, context, gateInput, sent.value.paintedBefore);
+  const confirmed = await awaitConfirmation(
+    core, context, gateInput, sent.value.paintedBefore, sent.value.startWatermark,
+  );
   if (!confirmed.ok) {
-    const failed = await failGate(core, gateInput, confirmed.error.message);
+    // A delivery failure is not skills drift, and must never be recorded as it.
+    // `ProviderTurnNeverStarted` says the question never reached anyone; the
+    // agent has not refused, disobeyed or answered wrongly, and publishing
+    // `skills-gate.failed` over it convicts a session that was never asked.
+    const failed = confirmed.error.code === 'ProviderTurnNeverStarted'
+      ? await endRun(core, gateInput, 'agent.run.provider-turn.never-started', confirmed.error.message)
+      : await endRun(core, gateInput, 'agent.run.skills-gate.failed', confirmed.error.message);
     return failed.ok ? confirmed : failed;
   }
 
@@ -215,6 +223,13 @@ interface SentTurn {
    * been asked yet.
    */
   readonly paintedBefore: number;
+  /**
+   * The binding's transcript watermark as turn 1 went out, or `undefined` when
+   * this turn was sent by an EARLIER attempt and there is no "before" to compare
+   * against. Only a turn this call actually submitted can be judged never to
+   * have started; a resumed one may have been answered while nobody was looking.
+   */
+  readonly startWatermark?: string | null;
 }
 
 /**
@@ -298,7 +313,12 @@ async function sendConfirmationTurn(
   if (!advanced.ok) return advanced;
   const current = await requireRun(core, input.agentRun.id);
   return current.ok
-    ? b3ok({ operation: advanced.value, agentRun: current.value, paintedBefore })
+    ? b3ok({
+        operation: advanced.value,
+        agentRun: current.value,
+        paintedBefore,
+        startWatermark: binding.mirrorWatermark ?? null,
+      })
     : current;
 }
 
@@ -330,8 +350,10 @@ async function screenSoFar(
  * typed is removed before anything is judged — so the only line that can pass
  * this gate is a line the Runtime did not write.
  */
+// eslint-disable-next-line sonarjs/cognitive-complexity -- One poll loop, two exact exits.
 async function awaitConfirmation(
   core: RunsCore, context: CommandContext, input: GateInput, paintedBefore: number,
+  startWatermark?: string | null,
 ): Promise<B3Result<string>> {
   const terminalSessionId = input.agentRun.terminalSessionId!;
   const mark = marker(input.plan);
@@ -357,12 +379,21 @@ async function awaitConfirmation(
     );
   };
 
+  const askedAt = core.clock();
+  const grace = Math.min(PROVIDER_TURN_START_GRACE_MS, core.gateTimeoutMs / 4);
+
   for (;;) {
     const seen = await screenSoFar(core, terminalSessionId);
     if (!seen.ok) return seen;
     noteStillness(core, vigil, seen.value);
     const line = answerOn(seen.value);
     if (line !== null) return judge(line, mark, expected, input.agentRun.id);
+    if (startWatermark !== undefined && core.clock() - askedAt >= grace) {
+      const stalled = await neverStarted(core, input, {
+        startWatermark, screen: seen.value, fingerprint,
+      });
+      if (stalled !== null) return b3fail(stalled);
+    }
     if (core.clock() >= deadline) {
       return b3fail(skillsFailed(input.agentRun.id, 'no confirmation arrived before the gate timed out', []));
     }
@@ -377,6 +408,64 @@ async function awaitConfirmation(
     if (!again.ok) return again;
     await new Promise((settle) => { setTimeout(settle, 100); });
   }
+}
+
+/**
+ * How long a turn may show NO sign of having been received before the gate
+ * stops waiting for an answer and says what it actually knows.
+ *
+ * Twenty seconds against measured receive latencies of 0.6–0.8 s from the write
+ * (NVK-KIMI-078 §4) — roughly 25× the slowest observed — and a sixth of the
+ * gate's own 120 s. Also capped at a quarter of whatever `gateTimeoutMs` is, so
+ * a host that shortens the gate does not end up with a fast-fail that can never
+ * fire before the deadline it was supposed to save.
+ */
+const PROVIDER_TURN_START_GRACE_MS = 20_000;
+
+/**
+ * Whether this turn provably never opened — or `null`, which means keep waiting.
+ *
+ * The failure being caught is exact: turn 1's bytes were destroyed before the
+ * provider was reading, so the provider never saw a question. Two independent
+ * things are true in that state and in no other:
+ *
+ *   - the binding's transcript watermark has not moved. The provider wrote no
+ *     transcript AT ALL — verified by listing the session directory after two
+ *     end-to-end repros and grepping every `*.jsonl` for the brief.
+ *   - turn 1's own fingerprint is not on the screen. A tty echoes what is typed
+ *     at it, so a turn that reached the session paints; the seven arms that lost
+ *     theirs showed an idle composer with the placeholder still in it.
+ *
+ * BOTH, because either alone convicts something healthy: a provider that does
+ * not echo has no fingerprint to find (which is why `paintedBefore` exists at
+ * all), and a mirror that polls slowly has a watermark that legitimately lags.
+ * A provider that neither echoed nor mirrored after the grace is one about
+ * which nothing can honestly be claimed except that no turn started.
+ */
+async function neverStarted(
+  core: RunsCore, input: GateInput,
+  observed: {
+    readonly startWatermark: string | null;
+    readonly screen: string;
+    readonly fingerprint: string;
+  },
+): Promise<ReturnType<typeof b3err> | null> {
+  if (bearsFingerprint(observed.screen, observed.fingerprint)) return null;
+  const binding = await core.transcriptBinding?.(input.agentRun.id);
+  if (binding === undefined || binding === null) return null;
+  const watermark = binding.mirrorWatermark ?? null;
+  if (watermark !== observed.startWatermark) return null;
+  return b3err('ProviderTurnNeverStarted',
+    'the provider never started a turn: nothing was echoed and the transcript never moved',
+    {
+      agentRunId: input.agentRun.id,
+      provider: input.plan.provider,
+      transcriptBindingId: binding.bindingId,
+      bindingState: binding.bindingState,
+      startTranscriptWatermark: observed.startWatermark,
+      currentTranscriptWatermark: watermark,
+      attribution: 'delivery',
+    }, true);
 }
 
 /**
@@ -468,11 +557,18 @@ export function workPrompt(brief: string): string {
 }
 
 /**
- * A failed gate terminates the Run and records drift. The work turn is NEVER
- * sent — that is the entire point of holding it behind the fence.
+ * A failed gate terminates the Run. The work turn is NEVER sent — that is the
+ * entire point of holding it behind the fence.
+ *
+ * WHICH event is published is the whole of the honesty here. Both outcomes end
+ * the Run identically, because neither can proceed; only one of them is a
+ * statement about the agent. `agent.run.skills-gate.failed` means an agent was
+ * asked and its answer did not match the pinned set.
+ * `agent.run.provider-turn.never-started` means nobody was asked anything, and
+ * says so where every reader downstream can see it.
  */
-async function failGate(
-  core: RunsCore, input: GateInput, reason: string,
+async function endRun(
+  core: RunsCore, input: GateInput, event: string, reason: string,
 ): Promise<B3Result<null>> {
   const failed = await core.store.update<AgentRun>(
     'sys_agent_runtime', input.agentRun.id,
@@ -483,7 +579,7 @@ async function failGate(
     input.agentRun.recordVersion, context0(),
   );
   if (!failed.ok) return failed;
-  const announced = await core.publish('agent.run.skills-gate.failed', {
+  const announced = await core.publish(event, {
     agentRunId: input.agentRun.id, reason,
   });
   if (!announced.ok) return b3fail(announced.error);

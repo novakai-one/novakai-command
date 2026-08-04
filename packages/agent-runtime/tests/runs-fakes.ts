@@ -25,7 +25,16 @@ import type { TurnDeliveryStep } from '../contract/types.js';
  */
 export type ScriptedReply =
   | 'valid' | 'silent' | 'malformed' | 'missing-token' | 'extra-token'
-  | 'duplicate-token' | 'out-of-order' | 'empty';
+  | 'duplicate-token' | 'out-of-order' | 'empty'
+  /**
+   * The bytes never reached the provider at all: nothing echoes, nothing
+   * answers, no transcript is written. NOT the same as `silent` — a silent
+   * agent was asked and said nothing, and this one was never asked. That
+   * distinction is the whole of NVK-KIMI-078: 7 of 7 arms against real claude
+   * lost turn 1 into the CLI's capability-query parser, and the gate then spent
+   * 120 s recording skills drift against a session that saw no question.
+   */
+  | 'destroyed';
 
 export interface FakeTerminal extends TerminalPort {
   readonly opened: { id: TerminalSessionId; fingerprint: string; authority: string }[];
@@ -154,7 +163,7 @@ const MARKER = 'SKILLS-CONFIRMED:';
 function scriptedConfirmation(
   tokens: readonly string[], reply: ScriptedReply,
 ): string | null {
-  if (reply === 'silent') return null;
+  if (reply === 'silent' || reply === 'destroyed') return null;
   if (reply === 'malformed') return `${MARKER} not json at all`;
   if (reply === 'empty') return `${MARKER} []`;
   if (reply === 'missing-token') return `${MARKER} ${JSON.stringify(tokens.slice(1))}`;
@@ -231,6 +240,9 @@ export function createFakeTerminal(): FakeTerminal {
       };
       const typed = input.keystrokes.map((step) => step.utf8Text).join('');
       port.submitted.push({ ...input, text: typed });
+      // Terminal wrote; the provider was not reading. Nothing painted, nothing
+      // answered — the screen a lost turn leaves behind.
+      if (port.reply === 'destroyed') return b3ok({ confirmed: true, ...attempted });
       // A real PTY shows what was typed at it, and §13.5's "retry observes
       // transcript before sending again" reads exactly that. A fake whose
       // output never contained the prompt would let a re-prompting retry pass.
@@ -438,10 +450,13 @@ export function createFakeTerminal(): FakeTerminal {
         text: `${input.utf8Text}\r`,
         effectKey: input.submissionEffectKey,
       });
-      port.output = `${port.output}${input.utf8Text}\r\n`;
-      if (input.utf8Text.includes('do NOT begin it yet')) {
-        const answer = scriptedConfirmation(port.pinnedTokens, port.reply);
-        if (answer !== null) port.output = `${port.output}${answer}\n`;
+      // See `destroyed` on ScriptedReply: the write happened and reached nobody.
+      if (port.reply !== 'destroyed') {
+        port.output = `${port.output}${input.utf8Text}\r\n`;
+        if (input.utf8Text.includes('do NOT begin it yet')) {
+          const answer = scriptedConfirmation(port.pinnedTokens, port.reply);
+          if (answer !== null) port.output = `${port.output}${answer}\n`;
+        }
       }
       return b3ok(submitted);
     },
