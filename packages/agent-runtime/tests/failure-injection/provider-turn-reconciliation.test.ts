@@ -51,7 +51,7 @@ async function seededSystemRig() {
     transcriptBindingId: binding!.id as TranscriptBindingId,
     utf8Text: 'durable system turn snapshot',
   };
-  return { rig, context, input, coordinated };
+  return { rig, context, input, coordinated, agentId: spawned.value.run.agentId };
 }
 
 async function seededRig() {
@@ -80,8 +80,293 @@ async function seededRig() {
     expectedNextInputSequence: 1,
     utf8Text: 'controller recovery turn',
   };
-  return { rig, context, input };
+  return { rig, context, input, agentId: spawned.value.run.agentId };
 }
+
+test('startup recovery leaves a queued system submission unchanged when its Run is final', async () => {
+  const { rig, context, input, agentId } = await seededSystemRig();
+  try {
+    rig.terminal.providerTurnPrepareBlocked = true;
+    const queued = await rig.runtime.submitProviderTurn(context, input);
+    assert.equal(queued.ok, true, queued.ok ? '' : queued.error.message);
+    if (!queued.ok) return;
+    assert.equal(queued.value.kind, 'queued-not-yet-safe');
+    if (queued.value.kind !== 'queued-not-yet-safe') return;
+    assert.equal(queued.value.providerEffectCreated, false);
+    assert.equal(queued.value.submission.state.kind, 'queued');
+
+    const stopped = await rig.runtime.stopAgent(rig.human(), {
+      agentId,
+      expectedLiveRunId: input.agentRunId,
+      confirmation: 'stop-one',
+    });
+    assert.equal(stopped.ok, true, stopped.ok ? '' : stopped.error.message);
+    if (!stopped.ok) return;
+    assert.equal(stopped.value.run.lifecycle, 'stopped');
+
+    const submissionBefore = await rig.runtime.getProviderTurnSubmission(
+      rig.principal(), queued.value.submission.providerTurnId,
+    );
+    const runBefore = await rig.runtime.getAgentRun(rig.principal(), input.agentRunId);
+    assert.equal(submissionBefore.ok, true);
+    assert.equal(runBefore.ok, true);
+    if (!submissionBefore.ok || !runBefore.ok) return;
+
+    const reconciled = await rig.runtime.reconcileAfterRestart();
+    assert.equal(reconciled.ok, true, reconciled.ok ? '' : reconciled.error.message);
+
+    const submissionAfter = await rig.runtime.getProviderTurnSubmission(
+      rig.principal(), queued.value.submission.providerTurnId,
+    );
+    const runAfter = await rig.runtime.getAgentRun(rig.principal(), input.agentRunId);
+    assert.deepEqual(submissionAfter, submissionBefore);
+    assert.equal(runAfter.ok, true);
+    if (runAfter.ok) assert.deepEqual(runAfter.value.run, runBefore.value.run);
+    assert.equal(rig.terminal.submitted.length, 0);
+  } finally {
+    rig.close();
+  }
+});
+
+test('startup recovery leaves a prepared system submission unchanged when its Run is final', async () => {
+  const { rig, context, input, coordinated, agentId } = await seededSystemRig();
+  try {
+    rig.terminal.crashOnProviderTurnExecute = true;
+    await assert.rejects(
+      () => rig.runtime.submitProviderTurn(context, input),
+      /injected crash before Terminal provider-turn execute/u,
+    );
+    const listed = await rig.runtime.listProviderTurnSubmissions(rig.principal(), {
+      includeTerminal: true, limit: 20,
+    });
+    assert.equal(listed.ok, true);
+    if (!listed.ok) return;
+    const prepared = listed.value.items.find((item) =>
+      item.origin.kind === 'runtime-effect'
+      && item.origin.sourceEffectKey === input.sourceEffectKey);
+    assert.ok(prepared);
+    assert.equal(prepared.state.kind, 'prepared');
+
+    const stopped = await rig.runtime.stopAgent(rig.human(), {
+      agentId,
+      expectedLiveRunId: input.agentRunId,
+      confirmation: 'stop-one',
+    });
+    assert.equal(stopped.ok, true, stopped.ok ? '' : stopped.error.message);
+    if (!stopped.ok) return;
+    assert.equal(stopped.value.run.lifecycle, 'stopped');
+
+    const submissionBefore = await rig.runtime.getProviderTurnSubmission(
+      rig.principal(), prepared.providerTurnId,
+    );
+    const runBefore = await rig.runtime.getAgentRun(rig.principal(), input.agentRunId);
+    const attemptBefore = await rig.terminal.getProviderTurnInputAttempt({
+      terminalSessionId: prepared.terminalSessionId,
+      providerTurnId: prepared.providerTurnId,
+      submissionEffectKey: prepared.submissionEffectKey,
+    });
+    assert.equal(submissionBefore.ok, true);
+    assert.equal(runBefore.ok, true);
+    assert.equal(attemptBefore.ok, true);
+    if (!submissionBefore.ok || !runBefore.ok || !attemptBefore.ok) return;
+
+    const reconciled = await rig.runtime.reconcileAfterRestart();
+    assert.equal(reconciled.ok, true, reconciled.ok ? '' : reconciled.error.message);
+
+    const submissionAfter = await rig.runtime.getProviderTurnSubmission(
+      rig.principal(), prepared.providerTurnId,
+    );
+    const runAfter = await rig.runtime.getAgentRun(rig.principal(), input.agentRunId);
+    const attemptAfter = await rig.terminal.getProviderTurnInputAttempt({
+      terminalSessionId: prepared.terminalSessionId,
+      providerTurnId: prepared.providerTurnId,
+      submissionEffectKey: prepared.submissionEffectKey,
+    });
+    assert.deepEqual(submissionAfter, submissionBefore);
+    assert.equal(runAfter.ok, true);
+    if (runAfter.ok) assert.deepEqual(runAfter.value.run, runBefore.value.run);
+    assert.deepEqual(attemptAfter, attemptBefore);
+    assert.equal(rig.terminal.submitted.length, 0);
+    assert.deepEqual(coordinated, []);
+  } finally {
+    rig.close();
+  }
+});
+
+test('startup recovery preserves submitted-unconfirmed uncertainty when its Run is final', async () => {
+  const { rig, context, input, coordinated, agentId } = await seededSystemRig();
+  try {
+    rig.terminal.crashAfterProviderTurnExecutionStarted = true;
+    await assert.rejects(
+      () => rig.runtime.submitProviderTurn(context, input),
+      /injected crash after Terminal provider-turn execution began/u,
+    );
+    const recovered = await rig.runtime.reconcileAfterRestart();
+    assert.equal(recovered.ok, true, recovered.ok ? '' : recovered.error.message);
+    assert.equal(coordinated.length, 1);
+
+    const listed = await rig.runtime.listProviderTurnSubmissions(rig.principal(), {
+      includeTerminal: true, limit: 20,
+    });
+    assert.equal(listed.ok, true);
+    if (!listed.ok) return;
+    const uncertain = listed.value.items.find((item) =>
+      item.origin.kind === 'runtime-effect'
+      && item.origin.sourceEffectKey === input.sourceEffectKey);
+    assert.ok(uncertain);
+    assert.equal(uncertain.state.kind, 'submitted-unconfirmed');
+
+    const stopped = await rig.runtime.stopAgent(rig.human(), {
+      agentId,
+      expectedLiveRunId: input.agentRunId,
+      confirmation: 'stop-one',
+    });
+    assert.equal(stopped.ok, true, stopped.ok ? '' : stopped.error.message);
+    if (!stopped.ok) return;
+    assert.equal(stopped.value.run.lifecycle, 'stopped');
+
+    const submissionBefore = await rig.runtime.getProviderTurnSubmission(
+      rig.principal(), uncertain.providerTurnId,
+    );
+    const runBefore = await rig.runtime.getAgentRun(rig.principal(), input.agentRunId);
+    const attemptBefore = await rig.terminal.getProviderTurnInputAttempt({
+      terminalSessionId: uncertain.terminalSessionId,
+      providerTurnId: uncertain.providerTurnId,
+      submissionEffectKey: uncertain.submissionEffectKey,
+    });
+    assert.equal(submissionBefore.ok, true);
+    assert.equal(runBefore.ok, true);
+    assert.equal(attemptBefore.ok, true);
+    if (!submissionBefore.ok || !runBefore.ok || !attemptBefore.ok) return;
+
+    const reconciled = await rig.runtime.reconcileAfterRestart();
+    assert.equal(reconciled.ok, true, reconciled.ok ? '' : reconciled.error.message);
+
+    const submissionAfter = await rig.runtime.getProviderTurnSubmission(
+      rig.principal(), uncertain.providerTurnId,
+    );
+    const runAfter = await rig.runtime.getAgentRun(rig.principal(), input.agentRunId);
+    const attemptAfter = await rig.terminal.getProviderTurnInputAttempt({
+      terminalSessionId: uncertain.terminalSessionId,
+      providerTurnId: uncertain.providerTurnId,
+      submissionEffectKey: uncertain.submissionEffectKey,
+    });
+    assert.deepEqual(submissionAfter, submissionBefore);
+    assert.equal(runAfter.ok, true);
+    if (runAfter.ok) assert.deepEqual(runAfter.value.run, runBefore.value.run);
+    assert.deepEqual(attemptAfter, attemptBefore);
+    assert.equal(rig.terminal.submitted.length, 0);
+    assert.equal(coordinated.length, 1);
+  } finally {
+    rig.close();
+  }
+});
+
+test('startup recovery leaves a queued controller submission unchanged when its Run is final',
+  async () => {
+    const { rig, context, input, agentId } = await seededRig();
+    try {
+      rig.terminal.providerTurnPrepareBlocked = true;
+      const queued = await rig.runtime.submitProviderTurn(context, input);
+      assert.equal(queued.ok, true, queued.ok ? '' : queued.error.message);
+      if (!queued.ok) return;
+      assert.equal(queued.value.kind, 'queued-not-yet-safe');
+
+      const stopped = await rig.runtime.stopAgent(rig.human(), {
+        agentId,
+        expectedLiveRunId: input.agentRunId,
+        confirmation: 'stop-one',
+      });
+      assert.equal(stopped.ok, true, stopped.ok ? '' : stopped.error.message);
+      if (!stopped.ok) return;
+      assert.equal(stopped.value.run.lifecycle, 'stopped');
+
+      const submissionBefore = await rig.runtime.getProviderTurnSubmission(
+        rig.principal(), queued.value.submission.providerTurnId,
+      );
+      const runBefore = await rig.runtime.getAgentRun(rig.principal(), input.agentRunId);
+      assert.equal(submissionBefore.ok, true);
+      assert.equal(runBefore.ok, true);
+      if (!submissionBefore.ok || !runBefore.ok) return;
+
+      const reconciled = await rig.runtime.reconcileAfterRestart();
+      assert.equal(reconciled.ok, true, reconciled.ok ? '' : reconciled.error.message);
+
+      const submissionAfter = await rig.runtime.getProviderTurnSubmission(
+        rig.principal(), queued.value.submission.providerTurnId,
+      );
+      const runAfter = await rig.runtime.getAgentRun(rig.principal(), input.agentRunId);
+      assert.deepEqual(submissionAfter, submissionBefore);
+      assert.equal(runAfter.ok, true);
+      if (runAfter.ok) assert.deepEqual(runAfter.value.run, runBefore.value.run);
+      assert.equal(rig.terminal.submitted.length, 0);
+    } finally {
+      rig.close();
+    }
+  });
+
+test('startup recovery leaves a prepared controller submission unchanged when its Run is final',
+  async () => {
+    const { rig, context, input, agentId } = await seededRig();
+    try {
+      rig.terminal.crashOnProviderTurnExecute = true;
+      await assert.rejects(
+        () => rig.runtime.submitProviderTurn(context, input),
+        /injected crash before Terminal provider-turn execute/u,
+      );
+      const listed = await rig.runtime.listProviderTurnSubmissions(rig.principal(), {
+        includeTerminal: true, limit: 20,
+      });
+      assert.equal(listed.ok, true);
+      if (!listed.ok) return;
+      const prepared = listed.value.items.find((item) => item.origin.kind === 'controller');
+      assert.ok(prepared);
+      assert.equal(prepared.state.kind, 'prepared');
+
+      const stopped = await rig.runtime.stopAgent(rig.human(), {
+        agentId,
+        expectedLiveRunId: input.agentRunId,
+        confirmation: 'stop-one',
+      });
+      assert.equal(stopped.ok, true, stopped.ok ? '' : stopped.error.message);
+      if (!stopped.ok) return;
+      assert.equal(stopped.value.run.lifecycle, 'stopped');
+
+      const submissionBefore = await rig.runtime.getProviderTurnSubmission(
+        rig.principal(), prepared.providerTurnId,
+      );
+      const runBefore = await rig.runtime.getAgentRun(rig.principal(), input.agentRunId);
+      const attemptBefore = await rig.terminal.getProviderTurnInputAttempt({
+        terminalSessionId: prepared.terminalSessionId,
+        providerTurnId: prepared.providerTurnId,
+        submissionEffectKey: prepared.submissionEffectKey,
+      });
+      assert.equal(submissionBefore.ok, true);
+      assert.equal(runBefore.ok, true);
+      assert.equal(attemptBefore.ok, true);
+      if (!submissionBefore.ok || !runBefore.ok || !attemptBefore.ok) return;
+
+      const reconciled = await rig.runtime.reconcileAfterRestart();
+      assert.equal(reconciled.ok, true, reconciled.ok ? '' : reconciled.error.message);
+
+      const submissionAfter = await rig.runtime.getProviderTurnSubmission(
+        rig.principal(), prepared.providerTurnId,
+      );
+      const runAfter = await rig.runtime.getAgentRun(rig.principal(), input.agentRunId);
+      const attemptAfter = await rig.terminal.getProviderTurnInputAttempt({
+        terminalSessionId: prepared.terminalSessionId,
+        providerTurnId: prepared.providerTurnId,
+        submissionEffectKey: prepared.submissionEffectKey,
+      });
+      assert.deepEqual(submissionAfter, submissionBefore);
+      assert.equal(runAfter.ok, true);
+      if (runAfter.ok) assert.deepEqual(runAfter.value.run, runBefore.value.run);
+      assert.deepEqual(attemptAfter, attemptBefore);
+      assert.equal(rig.terminal.submitted.length, 0);
+    } finally {
+      rig.close();
+    }
+  });
 
 for (const mode of ['startup', 'periodic'] as const) {
   test(`${mode} reconciliation cancels a queued controller attempt before rejecting it`, async () => {
@@ -230,6 +515,121 @@ test('reconciliation quarantines a Terminal attempt with no Runtime submission i
     rig.close();
   }
 });
+
+test('startup recovery quarantines an orphan Terminal attempt without mutating its final Run',
+  async () => {
+    const { rig, input, agentId } = await seededSystemRig();
+    try {
+      const providerTurnId = mintProviderTurnId();
+      const orphanSubmissionId = providerTurnSubmissionId(
+        input.agentRunId,
+        { kind: 'runtime-effect', source: 'agent-inbox-delivery' },
+        'final-orphan-terminal-attempt',
+      );
+      const prepared = await rig.terminal.prepareProviderTurnInput({
+        terminalSessionId: input.terminalSessionId,
+        agentRunId: input.agentRunId,
+        providerTurnSubmissionId: orphanSubmissionId,
+        deliveryAttemptOrdinal: 1,
+        providerSessionId: mintProviderSessionId(),
+        transcriptBindingId: input.transcriptBindingId,
+        startTranscriptWatermark: null,
+        expectedRunRecordVersion: 1 as never,
+        providerTurnId,
+        activityGeneration: 2 as never,
+        submissionEffectKey: 'final-orphan-terminal-attempt',
+        inputDigest: 'b'.repeat(64),
+        utf8Text: 'final orphan',
+        authority: {
+          kind: 'runtime-safe-boundary', source: 'agent-inbox-delivery',
+          sourceEffectKey: 'final-orphan-terminal-attempt', sourceObjectRef: 'final-orphan',
+          expectedNoActiveInputLease: true, expectedNoControllerDraft: true,
+        },
+      });
+      assert.equal(prepared.ok, true);
+      if (!prepared.ok || prepared.value.kind !== 'prepared') return;
+
+      const stopped = await rig.runtime.stopAgent(rig.human(), {
+        agentId,
+        expectedLiveRunId: input.agentRunId,
+        confirmation: 'stop-one',
+      });
+      assert.equal(stopped.ok, true, stopped.ok ? '' : stopped.error.message);
+      if (!stopped.ok) return;
+      assert.equal(stopped.value.run.lifecycle, 'stopped');
+      const runBefore = await rig.runtime.getAgentRun(rig.principal(), input.agentRunId);
+      assert.equal(runBefore.ok, true);
+      if (!runBefore.ok) return;
+
+      const reconciled = await rig.runtime.reconcileAfterRestart();
+      assert.equal(reconciled.ok, true, reconciled.ok ? '' : reconciled.error.message);
+      assert.deepEqual(rig.terminal.quarantinedProviderTurnAttemptIds, [prepared.value.attempt.id]);
+      const runAfter = await rig.runtime.getAgentRun(rig.principal(), input.agentRunId);
+      assert.equal(runAfter.ok, true);
+      if (runAfter.ok) assert.deepEqual(runAfter.value.run, runBefore.value.run);
+      const remaining = await rig.terminal.listIncompleteProviderTurnInputAttempts({});
+      assert.equal(remaining.ok, true);
+      if (remaining.ok) assert.equal(remaining.value.length, 0);
+    } finally {
+      rig.close();
+    }
+  });
+
+test('periodic recovery leaves a queued system submission unchanged when its Run stops mid-lookup',
+  async () => {
+    const { rig, context, input, agentId } = await seededSystemRig();
+    try {
+      rig.terminal.providerTurnPrepareBlocked = true;
+      const queued = await rig.runtime.submitProviderTurn(context, input);
+      assert.equal(queued.ok, true, queued.ok ? '' : queued.error.message);
+      if (!queued.ok) return;
+      assert.equal(queued.value.kind, 'queued-not-yet-safe');
+      const submissionBefore = await rig.runtime.getProviderTurnSubmission(
+        rig.principal(), queued.value.submission.providerTurnId,
+      );
+      assert.equal(submissionBefore.ok, true);
+      if (!submissionBefore.ok) return;
+
+      let lookupEntered!: () => void;
+      const entered = new Promise<void>((resolve) => { lookupEntered = resolve; });
+      let releaseLookup!: () => void;
+      const released = new Promise<void>((resolve) => { releaseLookup = resolve; });
+      rig.terminal.duringNextProviderTurnInputAttemptLookup = async () => {
+        lookupEntered();
+        await released;
+      };
+      rig.terminal.providerTurnPrepareBlocked = false;
+      const reconciliation = rig.runtime.reconcileProviderTurns();
+      await entered;
+
+      const stopped = await rig.runtime.stopAgent(rig.human(), {
+        agentId,
+        expectedLiveRunId: input.agentRunId,
+        confirmation: 'stop-one',
+      });
+      assert.equal(stopped.ok, true, stopped.ok ? '' : stopped.error.message);
+      if (!stopped.ok) return;
+      assert.equal(stopped.value.run.lifecycle, 'stopped');
+      const runBeforeRelease = await rig.runtime.getAgentRun(rig.principal(), input.agentRunId);
+      assert.equal(runBeforeRelease.ok, true);
+      if (!runBeforeRelease.ok) return;
+
+      releaseLookup();
+      const reconciled = await reconciliation;
+      assert.equal(reconciled.ok, true, reconciled.ok ? '' : reconciled.error.message);
+
+      const submissionAfter = await rig.runtime.getProviderTurnSubmission(
+        rig.principal(), queued.value.submission.providerTurnId,
+      );
+      const runAfter = await rig.runtime.getAgentRun(rig.principal(), input.agentRunId);
+      assert.deepEqual(submissionAfter, submissionBefore);
+      assert.equal(runAfter.ok, true);
+      if (runAfter.ok) assert.deepEqual(runAfter.value.run, runBeforeRelease.value.run);
+      assert.equal(rig.terminal.submitted.length, 0);
+    } finally {
+      rig.close();
+    }
+  });
 
 test('an executing attempt without Runtime prepared state and fence is quarantined', async () => {
   const { rig, context, input } = await seededSystemRig();
