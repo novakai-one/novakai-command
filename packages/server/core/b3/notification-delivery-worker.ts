@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import {
   deriveClientOpId, mintProviderTurnId, mintTraceCorrelationId,
   notificationInputReservationId,
-  type ActivityGeneration, type AgentRunId, type AuthenticatedPrincipal,
+  type ActivityGeneration, type AuthenticatedPrincipal,
   type B3ContractError, type B3Result, type SystemCommandContext,
 } from '@novakai/foundation/contract';
 import type { AgentRunsContract, ProviderPort } from '../../../agent-runtime/contract/index.js';
@@ -14,6 +14,10 @@ import type { SupervisionCore } from '../../../supervision/public/index.js';
 import type {
   Notification, NotificationDeliveryClaim, NotificationInputReservationId,
 } from '../../../supervision/contract/index.js';
+import {
+  NO_TERMINAL_SESSION, fromCode, inputBoundaryBlock, refuse, reserveSplit, runContextBlock, skip,
+  type DeliveryTarget, type NotificationDeliveryOutcome,
+} from './notification-delivery-diagnosis.js';
 
 export interface NotificationDeliveryDependencies {
   readonly supervision: SupervisionCore;
@@ -28,13 +32,6 @@ type NotificationTerminalAttempt = Extract<
 type CommittedReservation = Extract<
   NotificationInputReservation, { readonly state: 'committed' }
 >;
-type DeliveryTarget = {
-  readonly agentRunId: AgentRunId;
-  readonly effectKey: string;
-  readonly claimGeneration: ActivityGeneration;
-  readonly inputText: string;
-};
-
 const reader: AuthenticatedPrincipal = {
   id: 'sys_agent_runtime', kind: 'system', verifiedScopes: [],
 };
@@ -193,36 +190,26 @@ async function replayCommitted(
   return recordOutcome(dependencies, notification, claimed.value, reservation, attempt.value);
 }
 
-function runCanCarryContext(
-  runTruth: Awaited<ReturnType<AgentRunsContract['getAgentRun']>> extends infer Result
-    ? Result extends { readonly ok: true; readonly value: infer Value }
-      ? Value extends { readonly run: infer Run } ? Run : never
-      : never
-    : never,
-  target: DeliveryTarget,
-): boolean {
-  return runTruth.lifecycle === 'ready'
-    && runTruth.activity === 'idle'
-    && runTruth.activeProviderTurn === undefined
-    && runTruth.terminalSessionId !== undefined
-    && Number(runTruth.activityGeneration) > Number(target.claimGeneration);
-}
-
 async function submitNextTurn(
   dependencies: NotificationDeliveryDependencies,
   notification: Notification,
   target: DeliveryTarget,
   reservation: NotificationInputReservationId,
   prior: NotificationInputReservation | null,
-): Promise<string | null> {
+): Promise<NotificationDeliveryOutcome> {
   const runResult = await dependencies.runs.getAgentRun(reader, target.agentRunId);
-  if (!runResult.ok) return runResult.error.code;
+  if (!runResult.ok) return refuse(runResult.error.code);
   const runTruth = runResult.value.run;
-  if (!runCanCarryContext(runTruth, target) || runTruth.terminalSessionId === undefined) return null;
-  const terminal = await dependencies.terminal.getTerminalSession(reader, runTruth.terminalSessionId);
-  if (!terminal.ok) return terminal.error.code;
-  if (terminal.value.session.status !== 'live'
-    || terminal.value.activeInputLease !== undefined) return null;
+  const runBlock = runContextBlock(runTruth, target);
+  // The second half of the test only narrows `terminalSessionId` for the
+  // compiler; `runContextBlock` has already refused every Run without one.
+  if (runBlock !== null || runTruth.terminalSessionId === undefined) {
+    return { kind: 'skipped', diagnosis: runBlock ?? NO_TERMINAL_SESSION };
+  }
+  const boundary = await inputBoundaryBlock(
+    dependencies.terminal, reader, runTruth.terminalSessionId,
+  );
+  if (boundary !== null) return boundary;
   const providerTurnId = prior?.providerTurnId ?? mintProviderTurnId();
   const reserved = await dependencies.terminal.reserveNotificationInput(
     runtimeContext(target.effectKey, 'reserve-terminal-input'),
@@ -236,14 +223,18 @@ async function submitNextTurn(
       providerTurnId,
     },
   );
-  if (!reserved.ok) return reserved.error.code;
-  if (reserved.value.state === 'cancelled') return 'IdempotencyConflict';
+  if (!reserved.ok) {
+    return refuse(
+      reserved.error.code, reserveSplit(reserved.error, String(runTruth.terminalSessionId)),
+    );
+  }
+  if (reserved.value.state === 'cancelled') return refuse('IdempotencyConflict');
   const claimed = await claim(dependencies, notification, target, reservation);
   if (!claimed.ok) {
     await releaseDeadEndReservation(
       dependencies, target, reservation, claimed.error, 'supervision-claim-rejected',
     );
-    return claimed.error.code;
+    return refuse(claimed.error.code);
   }
   const submitted = await dependencies.terminal.commitReservedNotificationInput(
     runtimeContext(target.effectKey, 'commit-terminal-input'),
@@ -259,16 +250,18 @@ async function submitNextTurn(
     await releaseDeadEndReservation(
       dependencies, target, reservation, submitted.error, 'runtime-compensation',
     );
-    return submitted.error.code;
+    return refuse(submitted.error.code);
   }
   const { attempt } = submitted.value;
-  return recordOutcome(dependencies, notification, claimed.value, reservation, attempt);
+  return fromCode(
+    await recordOutcome(dependencies, notification, claimed.value, reservation, attempt),
+  );
 }
 
 async function deliverNextTurn(
   dependencies: NotificationDeliveryDependencies,
   notification: Notification,
-): Promise<string | null> {
+): Promise<NotificationDeliveryOutcome> {
   const occurrenceRunId = notification.schemaVersion === 2
     && notification.occurrenceIdentity !== 'legacy-generation'
     ? notification.conditionOccurrence.agentRunId
@@ -279,7 +272,7 @@ async function deliverNextTurn(
     : notification.subject.kind === 'agent-run'
       ? notification.subject.agentRunId
       : occurrenceRunId;
-  if (agentRunId === undefined) return 'NotificationDeliveryUnsafe';
+  if (agentRunId === undefined) return refuse('NotificationDeliveryUnsafe');
   const target: DeliveryTarget = {
     agentRunId,
     effectKey: notification.deliveryEffectKey,
@@ -293,9 +286,13 @@ async function deliverNextTurn(
     target.effectKey,
   ) as NotificationInputReservationId;
   const prior = await dependencies.terminal.getNotificationInputReservation(reader, reservation);
-  if (!prior.ok && prior.error.code !== 'ValidationFailed') return prior.error.code;
+  if (!prior.ok && prior.error.code !== 'ValidationFailed') {
+    return refuse(prior.error.code);
+  }
   if (prior.ok && prior.value.state === 'committed') {
-    return replayCommitted(dependencies, notification, target, reservation, prior.value);
+    return fromCode(
+      await replayCommitted(dependencies, notification, target, reservation, prior.value),
+    );
   }
   return submitNextTurn(
     dependencies, notification, target, reservation, prior.ok ? prior.value : null,
@@ -322,9 +319,11 @@ async function deliverStartTurn(
 export async function deliverNotification(
   dependencies: NotificationDeliveryDependencies,
   notification: Notification,
-): Promise<string | null> {
-  if (notification.deliveryMode === 'queue-only') return null;
+): Promise<NotificationDeliveryOutcome> {
+  if (notification.deliveryMode === 'queue-only') {
+    return skip('notification-is-queue-only', { deliveryMode: String(notification.deliveryMode) });
+  }
   return notification.deliveryMode === 'start-turn'
-    ? deliverStartTurn(dependencies, notification)
+    ? fromCode(await deliverStartTurn(dependencies, notification))
     : deliverNextTurn(dependencies, notification);
 }
