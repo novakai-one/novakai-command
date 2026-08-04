@@ -135,22 +135,17 @@ async function claim(
  * Release the Terminal input fence, but ONLY for a failure that can never
  * succeed.
  *
- * The reservation id is derived from the delivery effect key, so it is
- * permanent: a cancelled reservation is met again by every later pass and
- * turned into `IdempotencyConflict` for ever. Cancelling on a RETRYABLE
- * failure therefore converts one transient refusal into a Notification no pass
- * can ever deliver. Leaving a NON-retryable one reserved is the opposite
- * defect: `requireAvailableBoundary` then refuses every other Notification on
- * that terminal session with `InputLeaseBusy` for the life of the process.
- *
- * The error's own `retryable` flag is the only thing that separates the two,
- * and it is already carried by every refusal in the vocabulary.
+ * The reservation id is derived from the effect key, so it is permanent: a
+ * cancelled reservation is met again by every later pass and turned into
+ * `IdempotencyConflict` for ever. Cancelling a RETRYABLE failure therefore
+ * converts one transient refusal into a Notification no pass can deliver.
+ * Leaving a NON-retryable one reserved is the opposite defect — the fence
+ * refuses every other Notification on that session for the life of the
+ * process. The error's own `retryable` flag is what separates them.
  */
 async function releaseDeadEndReservation(
-  dependencies: NotificationDeliveryDependencies,
-  target: DeliveryTarget,
-  reservation: NotificationInputReservationId,
-  error: B3ContractError,
+  dependencies: NotificationDeliveryDependencies, target: DeliveryTarget,
+  reservation: NotificationInputReservationId, error: B3ContractError,
   reason: 'supervision-claim-rejected' | 'runtime-compensation',
 ): Promise<void> {
   if (error.retryable) return;
@@ -266,9 +261,8 @@ async function submitNextTurn(
     );
     return submitted.error.code;
   }
-  return recordOutcome(
-    dependencies, notification, claimed.value, reservation, submitted.value.attempt,
-  );
+  const { attempt } = submitted.value;
+  return recordOutcome(dependencies, notification, claimed.value, reservation, attempt);
 }
 
 async function deliverNextTurn(

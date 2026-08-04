@@ -218,7 +218,8 @@ function retainedPumpEventKinds(root: string): readonly string[] {
   return kinds;
 }
 
-const why = (event: RunEvent): unknown => event.payload['why'] ?? event.payload['code'];
+/** What one outcome event says happened: a typed skip reason, or an error code. */
+const why = (event: RunEvent): unknown => event.payload['reason'] ?? event.payload['code'];
 
 test('a retryable claim rejection does not dead-end its Notification', async () => {
   const rig = await startRig('claim-retry', [ONE]);

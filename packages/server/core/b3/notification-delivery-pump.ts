@@ -141,7 +141,7 @@ function deliveryReport(
 /** Both channels a pump outcome travels: the dev console and the event stream. */
 interface OutcomeAnnouncer {
   report(message: string): void;
-  skipped(notification: Notification, why: string): Promise<void>;
+  skipped(notification: Notification, reason: string): Promise<void>;
   refused(notification: Notification, code: string): Promise<void>;
   passRefused(stage: string, code: string): Promise<void>;
   delivered(notification: Notification): void;
@@ -160,18 +160,19 @@ function createOutcomeAnnouncer(
   const announced = new Map<string, string>();
 
   async function announce(
-    key: string, outcome: string, kind: string, payload: Readonly<Record<string, unknown>>,
+    subject: string, outcome: string, kind: string, payload: Readonly<Record<string, unknown>>,
   ): Promise<void> {
-    if (announced.get(key) === outcome) return;
-    announced.set(key, outcome);
+    if (announced.get(subject) === outcome) return;
+    announced.set(subject, outcome);
     const published = await options.runs.publishCapabilityEvent(kind, payload, 'server');
-    if (!published.ok) report(`${key} outcome event refused: ${published.error.code}`);
+    if (!published.ok) report(`${subject} outcome event refused: ${published.error.code}`);
   }
 
   return {
     report,
-    skipped: (notification, why) => announce(
-      notification.id, `skipped:${why}`, SKIPPED_EVENT, deliveryReport(notification, { why }),
+    skipped: (notification, reason) => announce(
+      notification.id, `skipped:${reason}`, SKIPPED_EVENT,
+      deliveryReport(notification, { reason }),
     ),
     refused: (notification, code) => announce(
       notification.id, `refused:${code}`, REFUSED_EVENT, deliveryReport(notification, { code }),
