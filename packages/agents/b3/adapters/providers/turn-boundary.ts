@@ -166,6 +166,25 @@ function sourceLineId(bindingId: string, position: string): TranscriptLineId {
     .digest('hex')}` as TranscriptLineId;
 }
 
+/** Row types Claude Code links into the conversation chain; every other type is noise. */
+const CLAUDE_CHAIN_TYPES: readonly string[] = ['user', 'assistant'];
+
+/**
+ * Claude Code records a tool result as a user-ROLE row:
+ * `{"type":"user","message":{"role":"user","content":[{"type":"tool_result",...}]}}`.
+ * Only a user-role row whose content is a string, or an array carrying no
+ * `tool_result` part, is a genuine new human turn — that is the one frame allowed
+ * to open or close a completion window.
+ */
+function claudeHumanTurn(value: Record<string, unknown>): boolean {
+  const message = object(value.message);
+  if (value.type !== 'user' || message?.role !== 'user') return false;
+  const content = message.content;
+  if (typeof content === 'string') return true;
+  return Array.isArray(content)
+    && !content.some((part) => object(part)?.type === 'tool_result');
+}
+
 // eslint-disable-next-line sonarjs/cognitive-complexity -- Exact native-frame state machine.
 function claudeMatch(
   rows: readonly SourceRow[], input: ProviderTurnBoundaryInput,
@@ -174,28 +193,39 @@ function claudeMatch(
   const candidates = rows.filter((row) => {
     const value = row.value!;
     const message = object(value.message);
-    return value.type === 'user'
+    return claudeHumanTurn(value)
       && value.sessionId === input.providerNativeSessionId
-      && message?.role === 'user'
-      && sha256(logicalText(message.content) ?? '') === input.inputDigest;
+      && sha256(logicalText(message?.content) ?? '') === input.inputDigest;
   });
-  if (candidates.length !== 1) return candidates.length === 0 ? null : 'input-ambiguous';
-  const start = candidates[0]!;
+  // Identical prompt text repeats within one session; source position disambiguates.
+  // `rows` is already clipped to the submission's watermark window, so the first
+  // candidate is the first genuine human turn after startTranscriptWatermark.
+  const start = candidates[0];
+  if (start === undefined) return null;
   const startIndex = rows.indexOf(start);
   const root = textAt(start.value!, 'uuid');
   if (root === null) return 'source-gap';
   const correlated = new Set([root]);
+  const skipped = new Set<string>();
   const toolCalls = new Set<string>();
   const terminals: SourceRow[] = [];
   const evidence: SourceRow[] = [start];
   for (const row of rows.slice(startIndex + 1)) {
     const value = row.value!;
     const message = object(value.message);
-    if (value.type === 'user' && message?.role === 'user') break;
+    if (claudeHumanTurn(value)) break;
     const parent = textAt(value, 'parentUuid');
     const uuid = textAt(value, 'uuid');
     if (uuid === null) continue;
-    if (parent === null || !correlated.has(parent)) return 'end-ambiguous';
+    // Attachment/system/summary/snapshot rows carry a uuid and a null parentUuid
+    // without joining the chain. They are interleaved noise, not corruption.
+    if (typeof value.type !== 'string' || !CLAUDE_CHAIN_TYPES.includes(value.type)) {
+      skipped.add(uuid);
+      continue;
+    }
+    if (parent === null || !(correlated.has(parent) || skipped.has(parent))) {
+      return 'end-ambiguous';
+    }
     correlated.add(uuid);
     evidence.push(row);
     if (message !== null && Array.isArray(message.content)) {
@@ -211,8 +241,10 @@ function claudeMatch(
     if (value.type === 'assistant' && message?.role === 'assistant'
       && message.stop_reason === 'end_turn') terminals.push(row);
   }
-  if (terminals.length !== 1) return terminals.length === 0 ? null : 'end-ambiguous';
-  const completion = terminals[0]!;
+  // A turn may stop more than once before the next human prompt; the turn ends at
+  // the last terminal frame in its correlated chain.
+  const completion = terminals[terminals.length - 1];
+  if (completion === undefined) return null;
   const committedAt = timeOf(completion);
   if (committedAt === null) return 'source-gap';
   return {
