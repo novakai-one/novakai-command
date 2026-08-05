@@ -49,9 +49,9 @@ describe('a count the server could not measure is never drawn as a number', () =
   });
 
   it('totals skip unknown counts rather than treating them as zero', () => {
-    expect(totals([row({ inputTokens: 10 }), row({ inputTokens: null })]).input).toBe(10);
-    expect(totals([row({ inputTokens: null }), row({ inputTokens: null })]).input).toBe(null);
-    expect(totals([]).input).toBe(null);
+    expect(totals([row({ inputTokens: 10 }), row({ inputTokens: null })]).input.value).toBe(10);
+    expect(totals([row({ inputTokens: null }), row({ inputTokens: null })]).input.value).toBe(null);
+    expect(totals([]).input.value).toBe(null);
   });
 });
 
