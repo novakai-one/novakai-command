@@ -17,7 +17,7 @@ import type {
 import { watchRemoveRetirement } from '../../supervision/contract/index.js';
 import { connectRuntime, type RuntimeClient } from '../core/b3/client.js';
 import {
-  clientOpIdFrom, emit, parseFlags, type Flags,
+  clientOpIdFrom, emit, fail, pageFlags, parseFlags, type Flags,
 } from '../core/b3/cli-shared.js';
 import { addWatchInput, replacementWatchInput } from './nvk-watch-inputs.js';
 
@@ -183,18 +183,25 @@ const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
     }), (deadline) => `Reset drift deadline ${deadline.id}.`);
   },
 
+  // A5-01: `--limit`/`--cursor` are the published page flags, spelled ONCE in
+  // `pageFlags` and handed to the list method unchanged. This command used to
+  // spell its own `Number(--limit ?? 50)` — a second default for the same law,
+  // no validation (so `--limit abc` sent NaN), and no way to ask for page two
+  // of a listing whose owner has always minted cursors.
   async list(argFlags) {
-    const limit = Number(argFlags.value('limit') ?? 50);
+    const page = pageFlags(argFlags);
+    if (!page.ok) return fail('watch.list', argFlags, page.error);
     emit('watch.list', argFlags, await withClient<WatcherListing>(
-      (client) => client.call('b3.supervision.listWatchers', { limit }),
+      (client) => client.call('b3.supervision.listWatchers', page.value),
     ), describeWatchers);
   },
 
   async notifications(argFlags) {
-    const limit = Number(argFlags.value('limit') ?? 50);
+    const page = pageFlags(argFlags);
+    if (!page.ok) return fail('watch.notifications', argFlags, page.error);
     emit('watch.notifications', argFlags, await withClient<{
       readonly items: readonly Notification[];
-    }>((client) => client.call('b3.supervision.listNotifications', { limit })),
+    }>((client) => client.call('b3.supervision.listNotifications', page.value)),
     describeNotifications);
   },
 

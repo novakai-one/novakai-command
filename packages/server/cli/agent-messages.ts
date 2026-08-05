@@ -11,13 +11,13 @@
 // `ensureDirectThread` operation the wire publishes, not a second path
 // (red gate 23).
 import {
-  b3err, b3fail, type B3ClientOpId, type B3Result,
+  b3err, b3fail, type B3ClientOpId, type B3ContractError, type B3Result,
 } from '@novakai/foundation/contract';
 import type {
   AgentCommunicationItem, ConversationView, MessageAcceptance,
 } from '../../messaging/b3/contract/index.js';
 import type { RuntimeClient } from '../core/b3/client.js';
-import type { CliCommand, Flags } from '../core/b3/cli-shared.js';
+import { pageFlags, type CliCommand, type Flags } from '../core/b3/cli-shared.js';
 
 export interface MessageDeps {
   withClient<Value>(
@@ -27,6 +27,8 @@ export interface MessageDeps {
     command: CliCommand, argFlags: Flags, result: B3Result<Value>, human: (value: Value) => string,
   ): never;
   usage(command: CliCommand, argFlags: Flags, expected: string): never;
+  /** Refuse before dispatch, naming the command that was typed (X-1). */
+  fail(command: CliCommand, argFlags: Flags, error: B3ContractError): never;
   operationId(): B3ClientOpId;
   /** The human principal this CLI speaks for, as Messaging names people. */
   readonly personId: string;
@@ -67,7 +69,7 @@ function describeCommunications(page: Page<AgentCommunicationItem>): string {
 export function messageCommands(
   deps: MessageDeps,
 ): Record<string, (argFlags: Flags) => Promise<never>> {
-  const { withClient, emit, usage, personId } = deps;
+  const { withClient, emit, usage, fail, personId } = deps;
 
   /** Resolve the direct Thread between Chris and one Agent, minting if needed. */
   async function directThread(
@@ -142,11 +144,15 @@ export function messageCommands(
         return usage('agent.communications', argFlags, '<agentId> [--with <agentId>]');
       }
       const withAgent = argFlags.value('with');
+      // A5-01's flags, through the one shared parser: the CLI hands `limit`
+      // and `cursor` to the list method unchanged and never re-pages.
+      const page = pageFlags(argFlags);
+      if (!page.ok) return fail('agent.communications', argFlags, page.error);
       return emit('agent.communications', argFlags,
         await withClient<Page<AgentCommunicationItem>>(
           (client) => client.call('b3.messaging.listAgentCommunications', {
             agentIds: withAgent === undefined ? [agentId] : [agentId, withAgent],
-            limit: Number(argFlags.value('limit') ?? 50),
+            ...page.value,
           }),
         ), describeCommunications);
     },

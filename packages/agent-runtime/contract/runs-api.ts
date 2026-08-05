@@ -162,6 +162,15 @@ export interface ListAgentRunsFilter {
    * decided (OQ-07 ruling).
    */
   readonly onlyFinal?: boolean;
+  /**
+   * pass2 §12.7's own field, restored. It was declared in the spec and absent
+   * from this shape, so `nvk agent list --cursor <c>` (A5-01) travelled to the
+   * boundary and was silently dropped there: the caller was handed page one
+   * again while believing it had resumed. An opaque keyset position over
+   * stable `(createdAt,id)`, minted by this owner and by nobody else
+   * (FZ-EVT-007).
+   */
+  readonly cursor?: EventCursor;
   readonly limit?: number;
 }
 

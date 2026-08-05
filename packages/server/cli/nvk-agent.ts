@@ -6,7 +6,7 @@
 //                   [--provider claude|codex|kimi] [--model <id>] [--effort <v>]
 //                   [--cwd <path>]
 //   nvk-agent list [--state live|final|all]
-//   nvk-agent tree <agentId>
+//   nvk-agent tree <agentId> [--depth <n>]
 //   nvk-agent inspect <agentRunId>
 //   nvk-agent usage <agentId|agentRunId>
 //   nvk-agent attach <agentRunId>
@@ -109,6 +109,27 @@ async function withClient<Value>(
   }
 }
 
+/**
+ * A5-09's `--depth <n>` → `GetAgentRunTreeInput.maxDepth`, published default 10.
+ *
+ * The CLI checks the ENCODING (is this a whole number?) and nothing else: the
+ * range belongs to the owner, which bounds `maxDepth` at its frozen boundary,
+ * and a second opinion here would be CLI-only policy (OQ-06). What it must not
+ * do is forward `NaN` and let the owner report a shape it never saw.
+ */
+const DEFAULT_TREE_DEPTH = 10;
+
+function treeDepth(argFlags: Flags): B3Result<number> {
+  const given = argFlags.value('depth');
+  if (given === undefined) return b3ok(DEFAULT_TREE_DEPTH);
+  const depth = Number(given);
+  if (!Number.isInteger(depth)) {
+    return b3fail(b3err('ValidationFailed', '--depth must be a whole number',
+      { issues: [{ path: 'depth', message: 'must be a whole number' }] }, false));
+  }
+  return b3ok(depth);
+}
+
 const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
   async roles(argFlags) {
     emit('agent roles', argFlags, await withClient<readonly AgentRoleProfile[]>(
@@ -190,18 +211,34 @@ const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
     ), (listed) => describeList(listed.items));
   },
 
+  /**
+   * A5-09 as superseded by NVK-KIMI-093: `nvk agent tree <agentId> [--depth <n>]`.
+   *
+   * The selector is a bare positional, which is §17.1's own idiom for an Agent
+   * subject (`inspect`, `attach`, `stop`, `usage`, … all take it that way) and
+   * the one spelling that cannot collide: `--root <path>` names the DATA root
+   * on every `nvk` command, and an operator typing `--root agent_x` would have
+   * pointed the client at a directory called `agent_x` as well as mis-targeting
+   * the tree. The `--agent` alias this CLI shipped goes with it — E1 forbids
+   * adding or renaming a flag on a ratified command, whichever direction it
+   * improves things in.
+   */
   async tree(argFlags) {
-    // NOT `--root`: that flag names the DATA root on every nvk CLI, and an
-    // operator typing `--root agent_x` would have silently pointed the client
-    // at a directory called `agent_x` as well as mis-targeting the tree.
-    const rootAgentId = argFlags.value('agent') ?? argFlags.positional[0];
-    if (!rootAgentId) return usage('agent.tree', argFlags, '<agentId> | --agent <agentId>');
-    const direction = argFlags.value('direction');
+    const rootAgentId = argFlags.positional[0];
+    // The §12.7 input field, not a flag: `--root` is not a spelling of this
+    // argument any more, so naming it in the issue would point at nothing.
+    if (!rootAgentId) {
+      return fail('agent.tree', argFlags,
+        b3err('ValidationFailed', 'usage: nvk agent tree <agentId> [--depth <n>]',
+          { issues: [{ path: 'rootAgentId', message: 'required' }] }, false));
+    }
+    const depth = treeDepth(argFlags);
+    if (!depth.ok) return fail('agent.tree', argFlags, depth.error);
+    // `direction` is deliberately absent: pass2 §12.7's input is
+    // `{rootAgentId, maxDepth}` and OQ-08 dissolved the question, so a
+    // `--direction` flag would be unratified input on a ratified command.
     emit('agent.tree', argFlags, await withClient<AgentRunTreeView>(
-      (client) => client.call('b3.agent.getTree', {
-        rootAgentId, maxDepth: 8,
-        ...(direction === undefined ? {} : { direction }),
-      }),
+      (client) => client.call('b3.agent.getTree', { rootAgentId, maxDepth: depth.value }),
     ), describeTree);
   },
 
@@ -400,7 +437,7 @@ const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
   // the human at this keyboard; it is derived from the same principal the
   // socket authenticates, never taken from a flag (red gate 5).
   ...messageCommands({
-    withClient, emit, usage, operationId,
+    withClient, emit, usage, fail, operationId,
     personId: `person_${(process.env['NOVAKAI_PRINCIPAL'] ?? 'chris').replace(/[^A-Za-z0-9-]/gu, '-')}`,
   }),
 

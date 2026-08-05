@@ -10,7 +10,7 @@ import {
   type AgentId, type AgentRunId, type B3Result, type ControlReplacementPlanId,
   type FieldReader, type HumanPrincipalId, type RecordVersion, type RunOperationId,
   type AgentRoleProfileId,
-  type ControllerAttachmentId, type LeaseGeneration, type ProviderSessionId,
+  type ControllerAttachmentId, type EventCursor, type LeaseGeneration, type ProviderSessionId,
   type ProviderTurnId, type ProviderUsageEvidenceId, type TerminalInputAttemptId,
   type TerminalInputLeaseId, type TerminalSessionId, type TranscriptBindingId,
   type TranscriptTurnCompletionId,
@@ -208,12 +208,17 @@ export function readListAgentRunsFilter(candidate: unknown): B3Result<ListAgentR
     if (lifecycle !== undefined && wanted === undefined) {
       field.reject('lifecycle', `must be an array of: ${AGENT_RUN_LIFECYCLES.join(', ')}`);
     }
+    // Passed through as the opaque token it is: only the owner that minted a
+    // cursor can say whether it is one of its own, and it refuses a foreign or
+    // malformed one rather than quietly starting again from the top.
+    const cursor = field.optionalText('cursor');
     return {
       ...(wanted === undefined ? {} : { lifecycle: wanted }),
       ...(agentId === undefined ? {} : { agentId }),
       ...(launchSurface === undefined ? {} : { launchSurface }),
       includeFinal: flag(field, 'includeFinal'),
       ...(onlyFinal === true ? { onlyFinal: true } : {}),
+      ...(cursor === undefined ? {} : { cursor: cursor as EventCursor }),
       ...(limit === undefined ? {} : { limit }),
     };
   });
