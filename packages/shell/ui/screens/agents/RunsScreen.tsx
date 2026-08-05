@@ -18,11 +18,11 @@
 import React, { useEffect, useState } from 'react';
 import type { ShellServices } from '../../../contract/index.js';
 import {
-  describeLaunchOrigin, describeRunState, describeRunUsage, orderRuns,
+  AGENT_RUN_MUST_SHOW, describeRunState, orderRuns,
   type AgentRunRowView, type AgentRunsPageView,
 } from '../../../contract/agentRuns.js';
 import {
-  EmptyState, InlineError, ListRow, Panel, ScrollArea, Stack, Text,
+  DescriptionList, EmptyState, InlineError, ListRow, Panel, ScrollArea, Stack, Text,
 } from '../../kit/index.js';
 import './runs.css';
 
@@ -38,6 +38,10 @@ export function RunsView(props: {
 }) {
   const rows = orderRuns(props.page?.items ?? []);
   const omissions = props.page?.omissions ?? [];
+  // Three states, not two. "Nobody has answered yet" is a different fact from
+  // "the answer was none", and drawing the first as the second is the same lie
+  // as drawing an unavailable measurement as a zero (FZ-VIEW-010).
+  const unanswered = props.page === null && props.error === null;
 
   return (
     <ScrollArea className="nv-runs__scroll">
@@ -46,7 +50,8 @@ export function RunsView(props: {
           {props.error && (
             <InlineError>{`${props.error.code}: ${props.error.message}`}</InlineError>
           )}
-          {!props.error && rows.length === 0 && (
+          {unanswered && <EmptyState>Reading Runs…</EmptyState>}
+          {!unanswered && !props.error && rows.length === 0 && (
             <EmptyState>No agent runs yet</EmptyState>
           )}
           {rows.length > 0 && (
@@ -74,6 +79,13 @@ export function RunsView(props: {
 function RunRow(props: { view: AgentRunRowView }) {
   const view = props.view;
   const uncertain = view.run.uncertainty.length > 0;
+  // FZ-VIEW-003, from the manifest rather than from memory. A fact with nothing
+  // to say (no warnings) is dropped; a fact this projection cannot supply is
+  // NOT — its absence is the thing Chris needs to see.
+  const facts = AGENT_RUN_MUST_SHOW
+    .map((fact) => [fact, fact.describe(view)] as const)
+    .filter(([, said]) => said !== '');
+
   return (
     <Stack gap={0} className="nv-runs__row" data-uncertain={uncertain ? 'true' : 'false'}>
       <ListRow
@@ -82,14 +94,17 @@ function RunRow(props: { view: AgentRunRowView }) {
       />
       <Text as="p" className="nv-runs__id">{view.run.id}</Text>
       <Text as="p" className="nv-runs__origin">
-        {`${describeLaunchOrigin(view)} · ${view.provider.provider} ${view.provider.modelId}`}
+        {`${view.provider.provider} ${view.provider.modelId}`}
       </Text>
-      <Text as="p" className="nv-runs__usage">{describeRunUsage(view)}</Text>
-      {uncertain && (
-        <Text as="p" className="nv-runs__uncertain">
-          {view.run.uncertainty.join(', ')}
-        </Text>
-      )}
+      <DescriptionList
+        className="nv-runs__facts"
+        items={facts.map(([fact, said]) => [
+          <Text key={`${fact.id}-t`} data-fact={fact.id} data-source={fact.source}>
+            {fact.term}
+          </Text>,
+          said,
+        ])}
+      />
     </Stack>
   );
 }

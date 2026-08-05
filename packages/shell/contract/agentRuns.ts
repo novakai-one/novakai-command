@@ -236,6 +236,146 @@ export function describeRunUsage(view: AgentRunRowView): string {
 }
 
 /**
+ * FZ-VIEW-003 must-show #2, and the one fact this projection cannot supply.
+ *
+ * The frozen `AgentRunView` (P2 §19.1) carries
+ * `controllers{attachedCount, kinds, inputLeaseHolder?}`. The IMPLEMENTED view
+ * in `packages/agent-runtime/contract/runs-api.ts` does not, and the frozen
+ * Shell door (FZ-VIEW-001) offers no attachment query to fill the hole from —
+ * its `terminal` slice is attach/detach/lease/write/resize/read, with no
+ * `getTerminalSession` and no `listControllerAttachments`.
+ *
+ * So the Shell says so. CL-S forbids a lane from adding the field; drawing a
+ * `0` would be worse than saying nothing, because `0 controllers` is a claim
+ * Chris would read as "nobody is watching this" — one inference away from the
+ * "no controller means stopped" mistake red gate 4 exists to stop.
+ *
+ * Reported to the orchestrator as T-06. When the ruling lands, this function
+ * gets a projection to read and its test stops asserting the gap.
+ */
+export function describeControllers(_view: AgentRunRowView): string {
+  return 'not carried by this projection';
+}
+
+/**
+ * FZ-VIEW-003 must-show #3 — whether the background provider process is live.
+ *
+ * Keyed on `run.finalAt` and on nothing else. The OQ-07 ruling is explicit that
+ * finality is NOT a function of the lifecycle enum ("`interrupted` is final
+ * only after reconciliation confirms no live provider process") and that
+ * `finalAt` is the single published observable. `nvk agent list --state` keys
+ * on the same field, so the Shell and the CLI cannot disagree about who is
+ * still running — FZ-VIEW-034 held by construction rather than by a promise.
+ *
+ * Note what this deliberately does NOT consult: controllers. Nobody attached is
+ * not stopped.
+ */
+export function describeBackgroundProcess(view: AgentRunRowView): string {
+  if (view.run.finalAt === undefined) return 'still running in the Novakai Runtime';
+  const why = view.run.finalReason === undefined ? '' : ` · ${view.run.finalReason}`;
+  return `ended ${readableUtc(view.run.finalAt)}${why}`;
+}
+
+/**
+ * `2026-08-06T03:11:00.000Z` → `2026-08-06 03:11 UTC`.
+ *
+ * Presentation, not derivation: same instant, same zone, fewer characters
+ * between Chris and the fact. An unparseable stamp is handed back untouched —
+ * a projection that sends something unexpected gets SHOWN, never swallowed.
+ */
+function readableUtc(iso: string): string {
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return iso;
+  return `${at.toISOString().slice(0, 10)} ${at.toISOString().slice(11, 16)} UTC`;
+}
+
+/** Who looks after this Agent today — never who spawned it (P2 §6.2). */
+function describeSupervisor(supervisor: RunSupervisorView): string {
+  if (supervisor.kind === 'human') return `supervised by ${supervisor.principalId}`;
+  if (supervisor.kind === 'agent') return `supervised by ${supervisor.agentId}`;
+  return `orphaned · ${supervisor.reason}`;
+}
+
+/**
+ * FZ-VIEW-003 must-show #5 — parent and current supervisor.
+ *
+ * `family.childCount` is a measured number, so a `0` here is a fact and is
+ * drawn as one. That is the opposite call from usage and controllers, and the
+ * difference is the whole point: a zero the owner counted is truth, a zero the
+ * consumer invented is a lie.
+ */
+export function describeFamily(view: AgentRunRowView): string {
+  const parent = view.family.parentAgentId === undefined
+    ? 'no parent'
+    : `parent ${view.family.parentAgentId}`;
+  const children = view.family.childCount === 0
+    ? 'no children'
+    : `${view.family.childCount} children`;
+  return `${describeSupervisor(view.family.supervisor)} · ${parent} · ${children}`;
+}
+
+/** FZ-VIEW-003 must-show #7 — the recovery/uncertainty warnings, verbatim. */
+export function describeWarnings(view: AgentRunRowView): string {
+  return view.run.uncertainty.join(', ');
+}
+
+/**
+ * One entry per line of P2 §19.1's "The view MUST show" list.
+ *
+ * The list is a manifest rather than seven remembered render calls because a
+ * must-show list that lives only in a spec paragraph is a must-show list a
+ * future seat drops one item from while every test stays green. `source` is
+ * the honest part: `not-carried` names a fact the implemented projection
+ * cannot supply, which the screen still draws — as the gap it is.
+ */
+export interface AgentRunMustShowFact {
+  readonly id: string;
+  /** What Chris reads as the label. Also how a test finds the fact on screen. */
+  readonly term: string;
+  readonly source: 'projection' | 'not-carried';
+  /** Drawn only when this returns a non-empty string. */
+  readonly describe: (view: AgentRunRowView) => string;
+}
+
+export const AGENT_RUN_MUST_SHOW: readonly AgentRunMustShowFact[] = [
+  {
+    id: 'launch-origin', term: 'Started from', source: 'projection',
+    describe: (view) => `${describeLaunchOrigin(view)} · by ${view.launch.requestedBy}`,
+  },
+  {
+    id: 'controllers', term: 'Controllers attached', source: 'not-carried',
+    describe: describeControllers,
+  },
+  {
+    id: 'background-process', term: 'Background process', source: 'projection',
+    describe: describeBackgroundProcess,
+  },
+  {
+    id: 'activity', term: 'Working or idle', source: 'projection',
+    describe: (view) => view.run.activity,
+  },
+  {
+    id: 'family', term: 'Family', source: 'projection',
+    describe: describeFamily,
+  },
+  {
+    id: 'usage', term: 'Usage', source: 'projection',
+    describe: describeRunUsage,
+  },
+  {
+    id: 'warnings', term: 'Warnings', source: 'projection',
+    describe: describeWarnings,
+  },
+];
+
+/** Lookup by id. Throws on an unknown id — a typo must not silently draw less. */
+export function mustShowFact(id: string): AgentRunMustShowFact {
+  const found = AGENT_RUN_MUST_SHOW.find((fact) => fact.id === id);
+  if (found === undefined) throw new Error(`no must-show fact "${id}"`);
+  return found;
+}
+
+/**
  * Ordering is how this screen directs attention — the one mechanism Chris
  * accepts. It does not write "3 runs need you"; the rows that need him are
  * simply first: anything uncertain, then anything working, then the rest.
