@@ -107,6 +107,23 @@
   color: var(--sage);
 }
 
+/* FZ-VIEW-016's line. It must always be readable — it is the only place that
+   answers "can an agent see this?" — and it must never look like news. Tier 3
+   ink is the same quiet the truth line rests at, so the bar reads as one calm
+   row until something actually happens. */
+.nvkTerminalScreenContext {
+  font-size: var(--text-3);
+  color: var(--ink-3);
+  flex: 0 0 auto;
+  white-space: nowrap;
+  /* Found in a screenshot: at the same ink tier and with only a gap, this ran
+     straight on from the Runtime's truth line and the two read as one
+     sentence — which hands the Shell's statement to the Runtime to say. The
+     hairline is the same device the strip above uses between neighbours. */
+  border-left: 1px solid var(--hairline);
+  padding-left: 14px;
+}
+
 .nvkTerminalButton {
   font-size: var(--text-3);
   color: var(--ink-2);

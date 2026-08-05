@@ -26,8 +26,12 @@ import React, { useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { TerminalChrome } from '../ui/screens/terminal/TerminalChrome.js';
 import { TerminalTabStrip } from '../ui/screens/terminal/TerminalTabStrip.js';
+import { Button, Stack } from '../ui/kit/index.js';
 import { composeTabStrip } from '../contract/terminalTabStrip.js';
 import { describeTerminal } from '../contract/terminalServices.js';
+import {
+  SCREEN_CONTEXT_SUPPORT, type ScreenContextSupport,
+} from '../contract/screenContext.js';
 import {
   SESSION_A, SESSION_B, SESSION_C, sessionView, tabRecord,
 } from '../tests/fixtures/terminalTab.js';
@@ -50,26 +54,47 @@ const views = [
 
 function Preview(): React.JSX.Element {
   const [selectedTabId, setSelectedTabId] = useState<string | null>('tab-build');
+  // FZ-VIEW-016 has three states and the Shell can only ever DETECT two of them
+  // — `query-only` arrives as Messaging's echo (freeze §5 P-18). A browser can
+  // therefore never show all three from its own capability, so the preview
+  // holds it as state and offers one control per state. The control is
+  // preview-only scaffolding; what it proves is about the real component, which
+  // is the one drawing the line.
+  const [screenContext, setScreenContext] = useState<ScreenContextSupport>('snapshot');
   const entries = composeTabStrip(records, views);
   const selected = records.find((record) => record.id === selectedTabId);
   const view = views.find((item) => item.terminalSessionId === selected?.terminalSessionId);
   return (
-    <TerminalChrome
-      truth={view ? describeTerminal(view) : 'This tab\'s session is not reported by the Runtime'}
-      tone={view?.status === 'recovery-required' ? 'attention' : 'calm'}
-      watchingOnly={false}
-      problem={null}
-      surfaceRef={null}
-      onClose={() => {}}
-      strip={(
-        <TerminalTabStrip
-          entries={entries}
-          selectedTabId={selectedTabId}
-          onSelect={setSelectedTabId}
-          onNewTab={() => {}}
-        />
-      )}
-    />
+    <Stack gap={0}>
+      <Stack horizontal className="previewControls">
+        {SCREEN_CONTEXT_SUPPORT.map((support) => (
+          <Button
+            key={support}
+            data-testid={`preview-screen-context-${support}`}
+            onClick={() => setScreenContext(support)}
+          >
+            {support}
+          </Button>
+        ))}
+      </Stack>
+      <TerminalChrome
+        truth={view ? describeTerminal(view) : 'This tab\'s session is not reported by the Runtime'}
+        tone={view?.status === 'recovery-required' ? 'attention' : 'calm'}
+        watchingOnly={false}
+        problem={null}
+        surfaceRef={null}
+        screenContext={screenContext}
+        onClose={() => {}}
+        strip={(
+          <TerminalTabStrip
+            entries={entries}
+            selectedTabId={selectedTabId}
+            onSelect={setSelectedTabId}
+            onNewTab={() => {}}
+          />
+        )}
+      />
+    </Stack>
   );
 }
 

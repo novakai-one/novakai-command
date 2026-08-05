@@ -28,6 +28,7 @@ import {
 import { listOpenTerminalTabs, type TerminalTabRecord } from '../../../contract/terminalTab.js';
 import { composeTabStrip } from '../../../contract/terminalTabStrip.js';
 import { mintShellOpId, type ShellTerminalTabServices } from '../../../contract/services.js';
+import type { ScreenContextSupport } from '../../../contract/screenContext.js';
 import type { TerminalConnection } from '../../../app/terminalClient.js';
 
 export interface TerminalScreenProps {
@@ -35,6 +36,12 @@ export interface TerminalScreenProps {
   /** The Shell's own tab store (FZ-VIEW-017) — never the Runtime's. */
   readonly tabs: ShellTerminalTabServices;
   readonly workingDirectory: string;
+  /**
+   * FZ-VIEW-016. Handed in by the composition root, which is the one place that
+   * reads the host's capabilities — this screen never reaches for a browser
+   * global to answer it. Not optional: see TerminalChrome.
+   */
+  readonly screenContext: ScreenContextSupport;
 }
 
 type Attached = TerminalAttachment;
@@ -317,6 +324,7 @@ export function TerminalScreen(props: TerminalScreenProps): React.JSX.Element {
     <TerminalChrome
       truth={view ? describeTerminal(view) : 'Reaching the background Runtime…'}
       tone={toneFor(view, settled)}
+      screenContext={props.screenContext}
       watchingOnly={watchingOnly}
       problem={problem}
       surfaceRef={surface}

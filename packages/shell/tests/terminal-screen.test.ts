@@ -20,6 +20,9 @@ import { TerminalChrome, toneFor } from '../ui/screens/terminal/TerminalChrome.j
 import {
   describeBootFailure, describeTerminal, type TerminalTabView,
 } from '../contract/terminalServices.js';
+import {
+  SCREEN_CONTEXT_SUPPORT, describeScreenContextSupport,
+} from '../contract/screenContext.js';
 
 const TERMINAL_DIR = path.resolve(import.meta.dirname, '../ui/screens/terminal');
 
@@ -43,6 +46,7 @@ const chrome = (props: Partial<React.ComponentProps<typeof TerminalChrome>> = {}
     problem: null,
     surfaceRef: null,
     onClose: () => {},
+    screenContext: 'unavailable',
     ...props,
   }));
 
@@ -61,6 +65,27 @@ describe('the terminal tab obeys the two standing UI laws', () => {
   it('the tab\'s own stylesheet reaches for the accent token zero times', () => {
     const css = readFileSync(path.join(TERMINAL_DIR, 'TerminalScreen.css'), 'utf8');
     expect(css.match(/--accent/g) ?? []).toHaveLength(0);
+  });
+
+  /**
+   * Found in a screenshot, not in a test — and it is the SAME defect seat 2
+   * found in the strip, one row down. The bar now carries two facts from two
+   * different authorities side by side at the same ink tier:
+   *
+   *   "…running in the background Runtime" — the RUNTIME's, about this session;
+   *   "Screen context: unavailable"        — the SHELL's, about what an agent
+   *                                          can see of this window.
+   *
+   * With only a gap between them they read as one continuous sentence, which
+   * quietly attributes the Shell's statement to the Runtime. The hairline is
+   * the device this stylesheet already uses for exactly this, and it costs no
+   * colour and no ornament.
+   */
+  it('separates the Shell\'s screen-context fact from the Runtime\'s truth line', () => {
+    const css = readFileSync(path.join(TERMINAL_DIR, 'TerminalScreen.css'), 'utf8');
+    const rule = /\.nvkTerminalScreenContext\s*\{[^}]*\}/u.exec(css)?.[0] ?? '';
+    expect(rule).toContain('border-left');
+    expect(rule).toContain('var(--hairline)');
   });
 
   it('and it does not smuggle the gold back in as a literal', () => {
@@ -179,6 +204,43 @@ describe('what the chrome draws', () => {
 
   it('draws no strip region at all when there is none to draw', () => {
     expect(chrome()).not.toContain('data-testid="terminal-strip"');
+  });
+
+  /**
+   * B1.4 / FZ-VIEW-016 — the Raw-mode display obligation.
+   *
+   * `screenContext` is a REQUIRED prop, and that is the point: an optional one
+   * can be forgotten, and a forgotten obligation looks exactly like a screen
+   * that has nothing to say. The compiler now refuses to draw a terminal that
+   * does not state what an agent can see of it.
+   *
+   * It is drawn in BOTH modes rather than gated on Raw. Raw is where the freeze
+   * puts the obligation, and a gate is a way to fail it — but the fact itself
+   * is a property of this Shell's capture ability, not of the tab's mode, so a
+   * value that appeared and vanished as Chris switched modes would read as a
+   * bug about the wrong thing.
+   */
+  it('states what an agent can see of this screen — in every one of the three states', () => {
+    for (const support of SCREEN_CONTEXT_SUPPORT) {
+      const html = chrome({ screenContext: support });
+      expect({ support, shown: html.includes(describeScreenContextSupport(support)) })
+        .toEqual({ support, shown: true });
+      expect(html).toContain('data-testid="terminal-screen-context"');
+    }
+  });
+
+  it('draws unavailable as WORDS, never as an absent line', () => {
+    const html = chrome({ screenContext: 'unavailable' });
+    expect(html).toContain('unavailable');
+    // The false-empty defect B0 found on Runs, refused one screen over: the
+    // region exists in the state that has the least to report.
+    expect(html).toContain('data-testid="terminal-screen-context"');
+  });
+
+  it('keeps the screen-context line quiet — it is chrome, not the exception', () => {
+    const html = chrome({ screenContext: 'unavailable' });
+    // No second attention signal: no dot, no chip, no tone attribute of its own.
+    expect(html).not.toMatch(/data-testid="terminal-screen-context"[^>]*data-tone/u);
   });
 
   it('every element it draws is a kit component', () => {

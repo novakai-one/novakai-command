@@ -16,7 +16,19 @@ import { connectTerminalServices, type TerminalConnection } from '../terminalCli
 import { describeBootFailure } from '../../contract/terminalServices.js';
 import { createServerServices, fetchBootstrap } from '../serverClient.js';
 import { createMockServices } from '../mockServices.js';
+import { readCaptureCapabilities } from '../captureCapabilities.js';
+import { detectShellCaptureSupport } from '../../contract/screenContext.js';
 import type { ShellTerminalTabServices } from '../../contract/index.js';
+
+/**
+ * FZ-VIEW-016, resolved once, here — the composition root is the one place that
+ * touches a browser global. The Shell is the capture authority for its OWN
+ * support (orchestrator ACK, 2026-08-06); it is NOT recomputing Messaging's
+ * echo, which stays Messaging's alone (FZ-VIEW-014).
+ */
+const SCREEN_CONTEXT = detectShellCaptureSupport(
+  readCaptureCapabilities(typeof navigator === 'undefined' ? undefined : navigator),
+);
 
 function Boot(): React.JSX.Element | null {
   const [services, setServices] = useState<TerminalConnection | null>(null);
@@ -55,7 +67,12 @@ function Boot(): React.JSX.Element | null {
           Tabs are in memory only — they will not survive a reload.
         </p>
       )}
-      <TerminalScreen services={services} tabs={tabs} workingDirectory="/tmp" />
+      <TerminalScreen
+        services={services}
+        tabs={tabs}
+        workingDirectory="/tmp"
+        screenContext={SCREEN_CONTEXT}
+      />
     </>
   );
 }
