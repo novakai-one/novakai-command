@@ -11,6 +11,7 @@ import { LAYOUT_MAIN_ID, LayoutRecord, SettingsRecord } from './types.js';
 import type { LayoutDriver } from './layout.js';
 import type { SettingsDriver } from './settings.js';
 import { ConversationViewRecord, type ConversationViewDriver } from './conversationView.js';
+import { TerminalTabRecord, type TerminalTabDriver } from './terminalTab.js';
 import { fail, ok, persistFailed } from './errors.js';
 
 export interface ShellPersistence {
@@ -18,6 +19,7 @@ export interface ShellPersistence {
   layoutDriver: LayoutDriver;
   settingsDriver: SettingsDriver;
   conversationViewDriver: ConversationViewDriver;
+  terminalTabDriver: TerminalTabDriver;
 }
 
 export function composeShellPersistence(opts: {
@@ -39,8 +41,10 @@ export function composeShellPersistence(opts: {
     ...(opts.dataRoot === undefined ? {} : { dataRoot: opts.dataRoot }),
     legacyRoot: opts.legacyRoot,
     capability: 'shell',
-    // F1/DEC-S2-11: shell's permitted kinds = layout, settings, conversationView.
-    allowedKinds: ['layout', 'settings', 'conversationView'],
+    // FZ-VIEW-018 (P2 §10:1711): the Shell's COMPLETE allowed-kind set. B3e adds
+    // `terminalTab` and closes the list — no `terminalPreference` kind, and no
+    // Shell-specific store engine, ever.
+    allowedKinds: ['layout', 'settings', 'conversationView', 'terminalTab'],
     principal: opts.principal,
     lockTimeoutMs: opts.lockTimeoutMs,
     ...(opts.failNextObjectAppend ? { failNextObjectAppend: opts.failNextObjectAppend } : {}),
@@ -135,7 +139,41 @@ export function composeShellPersistence(opts: {
     },
   };
 
-  return { handle, layoutDriver, settingsDriver, conversationViewDriver };
+  // B3e FZ-VIEW-017. Same engine, same envelope, same CAS, same clientOpId
+  // dedup as the three kinds above — which is the whole point of it being a
+  // Foundation kind rather than a Shell-private file.
+  const terminalTabDriver: TerminalTabDriver = {
+    async list() {
+      const listed = await listObjects<TerminalTabRecord>(handle, 'terminalTab');
+      if (!listed.ok) return [];
+      const tabs: TerminalTabRecord[] = [];
+      for (const item of listed.value.items) {
+        const parsed = TerminalTabRecord.safeParse(item.object);
+        if (parsed.success) tabs.push(parsed.data); // "last good" — corrupt lines skipped
+      }
+      return tabs;
+    },
+    async read(id) {
+      const found = await getObject<TerminalTabRecord>(handle, 'terminalTab', id as unknown as ObjectId);
+      if (!found.ok || 'absent' in found.value) return null;
+      const parsed = TerminalTabRecord.safeParse(found.value.object);
+      if (!parsed.success) return null; // corrupt → treated as absent
+      return { record: parsed.data, version: found.value.version };
+    },
+    async create(record, clientOpId) {
+      const created = await createObject<TerminalTabRecord>(handle, record, clientOpId as unknown as ClientOpId);
+      if (!created.ok) return fail(persistFailed('terminalTab', created.error.code, created.error.message));
+      return ok({ record: created.value.object as TerminalTabRecord, version: created.value.version });
+    },
+    async update(id, record, expectedVersion, clientOpId) {
+      const updated = await updateObject<TerminalTabRecord>(
+        handle, id as unknown as ObjectId, record, expectedVersion, clientOpId as unknown as ClientOpId);
+      if (!updated.ok) return fail(persistFailed('terminalTab', updated.error.code, updated.error.message));
+      return ok({ record: updated.value.object as TerminalTabRecord, version: updated.value.version });
+    },
+  };
+
+  return { handle, layoutDriver, settingsDriver, conversationViewDriver, terminalTabDriver };
 }
 
 /**

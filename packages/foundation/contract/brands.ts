@@ -52,6 +52,7 @@ export const OBJECT_KINDS = [
   'terminalInputLease',   // DEC-B3V4-29: terminal-owned single-writer lease
   'terminalInputAttempt', // DEC-B3V4-29: terminal-owned ordered input outcome
   'notificationInputReservation', // B3d Q7: terminal-owned delivery fence
+  'terminalTab',          // B3e DEC-B3V4 P2 §10: shell-owned tab (raw/calm, pacing, zoom)
   // B3b (B3V4-P2 §§5, 6, 18.1): governed Runs, roles, family and delegation.
   // Agents owns the first five; Agent Runtime owns the last five (§3.3).
   'agentRoleProfile',       // DEC-B3V4-03: agents-owned reusable governed role
