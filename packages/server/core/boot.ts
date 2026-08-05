@@ -28,6 +28,7 @@ import { listConversationViews, setConversationView } from '../../shell/contract
 import type { ScreenContext } from '../../shell/contract/context.js';
 import { recordSystemAction } from '@novakai/foundation/dist/contract/index.js';
 import { openConfigStore, type ConfigStore } from './config/store.js';
+import { canonicalDataRoot, StoreRouteConflictError } from './store-route.js';
 import type { ServerConfig } from '../contract/config.js';
 import { createSessionHolderFactory, type MessagingSessionHolder, type SessionHolderFactory } from './session/holders.js';
 import { createLiveAuthority } from './session/authority.js';
@@ -59,7 +60,12 @@ export interface BootOptions {
   providerHome?: string;
   /** Start the supervision timers. Off in tests, on in production. */
   supervisionTimers?: boolean;
-  /** Directory holding `.watchdog-sessions.json`. Defaults to cwd. */
+  /**
+   * Directory holding `.watchdog-sessions.json`. Defaults to the data root:
+   * it is this root's own state, and defaulting it to the working directory
+   * left a throwaway root's registry inside the product checkout
+   * (B3E-ENTRY-LIST E-03).
+   */
   watchdogDir?: string;
   processProbe?: ProcessProbe;
   /** @internal failure-injection seam for never-silent trace tests. */
@@ -75,6 +81,7 @@ export interface BootStep {
 export interface BootError {
   code:
     | 'ConfigUnavailable'
+    | 'StoreRouteConflict'
     | 'NoHumanPrincipal'
     | 'MessagingUnavailable'
     | 'StoreUnavailable'
@@ -115,7 +122,18 @@ export async function bootServer(options: BootOptions): Promise<BootResult> {
   const cwd = options.cwd ?? process.cwd();
 
   // ── 1. config ────────────────────────────────────────────────────────────
-  const opened = await openConfigStore({ root: options.root, principal: 'sys_spine' });
+  // The §18.1 route gate runs inside this open and refuses a blocked root by
+  // throwing — it is deliberately not a value there, because a process that
+  // came up after a route conflict would be writing to a route nobody proved
+  // is current. A composition root is where that becomes an operator-readable
+  // refusal instead of a stack trace.
+  let opened: Awaited<ReturnType<typeof openConfigStore>>;
+  try {
+    opened = await openConfigStore({ root: options.root, principal: 'sys_spine' });
+  } catch (cause) {
+    if (!(cause instanceof StoreRouteConflictError)) throw cause;
+    return { ok: false, error: { code: 'StoreRouteConflict', message: cause.message } };
+  }
   if (!opened.ok) {
     return { ok: false, error: { code: 'ConfigUnavailable', message: opened.error.message } };
   }
@@ -142,7 +160,19 @@ export async function bootServer(options: BootOptions): Promise<BootResult> {
   }
 
   // ── 2. foundation store ──────────────────────────────────────────────────
-  const persistence = composeShellPersistence({ root: options.root, principal: human.personId });
+  // On the CANONICAL route (§18.1), like every other capability under this
+  // root. Composing it on the legacy route is what made a fresh root bootable
+  // exactly once (B3E-ENTRY-LIST E-01): the boot trace appended a legacy
+  // `traces.jsonl` beside the canonical one the token mint had already
+  // written, and the route gate then refused every later boot. `legacyRoot`
+  // keeps a pre-B3 root's layout/settings/views readable until the gate's
+  // cutover copies them across.
+  const persistence = composeShellPersistence({
+    root: options.root,
+    dataRoot: canonicalDataRoot(options.root),
+    legacyRoot: options.root,
+    principal: human.personId,
+  });
   note(2, 'foundation', `store open at ${options.root} as ${human.personId}`);
 
   // ── 3. messaging (authority BUILT FROM CONFIG — the hardcoded table is gone) ─
@@ -469,7 +499,7 @@ export async function bootServer(options: BootOptions): Promise<BootResult> {
   );
 
   // ── 11. supervision (B1b: the engine — gate, drift, lifecycle, usage) ───
-  const watchdog: WatchdogHook = createWatchdogHook(options.watchdogDir ?? cwd);
+  const watchdog: WatchdogHook = createWatchdogHook(options.watchdogDir ?? options.root);
   const usageReader = createUsageReader({
     ...(options.providerHome ? { home: options.providerHome } : {}),
     transcriptRoot: path.join(options.root, 'transcripts'),

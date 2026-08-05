@@ -33,7 +33,7 @@ import { composeB3Messaging, composeB3TranscriptFor } from './messaging-composit
 import {
   messagingEndpointPort, messagingInboxPort, transcriptCustodyPort,
 } from './b3c-ports.js';
-import { gateStoreRoute } from '../store-route.js';
+import { canonicalDataRoot, gateStoreRoute } from '../store-route.js';
 import type { AgentMessagingContract } from '../../../messaging/b3/contract/index.js';
 import {
   createProviderFileLocator, createProviderFileSource, defaultProviderHomes,
@@ -215,7 +215,7 @@ function driftSubmissionAuthority(terminal: TerminalContract): {
 }
 
 export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Runtime> {
-  const dataRoot = path.join(options.root, 'stores');
+  const dataRoot = canonicalDataRoot(options.root);
   await gateStoreRoute(options.root, dataRoot);
   const authorities = options.authorities ?? createLaunchAuthorities();
   const ptyHost = options.ptyHost ?? await createNodePtyHost({ authorities });
