@@ -190,6 +190,12 @@ describe('what the chrome draws', () => {
     expect(html).toContain('data-testid="terminal-screen-context"');
   });
 
+  it('Calm\'s numbers are drawn only in Calm — Raw has no rate to set', () => {
+    const numbers = React.createElement('div', { 'data-testid': 'pacing-stand-in' }, 'the picker');
+    expect(chrome({ mode: 'calm', pacing: numbers })).toContain('data-testid="pacing-stand-in"');
+    expect(chrome({ mode: 'raw', pacing: numbers })).not.toContain('data-testid="pacing-stand-in"');
+  });
+
   it('the watch-only state is stated once, and only while watching', () => {
     expect(chrome({ watchingOnly: true })).toContain('This one is watching');
     expect(chrome({ watchingOnly: false })).not.toContain('This one is watching');

@@ -173,3 +173,73 @@ export function flushCalm(
     text: marker + held,
   };
 }
+
+// ── The picker's half of the same rule ──────────────────────────────────────
+
+/**
+ * Why the bounds are imported rather than restated: `CALM_PACING_LIMITS` is what
+ * the RECORD's schema enforces (contract/terminalTab.ts). A picker with its own
+ * copy of the range is a picker that will eventually offer a value the store
+ * refuses — the failure shape the constant was exported to prevent in B1.1.
+ */
+import { CALM_PACING_LIMITS } from './terminalTab.js';
+
+export type PacingField = keyof typeof CALM_PACING_LIMITS;
+
+export type PacingChoice =
+  | { readonly accepted: true; readonly value: number }
+  | { readonly accepted: false; readonly because: string };
+
+/** What each floor is FOR — the sentence a person needs, not the bound again. */
+const FLOOR_MATTERS: Record<PacingField, string> = {
+  maxBufferedLines: 'a smaller buffer would drop nearly everything the process prints',
+  revealLinesPerSecond: 'below 1 the tab would never reveal anything, '
+    + 'which looks exactly like a hung terminal',
+};
+
+const LABEL: Record<PacingField, string> = {
+  maxBufferedLines: 'Lines buffered',
+  revealLinesPerSecond: 'Lines per second',
+};
+
+/** For the field's own label — the range stated where the value is typed. */
+export function describePacingRange(field: PacingField): string {
+  const limit = CALM_PACING_LIMITS[field];
+  return `${LABEL[field]} · ${limit.floor.toLocaleString('en-US')}–`
+    + `${limit.ceiling.toLocaleString('en-US')}`;
+}
+
+/**
+ * A typed string in; a value the record will accept, or a refusal that says why.
+ *
+ * NOTHING IS CLAMPED. A picker that quietly rewrites 5,000,000 as 2,000 leaves
+ * the number on screen disagreeing with the number in force, and a picker that
+ * drops the write leaves a value that looks set and is not. Both are how a
+ * control and the thing it controls stop matching. The refusal is drawn instead.
+ */
+export function readPacingChoice(field: PacingField, typed: string): PacingChoice {
+  const limit = CALM_PACING_LIMITS[field];
+  const trimmed = typed.trim();
+  // Deliberately not `Number()`: it takes '1e9', '0x10' and '' as numbers, and
+  // a person typing into a number field means digits.
+  if (!/^-?\d+$/u.test(trimmed)) {
+    return /^-?\d*\.\d+$/u.test(trimmed)
+      ? { accepted: false, because: `${LABEL[field]} counts whole lines — no fractions.` }
+      : { accepted: false, because: `${LABEL[field]} needs a number.` };
+  }
+  const value = Number(trimmed);
+  if (value < limit.floor) {
+    return {
+      accepted: false,
+      because: `${LABEL[field]} starts at ${limit.floor.toLocaleString('en-US')}: `
+        + `${FLOOR_MATTERS[field]}.`,
+    };
+  }
+  if (value > limit.ceiling) {
+    return {
+      accepted: false,
+      because: `${LABEL[field]} stops at ${limit.ceiling.toLocaleString('en-US')}.`,
+    };
+  }
+  return { accepted: true, value };
+}

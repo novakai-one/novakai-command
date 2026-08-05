@@ -99,6 +99,10 @@ const driver: TerminalTabDriver = {
   },
   update: async (id, record, expectedVersion) => {
     stored.set(id, { record, version: expectedVersion + 1 });
+    // What the STORE holds, printed where a browser can read it. Not what the
+    // input shows: the whole question about a picker is whether the value the
+    // control displays is the value that actually got written.
+    showStored(record);
     return { ok: true as const, value: { record, version: expectedVersion + 1 } };
   },
 };
@@ -108,16 +112,29 @@ const tabs: ShellTerminalTabServices = {
   close: (id, clientOpId) => closeTerminalTab(driver, id, clientOpId),
 };
 
+const readout = document.querySelector('#readout');
+const reported = REPORTED.length === 0
+  ? 'nothing about this session'
+  : `it as ${REPORTED[0].status}`;
+function showStored(record: TerminalTabRecord): void {
+  if (!readout) return;
+  readout.textContent = `scenario ${scenario} — the Runtime reports ${reported}`
+    + ` · stored mode ${record.mode}`
+    + ` · stored pacing ${record.calmPacing.revealLinesPerSecond}/s`
+    + ` buffer ${record.calmPacing.maxBufferedLines}`;
+}
+
+// Declared BEFORE the seed write, which calls it: a `const` read from a hoisted
+// function that runs first is a TDZ error, and this page went blank on exactly
+// that — the whole surface gone, with a green typecheck.
+//
 // The tab exists BEFORE the page boots, so the screen restores it rather than
 // opening a new session — which is the only way the exited and unknown cases can
 // be staged at all.
-await setTerminalTab(driver, TAB_ID, { terminalSessionId: SESSION, title: 'build', mode: 'raw' }, 'op_seed');
-
-const readout = document.querySelector('#readout');
-if (readout) {
-  readout.textContent = `scenario ${scenario} — the Runtime reports `
-    + (REPORTED.length === 0 ? 'nothing about this session' : `it as ${REPORTED[0].status}`);
-}
+const seeded = await setTerminalTab(
+  driver, TAB_ID, { terminalSessionId: SESSION, title: 'build', mode: 'raw' }, 'op_seed',
+);
+if (seeded.ok) showStored(seeded.value.record);
 
 createRoot(document.querySelector('#preview') as HTMLElement).render(
   <TerminalScreen

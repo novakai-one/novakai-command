@@ -20,6 +20,7 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import { TerminalChrome, toneFor } from './TerminalChrome.js';
+import { TerminalPacing } from './TerminalPacing.js';
 import { TerminalTabStrip } from './TerminalTabStrip.js';
 import {
   chooseAdoptable, describeTerminal, SHELL_INSTANCE_ID,
@@ -272,15 +273,17 @@ export function TerminalScreen(props: TerminalScreenProps): React.JSX.Element {
     };
   }, [services, selectedSessionId, refresh]);
 
-  // The viewport follows the window, and the Runtime is told whose it is.
+  // The viewport follows the window, and the Runtime is told whose it is. Read at
+  // event time, never captured: a resize arriving between attachments must use
+  // the one that exists NOW, or it reshapes a session this window has left.
   useEffect(() => {
     const onResize = (): void => {
       fitter.current?.fit();
-      const held = attachment.current;
+      const holding = attachment.current;
       const screen = terminal.current;
       const sessionId = attachedTo.current;
-      if (!held || !screen || sessionId === null) return;
-      void services.resize(sessionId, held.attachmentId, screen.cols, screen.rows);
+      if (!holding || !screen || sessionId === null) return;
+      void services.resize(sessionId, holding.attachmentId, screen.cols, screen.rows);
     };
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
@@ -290,10 +293,7 @@ export function TerminalScreen(props: TerminalScreenProps): React.JSX.Element {
     tabs,
     openTerminal: services.openTerminal,
     workingDirectory,
-    viewport: () => ({
-      columns: terminal.current?.cols ?? 80,
-      rows: terminal.current?.rows ?? 24,
-    }),
+    viewport: () => ({ columns: terminal.current?.cols ?? 80, rows: terminal.current?.rows ?? 24 }),
     onOpened: (record) => {
       setOpenTabs((current) => [...current, record]);
       setSelectedTabId(record.id);
@@ -327,25 +327,15 @@ export function TerminalScreen(props: TerminalScreenProps): React.JSX.Element {
       nothing rather than promising a process it cannot see. */
   const sessionTruth: TabSessionTruth = view === null ? { known: false } : { known: true, view };
 
-  /**
-   * Closing is its own flow (useTabClose.ts): the question, the answer, and the
-   * one sentence the Shell may say afterwards. This screen keeps what it owns —
-   * which tabs exist, and which one is being looked at.
-   *
-   * `held` is read at press time rather than passed as a value: a window may
-   * have failed to attach (an exited session does), and that is exactly the case
-   * where the record must still close.
-   */
+  /** Closing is its own flow (useTabClose.ts). `held` is read at PRESS time
+      rather than passed as a value: a window may have failed to attach (an
+      exited session does), which is exactly when the record must still close. */
   const closing = useTabClose({
     tabs,
-    held: () => {
-      const attached = attachment.current;
-      const sessionId = attachedTo.current;
-      return attached && sessionId !== null
-        ? { terminalSessionId: sessionId, attachment: attached }
-        : null;
-    },
-    detach: async (sessionId, attachmentId) => {
+    held: () => (attachment.current && attachedTo.current !== null
+      ? { terminalSessionId: attachedTo.current, attachment: attachment.current }
+      : null),
+    detach: (sessionId, attachmentId) => {
       attachment.current = null;
       attachedTo.current = null;
       return services.detach(sessionId, attachmentId);
@@ -381,6 +371,11 @@ export function TerminalScreen(props: TerminalScreenProps): React.JSX.Element {
       tabOpen={selectedTab !== null}
       mode={selectedTab?.mode ?? 'raw'}
       onModeChange={(next) => { void pacing.changeMode(next); }}
+      pacing={selectedTab && (
+        <TerminalPacing
+          pacing={selectedTab.calmPacing}
+          onChange={(next) => { void pacing.changePacing(next); }}
+        />)}
       watchingOnly={watchingOnly}
       problem={problem}
       surfaceRef={surface}

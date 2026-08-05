@@ -232,3 +232,27 @@
 .nvkTerminalAskChoices .k-btn:not(.k-btn--primary):hover {
   color: var(--ink-2);
 }
+
+/* Calm's two numbers. A row that exists only in Calm, under the control that
+   chose it — so the mode's consequence is where the mode was picked. Quiet:
+   labels at tier 3, the numbers themselves the only full-ink thing in it. */
+.nvkTerminalPacingRow {
+  flex: 0 0 auto;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.nvkTerminalPacing {
+  align-items: flex-start;
+}
+
+.nvkTerminalPacing .k-field__label {
+  font-size: var(--text-3);
+  color: var(--ink-3);
+}
+
+.nvkTerminalPacingInput {
+  width: 88px;
+  font-size: var(--text-3);
+  padding: 3px 6px;
+}

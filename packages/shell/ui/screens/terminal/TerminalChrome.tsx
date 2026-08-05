@@ -70,6 +70,11 @@ export interface TerminalChromeProps {
   readonly surfaceRef: React.Ref<HTMLDivElement>;
   readonly onClose: () => void;
   /**
+   * Calm's two numbers, when Calm is the mode. Passed in for the same reason the
+   * strip is: whether there is anything to pace is the controller's fact.
+   */
+  readonly pacing?: React.ReactNode;
+  /**
    * FZ-VIEW-033's question, when there is one. Passed in like the strip so the
    * chrome stays a pure function of what it is handed — the decision of WHETHER
    * to ask belongs to contract/terminalClose.ts, not to the markup.
@@ -127,6 +132,11 @@ export function TerminalChrome(props: TerminalChromeProps): React.JSX.Element {
           </Button>
         )}
       </Stack>
+      {/* Only in Calm, and directly under the control that chose it: the mode's
+          consequence, where the mode was picked. */}
+      {props.pacing != null && props.mode === 'calm' && (
+        <Stack gap={0} className="nvkTerminalPacingRow">{props.pacing}</Stack>
+      )}
       {/* The question sits over the terminal it is about, not in a corner of the
           app: what Chris is deciding about is the output right behind it. */}
       <Stack gap={0} className="nvkTerminalStage">
