@@ -189,6 +189,10 @@ export function readListAgentRunsFilter(candidate: unknown): B3Result<ListAgentR
     const agentId = field.optionalId<AgentId>('agentId', 'agent', 'uuidv4');
     const launchSurface = field.optionalChoice<LaunchSurface>('launchSurface', LAUNCH_SURFACES);
     const limit = field.optionalCount('limit', 1, 10_000);
+    const onlyFinalGiven = field.given('onlyFinal');
+    if (onlyFinalGiven !== undefined && typeof onlyFinalGiven !== 'boolean') {
+      field.reject('onlyFinal', 'must be true or false');
+    }
     const lifecycle = field.given('lifecycle');
     const wanted = Array.isArray(lifecycle)
       && lifecycle.every((item) => AGENT_RUN_LIFECYCLES.includes(item as AgentRunLifecycle))
@@ -201,6 +205,7 @@ export function readListAgentRunsFilter(candidate: unknown): B3Result<ListAgentR
       ...(agentId === undefined ? {} : { agentId }),
       ...(launchSurface === undefined ? {} : { launchSurface }),
       includeFinal: flag(field, 'includeFinal'),
+      ...(onlyFinalGiven === true ? { onlyFinal: true } : {}),
       ...(limit === undefined ? {} : { limit }),
     };
   });

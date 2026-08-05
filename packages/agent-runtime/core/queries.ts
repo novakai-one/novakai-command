@@ -256,6 +256,10 @@ export async function listAgentRuns(
   if (!runs.ok) return runs;
   const wanted = runs.value.filter((agentRun) => {
     if (!filter.includeFinal && FINAL_LIFECYCLES.has(agentRun.lifecycle)) return false;
+    // A5-06. `finalAt` is the owner's decision made observable; asking whether
+    // the lifecycle LOOKS final would be the consumer deriving finality, which
+    // is exactly what OQ-07 forbids.
+    if (filter.onlyFinal === true && agentRun.finalAt === undefined) return false;
     if (filter.lifecycle && !filter.lifecycle.includes(agentRun.lifecycle)) return false;
     if (filter.launchSurface && agentRun.launchSurface !== filter.launchSurface) return false;
     return true;

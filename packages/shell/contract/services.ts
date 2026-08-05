@@ -8,6 +8,7 @@ import type { ScreenContext } from './context.js';
 import type { RunUsageTableView, UsageTableView } from './usage.js';
 import type { WatcherListView } from './watchers.js';
 import type { NotificationInboxView } from './notifications.js';
+import type { ShellAgentServices } from './agentRuns.js';
 
 /**
  * S2a: shell-side view of an agent definition v2 (plain data — the browser
@@ -170,4 +171,11 @@ export interface ShellServices {
   acknowledgeNotification?(notificationId: string): Promise<void>;
   /** B3d Run usage read from Runtime views; older hosts omit or refuse it. */
   getRunUsageTable?(): Promise<RunUsageTableView>;
+  /**
+   * B3e: the frozen read door onto Agent Runs (FZ-VIEW-001). Screens that show
+   * a Run read it HERE and render the projection as it arrives — the same
+   * bytes `nvk agent list --json` prints. Absent on hosts with no Runtime,
+   * which the screen draws rather than guesses at.
+   */
+  agentRuns?: ShellAgentServices;
 }

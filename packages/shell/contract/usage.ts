@@ -8,6 +8,7 @@
 // The formatting lives here rather than in the component so the rules a screen
 // cannot show wrongly — "null is a dash, never a zero", "one attention row" —
 // are testable without a DOM.
+import type { AgentRunsPageView, RunUsageValue } from './agentRuns.js';
 
 /** One row as the server's `usage` event delivers it. */
 export interface UsageRowView {
@@ -37,13 +38,13 @@ export interface UsageTableView {
 
 export type RunUsageQuality = 'measured' | 'estimated' | 'partial' | 'unavailable';
 
-/** Browser-safe copy of one sourced Supervision usage value. */
-export interface RunUsageValueView {
-  quality: RunUsageQuality;
-  value?: number;
-  source: string;
-  limitations: readonly string[];
-}
+/**
+ * One sourced Supervision usage value. An ALIAS, not a second declaration: this
+ * screen and the frozen Runs projection describe the same value, and two
+ * structurally-identical copies of one contract is precisely the drift this
+ * slice exists to remove.
+ */
+export type RunUsageValueView = RunUsageValue;
 
 /** One Runtime Run with the exact Supervision usage row embedded in its view. */
 export interface RunUsageRowView {
@@ -65,6 +66,40 @@ export interface RunUsageRowView {
 export interface RunUsageTableView {
   at: string;
   rows: readonly RunUsageRowView[];
+}
+
+/**
+ * The flat, screen-shaped rows this legacy table wants, derived from the frozen
+ * `AgentRunView` page (FZ-VIEW-002) rather than read over a second path.
+ *
+ * Reshaping at a presentation edge is fine. Reshaping in the TRANSPORT is not:
+ * that is how the browser ended up with a private projection of a Run that the
+ * CLI could contradict (FZ-VIEW-034). This function renames nothing the screen
+ * does not display, invents no value, and — per FZ-VIEW-010 — never turns an
+ * absent measurement into a zero: the `RunUsageValue` objects pass through with
+ * their quality and limitations intact.
+ */
+export function runUsageTableFrom(
+  page: AgentRunsPageView, at: string,
+): RunUsageTableView {
+  return {
+    at,
+    rows: page.items.map((view) => ({
+      agentRunId: view.run.id,
+      agentId: view.agent.agentId,
+      displayName: view.agent.displayName,
+      provider: view.provider.provider,
+      model: view.provider.modelId,
+      lifecycle: view.run.lifecycle,
+      inputTokens: view.usage.inputTokens,
+      outputTokens: view.usage.outputTokens,
+      cachedInputTokens: view.usage.cachedInputTokens,
+      costMicros: view.usage.costMicros,
+      providerTurns: view.usage.providerTurns,
+      observedAt: view.usage.observedAt,
+      final: view.usage.final,
+    })),
+  };
 }
 
 /**

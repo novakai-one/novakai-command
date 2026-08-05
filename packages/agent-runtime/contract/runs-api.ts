@@ -151,6 +151,17 @@ export interface ListAgentRunsFilter {
   readonly agentId?: AgentId;
   readonly launchSurface?: LaunchSurface;
   readonly includeFinal: boolean;
+  /**
+   * AMD-005 A5-06. When true, only Runs the OWNER considers final come back.
+   * Requires `includeFinal:true`.
+   *
+   * Deliberately not a lifecycle filter: §6.1 makes `interrupted` final only
+   * after reconciliation confirms no live provider process, so finality is not
+   * a function of the lifecycle enum and no consumer may derive it. The one
+   * published observable is `finalAt` — present exactly when the owner has
+   * decided (OQ-07 ruling).
+   */
+  readonly onlyFinal?: boolean;
   readonly limit?: number;
 }
 

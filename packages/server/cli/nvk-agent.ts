@@ -43,7 +43,7 @@ import type { AgentRoleProfile, DelegationGrant } from '../../agents/b3/contract
 import type { AgentRunUsage, AgentUsageSummary } from '../../supervision/contract/index.js';
 import { connectRuntime, type RuntimeClient } from '../core/b3/client.js';
 import {
-  clientOpIdFrom, emit, fail, parseFlags, type Flags,
+  clientOpIdFrom, emit, fail, pageFlags, parseFlags, type Flags,
 } from '../core/b3/cli-shared.js';
 import {
   describeControls, describeList, describeRun, describeTree, describeUsage,
@@ -164,15 +164,29 @@ const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
     }), describeRun);
   },
 
+  /**
+   * `nvk agent list [--state live|final|all] [--limit <n>] [--cursor <c>]`.
+   *
+   * `--state` maps ONLY to `includeFinal`/`onlyFinal` (AMD-005 A5-06, OQ-07
+   * ruling): no lane computes liveness. `interrupted` is final only once
+   * reconciliation confirms no live provider process, so a CLI that filtered on
+   * the lifecycle enum would be publishing its own answer to a question the
+   * owner alone can answer — the B3d SEVERE-2 shape.
+   *
+   * `--limit`/`--cursor` are A5-01, passed through unchanged: the CLI never
+   * re-pages, merges pages, filters items or recomputes `omissions`.
+   */
   async list(argFlags) {
-    const state = argFlags.value('state') ?? 'all';
+    const state = argFlags.value('state') ?? 'live';
+    const page = pageFlags(argFlags);
+    if (!page.ok) return fail('agent list', argFlags, page.error);
     emit('agent list', argFlags, await withClient<{ items: readonly AgentRunView[] }>(
       (client) => client.call('b3.agent.listRuns', {
         includeFinal: state !== 'live',
-        ...(state === 'final' ? { lifecycle: ['stopped', 'failed', 'interrupted'] } : {}),
-        limit: 200,
+        ...(state === 'final' ? { onlyFinal: true } : {}),
+        ...page.value,
       }),
-    ), (page) => describeList(page.items));
+    ), (listed) => describeList(listed.items));
   },
 
   async tree(argFlags) {

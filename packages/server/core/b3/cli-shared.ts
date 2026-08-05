@@ -101,6 +101,34 @@ export function clientOpIdFrom(flags: Flags): B3Result<B3ClientOpId> {
   return b3ok(given as B3ClientOpId);
 }
 
+/**
+ * AMD-005 A5-01: every command whose `--json` value is a `Page<T>` accepts
+ * `--limit <n>` (1–200) and `--cursor <EventCursor>`, both handed to the list
+ * method unchanged, with 200 supplied when `--limit` is omitted.
+ *
+ * Spelled once, here, because a per-command copy is how two `Page` commands
+ * end up with two different defaults. The CLI never re-pages, merges pages,
+ * filters items, or recomputes `omissions` — a cursor it invented would
+ * describe a page the owner never minted (FZ-EVT-007: cursors are opaque and
+ * minted by the stream owner).
+ */
+export const DEFAULT_PAGE_LIMIT = 200;
+export const MAX_PAGE_LIMIT = 200;
+
+export function pageFlags(flags: Flags): B3Result<{ limit: number; cursor?: string }> {
+  const cursor = flags.value('cursor');
+  const tail = cursor === undefined ? {} : { cursor };
+  const given = flags.value('limit');
+  if (given === undefined) return b3ok({ limit: DEFAULT_PAGE_LIMIT, ...tail });
+  const limit = Number(given);
+  if (!Number.isInteger(limit) || limit < 1 || limit > MAX_PAGE_LIMIT) {
+    return b3fail(validationFailed([{
+      path: 'limit', message: `must be a whole number from 1 to ${MAX_PAGE_LIMIT}`,
+    }]));
+  }
+  return b3ok({ limit, ...tail });
+}
+
 export function parseFlags(argv: readonly string[]): Flags {
   const positional: string[] = [];
   const named = new Map<string, string>();

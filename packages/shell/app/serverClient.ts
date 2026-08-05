@@ -12,6 +12,8 @@ import type {
   AgentEvent, RunUsageTableView, ShellServices, SettingsRecord, WatcherListView,
 } from '../contract/index.js';
 import type { SetSettingError } from '../contract/index.js';
+import { runUsageTableFrom } from '../contract/usage.js';
+import { createShellAgentServices } from './agentRuns.js';
 
 interface Pending { resolve(v: unknown): void; reject(e: Error): void }
 
@@ -19,14 +21,6 @@ interface B3WireResult<Value> {
   readonly ok: boolean;
   readonly value?: Value;
   readonly error?: { readonly code: string; readonly message: string };
-}
-
-interface RunUsageWireView {
-  readonly agent: { readonly agentId: string; readonly displayName: string };
-  readonly run: { readonly id: string; readonly lifecycle: string };
-  readonly provider: { readonly provider: string; readonly modelId: string };
-  readonly usage: Omit<RunUsageTableView['rows'][number],
-    'agentRunId' | 'agentId' | 'displayName' | 'provider' | 'model' | 'lifecycle'>;
 }
 
 const PROTOCOL_VERSION = 1;
@@ -132,26 +126,28 @@ export function createServerServices(
       return new Promise<T>((res, rej) => pending.set(id, { resolve: res as (v: unknown) => void, reject: rej }));
     };
 
+    /**
+     * The ONE door onto Agent Runs (FZ-VIEW-001). It hands the frozen
+     * projection through untouched — see `app/agentRuns.ts` for why the browser
+     * owns no projection of its own.
+     */
+    const agentRuns = createShellAgentServices({
+      call: (method, payload) => call(method, { contractVersion: 1, payload }),
+    });
+
+    /**
+     * The B1b usage table, now DERIVED from the frozen rows rather than read
+     * over a second path. Until this seat the browser ran its own
+     * `b3.agent.listRuns` read and renamed fields on the way in — a second
+     * projection of one Run, which is the FZ-VIEW-034 failure shape. The flat
+     * names that legacy screen's view type still wants are produced by a named
+     * presentation adapter (`runUsageTableFrom`), so the reshaping is visible
+     * at the edge that needs it instead of hiding inside the transport.
+     */
     async function readRunUsageTable(): Promise<RunUsageTableView> {
-      const result = await call<B3WireResult<{ readonly items: readonly RunUsageWireView[] }>>(
-        'b3.agent.listRuns',
-        { contractVersion: 1, payload: { includeFinal: true, limit: 500 } },
-      );
-      if (!result.ok || result.value === undefined) {
-        throw new Error(result.error?.message ?? 'B3 Run usage is unavailable');
-      }
-      return {
-        at: new Date().toISOString(),
-        rows: result.value.items.map((view) => ({
-          agentRunId: view.run.id,
-          agentId: view.agent.agentId,
-          displayName: view.agent.displayName,
-          provider: view.provider.provider,
-          model: view.provider.modelId,
-          lifecycle: view.run.lifecycle,
-          ...view.usage,
-        })),
-      };
+      const page = await agentRuns.runs.listAgentRuns({ state: 'all' });
+      if (!page.ok) throw new Error(page.error.message);
+      return runUsageTableFrom(page.value, new Date().toISOString());
     }
 
     const api: ShellServices = {
@@ -183,6 +179,7 @@ export function createServerServices(
         { contractVersion: 1, payload: { limit: 500 } },
       )),
       getRunUsageTable: readRunUsageTable,
+      agentRuns,
       getLayout: () => call('getLayout'),
       // M5/DEC-S2-12: clientOpId minted HERE (the interaction layer) and sent
       // with the mutation; the server threads it to foundation meta.
