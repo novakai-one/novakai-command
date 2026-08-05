@@ -30,7 +30,11 @@ import {
   emptyCalmState, flushCalm, rawPassthrough, receiveCalm, revealCalm,
   type CalmPacing, type CalmState,
 } from '../../../contract/calmPacing.js';
-import { composeTabStrip } from '../../../contract/terminalTabStrip.js';
+import { composeTabStrip, type TabSessionTruth } from '../../../contract/terminalTabStrip.js';
+import { TerminalCloseAsk } from './TerminalCloseAsk.js';
+import { useTabClose } from './useTabClose.js';
+import { useTabOpen } from './useTabOpen.js';
+import { useTabPacing } from './useTabPacing.js';
 import { mintShellOpId, type ShellTerminalTabServices } from '../../../contract/services.js';
 import type { ScreenContextSupport } from '../../../contract/screenContext.js';
 import type { TerminalConnection } from '../../../app/terminalClient.js';
@@ -282,99 +286,118 @@ export function TerminalScreen(props: TerminalScreenProps): React.JSX.Element {
     return () => window.removeEventListener('resize', onResize);
   }, [services]);
 
-  const openAnother = useCallback(async () => {
-    const screen = terminal.current;
-    const session = await services.openTerminal(
-      workingDirectory, screen?.cols ?? 80, screen?.rows ?? 24,
-    );
-    if (!session.succeeded) {
-      setProblem(`${session.code}: ${session.message}`);
-      return;
-    }
-    const created = await tabs.save(
-      `terminalTab_${crypto.randomUUID()}`,
-      { terminalSessionId: session.value.terminalSessionId },
-      mintShellOpId(),
-    );
-    if (!created.ok) {
-      setProblem(`${created.error.code}: ${created.error.message}`);
-      return;
-    }
-    setOpenTabs((current) => [...current, created.value.record]);
-    setSelectedTabId(created.value.record.id);
-    await refresh();
-  }, [services, tabs, workingDirectory, refresh]);
+  const openAnother = useTabOpen({
+    tabs,
+    openTerminal: services.openTerminal,
+    workingDirectory,
+    viewport: () => ({
+      columns: terminal.current?.cols ?? 80,
+      rows: terminal.current?.rows ?? 24,
+    }),
+    onOpened: (record) => {
+      setOpenTabs((current) => [...current, record]);
+      setSelectedTabId(record.id);
+      // A new window ends the last close's sentence, and its settled tone with
+      // it: leaving either up would attach the previous tab's truth to this one.
+      closing.forgetNote();
+      setSettled(false);
+      void refresh();
+    },
+    onProblem: setProblem,
+  });
+
+  /** Mode + Calm's numbers, one flow (useTabPacing.ts): the record is where
+      both LIVE (FZ-VIEW-017), so neither can quietly revert on reload. */
+  const pacing = useTabPacing({
+    tabs,
+    selectedTabId,
+    calm,
+    pace: paceRef,
+    write: (text) => terminal.current?.write(text),
+    onSaved: (record) => setOpenTabs((current) => current.map((held) =>
+      (held.id === record.id ? record : held))),
+    onProblem: setProblem,
+    clock: () => Date.now(),
+  });
+
+  /** What the Runtime actually said about the selected tab's session — the same
+      discriminated truth the strip joins on, so the close decision and the strip
+      can never disagree about whether a session is accounted for. A failed
+      `listTerminals` leaves this `known: false`, and the close path then claims
+      nothing rather than promising a process it cannot see. */
+  const sessionTruth: TabSessionTruth = view === null ? { known: false } : { known: true, view };
 
   /**
-   * Switch this tab's mode, and persist it — the record is where the mode
-   * LIVES (FZ-VIEW-017), so a mode that only existed in component state would
-   * be a mode that quietly reverted on reload.
+   * Closing is its own flow (useTabClose.ts): the question, the answer, and the
+   * one sentence the Shell may say afterwards. This screen keeps what it owns —
+   * which tabs exist, and which one is being looked at.
    *
-   * Going to Raw flushes everything Calm was holding, immediately: asking for
-   * the truth is asking for it now, and output stranded in a buffer nobody will
-   * ever read again is output the process printed and Chris never saw.
+   * `held` is read at press time rather than passed as a value: a window may
+   * have failed to attach (an exited session does), and that is exactly the case
+   * where the record must still close.
    */
-  const changeMode = useCallback(async (next: 'raw' | 'calm') => {
-    if (selectedTabId === null) return;
-    if (next === 'raw') {
-      const { state, text } = flushCalm(calm.current);
-      calm.current = state;
-      if (text !== '') terminal.current?.write(text);
-    } else {
-      calm.current = emptyCalmState(Date.now());
-    }
-    // Applied to the ref first so a frame arriving between here and the awaited
-    // write is already paced by the mode Chris just chose.
-    paceRef.current = { ...paceRef.current, mode: next };
-    const saved = await tabs.save(selectedTabId, { mode: next }, mintShellOpId());
-    if (!saved.ok) {
-      setProblem(`${saved.error.code}: ${saved.error.message}`);
-      return;
-    }
-    setOpenTabs((current) => current.map((record) =>
-      (record.id === selectedTabId ? saved.value.record : record)));
-  }, [selectedTabId, tabs]);
+  const closing = useTabClose({
+    tabs,
+    held: () => {
+      const attached = attachment.current;
+      const sessionId = attachedTo.current;
+      return attached && sessionId !== null
+        ? { terminalSessionId: sessionId, attachment: attached }
+        : null;
+    },
+    detach: async (sessionId, attachmentId) => {
+      attachment.current = null;
+      attachedTo.current = null;
+      return services.detach(sessionId, attachmentId);
+    },
+    onClosed: (tabId) => {
+      setOpenTabs((current) => {
+        const remaining = current.filter((record) => record.id !== tabId);
+        setSelectedTabId((chosen) => (chosen === tabId ? remaining[0]?.id ?? null : chosen));
+        return remaining;
+      });
+      // The signature moment: the line goes calm and states exactly what the
+      // decision licensed — never more than that.
+      setSettled(true);
+      void refresh();
+    },
+    onProblem: setProblem,
+  });
 
-  const closeTab = useCallback(async () => {
-    const held = attachment.current;
-    const sessionId = attachedTo.current;
-    if (!held || sessionId === null || selectedTabId === null) return;
-    const detached = await services.detach(sessionId, held.attachmentId);
-    attachment.current = null;
-    attachedTo.current = null;
-    if (!detached.succeeded) {
-      setProblem(`${detached.code}: ${detached.message}`);
-      return;
-    }
-    // The Shell forgets the WINDOW. It keeps the session id on the closed
-    // record, and it does not ask the Runtime to stop anything (FZ-VIEW-033).
-    const closed = await tabs.close(selectedTabId, mintShellOpId());
-    if (!closed.ok) setProblem(`${closed.error.code}: ${closed.error.message}`);
-    const remaining = openTabs.filter((record) => record.id !== selectedTabId);
-    setOpenTabs(remaining);
-    setSelectedTabId(remaining[0]?.id ?? null);
-    // The signature moment. No sentence announces it: the line itself goes
-    // calm and says "0 windows attached · running in the background Runtime".
-    setSettled(true);
-    await refresh();
-  }, [services, tabs, selectedTabId, openTabs, refresh]);
+  /** Looking at another tab ends the last close's sentence. */
+  const selectTab = useCallback((tabId: string) => {
+    closing.forgetNote();
+    setSettled(false);
+    setSelectedTabId(tabId);
+  }, [closing]);
 
   return (
     <TerminalChrome
-      truth={view ? describeTerminal(view) : 'Reaching the background Runtime…'}
+      truth={view
+        ? describeTerminal(view)
+        : (closing.closedNote ?? 'Reaching the background Runtime…')}
       tone={toneFor(view, settled)}
       screenContext={props.screenContext}
+      tabOpen={selectedTab !== null}
       mode={selectedTab?.mode ?? 'raw'}
-      onModeChange={(next) => { void changeMode(next); }}
+      onModeChange={(next) => { void pacing.changeMode(next); }}
       watchingOnly={watchingOnly}
       problem={problem}
       surfaceRef={surface}
-      onClose={() => { void closeTab(); }}
+      onClose={() => closing.requestClose(selectedTabId, sessionTruth)}
+      ask={closing.asking && (
+        <TerminalCloseAsk
+          tabTitle={openTabs.find((record) => record.id === closing.asking?.tabId)?.title.trim()
+            || 'this terminal'}
+          decision={closing.asking.decision}
+          onChoose={closing.answer}
+        />
+      )}
       strip={(
         <TerminalTabStrip
           entries={entries}
           selectedTabId={selectedTabId}
-          onSelect={setSelectedTabId}
+          onSelect={selectTab}
           onNewTab={() => { void openAnother(); }}
         />
       )}

@@ -150,3 +150,85 @@
 .nvkTerminalNotice[data-tone='problem'] {
   color: var(--ink);
 }
+
+/* FZ-VIEW-033's question, over the output it is about.
+
+   The stage exists so the dialog can sit ON the terminal rather than pushing it
+   around: a question that reflows the output you are deciding about makes you
+   re-find your place after answering. Still no accent — the question is the only
+   thing on screen, which is emphasis enough. */
+.nvkTerminalStage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+
+.nvkTerminalAsk {
+  position: absolute;
+  left: 50%;
+  top: 24px;
+  transform: translateX(-50%);
+  max-width: 460px;
+  padding: 16px 18px;
+  background: var(--inspector);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  /* The one thing that lifts it off the terminal. Shadow, not colour. */
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.55);
+}
+
+.nvkTerminalAskTitle {
+  font-size: var(--text-2);
+  font-weight: 500;
+  color: var(--ink);
+}
+
+/* The fact Chris decides with — full ink, and it reads as a sentence. */
+.nvkTerminalAskClaim {
+  font-size: var(--text-2);
+  line-height: var(--leading);
+  color: var(--ink);
+}
+
+.nvkTerminalAskChoices {
+  align-items: center;
+  padding-top: 2px;
+}
+
+/* An unreachable choice is a limit to READ: tier 3, the same quiet the standing
+   screen-context line rests at, so it never competes with the two choices that
+   work. It is not a control and does not look like one. */
+.nvkTerminalAskLimit {
+  font-size: var(--text-3);
+  line-height: var(--leading);
+  color: var(--ink-3);
+  border-top: 1px solid var(--hairline);
+  padding-top: 10px;
+}
+
+/* FOUND IN A SCREENSHOT, not in a test: the kit's primary fill is a 8.5% white
+   wash, which on this panel made "Keep running" and "Cancel" read as two equal
+   choices — the safe default invisible, on the one dialog where a reflex press
+   must not stop a process. Every assertion was green (there WAS exactly one
+   `k-btn--primary`); the picture showed near-parity. Same hazard three seats
+   running: a fact and its emphasis at the same tier.
+
+   Emphasis is ink and weight, the way the rest of this screen draws it. Cancel
+   drops to tier 3 and loses its outline — a way out, not an equal choice. */
+.nvkTerminalAskChoices .nvkTerminalButton {
+  font-size: var(--text-2);
+}
+
+.nvkTerminalAskChoices .k-btn--primary {
+  color: var(--ink);
+  font-weight: 500;
+}
+
+.nvkTerminalAskChoices .k-btn:not(.k-btn--primary) {
+  color: var(--ink-3);
+  border-color: transparent;
+}
+
+.nvkTerminalAskChoices .k-btn:not(.k-btn--primary):hover {
+  color: var(--ink-2);
+}

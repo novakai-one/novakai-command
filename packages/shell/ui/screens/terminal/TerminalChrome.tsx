@@ -56,9 +56,25 @@ export interface TerminalChromeProps {
    */
   readonly mode: 'raw' | 'calm';
   readonly onModeChange: (mode: 'raw' | 'calm') => void;
+  /**
+   * Whether there is a window to act on at all.
+   *
+   * Found in a screenshot: with the last tab closed, `Close window` and the
+   * Raw/Calm control were still drawn, and neither did anything — the controller
+   * returns early with no selected tab. Two dead controls on the calmest state
+   * the screen has. The truth line and the screen-context line stay: what was
+   * just said about the closed session is exactly what a person is reading.
+   */
+  readonly tabOpen: boolean;
   /** The node xterm draws into — handed straight to the foreign renderer. */
   readonly surfaceRef: React.Ref<HTMLDivElement>;
   readonly onClose: () => void;
+  /**
+   * FZ-VIEW-033's question, when there is one. Passed in like the strip so the
+   * chrome stays a pure function of what it is handed — the decision of WHETHER
+   * to ask belongs to contract/terminalClose.ts, not to the markup.
+   */
+  readonly ask?: React.ReactNode;
   /**
    * The tab strip, if there is one. Passed in rather than built here so the
    * chrome stays a pure function of what it is handed — and so a shell with one
@@ -93,21 +109,30 @@ export function TerminalChrome(props: TerminalChromeProps): React.JSX.Element {
         {/* FZ-VIEW-017. Quiet: it names the two modes and marks the one you
             are in, and it is not an attention signal — a person choosing how
             fast to read is not an exception the screen has to flag. */}
-        <RadioGroup
-          className="nvkTerminalMode"
-          label="Terminal mode"
-          value={props.mode}
-          options={[{ value: 'raw', label: 'Raw' }, { value: 'calm', label: 'Calm' }]}
-          onChange={(next) => props.onModeChange(next === 'calm' ? 'calm' : 'raw')}
-        />
+        {props.tabOpen && (
+          <RadioGroup
+            className="nvkTerminalMode"
+            label="Terminal mode"
+            value={props.mode}
+            options={[{ value: 'raw', label: 'Raw' }, { value: 'calm', label: 'Calm' }]}
+            onChange={(next) => props.onModeChange(next === 'calm' ? 'calm' : 'raw')}
+          />
+        )}
         {/* The only control that changes the SESSION's relationship to this
             window, and it detaches. A window closing is not a kill signal
             (red gate 1) — there is nothing here that can stop a shell. */}
-        <Button className="nvkTerminalButton" data-testid="terminal-close" onClick={props.onClose}>
-          Close window
-        </Button>
+        {props.tabOpen && (
+          <Button className="nvkTerminalButton" data-testid="terminal-close" onClick={props.onClose}>
+            Close window
+          </Button>
+        )}
       </Stack>
-      <Surface className="nvkTerminalSurface" ref={props.surfaceRef} data-testid="terminal-surface" />
+      {/* The question sits over the terminal it is about, not in a corner of the
+          app: what Chris is deciding about is the output right behind it. */}
+      <Stack gap={0} className="nvkTerminalStage">
+        <Surface className="nvkTerminalSurface" ref={props.surfaceRef} data-testid="terminal-surface" />
+        {props.ask}
+      </Stack>
       {props.watchingOnly && (
         <Text as="p" className="nvkTerminalNotice" data-testid="terminal-watching">
           Another window is typing. This one is watching.

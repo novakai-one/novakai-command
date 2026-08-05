@@ -78,6 +78,7 @@ function Preview(): React.JSX.Element {
       <TerminalChrome
         truth={'1 window attached · running'}
         tone="calm"
+        tabOpen
         screenContext="unavailable"
         mode={mode}
         onModeChange={change}

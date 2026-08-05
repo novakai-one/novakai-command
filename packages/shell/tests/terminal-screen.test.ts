@@ -49,6 +49,7 @@ const chrome = (props: Partial<React.ComponentProps<typeof TerminalChrome>> = {}
     screenContext: 'unavailable',
     mode: 'raw' as const,
     onModeChange: () => {},
+    tabOpen: true,
     ...props,
   }));
 
@@ -175,6 +176,18 @@ describe('what the chrome draws', () => {
     expect(html).toContain('Close window');
     expect(html.toLowerCase()).not.toContain('kill');
     expect(html.toLowerCase()).not.toContain('terminate');
+  });
+
+  it('with no tab open it draws no control it cannot honour', () => {
+    // Found in a screenshot (B1.6): after the last tab closed, `Close window`
+    // and the Raw/Calm control were still on the bar — two controls that do
+    // nothing, on the calmest state the screen has. The truth line stays, because
+    // what was just said about the closed session is the whole point of it.
+    const html = chrome({ tabOpen: false, truth: 'The session keeps running in the background Runtime.' });
+    expect(html).not.toContain('data-testid="terminal-close"');
+    expect(html).not.toContain('Terminal mode');
+    expect(html).toContain('keeps running in the background Runtime');
+    expect(html).toContain('data-testid="terminal-screen-context"');
   });
 
   it('the watch-only state is stated once, and only while watching', () => {
