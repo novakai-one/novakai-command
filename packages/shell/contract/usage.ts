@@ -80,10 +80,11 @@ export interface RunUsageTableView {
  * their quality and limitations intact.
  */
 export function runUsageTableFrom(
-  page: AgentRunsPageView, at: string,
+  page: AgentRunsPageView, capturedAt: string,
 ): RunUsageTableView {
   return {
-    at,
+    // eslint-disable-next-line id-length -- `at` is this view's published field name.
+    at: capturedAt,
     rows: page.items.map((view) => ({
       agentRunId: view.run.id,
       agentId: view.agent.agentId,

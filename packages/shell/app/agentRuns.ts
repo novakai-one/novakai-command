@@ -1,3 +1,6 @@
+/* eslint-disable id-length -- `ok` is the frozen result field every B3 caller
+   reads (FZ-CLI-SCHEMA-001/011). Spelling it anything else here would mean this
+   door no longer speaks the contract it exists to pass through. */
 // shell/app/agentRuns.ts — the implementation behind FZ-VIEW-001's Runs read.
 //
 // It does exactly two things: translate the published request into the
@@ -61,14 +64,7 @@ function readPage(answer: unknown): ShellReadResult<AgentRunsPageView> {
     return unavailable('the Runtime returned no answer');
   }
   if (frame.ok !== true) {
-    return {
-      ok: false,
-      error: {
-        code: typeof frame.error?.code === 'string' ? frame.error.code : 'RuntimeUnavailable',
-        message: typeof frame.error?.message === 'string'
-          ? frame.error.message : 'the Runtime refused the request',
-      },
-    };
+    return refused(frame.error);
   }
   const page = frame.value as { items?: unknown; omissions?: unknown } | null;
   if (page === null || typeof page !== 'object'
@@ -81,8 +77,51 @@ function readPage(answer: unknown): ShellReadResult<AgentRunsPageView> {
   return { ok: true, value: page as unknown as AgentRunsPageView };
 }
 
+function refused(
+  error: { code?: unknown; message?: unknown } | undefined,
+): ShellReadResult<never> {
+  return {
+    ok: false,
+    error: {
+      code: typeof error?.code === 'string' ? error.code : 'RuntimeUnavailable',
+      message: typeof error?.message === 'string'
+        ? error.message : 'the Runtime refused the request',
+    },
+  };
+}
+
 function unavailable(message: string): ShellReadResult<never> {
   return { ok: false, error: { code: 'RuntimeUnavailable', message } };
+}
+
+/** `''` names the top level; anything else names a nested member. */
+function labelFor(level: string): string {
+  return level === '' ? '<view>' : level;
+}
+
+/** Fields the projection sent that this copy of the contract has never heard of. */
+function unknownFields(
+  present: readonly string[], allowed: readonly string[], level: string,
+): string[] {
+  return present.filter((field) => !allowed.includes(field))
+    .map((field) => `${labelFor(level)}.${field} is not in the frozen projection`);
+}
+
+/** Facts the copy requires that did not arrive. */
+function missingFields(present: readonly string[], level: string): string[] {
+  return (AGENT_RUN_VIEW_REQUIRED[level] ?? [])
+    .filter((field) => !present.includes(field))
+    .map((field) => `${labelFor(level)}.${field} is missing from the projection`);
+}
+
+function driftAt(node: unknown, level: string): string[] {
+  const allowed = AGENT_RUN_VIEW_SHAPE[level];
+  if (allowed === undefined) return [];
+  if (node === null || typeof node !== 'object') {
+    return [`${labelFor(level)} is not an object`];
+  }
+  const present = Object.keys(node as Record<string, unknown>);
+  return [...unknownFields(present, allowed, level), ...missingFields(present, level)];
 }
 
 /**
@@ -93,38 +132,18 @@ function unavailable(message: string): ShellReadResult<never> {
  * in both directions — a field the projection carries that the Shell has never
  * heard of, and a required fact that went missing on the way through.
  *
- * Nested levels are visited only where `AGENT_RUN_VIEW_SHAPE` names them, so
- * an opaque member like `run.lastMutation` stays opaque: the Shell displays it
+ * Nested levels are visited only where `AGENT_RUN_VIEW_SHAPE` names them, so an
+ * opaque member like `run.lastMutation` stays opaque: the Shell displays it
  * nowhere and therefore has no business asserting its shape.
  */
 export function agentRunViewDrift(view: unknown): readonly string[] {
-  const problems: string[] = [];
-  const visit = (node: unknown, at: string): void => {
-    const allowed = AGENT_RUN_VIEW_SHAPE[at];
-    if (allowed === undefined) return;
-    if (node === null || typeof node !== 'object') {
-      problems.push(`${at === '' ? '<view>' : at} is not an object`);
-      return;
+  const problems = driftAt(view, '');
+  if (view === null || typeof view !== 'object') return problems;
+  for (const field of Object.keys(view as Record<string, unknown>)) {
+    if (AGENT_RUN_VIEW_SHAPE[field] !== undefined) {
+      problems.push(...driftAt((view as Record<string, unknown>)[field], field));
     }
-    const present = Object.keys(node as Record<string, unknown>);
-    for (const key of present) {
-      if (!allowed.includes(key)) {
-        problems.push(`${at === '' ? '<view>' : at}.${key} is not in the frozen projection`);
-      }
-    }
-    for (const key of AGENT_RUN_VIEW_REQUIRED[at] ?? []) {
-      if (!present.includes(key)) {
-        problems.push(`${at === '' ? '<view>' : at}.${key} is missing from the projection`);
-      }
-    }
-    if (at !== '') return;
-    for (const key of present) {
-      if (AGENT_RUN_VIEW_SHAPE[key] !== undefined) {
-        visit((node as Record<string, unknown>)[key], key);
-      }
-    }
-  };
-  visit(view, '');
+  }
   return problems;
 }
 

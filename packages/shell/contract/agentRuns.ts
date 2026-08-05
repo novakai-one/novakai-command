@@ -1,3 +1,5 @@
+/* eslint-disable id-length -- `run` is frozen contract text (FZ-VIEW-002). Renaming a
+   field on its way to the browser is precisely the drift this file exists to stop. */
 // shell/contract/agentRuns.ts — the Shell's read door onto Agent Runs
 // (FZ-VIEW-001, P2 §12.6:2495–2536).
 //

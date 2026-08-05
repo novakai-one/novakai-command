@@ -4,6 +4,10 @@
    position, never by a badge — a mark on every row is the pattern he
    rejected outright. */
 
+.nv-runs__scroll {
+  flex: 1;
+}
+
 .nv-runs {
   gap: 14px;
   padding: 12px 14px;

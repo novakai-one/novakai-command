@@ -40,7 +40,7 @@ export function RunsView(props: {
   const omissions = props.page?.omissions ?? [];
 
   return (
-    <ScrollArea style={{ flex: 1 }}>
+    <ScrollArea className="nv-runs__scroll">
       <Panel head="Agent Runs">
         <Stack className="nv-runs">
           {props.error && (

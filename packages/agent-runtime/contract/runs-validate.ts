@@ -39,6 +39,17 @@ const PROVIDER_TURN_STATES = [
   'rejected', 'recovery-required', 'completion-unproven-final',
 ] as const satisfies readonly ProviderTurnSubmissionState['kind'][];
 
+/** An absent flag is a legal answer; a flag of the wrong TYPE never is. */
+function optionalFlag(field: FieldReader, path: string): boolean | undefined {
+  const value = field.given(path);
+  if (value === undefined) return undefined;
+  if (typeof value !== 'boolean') {
+    field.reject(path, 'must be true or false');
+    return undefined;
+  }
+  return value;
+}
+
 function flag(field: FieldReader, path: string): boolean {
   const value = field.given(path);
   if (typeof value !== 'boolean') {
@@ -189,10 +200,7 @@ export function readListAgentRunsFilter(candidate: unknown): B3Result<ListAgentR
     const agentId = field.optionalId<AgentId>('agentId', 'agent', 'uuidv4');
     const launchSurface = field.optionalChoice<LaunchSurface>('launchSurface', LAUNCH_SURFACES);
     const limit = field.optionalCount('limit', 1, 10_000);
-    const onlyFinalGiven = field.given('onlyFinal');
-    if (onlyFinalGiven !== undefined && typeof onlyFinalGiven !== 'boolean') {
-      field.reject('onlyFinal', 'must be true or false');
-    }
+    const onlyFinal = optionalFlag(field, 'onlyFinal');
     const lifecycle = field.given('lifecycle');
     const wanted = Array.isArray(lifecycle)
       && lifecycle.every((item) => AGENT_RUN_LIFECYCLES.includes(item as AgentRunLifecycle))
@@ -205,7 +213,7 @@ export function readListAgentRunsFilter(candidate: unknown): B3Result<ListAgentR
       ...(agentId === undefined ? {} : { agentId }),
       ...(launchSurface === undefined ? {} : { launchSurface }),
       includeFinal: flag(field, 'includeFinal'),
-      ...(onlyFinalGiven === true ? { onlyFinal: true } : {}),
+      ...(onlyFinal === true ? { onlyFinal: true } : {}),
       ...(limit === undefined ? {} : { limit }),
     };
   });
