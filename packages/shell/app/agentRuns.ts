@@ -20,6 +20,7 @@ import {
   type AgentRunsPageView, type ListAgentRunsRequest, type ShellAgentServices,
   type ShellReadResult,
 } from '../contract/agentRuns.js';
+import { createShellCommunicationServices } from './communications.js';
 
 /**
  * One nvk-ws v1 call, payload-level: the transport owns the `{contractVersion,
@@ -151,6 +152,9 @@ export function createShellAgentServices(
   options: ShellAgentServicesOptions,
 ): ShellAgentServices {
   return {
+    // FZ-VIEW-001 is ONE facade. The communications read is built here rather
+    // than beside it so a screen cannot acquire half a door.
+    communications: createShellCommunicationServices(options),
     runs: {
       async listAgentRuns(request) {
         try {

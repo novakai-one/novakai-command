@@ -12,7 +12,7 @@ import {
   closeTerminalTab, setTerminalTab,
   type TerminalTabDriver, type TerminalTabRecord,
 } from '../contract/terminalTab.js';
-import { composeHumanMessage, type ScreenContext } from '../contract/context.js';
+import { composeHumanMessage, type FocusSnapshot } from '../contract/context.js';
 
 export function createMockServices(opts: { seeded?: boolean } = {}): ShellServices {
   let convos: ConversationSummary[] = opts.seeded === false ? [] : [
@@ -84,7 +84,7 @@ export function createMockServices(opts: { seeded?: boolean } = {}): ShellServic
   });
 
   // S2b context bus: the mock holds focus like the bridge does (host authority).
-  let focus: ScreenContext = { app: 'messaging', ref: 'none' };
+  let focus: FocusSnapshot = { app: 'messaging', ref: 'none' };
 
   // demo presence: Kimi breathes online, Fable types occasionally
   setInterval(() => {

@@ -1,0 +1,92 @@
+/* Communications — the same calm as Agent Runs, and deliberately so: two
+   screens showing two halves of one Agent must not look like two products.
+   Grayscale, spacing and type weight carry the structure; no accent token
+   appears here at all (the rail owns the single attention signal, SHL-010). */
+
+.nv-comms__scroll {
+  flex: 1;
+}
+
+.nv-comms {
+  gap: 14px;
+  padding: 12px 14px;
+}
+
+/* Whose messages these are. Quiet, but always present — a list with an unstated
+   scope is how "some" comes to be read as "all". */
+.nv-comms__scope {
+  color: var(--ink-muted, #a2a2aa);
+  font-size: 11px;
+  margin: 0;
+}
+
+.nv-comms__rows {
+  gap: 0;
+}
+
+.nv-comms__row {
+  gap: 2px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--panel-3, #29292d);
+}
+
+/* The exception, and only the exception: an echo that contradicts itself gets
+   extra air. Still no chip, still no dot. */
+.nv-comms__row[data-problem='true'] {
+  padding: 16px 0;
+}
+
+.nv-comms__id {
+  color: var(--ink-faint, #8b8b94);
+  font-size: 11px;
+  margin: 0;
+  padding-left: 10px;
+}
+
+.nv-comms__facts {
+  font-size: 11px;
+  padding: 4px 0 0 10px;
+  gap: 2px 14px;
+}
+
+.nv-comms__facts dt {
+  color: var(--ink-faint, #8b8b94);
+  opacity: 1;
+}
+
+.nv-comms__facts dd {
+  color: var(--ink-muted, #a2a2aa);
+}
+
+/* A fact the projection could have carried and did not reads as an ABSENCE:
+   dimmer than the facts around it, never mistakable for a measurement. */
+.nv-comms__facts dt:has([data-source='not-carried']),
+.nv-comms__facts dt:has([data-source='not-carried']) + dd {
+  color: var(--ink-faint, #8b8b94);
+  font-style: italic;
+}
+
+/* The ONE exception on this screen, and the only line that gets full ink: an
+   echo that contradicts its own law. Everything else on the row stays quiet, so
+   this reads without a badge, a chip or the accent token. */
+.nv-comms__facts dt:has([data-fact='echo-problem']),
+.nv-comms__facts dt:has([data-fact='echo-problem']) + dd {
+  color: var(--ink, #ececee);
+  font-style: normal;
+}
+
+/* A fact the OWNER publishes that the freeze does not name. Shown, and shown as
+   what it is — the distinction is the finding, so it is on screen and not only
+   in a report. */
+.nv-comms__facts dt:has([data-source='implementation-extra']),
+.nv-comms__facts dt:has([data-source='implementation-extra']) + dd {
+  color: var(--ink-faint, #8b8b94);
+}
+
+/* Provenance, not instruction: what this page cannot promise, said quietly. */
+.nv-comms__completeness {
+  color: var(--ink-muted, #a2a2aa);
+  font-size: 11px;
+  margin: 0;
+  padding-top: 4px;
+}

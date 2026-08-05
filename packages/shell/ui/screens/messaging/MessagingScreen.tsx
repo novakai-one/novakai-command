@@ -5,7 +5,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import type {
   ChatMessage, ConversationSummary, PresenceSnapshot, ShellServices,
 } from '../../../contract/index.js';
-import { PresenceTracker, SlashRegistry, renderSpeedKey, DEFAULT_RENDER_SPEED, settingValue, mintShellOpId, subscribeFocus, getFocus, registerActionHandler, type ScreenContext, type ChatMessage as ChatMessageT } from '../../../contract/index.js';
+import { PresenceTracker, SlashRegistry, renderSpeedKey, DEFAULT_RENDER_SPEED, settingValue, mintShellOpId, subscribeFocus, getFocus, registerActionHandler, type FocusSnapshot, type ChatMessage as ChatMessageT } from '../../../contract/index.js';
 import { ConversationList } from './ConversationList.js';
 import { ThreadView } from './ThreadView.js';
 import { Composer } from './Composer.js';
@@ -82,7 +82,7 @@ export function MessagingScreen(props: {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [, setPresenceTick] = useState(0);
-  const [focus, setFocus] = useState<ScreenContext>(getFocus());
+  const [focus, setFocus] = useState<FocusSnapshot>(getFocus());
 
   useEffect(() => subscribeFocus(setFocus), []);
 

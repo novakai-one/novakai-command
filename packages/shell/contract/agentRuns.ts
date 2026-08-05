@@ -24,6 +24,10 @@
 // against a REAL view produced by the real Runtime in
 // `packages/server/tests/b3e-tracer-consistency.test.ts`.
 
+import type {
+  AgentCommunicationsPageView, ListAgentCommunicationsRequest,
+} from './communications.js';
+
 /** One sourced Supervision measurement, verbatim (P2 §9.1:1420). */
 export interface RunUsageValue {
   readonly quality: string;
@@ -148,14 +152,26 @@ export interface ListAgentRunsRequest {
 }
 
 /**
- * FZ-VIEW-001's read slice. B3e's tracer ships the Runs read; the lifecycle,
- * terminal, communications and supervision members of the frozen facade are
- * named there and arrive with their lanes.
+ * FZ-VIEW-001's `communications` slice, read half. `sendAgentMessage` and
+ * `openConversationView` are the other two members and arrive with the
+ * compose-and-send path; this door is the one §19.2 inspection reads through.
+ */
+export interface ShellCommunicationServices {
+  listAgentCommunications(
+    request: ListAgentCommunicationsRequest,
+  ): Promise<ShellReadResult<AgentCommunicationsPageView>>;
+}
+
+/**
+ * FZ-VIEW-001's read slice. B3e's tracer shipped the Runs read; B2.3 adds the
+ * communications read; the lifecycle, terminal and supervision members of the
+ * frozen facade are named there and arrive with their lanes.
  */
 export interface ShellAgentServices {
   readonly runs: {
     listAgentRuns(request: ListAgentRunsRequest): Promise<ShellReadResult<AgentRunsPageView>>;
   };
+  readonly communications: ShellCommunicationServices;
 }
 
 /**

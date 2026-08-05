@@ -4,7 +4,7 @@
 import type { AgentEvent, LayoutRecord, PresenceSource, SettingsRecord } from './types.js';
 import type { SetSettingError } from './settings.js';
 import type { PersistFailedError } from './errors.js';
-import type { ScreenContext } from './context.js';
+import type { FocusSnapshot } from './context.js';
 import type { RunUsageTableView, UsageTableView } from './usage.js';
 import type { WatcherListView } from './watchers.js';
 import type { NotificationInboxView } from './notifications.js';
@@ -78,7 +78,7 @@ export interface ChatMessage {
   clientOpId?: string;
   /** S2b (SHL-008): send-time screen context snapshot — present on every
    * human-composed message (red gate 2; {app, ref:'none'} counts). */
-  context?: ScreenContext;
+  context?: FocusSnapshot;
 }
 
 export interface MessagingEvents {
@@ -164,7 +164,7 @@ export interface ShellServices {
   // S2b context bus (SHL-008): the UI publishes every focus change; the shell
   // host (demo bridge / future Electron) is the focus authority and attaches
   // the send-time snapshot to each human-composed message. Fire-and-forget.
-  publishFocus?(focus: ScreenContext): void;
+  publishFocus?(focus: FocusSnapshot): void;
 
   // Demo affordance (SHL-006/007 end-to-end proof): define + spawn a mock
   // agent session so presence dot / typing bubble / activity line move live.
