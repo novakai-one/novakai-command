@@ -26,10 +26,15 @@ import {
   type TerminalAttachment, type TerminalOutcome, type TerminalTabView,
 } from '../../../contract/terminalServices.js';
 import { listOpenTerminalTabs, type TerminalTabRecord } from '../../../contract/terminalTab.js';
+import {
+  emptyCalmState, flushCalm, rawPassthrough, receiveCalm, revealCalm,
+  type CalmPacing, type CalmState,
+} from '../../../contract/calmPacing.js';
 import { composeTabStrip } from '../../../contract/terminalTabStrip.js';
 import { mintShellOpId, type ShellTerminalTabServices } from '../../../contract/services.js';
 import type { ScreenContextSupport } from '../../../contract/screenContext.js';
 import type { TerminalConnection } from '../../../app/terminalClient.js';
+import { adoptOrOpen, writeReplay, xtermTheme } from './session.js';
 
 export interface TerminalScreenProps {
   readonly services: TerminalConnection;
@@ -46,49 +51,6 @@ export interface TerminalScreenProps {
 
 type Attached = TerminalAttachment;
 
-/**
- * Reuse the session this tab left running, or start one. Reuse is the normal
- * case — but only of a session this shell owns, in this directory. Anything
- * else on the machine belongs to someone else (see `chooseAdoptable`).
- */
-async function adoptOrOpen(
-  services: TerminalConnection, workingDirectory: string, columns: number, rows: number,
-): Promise<TerminalOutcome<TerminalTabView>> {
-  const existing = await services.listTerminals();
-  const reuse = existing.succeeded
-    ? chooseAdoptable(existing.value, workingDirectory, SHELL_INSTANCE_ID)
-    : null;
-  if (reuse) return { succeeded: true, value: reuse };
-  return services.openTerminal(workingDirectory, columns, rows);
-}
-
-/**
- * xterm paints its own pixels, so it is handed the kit's tokens rather than a
- * second palette (§16: one token source). No gold: the composed viewport's one
- * attention signal belongs to the rail, and a cursor is not an exception.
- */
-function xtermTheme(): { background: string; foreground: string; cursor: string } {
-  const tokens = getComputedStyle(document.documentElement);
-  const token = (name: string, fallback: string): string =>
-    tokens.getPropertyValue(name).trim() || fallback;
-  return {
-    background: token('--workspace', '#1b1b1e'),
-    foreground: token('--ink', '#ececee'),
-    cursor: token('--ink-2', '#b4b4bb'),
-  };
-}
-
-async function writeReplay(
-  services: TerminalConnection, sessionId: string, screen: Terminal,
-): Promise<void> {
-  const replay = await services.readReplay(sessionId, 0);
-  if (!replay.succeeded) return;
-  for (const frame of replay.value) {
-    // A gap is stated, never papered over with whatever bytes remain.
-    screen.write(frame.kind === 'gap' ? '\r\n[earlier output is no longer buffered]\r\n' : frame.text);
-  }
-}
-
 export function TerminalScreen(props: TerminalScreenProps): React.JSX.Element {
   const { services, tabs, workingDirectory } = props;
   const surface = useRef<HTMLDivElement | null>(null);
@@ -99,6 +61,20 @@ export function TerminalScreen(props: TerminalScreenProps): React.JSX.Element {
   const attachedTo = useRef<string | null>(null);
   const inputSequence = useRef(1);
   const disposed = useRef(false);
+  /**
+   * Calm's whole memory, in a ref rather than state: it advances on a 16ms tick
+   * and on every output frame, and re-rendering the terminal at that cadence
+   * would be paying React for something xterm already owns.
+   *
+   * `paceRef` mirrors the selected tab's mode and pacing so the ONE registered
+   * `onOutput` listener can read the current rule without being re-registered —
+   * re-registering it is what would leave the tab you left writing into the
+   * screen you are looking at (see the note on effect 1).
+   */
+  const calm = useRef<CalmState>(emptyCalmState(0));
+  const paceRef = useRef<{ mode: 'raw' | 'calm'; pacing: CalmPacing }>({
+    mode: 'raw', pacing: { maxBufferedLines: 2_000, revealLinesPerSecond: 24 },
+  });
   const [openTabs, setOpenTabs] = useState<readonly TerminalTabRecord[]>([]);
   const [selectedTabId, setSelectedTabId] = useState<string | null>(null);
   const [liveViews, setLiveViews] = useState<readonly TerminalTabView[]>([]);
@@ -140,12 +116,30 @@ export function TerminalScreen(props: TerminalScreenProps): React.JSX.Element {
     services.onOutput((emittedFor, frame) => {
       if (disposed.current || emittedFor !== attachedTo.current) return;
       if (frame.kind === 'exit') {
-        screen.write('\r\n[the terminal exited]\r\n');
+        // The exit notice is the Shell's own, not the session's bytes, and it
+        // is never paced: "this ended" held behind a backlog is the one message
+        // that must not arrive late.
+        const { state, text } = flushCalm(calm.current);
+        calm.current = state;
+        screen.write(`${text}\r\n[the terminal exited]\r\n`);
         void refresh();
         return;
       }
-      screen.write(frame.text);
+      if (paceRef.current.mode === 'raw') {
+        screen.write(rawPassthrough(frame.text));
+        return;
+      }
+      calm.current = receiveCalm(calm.current, frame.text, paceRef.current.pacing);
     });
+
+    // Calm's clock. Raw never reaches it, and a tick that releases nothing
+    // writes nothing — an empty write would still cost xterm a render.
+    const ticking = setInterval(() => {
+      if (disposed.current || paceRef.current.mode !== 'calm') return;
+      const { state, text } = revealCalm(calm.current, Date.now(), paceRef.current.pacing);
+      calm.current = state;
+      if (text !== '') screen.write(text);
+    }, 16);
 
     screen.onData((data) => {
       const held = attachment.current;
@@ -166,6 +160,7 @@ export function TerminalScreen(props: TerminalScreenProps): React.JSX.Element {
 
     return () => {
       disposed.current = true;
+      clearInterval(ticking);
       screen.dispose();
     };
   }, [services, refresh]);
@@ -210,6 +205,20 @@ export function TerminalScreen(props: TerminalScreenProps): React.JSX.Element {
     })();
     return () => { alive = false; };
   }, [services, tabs, workingDirectory, refresh]);
+
+  // 2b. The mode the ONE output listener reads. Kept in a ref deliberately —
+  //     see the note where it is declared. Switching tabs starts Calm clean:
+  //     nothing the previous tab was holding may appear in this one's stream.
+  useEffect(() => {
+    paceRef.current = {
+      mode: selectedTab?.mode ?? 'raw',
+      pacing: selectedTab?.calmPacing ?? { maxBufferedLines: 2_000, revealLinesPerSecond: 24 },
+    };
+  }, [selectedTab]);
+
+  useEffect(() => {
+    calm.current = emptyCalmState(Date.now());
+  }, [selectedTabId]);
 
   // 3. Attach to whichever session the selected tab shows. Switching tabs runs
   //    this cleanup first, so the session you left is detached before the next
@@ -296,6 +305,36 @@ export function TerminalScreen(props: TerminalScreenProps): React.JSX.Element {
     await refresh();
   }, [services, tabs, workingDirectory, refresh]);
 
+  /**
+   * Switch this tab's mode, and persist it — the record is where the mode
+   * LIVES (FZ-VIEW-017), so a mode that only existed in component state would
+   * be a mode that quietly reverted on reload.
+   *
+   * Going to Raw flushes everything Calm was holding, immediately: asking for
+   * the truth is asking for it now, and output stranded in a buffer nobody will
+   * ever read again is output the process printed and Chris never saw.
+   */
+  const changeMode = useCallback(async (next: 'raw' | 'calm') => {
+    if (selectedTabId === null) return;
+    if (next === 'raw') {
+      const { state, text } = flushCalm(calm.current);
+      calm.current = state;
+      if (text !== '') terminal.current?.write(text);
+    } else {
+      calm.current = emptyCalmState(Date.now());
+    }
+    // Applied to the ref first so a frame arriving between here and the awaited
+    // write is already paced by the mode Chris just chose.
+    paceRef.current = { ...paceRef.current, mode: next };
+    const saved = await tabs.save(selectedTabId, { mode: next }, mintShellOpId());
+    if (!saved.ok) {
+      setProblem(`${saved.error.code}: ${saved.error.message}`);
+      return;
+    }
+    setOpenTabs((current) => current.map((record) =>
+      (record.id === selectedTabId ? saved.value.record : record)));
+  }, [selectedTabId, tabs]);
+
   const closeTab = useCallback(async () => {
     const held = attachment.current;
     const sessionId = attachedTo.current;
@@ -325,6 +364,8 @@ export function TerminalScreen(props: TerminalScreenProps): React.JSX.Element {
       truth={view ? describeTerminal(view) : 'Reaching the background Runtime…'}
       tone={toneFor(view, settled)}
       screenContext={props.screenContext}
+      mode={selectedTab?.mode ?? 'raw'}
+      onModeChange={(next) => { void changeMode(next); }}
       watchingOnly={watchingOnly}
       problem={problem}
       surfaceRef={surface}

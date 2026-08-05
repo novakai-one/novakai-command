@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en" data-theme="dark" data-density="comfortable">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Calm pacing — FIXTURE DATA</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+    <style>
+      html, body { background: #0d0d0f; margin: 0; }
+      /* Stamped into every screenshot taken from this page, on purpose. */
+      #fixture-banner {
+        font: 500 11px/1.6 Inter, system-ui, sans-serif;
+        color: #0d0d0f; background: #d0a14b;
+        padding: 5px 14px; letter-spacing: 0.04em;
+      }
+      #preview { display: flex; flex-direction: column; height: 520px; max-width: 1000px; }
+      /* The engine emits \r\n. Without this the surface collapses them and the
+         capture shows one paragraph — a screenshot that cannot prove "lines".
+         Preview-only: the shipped terminal is xterm, which owns its own layout. */
+      .nvkTerminalSurface {
+        white-space: pre-wrap;
+        font: 400 11px/1.55 "JetBrains Mono", ui-monospace, monospace;
+        color: #a2a2aa;
+        padding: 8px 14px;
+        overflow: hidden;
+      }
+      .calmPreviewReadout {
+        font: 400 11px/1.5 "JetBrains Mono", ui-monospace, monospace;
+        color: #8b8b94; margin: 0; padding: 6px 14px;
+      }
+      #readout {
+        font: 400 12px/1.7 Inter, system-ui, sans-serif;
+        color: #a2a2aa; padding: 8px 14px; max-width: 1000px;
+      }
+      #readout b { color: #ececee; font-weight: 500; }
+    </style>
+  </head>
+  <body>
+    <div id="fixture-banner" data-testid="fixture-banner">
+      FIXTURE DATA — the REAL calmPacing engine over a scripted burst. No PTY, no Runtime, no session.
+    </div>
+    <div id="preview"></div>
+    <div id="readout" data-testid="readout"></div>
+    <script type="module" src="/tools/calm-preview.tsx"></script>
+  </body>
+</html>

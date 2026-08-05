@@ -9,7 +9,7 @@
 //   - zero accent (tools/lint-accent.mjs) — the composed viewport already has
 //     its ONE gold, on the rail. Attention here is ink tier, weight and a rule.
 import React from 'react';
-import { Button, Stack, Surface, Text } from '../../kit/index.js';
+import { Button, RadioGroup, Stack, Surface, Text } from '../../kit/index.js';
 import type { TerminalTabView } from '../../../contract/terminalServices.js';
 import {
   describeScreenContextSupport, type ScreenContextSupport,
@@ -45,6 +45,17 @@ export interface TerminalChromeProps {
    * ever receive as Messaging's echo.
    */
   readonly screenContext: ScreenContextSupport;
+  /**
+   * FZ-VIEW-017's `mode`, and the control that changes it.
+   *
+   * Raw is the truth mode: every byte, immediately (contract/calmPacing.ts).
+   * Calm paces. The control is a two-state choice rather than a toggle because
+   * "Calm" is a NAMED mode a person picks, not a switch whose off-state has no
+   * name — and because a reader must be able to see which one they are in
+   * without inferring it from the output rate.
+   */
+  readonly mode: 'raw' | 'calm';
+  readonly onModeChange: (mode: 'raw' | 'calm') => void;
   /** The node xterm draws into — handed straight to the foreign renderer. */
   readonly surfaceRef: React.Ref<HTMLDivElement>;
   readonly onClose: () => void;
@@ -79,8 +90,19 @@ export function TerminalChrome(props: TerminalChromeProps): React.JSX.Element {
         >
           {describeScreenContextSupport(props.screenContext)}
         </Text>
-        {/* The only control, and it detaches. A window closing is not a kill
-            signal (red gate 1) — there is nothing here that can stop a shell. */}
+        {/* FZ-VIEW-017. Quiet: it names the two modes and marks the one you
+            are in, and it is not an attention signal — a person choosing how
+            fast to read is not an exception the screen has to flag. */}
+        <RadioGroup
+          className="nvkTerminalMode"
+          label="Terminal mode"
+          value={props.mode}
+          options={[{ value: 'raw', label: 'Raw' }, { value: 'calm', label: 'Calm' }]}
+          onChange={(next) => props.onModeChange(next === 'calm' ? 'calm' : 'raw')}
+        />
+        {/* The only control that changes the SESSION's relationship to this
+            window, and it detaches. A window closing is not a kill signal
+            (red gate 1) — there is nothing here that can stop a shell. */}
         <Button className="nvkTerminalButton" data-testid="terminal-close" onClick={props.onClose}>
           Close window
         </Button>

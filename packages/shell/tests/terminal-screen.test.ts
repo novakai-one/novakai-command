@@ -47,6 +47,8 @@ const chrome = (props: Partial<React.ComponentProps<typeof TerminalChrome>> = {}
     surfaceRef: null,
     onClose: () => {},
     screenContext: 'unavailable',
+    mode: 'raw' as const,
+    onModeChange: () => {},
     ...props,
   }));
 
