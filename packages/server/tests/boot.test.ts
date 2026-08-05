@@ -8,6 +8,10 @@ import {
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { bootServer, type NovakaiServer } from '../core/boot.js';
+// The boot writes its traces on the canonical route (§18.1) like every other
+// capability; reading them from the root would be reading the legacy file that
+// only ever existed because the composition opened on the wrong route (E-01).
+import { canonicalDataRoot } from '../core/store-route.js';
 import { openConfigStore } from '../contract/index.js';
 import {
   mintClientOpId, queryTraceBound,
@@ -223,6 +227,7 @@ test('boot composes B2a capabilities in order, traces each step, and serves boot
 
   const engine = composeEngine({
     root: dir,
+    dataRoot: canonicalDataRoot(dir),
     capability: 'server',
     allowedKinds: ['artifact', 'project', 'spineStep'],
     principal: 'sys_spine',
@@ -330,7 +335,11 @@ test('boot archives a legacy thread-less conversation and send refuses it with a
     assert.equal(persisted?.archived, true, 'the view is preserved and migrated, never deleted');
 
     const engine = composeEngine({
-      root: dir, capability: 'server', allowedKinds: ['conversationView'], principal: 'sys_spine',
+      root: dir,
+      dataRoot: canonicalDataRoot(dir),
+      capability: 'server',
+      allowedKinds: ['conversationView'],
+      principal: 'sys_spine',
     });
     const traces = await queryTraceBound(engine, {});
     const migration = traces.items.find((item) =>
@@ -376,7 +385,11 @@ test('migration trace failure aborts boot and the next boot recovers exactly one
   });
 
   const archived = await getConversationView(
-    composeShellPersistence({ root: dir, principal: 'person_chris' }).conversationViewDriver,
+    // Read it back through the composition the boot itself uses: the seed is a
+    // legacy-route fixture, the migration writes canonically.
+    composeShellPersistence({
+      root: dir, dataRoot: canonicalDataRoot(dir), legacyRoot: dir, principal: 'person_chris',
+    }).conversationViewDriver,
     'conv_legacy_empty_thread',
   );
   assert.equal(archived?.archived, true, 'the mutation is recoverable after the trace failure');
@@ -385,6 +398,7 @@ test('migration trace failure aborts boot and the next boot recovers exactly one
   try {
     const engine = composeEngine({
       root: dir,
+      dataRoot: canonicalDataRoot(dir),
       capability: 'server',
       allowedKinds: ['conversationView'],
       principal: 'sys_spine',
@@ -652,7 +666,11 @@ test('terminateSession appends a session.terminate system action with session an
   assert.equal(terminated.ok, true);
 
   const engine = composeEngine({
-    root: dir, capability: 'server', allowedKinds: ['providerSession'], principal: 'sys_spine',
+    root: dir,
+    dataRoot: canonicalDataRoot(dir),
+    capability: 'server',
+    allowedKinds: ['providerSession'],
+    principal: 'sys_spine',
   });
   const page = await queryTraceBound(engine, {});
   const trace = page.items.find((item) => item.action === 'session.terminate');

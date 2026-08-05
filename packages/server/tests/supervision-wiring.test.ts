@@ -13,6 +13,7 @@ import path from 'node:path';
 import { WebSocket } from 'ws';
 import { mintClientOpId, queryTraceBound } from '@novakai/foundation/dist/contract/index.js';
 import { composeEngine } from '@novakai/foundation/dist/contract/compose.js';
+import { canonicalDataRoot } from '../core/store-route.js';
 import { bootServer, type NovakaiServer } from '../core/boot.js';
 import { openConfigStore } from '../contract/index.js';
 
@@ -86,7 +87,11 @@ async function boot(dir: string, cliPath: string): Promise<NovakaiServer> {
 /** Every system.action trace the server wrote, newest last. */
 async function traces(dir: string): Promise<Array<Record<string, unknown>>> {
   const engine = composeEngine({
-    root: dir, capability: 'server', allowedKinds: ['providerSession'], principal: 'sys_spine',
+    root: dir,
+    dataRoot: canonicalDataRoot(dir),
+    capability: 'server',
+    allowedKinds: ['providerSession'],
+    principal: 'sys_spine',
   });
   const page = await queryTraceBound(engine, {});
   return page.items as unknown as Array<Record<string, unknown>>;

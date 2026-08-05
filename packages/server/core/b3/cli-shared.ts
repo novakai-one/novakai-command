@@ -25,50 +25,13 @@ function cliEnvelope<Value>(command: string, result: B3Result<Value>): CliOutput
   return { ...body, [OK_FIELD]: result.ok } as CliOutput<Value>;
 }
 
-/** §17.2. The code says what a script should DO about it, not just that it failed. */
-export const EXIT = {
-  success: 0,
-  validation: 2,
-  permission: 3,
-  conflict: 4,
-  retryable: 5,
-  recovery: 6,
-} as const;
-
-const BY_CODE: Readonly<Record<string, number>> = {
-  ValidationFailed: EXIT.validation,
-  UnsupportedContractVersion: EXIT.validation,
-  UnsupportedOperation: EXIT.validation,
-  PermissionDenied: EXIT.permission,
-  AuthorityEscalation: EXIT.permission,
-  IdempotencyConflict: EXIT.conflict,
-  VersionConflict: EXIT.conflict,
-  InputLeaseBusy: EXIT.conflict,
-  InputLeaseGenerationChanged: EXIT.conflict,
-  LiveRunConflict: EXIT.conflict,
-  WatcherConflict: EXIT.conflict,
-  StoreRouteConflict: EXIT.conflict,
-  StaleRuntimeEpoch: EXIT.retryable,
-  RuntimeUnavailable: EXIT.retryable,
-  StoreUnavailable: EXIT.retryable,
-  Backpressure: EXIT.retryable,
-  RecoveryRequired: EXIT.recovery,
-  InputSubmittedUnconfirmed: EXIT.recovery,
-  // B3c. The endpoint conflicts are retryable because the SAME request with
-  // the same key is safe once the generation settles; `ExactRunEndpointClosed`
-  // is not — that Run will never accept another Message, so a retry is a
-  // changed decision. `TranscriptCorrupt` needs a human to look at a
-  // quarantine, which is exactly what exit 6 means.
-  EndpointClaimConflict: EXIT.conflict,
-  ExactRunEndpointClosed: EXIT.conflict,
-  TranscriptSourceUnavailable: EXIT.retryable,
-  TranscriptCorrupt: EXIT.recovery,
-  CursorExpired: EXIT.recovery,
-};
-
-export function exitCodeFor(error: B3ContractError): number {
-  return BY_CODE[error.code] ?? EXIT.validation;
-}
+// AMD-005 A5-11's published table. It moved out of this file so that it can be
+// a TOTAL function of the error code: it used to carry 26 of the 56 codes and
+// fall through to exit 2, which told a caller facing a recovery state that its
+// request was malformed. Re-exported here because every CLI already reads the
+// exit vocabulary through this module.
+export { EXIT, exitCodeFor } from './exit-codes.js';
+import { EXIT, exitCodeFor } from './exit-codes.js';
 
 export interface Flags {
   readonly json: boolean;
