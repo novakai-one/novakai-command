@@ -105,20 +105,17 @@ export const EXIT_BY_CODE: Readonly<Record<B3ErrorCode, ExitCode>> = {
   // Overridden per-error by `retryable` — the row is the `false` answer.
   [READS_RETRYABLE]: EXIT.recovery,
 
-  // ── NOT ratified published text (B3E-ENTRY-LIST T-04) ───────────────────
-  // Two codes the product publishes that pass2 §11 does not, so the A5-11
-  // table has no row for them. Assigned here by the ruling's own five-line
-  // law, and named as residuals in the lane report rather than blended in:
-  //   * `ProviderInputNotReady` states in its own message that the same
-  //     request with the same ClientOpId may be re-issued against an intact
-  //     reservation and that nothing was typed → 5.
-  //   * `ProviderTurnNeverStarted` ends the Run it was raised against, so the
-  //     identical request can never succeed; a new Run is a different explicit
-  //     decision → 4.
-  // A spec-author reading either publishes them or renames the uses. Until
-  // then a total function beats a silent fall-through.
+  // B3V4-AMD-006 A6-03. Both codes were already in the product's union and
+  // absent from pass2 §11's; the amendment publishes them and rules the exits:
+  //   * `ProviderInputNotReady` → 5, the textbook criterion-5 case — refused
+  //     before the effect marker, nothing written, the reservation intact, so
+  //     the same request with the same ClientOpId may be re-issued.
+  //   * `ProviderTurnNeverStarted` → 6 DESPITE `retryable:true`. The Run has
+  //     already ended, so a resend is not "with no change"; the operator must
+  //     inspect rather than loop re-spawns. The first retryable→6 row, and the
+  //     reason the meaning-wins clause above is a law and not a footnote.
   ProviderInputNotReady: EXIT.retryable,
-  ProviderTurnNeverStarted: EXIT.conflict,
+  ProviderTurnNeverStarted: EXIT.recovery,
 };
 
 export function exitCodeFor(error: B3ContractError): number {

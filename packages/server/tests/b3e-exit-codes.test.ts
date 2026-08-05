@@ -34,18 +34,11 @@ const RULED: Readonly<Record<string, number>> = {
   // AMD-002 §9's five additions.
   SemanticSubmitRequired: 2, UnknownProviderTurnSubmission: 2,
   ProviderTurnSubmissionConflict: 4, ProviderTurnOperationInProgress: 5,
+  // B3V4-AMD-006 A6-03's two. Ratified 2026-08-06; they were seat 1's named
+  // residuals and now carry the same authority as every row above.
+  ProviderInputNotReady: 5, ProviderTurnNeverStarted: 6,
   // ProviderTurnBoundaryUnavailable is the one code that also reads
   // `retryable`, so it is asserted separately rather than as a single row.
-};
-
-/**
- * The two codes the product publishes that the ratified §11 union does not.
- * Named here rather than blended into the ruled table so that nothing pretends
- * they carry the same authority. Both are stop-and-report items (T-04).
- */
-const UNRATIFIED: Readonly<Record<string, number>> = {
-  ProviderInputNotReady: 5,
-  ProviderTurnNeverStarted: 4,
 };
 
 test('every ruled code exits exactly as ruled', () => {
@@ -76,8 +69,7 @@ test('the function is total over the published union', () => {
   // runtime half. A code with no row used to fall through to 2, which told a
   // caller facing a recovery state that its request was malformed.
   const rows = Object.keys(EXIT_BY_CODE);
-  const named = new Set([...Object.keys(RULED), 'ProviderTurnBoundaryUnavailable',
-    ...Object.keys(UNRATIFIED)]);
+  const named = new Set([...Object.keys(RULED), 'ProviderTurnBoundaryUnavailable']);
   assert.deepEqual(rows.filter((code) => !named.has(code)), [],
     'the table carries a code neither the ruling nor the named residuals cover');
   assert.deepEqual([...named].filter((code) => !rows.includes(code)), [],
@@ -90,13 +82,13 @@ test('every exit code is one of the six published meanings', () => {
   }
 });
 
-test('the two unratified product codes are assigned by the ruling own law', () => {
-  // Not published text — recorded so the CLI is total rather than silently
-  // defaulting, and so the spec-author reading has something concrete to rule
-  // on. `ProviderInputNotReady` says in its own message that the same request
-  // with the same ClientOpId is safe to re-issue → 5. `ProviderTurnNeverStarted`
-  // ends the Run, so the identical request can never succeed → 4.
-  for (const [code, expected] of Object.entries(UNRATIFIED)) {
-    assert.equal(exitCodeFor(b3err(code as B3ErrorCode, 'x', {}, false)), expected);
-  }
+test('AMD-006: a retryable ProviderTurnNeverStarted still exits 6, not 5', () => {
+  // The first `retryable:true` → 6 mapping in the table, and the reason the
+  // "meaning wins" clause exists. A6-02 publishes the code as retryable, but
+  // A6-03 rules exit 6: the Run has already ended, so a resend is not "the
+  // same request with no change" — the operator must inspect rather than loop
+  // re-spawns. A table that derived the exit from the flag would say 5 here
+  // and teach a script to retry a Run that can never start.
+  assert.equal(exitCodeFor(b3err('ProviderTurnNeverStarted', 'x', {}, true)), 6);
+  assert.equal(exitCodeFor(b3err('ProviderTurnNeverStarted', 'x', {}, false)), 6);
 });
