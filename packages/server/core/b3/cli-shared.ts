@@ -51,10 +51,15 @@ export type RuledCommand = (typeof RULED_COMMANDS)[number];
  * Everything else this CLI can print in the `command` field, kept in a SEPARATE
  * list so that nothing outside §17.1's tree can pass for ruled surface:
  *
- *  - the commands the shipped CLI carries that §17.1 does not name. They are
- *    pre-existing B3a–B3d surface and a spec-author reading is owed on them
- *    (NVK-KIMI-090 handover §3 item 3) — until it lands they keep their old
- *    space form, which is exactly what marks them as outside the set;
+ *  - the OUT-OF-B3e EXTRAS (freeze §5b, NVK-KIMI-092): lawful pre-existing
+ *    B3a–B3d verbs that §17.1 never named. Eleven were ruled lawful and are
+ *    left exactly as they are, space form and all;
+ *  - `runtime.cutover-report`, the one defect's replacement. It is spelled
+ *    DOTTED and still unruled, which is deliberate: membership of X-1's set is
+ *    what decides "ratified or extra" (§0 consequence 5), never the shape of
+ *    the string. What it may not be is a ratified command plus a flag — the
+ *    old `"runtime doctor --cutover"` was exactly that, and it is the reason
+ *    the membership test could not be applied to it;
  *  - the group-level usage line, printed when the verb is not a command at all.
  *    X-1 constrains commands; a refusal that names no command names its group.
  */
@@ -63,7 +68,7 @@ export const UNRULED_COMMANDS = [
   'agent roles', 'agent define-role', 'agent operations', 'agent fence',
   'agent grants', 'agent repair', 'agent open-conversation',
   'terminal open', 'terminal write', 'terminal read',
-  'runtime doctor --cutover',
+  'runtime.cutover-report',
 ] as const;
 
 export type CliCommand = RuledCommand | (typeof UNRULED_COMMANDS)[number];
