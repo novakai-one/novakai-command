@@ -13,12 +13,81 @@ import {
  * written as literals the house identifier rule would reject.
  */
 export type CliOutput<Value> =
-  | { readonly schemaVersion: 1; readonly ok: true; readonly command: string; readonly value: Value }
-  | { readonly schemaVersion: 1; readonly ok: false; readonly command: string; readonly error: B3ContractError };
+  | { readonly schemaVersion: 1; readonly ok: true; readonly command: CliCommand; readonly value: Value }
+  | { readonly schemaVersion: 1; readonly ok: false; readonly command: CliCommand; readonly error: B3ContractError };
+
+/**
+ * NVK-KIMI-085 X-1: `command` is the canonical dotted command path with the
+ * RESOLVED argument form appended, drawn from this closed published set — never
+ * the caller's argv. Transcribed from the ruling, in its order.
+ *
+ * It is a set and not a convention because it is a discriminator: OQ-09 and
+ * OQ-16 give `agent inspect` and `agent usage` two different value types
+ * depending on the argument, and this field is the only published way to tell
+ * which one you were handed. A free-form string there forces a consumer to
+ * sniff fields — the thing the ruling exists to prevent.
+ *
+ * The two `.stream` members are the NDJSON follow-on lines of OQ-14(ii). They
+ * are published here so the vocabulary is whole; the stream that emits them is
+ * slice A3.
+ */
+export const RULED_COMMANDS = [
+  'runtime.ensure', 'runtime.status', 'runtime.doctor', 'runtime.stop',
+  'agent.spawn', 'agent.list', 'agent.tree',
+  'agent.inspect.run', 'agent.inspect.agent',
+  'agent.attach', 'agent.attach.stream',
+  'agent.interrupt', 'agent.stop', 'agent.stop-tree.prepare', 'agent.stop-tree.confirm',
+  'agent.continue', 'agent.adopt', 'agent.controls', 'agent.control', 'agent.message',
+  'agent.communications', 'agent.usage.run', 'agent.usage.agent', 'agent.events',
+  'terminal.list', 'terminal.inspect', 'terminal.attach', 'terminal.attach.stream',
+  'terminal.detach',
+  'watch.add', 'watch.list', 'watch.update', 'watch.remove',
+  'watch.notifications', 'watch.acknowledge', 'watch.reset-drift',
+] as const;
+
+export type RuledCommand = (typeof RULED_COMMANDS)[number];
+
+/**
+ * Everything else this CLI can print in the `command` field, kept in a SEPARATE
+ * list so that nothing outside §17.1's tree can pass for ruled surface:
+ *
+ *  - the commands the shipped CLI carries that §17.1 does not name. They are
+ *    pre-existing B3a–B3d surface and a spec-author reading is owed on them
+ *    (NVK-KIMI-090 handover §3 item 3) — until it lands they keep their old
+ *    space form, which is exactly what marks them as outside the set;
+ *  - the group-level usage line, printed when the verb is not a command at all.
+ *    X-1 constrains commands; a refusal that names no command names its group.
+ */
+export const UNRULED_COMMANDS = [
+  'agent', 'runtime', 'terminal', 'watch',
+  'agent roles', 'agent define-role', 'agent operations', 'agent fence',
+  'agent grants', 'agent repair', 'agent open-conversation',
+  'terminal open', 'terminal write', 'terminal read',
+  'runtime doctor --cutover',
+] as const;
+
+export type CliCommand = RuledCommand | (typeof UNRULED_COMMANDS)[number];
+
+/**
+ * X-3's resolution rule, spelled once: ONLY an `agentRun_` prefix picks the run
+ * form. Everything else — an Agent id, a malformed id, a missing argument — is
+ * the agent form, which is what makes the resolution total and keeps the two
+ * dual-form commands from ever having to guess.
+ */
+export const isRunForm = (target: string | undefined): boolean =>
+  target?.startsWith('agentRun_') ?? false;
+
+/**
+ * The verb an operator typed, recovered from a command member for the human
+ * usage line. Dotted members carry it as their second segment; the unruled
+ * space-form ones as their second word.
+ */
+export const verbOf = (command: CliCommand): string =>
+  (command.includes('.') ? command.split('.')[1]! : command.split(' ')[1] ?? '');
 
 const OK_FIELD = 'ok';
 
-function cliEnvelope<Value>(command: string, result: B3Result<Value>): CliOutput<Value> {
+function cliEnvelope<Value>(command: CliCommand, result: B3Result<Value>): CliOutput<Value> {
   const body = result.ok
     ? { schemaVersion: 1, command, value: result.value }
     : { schemaVersion: 1, command, error: result.error };
@@ -122,7 +191,7 @@ export function parseFlags(argv: readonly string[]): Flags {
  * report what they did and then keep doing it.
  */
 export function report<Value>(
-  command: string, flags: Flags, result: B3Result<Value>, human: (value: Value) => string,
+  command: CliCommand, flags: Flags, result: B3Result<Value>, human: (value: Value) => string,
 ): void {
   if (flags.json) {
     process.stdout.write(`${JSON.stringify(cliEnvelope(command, result))}\n`);
@@ -134,12 +203,12 @@ export function report<Value>(
 }
 
 export function emit<Value>(
-  command: string, flags: Flags, result: B3Result<Value>, human: (value: Value) => string,
+  command: CliCommand, flags: Flags, result: B3Result<Value>, human: (value: Value) => string,
 ): never {
   report(command, flags, result, human);
   process.exit(result.ok ? EXIT.success : exitCodeFor(result.error));
 }
 
-export function fail(command: string, flags: Flags, error: B3ContractError): never {
+export function fail(command: CliCommand, flags: Flags, error: B3ContractError): never {
   emit(command, flags, b3fail(error), () => '');
 }

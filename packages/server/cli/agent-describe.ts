@@ -10,6 +10,7 @@ import type {
 import type {
   AgentRunUsage, AgentUsageSummary, UsageValue,
 } from '../../supervision/contract/index.js';
+import type { Agent } from '../../agents/b3/contract/index.js';
 
 function usageValue(value: UsageValue, label: string): string {
   const limitations = value.limitations.length === 0
@@ -50,6 +51,15 @@ export function describeRun(view: AgentRunView): string {
 
 export const describeList = (views: readonly AgentRunView[]): string =>
   (views.length === 0 ? 'No agent runs.' : views.map(describeRun).join('\n\n'));
+
+/**
+ * The Agent, not a Run of it (OQ-09's agent form). Deliberately short: an
+ * Agent is an identity and a role, and everything that is "happening" belongs
+ * to a Run. Saying more here would invite reading a Run's state off an Agent.
+ */
+export const describeAgent = (agent: Agent): string =>
+  `${agent.displayName}  ${agent.id}\n  role ${agent.roleProfileId}; ${agent.status}; `
+  + `belongs to ${agent.rootHumanPrincipalId}`;
 
 /** Indented by generation, so the family reads as a family. */
 export function describeTree(tree: AgentRunTreeView): string {

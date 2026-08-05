@@ -11,16 +11,16 @@ import type {
 } from '../../agent-runtime/contract/index.js';
 import type { DelegationGrant } from '../../agents/b3/contract/index.js';
 import type { RuntimeClient } from '../core/b3/client.js';
-import type { Flags } from '../core/b3/cli-shared.js';
+import type { CliCommand, Flags } from '../core/b3/cli-shared.js';
 
 export interface ObserveDeps {
   withClient<Value>(
     work: (client: RuntimeClient) => Promise<B3Result<Value>>,
   ): Promise<B3Result<Value>>;
   emit<Value>(
-    command: string, argFlags: Flags, result: B3Result<Value>, human: (value: Value) => string,
+    command: CliCommand, argFlags: Flags, result: B3Result<Value>, human: (value: Value) => string,
   ): never;
-  usage(command: string, argFlags: Flags, expected: string): never;
+  usage(command: CliCommand, argFlags: Flags, expected: string): never;
   operationId(): B3ClientOpId;
 }
 
@@ -37,7 +37,7 @@ export function observeCommands(
    */
   async events(argFlags) {
     const after = argFlags.value('after');
-    return emit('agent events', argFlags, await withClient<RunEventPage>(
+    return emit('agent.events', argFlags, await withClient<RunEventPage>(
       (client) => client.call('b3.agent.subscribeEvents', {
         ...(after === undefined ? {} : { after }),
         limit: Number(argFlags.value('limit') ?? '50'),

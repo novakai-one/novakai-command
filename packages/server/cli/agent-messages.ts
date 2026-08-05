@@ -17,16 +17,16 @@ import type {
   AgentCommunicationItem, ConversationView, MessageAcceptance,
 } from '../../messaging/b3/contract/index.js';
 import type { RuntimeClient } from '../core/b3/client.js';
-import type { Flags } from '../core/b3/cli-shared.js';
+import type { CliCommand, Flags } from '../core/b3/cli-shared.js';
 
 export interface MessageDeps {
   withClient<Value>(
     work: (client: RuntimeClient) => Promise<B3Result<Value>>,
   ): Promise<B3Result<Value>>;
   emit<Value>(
-    command: string, argFlags: Flags, result: B3Result<Value>, human: (value: Value) => string,
+    command: CliCommand, argFlags: Flags, result: B3Result<Value>, human: (value: Value) => string,
   ): never;
-  usage(command: string, argFlags: Flags, expected: string): never;
+  usage(command: CliCommand, argFlags: Flags, expected: string): never;
   operationId(): B3ClientOpId;
   /** The human principal this CLI speaks for, as Messaging names people. */
   readonly personId: string;
@@ -93,9 +93,9 @@ export function messageCommands(
       const target = argFlags.positional[0];
       const text = argFlags.value('text');
       if (target === undefined || text === undefined) {
-        return usage('agent message', argFlags, '<agentId|agentRunId> --text <text>');
+        return usage('agent.message', argFlags, '<agentId|agentRunId> --text <text>');
       }
-      return emit('agent message', argFlags, await withClient<MessageAcceptance>(
+      return emit('agent.message', argFlags, await withClient<MessageAcceptance>(
         async (client) => {
           // An exact-run send still needs a Thread, and the Run alone does not
           // name one. `--thread` lets a script pin the conversation; without
@@ -139,10 +139,10 @@ export function messageCommands(
     async communications(argFlags) {
       const agentId = argFlags.positional[0];
       if (agentId === undefined) {
-        return usage('agent communications', argFlags, '<agentId> [--with <agentId>]');
+        return usage('agent.communications', argFlags, '<agentId> [--with <agentId>]');
       }
       const withAgent = argFlags.value('with');
-      return emit('agent communications', argFlags,
+      return emit('agent.communications', argFlags,
         await withClient<Page<AgentCommunicationItem>>(
           (client) => client.call('b3.messaging.listAgentCommunications', {
             agentIds: withAgent === undefined ? [agentId] : [agentId, withAgent],

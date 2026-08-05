@@ -323,6 +323,14 @@ export function buildB3AgentMethods(options: B3AgentMethodOptions): MethodTable 
     'b3.agent.getTreeFence': method(readAgentIdInput,
       (payload, _context, principal) => runs.getTreeFence(principal, payload)),
 
+    // OQ-09's agent form. `nvk agent inspect <agentId>` is in §17.1's ratified
+    // tree and had no in-process operation behind it — the capability read has
+    // existed since B3a; nothing published it. The name is transport naming
+    // under X-4 (§16.2 is a family enumeration, not a registry), recorded in
+    // the NVK-KIMI-090 lane report.
+    'b3.agent.getAgent': method(readAgentIdInput,
+      (payload, _context, principal) => agents.getAgent(principal, payload.agentId)),
+
     'b3.agent.getRoles': method(noPayload, async (_payload, _context, principal) => {
       // A list of every role, so `nvk agent spawn --role builder` can resolve a
       // NAME. Chris types names; ids are for machines.

@@ -128,10 +128,10 @@ function describeAcknowledgement(item: Notification): string {
 const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
   [ADD_COMMAND]: async function addWatcher(argFlags) {
     const input = addWatchInput(argFlags);
-    if (!input.ok) emit('watch add', argFlags, input, () => '');
+    if (!input.ok) emit('watch.add', argFlags, input, () => '');
     const clientOpId = clientOpIdFrom(argFlags);
-    if (!clientOpId.ok) emit('watch add', argFlags, clientOpId, () => '');
-    emit('watch add', argFlags, await withClient<WatchRule>(
+    if (!clientOpId.ok) emit('watch.add', argFlags, clientOpId, () => '');
+    emit('watch.add', argFlags, await withClient<WatchRule>(
       (client) => client.call(
         'b3.supervision.createWatch', input.value, clientOpId.value,
       ),
@@ -140,8 +140,8 @@ const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
 
   [UPDATE_COMMAND]: async function updateWatcher(argFlags) {
     const clientOpId = clientOpIdFrom(argFlags);
-    if (!clientOpId.ok) emit('watch update', argFlags, clientOpId, () => '');
-    emit('watch update', argFlags, await withClient<WatchRule>(async (client) => {
+    if (!clientOpId.ok) emit('watch.update', argFlags, clientOpId, () => '');
+    emit('watch.update', argFlags, await withClient<WatchRule>(async (client) => {
       const current = await currentRule(client, argFlags.positional[0]);
       if (!current.ok) return current;
       const replacement = replacementWatchInput(current.value, argFlags);
@@ -156,8 +156,8 @@ const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
 
   [REMOVE_COMMAND]: async function removeWatcher(argFlags) {
     const clientOpId = clientOpIdFrom(argFlags);
-    if (!clientOpId.ok) emit('watch remove', argFlags, clientOpId, () => '');
-    emit('watch remove', argFlags, await withClient<WatchRule>(async (client) => {
+    if (!clientOpId.ok) emit('watch.remove', argFlags, clientOpId, () => '');
+    emit('watch.remove', argFlags, await withClient<WatchRule>(async (client) => {
       const current = await currentRule(client, argFlags.positional[0]);
       if (!current.ok) return current;
       return client.call(
@@ -170,8 +170,8 @@ const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
 
   [RESET_DRIFT_COMMAND]: async function resetDrift(argFlags) {
     const clientOpId = clientOpIdFrom(argFlags);
-    if (!clientOpId.ok) emit('watch reset-drift', argFlags, clientOpId, () => '');
-    emit('watch reset-drift', argFlags, await withClient<WatchDeadline>(async (client) => {
+    if (!clientOpId.ok) emit('watch.reset-drift', argFlags, clientOpId, () => '');
+    emit('watch.reset-drift', argFlags, await withClient<WatchDeadline>(async (client) => {
       const deadline = await currentDeadline(client, argFlags.positional[0]);
       if (!deadline.ok) return deadline;
       return client.call('b3.supervision.resetDrift', {
@@ -185,14 +185,14 @@ const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
 
   async list(argFlags) {
     const limit = Number(argFlags.value('limit') ?? 50);
-    emit('watch list', argFlags, await withClient<WatcherListing>(
+    emit('watch.list', argFlags, await withClient<WatcherListing>(
       (client) => client.call('b3.supervision.listWatchers', { limit }),
     ), describeWatchers);
   },
 
   async notifications(argFlags) {
     const limit = Number(argFlags.value('limit') ?? 50);
-    emit('watch notifications', argFlags, await withClient<{
+    emit('watch.notifications', argFlags, await withClient<{
       readonly items: readonly Notification[];
     }>((client) => client.call('b3.supervision.listNotifications', { limit })),
     describeNotifications);
@@ -203,12 +203,12 @@ const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
     // writes it; --id stays available for scripts that would rather be explicit.
     const notificationId = argFlags.value('id') ?? rest[0];
     if (notificationId === undefined || notificationId.startsWith('--')) {
-      emit('watch acknowledge', argFlags, b3fail(b3err('ValidationFailed',
+      emit('watch.acknowledge', argFlags, b3fail(b3err('ValidationFailed',
         'usage: nvk watch acknowledge <notificationId>',
         { issues: [{ path: 'notificationId', message: 'is required' }] }, false)),
       describeAcknowledgement);
     }
-    emit('watch acknowledge', argFlags, await withClient<Notification>(
+    emit('watch.acknowledge', argFlags, await withClient<Notification>(
       (client) => client.call('b3.supervision.acknowledge', { notificationId }),
     ), describeAcknowledgement);
   },

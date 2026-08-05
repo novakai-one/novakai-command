@@ -24,7 +24,8 @@ import type {
 } from '../../terminal/contract/index.js';
 import { connectRuntime, type RuntimeClient } from '../core/b3/client.js';
 import {
-  clientOpIdFrom, emit, EXIT, fail, parseFlags, report, type Flags,
+  clientOpIdFrom, emit, EXIT, fail, parseFlags, report, verbOf,
+  type CliCommand, type Flags,
 } from '../core/b3/cli-shared.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -94,15 +95,15 @@ function describeList(views: readonly TerminalSessionView[]): string {
 const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
   async list(argFlags) {
     const state = argFlags.value('state') ?? 'all';
-    emit('terminal list', argFlags, await withClient<readonly TerminalSessionView[]>(
+    emit('terminal.list', argFlags, await withClient<readonly TerminalSessionView[]>(
       (client) => client.call('b3.terminal.list', { state }),
     ), describeList);
   },
 
   async inspect(argFlags) {
     const terminalSessionId = argFlags.positional[0] as TerminalSessionId | undefined;
-    if (!terminalSessionId) return usage('terminal inspect', argFlags, 'terminalSessionId');
-    emit('terminal inspect', argFlags, await withClient<TerminalSessionView>(
+    if (!terminalSessionId) return usage('terminal.inspect', argFlags, 'terminalSessionId');
+    emit('terminal.inspect', argFlags, await withClient<TerminalSessionView>(
       (client) => client.call('b3.terminal.inspect', { terminalSessionId }),
     ), describeSession);
   },
@@ -134,12 +135,12 @@ const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
    */
   async attach(argFlags) {
     const terminalSessionId = argFlags.positional[0] as TerminalSessionId | undefined;
-    if (!terminalSessionId) return usage('terminal attach', argFlags, 'terminalSessionId');
+    if (!terminalSessionId) return usage('terminal.attach', argFlags, 'terminalSessionId');
     let client: RuntimeClient;
     try {
       client = await connectRuntime({ root, port });
     } catch (cause) {
-      return fail('terminal attach', argFlags, unreachable(cause));
+      return fail('terminal.attach', argFlags, unreachable(cause));
     }
     const attached = await client.call<ControllerAttachment>('b3.terminal.attach', {
       terminalSessionId,
@@ -149,9 +150,9 @@ const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
     }, operationId());
     if (!attached.ok) {
       client.close();
-      return emit('terminal attach', argFlags, attached, () => '');
+      return emit('terminal.attach', argFlags, attached, () => '');
     }
-    report('terminal attach', argFlags, attached,
+    report('terminal.attach', argFlags, attached,
       (attachment) => `attached as ${attachment.id}. Closing this window detaches it; `
         + 'the terminal keeps running. Press Ctrl-C to leave.');
 
@@ -168,9 +169,9 @@ const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
     const attachmentId = argFlags.positional[0];
     const terminalSessionId = argFlags.value('session') as TerminalSessionId | undefined;
     if (!attachmentId || !terminalSessionId) {
-      return usage('terminal detach', argFlags, 'controllerAttachmentId --session <id>');
+      return usage('terminal.detach', argFlags, 'controllerAttachmentId --session <id>');
     }
-    emit('terminal detach', argFlags, await withClient<ControllerAttachment>(
+    emit('terminal.detach', argFlags, await withClient<ControllerAttachment>(
       (client) => client.call(
         'b3.terminal.detach', { terminalSessionId, attachmentId }, operationId(),
       ),
@@ -307,11 +308,21 @@ async function followUntilInterrupted(
   throw new Error('unreachable');
 }
 
+/** X-1's member for a verb. `open`/`write`/`read` are outside §17.1's tree and
+ * keep their space form until the ruling on them lands (X-2 reads `write` as a
+ * command the CLI has no business carrying at all). */
+const TERMINAL_COMMANDS: Readonly<Record<string, CliCommand>> = {
+  list: 'terminal.list', inspect: 'terminal.inspect', attach: 'terminal.attach',
+  detach: 'terminal.detach',
+  open: 'terminal open', write: 'terminal write', read: 'terminal read',
+};
+
 async function runCommand(name: string, argFlags: Flags): Promise<never> {
   // §17.2: a malformed --client-op-id is a usage error, refused before anything
   // runs — a caller that believes it is retrying safely must not be told a lie.
-  if (!mintedOperationId.ok) {
-    return fail(`terminal ${name}`, argFlags, mintedOperationId.error);
+  const command = TERMINAL_COMMANDS[name];
+  if (command !== undefined && !mintedOperationId.ok) {
+    return fail(command, argFlags, mintedOperationId.error);
   }
   const handler = COMMANDS[name];
   if (!handler) {
@@ -329,9 +340,9 @@ function renderFrame(frame: TerminalOutputFrame): string {
   return `\n[terminal exited${frame.exitCode === undefined ? '' : ` (code ${frame.exitCode})`}]\n`;
 }
 
-function usage(command: string, argFlags: Flags, expected: string): never {
+function usage(command: CliCommand, argFlags: Flags, expected: string): never {
   emit(command, argFlags, b3fail(
-    b3err('ValidationFailed', `usage: nvk-terminal ${command.split(' ')[1] ?? ''} ${expected}`,
+    b3err('ValidationFailed', `usage: nvk-terminal ${verbOf(command)} ${expected}`,
       { issues: [{ path: 'argv', message: `expected ${expected}` }] }, false),
   ), () => '');
 }

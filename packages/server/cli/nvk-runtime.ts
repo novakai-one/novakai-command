@@ -16,7 +16,9 @@ import { b3err, b3fail, type B3ClientOpId, type B3Result } from '@novakai/founda
 import type { RuntimeStatus, RuntimeDoctorReport, RuntimeStopOutcome } from '../../agent-runtime/contract/index.js';
 import { startRuntimeHost } from '../core/b3/host.js';
 import { connectRuntime, type RuntimeClient } from '../core/b3/client.js';
-import { clientOpIdFrom, emit, fail, parseFlags, type Flags } from '../core/b3/cli-shared.js';
+import {
+  clientOpIdFrom, emit, fail, parseFlags, type CliCommand, type Flags,
+} from '../core/b3/cli-shared.js';
 import { buildCutoverReport, describeCutover, LEGACY_MESSAGING_STORE } from '../core/b3/cutover-report.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -153,11 +155,11 @@ const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
       startDetached();
       status = await waitForRuntime();
     }
-    emit('runtime ensure', argFlags, status, describeStatus);
+    emit('runtime.ensure', argFlags, status, describeStatus);
   },
 
   async status(argFlags) {
-    emit('runtime status', argFlags, await withClient<RuntimeStatus>((client) =>
+    emit('runtime.status', argFlags, await withClient<RuntimeStatus>((client) =>
       client.call<RuntimeStatus>('b3.runtime.getStatus', {})), describeStatus);
   },
 
@@ -177,14 +179,14 @@ const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
       });
       emit('runtime doctor --cutover', argFlags, report, describeCutover);
     }
-    emit('runtime doctor', argFlags, await withClient<RuntimeDoctorReport>((client) =>
+    emit('runtime.doctor', argFlags, await withClient<RuntimeDoctorReport>((client) =>
       client.call<RuntimeDoctorReport>('b3.runtime.doctor', {})), describeDoctor);
   },
 
   async stop(argFlags) {
     const liveRuns = argFlags.value('live-runs') ?? 'refuse';
     if (liveRuns !== 'refuse' && liveRuns !== 'stop-explicitly') {
-      emit('runtime stop', argFlags, b3fail(
+      emit('runtime.stop', argFlags, b3fail(
         b3err('ValidationFailed', '--live-runs must be refuse or stop-explicitly',
           { issues: [{ path: 'live-runs', message: 'unknown value' }] }, false),
       ), () => '');
@@ -198,13 +200,22 @@ const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
         expectedEpochId: status.value.activeEpochId, liveRuns,
       }, operationId());
     });
-    emit('runtime stop', argFlags, outcome, describeStop);
+    emit('runtime.stop', argFlags, outcome, describeStop);
   },
 };
 
+/** X-1's member for a verb. `serve` is outside §17.1's tree — it is how the
+ * runtime is STARTED, not a command against one — so it reports under its
+ * group until the ruling on the out-of-tree commands lands. */
+const RUNTIME_COMMANDS: Readonly<Record<string, CliCommand>> = {
+  ensure: 'runtime.ensure', status: 'runtime.status',
+  doctor: 'runtime.doctor', stop: 'runtime.stop', serve: 'runtime',
+};
+
 async function runCommand(name: string, argFlags: Flags): Promise<never> {
-  if (!mintedOperationId.ok) {
-    return fail(`runtime ${name}`, argFlags, mintedOperationId.error);
+  const command = RUNTIME_COMMANDS[name];
+  if (command !== undefined && !mintedOperationId.ok) {
+    return fail(command, argFlags, mintedOperationId.error);
   }
   const handler = COMMANDS[name];
   if (!handler) {

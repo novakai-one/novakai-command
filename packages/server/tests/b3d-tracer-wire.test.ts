@@ -291,7 +291,8 @@ test('an operator sees the same watcher and Notification through the nvk CLI', a
       ok: boolean; command: string; value: { rules: readonly WatchRule[] };
     };
     assert.equal(rules.ok, true, listed.out);
-    assert.equal(rules.command, 'watch list');
+    // X-1: the dotted member, not the space form this asserted before.
+    assert.equal(rules.command, 'watch.list');
     assert.equal(rules.value.rules.length, 1, 'the CLI cannot see the installed watcher');
 
     const alerts = await runNvk([

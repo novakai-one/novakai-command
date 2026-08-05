@@ -39,14 +39,15 @@ import type {
   RunEventPage, RunOperationView, StopTreeConfirmation, SupervisionAssignment,
   TreeMutationFence,
 } from '../../agent-runtime/contract/index.js';
-import type { AgentRoleProfile, DelegationGrant } from '../../agents/b3/contract/index.js';
+import type { Agent, AgentRoleProfile, DelegationGrant } from '../../agents/b3/contract/index.js';
 import type { AgentRunUsage, AgentUsageSummary } from '../../supervision/contract/index.js';
 import { connectRuntime, type RuntimeClient } from '../core/b3/client.js';
 import {
-  clientOpIdFrom, emit, fail, pageFlags, parseFlags, type Flags,
+  clientOpIdFrom, emit, fail, isRunForm, pageFlags, parseFlags, verbOf,
+  type CliCommand, type Flags,
 } from '../core/b3/cli-shared.js';
 import {
-  describeControls, describeList, describeRun, describeTree, describeUsage,
+  describeAgent, describeControls, describeList, describeRun, describeTree, describeUsage,
 } from './agent-describe.js';
 import { roleFromFile, roleIdFor } from './agent-roles.js';
 import { messageCommands } from './agent-messages.js';
@@ -143,10 +144,10 @@ const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
     const role = argFlags.value('role');
     const displayName = argFlags.value('name');
     if (!role || !displayName) {
-      return usage('agent spawn', argFlags, '--role <name|id> --name <name> [--task "<brief>"]');
+      return usage('agent.spawn', argFlags, '--role <name|id> --name <name> [--task "<brief>"]');
     }
     const task = argFlags.value('task');
-    emit('agent spawn', argFlags, await withClient<AgentRunView>(async (client) => {
+    emit('agent.spawn', argFlags, await withClient<AgentRunView>(async (client) => {
       const roleId = await roleIdFor(client, role);
       if (!roleId.ok) return roleId;
       return client.call('b3.agent.spawn', {
@@ -179,8 +180,8 @@ const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
   async list(argFlags) {
     const state = argFlags.value('state') ?? 'live';
     const page = pageFlags(argFlags);
-    if (!page.ok) return fail('agent list', argFlags, page.error);
-    emit('agent list', argFlags, await withClient<{ items: readonly AgentRunView[] }>(
+    if (!page.ok) return fail('agent.list', argFlags, page.error);
+    emit('agent.list', argFlags, await withClient<{ items: readonly AgentRunView[] }>(
       (client) => client.call('b3.agent.listRuns', {
         includeFinal: state !== 'live',
         ...(state === 'final' ? { onlyFinal: true } : {}),
@@ -194,9 +195,9 @@ const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
     // operator typing `--root agent_x` would have silently pointed the client
     // at a directory called `agent_x` as well as mis-targeting the tree.
     const rootAgentId = argFlags.value('agent') ?? argFlags.positional[0];
-    if (!rootAgentId) return usage('agent tree', argFlags, '<agentId> | --agent <agentId>');
+    if (!rootAgentId) return usage('agent.tree', argFlags, '<agentId> | --agent <agentId>');
     const direction = argFlags.value('direction');
-    emit('agent tree', argFlags, await withClient<AgentRunTreeView>(
+    emit('agent.tree', argFlags, await withClient<AgentRunTreeView>(
       (client) => client.call('b3.agent.getTree', {
         rootAgentId, maxDepth: 8,
         ...(direction === undefined ? {} : { direction }),
@@ -204,28 +205,43 @@ const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
     ), describeTree);
   },
 
+  /**
+   * OQ-09: one command, two value types. The §4.1 prefix picks BOTH the
+   * operation and the shape you get back, and `command` (X-1) is what tells the
+   * caller which — an `agentRun_` id resolves to the Run's view, anything else
+   * to the Agent itself. No field sniffing, no schema change.
+   */
   async inspect(argFlags) {
-    const agentRunId = argFlags.positional[0];
-    if (!agentRunId) return usage('agent inspect', argFlags, '<agentRunId>');
-    emit('agent inspect', argFlags, await withClient<AgentRunView>(
-      (client) => client.call('b3.agent.getRun', { agentRunId }),
-    ), describeRun);
+    const target = argFlags.positional[0];
+    if (isRunForm(target)) {
+      return emit('agent.inspect.run', argFlags, await withClient<AgentRunView>(
+        (client) => client.call('b3.agent.getRun', { agentRunId: target }),
+      ), describeRun);
+    }
+    if (!target) return usage('agent.inspect.agent', argFlags, '<agentId|agentRunId>');
+    return emit('agent.inspect.agent', argFlags, await withClient<Agent>(
+      (client) => client.call('b3.agent.getAgent', { agentId: target }),
+    ), describeAgent);
   },
 
+  /** OQ-16, the same shape as OQ-09: prefix picks the form, `command` says so. */
   async usage(argFlags) {
     const target = argFlags.positional[0];
-    if (!target) return usage('agent usage', argFlags, '<agentId|agentRunId>');
-    emit('agent usage', argFlags, await withClient<AgentRunUsage | AgentUsageSummary>(
-      (client) => target.startsWith('agentRun_')
-        ? client.call('b3.supervision.getRunUsage', { agentRunId: target })
-        : client.call('b3.supervision.getAgentUsage', { agentId: target }),
+    if (isRunForm(target)) {
+      return emit('agent.usage.run', argFlags, await withClient<AgentRunUsage>(
+        (client) => client.call('b3.supervision.getRunUsage', { agentRunId: target }),
+      ), describeUsage);
+    }
+    if (!target) return usage('agent.usage.agent', argFlags, '<agentId|agentRunId>');
+    return emit('agent.usage.agent', argFlags, await withClient<AgentUsageSummary>(
+      (client) => client.call('b3.supervision.getAgentUsage', { agentId: target }),
     ), describeUsage);
   },
 
   async interrupt(argFlags) {
     const agentRunId = argFlags.positional[0];
-    if (!agentRunId) return usage('agent interrupt', argFlags, '<agentRunId>');
-    emit('agent interrupt', argFlags, await withClient(async (client) => {
+    if (!agentRunId) return usage('agent.interrupt', argFlags, '<agentRunId>');
+    emit('agent.interrupt', argFlags, await withClient(async (client) => {
       const view = await client.call<AgentRunView>('b3.agent.getRun', { agentRunId });
       if (!view.ok) return view;
       return client.call<{ kind: string }>('b3.agent.interrupt', {
@@ -240,9 +256,9 @@ const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
     const agentId = argFlags.positional[0];
     const agentRunId = argFlags.value('run');
     if (!agentId || !agentRunId || argFlags.value('confirm') !== 'stop-one') {
-      return usage('agent stop', argFlags, '<agentId> --run <agentRunId> --confirm stop-one');
+      return usage('agent.stop', argFlags, '<agentId> --run <agentRunId> --confirm stop-one');
     }
-    emit('agent stop', argFlags, await withClient<AgentRunView>(
+    emit('agent.stop', argFlags, await withClient<AgentRunView>(
       (client) => client.call('b3.agent.stop', {
         agentId, expectedLiveRunId: agentRunId, confirmation: 'stop-one',
       }, operationId()),
@@ -250,13 +266,21 @@ const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
       + 'their supervision moved to the nearest live ancestor.');
   },
 
+  /**
+   * The two halves of §17.1's two-step stop are two members of X-1's set, not
+   * one: `prepare` mints a confirmation token and changes nothing, `confirm`
+   * stops a family. A single `command` for both would leave a reader of the
+   * record unable to tell a rehearsal from the real thing.
+   */
   'stop-tree': async (argFlags) => {
+    const preparing = argFlags.value('prepare') !== undefined;
     const rootAgentId = argFlags.positional[0];
     if (!rootAgentId) {
-      return usage('agent stop-tree', argFlags, '<agentId> --prepare | --token <t> --confirm stop-tree');
+      return usage(preparing ? 'agent.stop-tree.prepare' : 'agent.stop-tree.confirm', argFlags,
+        '<agentId> --prepare | --token <t> --confirm stop-tree');
     }
-    if (argFlags.value('prepare') !== undefined) {
-      return emit('agent stop-tree', argFlags, await withClient<StopTreeConfirmation>(
+    if (preparing) {
+      return emit('agent.stop-tree.prepare', argFlags, await withClient<StopTreeConfirmation>(
         (client) => client.call('b3.agent.prepareStopTree', { rootAgentId }, operationId()),
       ), (confirmation) => `This will stop ${confirmation.visibleDescendantCount} agent(s) `
         + `below ${confirmation.rootAgentId}, and that agent.\n`
@@ -265,9 +289,9 @@ const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
     }
     const token = argFlags.value('token');
     if (!token || argFlags.value('confirm') !== 'stop-tree') {
-      return usage('agent stop-tree', argFlags, '<agentId> --token <t> --confirm stop-tree');
+      return usage('agent.stop-tree.confirm', argFlags, '<agentId> --token <t> --confirm stop-tree');
     }
-    return emit('agent stop-tree', argFlags, await withClient<RunOperationView>(
+    return emit('agent.stop-tree.confirm', argFlags, await withClient<RunOperationView>(
       (client) => client.call('b3.agent.stopTree', {
         rootAgentId, confirmationToken: token, confirmation: 'stop-tree',
       }, operationId()),
@@ -281,10 +305,10 @@ const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
     const fromRunId = argFlags.value('from');
     const mode = argFlags.value('mode');
     if (!agentId || !fromRunId || !mode) {
-      return usage('agent continue', argFlags,
+      return usage('agent.continue', argFlags,
         '<agentId> --from <agentRunId> --mode resume|fresh|compact|handover [--config inherit-plan|refresh-role]');
     }
-    emit('agent continue', argFlags, await withClient<AgentRunView>(
+    emit('agent.continue', argFlags, await withClient<AgentRunView>(
       (client) => client.call('b3.agent.continue', {
         agentId,
         expectedOldRunId: fromRunId,
@@ -302,10 +326,10 @@ const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
     const supervisor = argFlags.value('supervisor');
     const expected = argFlags.value('expect');
     if (!subjectAgentId || !supervisor || expected === undefined) {
-      return usage('agent adopt', argFlags,
+      return usage('agent.adopt', argFlags,
         '<agentId> --supervisor <agentId|human:<principal>> --expect <generation>');
     }
-    emit('agent adopt', argFlags, await withClient<SupervisionAssignment>(
+    emit('agent.adopt', argFlags, await withClient<SupervisionAssignment>(
       (client) => client.call('b3.agent.adopt', {
         subjectAgentId,
         expectedAssignmentVersion: Number(expected),
@@ -323,8 +347,8 @@ const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
    */
   async attach(argFlags) {
     const agentRunId = argFlags.positional[0];
-    if (!agentRunId) return usage('agent attach', argFlags, '<agentRunId>');
-    emit('agent attach', argFlags, await withClient<AgentRunView>(
+    if (!agentRunId) return usage('agent.attach', argFlags, '<agentRunId>');
+    emit('agent.attach', argFlags, await withClient<AgentRunView>(
       (client) => client.call('b3.agent.getRun', { agentRunId }),
     ), (view) => (view.run.terminalSessionId === undefined
       ? `${view.agent.displayName} has no terminal yet (${view.run.lifecycle}).`
@@ -335,8 +359,8 @@ const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
 
   async controls(argFlags) {
     const agentRunId = argFlags.positional[0];
-    if (!agentRunId) return usage('agent controls', argFlags, '<agentRunId>');
-    emit('agent controls', argFlags, await withClient<ControlCapabilityFacts>(
+    if (!agentRunId) return usage('agent.controls', argFlags, '<agentRunId>');
+    emit('agent.controls', argFlags, await withClient<ControlCapabilityFacts>(
       (client) => client.call('b3.agent.controls', { agentRunId }),
     ), describeControls);
   },
@@ -346,9 +370,9 @@ const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
     const setting = argFlags.value('set');
     const separator = setting?.indexOf('=') ?? -1;
     if (!agentRunId || setting === undefined || separator <= 0) {
-      return usage('agent control', argFlags, '<agentRunId> --set model|effort|provider-setting=<value>');
+      return usage('agent.control', argFlags, '<agentRunId> --set model|effort|provider-setting=<value>');
     }
-    emit('agent control', argFlags, await withClient<AgentControlOutcomeFacts>(async (client) => {
+    emit('agent.control', argFlags, await withClient<AgentControlOutcomeFacts>(async (client) => {
       // The version the CALLER read, so two people changing one Agent cannot
       // both silently win.
       const view = await client.call<AgentRunView>('b3.agent.getRun', { agentRunId });
@@ -390,20 +414,50 @@ const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
   },
 };
 
+/**
+ * X-1's member for a verb, resolved from the SAME facts the handler resolves
+ * from, so a refusal issued before dispatch names the command the operator
+ * actually typed rather than its group. The dual forms are spelled here too;
+ * `b3e-cli-command.test.ts` drives every command down both paths and asserts
+ * they agree, because two spellings of one answer is how they drift.
+ */
+function commandOf(name: string, argFlags: Flags): CliCommand | undefined {
+  const target = argFlags.positional[0];
+  if (name === 'inspect') return isRunForm(target) ? 'agent.inspect.run' : 'agent.inspect.agent';
+  if (name === 'usage') return isRunForm(target) ? 'agent.usage.run' : 'agent.usage.agent';
+  if (name === 'stop-tree') {
+    return argFlags.value('prepare') === undefined
+      ? 'agent.stop-tree.confirm' : 'agent.stop-tree.prepare';
+  }
+  return AGENT_COMMANDS[name];
+}
+
+/** Every single-form verb, ruled and unruled alike. */
+const AGENT_COMMANDS: Readonly<Record<string, CliCommand>> = {
+  spawn: 'agent.spawn', list: 'agent.list', tree: 'agent.tree', attach: 'agent.attach',
+  interrupt: 'agent.interrupt', stop: 'agent.stop', continue: 'agent.continue',
+  adopt: 'agent.adopt', controls: 'agent.controls', control: 'agent.control',
+  message: 'agent.message', communications: 'agent.communications', events: 'agent.events',
+  // Outside §17.1's tree; a ruling is owed (NVK-KIMI-090 handover §3 item 3).
+  roles: 'agent roles', 'define-role': 'agent define-role', operations: 'agent operations',
+  fence: 'agent fence', grants: 'agent grants', repair: 'agent repair',
+  'open-conversation': 'agent open-conversation',
+};
+
 async function runCommand(name: string, argFlags: Flags): Promise<never> {
-  if (!mintedOperationId.ok) return fail(`agent ${name}`, argFlags, mintedOperationId.error);
-  const handler = COMMANDS[name];
-  if (!handler) {
+  const command = commandOf(name, argFlags);
+  if (command === undefined || COMMANDS[name] === undefined) {
     // Derived from the table, so a verb added without a usage line is
     // impossible rather than merely unlikely.
     return usage('agent', argFlags, Object.keys(COMMANDS).join('|'));
   }
-  return handler(argFlags);
+  if (!mintedOperationId.ok) return fail(command, argFlags, mintedOperationId.error);
+  return COMMANDS[name]!(argFlags);
 }
 
-function usage(command: string, argFlags: Flags, expected: string): never {
+function usage(command: CliCommand, argFlags: Flags, expected: string): never {
   emit(command, argFlags, b3fail(
-    b3err('ValidationFailed', `usage: nvk-agent ${command.split(' ')[1] ?? ''} ${expected}`,
+    b3err('ValidationFailed', `usage: nvk-agent ${verbOf(command)} ${expected}`,
       { issues: [{ path: 'argv', message: `expected ${expected}` }] }, false),
   ), () => '');
 }
