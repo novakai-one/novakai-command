@@ -70,7 +70,9 @@ test('the same --client-op-id twice is ONE terminal, not two', async () => {
     );
 
     const listed = await runCli(root, host.port, ['list', '--state', 'live']);
-    assert.equal((listed.json?.value as unknown[]).length, 1,
+    // A5-05: the listing answers a Page. The count is the same fact, read
+    // where the owner now publishes it.
+    assert.equal((listed.json?.value as { items: unknown[] }).items.length, 1,
       'the machine ended up with two shells for one command');
   } finally {
     await host.close();
@@ -84,7 +86,7 @@ test('two DIFFERENT commands are still two terminals', async () => {
     await runCli(root, host.port, openArgs);
     await runCli(root, host.port, openArgs);
     const listed = await runCli(root, host.port, ['list', '--state', 'live']);
-    assert.equal((listed.json?.value as unknown[]).length, 2,
+    assert.equal((listed.json?.value as { items: unknown[] }).items.length, 2,
       'idempotency swallowed a genuinely separate request');
   } finally {
     await host.close();

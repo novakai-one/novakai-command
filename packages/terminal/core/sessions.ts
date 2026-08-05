@@ -2,14 +2,15 @@
 import {
   b3fail, b3err, b3ok, commandReceiptId, mintClientOpId, mintTerminalSessionId,
   nowIsoUtc, validationFailed,
-  type AuthenticatedPrincipal, type B3Result, type CommandContext,
+  type AuthenticatedPrincipal, type B3Page, type B3Result, type CommandContext,
   type CommandReceiptId, type IsoUtc, type RuntimeEpochId, type SystemCommandContext,
   type TerminalSessionId,
 } from '@novakai/foundation/contract';
 import type {
-  ListTerminalSessionsFilter, OpenManagedTerminalInput, TerminalSessionView,
+  OpenManagedTerminalInput, TerminalSessionFilter, TerminalSessionView,
   TerminateTerminalInput,
 } from '../contract/api.js';
+import { sessionPageWindow } from './session-listing.js';
 import type { ControllerAttachment, TerminalSession } from '../contract/records.js';
 import { FIRST_INPUT_SEQUENCE, LiveSession } from './live.js';
 import { settleAndFindActive } from './leases.js';
@@ -235,22 +236,33 @@ export async function getTerminalSession(
   return viewOfSession(core, session.value);
 }
 
+/**
+ * A5-05: §12.3's paged session listing. The window decides WHICH records this
+ * page is; the loop below decides what each of them looks like — two questions
+ * that used to be one, and that page differently.
+ */
 export async function listTerminalSessions(
-  core: TerminalCore, _principal: AuthenticatedPrincipal, filter?: ListTerminalSessionsFilter,
-): Promise<B3Result<readonly TerminalSessionView[]>> {
+  core: TerminalCore, _principal: AuthenticatedPrincipal, filter: TerminalSessionFilter,
+): Promise<B3Result<B3Page<TerminalSessionView>>> {
   const sessions = await core.store.list<TerminalSession>('terminalSession');
   if (!sessions.ok) return sessions;
-  const wanted = filter?.state ?? 'all';
-  const views: TerminalSessionView[] = [];
-  for (const session of sessions.value) {
-    const final = FINAL_STATUSES.has(session.status);
-    if (wanted === 'live' && final) continue;
-    if (wanted === 'final' && !final) continue;
+  const page = sessionPageWindow(sessions.value, filter);
+  if (!page.ok) return page;
+
+  const items: TerminalSessionView[] = [];
+  for (const session of page.value.wanted) {
     const view = await viewOfSession(core, session);
     if (!view.ok) return view;
-    views.push(view.value);
+    items.push(view.value);
   }
-  return b3ok(views);
+  // No visibility policy narrows this listing, so the page states honestly that
+  // nothing was withheld. If one is ever added, it belongs HERE — a false zero
+  // on `omissions` is worse than the omission it hides (FZ-VIEW-010).
+  return b3ok({
+    items,
+    ...(page.value.nextCursor === undefined ? {} : { nextCursor: page.value.nextCursor }),
+    omissions: [],
+  });
 }
 
 export async function terminateTerminal(

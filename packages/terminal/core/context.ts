@@ -5,6 +5,7 @@ import type {
 } from '@novakai/foundation/contract';
 import { b3err, b3fail, b3ok } from '@novakai/foundation/contract';
 import type { Clock, PtyHost, RuntimeEpochFence } from '../contract/ports.js';
+import { FINAL_TERMINAL_SESSION_STATUSES } from '../contract/records.js';
 import type { ProviderTurnTerminalInputAttempt, TerminalSession } from '../contract/records.js';
 import type { LiveSessions } from './live.js';
 import type { SessionQueue } from './serialize.js';
@@ -68,7 +69,8 @@ export const OPERATION = {
   closeProviderTurn: 'terminal.closeProviderTurnBarrierUnproven' as PublicOperationName,
 } as const;
 
-export const FINAL_STATUSES = new Set(['exited', 'failed']);
+/** Derived from the published list, so the door and the core cannot disagree. */
+export const FINAL_STATUSES: ReadonlySet<string> = new Set(FINAL_TERMINAL_SESSION_STATUSES);
 
 /** Statuses whose record asserts a process is currently running. */
 export const CLAIMS_TO_BE_RUNNING = new Set(['reserved', 'starting', 'live']);

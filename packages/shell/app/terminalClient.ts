@@ -7,9 +7,12 @@ import {
   type TerminalAttachment, type TerminalFrame, type TerminalOutcome,
   type TerminalServices, type TerminalTabView,
 } from '../contract/terminalServices.js';
+import { UNFINISHED_TERMINAL_SESSION_STATUSES } from '../../terminal/contract/records.js';
 import { fetchBootstrap, type BootstrapDocument } from './serverClient.js';
 
 const PROTOCOL_VERSION = 1;
+/** A5-05's ceiling. The tab strip shows every open shell, so it asks for all it may. */
+const TERMINAL_PAGE_LIMIT = 200;
 /** `op_<uuidv4>` — Foundation's existing ClientOpId shape, carried forward (§4.1). */
 function mintClientOpId(): string {
   return `op_${crypto.randomUUID()}`;
@@ -136,9 +139,15 @@ export async function connectTerminalServices(
     close() { socket.close(); },
 
     async listTerminals() {
-      const listed = await call<unknown[]>('b3.terminal.list', { state: 'live' });
+      // A5-05: the method answers a `Page`, and its filter is a set of the
+      // owner's own statuses. The page window is imported rather than spelled
+      // here — a window this client invented would be a second answer to a
+      // question Terminal already answers (CL-P).
+      const listed = await call<{ items: unknown[] }>('b3.terminal.list', {
+        status: UNFINISHED_TERMINAL_SESSION_STATUSES, limit: TERMINAL_PAGE_LIMIT,
+      });
       if (!listed.succeeded) return listed;
-      return { succeeded: true, value: listed.value.map(tabViewOf) };
+      return { succeeded: true, value: listed.value.items.map(tabViewOf) };
     },
 
     async openTerminal(workingDirectory, columns, rows) {

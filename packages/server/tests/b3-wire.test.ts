@@ -91,7 +91,7 @@ const WIRE_STEPS: readonly WireStep[] = [
     }),
     remember: (state, value) => { state.sessionId = (value as { id: string }).id; },
   },
-  { method: 'b3.terminal.list', payload: () => ({ state: 'live' }) },
+  { method: 'b3.terminal.list', payload: () => ({ limit: 200, status: ['live'] }) },
   {
     method: 'b3.terminal.inspect',
     payload: (state) => ({ terminalSessionId: state.sessionId }),

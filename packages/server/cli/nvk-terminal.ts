@@ -1,7 +1,7 @@
 #!/usr/bin/env -S npx tsx
 // nvk-terminal — list, inspect, attach to, and detach from real terminals (§17.1).
 //
-//   nvk-terminal list [--state live|final|all]
+//   nvk-terminal list [--limit <n>] [--cursor <EventCursor>] [--state live|final|all]
 //   nvk-terminal inspect <terminalSessionId>
 //   nvk-terminal open [--cwd <path>] [--authority plain-shell|mock-managed]
 //
@@ -16,15 +16,19 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  b3err, b3fail, b3ok, type B3ClientOpId, type B3Result, type TerminalSessionId,
+  b3err, b3fail, b3ok,
+  type B3ClientOpId, type B3Page, type B3Result, type TerminalSessionId,
 } from '@novakai/foundation/contract';
+import {
+  FINAL_TERMINAL_SESSION_STATUSES, UNFINISHED_TERMINAL_SESSION_STATUSES,
+} from '../../terminal/contract/index.js';
 import type {
   ControllerAttachment, TerminalInputAttempt, TerminalInputLease,
-  TerminalOutputFrame, TerminalSession, TerminalSessionView,
+  TerminalOutputFrame, TerminalSession, TerminalSessionStatus, TerminalSessionView,
 } from '../../terminal/contract/index.js';
 import { connectRuntime, type RuntimeClient } from '../core/b3/client.js';
 import {
-  clientOpIdFrom, emit, EXIT, fail, parseFlags, report, verbOf,
+  clientOpIdFrom, emit, EXIT, fail, pageFlags, parseFlags, report, verbOf,
   type CliCommand, type Flags,
 } from '../core/b3/cli-shared.js';
 
@@ -86,17 +90,46 @@ function describeSession(view: TerminalSessionView): string {
     + `${attached.length} controller(s) attached; ${runningLine}.`;
 }
 
-function describeList(views: readonly TerminalSessionView[]): string {
-  if (views.length === 0) return 'No terminal sessions.';
-  return views.map(describeSession).join('\n');
+/**
+ * A5-05 made this a `Page`, so the human line says what the page actually is.
+ * "No terminal sessions" for a page that merely ENDED here would be the CLI
+ * claiming completeness the owner never gave it.
+ */
+function describeList(page: B3Page<TerminalSessionView>): string {
+  const body = page.items.length === 0
+    ? 'No terminal sessions.' : page.items.map(describeSession).join('\n');
+  return page.nextCursor === undefined ? body
+    : `${body}\n  (more sessions follow; continue with --cursor ${page.nextCursor})`;
+}
+
+/**
+ * `--state` is not in §17.1 — it is an out-of-B3e extra this command already
+ * shipped (freeze §5b), kept rather than deleted. What it may NOT do is carry a
+ * vocabulary of its own: A5-05 spells the filter as a set of the owner's own
+ * statuses, so the flag maps onto the lists Terminal publishes. A CLI that
+ * spelled "still going" itself would be a second answer to a question the
+ * capability already answers (CL-P, FZ-VIEW-034).
+ */
+function statusesFor(state: string): B3Result<readonly TerminalSessionStatus[] | undefined> {
+  if (state === 'all') return b3ok(undefined);
+  if (state === 'live') return b3ok(UNFINISHED_TERMINAL_SESSION_STATUSES);
+  if (state === 'final') return b3ok(FINAL_TERMINAL_SESSION_STATUSES);
+  return b3fail(b3err('ValidationFailed', `unknown --state "${state}"`,
+    { issues: [{ path: 'state', message: 'must be live, final or all' }] }, false));
 }
 
 /** One handler per command — a table, so adding a verb never grows a branch. */
 const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
   async list(argFlags) {
-    const state = argFlags.value('state') ?? 'all';
-    emit('terminal.list', argFlags, await withClient<readonly TerminalSessionView[]>(
-      (client) => client.call('b3.terminal.list', { state }),
+    const page = pageFlags(argFlags);
+    if (!page.ok) return fail('terminal.list', argFlags, page.error);
+    const statuses = statusesFor(argFlags.value('state') ?? 'all');
+    if (!statuses.ok) return fail('terminal.list', argFlags, statuses.error);
+    emit('terminal.list', argFlags, await withClient<B3Page<TerminalSessionView>>(
+      (client) => client.call('b3.terminal.list', {
+        ...page.value,
+        ...(statuses.value === undefined ? {} : { status: statuses.value }),
+      }),
     ), describeList);
   },
 

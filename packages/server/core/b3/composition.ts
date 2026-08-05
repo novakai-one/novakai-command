@@ -28,6 +28,7 @@ import {
   composeProviderUsageEvidence, type ProviderUsageEvidenceContract,
 } from '../../../agents/contract/index.js';
 import { agentsPort, createRunCredentials, terminalPort } from './run-ports.js';
+import { readAllTerminalSessions } from './terminal-paging.js';
 import { createProviderPort } from './provider-port.js';
 import { composeB3Messaging, composeB3TranscriptFor } from './messaging-composition.js';
 import {
@@ -141,8 +142,10 @@ function terminalAsRecoverable(terminal: TerminalContract): RecoverableCapabilit
     },
 
     async census(): Promise<B3Result<RuntimeCensus>> {
-      const listed = await terminal.listTerminalSessions(
-        { id: 'sys_agent_runtime', kind: 'system', verifiedScopes: [] },
+      // Every session, not a page of them: a census that stops at 200 would
+      // under-report exactly the machine that has too much running on it.
+      const listed = await readAllTerminalSessions(
+        terminal, { id: 'sys_agent_runtime', kind: 'system', verifiedScopes: [] },
       );
       if (!listed.ok) return listed;
       const live: TerminalSessionId[] = [];

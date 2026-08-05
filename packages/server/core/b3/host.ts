@@ -10,11 +10,14 @@ import {
   type TerminalSessionId,
 } from '@novakai/foundation/contract';
 import { HUMAN_SCOPES } from '../../../agents/b3/contract/index.js';
-import { DEFAULT_STALE_AFTER_MS } from '../../../terminal/contract/index.js';
+import {
+  DEFAULT_STALE_AFTER_MS, UNFINISHED_TERMINAL_SESSION_STATUSES,
+} from '../../../terminal/contract/index.js';
 import { startTransport, type DispatchedCall, type RunningTransport } from '../transport/server.js';
 import type { CallerIdentity, CallerSession } from '../../contract/protocol.js';
 import { composeB3Runtime, type B3Runtime, type B3RuntimeOptions } from './composition.js';
 import { buildB3Methods } from './methods.js';
+import { readAllTerminalSessions } from './terminal-paging.js';
 import { buildB3AgentMethods } from './agent-methods.js';
 import { buildB3MessagingMethods } from './messaging-methods.js';
 import { buildB3SupervisionMethods } from './supervision-methods.js';
@@ -244,8 +247,12 @@ export async function startRuntimeHost(
   }
 
   async function followNewSessions(): Promise<void> {
-    const listed = await runtime.terminal.listTerminalSessions(
-      { id: principalId, kind: 'human', verifiedScopes: [] }, { state: 'live' },
+    // A5-05 replaced `state: 'live'` with the status set it always meant: the
+    // three statuses that are not final. Every one of them, paged through, so
+    // a busy machine does not quietly stop following its newest tabs.
+    const listed = await readAllTerminalSessions(
+      runtime.terminal, { id: principalId, kind: 'human', verifiedScopes: [] },
+      { status: UNFINISHED_TERMINAL_SESSION_STATUSES },
     );
     if (!listed.ok) return;
     for (const view of listed.value) follow(view.session.id);
