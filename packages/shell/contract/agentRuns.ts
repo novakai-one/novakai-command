@@ -28,6 +28,9 @@ import type {
   AgentCommunicationsPageView, ListAgentCommunicationsRequest,
 } from './communications.js';
 import type { AgentRunTreeView, GetAgentRunTreeRequest } from './agentTree.js';
+import type {
+  ListNotificationsRequest, NotificationPageView, NotificationView,
+} from './notificationRead.js';
 
 /** One sourced Supervision measurement, verbatim (P2 §9.1:1420). */
 export interface RunUsageValue {
@@ -164,9 +167,27 @@ export interface ShellCommunicationServices {
 }
 
 /**
+ * FZ-VIEW-001's `supervision` slice, as far as the notification surface reaches.
+ *
+ * The read and the one mutation the frozen state machine actually accepts. Both
+ * are published methods (`packages/server/core/b3/supervision-methods.ts`); the
+ * Shell had invented its own pair beside them and reached neither (L-14).
+ * `subscribeNotifications` is the third member and is not wired here — the
+ * screen re-reads through this door instead, so there is no second projection of
+ * a Notification anywhere in the browser.
+ */
+export interface ShellSupervisionServices {
+  listNotifications(
+    request: ListNotificationsRequest,
+  ): Promise<ShellReadResult<NotificationPageView>>;
+  acknowledge(notificationId: string): Promise<ShellReadResult<NotificationView>>;
+}
+
+/**
  * FZ-VIEW-001's read slice. B3e's tracer shipped the Runs read; B2.3 adds the
- * communications read; the lifecycle, terminal and supervision members of the
- * frozen facade are named there and arrive with their lanes.
+ * communications read; B2.5 adds the supervision read; the lifecycle and
+ * terminal members of the frozen facade are named there and arrive with their
+ * lanes.
  */
 export interface ShellAgentServices {
   readonly runs: {
@@ -174,6 +195,7 @@ export interface ShellAgentServices {
     getAgentRunTree(request: GetAgentRunTreeRequest): Promise<ShellReadResult<AgentRunTreeView>>;
   };
   readonly communications: ShellCommunicationServices;
+  readonly supervision: ShellSupervisionServices;
 }
 
 /**

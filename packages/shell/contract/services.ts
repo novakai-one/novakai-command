@@ -7,7 +7,6 @@ import type { PersistFailedError } from './errors.js';
 import type { FocusSnapshot } from './context.js';
 import type { RunUsageTableView, UsageTableView } from './usage.js';
 import type { WatcherListView } from './watchers.js';
-import type { NotificationInboxView } from './notifications.js';
 import type { ShellAgentServices } from './agentRuns.js';
 import type { TerminalTabPatch, TerminalTabRecord } from './terminalTab.js';
 
@@ -91,11 +90,15 @@ export interface MessagingEvents {
    */
   onUsage?(table: UsageTableView): void;
   /**
-   * B3d lane C: the supervision notification inbox. Pushed whenever a
-   * Notification's durable state moves, so the ONE row that is the exception
-   * follows the capability rather than a poll interval.
+   * Lane C: something moved in the notification inbox.
+   *
+   * Deliberately CARRIES NOTHING. It used to push a Shell-shaped inbox, which
+   * made the pushed value a second projection of a Notification arriving by a
+   * second path — the FZ-VIEW-034 drift shape. It is a nudge now: the screen
+   * re-reads through the frozen `supervision` door, so there is exactly one
+   * shape of a Notification in the browser and exactly one place it comes from.
    */
-  onNotifications?(inbox: NotificationInboxView): void;
+  onNotifications?(): void;
   /** A committed Agents evidence event says the rebuildable Run rows may have moved. */
   onRunUsageChanged?(): void;
 }
@@ -185,17 +188,15 @@ export interface ShellServices {
   /** Current watcher rules joined to their generation-fenced deadlines. */
   listWatchers?(): Promise<WatcherListView>;
   /**
-   * B3d lane C supervision surface: the current notification inbox, pulled once
-   * so the screen is never blank while it waits for the next push. Absent on
-   * hosts with no supervision engine — the screen draws that.
+   * `getNotificationInbox` and `acknowledgeNotification` used to live here.
+   *
+   * They were Shell-invented methods that no host outside `app/mockServices.ts`
+   * implemented, so against a fully backed server the attention screen drew
+   * "Supervision is not available in this host" forever while the published
+   * `b3.supervision.listNotifications` and `b3.supervision.acknowledge` sat
+   * unread (L-14). Retired in B2.5 — the surface reads through
+   * `agentRuns.supervision` like every other frozen view.
    */
-  getNotificationInbox?(): Promise<NotificationInboxView>;
-  /**
-   * Settle one Notification. The ONLY mutation this surface offers, because the
-   * frozen state machine accepts an acknowledgement from `transcript-observed`
-   * and from nothing else. Resolves when the durable state has moved.
-   */
-  acknowledgeNotification?(notificationId: string): Promise<void>;
   /** B3d Run usage read from Runtime views; older hosts omit or refuse it. */
   getRunUsageTable?(): Promise<RunUsageTableView>;
   /**

@@ -3,7 +3,7 @@
 // (Absence is drawn, not described — but the app must never look dead.)
 import type {
   ChatMessage, ConversationSummary, MessagingEvents, SettingsRecord, ShellServices,
-  AgentEvent, LayoutRecord, NotificationRowView,
+  AgentEvent, LayoutRecord, NotificationView,
 } from '../contract/index.js';
 import { defaultLayoutRecord } from '../contract/layout.js';
 import { validateSetting } from '../contract/settings.js';
@@ -13,6 +13,20 @@ import {
   type TerminalTabDriver, type TerminalTabRecord,
 } from '../contract/terminalTab.js';
 import { composeHumanMessage, type FocusSnapshot } from '../contract/context.js';
+
+/* eslint-disable id-length -- `ok` is the frozen result field every B3 caller
+   reads (FZ-CLI-SCHEMA-001/011). Scoped to the door answers alone, so this
+   file's other id-length debt stays counted rather than silenced. */
+
+/** Said once, as a value: this host has no Runtime, and that is not an empty list. */
+const noRuntime = {
+  ok: false as const,
+  error: {
+    code: 'RuntimeUnavailable',
+    message: 'this host has no Novakai Runtime to read Agent Runs from',
+  },
+};
+/* eslint-enable id-length */
 
 export function createMockServices(opts: { seeded?: boolean } = {}): ShellServices {
   let convos: ConversationSummary[] = opts.seeded === false ? [] : [
@@ -56,32 +70,73 @@ export function createMockServices(opts: { seeded?: boolean } = {}): ShellServic
   };
   const emit = (fn: (l: MessagingEvents) => void) => listeners.forEach(fn);
 
-  // B3d lane C: a notification inbox covering every durable state, so the ONE
-  // attention row and its release are drivable without a supervision engine.
-  let notifications: NotificationRowView[] = [
+  // Lane C: notifications covering every durable state AND both drift phases,
+  // so the ONE attention row, its release, and the human-escalation exception
+  // are all drivable without a Supervision engine.
+  //
+  // These are whole FZ-VIEW-024 records, not the seven-field row the Shell used
+  // to invent (L-14): the mock answers the FROZEN door, so the offline harness
+  // exercises `app/supervision.ts` rather than a second path around it.
+  let notifications: NotificationView[] = [
+    // TWO human escalations, on purpose. One mark, not two — the fixture that
+    // would have shipped the wrong screenshot here is the one where only a
+    // single row can qualify, because then "at most one mark" is untested by
+    // the picture. Settling this one releases the mark onto the other.
+    { id: 'notification_escalation_seen', summary: 'Fable stopped mid-turn and its work is unfinished',
+      state: 'transcript-observed', deliveryMode: 'start-turn', phase: 'drift-human-escalation',
+      driftEpisodeId: 'driftepisode_fable_4', watchRuleId: 'watchrule_drift_fable',
+      conditionGeneration: 7, evidenceRefs: ['driftcheck_9'],
+      recipient: { kind: 'human', principalId: 'person_chris' },
+      subject: { kind: 'agent', agentId: 'agent_fable' },
+      createdAt: '2026-08-03T10:55:00.000Z' },
+    { id: 'notification_escalation', summary: 'Kimi has stopped answering and its work is unfinished',
+      state: 'queued', deliveryMode: 'start-turn', phase: 'drift-human-escalation',
+      driftEpisodeId: 'driftepisode_kimi_1', watchRuleId: 'watchrule_drift_kimi',
+      conditionGeneration: 12, evidenceRefs: ['driftcheck_2', 'driftcheck_3'],
+      recipient: { kind: 'human', principalId: 'person_chris' },
+      subject: { kind: 'agent', agentId: 'agent_kimi' },
+      createdAt: '2026-08-03T10:50:00.000Z' },
     { id: 'notification_seen_2', summary: 'Kimi has not answered the supervision check-in',
-      state: 'transcript-observed', deliveryMode: 'start-turn', recipient: 'Chris',
-      subject: 'agent_kimi', observedAt: '2026-08-03T10:40:00.000Z' },
+      state: 'transcript-observed', deliveryMode: 'start-turn', phase: 'drift-status-request',
+      driftEpisodeId: 'driftepisode_kimi_1', watchRuleId: 'watchrule_drift_kimi',
+      conditionGeneration: 12, evidenceRefs: ['driftcheck_1'],
+      recipient: { kind: 'agent', agentId: 'agent_kimi' },
+      subject: { kind: 'agent', agentId: 'agent_kimi' },
+      createdAt: '2026-08-03T10:40:00.000Z' },
     { id: 'notification_seen_1', summary: 'Output token threshold reached',
-      state: 'transcript-observed', deliveryMode: 'start-turn', recipient: 'Chris',
-      subject: 'agent_fable', observedAt: '2026-08-03T10:20:00.000Z' },
+      state: 'transcript-observed', deliveryMode: 'start-turn', phase: 'condition',
+      watchRuleId: 'watchrule_tokens', conditionGeneration: 4,
+      evidenceRefs: ['usageevidence_88'],
+      recipient: { kind: 'human', principalId: 'person_chris' },
+      subject: { kind: 'agent', agentId: 'agent_fable' },
+      createdAt: '2026-08-03T10:20:00.000Z' },
     { id: 'notification_uncertain', summary: 'Build room reply never appeared in the transcript',
-      state: 'delivery-uncertain', deliveryMode: 'next-turn-context', recipient: 'Chris',
-      subject: 'agent_codex', observedAt: '2026-08-03T10:10:00.000Z' },
+      state: 'delivery-uncertain', deliveryMode: 'next-turn-context', phase: 'condition',
+      watchRuleId: 'watchrule_reply', conditionGeneration: 2, evidenceRefs: [],
+      recipient: { kind: 'human', principalId: 'person_chris' },
+      subject: { kind: 'agent-run', agentRunId: 'agentrun_codex_7' },
+      createdAt: '2026-08-03T10:10:00.000Z' },
     { id: 'notification_sent', summary: 'Deadline armed for the nightly gate',
-      state: 'offered-to-endpoint', deliveryMode: 'next-turn-context', recipient: 'Chris',
-      subject: 'agent_kimi', observedAt: '2026-08-03T09:50:00.000Z' },
+      state: 'offered-to-endpoint', deliveryMode: 'next-turn-context', phase: 'condition',
+      watchRuleId: 'watchrule_nightly', conditionGeneration: 31,
+      evidenceRefs: ['watchdeadline_5'],
+      recipient: { kind: 'human', principalId: 'person_chris' },
+      subject: { kind: 'children-of', agentId: 'agent_kimi' },
+      createdAt: '2026-08-03T09:50:00.000Z' },
     { id: 'notification_queued', summary: 'Disk usage crossed 80% on the build host',
-      state: 'queued', deliveryMode: 'queue-only', recipient: 'Chris',
-      subject: 'host_build', observedAt: '2026-08-03T09:30:00.000Z' },
+      state: 'queued', deliveryMode: 'queue-only', phase: 'condition',
+      watchRuleId: 'watchrule_disk', conditionGeneration: 1, evidenceRefs: [],
+      recipient: { kind: 'human', principalId: 'person_chris' },
+      subject: { kind: 'agent', agentId: 'agent_kimi' },
+      createdAt: '2026-08-03T09:30:00.000Z' },
     { id: 'notification_settled', summary: 'Nightly gate passed',
-      state: 'acknowledged', deliveryMode: 'queue-only', recipient: 'Chris',
-      subject: 'agent_codex', observedAt: '2026-08-03T08:00:00.000Z' },
+      state: 'acknowledged', deliveryMode: 'queue-only', phase: 'condition',
+      watchRuleId: 'watchrule_nightly', conditionGeneration: 30,
+      evidenceRefs: ['watchdeadline_4'],
+      recipient: { kind: 'human', principalId: 'person_chris' },
+      subject: { kind: 'agent', agentId: 'agent_codex' },
+      createdAt: '2026-08-03T08:00:00.000Z' },
   ];
-  const inboxView = () => ({
-    observedAt: new Date().toISOString(),
-    rows: notifications.map((item) => ({ ...item })),
-  });
 
   // S2b context bus: the mock holds focus like the bridge does (host authority).
   let focus: FocusSnapshot = { app: 'messaging', ref: 'none' };
@@ -214,16 +269,70 @@ export function createMockServices(opts: { seeded?: boolean } = {}): ShellServic
         async listSkills() { return skills.map((s) => ({ ...s })); },
       };
     })(),
-    async getNotificationInbox() { return inboxView(); },
-    async acknowledgeNotification(notificationId: string) {
-      // The mock enforces the same law the capability does: only a Notification
-      // the provider was observed to receive can be settled.
-      notifications = notifications.map((item) =>
-        (item.id === notificationId && item.state === 'transcript-observed'
-          ? { ...item, state: 'acknowledged' as const }
-          : item));
-      emit((listener) => listener.onNotifications?.(inboxView()));
+    /**
+     * FZ-VIEW-001's read facade. This host has no Runtime, so the Runs and
+     * communications members say so as a VALUE — the screens draw a stated
+     * absence, which is the same thing they must do when a real host's Runtime
+     * is down. Supervision is answered for real, so the attention surface is
+     * drivable offline through the frozen door rather than around it.
+     */
+    /* eslint-disable id-length -- the frozen `ok` again; see the note above. */
+    agentRuns: {
+      runs: {
+        async listAgentRuns() { return noRuntime; },
+        async getAgentRunTree() { return noRuntime; },
+      },
+      communications: {
+        async listAgentCommunications() {
+          return {
+            ok: false as const,
+            error: {
+              code: 'MessagingUnavailable',
+              message: 'this host has no Novakai Runtime to read communications from',
+            },
+          };
+        },
+      },
+      supervision: {
+        async listNotifications(request) {
+          return {
+            ok: true as const,
+            value: {
+              items: notifications.slice(0, request.limit ?? 200).map((item) => ({ ...item })),
+              omissions: [],
+            },
+          };
+        },
+        async acknowledge(notificationId: string) {
+          // The mock enforces the same law the capability does: only a
+          // Notification the provider was observed to receive can be settled.
+          // A refusal is a typed value here too, so the screen's failure path
+          // is reachable offline instead of only in a unit test.
+          const target = notifications.find((item) => item.id === notificationId);
+          if (target === undefined) {
+            return {
+              ok: false as const,
+              error: { code: 'NotFound', message: `no notification ${notificationId}` },
+            };
+          }
+          if (target.state !== 'transcript-observed') {
+            return {
+              ok: false as const,
+              error: {
+                code: 'InvalidStateTransition',
+                message: `a notification in ${target.state} cannot be acknowledged`,
+              },
+            };
+          }
+          const settled: NotificationView = { ...target, state: 'acknowledged' };
+          notifications = notifications.map((item) =>
+            (item.id === notificationId ? settled : item));
+          emit((listener) => listener.onNotifications?.());
+          return { ok: true as const, value: settled };
+        },
+      },
     },
+    /* eslint-enable id-length */
     presence: {
       subscribeAgentEvents(handler) {
         presenceHandlers.add(handler);

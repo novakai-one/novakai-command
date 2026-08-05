@@ -35,7 +35,7 @@ describe('nothing has answered yet is NOT the answer "none"', () => {
   });
 
   it('the inbox does not tell Chris he is caught up before it has looked', () => {
-    const waiting = html(React.createElement(NotificationInboxView, { inbox: null }));
+    const waiting = html(React.createElement(NotificationInboxView, { inbox: null, error: null }));
     expect(waiting).not.toContain('No notifications');
     expect(waiting).toContain('Reading notifications…');
   });
@@ -80,7 +80,7 @@ describe('and when an authority DID answer none, that is still said plainly', ()
 
   it('an empty inbox is an empty inbox — this is the sentence that lets him rest', () => {
     const answered = html(React.createElement(NotificationInboxView, {
-      inbox: { observedAt: '2026-08-06T00:00:00.000Z', rows: [] },
+      inbox: { observedAt: '2026-08-06T00:00:00.000Z', rows: [] }, error: null,
     }));
     expect(answered).toContain('No notifications');
   });

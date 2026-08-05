@@ -22,6 +22,7 @@ import {
 } from '../contract/agentRuns.js';
 import type { AgentRunTreeView } from '../contract/agentTree.js';
 import { createShellCommunicationServices } from './communications.js';
+import { createShellSupervisionServices } from './supervision.js';
 
 /**
  * One nvk-ws v1 call, payload-level: the transport owns the `{contractVersion,
@@ -170,9 +171,10 @@ export function createShellAgentServices(
   options: ShellAgentServicesOptions,
 ): ShellAgentServices {
   return {
-    // FZ-VIEW-001 is ONE facade. The communications read is built here rather
-    // than beside it so a screen cannot acquire half a door.
+    // FZ-VIEW-001 is ONE facade. The communications and supervision reads are
+    // built here rather than beside it so a screen cannot acquire half a door.
     communications: createShellCommunicationServices(options),
+    supervision: createShellSupervisionServices(options),
     runs: {
       /**
        * The family. `maxDepth` is passed only when the caller named one — a
