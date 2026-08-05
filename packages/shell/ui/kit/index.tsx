@@ -170,18 +170,20 @@ export function Swatch(props: {
 }
 
 // ── List rows ───────────────────────────────────────────────────────────────
-export function ListRow(props: {
-  label: React.ReactNode;
-  meta?: React.ReactNode;
-  leading?: React.ReactNode;
-  selected?: boolean;
-  onClick?: () => void;
+// Passthrough attributes, the way Button and IconButton already take them: a
+// caller needs to hang `data-*` on the row (state a test or the browse harness
+// can read) without dropping to a raw element and tripping red gate 3.
+export function ListRow(props: Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, 'onClick'> & {
+  label: React.ReactNode; meta?: React.ReactNode; leading?: React.ReactNode;
+  selected?: boolean; onClick?: () => void;
 }) {
+  const { label, meta, leading, selected, className, ...rest } = props;
   return (
-    <button className="k-row" data-selected={props.selected ? 'true' : 'false'} onClick={props.onClick}>
-      {props.leading}
-      <span className="k-row__label">{props.label}</span>
-      {props.meta != null && <span className="k-row__meta">{props.meta}</span>}
+    <button className={`k-row${className ? ` ${className}` : ''}`}
+      data-selected={selected ? 'true' : 'false'} {...rest}>
+      {leading}
+      <span className="k-row__label">{label}</span>
+      {meta != null && <span className="k-row__meta">{meta}</span>}
     </button>
   );
 }

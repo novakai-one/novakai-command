@@ -9,6 +9,7 @@ import type { RunUsageTableView, UsageTableView } from './usage.js';
 import type { WatcherListView } from './watchers.js';
 import type { NotificationInboxView } from './notifications.js';
 import type { ShellAgentServices } from './agentRuns.js';
+import type { TerminalTabPatch, TerminalTabRecord } from './terminalTab.js';
 
 /**
  * S2a: shell-side view of an agent definition v2 (plain data — the browser
@@ -99,6 +100,20 @@ export interface MessagingEvents {
   onRunUsageChanged?(): void;
 }
 
+/**
+ * The browser's reach into the `terminalTab` kind. Plain data both ways: the
+ * page never sees a driver, and `clientOpId` is minted at the interaction layer
+ * exactly as it is for every other UI-originated mutation (DEC-S2-12).
+ */
+export interface ShellTerminalTabServices {
+  list(): Promise<TerminalTabRecord[]>;
+  save(id: string, patch: TerminalTabPatch, clientOpId: string):
+    Promise<{ ok: true; value: { record: TerminalTabRecord; version: number } } | { ok: false; error: PersistFailedError }>;
+  /** Detaches this window from the tab. It does not stop the session. */
+  close(id: string, clientOpId: string):
+    Promise<{ ok: true; value: { record: TerminalTabRecord; version: number } } | { ok: false; error: PersistFailedError }>;
+}
+
 export interface ShellServices {
   // conversations (messaging owns CRUD — §11 ruling 9; shell calls its contract)
   listConversations(): Promise<ConversationSummary[]>;
@@ -125,6 +140,18 @@ export interface ShellServices {
   getSettings(): Promise<SettingsRecord[]>;
   setSetting(key: string, value: unknown, opts: { derivedFrom?: string; theme?: 'dark' | 'light'; clientOpId: string }):
     Promise<{ ok: true; value: SettingsRecord } | { ok: false; error: SetSettingError }>;
+
+  /**
+   * Terminal TABS — the Shell's own durable record of which windows are open
+   * (FZ-VIEW-017), reached the same way layout and settings are.
+   *
+   * Deliberately NOT on `TerminalServices`: that seam is the Runtime's terminal
+   * facade and owns sessions, which outlive every tab. This one is a Shell fact
+   * and goes through the Shell's scoped Foundation handle. Keeping them apart is
+   * what makes "closing a tab does not stop a session" structural rather than a
+   * rule someone has to remember (red gate 1).
+   */
+  terminalTabs: ShellTerminalTabServices;
 
   // agents (S2a: agent-def UI + model picker; shell keeps NO model truth —
   // every write goes through the agents contract via this seam)

@@ -7,6 +7,11 @@ import type {
 } from '../contract/index.js';
 import { defaultLayoutRecord } from '../contract/layout.js';
 import { validateSetting } from '../contract/settings.js';
+import { fail, ok, persistFailed } from '../contract/errors.js';
+import {
+  closeTerminalTab, setTerminalTab,
+  type TerminalTabDriver, type TerminalTabRecord,
+} from '../contract/terminalTab.js';
 import { composeHumanMessage, type ScreenContext } from '../contract/context.js';
 
 export function createMockServices(opts: { seeded?: boolean } = {}): ShellServices {
@@ -22,6 +27,32 @@ export function createMockServices(opts: { seeded?: boolean } = {}): ShellServic
   let layout: { record: LayoutRecord; version: number } = {
     record: defaultLayoutRecord(new Date().toISOString(), 'person_chris'),
     version: 1,
+  };
+  // CAS is modelled, not skipped: a stale expectedVersion is refused here the
+  // same way Foundation refuses it, so a UI that forgets to re-read is caught in
+  // the demo rather than only against a real store.
+  const mockTabs = new Map<string, { record: TerminalTabRecord; version: number }>();
+  const mockTabDriver: TerminalTabDriver = {
+    async list() { return [...mockTabs.values()].map((held) => held.record); },
+    async read(id) { return mockTabs.get(id) ?? null; },
+    async create(record, _clientOpId) {
+      if (mockTabs.has(record.id)) {
+        return fail(persistFailed('terminalTab', 'Conflict', `tab ${record.id} already exists`));
+      }
+      const held = { record, version: 1 };
+      mockTabs.set(record.id, held);
+      return ok(held);
+    },
+    async update(id, record, expectedVersion, _clientOpId) {
+      const current = mockTabs.get(id);
+      if (!current) return fail(persistFailed('terminalTab', 'NotFound', `no terminal tab ${id}`));
+      if (current.version !== expectedVersion) {
+        return fail(persistFailed('terminalTab', 'VersionConflict', `tab ${id} moved on`));
+      }
+      const held = { record, version: current.version + 1 };
+      mockTabs.set(id, held);
+      return ok(held);
+    },
   };
   const emit = (fn: (l: MessagingEvents) => void) => listeners.forEach(fn);
 
@@ -117,6 +148,17 @@ export function createMockServices(opts: { seeded?: boolean } = {}): ShellServic
         version: layout.version + 1,
       };
       return { ok: true as const, value: layout };
+    },
+    // The tab store the demo runs on. It is an in-memory DRIVER behind the REAL
+    // contract functions, not a second implementation of them — so the demo
+    // rejects a wrong-prefix session id and keeps a closed tab's session for the
+    // same reasons production does, instead of being politely wrong.
+    terminalTabs: {
+      async list() { return [...mockTabs.values()].map((held) => held.record); },
+      async save(id, patch, clientOpId) {
+        return setTerminalTab(mockTabDriver, id, patch, clientOpId);
+      },
+      async close(id, clientOpId) { return closeTerminalTab(mockTabDriver, id, clientOpId); },
     },
     async getSettings() { return settingsStore; },
     async setSetting(key, value, o) {

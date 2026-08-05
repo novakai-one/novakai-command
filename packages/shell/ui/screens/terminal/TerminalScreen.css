@@ -12,6 +12,59 @@
   color: var(--ink);
 }
 
+/* The tab strip. Rows are the kit's rows, laid along the bar instead of down a
+   list — so selection, hover and ellipsis are the ones every list in the app
+   already uses, and this file only says "horizontal, and only as wide as its
+   name". No accent: the composed viewport's one gold is on the rail. */
+.nvkTerminalStrip {
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.nvkTerminalStrip .k-stack {
+  align-items: center;
+  gap: 0;
+  padding: 6px 10px 6px 6px;
+  overflow-x: auto;
+}
+
+.nvkTabStripRow {
+  width: auto;
+  max-width: 220px;
+  font-size: var(--text-3);
+}
+
+/* Found in a screenshot, not in a test: with only a gap between them, adjacent
+   tabs read as one continuous line of words — "Terminal 000b Needs recovery
+   deploy Session unknown" — and the strip stops looking like tabs at all. A
+   hairline between neighbours is the same structural device the bar below
+   already uses, and it costs no colour and no ornament. */
+.nvkTabStripRow + .nvkTabStripRow {
+  margin-left: 6px;
+  border-left: 1px solid var(--hairline);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  padding-left: 12px;
+}
+
+/* The status word is a whisper next to the name, never its equal — otherwise
+   every marked tab shouts as loudly as the tab itself. */
+.nvkTabStripRow .k-row__meta {
+  font-size: calc(var(--text-3) - 1px);
+  opacity: 0.85;
+}
+
+/* The two rows that earn a mark, marked the quiet way — ink tier and weight,
+   never a dot or a chip. A strip of healthy tabs stays completely flat. */
+.nvkTabStripRow[data-session='unknown'] .k-row__meta,
+.nvkTabStripRow[data-session='attention'] .k-row__meta {
+  color: var(--ink-2);
+}
+
+.nvkTabStripRow[data-session='attention'] .k-row__label {
+  color: var(--ink);
+  font-weight: 500;
+}
+
 .nvkTerminalBar {
   align-items: baseline;
   gap: 14px;

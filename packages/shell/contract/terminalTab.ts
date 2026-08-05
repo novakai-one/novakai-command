@@ -139,9 +139,13 @@ export async function closeTerminalTab(
  * he had open, and a restore that throws is a restore that shows him nothing.
  */
 export async function listOpenTerminalTabs(
-  driver: TerminalTabDriver,
+  // Widened to the one method it uses: the Node driver satisfies this, and so
+  // does the browser's `ShellTerminalTabServices`. One rule for "which tabs are
+  // open", reachable from both sides — rather than the page reimplementing the
+  // filter and quietly disagreeing about a closed tab.
+  source: { list(): Promise<TerminalTabRecord[]> },
 ): Promise<TerminalTabRecord[]> {
-  const rows = await driver.list();
+  const rows = await source.list();
   const open: TerminalTabRecord[] = [];
   for (const stored of rows) {
     const parsed = TerminalTabRecord.safeParse(stored);

@@ -34,11 +34,22 @@ export interface TerminalChromeProps {
   /** The node xterm draws into — handed straight to the foreign renderer. */
   readonly surfaceRef: React.Ref<HTMLDivElement>;
   readonly onClose: () => void;
+  /**
+   * The tab strip, if there is one. Passed in rather than built here so the
+   * chrome stays a pure function of what it is handed — and so a shell with one
+   * tab draws no strip region at all instead of an empty bar.
+   */
+  readonly strip?: React.ReactNode;
 }
 
 export function TerminalChrome(props: TerminalChromeProps): React.JSX.Element {
   return (
     <Stack gap={0} className="nvkTerminal" role="region" aria-label="Terminal">
+      {props.strip != null && (
+        <Stack gap={0} className="nvkTerminalStrip" data-testid="terminal-strip">
+          {props.strip}
+        </Stack>
+      )}
       <Stack horizontal className="nvkTerminalBar">
         <Text className="nvkTerminalTitle">Terminal</Text>
         <Text className="nvkTerminalTruth" data-tone={props.tone} data-testid="terminal-truth">

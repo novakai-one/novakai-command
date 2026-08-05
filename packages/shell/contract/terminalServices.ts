@@ -138,6 +138,22 @@ export function toTabView(reported: unknown): TerminalTabView {
   };
 }
 
+/**
+ * What a page says when it could not reach the Runtime at all.
+ *
+ * The raw cause is KEPT, not replaced: whoever has to fix this needs the parse
+ * error. But it is not the headline, because the headline has to answer the
+ * question a person actually has when a terminal window will not open — are my
+ * shells gone? They are not. A window failing to reach the Runtime says nothing
+ * about the sessions, which is the same distinction the whole tab surface is
+ * built on (red gate 1).
+ */
+export function describeBootFailure(cause: unknown): string {
+  const detail = cause instanceof Error ? cause.message : JSON.stringify(cause);
+  return `Cannot reach the Novakai Runtime, so this window has nothing to attach to. `
+    + `Any terminals it started are still running. (${detail})`;
+}
+
 /** The one sentence the tab shows. Three facts, never collapsed into one. */
 export function describeTerminal(view: TerminalTabView): string {
   const origin = view.owner.kind === 'plain-shell'

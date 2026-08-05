@@ -17,7 +17,9 @@ import path from 'node:path';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { TerminalChrome, toneFor } from '../ui/screens/terminal/TerminalChrome.js';
-import { describeTerminal, type TerminalTabView } from '../contract/terminalServices.js';
+import {
+  describeBootFailure, describeTerminal, type TerminalTabView,
+} from '../contract/terminalServices.js';
 
 const TERMINAL_DIR = path.resolve(import.meta.dirname, '../ui/screens/terminal');
 
@@ -69,6 +71,29 @@ describe('the terminal tab obeys the two standing UI laws', () => {
       expect({ file, gold: src.match(/#(d0a14b|e2ba6e|c98f2f)/gi) ?? [] })
         .toEqual({ file, gold: [] });
     }
+  });
+});
+
+/**
+ * Found in a browser, not in a test: against a host with no nvk-server the
+ * terminal page drew `Unexpected token '<', "<!doctype "... is not valid JSON`.
+ * That is red gate 5 satisfied on a technicality — something IS drawn — while
+ * telling Chris nothing about what is wrong or whether his shells are safe.
+ */
+describe('a boot failure says what could not be reached', () => {
+  it('names the Runtime, and keeps the raw cause instead of replacing it', () => {
+    const said = describeBootFailure(new Error('Unexpected token \'<\', "<!doctype "... is not valid JSON'));
+    expect(said).toContain('Novakai Runtime');
+    expect(said).toContain('is not valid JSON');
+  });
+
+  it('says the terminals are unaffected — the question a person actually has', () => {
+    expect(describeBootFailure(new Error('boom'))).toContain('still running');
+  });
+
+  it('handles a thrown non-Error without turning it into "[object Object]"', () => {
+    expect(describeBootFailure({ nope: true })).toContain('Novakai Runtime');
+    expect(describeBootFailure({ nope: true })).not.toContain('[object Object]');
   });
 });
 
@@ -134,6 +159,26 @@ describe('what the chrome draws', () => {
     expect(chrome({ problem: 'lease-lost: another window took the lease' }))
       .toContain('lease-lost: another window took the lease');
     expect(chrome()).not.toContain('data-testid="terminal-problem"');
+  });
+
+  /**
+   * B1.2: the strip sits ABOVE the truth line, not inside it. The strip says
+   * which windows exist and stays quiet about healthy ones; the truth line says
+   * everything about the one you are looking at. Both are always on screen, so
+   * a quiet strip is never the only thing standing between Chris and a status.
+   */
+  it('hosts the tab strip, and the selected session\'s truth line beside it', () => {
+    const html = chrome({
+      strip: React.createElement('div', { 'data-testid': 'stub-strip' }, 'tabs go here'),
+      truth: describeTerminal(view()),
+    });
+    expect(html).toContain('data-testid="stub-strip"');
+    expect(html).toContain('1 window attached');
+    expect(html.indexOf('stub-strip')).toBeLessThan(html.indexOf('data-testid="terminal-truth"'));
+  });
+
+  it('draws no strip region at all when there is none to draw', () => {
+    expect(chrome()).not.toContain('data-testid="terminal-strip"');
   });
 
   it('every element it draws is a kit component', () => {

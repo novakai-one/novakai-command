@@ -184,6 +184,14 @@ export function createServerServices(
       // M5/DEC-S2-12: clientOpId minted HERE (the interaction layer) and sent
       // with the mutation; the server threads it to foundation meta.
       setLayout: (patch, clientOpId) => call('setLayout', { patch, clientOpId }),
+      // FZ-VIEW-017: the tab record travels as plain data, like layout does.
+      // clientOpId is minted at the interaction layer and threaded through, so a
+      // retried click never opens two tabs (LAW 1).
+      terminalTabs: {
+        list: () => call('listTerminalTabs'),
+        save: (tabId, patch, clientOpId) => call('setTerminalTab', { id: tabId, patch, clientOpId }),
+        close: (tabId, clientOpId) => call('closeTerminalTab', { id: tabId, clientOpId }),
+      },
       getSettings: () => call('getSettings'),
       setSetting: async (key, value, opts) =>
         call<{ ok: true; value: SettingsRecord } | { ok: false; error: SetSettingError }>('setSetting', { key, value, opts }),
