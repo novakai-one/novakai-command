@@ -11,6 +11,7 @@ import { MessagingScreen, MessagingRail } from './screens/messaging/MessagingScr
 import { SettingsScreen } from './screens/settings/SettingsScreen.js';
 import { AgentsScreen } from './screens/agents/AgentsScreen.js';
 import { UsageScreen } from './screens/supervision/UsageScreen.js';
+import { RunsScreen } from './screens/agents/RunsScreen.js';
 import { WatchersScreen } from './screens/supervision/WatchersScreen.js';
 import { NotificationInboxScreen } from './screens/supervision/NotificationInboxScreen.js';
 import { Inspector } from './inspector/Inspector.js';
@@ -20,7 +21,7 @@ export function App(props: { services: ShellServices; models?: string[] }) {
   const { services } = props;
   const [settings, setSettings] = useState<SettingsRecord[]>([]);
   const [view, setView] = useState<
-    'messaging' | 'agents' | 'sessions' | 'watchers' | 'notifications' | 'settings'
+    'messaging' | 'agents' | 'runs' | 'sessions' | 'watchers' | 'notifications' | 'settings'
   >('messaging');
   const [selectedConvo, setSelectedConvo] = useState<string | null>(null);
   const [inspected, setInspected] = useState<{ title: string; body: React.ReactNode } | null>(null);
@@ -80,6 +81,7 @@ export function App(props: { services: ShellServices; models?: string[] }) {
     <div className="nv-rail__wide" style={{ padding: '2px 6px' }}>
       <ListRow label="Messages" selected={view === 'messaging'} onClick={() => setView('messaging')} />
       <ListRow label="Agents" selected={view === 'agents'} onClick={() => setView('agents')} />
+      <ListRow label="Runs" selected={view === 'runs'} onClick={() => setView('runs')} />
       <ListRow label="Sessions" selected={view === 'sessions'} onClick={() => setView('sessions')} />
       <ListRow label="Watchers" selected={view === 'watchers'} onClick={() => setView('watchers')} />
       <ListRow label="Notifications" selected={view === 'notifications'} onClick={() => setView('notifications')} />
@@ -129,6 +131,8 @@ export function App(props: { services: ShellServices; models?: string[] }) {
         />
       ) : view === 'agents' ? (
         <AgentsScreen services={services} />
+      ) : view === 'runs' ? (
+        <RunsScreen services={services} />
       ) : view === 'sessions' ? (
         <UsageScreen services={services} />
       ) : view === 'watchers' ? (

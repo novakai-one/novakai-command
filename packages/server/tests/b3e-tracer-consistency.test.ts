@@ -20,7 +20,7 @@ import { createFakePtyHost } from '../../terminal/adapters/pty-host/fake.js';
 import { createFakeProviderAdapters } from '../../agents/b3/contract/index.js';
 import { startRuntimeHost, type RunningRuntimeHost } from '../core/b3/host.js';
 import { connectRuntime, type RuntimeClient } from '../core/b3/client.js';
-import { createShellAgentServices } from '../../shell/app/agentRuns.js';
+import { agentRunViewDrift, createShellAgentServices } from '../../shell/app/agentRuns.js';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 const tsx = path.join(repoRoot, 'node_modules', 'tsx', 'dist', 'cli.mjs');
@@ -254,6 +254,50 @@ test('--state means the same thing to both hosts', async () => {
         `--state ${state} must select the same Runs on both hosts`,
       );
     }
+  } finally {
+    await rig.close();
+  }
+});
+
+/**
+ * The browser-safe copy is a SECOND place a contract lives, and a copy of a
+ * contract rots silently: the capability grows a field, the Shell keeps
+ * rendering the six it knows, and nobody finds out until two screens disagree.
+ *
+ * So the copy is checked against a REAL view from the REAL Runtime, in both
+ * directions — a field the projection carries that the Shell has never heard
+ * of, and a field the Shell believes in that the projection does not send.
+ */
+test('the browser-safe copy still matches the real projection', async () => {
+  const rig = await createRig();
+  try {
+    const { agentRunId } = await spawnTracerRun(rig, 'Drift');
+    const shell = createShellAgentServices({
+      call: (method, payload) => rig.chris.call(method, payload),
+    });
+    const page = await shell.runs.listAgentRuns({ state: 'all' });
+    assert.equal(page.ok, true);
+    if (!page.ok) return;
+    const view = page.value.items.find((item) => item.run.id === agentRunId);
+    assert.ok(view, 'the spawned Run must be readable');
+
+    assert.deepEqual(
+      agentRunViewDrift(view), [],
+      'the frozen projection and the Shell copy must describe the same fields',
+    );
+
+    // The guard has to be able to FAIL, or it is decoration. A field the Shell
+    // has never heard of is caught...
+    assert.deepEqual(
+      agentRunViewDrift({ ...view, mood: 'cheerful' }),
+      ['<view>.mood is not in the frozen projection'],
+    );
+    // ...and so is a fact that went missing on the way through.
+    const { displayName: _dropped, ...thinAgent } = view.agent;
+    assert.deepEqual(
+      agentRunViewDrift({ ...view, agent: thinAgent }),
+      ['agent.displayName is missing from the projection'],
+    );
   } finally {
     await rig.close();
   }

@@ -85,6 +85,49 @@ function unavailable(message: string): ShellReadResult<never> {
   return { ok: false, error: { code: 'RuntimeUnavailable', message } };
 }
 
+/**
+ * The drift guard for the browser-safe copy, expressed as data.
+ *
+ * Run over a REAL view from the real Runtime it answers the only question that
+ * matters about a copied contract: are these still the same fields? It reports
+ * in both directions — a field the projection carries that the Shell has never
+ * heard of, and a required fact that went missing on the way through.
+ *
+ * Nested levels are visited only where `AGENT_RUN_VIEW_SHAPE` names them, so
+ * an opaque member like `run.lastMutation` stays opaque: the Shell displays it
+ * nowhere and therefore has no business asserting its shape.
+ */
+export function agentRunViewDrift(view: unknown): readonly string[] {
+  const problems: string[] = [];
+  const visit = (node: unknown, at: string): void => {
+    const allowed = AGENT_RUN_VIEW_SHAPE[at];
+    if (allowed === undefined) return;
+    if (node === null || typeof node !== 'object') {
+      problems.push(`${at === '' ? '<view>' : at} is not an object`);
+      return;
+    }
+    const present = Object.keys(node as Record<string, unknown>);
+    for (const key of present) {
+      if (!allowed.includes(key)) {
+        problems.push(`${at === '' ? '<view>' : at}.${key} is not in the frozen projection`);
+      }
+    }
+    for (const key of AGENT_RUN_VIEW_REQUIRED[at] ?? []) {
+      if (!present.includes(key)) {
+        problems.push(`${at === '' ? '<view>' : at}.${key} is missing from the projection`);
+      }
+    }
+    if (at !== '') return;
+    for (const key of present) {
+      if (AGENT_RUN_VIEW_SHAPE[key] !== undefined) {
+        visit((node as Record<string, unknown>)[key], key);
+      }
+    }
+  };
+  visit(view, '');
+  return problems;
+}
+
 export function createShellAgentServices(
   options: ShellAgentServicesOptions,
 ): ShellAgentServices {
@@ -101,42 +144,4 @@ export function createShellAgentServices(
       },
     },
   };
-}
-
-/**
- * The drift guard for the browser-safe copy, as data.
- *
- * A copy of a contract rots silently: the capability grows a field, the Shell
- * keeps rendering the six it knows, and nobody finds out until two screens
- * disagree. Running this over a REAL view from the REAL Runtime turns that
- * into a failing test the moment it happens.
- */
-export function agentRunViewDrift(view: unknown): readonly string[] {
-  const problems: string[] = [];
-  const visit = (node: unknown, at: string): void => {
-    const allowed = AGENT_RUN_VIEW_SHAPE[at];
-    if (allowed === undefined) return;
-    if (node === null || typeof node !== 'object') {
-      problems.push(`${at || '<view>'} is not an object`);
-      return;
-    }
-    const present = Object.keys(node as Record<string, unknown>);
-    for (const key of present) {
-      if (!allowed.includes(key)) {
-        problems.push(`${at || '<view>'}.${key} is not in the frozen projection`);
-      }
-    }
-    for (const key of AGENT_RUN_VIEW_REQUIRED[at] ?? []) {
-      if (!present.includes(key)) {
-        problems.push(`${at || '<view>'}.${key} is missing from the projection`);
-      }
-    }
-    for (const key of present) {
-      if (AGENT_RUN_VIEW_SHAPE[key] !== undefined && at === '') {
-        visit((node as Record<string, unknown>)[key], key);
-      }
-    }
-  };
-  visit(view, '');
-  return problems;
 }

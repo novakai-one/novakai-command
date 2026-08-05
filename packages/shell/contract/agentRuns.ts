@@ -187,6 +187,71 @@ export const AGENT_RUN_VIEW_SHAPE: Readonly<Record<string, readonly string[]>> =
   ],
 } as const;
 
+// ── Presentation (DOM-free, so the rules are testable without a screen) ──────
+
+/**
+ * FZ-VIEW-004. Where the Run was STARTED — historical truth, read from
+ * `launch.surface` and from nothing else. It is never inferred from who is
+ * attached now, because "nobody is watching" and "started elsewhere" and
+ * "stopped" are three different facts and the shell has told Chris the wrong
+ * one before.
+ */
+const SURFACE_WORDS: Readonly<Record<string, string>> = {
+  'novakai-shell': 'Novakai',
+  'external-terminal': 'Terminal.app',
+  agent: 'another Agent',
+  script: 'a script',
+  operations: 'Operations',
+};
+
+export function describeLaunchOrigin(view: AgentRunRowView): string {
+  return `Started from ${SURFACE_WORDS[view.launch.surface] ?? view.launch.surface}`;
+}
+
+/**
+ * FZ-VIEW-006. Two unions, two facts, drawn as two facts. `activity:"unknown"`
+ * is legal and displayable — an honest "we do not know what it is doing right
+ * now" is never rounded down to "stopped".
+ */
+export function describeRunState(view: AgentRunRowView): string {
+  return `${view.run.lifecycle} · ${view.run.activity}`;
+}
+
+/** A measurement we do not have prints as a dash. A zero would be a claim. */
+function describeValue(value: RunUsageValue, label: string): string {
+  const amount = value.value === undefined ? '—' : value.value.toLocaleString('en-US');
+  return `${amount} ${label} (${value.quality})`;
+}
+
+/**
+ * FZ-VIEW-010. Every Run gets a usage line even when every value is missing,
+ * and the QUALITY travels beside the number: "unavailable" is not zero, and a
+ * measured 0 and an unmeasured nothing must never look the same.
+ */
+export function describeRunUsage(view: AgentRunRowView): string {
+  return `${describeValue(view.usage.inputTokens, 'in')} · `
+    + `${describeValue(view.usage.outputTokens, 'out')}`;
+}
+
+/**
+ * Ordering is how this screen directs attention — the one mechanism Chris
+ * accepts. It does not write "3 runs need you"; the rows that need him are
+ * simply first: anything uncertain, then anything working, then the rest.
+ */
+export function orderRuns(items: readonly AgentRunRowView[]): AgentRunRowView[] {
+  const rank = (view: AgentRunRowView): number => {
+    if (view.run.uncertainty.length > 0) return 0;
+    if (view.run.activity === 'working') return 1;
+    if (view.run.activity === 'unknown') return 2;
+    return 3;
+  };
+  return [...items].sort((left, right) => {
+    const byRank = rank(left) - rank(right);
+    if (byRank !== 0) return byRank;
+    return String(right.run.createdAt).localeCompare(String(left.run.createdAt));
+  });
+}
+
 /** Required at every level — absent means the projection lost a fact. */
 export const AGENT_RUN_VIEW_REQUIRED: Readonly<Record<string, readonly string[]>> = {
   '': ['agent', 'run', 'provider', 'launch', 'family', 'usage', 'transcript'],

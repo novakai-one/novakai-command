@@ -1,0 +1,55 @@
+/* Agent Runs — calm by default. Grayscale, spacing and type weight carry the
+   structure; no accent token appears here at all (the rail owns the single
+   attention signal, SHL-010). A row that needs Chris is separated by AIR and
+   position, never by a badge — a mark on every row is the pattern he
+   rejected outright. */
+
+.nv-runs {
+  gap: 14px;
+  padding: 12px 14px;
+}
+
+.nv-runs__rows {
+  gap: 0;
+}
+
+.nv-runs__row {
+  gap: 2px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--panel-3, #29292d);
+}
+
+/* The exception, and only the exception, gets extra air and a brighter ink —
+   still no chip, still no dot. */
+.nv-runs__row[data-uncertain='true'] {
+  padding: 16px 0;
+}
+
+.nv-runs__id,
+.nv-runs__origin,
+.nv-runs__usage {
+  color: var(--ink-faint, #8b8b94);
+  font-size: 11px;
+  margin: 0;
+  padding-left: 10px;
+}
+
+.nv-runs__origin {
+  color: var(--ink-muted, #a2a2aa);
+  font-size: 12px;
+}
+
+.nv-runs__uncertain {
+  color: var(--ink, #ececee);
+  font-size: 12px;
+  margin: 0;
+  padding-left: 10px;
+}
+
+/* Provenance, not instruction: what this page could not show, said quietly. */
+.nv-runs__omission {
+  color: var(--ink-muted, #a2a2aa);
+  font-size: 11px;
+  margin: 0;
+  padding-top: 4px;
+}
