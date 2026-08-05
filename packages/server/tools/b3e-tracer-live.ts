@@ -23,8 +23,8 @@ import { connectRuntime } from '../core/b3/client.js';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 const flagValue = (name: string, fallback: string): string => {
-  const at = process.argv.indexOf(`--${name}`);
-  return at >= 0 ? (process.argv[at + 1] ?? fallback) : fallback;
+  const found = process.argv.indexOf(`--${name}`);
+  return found >= 0 ? (process.argv[found + 1] ?? fallback) : fallback;
 };
 
 const port = Number(flagValue('port', '5194'));
@@ -82,6 +82,6 @@ for (const [roleName, agentName] of [
 chris.close();
 
 process.stdout.write(`${JSON.stringify({
-  url: `${host.httpUrl}/`, port: host.port, root, token: host.token,
+  shellUrl: `${host.httpUrl}/`, port: host.port, root, token: host.token,
 }, null, 2)}\n`);
 process.stdout.write('TRACER LIVE — Ctrl-C to stop\n');
