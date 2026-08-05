@@ -20,6 +20,7 @@ import {
   type AgentRunsPageView, type ListAgentRunsRequest, type ShellAgentServices,
   type ShellReadResult,
 } from '../contract/agentRuns.js';
+import type { AgentRunTreeView } from '../contract/agentTree.js';
 import { createShellCommunicationServices } from './communications.js';
 
 /**
@@ -76,6 +77,23 @@ function readPage(answer: unknown): ShellReadResult<AgentRunsPageView> {
   // CLI prints, so "the same bytes" is a property of the code and not a
   // coincidence two tests happen to agree on.
   return { ok: true, value: page as unknown as AgentRunsPageView };
+}
+
+/** Parse the tree answer from `unknown` at the seam; never trust its shape. */
+function readTree(answer: unknown): ShellReadResult<AgentRunTreeView> {
+  const frame = answer as {
+    ok?: unknown; value?: unknown; error?: { code?: unknown; message?: unknown };
+  } | null;
+  if (frame === null || typeof frame !== 'object') {
+    return unavailable('the Runtime returned no answer');
+  }
+  if (frame.ok !== true) return refused(frame.error);
+  const tree = frame.value as { nodes?: unknown; edges?: unknown } | null;
+  if (tree === null || typeof tree !== 'object'
+    || !Array.isArray(tree.nodes) || !Array.isArray(tree.edges)) {
+    return unavailable('the Runtime returned something that is not an Agent family');
+  }
+  return { ok: true, value: tree as unknown as AgentRunTreeView };
 }
 
 function refused(
@@ -156,6 +174,22 @@ export function createShellAgentServices(
     // than beside it so a screen cannot acquire half a door.
     communications: createShellCommunicationServices(options),
     runs: {
+      /**
+       * The family. `maxDepth` is passed only when the caller named one — a
+       * default invented here would silently truncate a tree the owner was
+       * willing to draw whole, and the answer carries no marker to say so
+       * (the AMD-005 residual; see contract/agentTree.ts).
+       */
+      async getAgentRunTree(request) {
+        try {
+          return readTree(await options.call('b3.agent.getTree', {
+            rootAgentId: request.rootAgentId,
+            ...(request.maxDepth === undefined ? {} : { maxDepth: request.maxDepth }),
+          }));
+        } catch (cause) {
+          return unavailable(cause instanceof Error ? cause.message : String(cause));
+        }
+      },
       async listAgentRuns(request) {
         try {
           return readPage(await options.call('b3.agent.listRuns', listFilterForState(request)));

@@ -12,6 +12,8 @@ export const unavailable: RunUsageValue = {
 
 export interface RunRowOverrides {
   readonly id?: string;
+  /** A tree needs distinct agents; every other suite is happy with the default. */
+  readonly agentId?: string;
   readonly name?: string;
   readonly lifecycle?: string;
   readonly activity?: string;
@@ -29,9 +31,10 @@ export interface RunRowOverrides {
 
 export function runRow(partial: RunRowOverrides = {}): AgentRunRowView {
   const id = partial.id ?? 'agentRun_1';
+  const agentId = partial.agentId ?? 'agent_1';
   return {
     agent: {
-      agentId: 'agent_1', displayName: partial.name ?? 'Builder',
+      agentId, displayName: partial.name ?? 'Builder',
       roleProfileId: 'agentRole_1',
     },
     // `run` is frozen contract text (FZ-VIEW-002) — the same named waiver
@@ -42,7 +45,7 @@ export function runRow(partial: RunRowOverrides = {}): AgentRunRowView {
       id, kind: 'agentRun', schemaVersion: 1, recordVersion: 3,
       createdAt: '2026-08-06T01:00:00.000Z', permissionLevel: 'private',
       createdBy: 'person_chris', lastMutation: { state: 'trace-complete' },
-      agentId: 'agent_1', launchPlanId: 'launchPlan_1', providerSessionId: 'sess_1',
+      agentId, launchPlanId: 'launchPlan_1', providerSessionId: 'sess_1',
       lifecycle: partial.lifecycle ?? 'ready', activity: partial.activity ?? 'idle',
       activityGeneration: 1, launchSurface: partial.surface ?? 'novakai-shell',
       requestedBy: 'person_chris', rootTraceId: 'trace_1',

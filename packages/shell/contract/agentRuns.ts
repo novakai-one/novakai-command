@@ -27,6 +27,7 @@
 import type {
   AgentCommunicationsPageView, ListAgentCommunicationsRequest,
 } from './communications.js';
+import type { AgentRunTreeView, GetAgentRunTreeRequest } from './agentTree.js';
 
 /** One sourced Supervision measurement, verbatim (P2 §9.1:1420). */
 export interface RunUsageValue {
@@ -170,6 +171,7 @@ export interface ShellCommunicationServices {
 export interface ShellAgentServices {
   readonly runs: {
     listAgentRuns(request: ListAgentRunsRequest): Promise<ShellReadResult<AgentRunsPageView>>;
+    getAgentRunTree(request: GetAgentRunTreeRequest): Promise<ShellReadResult<AgentRunTreeView>>;
   };
   readonly communications: ShellCommunicationServices;
 }

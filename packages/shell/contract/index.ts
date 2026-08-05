@@ -13,6 +13,7 @@ export * from './composer.js';
 export * from './renderer.js';
 export * from './services.js';
 export * from './communications.js';
+export * from './agentTree.js';
 export * from './agentRuns.js';
 export * from './usage.js';
 export * from './watchers.js';
