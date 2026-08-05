@@ -27,6 +27,7 @@ import {
   attentionIdOf, formatRowMeta, isSettled, orderInbox,
   type NotificationInboxView as InboxData, type NotificationRowView,
 } from '../../../contract/notifications.js';
+import { answerFrom } from '../../../contract/listAnswer.js';
 import {
   EmptyState, ListRow, Panel, PresenceDot, ScrollArea, Stack,
 } from '../../kit/index.js';
@@ -37,18 +38,27 @@ export function NotificationInboxView(props: {
   inbox: InboxData | null;
   onAcknowledge?: (notificationId: string) => void;
 }) {
-  const rows = orderInbox(props.inbox?.rows ?? []);
+  // "No notifications" is the most load-bearing sentence in this app: it is the
+  // one that lets Chris stop watching. Printing it before the inbox has
+  // answered tells him he is free to look away when we do not know
+  // (contract/listAnswer.ts).
+  const answer = answerFrom({
+    source: props.inbox,
+    failure: null,
+    rowsOf: (inbox: InboxData) => orderInbox(inbox.rows),
+  });
+  const rows = answer.kind === 'rows' ? answer.rows : [];
   const attentionId = attentionIdOf(rows);
 
   return (
     <ScrollArea className="nv-inbox__scroll">
       <Panel head="Notifications">
         <Stack className="nv-inbox">
-          {rows.length === 0 ? (
-            // A fact, not reassurance. "All caught up" is the app congratulating
-            // itself for a state it merely observed.
-            <EmptyState>No notifications</EmptyState>
-          ) : (
+          {answer.kind === 'waiting' && <EmptyState>Reading notifications…</EmptyState>}
+          {/* A fact, not reassurance. "All caught up" is the app congratulating
+              itself for a state it merely observed. */}
+          {answer.kind === 'none' && <EmptyState>No notifications</EmptyState>}
+          {answer.kind === 'rows' && (
             <Stack gap={0} className="nv-inbox__rows">
               {rows.map((item) => (
                 <InboxRow

@@ -21,40 +21,46 @@ import {
   AGENT_RUN_MUST_SHOW, describeRunState, orderRuns,
   type AgentRunRowView, type AgentRunsPageView,
 } from '../../../contract/agentRuns.js';
+import { answerFrom, type AnswerFailure } from '../../../contract/listAnswer.js';
 import {
   DescriptionList, EmptyState, InlineError, ListRow, Panel, ScrollArea, Stack, Text,
 } from '../../kit/index.js';
 import './runs.css';
 
-export interface RunsViewError {
-  readonly code: string;
-  readonly message: string;
-}
+/**
+ * An ALIAS, not a second declaration. B0 wrote this rule here first; B2.1 moved
+ * it to contract/listAnswer.ts when the audit found four more screens breaking
+ * it, and two structurally-identical copies of one rule is exactly the drift
+ * that made the rule necessary.
+ */
+export type RunsViewError = AnswerFailure;
 
 /** Pure presentational — every value arrives as a prop, nothing is derived. */
 export function RunsView(props: {
   page: AgentRunsPageView | null;
   error: RunsViewError | null;
 }) {
-  const rows = orderRuns(props.page?.items ?? []);
   const omissions = props.page?.omissions ?? [];
-  // Three states, not two. "Nobody has answered yet" is a different fact from
+  // Four states, not two. "Nobody has answered yet" is a different fact from
   // "the answer was none", and drawing the first as the second is the same lie
   // as drawing an unavailable measurement as a zero (FZ-VIEW-010).
-  const unanswered = props.page === null && props.error === null;
+  const answer = answerFrom({
+    source: props.page,
+    failure: props.error,
+    rowsOf: (page: AgentRunsPageView) => orderRuns(page.items),
+  });
+  const rows = answer.kind === 'rows' ? answer.rows : [];
 
   return (
     <ScrollArea className="nv-runs__scroll">
       <Panel head="Agent Runs">
         <Stack className="nv-runs">
-          {props.error && (
-            <InlineError>{`${props.error.code}: ${props.error.message}`}</InlineError>
+          {answer.kind === 'failed' && (
+            <InlineError>{`${answer.failure.code}: ${answer.failure.message}`}</InlineError>
           )}
-          {unanswered && <EmptyState>Reading Runs…</EmptyState>}
-          {!unanswered && !props.error && rows.length === 0 && (
-            <EmptyState>No agent runs yet</EmptyState>
-          )}
-          {rows.length > 0 && (
+          {answer.kind === 'waiting' && <EmptyState>Reading Runs…</EmptyState>}
+          {answer.kind === 'none' && <EmptyState>No agent runs yet</EmptyState>}
+          {answer.kind === 'rows' && (
             <Stack gap={0} className="nv-runs__rows">
               {rows.map((view) => <RunRow key={view.run.id} view={view} />)}
             </Stack>

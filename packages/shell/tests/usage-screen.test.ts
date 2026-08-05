@@ -120,9 +120,17 @@ describe('what the screen shows', () => {
     expect(html).toContain('read from provider transcripts');
   });
 
-  it('before the first broadcast arrives the screen renders without throwing', () => {
+  /**
+   * B2.1 corrected this test rather than the screen passing it. As written it
+   * PINNED the false empty — it asserted that a table nobody had answered yet
+   * printed "No provider sessions yet", which is the lie B0 found on Runs. The
+   * intent ("it renders before the first broadcast") is kept; the claim about
+   * what it renders is now the honest one.
+   */
+  it('before the first broadcast arrives it renders, and does not claim there are none', () => {
     const html = renderToStaticMarkup(React.createElement(UsageView, { table: null }));
-    expect(html).toContain('No provider sessions yet');
+    expect(html).toContain('Reading sessions…');
+    expect(html).not.toContain('No provider sessions yet');
   });
 });
 

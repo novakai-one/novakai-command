@@ -20,6 +20,7 @@ import {
   formatRunUsage, type RunUsageRowView, type RunUsageTableView,
   type UsageRowView, type UsageTableView,
 } from '../../../contract/usage.js';
+import { answerFrom } from '../../../contract/listAnswer.js';
 import {
   EmptyState, ListRow, Panel, PresenceDot, ScrollArea, Stack, Text,
 } from '../../kit/index.js';
@@ -28,16 +29,23 @@ import './usage.css';
 /** Pure presentational — every value arrives as a prop, nothing is derived. */
 export function UsageView(props: { table: UsageTableView | null }) {
   const table = props.table;
-  const rows = orderRows(table?.rows ?? []);
+  // "Nobody has answered yet" is not "there are no sessions". This screen used
+  // to print the second while meaning the first (contract/listAnswer.ts).
+  const answer = answerFrom({
+    source: table,
+    failure: null,
+    rowsOf: (answered: UsageTableView) => orderRows(answered.rows),
+  });
+  const rows = answer.kind === 'rows' ? answer.rows : [];
   const aggregate = totals(rows);
 
   return (
     <ScrollArea style={{ flex: 1 }}>
       <Panel head="Sessions">
         <Stack className="nv-usage">
-          {rows.length === 0 ? (
-            <EmptyState>No provider sessions yet</EmptyState>
-          ) : (
+          {answer.kind === 'waiting' && <EmptyState>Reading sessions…</EmptyState>}
+          {answer.kind === 'none' && <EmptyState>No provider sessions yet</EmptyState>}
+          {answer.kind === 'rows' && (
             <Stack gap={0} className="nv-usage__rows">
               {rows.map((usageRow) => (
                 <UsageRow key={usageRow.sessionId} row={usageRow} />
@@ -65,16 +73,20 @@ export function UsageView(props: { table: UsageTableView | null }) {
 
 /** B3d's per-Run usage surface; it only renders the Runtime view it receives. */
 export function RunUsageView(props: { table: RunUsageTableView | null }) {
-  const rows = props.table?.rows ?? [];
+  const answer = answerFrom({
+    source: props.table,
+    failure: null,
+    rowsOf: (answered: RunUsageTableView) => answered.rows,
+  });
   return (
     <ScrollArea style={{ flex: 1 }}>
       <Panel head="Agent Runs">
         <Stack className="nv-usage">
-          {rows.length === 0 ? (
-            <EmptyState>No agent runs yet</EmptyState>
-          ) : (
+          {answer.kind === 'waiting' && <EmptyState>Reading agent runs…</EmptyState>}
+          {answer.kind === 'none' && <EmptyState>No agent runs yet</EmptyState>}
+          {answer.kind === 'rows' && (
             <Stack gap={0} className="nv-usage__rows">
-              {rows.map((usageRow) => (
+              {answer.rows.map((usageRow) => (
                 <RunUsageRow key={usageRow.agentRunId} row={usageRow} />
               ))}
             </Stack>
