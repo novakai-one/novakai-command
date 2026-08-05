@@ -19,6 +19,7 @@ import type {
 import { previewOf } from "../contract/records.js";
 import { agentIdOf, agentPersonId } from "./identity.js";
 import { ORIGIN_BINDING_FIELD } from "./mirror-fields.js";
+import { screenContextOf } from "../contract/screen-context.js";
 
 /**
  * Both derived facts on a communication row — where a Message was mirrored
@@ -120,6 +121,7 @@ async function rowFor(
   if (!involved) return null;
 
   const origin = message.body.fields?.[ORIGIN_BINDING_FIELD];
+  const echo = screenContextOf(message.body.fields);
   const senderAgentId = agentIdOf(message.senderId);
   const inboxState = await inboxStateOf(store, message.id, agentIds);
   return {
@@ -143,6 +145,10 @@ async function rowFor(
     ...(senderAgentId === null ? {} : { senderAgentId }),
     textPreview: previewOf(message.body.text),
     ...(typeof origin === "string" ? { originBindingId: origin as never } : {}),
+    // Unchanged, not rebuilt (§10). A projection that reassembled the context
+    // from parts would make the echo a function of this reader rather than of
+    // what the sender actually committed.
+    ...(echo === undefined ? {} : { screenContext: echo }),
   };
 }
 

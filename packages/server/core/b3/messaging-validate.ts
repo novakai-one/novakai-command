@@ -15,8 +15,9 @@ import type {
   AgentEndpointClaimId, AgentId, AgentInboxItem, AgentRunId,
   ConversationParticipant, EnsureDirectThreadInput, EnsureGroupThreadInput,
   ListAgentCommunicationsInput, ListAgentInboxInput, OpenConversationViewInput,
-  SendAgentMessageInput,
+  ScreenContext, SendAgentMessageInput,
 } from '../../../messaging/b3/contract/index.js';
+import { readScreenContext } from '../../../messaging/b3/contract/index.js';
 import type { ThreadId } from '../../../messaging/public/contract/index.js';
 import type {
   IngestTranscriptSourceInput, ListObservedSubagentsInput, ObservedSubagentId,
@@ -88,6 +89,19 @@ function readSendTarget(
   return null;
 }
 
+/**
+ * AMD-004's optional field, read through Messaging's OWN reader rather than a
+ * copy of it: §10 makes Messaging the sole authority for this field, and a
+ * second spelling at the wire is how the socket and an in-process caller end up
+ * governed by two different laws (CL-P). Absent stays absent.
+ */
+function optionalScreenContext(
+  body: Record<string, unknown>,
+): B3Result<ScreenContext | undefined> {
+  if (body['screenContext'] === undefined) return b3ok(undefined);
+  return readScreenContext(body['screenContext']);
+}
+
 export function readSendAgentMessageInput(
   candidate: unknown,
 ): B3Result<SendAgentMessageInput> {
@@ -114,12 +128,15 @@ export function readSendAgentMessageInput(
     clientMessageId: field.optionalText('clientMessageId'),
   }));
   if (!scalars.ok) return scalars;
+  const screenContext = optionalScreenContext(body);
+  if (!screenContext.ok) return screenContext;
   return b3ok({
     target: resolved,
     ...(threadId === undefined ? {} : { threadId }),
     text: scalars.value.text,
     ...(scalars.value.clientMessageId === undefined
       ? {} : { clientMessageId: scalars.value.clientMessageId }),
+    ...(screenContext.value === undefined ? {} : { screenContext: screenContext.value }),
   });
 }
 

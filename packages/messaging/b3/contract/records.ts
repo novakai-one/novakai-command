@@ -25,6 +25,7 @@
  */
 
 import type { MessageId, ThreadId } from "../../public/contract/index.js";
+import type { ScreenContext } from "./screen-context.js";
 
 /** `agent_<uuidv4>` — the stable individual (DEC-B3V4-02). */
 export type AgentId = string & { readonly __brand: "AgentId" };
@@ -139,6 +140,13 @@ export interface AgentCommunicationItem {
    * through Novakai — the evidence that terminal and app are one conversation.
    */
   readonly originBindingId?: TranscriptBindingId;
+  /**
+   * Verbatim echo of the `ScreenContext` committed with this Message (§12.5,
+   * AMD-004). Absent when the Message was committed without one — including
+   * every terminal-originated Message. Messaging is the sole authority for it;
+   * no Shell view-model recomputes or supplies it.
+   */
+  readonly screenContext?: ScreenContext;
 }
 
 export const PREVIEW_MAX_CHARS = 160;

@@ -64,16 +64,16 @@ export const describeAgent = (agent: Agent): string =>
 /** Indented by generation, so the family reads as a family. */
 export function describeTree(tree: AgentRunTreeView): string {
   if (tree.nodes.length === 0) return 'No agents under that root.';
-  const depthOf = new Map<string, number>([[tree.rootAgentId, 0]]);
-  const lines: string[] = [];
-  for (const node of tree.nodes) {
-    const parent = node.family.parentAgentId;
-    const depth = parent === undefined ? 0 : (depthOf.get(parent) ?? 0) + 1;
-    depthOf.set(node.agent.agentId, depth);
-    lines.push(`${'  '.repeat(depth)}${node.agent.displayName} `
-      + `[${node.provider.provider}] ${node.run.lifecycle} — ${node.run.id}`);
-  }
-  return lines.join('\n');
+  // L-13: `depth` is the owner's own answer (§12.7), so it is read, not
+  // recomputed. The walk this replaces derived each generation from
+  // `family.parentAgentId` IN ARRAY ORDER — `depthOf.get(parent) ?? 0` — which
+  // silently turned "I have not reached that parent yet" into "it is the root".
+  // Node order is not promised to be parents-first, so a child listed before
+  // its parent was drawn a generation too shallow, and the CLI and the Shell
+  // could print two different families from one answer (FZ-VIEW-034).
+  return tree.nodes.map((node) =>
+    `${'  '.repeat(node.depth)}${node.agent.displayName} `
+    + `[${node.provider.provider}] ${node.run.lifecycle} — ${node.run.id}`).join('\n');
 }
 
 export function describeControls(report: ControlCapabilityFacts): string {

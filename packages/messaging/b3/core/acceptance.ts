@@ -28,6 +28,7 @@ import type { AcceptanceInput } from "../../seams/store.js";
 import type {
   AgentId, AgentInboxItem, AgentInboxItemId, AgentRunId, MessagingStoreOpId,
 } from "../contract/records.js";
+import { SCREEN_CONTEXT_FIELD, type ScreenContext } from "../contract/screen-context.js";
 
 export interface AcceptanceDraft {
   readonly senderId: PersonId;
@@ -47,6 +48,15 @@ export interface AcceptanceDraft {
    * shortcut it was testing.
    */
   readonly originIdentity?: PersonId;
+  /**
+   * What the sender was looking at (§10, AMD-004). Rides INSIDE the acceptance
+   * for the same reason the origin binding does: a fact that must never be
+   * separable from its Message goes in the transaction that commits it, not
+   * beside it. Absent for every Message composed without a screen — and, since
+   * the mirror path never sets it, for every terminal-originated Message by
+   * construction rather than by a rule someone has to remember.
+   */
+  readonly screenContext?: ScreenContext;
   /** Absent for a Message nobody has to deliver into a terminal (a mirror). */
   readonly inboxFor?: {
     readonly agentId: AgentId;
@@ -76,7 +86,11 @@ export function buildAcceptance(clock: ClockIds, draft: AcceptanceDraft): Accept
     // placeholder the store always overwrites; it is never observable.
     sequence: 0 as Sequence,
     priority: "normal",
-    body: { text: draft.text },
+    body: {
+      text: draft.text,
+      ...(draft.screenContext === undefined
+        ? {} : { fields: { [SCREEN_CONTEXT_FIELD]: draft.screenContext } }),
+    },
   };
   const snapshot: RecipientSnapshot = {
     id: clock.newId("snapshot"),
