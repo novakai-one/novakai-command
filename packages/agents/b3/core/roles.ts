@@ -3,7 +3,7 @@
 // A role is the reusable half of governance. The half that binds is the
 // resolved plan in `plans.ts` — editing a role never reaches a live Run.
 import {
-  b3err, b3fail, b3ok, mintAgentRoleProfileId, nowIsoUtc,
+  b3err, b3fail, b3ok, mintAgentRoleProfileId, nowIsoUtc, validationFailed,
   type AgentRoleProfileId, type AuthenticatedPrincipal, type B3Result,
   type CommandContext, type RecordVersion,
 } from '@novakai/foundation/contract';
@@ -147,4 +147,40 @@ export async function listRoleProfiles(
 ): Promise<B3Result<readonly AgentRoleProfile[]>> {
   const listed = await core.store.list<AgentRoleProfile>('agentRoleProfile');
   return listed.ok ? b3ok(listed.value.map(compatibleRole)) : listed;
+}
+
+/**
+ * A5-04: a role BY NAME, resolved by the owner — exact, case-sensitive,
+ * whole-string, over non-archived profiles. **The query never chooses.**
+ *
+ * It answers one question: which profile is named this. Zero and many are both
+ * `ValidationFailed`, because both mean the caller's name did not identify a
+ * profile; the many form hands back every candidate id, since naming it by id
+ * is the operator's only way forward.
+ *
+ * `AgentRoleProfile.status` is `'active' | 'retired'` and has no `archived`
+ * state, so "non-archived" excludes nothing here. That is also the only
+ * reading that keeps this out of the launch policy's job: whether a retired
+ * role may be LAUNCHED from is decided once, in `plans.ts` (`retiredRole`),
+ * which refuses it BY NAME. A lookup that hid retired profiles would answer
+ * "no role is named builder" when there is one — a false statement, and the
+ * defect the client-side filter this replaces actually shipped.
+ */
+export async function resolveRoleProfileByName(
+  core: GovernedAgentsCore, principal: AuthenticatedPrincipal, displayName: string,
+): Promise<B3Result<AgentRoleProfile>> {
+  const listed = await listRoleProfiles(core, principal);
+  if (!listed.ok) return listed;
+  const matched = listed.value.filter((role) => role.name === displayName);
+  if (matched.length === 1) return b3ok(matched[0]!);
+  if (matched.length === 0) {
+    return b3fail(validationFailed([{
+      path: 'displayName',
+      message: `no role profile is named "${displayName}"`,
+    }]));
+  }
+  return b3fail(validationFailed([
+    { path: 'displayName', message: `${matched.length} role profiles are named "${displayName}"` },
+    ...matched.map((role, index) => ({ path: `candidates[${index}]`, message: role.id })),
+  ]));
 }

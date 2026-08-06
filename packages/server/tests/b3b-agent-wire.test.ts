@@ -99,6 +99,10 @@ const WIRE_STEPS: readonly WireStep[] = [
     remember: (state, value) => { state.managerRoleId = (value as { id: string }).id; },
   },
   { method: 'b3.agent.getRoles', payload: () => ({}) },
+  // A5-04: the name → id resolution the CLI used to do for itself. It takes its
+  // turn here for the same reason every other method does — the guard below
+  // fails any `b3.agent.*` the host serves and this walk never exercises.
+  { method: 'b3.agent.resolveRoleByName', payload: () => ({ displayName: 'wire-builder' }) },
   {
     method: 'b3.agent.updateRole',
     payload: (state) => ({

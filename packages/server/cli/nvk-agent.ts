@@ -435,13 +435,10 @@ const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
 
   ...observeCommands({ withClient, emit, usage, operationId }),
 
-  // §17.1's message/communications verbs. `personId` is how Messaging names
-  // the human at this keyboard; it is derived from the same principal the
-  // socket authenticates, never taken from a flag (red gate 5).
-  ...messageCommands({
-    withClient, emit, usage, fail, operationId,
-    personId: `person_${(process.env['NOVAKAI_PRINCIPAL'] ?? 'chris').replace(/[^A-Za-z0-9-]/gu, '-')}`,
-  }),
+  // §17.1's message/communications verbs. They no longer need to know how
+  // Messaging names the human at this keyboard: A5-07 makes `--thread` the
+  // operator's to supply, so nothing here composes a Thread membership.
+  ...messageCommands({ withClient, emit, usage, fail, operationId }),
 
   async operations(argFlags) {
     emit('agent operations', argFlags, await withClient<readonly RunOperationView[]>(

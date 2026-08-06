@@ -225,6 +225,17 @@ export interface GovernedAgentsQueries {
     principal: AuthenticatedPrincipal,
   ): Promise<B3Result<readonly AgentRoleProfile[]>>;
 
+  /**
+   * A5-04. Exact, case-sensitive, whole-string match over non-archived role
+   * profiles. No match and ambiguous match are both `ValidationFailed`; the
+   * ambiguous form lists every candidate `AgentRoleProfileId` in `issues`.
+   * **The query never chooses** — a caller that wanted one of several must
+   * name it by id.
+   */
+  resolveRoleProfileByName(
+    principal: AuthenticatedPrincipal, displayName: string,
+  ): Promise<B3Result<AgentRoleProfile>>;
+
   getLaunchPlan(
     principal: AuthenticatedPrincipal, launchPlanId: ResolvedLaunchPlanId,
   ): Promise<B3Result<ResolvedLaunchPlan>>;

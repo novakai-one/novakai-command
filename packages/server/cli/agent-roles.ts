@@ -11,25 +11,30 @@ import {
 import type { AgentRoleProfile } from '../../agents/b3/contract/index.js';
 import type { RuntimeClient } from '../core/b3/client.js';
 
-/** A role by NAME, because that is what Chris types. */
+/**
+ * A role by NAME, because that is what Chris types — resolved by the OWNER.
+ *
+ * A5-04: the CLI asks one question and forwards one answer. It used to fetch
+ * every role profile and run its own `name === given && status === 'active'`
+ * filter, which made the CLI the author of a matching rule the Shell and any
+ * script would each have spelled differently — and got it wrong twice over: a
+ * retired role was invisible (so the refusal said "no active role is named
+ * builder" when there was one), and two profiles sharing a name resolved
+ * silently to whichever was live. The launch policy already refuses a retired
+ * role by name; deciding that here was the CLI answering a question that is
+ * not its to answer (OQ-02's shape).
+ *
+ * An `agentRole_` argument is an id, not a name: §4.1's prefix says so, and a
+ * lookup would be asking the owner to confirm what the caller already told us.
+ */
 export async function roleIdFor(
   client: RuntimeClient, given: string,
 ): Promise<B3Result<string>> {
   if (given.startsWith('agentRole_')) return b3ok(given);
-  const roles = await client.call<readonly AgentRoleProfile[]>('b3.agent.getRoles', {});
-  if (!roles.ok) return roles;
-  const matched = roles.value.filter((role) => role.name === given && role.status === 'active');
-  if (matched.length === 0) {
-    return b3fail(b3err('RoleNotAllowed',
-      `no active role is named "${given}"; try \`nvk agent roles\``,
-      { roleProfileId: given }, false));
-  }
-  if (matched.length > 1) {
-    return b3fail(b3err('RoleNotAllowed',
-      `${matched.length} active roles are named "${given}"; name it by id`,
-      { roleProfileId: given }, false));
-  }
-  return b3ok(matched[0]!.id);
+  const resolved = await client.call<AgentRoleProfile>(
+    'b3.agent.resolveRoleByName', { displayName: given },
+  );
+  return resolved.ok ? b3ok(resolved.value.id) : resolved;
 }
 
 /**

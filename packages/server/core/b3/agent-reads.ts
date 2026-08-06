@@ -17,6 +17,19 @@ export function readAgentIdInput(
   }));
 }
 
+/**
+ * A5-04's one argument. `displayName` is read as text and nothing more: the
+ * match itself — exact, case-sensitive, whole-string — is the owner's, and a
+ * boundary that trimmed or folded it here would be a second matching rule.
+ */
+export function readResolveRoleByNameInput(
+  candidate: unknown,
+): B3Result<{ readonly displayName: string }> {
+  return readBoundary(candidate, (field) => ({
+    displayName: field.text('displayName'),
+  }));
+}
+
 export function readReadRunEventsInput(
   candidate: unknown,
 ): B3Result<{ readonly after?: EventCursor; readonly limit?: number }> {

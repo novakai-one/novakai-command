@@ -29,6 +29,7 @@ import {
 } from '../../../agents/contract/index.js';
 import {
   readAgentIdInput, readListGrantsFilter, readReadRunEventsInput,
+  readResolveRoleByNameInput,
 } from './agent-reads.js';
 import type { CallerSession, MethodTable } from '../../contract/protocol.js';
 import type { B3Runtime } from './composition.js';
@@ -332,11 +333,20 @@ export function buildB3AgentMethods(options: B3AgentMethodOptions): MethodTable 
       (payload, _context, principal) => agents.getAgent(principal, payload.agentId)),
 
     'b3.agent.getRoles': method(noPayload, async (_payload, _context, principal) => {
-      // A list of every role, so `nvk agent spawn --role builder` can resolve a
-      // NAME. Chris types names; ids are for machines.
+      // Every role, for an operator BROWSING them (`nvk agent roles`). It is no
+      // longer how a name becomes an id — see `resolveRoleByName` below.
       const listed = await agents.listRoleProfiles(principal);
       return listed;
     }),
+
+    // A5-04. `nvk agent spawn --role builder` used to fetch the list above and
+    // pick a profile out of it in the client, which is the one thing the
+    // amendment forbids ("the query never chooses"). The match is the owner's
+    // now: exact, case-sensitive, whole-string, over non-archived profiles, and
+    // zero or many is `ValidationFailed` with every candidate id named.
+    'b3.agent.resolveRoleByName': method(readResolveRoleByNameInput,
+      (payload, _context, principal) =>
+        agents.resolveRoleProfileByName(principal, payload.displayName)),
   };
 }
 

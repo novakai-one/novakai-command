@@ -5,13 +5,14 @@
 // agents talk, then opens their conversation deliberately" is a §25-B3c exit
 // promise that had no command behind it.
 //
-// Both resolve a Thread themselves. §12.5 requires a `threadId` and a human
-// typing `nvk agent message builder --text "status?"` has no idea what one is,
-// so the CLI mints or resolves the direct Thread first — the same
-// `ensureDirectThread` operation the wire publishes, not a second path
-// (red gate 23).
-import {
-  b3err, b3fail, type B3ClientOpId, type B3ContractError, type B3Result,
+// Neither resolves a Thread for the caller. §12.5 requires a `threadId`, and
+// A5-07 rules that the operator supplies it (`--thread <threadId>`, required):
+// until then this file MINTED one through `ensureDirectThread` whenever the
+// flag was absent, so sending one line created a durable conversation as a
+// side effect. Minting is still one published operation away — it is just no
+// longer something a send does behind your back.
+import type {
+  B3ClientOpId, B3ContractError, B3Result,
 } from '@novakai/foundation/contract';
 import type {
   AgentCommunicationItem, ConversationView, MessageAcceptance,
@@ -30,11 +31,8 @@ export interface MessageDeps {
   /** Refuse before dispatch, naming the command that was typed (X-1). */
   fail(command: CliCommand, argFlags: Flags, error: B3ContractError): never;
   operationId(): B3ClientOpId;
-  /** The human principal this CLI speaks for, as Messaging names people. */
-  readonly personId: string;
 }
 
-interface Thread { readonly id: string }
 interface Page<T> { readonly items: readonly T[] }
 
 const isRun = (target: string): boolean => target.startsWith('agentRun_');
@@ -69,23 +67,20 @@ function describeCommunications(page: Page<AgentCommunicationItem>): string {
 export function messageCommands(
   deps: MessageDeps,
 ): Record<string, (argFlags: Flags) => Promise<never>> {
-  const { withClient, emit, usage, fail, personId } = deps;
-
-  /** Resolve the direct Thread between Chris and one Agent, minting if needed. */
-  async function directThread(
-    client: RuntimeClient, agentId: string,
-  ): Promise<B3Result<Thread>> {
-    return client.call<Thread>('b3.messaging.ensureDirectThread', {
-      between: [
-        { kind: 'human', personId },
-        { kind: 'agent', agentId },
-      ],
-    });
-  }
+  const { withClient, emit, usage, fail } = deps;
 
   return {
     /**
-     * `nvk agent message <agentId|agentRunId> --text <text>`.
+     * A5-07: `nvk agent message <agentId|agentRunId> --thread <threadId>
+     * --text <text>`. All three are required — the amendment brackets none of
+     * them, and it is the ruled answer to OQ-11 ("thread selection/creation for
+     * a CLI-originated Message is undefined").
+     *
+     * It used to MINT one when the flag was absent, so sending a line created a
+     * durable conversation as a side effect. Messaging publishes
+     * `ensureDirectThread` so that minting is something a caller asks for on
+     * purpose; the CLI's job here is to carry the operator's choice, not to
+     * make it for them.
      *
      * An `agentRun_` target is an EXACT-RUN send: it names the provider context
      * that must read it, and it fails rather than silently redirecting once
@@ -94,31 +89,13 @@ export function messageCommands(
     async message(argFlags) {
       const target = argFlags.positional[0];
       const text = argFlags.value('text');
-      if (target === undefined || text === undefined) {
-        return usage('agent.message', argFlags, '<agentId|agentRunId> --text <text>');
+      const threadId = argFlags.value('thread');
+      if (target === undefined || text === undefined || threadId === undefined) {
+        return usage('agent.message', argFlags,
+          '<agentId|agentRunId> --thread <threadId> --text <text>');
       }
       return emit('agent.message', argFlags, await withClient<MessageAcceptance>(
         async (client) => {
-          // An exact-run send still needs a Thread, and the Run alone does not
-          // name one. `--thread` lets a script pin the conversation; without
-          // it the Agent's direct Thread is the honest default.
-          const explicit = argFlags.value('thread');
-          let threadId = explicit;
-          if (threadId === undefined) {
-            const agentId = argFlags.value('agent');
-            if (isRun(target) && agentId === undefined) {
-              // A Run names a provider context, not a conversation. Guessing a
-              // Thread here would put an exact-run Message somewhere the
-              // caller never chose.
-              return b3fail(b3err('ValidationFailed',
-                'an exact-run send needs --thread <threadId> or --agent <agentId>',
-                { issues: [{ path: 'thread', message: 'cannot be derived from a Run alone' }] },
-                false));
-            }
-            const thread = await directThread(client, agentId ?? target);
-            if (!thread.ok) return thread;
-            threadId = thread.value.id;
-          }
           return client.call<MessageAcceptance>('b3.messaging.sendAgent', {
             target: isRun(target)
               ? { kind: 'exact-run', agentRunId: target }
