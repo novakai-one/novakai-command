@@ -50,6 +50,7 @@ function runRow(patch: Partial<AgentRunRowView['run']> = {}): AgentRunRowView {
     },
     provider: { provider: 'kimi', modelId: 'k2', effort: 'high', providerSessionId: 'ps_1' },
     launch: { surface: 'novakai-shell', requestedBy: 'chris' },
+    controllers: { attachedCount: 0, kinds: [] },
     family: {
       childCount: 0, supervisor: { kind: 'human', principalId: 'chris' },
       supervisionVersion: 1,
