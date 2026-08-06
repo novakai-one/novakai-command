@@ -8,7 +8,7 @@
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "npm run typecheck && tsx --test \"tests/*.test.ts\""
+    "test": "npm run typecheck && tsx --import ./tests/support/no-leaked-handles.ts --test \"tests/*.test.ts\""
   },
   "license": "UNLICENSED",
   "private": true,
