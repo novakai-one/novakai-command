@@ -23,23 +23,28 @@ import { TerminalChrome, toneFor } from './TerminalChrome.js';
 import { TerminalPacing } from './TerminalPacing.js';
 import { TerminalTabStrip } from './TerminalTabStrip.js';
 import {
-  chooseAdoptable, describeTerminal, SHELL_INSTANCE_ID,
-  type TerminalAttachment, type TerminalOutcome, type TerminalTabView,
+  describeTerminal,
+  type TerminalAttachment, type TerminalFrame, type TerminalTabView,
 } from '../../../contract/terminalServices.js';
-import { listOpenTerminalTabs, type TerminalTabRecord } from '../../../contract/terminalTab.js';
-import {
-  emptyCalmState, flushCalm, rawPassthrough, receiveCalm, revealCalm,
-  type CalmPacing, type CalmState,
-} from '../../../contract/calmPacing.js';
+import type { TerminalTabRecord } from '../../../contract/terminalTab.js';
+import { emptyCalmState, type CalmPacing, type CalmState } from '../../../contract/calmPacing.js';
 import { composeTabStrip, type TabSessionTruth } from '../../../contract/terminalTabStrip.js';
+import { acceptOutputFrame, NOTHING_REPLAYED } from '../../../contract/terminalReplay.js';
+import {
+  type TerminalViewport,
+} from '../../../contract/terminalViewport.js';
 import { TerminalCloseAsk } from './TerminalCloseAsk.js';
+import { bootTerminalTabs } from './bootFlow.js';
 import { useTabClose, type TabCloseWiring } from './useTabClose.js';
 import { useTabOpen } from './useTabOpen.js';
 import { useTabPacing } from './useTabPacing.js';
 import { mintShellOpId, type ShellTerminalTabServices } from '../../../contract/services.js';
 import type { ScreenContextSupport } from '../../../contract/screenContext.js';
 import type { TerminalConnection } from '../../../app/terminalClient.js';
-import { adoptOrOpen, writeReplay, xtermTheme } from './session.js';
+import { attachAndReplay } from './attachFlow.js';
+import {
+  makeFrameWriter, startCalmClock, watchViewport, xtermTheme,
+} from './session.js';
 import { makeRawInputHandler } from './rawInput.js';
 
 export interface TerminalScreenProps {
@@ -91,6 +96,25 @@ export function TerminalScreen(props: TerminalScreenProps): React.JSX.Element {
   const paceRef = useRef<{ mode: 'raw' | 'calm'; pacing: CalmPacing }>({
     mode: 'raw', pacing: { maxBufferedLines: 2_000, revealLinesPerSecond: 24 },
   });
+  /**
+   * How far the replay wrote, and the live frames that landed while it was
+   * writing. Refs, because the output listener is registered once and must read
+   * both at frame time — see contract/terminalReplay.ts for why history arrives
+   * twice at all.
+   */
+  const replayMark = useRef(NOTHING_REPLAYED);
+  const heldFrames = useRef<TerminalFrame[] | null>(null);
+  /** Effect 1's writer, so the held frames go out the same door live ones do. */
+  const drawFrame = useRef<((frame: TerminalFrame) => void) | null>(null);
+  /**
+   * The size the surface actually has. `null` until the browser has laid it out
+   * — and until then NOTHING may be opened: this number is set on a real pty,
+   * and the fit addon answers with its own floor rather than admitting it could
+   * not measure (contract/terminalViewport.ts).
+   */
+  const [viewport, setViewport] = useState<TerminalViewport | null>(null);
+  const measured = useRef<TerminalViewport | null>(null);
+  const booted = useRef(false);
   const [openTabs, setOpenTabs] = useState<readonly TerminalTabRecord[]>([]);
   const [selectedTabId, setSelectedTabId] = useState<string | null>(null);
   const [liveViews, setLiveViews] = useState<readonly TerminalTabView[]>([]);
@@ -98,6 +122,8 @@ export function TerminalScreen(props: TerminalScreenProps): React.JSX.Element {
   const [settled, setSettled] = useState(false);
   const [watchingOnly, setWatchingOnly] = useState(false);
 
+  /** Whether a measurement exists at all — see effect 3's dependency note. */
+  const hasViewport = viewport !== null;
   const selectedTab = openTabs.find((record) => record.id === selectedTabId) ?? null;
   const selectedSessionId = selectedTab?.terminalSessionId ?? null;
   const view = liveViews.find((item) => item.terminalSessionId === selectedSessionId) ?? null;
@@ -125,37 +151,43 @@ export function TerminalScreen(props: TerminalScreenProps): React.JSX.Element {
     const fitAddon = new FitAddon();
     screen.loadAddon(fitAddon);
     if (surface.current) screen.open(surface.current);
-    fitAddon.fit();
     terminal.current = screen;
     fitter.current = fitAddon;
 
-    services.onOutput((emittedFor, frame) => {
-      if (disposed.current || emittedFor !== attachedTo.current) return;
-      if (frame.kind === 'exit') {
-        // The exit notice is the Shell's own, not the session's bytes, and it
-        // is never paced: "this ended" held behind a backlog is the one message
-        // that must not arrive late.
-        const { state, text } = flushCalm(calm.current);
-        calm.current = state;
-        screen.write(`${text}\r\n[the terminal exited]\r\n`);
-        void refresh();
-        return;
-      }
-      if (paceRef.current.mode === 'raw') {
-        screen.write(rawPassthrough(frame.text));
-        return;
-      }
-      calm.current = receiveCalm(calm.current, frame.text, paceRef.current.pacing);
+    const unwatch = watchViewport({
+      surface: surface.current,
+      screen,
+      fitAddon,
+      current: () => measured.current,
+      onMeasured: (next) => {
+        measured.current = next;
+        setViewport(next);
+      },
     });
 
-    // Calm's clock. Raw never reaches it, and a tick that releases nothing
-    // writes nothing — an empty write would still cost xterm a render.
-    const ticking = setInterval(() => {
-      if (disposed.current || paceRef.current.mode !== 'calm') return;
-      const { state, text } = revealCalm(calm.current, Date.now(), paceRef.current.pacing);
-      calm.current = state;
-      if (text !== '') screen.write(text);
-    }, 16);
+    const draw = makeFrameWriter({
+      screen, calm, pace: paceRef, onExit: () => { void refresh(); },
+    });
+    drawFrame.current = draw;
+
+    services.onOutput((emittedFor, frame) => {
+      if (disposed.current || emittedFor !== attachedTo.current) return;
+      // History is still being written: this frame cannot be judged yet.
+      if (heldFrames.current !== null) {
+        heldFrames.current.push(frame);
+        return;
+      }
+      if (!acceptOutputFrame(frame, replayMark.current)) return;
+      draw(frame);
+    });
+
+    const stopClock = startCalmClock({
+      screen,
+      calm,
+      pace: paceRef,
+      stopped: () => disposed.current,
+      clock: () => Date.now(),
+    });
 
     // FZ-VIEW-032's Raw clause. The handler lives in rawInput.ts with the rule
     // it enforces, not inline here, so a keystroke's whole journey is one file.
@@ -169,51 +201,41 @@ export function TerminalScreen(props: TerminalScreenProps): React.JSX.Element {
 
     return () => {
       disposed.current = true;
-      clearInterval(ticking);
+      unwatch();
+      stopClock();
       screen.dispose();
     };
   }, [services, refresh]);
 
   // 2. Which tabs exist. Restored from the Shell's store, so a reload comes back
-  //    to the windows Chris had — and a first boot gets exactly one.
+  //    to the windows Chris had — and a first boot gets exactly one, opened at
+  //    the size the surface turned out to be (bootFlow.ts). Runs again on the
+  //    first real measurement: until then it can restore, but it may not open.
   useEffect(() => {
     let alive = true;
     void (async () => {
-      const restored = await listOpenTerminalTabs(tabs);
-      const views = await refresh();
-      if (!alive) return;
-      if (restored.length > 0) {
-        setOpenTabs(restored);
-        setSelectedTabId(restored[0].id);
+      if (booted.current) return;
+      const outcome = await bootTerminalTabs({
+        tabs,
+        services,
+        workingDirectory,
+        viewport,
+        newTabId: () => `terminalTab_${crypto.randomUUID()}`,
+        opId: mintShellOpId,
+      });
+      if (!alive || outcome.kind === 'not-measured') return;
+      booted.current = true;
+      setLiveViews(outcome.views);
+      if (outcome.kind === 'problem') {
+        setProblem(outcome.message);
         return;
       }
-      const screen = terminal.current;
-      const session = await adoptOrOpen(
-        services, workingDirectory, screen?.cols ?? 80, screen?.rows ?? 24,
-      );
-      if (!alive) return;
-      if (!session.succeeded) {
-        setProblem(`${session.code}: ${session.message}`);
-        return;
-      }
-      if (!views.some((item) => item.terminalSessionId === session.value.terminalSessionId)) {
-        setLiveViews([...views, session.value]);
-      }
-      const created = await tabs.save(
-        `terminalTab_${crypto.randomUUID()}`,
-        { terminalSessionId: session.value.terminalSessionId },
-        mintShellOpId(),
-      );
-      if (!alive) return;
-      if (!created.ok) {
-        setProblem(`${created.error.code}: ${created.error.message}`);
-        return;
-      }
-      setOpenTabs([created.value.record]);
-      setSelectedTabId(created.value.record.id);
+      const records = outcome.kind === 'restored' ? outcome.records : [outcome.record];
+      setOpenTabs(records);
+      setSelectedTabId(records[0].id);
     })();
     return () => { alive = false; };
-  }, [services, tabs, workingDirectory, refresh]);
+  }, [services, tabs, workingDirectory, viewport]);
 
   // 2b. The mode the ONE output listener reads. Kept in a ref deliberately —
   //     see the note where it is declared. Switching tabs starts Calm clean:
@@ -233,7 +255,8 @@ export function TerminalScreen(props: TerminalScreenProps): React.JSX.Element {
   //    this cleanup first, so the session you left is detached before the next
   //    one is joined — the controller count stays true on both.
   useEffect(() => {
-    if (selectedSessionId === null) return;
+    const measuredNow = measured.current;
+    if (selectedSessionId === null || measuredNow === null) return;
     const screen = terminal.current;
     if (!screen) return;
     let alive = true;
@@ -242,24 +265,29 @@ export function TerminalScreen(props: TerminalScreenProps): React.JSX.Element {
     screen.reset();
     setWatchingOnly(false);
     setSettled(false);
+    // This session's history has not been written yet, and any live frame that
+    // arrives before it has cannot be told apart from history.
+    replayMark.current = NOTHING_REPLAYED;
+    heldFrames.current = [];
 
     void (async () => {
-      const joined = await services.attach(selectedSessionId, screen.cols, screen.rows);
-      if (!alive) return;
-      if (!joined.succeeded) {
-        screen.write(`\r\n[${joined.code}] ${joined.message}\r\n`);
+      const outcome = await attachAndReplay({
+        services,
+        terminalSessionId: selectedSessionId,
+        viewport: measuredNow,
+        screen,
+        alive: () => alive,
+        refs: { attachment, attachedTo, inputSequence, heldFrames },
+        onWatchingOnly: () => setWatchingOnly(true),
+        draw: (frame) => drawFrame.current?.(frame),
+      });
+      if (outcome.kind === 'abandoned') return;
+      if (outcome.kind === 'refused') {
+        heldFrames.current = null;
+        screen.write(`\r\n[${outcome.code}] ${outcome.message}\r\n`);
         return;
       }
-      attachment.current = joined.value;
-      attachedTo.current = selectedSessionId;
-      // This window has typed nothing; the session may have been typed into for
-      // an hour. The Runtime's position is adopted, never assumed to be 1 —
-      // assuming it is what made a reopened window read-only (NVK-KIMI-025).
-      inputSequence.current = joined.value.nextInputSequence;
-      if (joined.value.leaseId === '') setWatchingOnly(true);
-
-      // Whatever happened while nobody was watching is shown before live output.
-      await writeReplay(services, selectedSessionId, screen);
+      replayMark.current = outcome.mark;
       await refresh();
     })();
 
@@ -275,23 +303,26 @@ export function TerminalScreen(props: TerminalScreenProps): React.JSX.Element {
         void services.detach(sessionId, held.attachmentId);
       }
     };
-  }, [services, selectedSessionId, refresh]);
+    // `hasViewport`, not `viewport`: this must run once when the surface is
+    // first measured, and NOT again on every resize — re-running it detaches and
+    // reattaches, which is a controller count that flickers for a window nobody
+    // left. The numbers are read from the ref at attach time.
+  }, [services, selectedSessionId, refresh, hasViewport]);
 
-  // The viewport follows the window, and the Runtime is told whose it is. Read at
-  // event time, never captured: a resize arriving between attachments must use
-  // the one that exists NOW, or it reshapes a session this window has left.
+  // The Runtime is told when the size CHANGES, and only then. Every telling
+  // signals the process, which redraws its prompt into the session's permanent
+  // output history — so a size pushed on every measurement writes noise into the
+  // record of what the terminal did (B1.5 watched one page load do it twice).
+  // The attachment is read here, not captured: a resize arriving between
+  // attachments must use the one that exists NOW, or it reshapes a session this
+  // window has left.
   useEffect(() => {
-    const onResize = (): void => {
-      fitter.current?.fit();
-      const holding = attachment.current;
-      const screen = terminal.current;
-      const sessionId = attachedTo.current;
-      if (!holding || !screen || sessionId === null) return;
-      void services.resize(sessionId, holding.attachmentId, screen.cols, screen.rows);
-    };
-    window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
-  }, [services]);
+    if (viewport === null) return;
+    const holding = attachment.current;
+    const sessionId = attachedTo.current;
+    if (!holding || sessionId === null) return;
+    void services.resize(sessionId, holding.attachmentId, viewport.columns, viewport.rows);
+  }, [services, viewport]);
 
   const openAnother = useTabOpen({
     tabs,

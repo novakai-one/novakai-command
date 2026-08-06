@@ -230,4 +230,86 @@ export const MUTANTS = [
     from: "  if (input.failure !== null) return { kind: 'failed', failure: input.failure };",
     to: "  if (input.failure !== null && input.source !== null) return { kind: 'failed', failure: input.failure };",
   },
+
+  // ── B1.5 · The backed host: geometry, history, and one open (seat 11) ─────
+  // Every one of these was found in a browser against a REAL nvk-server, and
+  // none of them can go red offline: the mock services spawn no process, so an
+  // unmeasured viewport goes nowhere and history arrives down one path only.
+  {
+    id: 'VIEW-01',
+    slice: 'B1.5',
+    file: 'contract/terminalViewport.ts',
+    law: 'The fit addon\'s floor is a measurement that did not happen. Accepting '
+      + 'it opens a real pty at two columns, and the shell mangles every prompt '
+      + 'it draws from then on — permanently, in the session\'s replay.',
+    from: '  if (cols <= XTERM_FIT_FLOOR.cols || rows <= XTERM_FIT_FLOOR.rows) return UNKNOWN;',
+    to: '  if (cols <= 0 || rows <= 0) return UNKNOWN;',
+  },
+  {
+    id: 'VIEW-02',
+    slice: 'B1.5',
+    file: 'contract/terminalViewport.ts',
+    law: 'Nothing measured is unknown, never a default — a viewport is set on '
+      + 'somebody else\'s process, so a guess is a write.',
+    from: '  if (!proposed) return UNKNOWN;',
+    to: '  if (!proposed) return { known: true, columns: 80, rows: 24 };',
+  },
+  {
+    id: 'VIEW-03',
+    slice: 'B1.5',
+    file: 'contract/terminalViewport.ts',
+    law: 'The Runtime is told when the size CHANGES. Telling it on every '
+      + 'measurement signals the process for nothing, and each signal writes a '
+      + 'prompt redraw into the permanent output history.',
+    from: '  return current.columns !== next.columns || current.rows !== next.rows;',
+    to: '  return true;',
+  },
+  {
+    id: 'BOOT-01',
+    slice: 'B1.5',
+    file: 'ui/screens/terminal/bootFlow.ts',
+    law: 'Nothing is opened before the surface has been measured. This is the '
+      + 'defect itself: the mount effect opened a pty at whatever the unlaid-out '
+      + 'terminal happened to say.',
+    from: "  if (viewport === null) return { kind: 'not-measured' };",
+    to: '  const size = viewport ?? { columns: 80, rows: 24 };',
+  },
+  {
+    id: 'RPLY-01',
+    slice: 'B1.5',
+    file: 'contract/terminalReplay.ts',
+    law: 'History the replay already wrote is not written again — the Runtime '
+      + 'catches every new subscriber up on the same backlog the Shell reads.',
+    from: '  return frame.sequence > mark;',
+    to: '  return true;',
+  },
+  {
+    id: 'RPLY-02',
+    slice: 'B1.5',
+    file: 'contract/terminalReplay.ts',
+    law: 'A frame the Runtime did not number is DRAWN. Dropping live output '
+      + 'makes a working process look like a dead one, which is worse than '
+      + 'drawing the banner twice.',
+    from: '  if (frame.sequence === undefined) return true;',
+    to: '  if (frame.sequence === undefined) return false;',
+  },
+  {
+    id: 'RPLY-03',
+    slice: 'B1.5',
+    file: 'contract/terminalReplay.ts',
+    law: 'A gap carries none of the session\'s bytes, so it is never progress — '
+      + 'taking it as progress drops the live frames that fill the hole.',
+    from: "    if (frame.kind === 'gap') continue;",
+    to: "    if (frame.kind === 'gap-never') continue;",
+  },
+  {
+    id: 'OPEN-01',
+    slice: 'B1.5',
+    file: 'contract/terminalOpen.ts',
+    law: 'A clientOpId names ONE request. The size is part of an open, so reusing '
+      + 'the id across sizes is a different request under an old name — which the '
+      + 'owner refuses (IdempotencyConflict) and New tab stops working.',
+    from: '  return [workingDirectory, columns, rows].join(JOIN);',
+    to: '  return workingDirectory;',
+  },
 ];
