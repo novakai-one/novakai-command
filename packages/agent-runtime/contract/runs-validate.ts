@@ -199,7 +199,10 @@ export function readListAgentRunsFilter(candidate: unknown): B3Result<ListAgentR
   return readBoundary(candidate, (field) => {
     const agentId = field.optionalId<AgentId>('agentId', 'agent', 'uuidv4');
     const launchSurface = field.optionalChoice<LaunchSurface>('launchSurface', LAUNCH_SURFACES);
-    const limit = field.optionalCount('limit', 1, 10_000);
+    // 1–200, required — the same call its own sibling `readListProviderTurnsInput`
+    // already makes below. `optionalCount(…, 1, 10_000)` accepted fifty times
+    // the ratified cap, and accepted omission (A7-03 item 2).
+    const limit = field.count('limit', 1, 200);
     const onlyFinal = optionalFlag(field, 'onlyFinal');
     const lifecycle = field.given('lifecycle');
     const wanted = Array.isArray(lifecycle)
@@ -219,7 +222,7 @@ export function readListAgentRunsFilter(candidate: unknown): B3Result<ListAgentR
       includeFinal: flag(field, 'includeFinal'),
       ...(onlyFinal === true ? { onlyFinal: true } : {}),
       ...(cursor === undefined ? {} : { cursor: cursor as EventCursor }),
-      ...(limit === undefined ? {} : { limit }),
+      limit,
     };
   });
 }

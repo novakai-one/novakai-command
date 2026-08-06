@@ -314,7 +314,10 @@ function runPageWindow(
   const matching = ordered
     .filter((agentRun) => from === null || afterRunCursor(agentRun, from))
     .filter((agentRun) => matchesRunFilter(agentRun, filter));
-  const wanted = matching.slice(0, filter.limit ?? 500);
+  // No owner-side default: `limit` is required (§12.7:2650) and the one default
+  // in the build is the CLI's 200 (A5-01). `?? 500` was a second authority
+  // answering "how big is a page" — the B3d SEVERE-2 shape (A7-03 item 3).
+  const wanted = matching.slice(0, filter.limit);
   return b3ok({ wanted, more: wanted.length < matching.length });
 }
 

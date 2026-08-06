@@ -171,7 +171,19 @@ export interface ListAgentRunsFilter {
    * (FZ-EVT-007).
    */
   readonly cursor?: EventCursor;
-  readonly limit?: number;
+  /**
+   * pass2 §12.7:2650, and the same shape as all six list filters in that
+   * section: REQUIRED, 1–200. It was optional here — the only outlier in its
+   * own section — and the owner then invented `?? 500` behind it, so a wire
+   * caller that omitted it was handed 2.5× the ratified page with no
+   * `nextCursor` discipline to reason about (NVK-KIMI-094 A7-03 items 1–3).
+   *
+   * There is exactly one default in the build and it lives in the ADAPTER:
+   * A5-01's "when `--limit` is omitted the CLI supplies 200". An owner-side
+   * default means a raw wire caller silently gets a page size someone else
+   * chose.
+   */
+  readonly limit: number;
 }
 
 export interface GetAgentRunTreeInput {

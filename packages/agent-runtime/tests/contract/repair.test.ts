@@ -145,7 +145,7 @@ test('repairRunOperation resumes a pending tree stop through its own door', asyn
     }
 
     // And the subtree really is stopped, not just re-labelled.
-    const live = await rig.runtime.listAgentRuns(rig.principal(), { includeFinal: false });
+    const live = await rig.runtime.listAgentRuns(rig.principal(), { includeFinal: false, limit: 200 });
     assert.equal(live.ok, true);
     if (live.ok) assert.deepEqual(live.value.items.map((view) => view.agent.displayName), []);
   });
