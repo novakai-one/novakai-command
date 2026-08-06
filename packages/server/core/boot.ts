@@ -7,7 +7,14 @@
 //   4 agents+providers 5 transcript        6 shell persistence
 //   7 session layer + providerSession registry + orphan sweep
 //   8 artifacts       9 projects          10 spine
-//  11 supervision (B1a: watchdog hook)    12 HTTP + nvk-ws v1
+//  11 supervision (B1a: watchdog hook)    12 B3 Runtime (`b3.*`)
+//  13 HTTP + nvk-ws v1
+//
+// Step 12 is A4/T-02: the page this process serves reaches every Agent Run
+// through FZ-VIEW-001's door, which is `b3.*`. Composing the Runtime anywhere
+// else meant the server that served the Shell answered `unknown method` to the
+// only vocabulary its screens speak, so a backed Shell was unreachable by
+// construction. One process, one port, both vocabularies.
 //
 // It replaces packages/shell/demo/bridge.ts. Everything the demo PROVED is
 // promoted; everything the demo HACKED (hardcoded tokens, person pools, code
@@ -39,6 +46,8 @@ import { createSupervisedTransport } from './supervision/transport.js';
 import { createSupervisionEngine, type SupervisionEngine, type SupervisionRecord } from './supervision/engine.js';
 import { startTransport, type RunningTransport } from './transport/server.js';
 import { buildMethods, restoreLiveSessions, type ServerRuntime, type Conversation } from './methods.js';
+import { composeB3Wire } from './b3/runtime-wire.js';
+import type { B3RuntimeOptions } from './b3/composition.js';
 import { composeB2aServerCapabilities } from './b2a/composition.js';
 import { composeTranscriptServerHost } from './b2b/composition.js';
 import type { MessageExistenceQuery } from '../../spine/contract/index.js';
@@ -70,6 +79,14 @@ export interface BootOptions {
   processProbe?: ProcessProbe;
   /** @internal failure-injection seam for never-silent trace tests. */
   recordSystemAction?: typeof recordSystemAction;
+  /**
+   * Passed straight through to the B3 Runtime this process composes (step 12).
+   * It carries no policy of its own: the seams are the Runtime's own published
+   * ones — the PTY host and the provider adapters a suite substitutes, the
+   * interval tunables an operator sets — and `root` is this boot's root, never
+   * a second one.
+   */
+  b3?: Omit<B3RuntimeOptions, 'root' | 'publish'>;
 }
 
 export interface BootStep {
@@ -85,7 +102,13 @@ export interface BootError {
     | 'NoHumanPrincipal'
     | 'MessagingUnavailable'
     | 'StoreUnavailable'
-    | 'MigrationTraceFailed';
+    | 'MigrationTraceFailed'
+    /**
+     * Another process already holds this root's Runtime. Since step 12 this
+     * server IS the Runtime, so it refuses rather than serving `b3.*` from a
+     * composition that has no right to the machine's PTYs (red gate 2).
+     */
+    | 'RuntimeUnavailable';
   message: string;
 }
 
@@ -109,6 +132,14 @@ export type BootResult =
   | { ok: true; value: NovakaiServer }
   | { ok: false; error: BootError };
 
+/**
+ * A boot that will not happen, said once. Every refusal below is the same
+ * sentence — this root cannot be served, and here is which fact stopped it —
+ * so it is spelled in one place rather than re-assembled at each step.
+ */
+const refuse = (code: BootError['code'], message: string): BootResult =>
+  ({ ok: false, error: { code, message } });
+
 const HUMAN_ROLE = 'Human';
 const MINT_RUNBOOK =
   'run: npx tsx packages/server/cli/nvk-token.ts mint person_chris --grants layout,settings,conversationView --roles Human';
@@ -117,7 +148,7 @@ export async function bootServer(options: BootOptions): Promise<BootResult> {
   const steps: BootStep[] = [];
   const note = (step: number, name: string, detail: string): void => {
     steps.push({ step, name, detail });
-    console.log(`[nvk-server] ${step}/12 ${name}: ${detail}`);
+    console.log(`[nvk-server] ${step}/13 ${name}: ${detail}`);
   };
   const cwd = options.cwd ?? process.cwd();
 
@@ -132,10 +163,10 @@ export async function bootServer(options: BootOptions): Promise<BootResult> {
     opened = await openConfigStore({ root: options.root, principal: 'sys_spine' });
   } catch (cause) {
     if (!(cause instanceof StoreRouteConflictError)) throw cause;
-    return { ok: false, error: { code: 'StoreRouteConflict', message: cause.message } };
+    return refuse('StoreRouteConflict', cause.message);
   }
   if (!opened.ok) {
-    return { ok: false, error: { code: 'ConfigUnavailable', message: opened.error.message } };
+    return refuse('ConfigUnavailable', opened.error.message);
   }
   const configStore: ConfigStore = opened.value;
   let config = configStore.current();
@@ -264,7 +295,7 @@ export async function bootServer(options: BootOptions): Promise<BootResult> {
   const holders: SessionHolderFactory = createSessionHolderFactory({ messaging: embedded as never });
   const humanHolder = await holders.holderFor({ token: human.token, personId: human.personId });
   if (!humanHolder.ok) {
-    return { ok: false, error: { code: 'MessagingUnavailable', message: humanHolder.error.message } };
+    return refuse('MessagingUnavailable', humanHolder.error.message);
   }
   const appendSystemAction = options.recordSystemAction ?? recordSystemAction;
 
@@ -678,18 +709,50 @@ export async function bootServer(options: BootOptions): Promise<BootResult> {
   const restored = await restoreLiveSessions(runtime);
   if (restored > 0) note(7, 'sessions', `${restored} session(s) reattached to their conversations`);
 
-  // ── 12. HTTP + nvk-ws v1 ────────────────────────────────────────────────
-  const methods = buildMethods(runtime);
+  // ── 12. the B3 Runtime, on this process's own root ───────────────────────
+  // Composed LAST of the capabilities, and deliberately after every path that
+  // can still refuse the boot: a Runtime composed before one of those would
+  // hold the machine's instance lease and its timers while the process walked
+  // away from them.
+  const b3Wire = await composeB3Wire({ ...(options.b3 ?? {}), root: options.root });
+  note(12, 'runtime', `b3.* composed on ${b3Wire.runtime.dataRoot}`);
+
+  // ── 13. HTTP + nvk-ws v1 ────────────────────────────────────────────────
+  // ONE table. The Shell's boot methods and `b3.*` answer on the same socket,
+  // because they answer the same page (A4/T-02). The b3 half is spelled by the
+  // adapter, never here — a second spelling is how the headless host and the
+  // backed Shell end up with different surfaces.
+  const methods = { ...buildMethods(runtime), ...b3Wire.methods };
   const transport: RunningTransport = await startTransport({
     root: options.root,
     port: options.port,
     ...(options.staticDir ? { staticDir: options.staticDir } : {}),
     methods,
     artifacts: b2a.artifacts,
+    // An Agent Run presenting its credential on this socket is identified as
+    // ITSELF here too — the Shell's server is a lawful place for a spawned
+    // Agent to call from, and a forged credential is refused rather than
+    // downgraded to Chris.
+    identifyCaller: b3Wire.identifyCaller,
+    onDispatch: b3Wire.onDispatch,
+    onDisconnect: b3Wire.onDisconnect,
   });
   runtime.broadcast = (name, data) => transport.broadcast(name, data);
+  // The machine is claimed once the socket exists, for the reason the headless
+  // host claims it: a second Runtime must never serve a request it is not
+  // allowed to have served. A refused claim gives the port back.
+  try {
+    await b3Wire.serve(transport);
+  } catch (cause) {
+    await transport.close();
+    await b3Wire.close();
+    await embedded.close();
+    return refuse('RuntimeUnavailable',
+      `the B3 Runtime for ${options.root} refused to start: `
+      + `${cause instanceof Error ? cause.message : String(cause)}`);
+  }
   agents.subscribeAgentEvents((event) => transport.broadcast('presence', event));
-  note(12, 'transport', `listening on ${transport.url} (nvk-ws v1, token-gated)`);
+  note(13, 'transport', `listening on ${transport.url} (nvk-ws v1, token-gated)`);
   if (config.transcript.ingest) transcript.topology.start();
 
   // The supervision timers start only once the socket exists — otherwise the
@@ -719,6 +782,10 @@ export async function bootServer(options: BootOptions): Promise<BootResult> {
         configWatcher.close();
         await transcript.topology.stop();
         await transport.close();
+        // Before messaging: the Runtime releases the machine's instance lease
+        // on the way down, and a root whose lease outlived its process refuses
+        // the next boot.
+        await b3Wire.close();
         await embedded.close();
       },
     },

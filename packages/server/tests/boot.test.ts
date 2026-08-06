@@ -205,7 +205,7 @@ test('boot composes B2a capabilities in order, traces each step, and serves boot
 
   assert.deepEqual(
     server.steps.map((s) => s.step),
-    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
   );
   assert.deepEqual(
     server.steps.map((s) => s.name),
@@ -221,6 +221,9 @@ test('boot composes B2a capabilities in order, traces each step, and serves boot
       'projects',
       'spine',
       'supervision',
+      // A4/T-02: the server that serves the Shell IS the B3 Runtime, so its
+      // composition is a boot step like every other one — never silent.
+      'runtime',
       'transport',
     ],
   );
