@@ -17,7 +17,7 @@ import type {
   CancelPreparedProviderTurnInput, CancelReservedNotificationInput,
   CloseTerminalProviderTurnUnprovenInput, CommitReservedNotificationInput,
   ExecuteProviderTurnInputInput,
-  InterruptTerminalTurnInput, ListTerminalSessionsFilter, OpenManagedTerminalInput,
+  InterruptTerminalTurnInput, OpenManagedTerminalInput, TerminalSessionFilter,
   NotificationInputCommitOutcome, ReserveNotificationInput,
   PrepareProviderTurnInputInput, PrepareProviderTurnInputOutcome,
   ReadTerminalStreamInput, ReleaseInputLeaseInput, ResizeTerminalInput,
@@ -352,7 +352,7 @@ export function composeTerminal(options: ComposeTerminalOptions): TerminalContra
     getTerminalSession: (principal, terminalSessionId) =>
       getTerminalSession(core, principal, terminalSessionId),
 
-    listTerminalSessions: (principal: AuthenticatedPrincipal, filter?: ListTerminalSessionsFilter) =>
+    listTerminalSessions: (principal: AuthenticatedPrincipal, filter: TerminalSessionFilter) =>
       listTerminalSessions(core, principal, filter),
 
     async listControllerAttachments(_principal, terminalSessionId: TerminalSessionId) {

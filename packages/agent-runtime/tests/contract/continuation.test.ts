@@ -62,7 +62,7 @@ test('restart-fresh keeps the Agent and mints a new Run', async () => {
     }
     // At most one live Run per Agent, still true.
     const live = await rig.runtime.listAgentRuns(rig.principal(), {
-      agentId: agent.agentId, includeFinal: false,
+      agentId: agent.agentId, includeFinal: false, limit: 200,
     });
     assert.equal(live.ok, true);
     if (live.ok) assert.equal(live.value.items.length, 1);

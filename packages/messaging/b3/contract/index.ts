@@ -9,6 +9,7 @@
 
 export * from './api.js';
 export * from './records.js';
+export * from './screen-context.js';
 export {
   composeAgentMessaging, createMemoryConversationViews,
   type AgentDirectoryPort, type AgentMessagingOptions, type CapabilityEventEmitter,

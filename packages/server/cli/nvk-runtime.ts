@@ -4,7 +4,8 @@
 //   nvk-runtime serve  [--root .novakai] [--port 5190] [--static <dir>]
 //   nvk-runtime ensure [--start]
 //   nvk-runtime status
-//   nvk-runtime doctor [--cutover]
+//   nvk-runtime doctor
+//   nvk-runtime cutover-report [--root <path>]   ← out-of-tree (freeze §5b)
 //   nvk-runtime stop --live-runs refuse|stop-explicitly
 //
 // `ensure --start` is the point of the whole slice: it reaches the runtime, and
@@ -13,10 +14,12 @@ import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { b3err, b3fail, type B3ClientOpId, type B3Result } from '@novakai/foundation/contract';
-import type { RuntimeStatus, RuntimeDoctorReport, RuntimeStopOutcome } from '../../agent-runtime/contract/index.js';
+import type { RuntimeStatus, RuntimeStopOutcome } from '../../agent-runtime/contract/index.js';
 import { startRuntimeHost } from '../core/b3/host.js';
 import { connectRuntime, type RuntimeClient } from '../core/b3/client.js';
-import { clientOpIdFrom, emit, fail, parseFlags, type Flags } from '../core/b3/cli-shared.js';
+import {
+  clientOpIdFrom, emit, fail, parseFlags, type CliCommand, type Flags,
+} from '../core/b3/cli-shared.js';
 import { buildCutoverReport, describeCutover, LEGACY_MESSAGING_STORE } from '../core/b3/cutover-report.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -87,17 +90,27 @@ function describeStatus(status: RuntimeStatus): string {
   ].join('\n');
 }
 
-function describeDoctor(report: RuntimeDoctorReport): string {
-  const lines = [
-    report.ownedByThisProcess
-      ? 'This process owns the local runtime.'
-      : `This process does NOT own the local runtime (holder pid ${String(report.leaseHolderPid)}).`,
-    report.activeEpoch
-      ? `Active epoch ${report.activeEpoch.id}, started ${report.activeEpoch.startedAt}.`
-      : 'No active epoch is recorded.',
-    `${report.supersededEpochs} superseded epoch(s) on record.`,
-  ];
-  return [...lines, ...report.findings.map((line) => `- ${line}`)].join('\n');
+/**
+ * OQ-01's human clause, on top of FZ-CLI-SCHEMA-007's truth law. Built FROM
+ * `describeStatus` rather than beside it, so the two human readings of one
+ * query cannot drift into disagreeing about the same machine.
+ *
+ * Everything here is a field of the one query. `doctor` is a read-only
+ * composition of `getRuntimeStatus` and nothing else (OQ-01) — anything it
+ * could only say by asking a second question is new surface, and needs an
+ * amendment before a lane ships it.
+ */
+function describeDoctor(status: RuntimeStatus): string {
+  return [
+    describeStatus(status),
+    `Runtime ${status.version} has been up since ${status.startedAt}; `
+      + `${status.liveAgentRunCount} Agent Run(s) are still running in Novakai Runtime, `
+      + `with ${status.attachedControllerCount} controller(s) attached.`,
+    ...(status.recoveryRequiredCount > 0
+      ? [`recoveryRequiredCount is ${status.recoveryRequiredCount} — that many session(s) `
+        + 'are waiting to be recovered, and are not lost.']
+      : []),
+  ].join('\n');
 }
 
 function describeStop(outcome: RuntimeStopOutcome): string {
@@ -153,38 +166,48 @@ const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
       startDetached();
       status = await waitForRuntime();
     }
-    emit('runtime ensure', argFlags, status, describeStatus);
+    emit('runtime.ensure', argFlags, status, describeStatus);
   },
 
   async status(argFlags) {
-    emit('runtime status', argFlags, await withClient<RuntimeStatus>((client) =>
+    emit('runtime.status', argFlags, await withClient<RuntimeStatus>((client) =>
       client.call<RuntimeStatus>('b3.runtime.getStatus', {})), describeStatus);
   },
 
+  // OQ-01: a read-only composition of already-published queries — it calls
+  // `getRuntimeStatus` and NOTHING else, and its ratified flag set is empty.
+  // Exit is 0 whenever the query succeeds: an unhealthy runtime is honest data,
+  // not an error, and a doctor that exits non-zero on one is the tool for the
+  // situation refusing to answer in exactly that situation.
   async doctor(argFlags) {
-    // `--cutover` answers a different question from the runtime health one:
-    // "did the store route actually move, and can I prove it?" It is a pure
-    // read of the local data root, so it works with no Runtime running — which
-    // is exactly when someone reaches for it (§17.1, surface #10).
-    if (argFlags.value('cutover') === 'true') {
-      const report = await buildCutoverReport({
-        root,
-        dataRoot: path.join(root, 'stores'),
-        // The file the product actually writes (packages/server/core/boot.ts:146).
-        // It said `messaging-store.jsonl`, which nothing has ever written, so a
-        // root with a real legacy journal beside it reported `clear`.
-        legacySources: { messagingStoreOp: path.join(root, LEGACY_MESSAGING_STORE) },
-      });
-      emit('runtime doctor --cutover', argFlags, report, describeCutover);
-    }
-    emit('runtime doctor', argFlags, await withClient<RuntimeDoctorReport>((client) =>
-      client.call<RuntimeDoctorReport>('b3.runtime.doctor', {})), describeDoctor);
+    emit('runtime.doctor', argFlags, await withClient<RuntimeStatus>((client) =>
+      client.call<RuntimeStatus>('b3.runtime.getStatus', {})), describeDoctor);
+  },
+
+  // Answers a different question from the runtime health one — "did the store
+  // route actually move, and can I prove it?" — so it is its own verb rather
+  // than a flag on a ratified one (NVK-KIMI-092 §4; CL-A: a flag on a §17.1
+  // command needs an amendment, and none exists). Out-of-B3e extra under
+  // freeze §5b: lawful operator surface, outside X-1's set, carrying no proof.
+  //
+  // A pure read of the local data root, so it answers with no Runtime running
+  // — which is exactly the state someone reaches for it in.
+  async ['cutover-report'](argFlags) {
+    const report = await buildCutoverReport({
+      root,
+      dataRoot: path.join(root, 'stores'),
+      // The file the product actually writes (packages/server/core/boot.ts:146).
+      // It said `messaging-store.jsonl`, which nothing has ever written, so a
+      // root with a real legacy journal beside it reported `clear`.
+      legacySources: { messagingStoreOp: path.join(root, LEGACY_MESSAGING_STORE) },
+    });
+    emit('runtime.cutover-report', argFlags, report, describeCutover);
   },
 
   async stop(argFlags) {
     const liveRuns = argFlags.value('live-runs') ?? 'refuse';
     if (liveRuns !== 'refuse' && liveRuns !== 'stop-explicitly') {
-      emit('runtime stop', argFlags, b3fail(
+      emit('runtime.stop', argFlags, b3fail(
         b3err('ValidationFailed', '--live-runs must be refuse or stop-explicitly',
           { issues: [{ path: 'live-runs', message: 'unknown value' }] }, false),
       ), () => '');
@@ -198,19 +221,30 @@ const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
         expectedEpochId: status.value.activeEpochId, liveRuns,
       }, operationId());
     });
-    emit('runtime stop', argFlags, outcome, describeStop);
+    emit('runtime.stop', argFlags, outcome, describeStop);
   },
 };
 
+/** X-1's member for a verb. `serve` is not a command at all — it is the process
+ * `ensure --start` spawns (NVK-KIMI-092 §3 row 11) — so it reports under its
+ * group; `cutover-report` is an out-of-B3e extra, published outside X-1's set. */
+const RUNTIME_COMMANDS: Readonly<Record<string, CliCommand>> = {
+  ensure: 'runtime.ensure', status: 'runtime.status',
+  doctor: 'runtime.doctor', stop: 'runtime.stop', serve: 'runtime',
+  'cutover-report': 'runtime.cutover-report',
+};
+
 async function runCommand(name: string, argFlags: Flags): Promise<never> {
-  if (!mintedOperationId.ok) {
-    return fail(`runtime ${name}`, argFlags, mintedOperationId.error);
+  const command = RUNTIME_COMMANDS[name];
+  if (command !== undefined && !mintedOperationId.ok) {
+    return fail(command, argFlags, mintedOperationId.error);
   }
   const handler = COMMANDS[name];
   if (!handler) {
     emit('runtime', argFlags, b3fail(
       b3err('ValidationFailed', `unknown command "${name}"`,
-        { issues: [{ path: 'command', message: 'expected serve|ensure|status|doctor|stop' }] }, false),
+        { issues: [{ path: 'command',
+          message: 'expected serve|ensure|status|doctor|cutover-report|stop' }] }, false),
     ), () => '');
   }
   return handler(argFlags);

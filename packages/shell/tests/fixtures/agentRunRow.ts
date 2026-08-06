@@ -61,6 +61,7 @@ export function runRow(partial: RunRowOverrides = {}): AgentRunRowView {
       surface: partial.surface ?? 'novakai-shell', requestedBy: 'person_chris',
       ...(partial.startedAt === undefined ? {} : { startedAt: partial.startedAt }),
     },
+    controllers: { attachedCount: 0, kinds: [] },
     family: {
       childCount: partial.childCount ?? 0,
       supervisor: partial.supervisor ?? { kind: 'human', principalId: 'person_chris' },

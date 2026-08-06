@@ -19,6 +19,7 @@ import type {
   AuthenticatedPrincipal,
 } from "@novakai/foundation/contract";
 import type { Thread, ThreadId } from "../../public/contract/index.js";
+import type { ScreenContext } from "./screen-context.js";
 import type {
   AgentCommunicationItem, AgentEndpointClaim, AgentEndpointClaimId, AgentId,
   AgentInboxItem, AgentRunId, TerminalInputAttemptId, TerminalSessionId,
@@ -74,6 +75,13 @@ export interface SendAgentMessageInput {
    * and the wire both pass one.
    */
   readonly clientMessageId?: string;
+  /**
+   * What the sender was looking at when they composed this (§10, AMD-004).
+   * Persisted verbatim on the committed Message and echoed unchanged on
+   * `AgentCommunicationItem`. Absent is the honest answer for a send composed
+   * without a screen — including every terminal-originated Message.
+   */
+  readonly screenContext?: ScreenContext;
 }
 
 export interface MessageAcceptance {

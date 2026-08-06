@@ -133,6 +133,10 @@ const WIRE_STEPS: readonly WireStep[] = [
       state.managerRunVersion = runView(value).run.recordVersion;
     },
   },
+  // OQ-09's agent form. It is the other half of `nvk agent inspect`: the same
+  // command answers with the Agent rather than the Run when handed an Agent id,
+  // and until B3e there was no operation behind it at all.
+  { method: 'b3.agent.getAgent', payload: (state) => ({ agentId: state.managerAgentId }) },
   { method: 'b3.agent.listRuns', payload: () => ({ includeFinal: true, limit: 50 }) },
   {
     method: 'b3.agent.listTurnSubmissions',

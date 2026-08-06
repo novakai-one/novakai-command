@@ -84,7 +84,7 @@ async function crashAndRetry(writes: number): Promise<CrashRun> {
     });
     assert.equal(journals.ok, true);
     const runs = await restarted.runtime.listAgentRuns(restarted.principal(), {
-      includeFinal: true,
+      includeFinal: true, limit: 200,
     });
     assert.equal(runs.ok, true);
 
@@ -228,7 +228,7 @@ async function crashBootAndRetry(writes: number): Promise<BootedRetry> {
       });
     }
 
-    const runs = await restarted.runtime.listAgentRuns(restarted.principal(), { includeFinal: true });
+    const runs = await restarted.runtime.listAgentRuns(restarted.principal(), { includeFinal: true, limit: 200 });
     const journals = await restarted.runtime.listRunOperations(restarted.principal(), {
       includeCompleted: true,
     });

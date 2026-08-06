@@ -126,7 +126,11 @@ test('a closed enum is closed: unknown members of it never reach the contract', 
         attachmentId: 'controller_00000000-0000-7000-8000-000000000001',
         mode: 'just-take-it', ttlMs: 1000,
       }),
-      refusal(rig.client, 'b3.terminal.list', { state: 'everything' }),
+      // A5-05: `status` is a set of the owner's own statuses, and `limit` is
+      // required — a filter with neither is not a smaller question, it is an
+      // unstated one.
+      refusal(rig.client, 'b3.terminal.list', { limit: 10, status: ['everything'] }),
+      refusal(rig.client, 'b3.terminal.list', {}),
       refusal(rig.client, 'b3.runtime.stop', {
         expectedEpochId: session.id, liveRuns: 'refuse',
       }),

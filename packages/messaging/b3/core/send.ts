@@ -134,6 +134,7 @@ async function acceptanceFor(
     threadId: threadId.value,
     text: input.text,
     clientMessageId,
+    ...(input.screenContext === undefined ? {} : { screenContext: input.screenContext }),
     inboxFor: {
       agentId, inboxItemId,
       ...(requestedRunId === undefined ? {} : { requestedRunId }),

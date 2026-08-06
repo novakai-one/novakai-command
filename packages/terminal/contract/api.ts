@@ -35,7 +35,7 @@ export const DEFAULT_STALE_AFTER_MS = 120_000;
 import type {
   ControllerAttachment, ControllerKind, TerminalInputAttempt, TerminalInputKind,
   NotificationInputReservation, ProviderTurnTerminalInputAttempt,
-  TerminalInputLease, TerminalSession, TerminalSessionOwner,
+  TerminalInputLease, TerminalSession, TerminalSessionOwner, TerminalSessionStatus,
 } from './records.js';
 
 export interface OpenManagedTerminalInput {
@@ -319,8 +319,20 @@ export interface TerminalSessionView {
   readonly nextInputSequence: number;
 }
 
-export interface ListTerminalSessionsFilter {
-  readonly state?: 'live' | 'final' | 'all';
+/**
+ * A5-05 (B3V4-AMD-005): the ratified filter for §12.3's session listing.
+ *
+ * Conjunctive — every stated member must hold. `limit` is required and has no
+ * default here on purpose: a listing that invents a page size decides for its
+ * caller how much of the truth it wanted, and A5-05 puts that decision at the
+ * CLI (`pageFlags`, which supplies 200) rather than in the owner.
+ */
+export interface TerminalSessionFilter {
+  readonly owner?: TerminalSessionOwner;
+  readonly status?: readonly TerminalSessionStatus[];
+  /** Opaque `terminalSessions.*` keyset cursor over stable `(createdAt,id)`. */
+  readonly cursor?: EventCursor;
+  readonly limit: number;
 }
 
 /**
@@ -516,8 +528,8 @@ export interface TerminalQueries {
   ): Promise<B3Result<TerminalSessionView>>;
 
   listTerminalSessions(
-    principal: AuthenticatedPrincipal, filter?: ListTerminalSessionsFilter,
-  ): Promise<B3Result<readonly TerminalSessionView[]>>;
+    principal: AuthenticatedPrincipal, filter: TerminalSessionFilter,
+  ): Promise<B3Result<B3Page<TerminalSessionView>>>;
 
   listControllerAttachments(
     principal: AuthenticatedPrincipal, terminalSessionId: TerminalSessionId,

@@ -25,10 +25,11 @@ import type {
   TerminalPort, TurnDeliveryStep,
 } from '../../../agent-runtime/contract/index.js';
 import type { GovernedAgentsContract } from '../../../agents/b3/contract/index.js';
-import type { TerminalContract } from '../../../terminal/contract/index.js';
+import type { TerminalContract, TerminalSessionView } from '../../../terminal/contract/index.js';
 import type {
   LaunchAuthorityRegistrar,
 } from '../../../terminal/adapters/pty-host/node-pty.js';
+import type { AgentRunView } from '../../../agent-runtime/contract/index.js';
 import { notificationTerminalPort } from './notification-terminal-port.js';
 
 const systemContext = (): SystemCommandContext<'sys_agent_runtime'> => ({
@@ -139,6 +140,36 @@ export function agentsPort(agents: GovernedAgentsContract): AgentsPort {
 }
 
 /**
+ * The three rules of §19.1's controllers section, as ruled by NVK-KIMI-089:
+ *
+ * 1. `attachedCount` counts attachments whose `state === 'attached'` (§7:1172).
+ *    `detached` and `stale` are NOT connected (§20:3829) — a stale attachment
+ *    is precisely a controller that may no longer be watching.
+ * 2. `kinds` is the DEDUPLICATED set of those attachments' `controllerKind`,
+ *    emitted in the §7:1155 declaration order, so two reads of one state are
+ *    byte-identical. Ordering by arrival would make an unchanged session read
+ *    differently between two calls (FZ-VIEW-034).
+ * 3. `inputLeaseHolder` is the attachment holding the session's ACTIVE lease
+ *    (§7:1183); omitted when there is none. Omission means "no lease holder",
+ *    never "unknown".
+ */
+const CONTROLLER_KIND_ORDER = [
+  'novakai-shell', 'external-terminal', 'script', 'operations',
+] as const;
+
+export function controllersOf(session: TerminalSessionView): AgentRunView['controllers'] {
+  const connected = session.attachments.filter((attachment) => attachment.state === 'attached');
+  const present = new Set(connected.map((attachment) => attachment.controllerKind));
+  const holder = session.activeInputLease?.state === 'active'
+    ? session.activeInputLease.attachmentId : undefined;
+  return {
+    attachedCount: connected.length,
+    kinds: CONTROLLER_KIND_ORDER.filter((kind) => present.has(kind)),
+    ...(holder === undefined ? {} : { inputLeaseHolder: holder }),
+  };
+}
+
+/**
  * Terminal, narrowed the same way — plus the one thing the port needs that the
  * public Terminal contract deliberately does not offer a caller: typing as the
  * RUNTIME rather than as a controller. The Runtime attaches its own controller
@@ -160,6 +191,19 @@ export function terminalPort(
 
   return {
     ...notificationTerminalPort(terminal),
+
+    /**
+     * §19.1's controllers section, derived from ONE published Terminal read.
+     * `TerminalSessionView` already carries both `attachments` and
+     * `activeInputLease`, which is everything the three rules need — so this
+     * adds no Terminal surface and invents no second definition of "connected".
+     */
+    async controllerFacts(principal, terminalSessionId) {
+      const session = await terminal.getTerminalSession(principal, terminalSessionId);
+      if (!session.ok) return session;
+      return b3ok(controllersOf(session.value));
+    },
+
     async openManagedTerminal(context, input) {
       const opened = await terminal.openManagedTerminal(context, {
         owner: { kind: 'agent-run', agentRunId: input.agentRunId },
