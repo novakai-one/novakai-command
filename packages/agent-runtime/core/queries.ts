@@ -171,6 +171,21 @@ export async function observeTerminalExit(
   return reconciled.ok ? b3ok(null) : b3fail(reconciled.error);
 }
 
+/** No terminal session ⇒ no attachments to hang off one (§7:1165). Truth, not a default. */
+const NO_CONTROLLERS: AgentRunView['controllers'] = { attachedCount: 0, kinds: [] };
+
+/**
+ * §19.1's controllers section, from the one owner of ControllerAttachment and
+ * TerminalInputLease. The Runtime asks Terminal every read and caches nothing
+ * (§3.3), and it never derives this from `launch.surface` (FZ-VIEW-004).
+ */
+async function controllersOfRun(
+  core: RunsCore, principal: AuthenticatedPrincipal, agentRun: AgentRun,
+): Promise<B3Result<AgentRunView['controllers']>> {
+  if (agentRun.terminalSessionId === undefined) return b3ok(NO_CONTROLLERS);
+  return core.terminal.controllerFacts(principal, agentRun.terminalSessionId);
+}
+
 // eslint-disable-next-line sonarjs/cognitive-complexity -- View projection retains explicit custody states.
 export async function viewOfRun(
   core: RunsCore, principal: AuthenticatedPrincipal, stale: AgentRun,
@@ -192,6 +207,13 @@ export async function viewOfRun(
   // Transcript owns this fact; the Runtime asks. A null answer is "no binding",
   // never "no transcript" — the two are told apart in the view below.
   const binding = (await core.transcriptBinding?.(agentRun.id)) ?? null;
+  // §19.1's controllers section, asked of Terminal on every read and never
+  // cached (§3.3). A Run with no terminal session has no attachments to hang
+  // off one (§7:1165), so `{0, []}` there is truth rather than a fallback —
+  // and when Terminal cannot answer, the read FAILS below rather than
+  // fabricating a zero ("unavailable" is not zero, §24.5/FZ-VIEW-010).
+  const controllers = await controllersOfRun(core, principal, agentRun);
+  if (!controllers.ok) return controllers;
   const usage = core.usage === undefined
     ? b3ok(unavailableUsage(agentRun, new Date(core.clock()).toISOString() as IsoUtc))
     : await core.usage(principal, agentRun.id);
@@ -214,6 +236,7 @@ export async function viewOfRun(
       requestedBy: agentRun.requestedBy,
       ...(agentRun.startedAt === undefined ? {} : { startedAt: agentRun.startedAt }),
     },
+    controllers: controllers.value,
     family: {
       ...(parent.value === null ? {} : { parentAgentId: parent.value }),
       childCount: children.value.length,
@@ -297,23 +320,69 @@ function matchesRunFilter(agentRun: AgentRun, filter: ListAgentRunsFilter): bool
 }
 
 /**
+ * §12.7:2647's attachment filter, applied conjunctively with the record-only
+ * members above.
+ *
+ * It runs BEFORE the page is cut, never after: filtering a already-sliced page
+ * would hand the caller fewer items than it asked for while `nextCursor`
+ * claimed a full window, which is the silent-truncation shape L-11 and L-15
+ * name one capability over. The Terminal read is paid only when the caller
+ * actually states the filter.
+ */
+async function matchesControllerState(
+  core: RunsCore,
+  principal: AuthenticatedPrincipal,
+  agentRun: AgentRun,
+  wanted: NonNullable<ListAgentRunsFilter['controllerState']>,
+): Promise<B3Result<boolean>> {
+  const controllers = await controllersOfRun(core, principal, agentRun);
+  if (!controllers.ok) return controllers;
+  // The ruled equivalence, spelled once: "attached" ⇔ attachedCount > 0, and
+  // "headless" is its exact complement. Never read off `launch.surface`.
+  const attached = controllers.value.attachedCount > 0;
+  return b3ok(wanted === 'attached' ? attached : !attached);
+}
+
+async function narrowByControllerState(
+  core: RunsCore,
+  principal: AuthenticatedPrincipal,
+  candidates: readonly AgentRun[],
+  filter: ListAgentRunsFilter,
+): Promise<B3Result<readonly AgentRun[]>> {
+  if (filter.controllerState === undefined) return b3ok(candidates);
+  const kept: AgentRun[] = [];
+  for (const agentRun of candidates) {
+    const matches = await matchesControllerState(core, principal, agentRun, filter.controllerState);
+    if (!matches.ok) return matches;
+    if (matches.value) kept.push(agentRun);
+  }
+  return b3ok(kept);
+}
+
+/**
  * The page of Runs a filter selects: ordered by the stable `(createdAt,id)`
  * key, resumed after the caller's cursor, filtered, then cut to `limit`.
  *
  * Separate from the projection below because they answer different questions —
  * WHICH records this page is, and what each of them looks like to this reader.
  */
-function runPageWindow(
-  stored: readonly AgentRun[], filter: ListAgentRunsFilter,
-): B3Result<{ readonly wanted: readonly AgentRun[]; readonly more: boolean }> {
+async function runPageWindow(
+  core: RunsCore,
+  principal: AuthenticatedPrincipal,
+  stored: readonly AgentRun[],
+  filter: ListAgentRunsFilter,
+): Promise<B3Result<{ readonly wanted: readonly AgentRun[]; readonly more: boolean }>> {
   const position = filter.cursor === undefined ? b3ok(null) : readRunCursor(filter.cursor);
   if (!position.ok) return position;
   const ordered = [...stored].sort((left, right) =>
     left.createdAt.localeCompare(right.createdAt) || String(left.id).localeCompare(String(right.id)));
   const from = position.value;
-  const matching = ordered
+  const byRecord = ordered
     .filter((agentRun) => from === null || afterRunCursor(agentRun, from))
     .filter((agentRun) => matchesRunFilter(agentRun, filter));
+  const narrowed = await narrowByControllerState(core, principal, byRecord, filter);
+  if (!narrowed.ok) return narrowed;
+  const matching = narrowed.value;
   // No owner-side default: `limit` is required (§12.7:2650) and the one default
   // in the build is the CLI's 200 (A5-01). `?? 500` was a second authority
   // answering "how big is a page" — the B3d SEVERE-2 shape (A7-03 item 3).
@@ -328,7 +397,7 @@ export async function listAgentRuns(
     'agentRun', filter.agentId === undefined ? undefined : { agentId: filter.agentId },
   );
   if (!runs.ok) return runs;
-  const page = runPageWindow(runs.value, filter);
+  const page = await runPageWindow(core, principal, runs.value, filter);
   if (!page.ok) return page;
   const { wanted, more } = page.value;
 

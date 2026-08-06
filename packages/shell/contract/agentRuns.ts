@@ -105,6 +105,17 @@ export interface AgentRunRowView {
     readonly requestedBy: string;
     readonly startedAt?: string;
   };
+  /**
+   * §19.1 / FZ-VIEW-002, mirrored. Who is watching RIGHT NOW — a different
+   * fact from `launch` (where it was started) and from `run.lifecycle`
+   * (whether it is going). §24.5 red-gates all three against each other:
+   * "'No controller' is not 'Agent stopped'".
+   */
+  readonly controllers: {
+    readonly attachedCount: number;
+    readonly kinds: readonly string[];
+    readonly inputLeaseHolder?: string;
+  };
   readonly family: {
     readonly parentAgentId?: string;
     readonly childCount: number;
@@ -169,10 +180,11 @@ export interface ShellAgentServices {
  * "no key outside this set", plus the required keys being present.
  */
 export const AGENT_RUN_VIEW_SHAPE: Readonly<Record<string, readonly string[]>> = {
-  '': ['agent', 'run', 'provider', 'launch', 'family', 'usage', 'transcript'],
+  '': ['agent', 'run', 'provider', 'launch', 'controllers', 'family', 'usage', 'transcript'],
   agent: ['agentId', 'displayName', 'roleProfileId'],
   provider: ['provider', 'modelId', 'effort', 'providerSessionId'],
   launch: ['surface', 'requestedBy', 'startedAt'],
+  controllers: ['attachedCount', 'kinds', 'inputLeaseHolder'],
   family: ['parentAgentId', 'childCount', 'supervisor', 'supervisionVersion'],
   transcript: ['bindingState', 'mirrorWatermark'],
   usage: [
@@ -256,10 +268,11 @@ export function orderRuns(items: readonly AgentRunRowView[]): AgentRunRowView[] 
 
 /** Required at every level — absent means the projection lost a fact. */
 export const AGENT_RUN_VIEW_REQUIRED: Readonly<Record<string, readonly string[]>> = {
-  '': ['agent', 'run', 'provider', 'launch', 'family', 'usage', 'transcript'],
+  '': ['agent', 'run', 'provider', 'launch', 'controllers', 'family', 'usage', 'transcript'],
   agent: ['agentId', 'displayName', 'roleProfileId'],
   provider: ['provider', 'modelId', 'effort', 'providerSessionId'],
   launch: ['surface', 'requestedBy'],
+  controllers: ['attachedCount', 'kinds'],
   family: ['childCount', 'supervisor', 'supervisionVersion'],
   transcript: ['bindingState'],
   usage: [

@@ -62,6 +62,17 @@ export const LAUNCH_SURFACES = [
 ] as const;
 export type LaunchSurface = typeof LAUNCH_SURFACES[number];
 
+/**
+ * §12.7:2647's `ListAgentRunsFilter.controllerState`. Spelled once so the
+ * boundary reader and the filter cannot disagree about the vocabulary.
+ *
+ * Deliberately NOT a launch surface and not a lifecycle: it names whether a
+ * controller is connected right now, which §24.5 requires to stay independent
+ * of both.
+ */
+export const CONTROLLER_STATES = ['attached', 'headless'] as const;
+export type ControllerState = typeof CONTROLLER_STATES[number];
+
 export interface AgentRun extends RecordEnvelope<AgentRunId, 'agentRun'> {
   readonly agentId: AgentId;
   readonly launchPlanId: ResolvedLaunchPlanId;

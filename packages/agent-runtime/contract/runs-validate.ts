@@ -26,8 +26,9 @@ import type {
   ProviderTurnSubmissionState,
 } from './provider-turns.js';
 import {
-  AGENT_RUN_LIFECYCLES, CONTINUATION_MODES, LAUNCH_CONFIGURATION_MODES, LAUNCH_SURFACES,
-  type AgentRunLifecycle, type LaunchSurface,
+  AGENT_RUN_LIFECYCLES, CONTINUATION_MODES, CONTROLLER_STATES, LAUNCH_CONFIGURATION_MODES,
+  LAUNCH_SURFACES,
+  type AgentRunLifecycle, type ControllerState, type LaunchSurface,
 } from './runs.js';
 
 const PROVIDERS = ['claude', 'codex', 'kimi'] as const;
@@ -204,6 +205,7 @@ export function readListAgentRunsFilter(candidate: unknown): B3Result<ListAgentR
     // the ratified cap, and accepted omission (A7-03 item 2).
     const limit = field.count('limit', 1, 200);
     const onlyFinal = optionalFlag(field, 'onlyFinal');
+    const controllerState = field.optionalChoice<ControllerState>('controllerState', CONTROLLER_STATES);
     const lifecycle = field.given('lifecycle');
     const wanted = Array.isArray(lifecycle)
       && lifecycle.every((item) => AGENT_RUN_LIFECYCLES.includes(item as AgentRunLifecycle))
@@ -221,6 +223,7 @@ export function readListAgentRunsFilter(candidate: unknown): B3Result<ListAgentR
       ...(launchSurface === undefined ? {} : { launchSurface }),
       includeFinal: flag(field, 'includeFinal'),
       ...(onlyFinal === true ? { onlyFinal: true } : {}),
+      ...(controllerState === undefined ? {} : { controllerState }),
       ...(cursor === undefined ? {} : { cursor: cursor as EventCursor }),
       limit,
     };

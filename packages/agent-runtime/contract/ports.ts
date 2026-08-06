@@ -26,6 +26,9 @@ import type {
   AgentControlFacts, AgentControlOutcomeFacts, ControlCapabilityFacts,
 } from './controls.js';
 import type { AgentRelationshipFacts } from './family.js';
+// Type-only, and erased at build: the controllers section is spelled ONCE, in
+// the view that publishes it, so the port and the projection cannot drift.
+import type { AgentRunView } from './runs-api.js';
 import type { LaunchPlanFacts } from './launch-facts.js';
 
 export type {
@@ -301,6 +304,20 @@ export interface TerminalPort {
   openManagedTerminal(
     context: CommandContext, input: ManagedTerminalRequest,
   ): Promise<B3Result<TerminalFacts>>;
+
+  /**
+   * §19.1's controllers section. Terminal owns ControllerAttachment and
+   * TerminalInputLease (§7); the Runtime asks and never caches.
+   *
+   * There is no unavailable answer on purpose: the ratified shape has no such
+   * representation, so a port that cannot answer returns its error and the
+   * view read fails with it. A fabricated `0` would be the lie §24.5 and
+   * FZ-VIEW-010 forbid — "unavailable" is not zero.
+   */
+  controllerFacts(
+    principal: AuthenticatedPrincipal,
+    terminalSessionId: TerminalSessionId,
+  ): Promise<B3Result<AgentRunView['controllers']>>;
 
   /**
    * Submit one turn as the Runtime, not as a controller. Returns `false` when

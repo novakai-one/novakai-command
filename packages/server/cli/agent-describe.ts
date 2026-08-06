@@ -28,6 +28,28 @@ function usageLine(usage: Omit<AgentRunUsage, 'agentRunId'>): string {
 }
 
 /**
+ * §17.2:3605's second half: "Human output MUST say both launch origin and
+ * current controller truth" — the `currently 0 controllers` clause.
+ *
+ * It is a separate clause from the origin on purpose. §24.5 red-gates the two
+ * against each other ("'Started externally' is not inferred from current
+ * attachment", "'No controller' is not 'Agent stopped'"), so the line states
+ * both rather than letting a reader derive one from the other.
+ *
+ * An absent `inputLeaseHolder` is passed over in silence, because the owner
+ * omits it to mean "no lease holder" — printing "unknown" would turn a stated
+ * fact into a doubt.
+ */
+function controllerLine(controllers: AgentRunView['controllers']): string {
+  const count = controllers.attachedCount;
+  const noun = count === 1 ? 'controller' : 'controllers';
+  const kinds = controllers.kinds.length === 0 ? '' : ` (${controllers.kinds.join(', ')})`;
+  const holder = controllers.inputLeaseHolder === undefined
+    ? '' : `, input lease held by ${controllers.inputLeaseHolder}`;
+  return `currently ${count} ${noun}${kinds}${holder}`;
+}
+
+/**
  * The sentence Chris needs, with the four facts kept apart: where it came from,
  * who supervises it, what it is doing, and what we do NOT know (§24.5).
  */
@@ -44,7 +66,8 @@ export function describeRun(view: AgentRunView): string {
   return `${view.agent.displayName}  ${view.run.id}\n`
     + `  ${view.provider.provider}/${view.provider.modelId} (${view.provider.effort}); `
     + `${view.run.lifecycle}, ${view.run.activity}\n`
-    + `  Started from ${view.launch.surface} by ${view.launch.requestedBy}; ${family}; ${supervisor}\n`
+    + `  Started from ${view.launch.surface} by ${view.launch.requestedBy}; `
+    + `${controllerLine(view.controllers)}; ${family}; ${supervisor}\n`
     + `  ${view.family.childCount} child agent(s); usage ${usageLine(view.usage)}`
     + doubts;
 }

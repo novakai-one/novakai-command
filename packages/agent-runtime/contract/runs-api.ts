@@ -8,14 +8,14 @@
 // hold that gate is to have exactly one path.
 import type {
   AgentId, AgentRunId, AuthenticatedPrincipal, B3Page, B3Result, CapabilityOwner, CommandContext,
-  ControlReplacementPlanId, EventCursor, HumanPrincipalId, IsoUtc,
+  ControlReplacementPlanId, ControllerAttachmentId, EventCursor, HumanPrincipalId, IsoUtc,
   ProviderSessionId, ProviderTurnId, ActivityGeneration, RecordVersion,
   AgentRoleProfileId, ResolvedLaunchPlanId, RunOperationId, TraceCorrelationId,
   SystemCommandContext,
 } from '@novakai/foundation/contract';
 import type {
   AgentRun, AgentRunLifecycle, ContinuationMode, LaunchConfigurationMode,
-  LaunchSurface, RunOperation, SupervisionAssignment, TreeMutationFence,
+  ControllerState, LaunchSurface, RunOperation, SupervisionAssignment, TreeMutationFence,
 } from './runs.js';
 import type {
   AgentControlFacts, AgentControlOutcomeFacts, AgentRelationshipFacts,
@@ -163,6 +163,23 @@ export interface ListAgentRunsFilter {
    */
   readonly onlyFinal?: boolean;
   /**
+   * pass2 §12.7:2647, restored. It carries Chris point 6's direct proof — the
+   * "live/HEADLESS/final list" (pass1:1366) — and is the only surface in Build
+   * 3 that produces the headless third of it. Its two siblings already reach
+   * `includeFinal`/`onlyFinal` through `--state`.
+   *
+   * `"attached"` ⇔ at least one ControllerAttachment in state `attached` for
+   * the Run's terminal session at query time ⇔ `AgentRunView.controllers
+   * .attachedCount > 0`. `"headless"` is its exact complement. Omitted means
+   * no filtering on attachment.
+   *
+   * It is never inferred from and never constrains `launch.surface` (§24.5:
+   * "'Started externally' is not inferred from current attachment"), and it is
+   * not a lifecycle statement: a final Run with no attachments is `headless`,
+   * not stopped.
+   */
+  readonly controllerState?: ControllerState;
+  /**
    * pass2 §12.7's own field, restored. It was declared in the spec and absent
    * from this shape, so `nvk agent list --cursor <c>` (A5-01) travelled to the
    * boundary and was silently dropped there: the caller was handed page one
@@ -224,6 +241,23 @@ export interface AgentRunView {
     readonly surface: LaunchSurface;
     readonly requestedBy: string;
     readonly startedAt?: IsoUtc;
+  };
+  /**
+   * §19.1 / FZ-VIEW-002. Current attachment truth, asked of Terminal on every
+   * read and never cached (§3.3). Separate from `launch` because "nobody is
+   * watching" and "started somewhere else" are different facts, and neither is
+   * "stopped" (FZ-VIEW-004, §24.5 red gate 4).
+   *
+   * The `ControllerKind` union is inlined rather than imported: Agent Runtime
+   * never imports Terminal (§3.1), and it is the same idiom this file already
+   * uses for `provider`.
+   */
+  readonly controllers: {
+    readonly attachedCount: number;
+    readonly kinds: readonly (
+      'novakai-shell' | 'external-terminal' | 'script' | 'operations'
+    )[];
+    readonly inputLeaseHolder?: ControllerAttachmentId;
   };
   readonly family: {
     readonly parentAgentId?: AgentId;
