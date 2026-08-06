@@ -3,8 +3,8 @@
 // `--json` field names and enum meanings are a compatibility contract; the
 // human text above them is free to improve.
 import {
-  b3fail, b3ok, isValidClientOpId, mintClientOpId, validationFailed,
-  type B3ClientOpId, type B3ContractError, type B3Result,
+  b3fail, b3ok, isValidClientOpId, isValidId, mintClientOpId, validationFailed,
+  type B3ClientOpId, type B3ContractError, type B3Result, type IdFormat,
 } from '@novakai/foundation/contract';
 
 /**
@@ -110,6 +110,16 @@ import { EXIT, exitCodeFor } from './exit-codes.js';
 export interface Flags {
   readonly json: boolean;
   value(name: string): string | undefined;
+  /**
+   * Every occurrence of a flag, in the order the operator typed them.
+   *
+   * `parseFlags` kept ONE value per name, which is right for every flag that
+   * names a single thing and silently wrong for A5-02's `--confirmed-run`: a
+   * `runtime stop` told about three live Runs would have confirmed only the
+   * last, and stopped while refusing two Runs the operator had already agreed
+   * to lose. `value()` keeps its old meaning; a repeatable flag reads here.
+   */
+  values(name: string): readonly string[];
   readonly positional: readonly string[];
 }
 
@@ -212,9 +222,126 @@ export function supervisedTask(flags: Flags): B3Result<{
   return b3ok({ task: { kind: SUPERVISED_TASK_KIND, brief } });
 }
 
+/**
+ * AMD-005 A5-02 — the concurrency preconditions, as flags.
+ *
+ * "A command whose in-process input requires a caller-supplied concurrency
+ * precondition accepts it as an explicit flag; the CLI never reads a record in
+ * order to supply one."
+ *
+ * The CLI supplied all of them, at five sites, by reading the record it was
+ * about to write. That is a compare-and-set against a value nobody compared:
+ * the operator decided at version 3, the CLI fetched version 5 a millisecond
+ * before writing, and the write the CAS existed to refuse went through. The
+ * operator's belief is the only expected value worth quoting, and it can only
+ * arrive from the operator.
+ *
+ * Spelled once, here, for the same reason `pageFlags` is: five copies of one
+ * law is how the five sites drift into five laws.
+ */
+export const EXPECT_VERSION_FLAG = 'expect-version';
+export const EXPECT_EPOCH_FLAG = 'expect-epoch';
+export const EXPECT_EPISODE_FLAG = 'expect-episode';
+export const CONFIRMED_RUN_FLAG = 'confirmed-run';
+export const REASON_FLAG = 'reason';
+
+const requiredFlag = (name: string, message: string): B3Result<never> =>
+  b3fail(validationFailed([{ path: name, message }]));
+
+/**
+ * `--expect-version <n>` → `expectedRecordVersion` / `expectedAssignmentVersion`
+ * / `expectedRunVersion`, whichever the owner's input names.
+ *
+ * The CLI refuses only the encoding error it can SEE — "that is not a whole
+ * number". Each owner's floor differs (`count(…, 1, …)` for a Run record,
+ * `count(…, 0, …)` for an assignment), and a range check here would be CLI-only
+ * policy answering a question the boundary already answers — the same reading
+ * `--depth` was given in A5-09 (OQ-06).
+ */
+export function expectedVersion(flags: Flags): B3Result<number> {
+  const given = flags.value(EXPECT_VERSION_FLAG);
+  if (given === undefined) {
+    return requiredFlag(EXPECT_VERSION_FLAG,
+      `--${EXPECT_VERSION_FLAG} <n> is required: quote the record version YOU read`);
+  }
+  const version = Number(given);
+  if (!Number.isInteger(version)) {
+    return requiredFlag(EXPECT_VERSION_FLAG, `--${EXPECT_VERSION_FLAG} must be a whole number`);
+  }
+  return b3ok(version);
+}
+
+/** One required id-shaped precondition flag, refused here only for its shape. */
+function expectedId(
+  flags: Flags, flag: string, prefix: string, format: IdFormat, purpose: string,
+): B3Result<string> {
+  const given = flags.value(flag);
+  if (given === undefined) {
+    return requiredFlag(flag, `--${flag} <${prefix}Id> is required: ${purpose}`);
+  }
+  if (!isValidId(given, prefix, format)) {
+    return requiredFlag(flag, `--${flag} must be a ${prefix} identifier`);
+  }
+  return b3ok(given);
+}
+
+/** `--expect-epoch <RuntimeEpochId>` → `expectedEpochId`. */
+export const expectedEpoch = (flags: Flags): B3Result<string> => expectedId(
+  flags, EXPECT_EPOCH_FLAG, 'runtimeEpoch', 'uuidv7',
+  'a stop applies to the Runtime you saw, never to one that took over since',
+);
+
+/** `--expect-episode <DriftEpisodeId>` → `expectedEpisodeId`. */
+export const expectedEpisode = (flags: Flags): B3Result<string> => expectedId(
+  flags, EXPECT_EPISODE_FLAG, 'driftEpisode', 'base32sha256',
+  'a reset applies to the drift episode you looked at',
+);
+
+/**
+ * `--confirmed-run <AgentRunId>`, repeatable → `confirmedRunIds`.
+ *
+ * Optional at the owner's boundary (`RequestRuntimeStopInput.confirmedRunIds?`),
+ * so an absent flag omits the field rather than sending an empty list — an
+ * empty list is the operator saying "I confirm nothing", which is a different
+ * sentence from not being asked.
+ */
+export function confirmedRuns(flags: Flags): B3Result<{ confirmedRunIds?: readonly string[] }> {
+  const given = flags.values(CONFIRMED_RUN_FLAG);
+  if (given.length === 0) return b3ok({});
+  const malformed = given.filter((id) => !isValidId(id, 'agentRun', 'uuidv7'));
+  if (malformed.length > 0) {
+    // Every bad id is reported, not just the first: an operator confirming four
+    // Runs should learn about all four typos in one answer, not four runs.
+    return b3fail(validationFailed(malformed.map((id) => ({
+      path: CONFIRMED_RUN_FLAG, message: `--${CONFIRMED_RUN_FLAG} "${id}" is not an AgentRunId`,
+    }))));
+  }
+  return b3ok({ confirmedRunIds: given });
+}
+
+/**
+ * `--reason <text>` → `reason`.
+ *
+ * `watch reset-drift` shipped a default of `'reset requested by nvk watch
+ * reset-drift'` — the durable record of why a human overrode a drift alarm,
+ * written by the tool instead of the human. Emptiness is still the owner's
+ * call (`field.text('reason')`); what the CLI will not do is answer for them.
+ */
+export function requiredReason(flags: Flags): B3Result<string> {
+  const given = flags.value(REASON_FLAG);
+  return given === undefined
+    ? requiredFlag(REASON_FLAG, `--${REASON_FLAG} <text> is required: say why, in your words`)
+    : b3ok(given);
+}
+
 export function parseFlags(argv: readonly string[]): Flags {
   const positional: string[] = [];
-  const named = new Map<string, string>();
+  const named = new Map<string, string[]>();
+  const push = (name: string, value: string): void => {
+    const seen = named.get(name);
+    if (seen === undefined) named.set(name, [value]);
+    else seen.push(value);
+  };
   for (let index = 0; index < argv.length; index += 1) {
     const item = argv[index]!;
     if (!item.startsWith('--')) {
@@ -224,15 +351,21 @@ export function parseFlags(argv: readonly string[]): Flags {
     const name = item.slice(2);
     const next = argv[index + 1];
     if (next === undefined || next.startsWith('--')) {
-      named.set(name, 'true');
+      push(name, 'true');
       continue;
     }
-    named.set(name, next);
+    push(name, next);
     index += 1;
   }
+  // `value()` answers with the LAST occurrence, which is what a Map already did
+  // and what every non-repeatable flag has always been read as. Changing it to
+  // the first would silently move which value a command already in the field
+  // sends; the repeatable case reads `values()` instead.
+  const lastOf = (name: string): string | undefined => named.get(name)?.at(-1);
   return {
-    json: named.get('json') === 'true',
-    value: (name: string) => named.get(name),
+    json: lastOf('json') === 'true',
+    value: lastOf,
+    values: (name: string) => named.get(name) ?? [],
     positional,
   };
 }

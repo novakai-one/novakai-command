@@ -11,19 +11,23 @@
 //   nvk-agent usage <agentId|agentRunId>
 //   nvk-agent attach <agentRunId>
 //   nvk-agent controls <agentRunId>
-//   nvk-agent control <agentRunId> --set model=<id>|effort=<v>|provider-setting=<v>
-//   nvk-agent interrupt <agentRunId>
+//   nvk-agent control <agentRunId> --expect-version <n>
+//                     --name model|effort|provider-setting --value <value>
+//   nvk-agent interrupt <agentRunId> --expect-version <n>
 //   nvk-agent stop <agentId> --run <agentRunId> --confirm stop-one
 //   nvk-agent stop-tree <agentId> --prepare
 //   nvk-agent stop-tree <agentId> --token <token> --confirm stop-tree
 //   nvk-agent continue <agentId> --from <agentRunId>
 //                      --mode resume|fresh|compact|handover
 //                      --config inherit-plan|refresh-role
-//   nvk-agent adopt <agentId> --supervisor <agentId|human> --expect <n>
+//   nvk-agent adopt <agentId> --supervisor <agentId|human> --expect-version <n>
 //   nvk-agent operations
 //
 // Every command takes --json; mutations take --client-op-id (§17.2), so
-// re-running the exact command resumes the exact operation.
+// re-running the exact command resumes the exact operation. A mutation whose
+// input needs a concurrency precondition takes it as a flag (AMD-005 A5-02) —
+// the CLI never reads a record to supply one, because a CAS against a value
+// the operator never saw refuses nothing.
 //
 // This CLI is the SAME operation the in-app path uses — red gate 23 says
 // similar callers may not travel different policy paths, and the cheapest way
@@ -43,7 +47,8 @@ import type { Agent, AgentRoleProfile, DelegationGrant } from '../../agents/b3/c
 import type { AgentRunUsage, AgentUsageSummary } from '../../supervision/contract/index.js';
 import { connectRuntime, type RuntimeClient } from '../core/b3/client.js';
 import {
-  clientOpIdFrom, emit, fail, isRunForm, pageFlags, parseFlags, supervisedTask, verbOf,
+  clientOpIdFrom, emit, expectedVersion, fail, isRunForm, pageFlags, parseFlags,
+  supervisedTask, verbOf, EXPECT_VERSION_FLAG,
   type CliCommand, type Flags,
 } from '../core/b3/cli-shared.js';
 import {
@@ -277,16 +282,24 @@ const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
     ), describeUsage);
   },
 
+  /**
+   * A5-02. This used to `getRun` and quote the version it had just been handed
+   * — a CAS against a value the operator never saw, which cannot refuse the one
+   * race it exists for: somebody else changing the Run between the operator
+   * deciding to interrupt and the command running.
+   */
   async interrupt(argFlags) {
     const agentRunId = argFlags.positional[0];
-    if (!agentRunId) return usage('agent.interrupt', argFlags, '<agentRunId>');
-    emit('agent.interrupt', argFlags, await withClient(async (client) => {
-      const view = await client.call<AgentRunView>('b3.agent.getRun', { agentRunId });
-      if (!view.ok) return view;
-      return client.call<{ kind: string }>('b3.agent.interrupt', {
-        agentRunId, expectedRecordVersion: view.value.run.recordVersion,
-      }, operationId());
-    }), (outcome) => (outcome.kind === 'not-working'
+    if (!agentRunId) {
+      return usage('agent.interrupt', argFlags, `<agentRunId> --${EXPECT_VERSION_FLAG} <n>`);
+    }
+    const expected = expectedVersion(argFlags);
+    if (!expected.ok) return fail('agent.interrupt', argFlags, expected.error);
+    emit('agent.interrupt', argFlags, await withClient(
+      (client) => client.call<{ kind: string }>('b3.agent.interrupt', {
+        agentRunId, expectedRecordVersion: expected.value,
+      }, operationId()),
+    ), (outcome) => (outcome.kind === 'not-working'
       ? 'That agent was not working; nothing was changed.'
       : `Interrupted (${outcome.kind}). The agent is still running; its children are untouched.`));
   },
@@ -360,18 +373,25 @@ const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
       + '  Same agent, same family; a new run. The old one is recorded as replaced.');
   },
 
+  /**
+   * A5-02 names this precondition `--expect-version`. The product spelled it
+   * `--expect`, which was never ratified — so taking the ruled name is the fix,
+   * not a rename of a ratified flag (E1 is not engaged). Both spellings would
+   * be two names for one precondition, which is how they drift apart again.
+   */
   async adopt(argFlags) {
     const subjectAgentId = argFlags.positional[0];
     const supervisor = argFlags.value('supervisor');
-    const expected = argFlags.value('expect');
-    if (!subjectAgentId || !supervisor || expected === undefined) {
+    if (!subjectAgentId || !supervisor) {
       return usage('agent.adopt', argFlags,
-        '<agentId> --supervisor <agentId|human:<principal>> --expect <generation>');
+        `<agentId> --supervisor <agentId|human:<principal>> --${EXPECT_VERSION_FLAG} <n>`);
     }
+    const expected = expectedVersion(argFlags);
+    if (!expected.ok) return fail('agent.adopt', argFlags, expected.error);
     emit('agent.adopt', argFlags, await withClient<SupervisionAssignment>(
       (client) => client.call('b3.agent.adopt', {
         subjectAgentId,
-        expectedAssignmentVersion: Number(expected),
+        expectedAssignmentVersion: expected.value,
         supervisor: supervisor.startsWith('human:')
           ? { kind: 'human', principalId: supervisor.slice('human:'.length) }
           : { kind: 'agent', agentId: supervisor },
@@ -404,24 +424,34 @@ const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
     ), describeControls);
   },
 
+  /**
+   * FZ-CLI-022 spells this `--name model|effort|provider-setting --value
+   * <value>`; the product took `--set name=value`, so the ratified form was a
+   * usage error. The name itself is NOT judged here — `AGENT_CONTROL_NAMES` is
+   * the owner's closed set, and a second opinion at the keyboard is a second
+   * policy path (§3.2).
+   *
+   * A5-02: the old comment here read "the version the CALLER read". It was the
+   * version this process read, on the caller's behalf, without asking.
+   */
   async control(argFlags) {
     const agentRunId = argFlags.positional[0];
-    const setting = argFlags.value('set');
-    const separator = setting?.indexOf('=') ?? -1;
-    if (!agentRunId || setting === undefined || separator <= 0) {
-      return usage('agent.control', argFlags, '<agentRunId> --set model|effort|provider-setting=<value>');
+    const name = argFlags.value('name');
+    const value = argFlags.value('value');
+    if (!agentRunId || name === undefined || value === undefined) {
+      return usage('agent.control', argFlags,
+        `<agentRunId> --${EXPECT_VERSION_FLAG} <n> --name model|effort|provider-setting `
+        + '--value <value>');
     }
-    emit('agent.control', argFlags, await withClient<AgentControlOutcomeFacts>(async (client) => {
-      // The version the CALLER read, so two people changing one Agent cannot
-      // both silently win.
-      const view = await client.call<AgentRunView>('b3.agent.getRun', { agentRunId });
-      if (!view.ok) return view;
-      return client.call('b3.agent.control', {
+    const expected = expectedVersion(argFlags);
+    if (!expected.ok) return fail('agent.control', argFlags, expected.error);
+    emit('agent.control', argFlags, await withClient<AgentControlOutcomeFacts>(
+      (client) => client.call('b3.agent.control', {
         agentRunId,
-        expectedRunVersion: view.value.run.recordVersion,
-        control: { name: setting.slice(0, separator), value: setting.slice(separator + 1) },
-      }, operationId());
-    }), (outcome) => {
+        expectedRunVersion: expected.value,
+        control: { name, value },
+      }, operationId()),
+    ), (outcome) => {
       if (outcome.kind === 'applied-native') {
         return `Changed ${outcome.control.name} to ${outcome.control.value}, in place.`;
       }
