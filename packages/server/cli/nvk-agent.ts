@@ -2,7 +2,7 @@
 // nvk-agent — spawn and run a governed team, from anywhere (§17.1).
 //
 //   nvk-agent roles
-//   nvk-agent spawn --role <name|id> --name <name> [--task "<brief>"]
+//   nvk-agent spawn --role <name|id> --name <name> [--task supervised --brief <text>]
 //                   [--provider claude|codex|kimi] [--model <id>] [--effort <v>]
 //                   [--cwd <path>]
 //   nvk-agent list [--state live|final|all]
@@ -43,7 +43,7 @@ import type { Agent, AgentRoleProfile, DelegationGrant } from '../../agents/b3/c
 import type { AgentRunUsage, AgentUsageSummary } from '../../supervision/contract/index.js';
 import { connectRuntime, type RuntimeClient } from '../core/b3/client.js';
 import {
-  clientOpIdFrom, emit, fail, isRunForm, pageFlags, parseFlags, verbOf,
+  clientOpIdFrom, emit, fail, isRunForm, pageFlags, parseFlags, supervisedTask, verbOf,
   type CliCommand, type Flags,
 } from '../core/b3/cli-shared.js';
 import {
@@ -165,9 +165,11 @@ const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
     const role = argFlags.value('role');
     const displayName = argFlags.value('name');
     if (!role || !displayName) {
-      return usage('agent.spawn', argFlags, '--role <name|id> --name <name> [--task "<brief>"]');
+      return usage('agent.spawn', argFlags,
+        '--role <name|id> --name <name> [--task supervised --brief <text>]');
     }
-    const task = argFlags.value('task');
+    const task = supervisedTask(argFlags);
+    if (!task.ok) return fail('agent.spawn', argFlags, task.error);
     emit('agent.spawn', argFlags, await withClient<AgentRunView>(async (client) => {
       const roleId = await roleIdFor(client, role);
       if (!roleId.ok) return roleId;
@@ -181,7 +183,7 @@ const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
           ? {} : { requestedModelId: argFlags.value('model') }),
         ...(argFlags.value('effort') === undefined
           ? {} : { requestedEffort: argFlags.value('effort') }),
-        ...(task === undefined ? {} : { task: { kind: 'supervised', brief: task } }),
+        ...task.value,
       }, operationId());
     }), describeRun);
   },
