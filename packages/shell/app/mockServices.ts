@@ -278,7 +278,35 @@ export function createMockServices(opts: { seeded?: boolean } = {}): ShellServic
      */
     /* eslint-disable id-length -- the frozen `ok` again; see the note above. */
     agentRuns: {
+      /**
+       * The three slices B3.2 built. Offline they answer the ONLY true thing:
+       * there is no Runtime here, so nothing was spawned, stopped, attached or
+       * asked. A refusal is a value on the command half of the door too, which
+       * is what makes the interesting path — a stop that FAILS must leave the
+       * window exactly where it was — reachable offline instead of only in a
+       * unit test (contract/agentLifecycle.ts).
+       */
+      runtime: { async getRuntimeStatus() { return noRuntime; } },
+      lifecycle: {
+        async spawnAgent() { return noRuntime; },
+        async interruptAgentTurn() { return noRuntime; },
+        async stopAgent() { return noRuntime; },
+        async prepareStopAgentTree() { return noRuntime; },
+        async stopAgentTree() { return noRuntime; },
+        async continueAgent() { return noRuntime; },
+        async adoptAgent() { return noRuntime; },
+      },
+      terminal: {
+        async attachController() { return noRuntime; },
+        async detachController() { return noRuntime; },
+        async acquireInputLease() { return noRuntime; },
+        async releaseInputLease() { return noRuntime; },
+        async writeInput() { return noRuntime; },
+        async resizeTerminal() { return noRuntime; },
+        async readTerminalStream() { return noRuntime; },
+      },
       runs: {
+        async getAgentRun() { return noRuntime; },
         async listAgentRuns() { return noRuntime; },
         async getAgentRunTree() { return noRuntime; },
       },
@@ -303,7 +331,7 @@ export function createMockServices(opts: { seeded?: boolean } = {}): ShellServic
             },
           };
         },
-        async acknowledge(notificationId: string) {
+        async acknowledgeNotification(notificationId: string) {
           // The mock enforces the same law the capability does: only a
           // Notification the provider was observed to receive can be settled.
           // A refusal is a typed value here too, so the screen's failure path

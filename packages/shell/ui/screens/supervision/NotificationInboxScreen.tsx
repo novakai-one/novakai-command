@@ -207,7 +207,7 @@ export function NotificationInboxScreen(props: { services: ShellServices }) {
     // Optimism would be a lie here: the capability may refuse, and the whole
     // point of the marker is that it tracks durable truth. Re-read instead, and
     // draw a refusal rather than leaving the row looking settled.
-    void door.acknowledge(notificationId).then((answer) => {
+    void door.acknowledgeNotification(notificationId).then((answer) => {
       if (!answer.ok) setError(answer.error);
       return refresh(() => true);
     });

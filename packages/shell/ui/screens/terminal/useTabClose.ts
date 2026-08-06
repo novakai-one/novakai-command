@@ -12,9 +12,13 @@
 // deciding what is open, which is the same drift the strip's own join avoids.
 import { useCallback, useState } from 'react';
 import {
-  decideTabClose, describeTabCloseClaim, planTabClose, SHELL_STOP_DOORS,
+  decideTabClose, describeTabCloseClaim, planTabClose, SHELL_STOP_DOORS, stopSubjectOf,
   type TabCloseChoiceId, type TabCloseClaim, type TabCloseDecision,
 } from '../../../contract/terminalClose.js';
+import {
+  describeStopRefusal, planTerminalStop,
+} from '../../../contract/agentLifecycle.js';
+import type { ShellAgentServices } from '../../../contract/agentRuns.js';
 import type { TabSessionTruth } from '../../../contract/terminalTabStrip.js';
 import { mintShellOpId, type ShellTerminalTabServices } from '../../../contract/services.js';
 import type { TerminalAttachment } from '../../../contract/terminalServices.js';
@@ -27,6 +31,13 @@ export interface HeldAttachment {
 
 export interface TabCloseWiring {
   readonly tabs: ShellTerminalTabServices;
+  /**
+   * FZ-VIEW-001's `runs` and `lifecycle` slices — the real ones, not a pair of
+   * functions assembled here. A stop needs BOTH: `runs.getAgentRun` is the only
+   * honest source of the `agentId` the frozen `StopAgentInput` wants, and
+   * `lifecycle.stopAgent` is the only thing that can stop anything.
+   */
+  readonly agentRuns: Pick<ShellAgentServices, 'runs' | 'lifecycle'>;
   /** Read at press time — a window may have failed to attach, and often has. */
   readonly held: () => HeldAttachment | null;
   readonly detach: (terminalSessionId: string, attachmentId: string) => Promise<
@@ -41,6 +52,8 @@ export interface TabCloseFlow {
   /** The question in flight, with the tab it is about, or `null`. */
   readonly asking: {
     readonly tabId: string;
+    /** The Run a stop would be aimed at, decided at PRESS time with the rest. */
+    readonly subject: string | null;
     readonly decision: Extract<TabCloseDecision, { mustAsk: true }>;
   } | null;
   /** The last thing said about a closed session — the screen draws it. */
@@ -53,22 +66,49 @@ export interface TabCloseFlow {
 export function useTabClose(wiring: TabCloseWiring): TabCloseFlow {
   const [asking, setAsking] = useState<TabCloseFlow['asking']>(null);
   const [closedNote, setClosedNote] = useState<string | null>(null);
-  const { tabs, held, detach, onClosed, onProblem } = wiring;
+  const { tabs, agentRuns, held, detach, onClosed, onProblem } = wiring;
+
+  /**
+   * Read, then aim, then send — and stop at the first refusal.
+   *
+   * `true` means the process is gone and the window may close. Every `false`
+   * path LEAVES THE TAB WHERE IT WAS: a stop that did not happen behind a window
+   * that closed anyway is a running process hidden by a closed window, which is
+   * the same lie the whole close contract exists to prevent. Nothing here
+   * retries, and nothing invents an `agentId` from the Run id.
+   */
+  const stopSubject = useCallback(async (agentRunId: string | null): Promise<boolean> => {
+    if (agentRunId === null) {
+      onProblem(describeStopRefusal('This terminal does not belong to an Agent Run.'));
+      return false;
+    }
+    const plan = planTerminalStop(agentRunId, await agentRuns.runs.getAgentRun({ agentRunId }));
+    if (!plan.send) {
+      onProblem(describeStopRefusal(plan.because));
+      return false;
+    }
+    const stopped = await agentRuns.lifecycle.stopAgent(plan.request);
+    if (!stopped.ok) {
+      onProblem(describeStopRefusal(`${stopped.error.code}: ${stopped.error.message}`));
+      return false;
+    }
+    return true;
+  }, [agentRuns, onProblem]);
 
   const apply = useCallback(async (
-    tabId: string, choice: TabCloseChoiceId, claim: TabCloseClaim,
+    tabId: string, choice: TabCloseChoiceId, claim: TabCloseClaim, subject: string | null,
   ) => {
     setAsking(null);
     const holding = held();
     const plan = planTabClose(choice, holding !== null);
     if (!plan.closeRecord) return;
+    let said = claim;
     if (plan.stopFirst) {
-      // Unreachable through the UI — the dialog draws only choices this host can
-      // keep — and it refuses loudly rather than falling through to the detach
-      // path. A "Stop and close" that detached would tell Chris a process is gone
-      // while it runs on (contract/terminalClose.ts).
-      onProblem('NoStopDoor: this window cannot stop a terminal session.');
-      return;
+      if (!await stopSubject(subject)) return;
+      // The claim is REPLACED, not kept. `keeps-running` was true of the tab a
+      // moment ago and is false of it now, and the sentence under a closed
+      // window is the only record of what the press accomplished.
+      said = { kind: 'stopped', agentRunId: subject! };
     }
     if (plan.detach && holding) {
       const detached = await detach(holding.terminalSessionId, holding.attachment.attachmentId);
@@ -81,9 +121,9 @@ export function useTabClose(wiring: TabCloseWiring): TabCloseFlow {
     // and it asks the Runtime to stop nothing (FZ-VIEW-033).
     const closed = await tabs.close(tabId, mintShellOpId());
     if (!closed.ok) onProblem(`${closed.error.code}: ${closed.error.message}`);
-    setClosedNote(describeTabCloseClaim(claim));
+    setClosedNote(describeTabCloseClaim(said));
     onClosed(tabId);
-  }, [tabs, held, detach, onClosed, onProblem]);
+  }, [tabs, held, detach, onClosed, onProblem, stopSubject]);
 
   /**
    * The press. It asks ONLY when the session is live, exactly as the row is
@@ -94,10 +134,12 @@ export function useTabClose(wiring: TabCloseWiring): TabCloseFlow {
     if (tabId === null) return;
     const decision = decideTabClose(session, SHELL_STOP_DOORS);
     if (decision.mustAsk) {
-      setAsking({ tabId, decision });
+      // The subject is captured with the question. A strip that moves while the
+      // dialog is open must not re-point the stop at whatever is selected now.
+      setAsking({ tabId, subject: stopSubjectOf(session), decision });
       return;
     }
-    void apply(tabId, 'keep-running', decision.claim);
+    void apply(tabId, 'keep-running', decision.claim, null);
   }, [apply]);
 
   const answer = useCallback((choice: TabCloseChoiceId) => {
@@ -106,7 +148,7 @@ export function useTabClose(wiring: TabCloseWiring): TabCloseFlow {
       setAsking(null);
       return;
     }
-    void apply(asking.tabId, choice, asking.decision.claim);
+    void apply(asking.tabId, choice, asking.decision.claim, asking.subject);
   }, [asking, apply]);
 
   return {

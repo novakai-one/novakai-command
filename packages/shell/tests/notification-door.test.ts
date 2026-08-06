@@ -254,7 +254,7 @@ describe('the door translates and passes through, and never throws at a screen',
 
   it('settles ONE notification through the frozen mutation', async () => {
     const { door, seen } = doorOver(async () => ({ ok: true, value: notification() }));
-    const answer = await door.acknowledge('notification_1');
+    const answer = await door.acknowledgeNotification('notification_1');
     expect(seen[0]?.method).toBe('b3.supervision.acknowledge');
     expect(seen[0]?.payload).toEqual({ notificationId: 'notification_1' });
     expect(answer.ok).toBe(true);

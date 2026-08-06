@@ -27,6 +27,8 @@
 import type {
   AgentCommunicationsPageView, ListAgentCommunicationsRequest,
 } from './communications.js';
+import type { ShellLifecycleServices, ShellRuntimeServices } from './agentLifecycle.js';
+import type { ShellTerminalServices } from './agentTerminal.js';
 import type { AgentRunTreeView, GetAgentRunTreeRequest } from './agentTree.js';
 import type {
   ListNotificationsRequest, NotificationPageView, NotificationView,
@@ -175,28 +177,103 @@ export interface ShellCommunicationServices {
  * `subscribeNotifications` is the third member and is not wired here — the
  * screen re-reads through this door instead, so there is no second projection of
  * a Notification anywhere in the browser.
+ *
+ * B3.2 renamed `acknowledge` to the name the FREEZE gives it. The published wire
+ * method is `b3.supervision.acknowledge` and stays that way; the short name came
+ * first and scripts speak it. But a door member is contract, not transport, and
+ * a second host written from P2 §12.6 reaches for `acknowledgeNotification` —
+ * which until now was `undefined is not a function`. Same hazard the server
+ * itself records for `b3.agent.controls` vs the spec's `getControls`.
  */
 export interface ShellSupervisionServices {
   listNotifications(
     request: ListNotificationsRequest,
   ): Promise<ShellReadResult<NotificationPageView>>;
-  acknowledge(notificationId: string): Promise<ShellReadResult<NotificationView>>;
+  acknowledgeNotification(notificationId: string): Promise<ShellReadResult<NotificationView>>;
+}
+
+/** `getAgentRun`'s request. One Run, named by id (FZ-VIEW-001's `runs` slice). */
+export interface GetAgentRunRequest {
+  readonly agentRunId: string;
 }
 
 /**
- * FZ-VIEW-001's read slice. B3e's tracer shipped the Runs read; B2.3 adds the
- * communications read; B2.5 adds the supervision read; the lifecycle and
- * terminal members of the frozen facade are named there and arrive with their
- * lanes.
+ * FZ-VIEW-001, whole.
+ *
+ * It was two thirds of a door until B3.2. The tracer shipped `runs` (minus
+ * `getAgentRun`), B2.3 added `communications`, B2.5 added `supervision`, and
+ * `runtime`, `lifecycle` and `terminal` were named in the freeze and built
+ * nowhere — finding L-20. That was not a cosmetic gap: a frozen facade the host
+ * implements two thirds of looks complete from inside the host, so each missing
+ * slice surfaced as a STATED LIMIT on some screen ("this window cannot make that
+ * lifecycle action yet") rather than as the hole it was. Two shipped that way.
+ *
+ * `SHELL_AGENT_SERVICES_SHAPE` below is the machine-readable form of the six
+ * slices, and a test composes the real door and compares. A slice that goes
+ * missing again fails a suite instead of becoming a sentence on a dialog.
  */
 export interface ShellAgentServices {
+  readonly runtime: ShellRuntimeServices;
   readonly runs: {
+    getAgentRun(request: GetAgentRunRequest): Promise<ShellReadResult<AgentRunRowView>>;
     listAgentRuns(request: ListAgentRunsRequest): Promise<ShellReadResult<AgentRunsPageView>>;
     getAgentRunTree(request: GetAgentRunTreeRequest): Promise<ShellReadResult<AgentRunTreeView>>;
   };
+  readonly lifecycle: ShellLifecycleServices;
+  readonly terminal: ShellTerminalServices;
   readonly communications: ShellCommunicationServices;
   readonly supervision: ShellSupervisionServices;
 }
+
+/**
+ * FZ-VIEW-001 as data: every slice, and every member of it, verbatim from
+ * P2 §12.6:2495–2536 — including the members this host has not wired.
+ *
+ * Writing the WHOLE door down is the point. The version of this list that
+ * contained only what the Shell happened to implement is what let three slices
+ * go missing for seven seats: every screen could see a door it was fully using,
+ * and the two thirds that did not exist showed up only as stated limits on
+ * unrelated dialogs. A frozen contract is not a description of the host.
+ */
+export const SHELL_AGENT_SERVICES_FROZEN: Readonly<Record<string, readonly string[]>> = {
+  runtime: ['getRuntimeStatus'],
+  runs: ['getAgentRun', 'listAgentRuns', 'getAgentRunTree'],
+  lifecycle: [
+    'spawnAgent', 'interruptAgentTurn', 'stopAgent', 'prepareStopAgentTree',
+    'stopAgentTree', 'continueAgent', 'adoptAgent',
+  ],
+  terminal: [
+    'attachController', 'detachController', 'acquireInputLease', 'releaseInputLease',
+    'writeInput', 'resizeTerminal', 'readTerminalStream',
+  ],
+  communications: ['sendAgentMessage', 'openConversationView', 'listAgentCommunications'],
+  supervision: [
+    'getRunUsage', 'getAgentUsage', 'listNotifications', 'acknowledgeNotification',
+    'resetDriftEpisode',
+  ],
+} as const;
+
+/**
+ * The frozen members this host has NOT built, and the lane each belongs to.
+ *
+ * Named rather than omitted, so the gap is a fact with a home instead of a
+ * silence. The suite asserts `wired ∪ unwired === frozen`, exactly: wiring a
+ * member without striking it off here fails, and so does inventing one that the
+ * freeze never named.
+ *
+ * `getRunUsage` / `getAgentUsage` are the interesting entry. The usage SCREENS
+ * are built (B2.2) and read `usage` off the Run row the `runs` slice already
+ * carries, which is the frozen projection's own copy — so the Shell is not
+ * missing the numbers, it is missing Supervision's direct read of them. That
+ * distinction is why this list carries a reason per member and not just a name.
+ */
+export const SHELL_AGENT_SERVICES_UNWIRED: Readonly<Record<string, string>> = {
+  'communications.sendAgentMessage': 'compose-and-send; Messaging is the authority (FZ-VIEW-013)',
+  'communications.openConversationView': 'compose-and-send lane',
+  'supervision.getRunUsage': 'usage is read off the Run row the runs slice carries (B2.2)',
+  'supervision.getAgentUsage': 'per-Agent totals; no surface reads them yet',
+  'supervision.resetDriftEpisode': 'drift authoring; no Shell surface owns it',
+} as const;
 
 /**
  * Rule 1, machine-readable: every field name the frozen projection carries, at

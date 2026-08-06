@@ -37,19 +37,29 @@ import type { TabSessionTruth } from './terminalTabStrip.js';
  */
 export interface TerminalStopDoors {
   /**
-   * Can this host ask Agent Runtime to stop a Run? B3e's Shell door
-   * (`ShellAgentServices`) is READ-ONLY today, so the composition root passes
-   * `false` — see `SHELL_STOP_DOORS`.
+   * Can this host ask Agent Runtime to stop a Run? B3.2 built FZ-VIEW-001's
+   * `lifecycle` slice, so the answer is now yes — see `SHELL_STOP_DOORS`.
    */
   readonly agentRunLifecycle: boolean;
 }
 
 /**
  * What this Shell can reach. Declared here, next to the rule that reads it, so
- * "we cannot stop terminals yet" is a stated fact with one home rather than a
- * `false` sprinkled through the screens.
+ * the answer is a stated fact with one home rather than a boolean sprinkled
+ * through the screens.
+ *
+ * It was `false` for seven seats, and that was TRUE while it was written: the
+ * implemented `ShellAgentServices` had no `lifecycle` slice at all (finding
+ * L-20), so a "Stop and close" would have had nothing to call. It flipped when
+ * the slice was built, not when the button was wanted — which is the only order
+ * that keeps the flag honest.
+ *
+ * Note what did NOT change: a plain shell still cannot be stopped by anyone.
+ * `TerminateTerminalInput` requires an `agentRunId` and §13.4 restricts
+ * termination to managed Agent terminals, so that limit is the CONTRACT's, not
+ * this host's, and `terminalStopPath` still refuses it below (L-18 ruling).
  */
-export const SHELL_STOP_DOORS: TerminalStopDoors = { agentRunLifecycle: false };
+export const SHELL_STOP_DOORS: TerminalStopDoors = { agentRunLifecycle: true };
 
 export type TerminalStopPath =
   | { readonly reachable: true; readonly route: 'agent-run-lifecycle' }
@@ -91,12 +101,32 @@ export function terminalStopPath(
 }
 
 /**
- * What the Shell may say about the process after the window is gone. Three
- * claims, and the third is the important one: `no-claim` is a value, so
- * "we do not know" cannot be rounded to either of the other two.
+ * Which Run a stop from this tab would be aimed at, or `null` if there is none.
+ *
+ * A terminal tab knows exactly one thing about the Agent behind it: the
+ * `agentRunId` on `owner.label` (`toTabView` puts it there). That single string
+ * is the whole subject of a stop, and everything else the frozen `StopAgentInput`
+ * wants has to be READ — see `planTerminalStop`.
+ */
+export function stopSubjectOf(session: TabSessionTruth): string | null {
+  if (!session.known || session.view.owner.kind !== 'agent-run') return null;
+  return session.view.owner.label;
+}
+
+/**
+ * What the Shell may say about the process after the window is gone. Four
+ * claims, and `no-claim` is the important one: it is a VALUE, so "we do not
+ * know" cannot be rounded to any of the other three.
+ *
+ * `stopped` arrived with B3.2 and is not decoration. Before the lifecycle door
+ * existed, a live session could only ever be left running, so ONE sentence
+ * covered every close of a live tab. A "Stop and close" that then said "the
+ * session keeps running in the background Runtime" would be the same lie as a
+ * Stop button that only detaches — read off the wrong end.
  */
 export type TabCloseClaim =
   | { readonly kind: 'keeps-running' }
+  | { readonly kind: 'stopped'; readonly agentRunId: string }
   | { readonly kind: 'already-ended'; readonly status: string }
   | { readonly kind: 'no-claim'; readonly status: string | null };
 
@@ -105,6 +135,9 @@ export function describeTabCloseClaim(claim: TabCloseClaim): string {
   switch (claim.kind) {
     case 'keeps-running':
       return 'Closing this window detaches it. The session keeps running in the background Runtime.';
+    case 'stopped':
+      return `Novakai stopped ${claim.agentRunId} and closed this window. `
+        + 'The session is not running.';
     case 'already-ended':
       return `Novakai reports this session as ${claim.status}. `
         + 'Closing this window changes nothing about it.';

@@ -33,7 +33,7 @@ import {
 } from '../../../contract/calmPacing.js';
 import { composeTabStrip, type TabSessionTruth } from '../../../contract/terminalTabStrip.js';
 import { TerminalCloseAsk } from './TerminalCloseAsk.js';
-import { useTabClose } from './useTabClose.js';
+import { useTabClose, type TabCloseWiring } from './useTabClose.js';
 import { useTabOpen } from './useTabOpen.js';
 import { useTabPacing } from './useTabPacing.js';
 import { mintShellOpId, type ShellTerminalTabServices } from '../../../contract/services.js';
@@ -46,6 +46,14 @@ export interface TerminalScreenProps {
   readonly services: TerminalConnection;
   /** The Shell's own tab store (FZ-VIEW-017) — never the Runtime's. */
   readonly tabs: ShellTerminalTabServices;
+  /**
+   * FZ-VIEW-001's `runs` + `lifecycle` slices, for the one thing this screen
+   * does that is not a terminal operation: stopping the Agent behind an
+   * Agent-owned tab (FZ-VIEW-033's "Stop and close"). Required, not optional —
+   * a screen that could be handed no stop door would silently go back to
+   * drawing the limit, which is how it stayed unbuilt for seven seats.
+   */
+  readonly agentRuns: TabCloseWiring['agentRuns'];
   readonly workingDirectory: string;
   /**
    * FZ-VIEW-016. Handed in by the composition root, which is the one place that
@@ -328,6 +336,7 @@ export function TerminalScreen(props: TerminalScreenProps): React.JSX.Element {
       exited session does), which is exactly when the record must still close. */
   const closing = useTabClose({
     tabs,
+    agentRuns: props.agentRuns,
     held: () => (attachment.current && attachedTo.current !== null
       ? { terminalSessionId: attachedTo.current, attachment: attachment.current }
       : null),

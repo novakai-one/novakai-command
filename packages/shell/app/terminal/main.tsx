@@ -19,6 +19,7 @@ import { createMockServices } from '../mockServices.js';
 import { readCaptureCapabilities } from '../captureCapabilities.js';
 import { detectShellCaptureSupport } from '../../contract/screenContext.js';
 import type { ShellTerminalTabServices } from '../../contract/index.js';
+import type { ShellAgentServices } from '../../contract/agentRuns.js';
 
 /**
  * FZ-VIEW-016, resolved once, here — the composition root is the one place that
@@ -33,6 +34,7 @@ const SCREEN_CONTEXT = detectShellCaptureSupport(
 function Boot(): React.JSX.Element | null {
   const [services, setServices] = useState<TerminalConnection | null>(null);
   const [tabs, setTabs] = useState<ShellTerminalTabServices | null>(null);
+  const [agentRuns, setAgentRuns] = useState<ShellAgentServices | null>(null);
   const [tabsBackend, setTabsBackend] = useState<'server' | 'offline' | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
 
@@ -46,11 +48,19 @@ function Boot(): React.JSX.Element | null {
       .then((shell) => {
         if (!alive) return;
         setTabs(shell.terminalTabs);
+        // The SAME connection the tab records come over, so a page that reached
+        // the Shell server can also reach FZ-VIEW-001 — no second socket, and
+        // no case where the stop door is present but pointing somewhere else.
+        setAgentRuns(shell.agentRuns);
         setTabsBackend('server');
       })
       .catch(() => {
         if (!alive) return;
-        setTabs(createMockServices().terminalTabs);
+        const offline = createMockServices();
+        setTabs(offline.terminalTabs);
+        // The offline door refuses every lifecycle command as a VALUE, so the
+        // dialog can say a stop did not happen instead of the page throwing.
+        setAgentRuns(offline.agentRuns);
         setTabsBackend('offline');
       });
     return () => { alive = false; };
@@ -59,7 +69,7 @@ function Boot(): React.JSX.Element | null {
   if (failure) {
     return <p className="nvkBootError" data-testid="terminal-boot-error">{failure}</p>;
   }
-  if (!services || !tabs) return null;
+  if (!services || !tabs || !agentRuns) return null;
   return (
     <>
       {tabsBackend === 'offline' && (
@@ -70,6 +80,7 @@ function Boot(): React.JSX.Element | null {
       <TerminalScreen
         services={services}
         tabs={tabs}
+        agentRuns={agentRuns}
         workingDirectory="/tmp"
         screenContext={SCREEN_CONTEXT}
       />

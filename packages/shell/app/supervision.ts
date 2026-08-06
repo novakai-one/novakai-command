@@ -156,7 +156,7 @@ export function createShellSupervisionServices(
      * that enforces that, not this door. A refusal comes back as a drawable
      * failure so the screen can say what happened instead of pretending.
      */
-    async acknowledge(notificationId) {
+    async acknowledgeNotification(notificationId) {
       try {
         return readNotification(await options.call(
           'b3.supervision.acknowledge', { notificationId },
