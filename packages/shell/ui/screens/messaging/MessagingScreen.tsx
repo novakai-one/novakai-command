@@ -212,11 +212,15 @@ export function MessagingScreen(props: {
     }
   };
 
-  const onProvider = (name: string, args: string) => {
-    // Structured contract message forwarded to the provider adapter (R3-13) —
-    // never shell-side stdin injection. Until agents lands, a typed note.
-    void name; void args;
-  };
+  /**
+   * There is no `onControl` here on purpose (FZ-VIEW-032 → FZ-VIEW-029/030).
+   * A named provider control needs `SlashDoors.providerControl`, and B3e's
+   * `ShellAgentServices` is read-only — so `readSlashInput` refuses and names
+   * `nvk agent control` instead. The handler this replaces was
+   * `void name; void args;`: a silent no-op that let the composer imply a
+   * control had been applied. A missing handler now refuses out loud; a fake one
+   * could not.
+   */
 
   return (
     <>
@@ -238,7 +242,6 @@ export function MessagingScreen(props: {
         onResize={props.onComposerResize}
         onSend={(t) => void send(t)}
         onBuiltin={(n, a) => void onBuiltin(n, a)}
-        onProvider={onProvider}
       />
       <CommandPalette
         open={paletteOpen}

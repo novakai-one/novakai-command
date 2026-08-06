@@ -10,6 +10,7 @@ export * from './focus.js';
 export * from './context.js';
 export * from './presence.js';
 export * from './composer.js';
+export * from './slashContinuity.js';
 export * from './renderer.js';
 export * from './services.js';
 export * from './communications.js';

@@ -40,6 +40,7 @@ import { mintShellOpId, type ShellTerminalTabServices } from '../../../contract/
 import type { ScreenContextSupport } from '../../../contract/screenContext.js';
 import type { TerminalConnection } from '../../../app/terminalClient.js';
 import { adoptOrOpen, writeReplay, xtermTheme } from './session.js';
+import { makeRawInputHandler } from './rawInput.js';
 
 export interface TerminalScreenProps {
   readonly services: TerminalConnection;
@@ -65,6 +66,8 @@ export function TerminalScreen(props: TerminalScreenProps): React.JSX.Element {
   /** Also a ref: unmount cleanup must know it without waiting for a render. */
   const attachedTo = useRef<string | null>(null);
   const inputSequence = useRef(1);
+  /** Has the "nothing was sent" line already been drawn for this blocked run? */
+  const blockedAnnounced = useRef(false);
   const disposed = useRef(false);
   /**
    * Calm's whole memory, in a ref rather than state: it advances on a 16ms tick
@@ -146,22 +149,15 @@ export function TerminalScreen(props: TerminalScreenProps): React.JSX.Element {
       if (text !== '') screen.write(text);
     }, 16);
 
-    screen.onData((data) => {
-      const held = attachment.current;
-      const sessionId = attachedTo.current;
-      if (!held || sessionId === null || held.leaseId === '') return;
-      const sequence = inputSequence.current;
-      inputSequence.current += 1;
-      void services.write(sessionId, held, data, sequence).then(async (written) => {
-        if (written.succeeded) return;
-        setProblem(`${written.code}: ${written.message}`);
-        // A refused write leaves this window's idea of the stream wrong, and
-        // repeating the same wrong number refuses forever. Ask again.
-        const truth = await refresh();
-        inputSequence.current = truth.find((item) => item.terminalSessionId === sessionId)
-          ?.nextInputSequence ?? sequence;
-      });
-    });
+    // FZ-VIEW-032's Raw clause. The handler lives in rawInput.ts with the rule
+    // it enforces, not inline here, so a keystroke's whole journey is one file.
+    screen.onData(makeRawInputHandler({
+      services,
+      write: (text) => screen.write(text),
+      refresh,
+      onProblem: setProblem,
+      refs: { attachment, attachedTo, inputSequence, blockedAnnounced },
+    }));
 
     return () => {
       disposed.current = true;

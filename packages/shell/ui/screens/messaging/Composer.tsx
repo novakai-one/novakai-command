@@ -1,8 +1,13 @@
-// shell/ui/screens/messaging/Composer.tsx — SHL-005.
-// Slash palette on '/', dispatch order built-ins → provider-declared → typed
-// UnknownCommand error drawn inline (never silent, never blank).
+// shell/ui/screens/messaging/Composer.tsx — SHL-005 / FZ-VIEW-032.
+//
+// The composer PARSES NOTHING. It hands the typed line and the situation to
+// `readSlashInput` and executes the answer. Every branch of that answer is drawn
+// — including the two refusals, which is the fix for the defect this screen
+// shipped with: `/model opus` used to clear the box and do nothing at all, so
+// the only thing left on screen said "sent".
 import React, { useMemo, useState } from 'react';
-import type { DispatchResult, SlashCommand, SlashRegistry } from '../../../contract/index.js';
+import type { SlashAnswer, SlashCommand, SlashRegistry, SlashSituation } from '../../../contract/index.js';
+import { palettePartial, readSlashInput, slashPalette, SHELL_SLASH_DOORS } from '../../../contract/index.js';
 import { ComposerInput, MenuRow, Stack, Text } from '../../kit/index.js';
 
 export function Composer(props: {
@@ -11,43 +16,70 @@ export function Composer(props: {
   onResize(deltaPx: number): void;
   onSend(text: string): void;
   onBuiltin(name: string, args: string): void;
-  onProvider(name: string, args: string): void;
+  /**
+   * Supplied ONLY by a host that has a control door. Optional because the door
+   * and the handler must agree: a host with no route supplies neither, and the
+   * refusal comes from `readSlashInput`. If a host ever wires one without the
+   * other, the branch below refuses out loud rather than dropping the control.
+   */
+  onControl?(name: string, value: string): void;
 }) {
   const [value, setValue] = useState('');
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [sel, setSel] = useState(0);
-  const [inlineError, setInlineError] = useState<string | null>(null);
+  const [refusal, setRefusal] = useState<{ because: string; instead: string | null } | null>(null);
 
-  const partial = paletteOpen && value.startsWith('/') && !value.includes(' ')
-    ? value.slice(1) : '';
-  const suggestions: SlashCommand[] = useMemo(
-    () => (paletteOpen ? props.registry.suggest(partial) : []),
-    [paletteOpen, partial, props.registry],
+  // The composer IS the Calm/Message surface (FZ-VIEW-032: Raw is the terminal
+  // tab, and Raw input never reaches this component).
+  const situation: SlashSituation = useMemo(() => ({
+    surface: 'calm',
+    holdsInputLease: false,
+    providerDeclared: props.registry.declaredNames(),
+    doors: SHELL_SLASH_DOORS,
+  }), [props.registry]);
+
+  const partial = paletteOpen ? palettePartial(value) : null;
+  const suggestions: readonly SlashCommand[] = useMemo(
+    () => (partial === null ? [] : slashPalette(partial, situation, props.registry.declared())),
+    [partial, situation, props.registry],
   );
 
   const submit = () => {
     const text = value.trim();
     if (!text) return;
-    const result: DispatchResult = props.registry.dispatch(text);
+    const answer: SlashAnswer = readSlashInput(text, situation);
     setValue('');
     setPaletteOpen(false);
-    switch (result.kind) {
+    setRefusal(null);
+    switch (answer.kind) {
       case 'message':
-        setInlineError(null);
-        props.onSend(result.text);
+        props.onSend(answer.text);
         break;
-      case 'builtin':
-        setInlineError(null);
-        props.onBuiltin(result.name, result.args);
+      case 'novakai':
+        props.onBuiltin(answer.name, answer.args);
         break;
-      case 'provider':
-        setInlineError(null);
-        props.onProvider(result.name, result.args);
+      case 'provider-control':
+        // Routed through the NAMED control contract — never stdin injection.
+        if (props.onControl) props.onControl(answer.control.name, answer.control.value);
+        else setRefusal({
+          because: `This host reports a route for /${answer.control.name} but wired no handler for it, `
+            + 'so nothing was sent.',
+          instead: `nvk agent control <agentRunId> --name ${answer.control.name} --value ${answer.control.value}`,
+        });
         break;
-      case 'error':
-        // typed error, drawn — never silent (SHL-005)
-        setInlineError(`${result.error.message}${result.error.details.suggestions.length ? ` — try ${result.error.details.suggestions.join(', ')}` : ''}`);
+      case 'refused':
+        setRefusal({ because: answer.because, instead: answer.instead });
         break;
+      case 'unknown':
+        setRefusal({
+          because: answer.error.message,
+          instead: answer.error.details.suggestions.length
+            ? `Try ${answer.error.details.suggestions.join(', ')}`
+            : null,
+        });
+        break;
+      // `raw-passthrough` / `raw-blocked` cannot occur on this surface, and a
+      // `default` that swallowed them would be the silent branch all over again.
     }
   };
 
@@ -74,20 +106,33 @@ export function Composer(props: {
         height={props.height}
         onResize={props.onResize}
         onSubmit={submit}
-        hint={inlineError
-          ? <Text style={{ color: 'var(--danger)' }}>{inlineError}</Text>
-          : undefined}
+        hint={refusal ? <SlashRefusal because={refusal.because} instead={refusal.instead} /> : undefined}
         onChange={(v) => {
           setValue(v);
-          setInlineError(null);
-          if (v === '/') { setPaletteOpen(true); setSel(0); }
-          else if (paletteOpen && (v.length === 0 || !v.startsWith('/') || v.includes(' '))) setPaletteOpen(false);
-          else if (v.startsWith('/') && !paletteOpen && !v.includes(' ')) setPaletteOpen(true);
+          setRefusal(null);
+          if (palettePartial(v) === null) setPaletteOpen(false);
+          else { if (!paletteOpen) setSel(0); setPaletteOpen(true); }
         }}
       />
       <PaletteKeys active={paletteOpen} count={suggestions.length} sel={sel} setSel={setSel}
         onPick={() => { const c = suggestions[sel]; if (c) { setValue(`/${c.name} `); setPaletteOpen(false); } }}
         onClose={() => setPaletteOpen(false)} />
+    </Stack>
+  );
+}
+
+/**
+ * A refusal is two sentences doing different jobs: what did NOT happen, and what
+ * to do instead. Two ink tiers rather than two equal lines — the second one is
+ * the useful one and should read as an instruction, not as more error.
+ * `role="status"` because the composer keeps focus: someone who never looks down
+ * is still told that nothing was sent.
+ */
+function SlashRefusal(props: { because: string; instead: string | null }) {
+  return (
+    <Stack className="nv-slash-refusal" role="status">
+      <Text className="nv-slash-refusal__because">{props.because}</Text>
+      {props.instead && <Text className="nv-slash-refusal__instead">{props.instead}</Text>}
     </Stack>
   );
 }

@@ -342,7 +342,12 @@ export function ComposerInput(props: {
   const ref = useRef<HTMLTextAreaElement>(null);
   useEffect(() => { ref.current?.focus(); }, []);
   return (
-    <div className="k-composer" style={{ height: props.height }}>
+    // minHeight, not height: the hint slot below the text area is where a
+    // refusal is drawn, and a FIXED height crushed the input to a strip whose
+    // placeholder was clipped by its own descenders (read off b31-4). The
+    // composer keeps the height Chris dragged it to, and grows only when it has
+    // something more to say — then goes back.
+    <div className="k-composer" style={{ minHeight: props.height }}>
       <Splitter horizontal label="Resize composer" onDelta={(d) => props.onResize(-d)} />
       <textarea
         ref={ref}

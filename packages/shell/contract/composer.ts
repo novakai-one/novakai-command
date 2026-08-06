@@ -1,19 +1,18 @@
-// shell/contract/composer.ts — slash-command dispatch (SHL-005, R3-13).
-// Order: shell built-ins → provider-declared → unknown = typed UnknownCommand.
-// Provider commands are structured contract messages — never stdin injection.
-import { unknownCommand, type UnknownCommandError } from './errors.js';
-
+// shell/contract/composer.ts — the Shell's Novakai command REGISTRY (SHL-005,
+// R3-13, FZ-VIEW-032).
+//
+// Declaration only. What a typed line MEANS is decided in one place —
+// `contract/slashContinuity.ts` — and this file no longer parses anything: it
+// holds the Shell's own command set and the names a provider has told us it
+// understands. Keeping the two apart is what "never a second registry" buys:
+// a provider can add a NAME, and it still cannot add a ROUTE.
+//
+// Dependency runs ONE way: slashContinuity reads this file, never the reverse.
 export interface SlashCommand {
   name: string;          // without the leading '/'
   description: string;   // one calm sentence
   source: 'shell' | 'provider';
 }
-
-export type DispatchResult =
-  | { kind: 'builtin'; name: string; args: string }
-  | { kind: 'provider'; name: string; args: string }
-  | { kind: 'message'; text: string }
-  | { kind: 'error'; error: UnknownCommandError };
 
 export const SHELL_BUILTINS: SlashCommand[] = [
   { name: 'new', description: 'Start a new chat', source: 'shell' },
@@ -35,21 +34,13 @@ export class SlashRegistry {
     return [...SHELL_BUILTINS, ...this.providerCommands.values()];
   }
 
-  /** Autocomplete candidates for a partial name (palette contents). */
-  suggest(partial: string): SlashCommand[] {
-    const p = partial.toLowerCase();
-    return this.all().filter((c) => c.name.toLowerCase().startsWith(p));
+  /** What the provider says it understands. Names, because a declaration is
+   * evidence about the provider, not a route through Novakai. */
+  declaredNames(): readonly string[] {
+    return [...this.providerCommands.keys()];
   }
 
-  dispatch(input: string): DispatchResult {
-    if (!input.startsWith('/')) return { kind: 'message', text: input };
-    const body = input.slice(1);
-    const space = body.indexOf(' ');
-    const name = (space === -1 ? body : body.slice(0, space)).trim();
-    const args = space === -1 ? '' : body.slice(space + 1).trim();
-    if (SHELL_BUILTINS.some((c) => c.name === name)) return { kind: 'builtin', name, args };
-    if (this.providerCommands.has(name)) return { kind: 'provider', name, args };
-    const suggestions = this.suggest(name.slice(0, 2)).map((c) => `/${c.name}`);
-    return { kind: 'error', error: unknownCommand(`/${name}`, suggestions) };
+  declared(): readonly SlashCommand[] {
+    return [...this.providerCommands.values()];
   }
 }

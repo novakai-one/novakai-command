@@ -184,9 +184,19 @@ body {
   resize: none;
   width: 100%;
   line-height: var(--leading);
+  /* The composer has a FIXED height (it is drag-resizable), so the text area has
+     to be the part that yields. Without this it kept its intrinsic height and a
+     two-line hint overflowed the box and drew ON TOP of the placeholder —
+     read off b31-4, with every assertion green. */
+  flex: 1 1 auto;
+  min-height: 0;
 }
 .k-composer textarea:focus { outline: none; }
-.k-composer__hint { color: var(--ink-3); font-size: var(--text-3); display: flex; justify-content: space-between; }
+.k-composer__hint {
+  color: var(--ink-3); font-size: var(--text-3);
+  display: flex; justify-content: space-between;
+  flex: 0 0 auto;
+}
 
 /* ── empty states: absence is drawn, not described (law 6/7) ──────────── */
 .k-empty {
