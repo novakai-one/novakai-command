@@ -273,6 +273,22 @@ describe('planTerminalStop — a stop is aimed at what was READ, never guessed',
   it('says what happened in a sentence for the dialog, not a code', () => {
     expect(describeStopRefusal('Novakai could not read the Run.')).toContain('still running');
   });
+
+  it('does not fuse the owner sentence into its own', () => {
+    // Read off a PNG: "…this Run has already moved on The session and the Agent
+    // behind it are still running". The reason is composed from an owner-supplied
+    // `message`, and no owner promises terminal punctuation — so the consequence,
+    // which is the half a person actually needs, ran on as a subordinate clause
+    // of somebody else's sentence.
+    const said = describeStopRefusal('VersionConflict: this Run has already moved on');
+    expect(said).toContain('moved on. The session');
+    expect(said).not.toContain('moved on The session');
+  });
+
+  it('adds no second full stop to a reason that already ends in one', () => {
+    expect(describeStopRefusal('Novakai could not read the Run.')).not.toContain('Run.. ');
+    expect(describeStopRefusal('Is it gone?')).toContain('Is it gone? The session');
+  });
 });
 
 describe('the stop door is open now, and only for Agent terminals (L-18 ruling)', () => {

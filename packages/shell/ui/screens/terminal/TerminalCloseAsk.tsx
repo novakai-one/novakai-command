@@ -4,10 +4,12 @@
 // Three design rules, all of them the standing laws rather than taste of the
 // moment:
 //
-//   THE FACT COMES FIRST. The sentence is what Chris is actually deciding with —
-//   "the session keeps running in the background Runtime" — so it is the full-ink
-//   line and the buttons are below it. A dialog that leads with buttons makes him
-//   read the buttons to work out the question.
+//   THE FACT COMES FIRST, AND IT IS A FACT. The lead is what Chris is actually
+//   deciding with, so it is the full-ink line and the buttons are below it — a
+//   dialog that leads with buttons makes him read the buttons to work out the
+//   question. It states what is TRUE NOW, never the result of one of the choices:
+//   with a reachable Stop below it, "the session keeps running" is the other
+//   button's consequence printed above this one (`describeCloseQuestion`).
 //
 //   THE SAFE CHOICE IS THE EMPHASISED ONE. `Keep running` is the row's DEFAULT
 //   result and is the primary; it is also the focused control on open, so a
@@ -22,7 +24,7 @@
 import React, { useEffect } from 'react';
 import { Button, Stack, Surface, Text } from '../../kit/index.js';
 import {
-  describeTabCloseClaim,
+  describeCloseQuestion,
   type TabCloseChoice, type TabCloseChoiceId, type TabCloseDecision,
 } from '../../../contract/terminalClose.js';
 import './TerminalScreen.css';
@@ -70,7 +72,7 @@ export function TerminalCloseAsk(props: TerminalCloseAskProps): React.JSX.Elemen
       <Stack gap={10}>
         <Text className="nvkTerminalAskTitle">{`Close ${props.tabTitle}`}</Text>
         <Text as="p" className="nvkTerminalAskClaim" data-testid="terminal-close-claim">
-          {describeTabCloseClaim(props.decision.claim)}
+          {describeCloseQuestion(props.decision)}
         </Text>
         <Stack horizontal gap={8} className="nvkTerminalAskChoices">
           {props.decision.choices.filter((choice) => choice.available).map((choice) => (

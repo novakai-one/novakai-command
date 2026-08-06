@@ -39,8 +39,8 @@ function withOptional(
   base: Record<string, unknown>, optional: Record<string, unknown>,
 ): Record<string, unknown> {
   const built = { ...base };
-  for (const [key, value] of Object.entries(optional)) {
-    if (value !== undefined) built[key] = value;
+  for (const [field, value] of Object.entries(optional)) {
+    if (value !== undefined) built[field] = value;
   }
   return built;
 }

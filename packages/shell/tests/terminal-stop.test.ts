@@ -5,14 +5,13 @@
 // and a control that stops a process has exactly one dangerous failure mode:
 // the window closes and the process does not. Every test here is aimed at it.
 //
-// The flow is driven through the REAL `useTabClose`, over a recording door — no
-// React renderer, because the hook's decisions are what is being pinned and a
-// renderer would only add a way for the test to be about markup instead.
+// The flow is driven through the REAL `runTabClose` over a recording door — no
+// React renderer, because the ORDER of effects is what is being pinned and a
+// renderer would only add a way for the test to be about markup instead. The
+// React binding around it (`useTabClose`) holds two useStates and is proven in a
+// real browser, where a hook belongs.
 import { describe, expect, it } from 'vitest';
-import { act } from 'react';
-import { createRoot } from 'react-dom/client';
-import React from 'react';
-import { useTabClose, type TabCloseWiring } from '../ui/screens/terminal/useTabClose.js';
+import { runTabClose, type TabCloseWiring } from '../ui/screens/terminal/tabCloseFlow.js';
 import { stopSubjectOf } from '../contract/terminalClose.js';
 import type { TabSessionTruth } from '../contract/terminalTabStrip.js';
 import { sessionView as view } from './fixtures/terminalTab.js';
@@ -95,27 +94,21 @@ function wiringFor(
 }
 
 /**
- * Drive the real hook: press close, answer the question, settle the promises.
- * Returns the sentence the screen would draw — the one record of what the press
- * accomplished, so it is asserted rather than assumed.
+ * Press one of the two choices, with what the press-time decision produced:
+ * `keeps-running` is the claim `decideTabClose` attaches to a live session, and
+ * the subject is what `stopSubjectOf` read off the same session. Returns the
+ * sentence the screen would draw, or `null` when the window did not close — the
+ * one record of what the press accomplished, so it is asserted rather than
+ * assumed.
  */
-async function press(
+const press = (
   wiring: TabCloseWiring, choice: 'stop-and-close' | 'keep-running',
-): Promise<string | null> {
-  let flow: ReturnType<typeof useTabClose> | null = null;
-  const root = createRoot(document.createElement('div'));
-  function Probe(): null {
-    flow = useTabClose(wiring);
-    return null;
-  }
-  await act(async () => { root.render(React.createElement(Probe)); });
-  await act(async () => { flow!.requestClose(TAB_ID, agentTab()); });
-  await act(async () => { flow!.answer(choice); });
-  await act(async () => { await Promise.resolve(); });
-  const note = flow!.closedNote;
-  root.unmount();
-  return note;
-}
+): Promise<string | null> => runTabClose(wiring, {
+  tabId: TAB_ID,
+  choice,
+  claim: { kind: 'keeps-running' },
+  subject: stopSubjectOf(agentTab()),
+});
 
 describe('stopSubjectOf — which Run a stop from this tab is about', () => {
   it('is the agentRunId on the owner label', () => {
@@ -134,7 +127,7 @@ describe('stopSubjectOf — which Run a stop from this tab is about', () => {
 describe('Stop and close, when the stop succeeds', () => {
   it('reads the Run, stops the Agent it read, then detaches and closes — in that order', async () => {
     const { wiring, log } = wiringFor({ ok: true, value: { kind: 'stopped' } });
-    await pressStopAndClose(wiring);
+    await press(wiring, 'stop-and-close');
 
     expect(log.sent).toEqual([
       `read ${RUN_ID}`,
@@ -148,11 +141,14 @@ describe('Stop and close, when the stop succeeds', () => {
 
   it('does not then say the session keeps running', async () => {
     const { wiring } = wiringFor({ ok: true, value: { kind: 'stopped' } });
-    await pressStopAndClose(wiring);
+    const note = await press(wiring, 'stop-and-close');
     // The claim the dialog computed was `keeps-running` — true of the tab a
     // moment earlier, false of it now. Pinned because the sentence under a
-    // closed window is the only record of what the press accomplished.
-    expect(true).toBe(true);
+    // closed window is the only record of what the press accomplished, and
+    // carrying the press-time claim through would say the opposite of the truth.
+    expect(note).toContain(`Novakai stopped ${RUN_ID}`);
+    expect(note).toContain('The session is not running.');
+    expect(note).not.toContain('keeps running');
   });
 });
 
@@ -161,12 +157,14 @@ describe('Stop and close, when the stop does NOT happen', () => {
     const { wiring, log } = wiringFor({
       ok: false, error: { code: 'VersionConflict', message: 'this Run has already moved on' },
     });
-    await pressStopAndClose(wiring);
+    const note = await press(wiring, 'stop-and-close');
 
     expect(log.sent).toEqual([`read ${RUN_ID}`, `stop ${AGENT_ID}/${RUN_ID}/stop-one`]);
     expect(log.closed).toEqual([]);
     expect(log.problems[0]).toContain('VersionConflict');
     expect(log.problems[0]).toContain('still running');
+    // No sentence at all: a note here would announce a close that did not happen.
+    expect(note).toBeNull();
   });
 
   it('never sends a stop at all when the Run could not be read', async () => {
@@ -174,31 +172,23 @@ describe('Stop and close, when the stop does NOT happen', () => {
       { ok: true, value: {} },
       { ok: false, error: { code: 'RuntimeUnavailable', message: 'socket closed' } },
     );
-    await pressStopAndClose(wiring);
+    const note = await press(wiring, 'stop-and-close');
 
     // The agentId is not knowable, and there is no guessing one from the run id.
     expect(log.sent).toEqual([`read ${RUN_ID}`]);
     expect(log.closed).toEqual([]);
     expect(log.problems[0]).toContain('socket closed');
+    expect(note).toBeNull();
   });
 });
 
 describe('Keep running is untouched by the door being open', () => {
   it('asks the door for nothing and closes the window', async () => {
     const { wiring, log } = wiringFor({ ok: true, value: {} });
-    let flow: ReturnType<typeof useTabClose> | null = null;
-    const root = createRoot(document.createElement('div'));
-    function Probe(): null {
-      flow = useTabClose(wiring);
-      return null;
-    }
-    await act(async () => { root.render(React.createElement(Probe)); });
-    await act(async () => { flow!.requestClose(TAB_ID, agentTab()); });
-    await act(async () => { flow!.answer('keep-running'); });
-    await act(async () => { await Promise.resolve(); });
-    root.unmount();
+    const note = await press(wiring, 'keep-running');
 
     expect(log.sent).toEqual(['detach', `close-record ${TAB_ID}`]);
     expect(log.closed).toEqual([TAB_ID]);
+    expect(note).toContain('keeps running in the background Runtime');
   });
 });

@@ -153,6 +153,35 @@ export function describeTabCloseClaim(claim: TabCloseClaim): string {
 export type TabCloseChoiceId = 'keep-running' | 'stop-and-close' | 'cancel';
 
 /**
+ * The leading fact on the QUESTION — which is not the same job as the sentence
+ * after the window is gone, and stopped being the same job the moment a stop
+ * became reachable.
+ *
+ * `TabCloseClaim` describes an OUTCOME. While Keep running was the only thing a
+ * live tab could do, the outcome and the situation were one sentence, so the
+ * dialog led with the claim and was right. With a reachable Stop directly
+ * underneath it, "the session keeps running in the background Runtime" is the
+ * consequence of the OTHER button — a person reads the fact, presses Stop, and
+ * the fact described the press they did not make.
+ *
+ * So when more than one outcome is reachable, the lead states what is true NOW,
+ * and every button below it carries its own consequence in its own label. That
+ * is the smaller sentence as well as the truer one: `Stop and close` and
+ * `Keep running` already say what they do, and spelling both out above them is
+ * the dialog telling Chris what the controls already show him.
+ */
+export function describeCloseQuestion(
+  decision: Extract<TabCloseDecision, { mustAsk: true }>,
+): string {
+  const stoppable = decision.choices.some(
+    (choice) => choice.id === 'stop-and-close' && choice.available,
+  );
+  if (!stoppable) return describeTabCloseClaim(decision.claim);
+  return 'This session is running in the background Runtime. '
+    + 'Closing this window detaches it.';
+}
+
+/**
  * `effect` is what the choice DOES, and it is deliberately independent of
  * `available`: an unavailable Stop keeps `stop-then-close`, so no caller can
  * ever quietly re-point it at the detach path. A test pins that.

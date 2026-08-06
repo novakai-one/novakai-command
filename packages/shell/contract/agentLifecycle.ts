@@ -186,6 +186,12 @@ export function planTerminalStop(
  * the defect `terminalClose.ts` was written to prevent.
  */
 export function describeStopRefusal(because: string): string {
-  return `${because} The session and the Agent behind it are still running, and this `
+  // Terminated first. The reason is composed from an owner-supplied `message`
+  // and no owner promises punctuation, so without this the consequence — the
+  // half a person actually needs — ran on as a clause of somebody else's
+  // sentence: "…this Run has already moved on The session and the Agent…".
+  // Found on a screenshot with the assertion for "still running" green.
+  const ended = /[.!?]$/u.test(because.trim()) ? because.trim() : `${because.trim()}.`;
+  return `${ended} The session and the Agent behind it are still running, and this `
     + 'window is still open.';
 }

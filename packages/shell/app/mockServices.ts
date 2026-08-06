@@ -13,20 +13,7 @@ import {
   type TerminalTabDriver, type TerminalTabRecord,
 } from '../contract/terminalTab.js';
 import { composeHumanMessage, type FocusSnapshot } from '../contract/context.js';
-
-/* eslint-disable id-length -- `ok` is the frozen result field every B3 caller
-   reads (FZ-CLI-SCHEMA-001/011). Scoped to the door answers alone, so this
-   file's other id-length debt stays counted rather than silenced. */
-
-/** Said once, as a value: this host has no Runtime, and that is not an empty list. */
-const noRuntime = {
-  ok: false as const,
-  error: {
-    code: 'RuntimeUnavailable',
-    message: 'this host has no Novakai Runtime to read Agent Runs from',
-  },
-};
-/* eslint-enable id-length */
+import { createOfflineAgentServices } from './mockAgentRuns.js';
 
 export function createMockServices(opts: { seeded?: boolean } = {}): ShellServices {
   let convos: ConversationSummary[] = opts.seeded === false ? [] : [
@@ -270,97 +257,21 @@ export function createMockServices(opts: { seeded?: boolean } = {}): ShellServic
       };
     })(),
     /**
-     * FZ-VIEW-001's read facade. This host has no Runtime, so the Runs and
-     * communications members say so as a VALUE — the screens draw a stated
+     * FZ-VIEW-001, whole (app/mockAgentRuns.ts). This host has no Runtime, so
+     * every slice but supervision says so as a VALUE — the screens draw a stated
      * absence, which is the same thing they must do when a real host's Runtime
-     * is down. Supervision is answered for real, so the attention surface is
-     * drivable offline through the frozen door rather than around it.
+     * is down. It lives in its own file because the door is twenty-one members
+     * and a door buried in a mock is a door whose missing slice is invisible
+     * (finding L-20).
      */
-    /* eslint-disable id-length -- the frozen `ok` again; see the note above. */
-    agentRuns: {
-      /**
-       * The three slices B3.2 built. Offline they answer the ONLY true thing:
-       * there is no Runtime here, so nothing was spawned, stopped, attached or
-       * asked. A refusal is a value on the command half of the door too, which
-       * is what makes the interesting path — a stop that FAILS must leave the
-       * window exactly where it was — reachable offline instead of only in a
-       * unit test (contract/agentLifecycle.ts).
-       */
-      runtime: { async getRuntimeStatus() { return noRuntime; } },
-      lifecycle: {
-        async spawnAgent() { return noRuntime; },
-        async interruptAgentTurn() { return noRuntime; },
-        async stopAgent() { return noRuntime; },
-        async prepareStopAgentTree() { return noRuntime; },
-        async stopAgentTree() { return noRuntime; },
-        async continueAgent() { return noRuntime; },
-        async adoptAgent() { return noRuntime; },
+    agentRuns: createOfflineAgentServices({
+      list: () => notifications,
+      settle: (notificationId, settled) => {
+        notifications = notifications.map((item) =>
+          (item.id === notificationId ? settled : item));
+        emit((listener) => listener.onNotifications?.());
       },
-      terminal: {
-        async attachController() { return noRuntime; },
-        async detachController() { return noRuntime; },
-        async acquireInputLease() { return noRuntime; },
-        async releaseInputLease() { return noRuntime; },
-        async writeInput() { return noRuntime; },
-        async resizeTerminal() { return noRuntime; },
-        async readTerminalStream() { return noRuntime; },
-      },
-      runs: {
-        async getAgentRun() { return noRuntime; },
-        async listAgentRuns() { return noRuntime; },
-        async getAgentRunTree() { return noRuntime; },
-      },
-      communications: {
-        async listAgentCommunications() {
-          return {
-            ok: false as const,
-            error: {
-              code: 'MessagingUnavailable',
-              message: 'this host has no Novakai Runtime to read communications from',
-            },
-          };
-        },
-      },
-      supervision: {
-        async listNotifications(request) {
-          return {
-            ok: true as const,
-            value: {
-              items: notifications.slice(0, request.limit ?? 200).map((item) => ({ ...item })),
-              omissions: [],
-            },
-          };
-        },
-        async acknowledgeNotification(notificationId: string) {
-          // The mock enforces the same law the capability does: only a
-          // Notification the provider was observed to receive can be settled.
-          // A refusal is a typed value here too, so the screen's failure path
-          // is reachable offline instead of only in a unit test.
-          const target = notifications.find((item) => item.id === notificationId);
-          if (target === undefined) {
-            return {
-              ok: false as const,
-              error: { code: 'NotFound', message: `no notification ${notificationId}` },
-            };
-          }
-          if (target.state !== 'transcript-observed') {
-            return {
-              ok: false as const,
-              error: {
-                code: 'InvalidStateTransition',
-                message: `a notification in ${target.state} cannot be acknowledged`,
-              },
-            };
-          }
-          const settled: NotificationView = { ...target, state: 'acknowledged' };
-          notifications = notifications.map((item) =>
-            (item.id === notificationId ? settled : item));
-          emit((listener) => listener.onNotifications?.());
-          return { ok: true as const, value: settled };
-        },
-      },
-    },
-    /* eslint-enable id-length */
+    }),
     presence: {
       subscribeAgentEvents(handler) {
         presenceHandlers.add(handler);

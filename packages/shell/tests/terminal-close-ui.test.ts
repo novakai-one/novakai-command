@@ -94,6 +94,32 @@ describe('an unreachable Stop is a stated limit, never a control', () => {
   });
 });
 
+describe('the leading fact must be true of every button under it', () => {
+  // Read off a PNG, with the plain-shell dialog beside it. Both said "The
+  // session keeps running in the background Runtime" — TRUE of the plain shell,
+  // where Keep running is the only thing that can happen, and a half-truth of
+  // the Agent one, where the button directly beneath it exists to make it false.
+  //
+  // It is the same defect the close FLOW fixes one step later (the press-time
+  // claim is replaced, not carried, once a stop succeeds). The dialog carried it.
+  it('states only what is true NOW when a stop is also on offer', () => {
+    const claim = 'terminal-close-claim';
+    const html = ask(agentRun(), WITH_LIFECYCLE);
+    const said = html.match(new RegExp(`${claim}"[^>]*>([^<]*)<`, 'u'))?.[1] ?? '';
+    expect(said).toContain('is running in the background Runtime');
+    expect(said).toContain('Closing this window detaches it');
+    expect(said).not.toContain('keeps running');
+  });
+
+  it('keeps the outcome sentence when Keep running IS the only outcome', () => {
+    // Nothing to hedge here: with no reachable stop, the fact and the result of
+    // the only available press are the same sentence. B1.6's wording stands.
+    expect(ask({ known: true, view: view({ status: 'live' }) }, WITH_LIFECYCLE))
+      .toContain('keeps running in the background Runtime');
+    expect(ask(agentRun(), NO_DOORS)).toContain('keeps running in the background Runtime');
+  });
+});
+
 describe('the two choices are not drawn as equals', () => {
   // The defect a static render cannot see: with the kit's primary being a faint
   // wash, both buttons came out at the same tier and the safe default was
