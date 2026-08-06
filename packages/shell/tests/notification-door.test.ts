@@ -23,8 +23,9 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import {
   HUMAN_ESCALATION_PHASE, NOTIFICATION_VIEW_EXTRAS, NOTIFICATION_VIEW_FROZEN,
   attentionIdOf, awaitingAcknowledgement, describeProvenance, describeRecipient,
-  describeSubject, formatDelivery, formatState, isHumanEscalation, isSettled,
-  orderInbox, type NotificationView,
+  describeSubject, formatDelivery, formatState, inboxCompleteness,
+  isHumanEscalation, isSettled, orderInbox,
+  type NotificationPageView, type NotificationView,
 } from '../contract/notificationRead.js';
 import {
   createShellSupervisionServices, notificationDrift, notificationFilterFor,
@@ -152,6 +153,37 @@ describe('the escalation phase is the one that means a human is being asked', ()
     expect(attentionIdOf(rows)).toBe('seen');
   });
 
+  it('releases it onto NOTHING when the escalation was the only thing there', () => {
+    // B4 (NOTE-02). The sibling above passes with the `!isSettled` clause
+    // removed from the candidate set, because the settled escalation loses the
+    // ordering to a live row anyway — the guard was covered by a row that
+    // happened to outrank it. Alone, there is nothing to lose to: a settled
+    // escalation would stay lit forever, and the screen would never go calm.
+    // The release IS the confirmation, so this is the assertion that matters.
+    const settled = notification({
+      id: 'escalation', state: 'acknowledged', phase: HUMAN_ESCALATION_PHASE,
+      driftEpisodeId: 'driftepisode_1',
+    });
+    expect(attentionIdOf([settled])).toBeNull();
+    expect(html([settled])).not.toContain('nv-inbox__row--attention');
+    // `expired` is the other way a row is finished, and it releases the same.
+    expect(attentionIdOf([{ ...settled, state: 'expired' }])).toBeNull();
+  });
+
+  it('stops OUTRANKING once settled — the order releases with the marker', () => {
+    // B4 (NOTE-03). Rank 0 is what "a human is being asked" buys. Keeping it
+    // after the ask is answered pins a finished row to the top of the attention
+    // screen above live work, permanently, and no marker assertion can see it:
+    // the mark is already gone, so every test about the mark stays green while
+    // the screen is sorted wrong.
+    const rows = [
+      notification({ id: 'seen', state: 'transcript-observed' }),
+      notification({ id: 'queued', state: 'queued' }),
+      notification({ id: 'done', state: 'acknowledged', phase: HUMAN_ESCALATION_PHASE }),
+    ];
+    expect(orderInbox(rows).map((r) => r.id)).toEqual(['seen', 'queued', 'done']);
+  });
+
   it('gives the SENTENCE to the marked row alone — found in a screenshot, not a DOM', () => {
     // Every earlier assertion was green while this screen drew two identical
     // full-ink alarms: the sentence was present, one row carried `--attention`,
@@ -187,6 +219,52 @@ describe('the escalation phase is the one that means a human is being asked', ()
     });
     expect(attentionIdOf([queuedEscalation])).toBe('escalation');
     expect(awaitingAcknowledgement([queuedEscalation])).toEqual([]);
+  });
+});
+
+describe('what the answer cannot show, in its own numbers', () => {
+  // B4 (NOTE-09). `inboxCompleteness` had no test at all, and its return value
+  // is written straight onto the screen as the `nv-inbox__gap` lines. This is
+  // the attention surface's version of the false empty: a page that hid rows
+  // drawn as a page that hid none.
+  const page = (partial: Partial<NotificationPageView> = {}): NotificationPageView => ({
+    items: [], omissions: [], ...partial,
+  });
+
+  it('says WHY rows are missing, not just how many', () => {
+    // A bare "3" on the attention screen is a number with no noun. The reason
+    // is the half that tells Chris whether the gap is his problem: rows hidden
+    // by permission are a different fact from rows hidden by a filter, and the
+    // count is identical either way.
+    const said = inboxCompleteness(page({
+      omissions: [{ reason: 'not visible at this permission level', count: 3 }],
+    }));
+    expect(said).toHaveLength(1);
+    expect(said[0]).toContain('3');
+    expect(said[0]).toContain('not visible at this permission level');
+  });
+
+  it('states every omission it was given, one line each', () => {
+    const said = inboxCompleteness(page({
+      omissions: [
+        { reason: 'permission', count: 2 },
+        { reason: 'redacted', count: 1 },
+      ],
+    }));
+    expect(said).toHaveLength(2);
+    expect(said.join(' ')).toContain('redacted');
+  });
+
+  it('says nothing when nothing was hidden — silence is a claim it can make', () => {
+    expect(inboxCompleteness(page())).toEqual([]);
+    // A reported omission of zero rows is not an omission.
+    expect(inboxCompleteness(page({ omissions: [{ reason: 'permission', count: 0 }] })))
+      .toEqual([]);
+  });
+
+  it('says the page continues when the door hands back a cursor', () => {
+    expect(inboxCompleteness(page({ nextCursor: 'cursor_2' })).join(' '))
+      .toMatch(/continue|more/i);
   });
 });
 

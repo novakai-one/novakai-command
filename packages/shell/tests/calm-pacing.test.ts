@@ -37,6 +37,21 @@ describe('Raw is identity — the mode that cannot lie about what was printed', 
   });
 });
 
+describe('Raw keeps the bytes a tidier-up would take', () => {
+  // B4 (CALM-09). The identity assertion above passed a `rawPassthrough` that
+  // called `.trimEnd()` — neither of its fixtures has trailing whitespace, so
+  // Law 1 was stated, asserted, and unguarded. Trailing whitespace is not an
+  // edge case in a terminal: it is every prompt, every progress bar, and every
+  // column of a padded table. The bytes a well-meaning cleanup would eat are
+  // exactly the bytes that have to survive.
+  it('preserves the trailing whitespace that IS the prompt', () => {
+    expect(rawPassthrough('chris@novakai $ ')).toBe('chris@novakai $ ');
+    expect(rawPassthrough('done\r\n')).toBe('done\r\n');
+    expect(rawPassthrough('  indented  ')).toBe('  indented  ');
+    expect(rawPassthrough('\r')).toBe('\r');
+  });
+});
+
 describe('Calm releases at the rate it was given', () => {
   it('reveals nothing before any time has passed', () => {
     const state = receiveCalm(emptyCalmState(1_000), lines(50), PACING);
@@ -99,6 +114,17 @@ describe('a terminal that is fine never looks hung', () => {
     expect(text).not.toContain('chris@novakai $');
   });
 
+  it('forgets a partial once it has been released — the prompt prints ONCE', () => {
+    // B4 (CALM-05). A state that releases the tail and keeps holding it reprints
+    // the prompt on every tick, forever. The screen fills with `$ ` at the
+    // reveal rate and the terminal looks possessed rather than paced — and the
+    // first reveal, which is all the suite used to check, is byte-perfect.
+    const state = receiveCalm(emptyCalmState(0), 'done\r\nchris@novakai $ ', PACING);
+    const first = revealCalm(state, 10_000, PACING);
+    expect(first.text).toContain('chris@novakai $ ');
+    expect(revealCalm(first.state, 20_000, PACING).text).toBe('');
+  });
+
   it('completes a partial line when the rest of it arrives', () => {
     let state = receiveCalm(emptyCalmState(0), 'half a ', PACING);
     state = receiveCalm(state, 'line\r\n', PACING);
@@ -135,6 +161,33 @@ describe('output that was dropped is said out loud', () => {
     expect(seen.match(/not shown/gi) ?? []).toHaveLength(1);
   });
 
+  it('announces the gap WITH the lines that replaced it, never above them', () => {
+    // B4 (CALM-03). The marker belongs where the lost output was. Announcing it
+    // the moment the drop happens puts it above output that has not arrived
+    // yet, so Chris reads "20 lines not shown" over a blank region and then
+    // watches the surviving lines appear underneath it. Nothing is released
+    // before any time has passed, so nothing is announced then either.
+    const state = receiveCalm(emptyCalmState(0), lines(30), tight);
+    const idle = revealCalm(state, 0, tight);
+    expect(idle.text).toBe('');
+    const moved = revealCalm(idle.state, 1_000, tight);
+    expect(moved.text).toMatch(/not shown/i);
+    expect(moved.text).toContain('line 21');
+  });
+
+  it('announces a drop even when the ceiling leaves room for only one line', () => {
+    // B4 (CALM-01). `Math.max(1, …)` is the whole defence. Without it a pacing
+    // of 0 buffers nothing, so nothing is ever RELEASED, so the gap marker —
+    // which rides out with the lines that survived — has nothing to ride on.
+    // The tab eats the entire process output and says absolutely nothing. It is
+    // Law 3 failing in the one direction that is invisible from the screen.
+    const none: CalmPacing = { maxBufferedLines: 0, revealLinesPerSecond: 10 };
+    const state = receiveCalm(emptyCalmState(0), lines(30), none);
+    const { text } = revealCalm(state, 10_000, none);
+    expect(text).toMatch(/not shown/i);
+    expect(text).toContain('line 30');
+  });
+
   it('says nothing at all when nothing was dropped', () => {
     const state = receiveCalm(emptyCalmState(0), lines(5), PACING);
     const { text } = revealCalm(state, 10_000, PACING);
@@ -159,6 +212,18 @@ describe('asking for the truth gives it to you now', () => {
     const tight: CalmPacing = { maxBufferedLines: 5, revealLinesPerSecond: 10 };
     const state = receiveCalm(emptyCalmState(0), lines(20), tight);
     expect(flushCalm(state).text).toMatch(/not shown/i);
+  });
+
+  it('announces that gap ONCE — a flush clears the debt it just paid', () => {
+    // B4 (CALM-07). The sibling above proves a flush is not an amnesty; this
+    // proves it is not a second alarm either. The empty-second-flush test one
+    // above ran against a state that had never dropped anything, so the
+    // clearing of `dropped` was the one half of the flush nothing checked.
+    // Left uncleared, every later flush — every Calm → Raw switch — re-announces
+    // a gap that was already reported, and old losses look like new ones.
+    const tight: CalmPacing = { maxBufferedLines: 5, revealLinesPerSecond: 10 };
+    const first = flushCalm(receiveCalm(emptyCalmState(0), lines(20), tight));
+    expect(flushCalm(first.state).text).toBe('');
   });
 });
 

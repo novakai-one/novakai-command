@@ -64,6 +64,19 @@ describe('the house gates still hold with the inbox in the viewport', () => {
     const out = execFileSync('node', ['tools/lint-accent.mjs'], { encoding: 'utf8' });
     expect(out).toContain('--accent used 1×');
   });
+
+  it('every honesty mutant still aims at a line that exists', () => {
+    // B4. The mutation manifest (`tools/mutants.mjs`) is the only record of
+    // which laws on this surface are GUARDED rather than merely obeyed, and its
+    // failure mode is silence: the moment somebody edits a line an anchor
+    // points at, that mutant stops being applicable and the board it was on
+    // stops meaning anything. Nobody re-runs a green gate. So the cheap half —
+    // do the anchors still match? — runs with the suite, at the same cost as
+    // the two lint gates above. The expensive half (`node tools/mutate.mjs`,
+    // ~90s) stays a deliberate act before a seal.
+    const out = execFileSync('node', ['tools/mutate.mjs', '--dry'], { encoding: 'utf8' });
+    expect(out).toContain('ANCHORS GREEN');
+  });
 });
 
 describe('exactly one thing is the exception', () => {
