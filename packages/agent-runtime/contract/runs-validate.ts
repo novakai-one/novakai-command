@@ -10,7 +10,7 @@ import {
   type AgentId, type AgentRunId, type B3Result, type ControlReplacementPlanId,
   type FieldReader, type HumanPrincipalId, type RecordVersion, type RunOperationId,
   type AgentRoleProfileId,
-  type ControllerAttachmentId, type LeaseGeneration, type ProviderSessionId,
+  type ControllerAttachmentId, type EventCursor, type LeaseGeneration, type ProviderSessionId,
   type ProviderTurnId, type ProviderUsageEvidenceId, type TerminalInputAttemptId,
   type TerminalInputLeaseId, type TerminalSessionId, type TranscriptBindingId,
   type TranscriptTurnCompletionId,
@@ -26,8 +26,9 @@ import type {
   ProviderTurnSubmissionState,
 } from './provider-turns.js';
 import {
-  AGENT_RUN_LIFECYCLES, CONTINUATION_MODES, LAUNCH_CONFIGURATION_MODES, LAUNCH_SURFACES,
-  type AgentRunLifecycle, type LaunchSurface,
+  AGENT_RUN_LIFECYCLES, CONTINUATION_MODES, CONTROLLER_STATES, LAUNCH_CONFIGURATION_MODES,
+  LAUNCH_SURFACES,
+  type AgentRunLifecycle, type ControllerState, type LaunchSurface,
 } from './runs.js';
 
 const PROVIDERS = ['claude', 'codex', 'kimi'] as const;
@@ -199,8 +200,12 @@ export function readListAgentRunsFilter(candidate: unknown): B3Result<ListAgentR
   return readBoundary(candidate, (field) => {
     const agentId = field.optionalId<AgentId>('agentId', 'agent', 'uuidv4');
     const launchSurface = field.optionalChoice<LaunchSurface>('launchSurface', LAUNCH_SURFACES);
-    const limit = field.optionalCount('limit', 1, 10_000);
+    // 1–200, required — the same call its own sibling `readListProviderTurnsInput`
+    // already makes below. `optionalCount(…, 1, 10_000)` accepted fifty times
+    // the ratified cap, and accepted omission (A7-03 item 2).
+    const limit = field.count('limit', 1, 200);
     const onlyFinal = optionalFlag(field, 'onlyFinal');
+    const controllerState = field.optionalChoice<ControllerState>('controllerState', CONTROLLER_STATES);
     const lifecycle = field.given('lifecycle');
     const wanted = Array.isArray(lifecycle)
       && lifecycle.every((item) => AGENT_RUN_LIFECYCLES.includes(item as AgentRunLifecycle))
@@ -208,13 +213,19 @@ export function readListAgentRunsFilter(candidate: unknown): B3Result<ListAgentR
     if (lifecycle !== undefined && wanted === undefined) {
       field.reject('lifecycle', `must be an array of: ${AGENT_RUN_LIFECYCLES.join(', ')}`);
     }
+    // Passed through as the opaque token it is: only the owner that minted a
+    // cursor can say whether it is one of its own, and it refuses a foreign or
+    // malformed one rather than quietly starting again from the top.
+    const cursor = field.optionalText('cursor');
     return {
       ...(wanted === undefined ? {} : { lifecycle: wanted }),
       ...(agentId === undefined ? {} : { agentId }),
       ...(launchSurface === undefined ? {} : { launchSurface }),
       includeFinal: flag(field, 'includeFinal'),
       ...(onlyFinal === true ? { onlyFinal: true } : {}),
-      ...(limit === undefined ? {} : { limit }),
+      ...(controllerState === undefined ? {} : { controllerState }),
+      ...(cursor === undefined ? {} : { cursor: cursor as EventCursor }),
+      limit,
     };
   });
 }

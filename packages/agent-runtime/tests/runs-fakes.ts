@@ -15,6 +15,7 @@ import type {
   ProviderPort, ProviderTurnInputAttemptFacts, TerminalFacts, TerminalPort,
 } from '../contract/ports.js';
 import type { TurnDeliveryStep } from '../contract/types.js';
+import type { AgentRunView } from '../contract/runs-api.js';
 
 // ── A fake Terminal that remembers exactly what was typed into it ───────────
 
@@ -57,6 +58,10 @@ export interface FakeTerminal extends TerminalPort {
    */
   pinnedTokens: readonly string[];
   failOpen: ReturnType<typeof b3err> | null;
+  /** What §19.1's controllers section reads as. Terminal owns it; this fake states it. */
+  controllerAnswer: AgentRunView['controllers'];
+  /** Make Terminal unable to answer, so the view read must FAIL rather than say 0. */
+  failControllerFacts: ReturnType<typeof b3err> | null;
   interruptOutcome: 'barrier-committed' | 'target-turn-not-active' | 'raced-with-completion';
   failTerminate: ReturnType<typeof b3err> | null;
   /**
@@ -208,6 +213,8 @@ export function createFakeTerminal(): FakeTerminal {
     reply: 'valid',
     pinnedTokens: [],
     failOpen: null,
+    controllerAnswer: { attachedCount: 0, kinds: [] },
+    failControllerFacts: null,
     interruptOutcome: 'barrier-committed',
     failTerminate: null,
     duringNextTerminate: null,
@@ -245,6 +252,11 @@ export function createFakeTerminal(): FakeTerminal {
         id, fingerprint: input.launchFingerprint, authority: input.launchAuthorityRef,
       });
       return b3ok(opened);
+    },
+
+    async controllerFacts(_principal, _terminalSessionId) {
+      if (port.failControllerFacts) return b3fail(port.failControllerFacts);
+      return b3ok(port.controllerAnswer);
     },
 
     async submitRuntimeInput(_context, input) {

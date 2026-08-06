@@ -10,7 +10,7 @@ import {
 } from '@novakai/foundation/contract';
 import {
   readAcquireInputLeaseInput, readAttachControllerInput, readDetachControllerInput,
-  readListTerminalSessionsFilter, readOpenManagedTerminalInput,
+  readTerminalSessionFilter, readOpenManagedTerminalInput,
   readReadTerminalStreamInput, readReleaseInputLeaseInput, readResizeTerminalInput,
   readGetProviderTurnInputAttemptInput, readIncompleteProviderTurnInputAttemptFilter,
   readTerminalSessionIdInput, readWriteTerminalInput,
@@ -114,7 +114,7 @@ export function buildB3Methods(options: B3MethodOptions): MethodTable {
 
     'b3.terminal.open': method(readOpenManagedTerminalInput,
       (payload, context) => terminal.openManagedTerminal(context, payload)),
-    'b3.terminal.list': method(readListTerminalSessionsFilter,
+    'b3.terminal.list': method(readTerminalSessionFilter,
       (payload) => terminal.listTerminalSessions(principal, payload)),
     'b3.terminal.inspect': method(readTerminalSessionIdInput,
       (payload) => terminal.getTerminalSession(principal, payload.terminalSessionId)),

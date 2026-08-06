@@ -10,6 +10,7 @@ import type {
 import type {
   AgentRunUsage, AgentUsageSummary, UsageValue,
 } from '../../supervision/contract/index.js';
+import type { Agent } from '../../agents/b3/contract/index.js';
 
 function usageValue(value: UsageValue, label: string): string {
   const limitations = value.limitations.length === 0
@@ -24,6 +25,28 @@ function usageLine(usage: Omit<AgentRunUsage, 'agentRunId'>): string {
     + `${usageValue(usage.cachedInputTokens, 'cached input tokens')} · `
     + `${usageValue(usage.costMicros, 'cost micros')} · `
     + usageValue(usage.providerTurns, 'provider turns');
+}
+
+/**
+ * §17.2:3605's second half: "Human output MUST say both launch origin and
+ * current controller truth" — the `currently 0 controllers` clause.
+ *
+ * It is a separate clause from the origin on purpose. §24.5 red-gates the two
+ * against each other ("'Started externally' is not inferred from current
+ * attachment", "'No controller' is not 'Agent stopped'"), so the line states
+ * both rather than letting a reader derive one from the other.
+ *
+ * An absent `inputLeaseHolder` is passed over in silence, because the owner
+ * omits it to mean "no lease holder" — printing "unknown" would turn a stated
+ * fact into a doubt.
+ */
+function controllerLine(controllers: AgentRunView['controllers']): string {
+  const count = controllers.attachedCount;
+  const noun = count === 1 ? 'controller' : 'controllers';
+  const kinds = controllers.kinds.length === 0 ? '' : ` (${controllers.kinds.join(', ')})`;
+  const holder = controllers.inputLeaseHolder === undefined
+    ? '' : `, input lease held by ${controllers.inputLeaseHolder}`;
+  return `currently ${count} ${noun}${kinds}${holder}`;
 }
 
 /**
@@ -43,7 +66,8 @@ export function describeRun(view: AgentRunView): string {
   return `${view.agent.displayName}  ${view.run.id}\n`
     + `  ${view.provider.provider}/${view.provider.modelId} (${view.provider.effort}); `
     + `${view.run.lifecycle}, ${view.run.activity}\n`
-    + `  Started from ${view.launch.surface} by ${view.launch.requestedBy}; ${family}; ${supervisor}\n`
+    + `  Started from ${view.launch.surface} by ${view.launch.requestedBy}; `
+    + `${controllerLine(view.controllers)}; ${family}; ${supervisor}\n`
     + `  ${view.family.childCount} child agent(s); usage ${usageLine(view.usage)}`
     + doubts;
 }
@@ -51,19 +75,28 @@ export function describeRun(view: AgentRunView): string {
 export const describeList = (views: readonly AgentRunView[]): string =>
   (views.length === 0 ? 'No agent runs.' : views.map(describeRun).join('\n\n'));
 
+/**
+ * The Agent, not a Run of it (OQ-09's agent form). Deliberately short: an
+ * Agent is an identity and a role, and everything that is "happening" belongs
+ * to a Run. Saying more here would invite reading a Run's state off an Agent.
+ */
+export const describeAgent = (agent: Agent): string =>
+  `${agent.displayName}  ${agent.id}\n  role ${agent.roleProfileId}; ${agent.status}; `
+  + `belongs to ${agent.rootHumanPrincipalId}`;
+
 /** Indented by generation, so the family reads as a family. */
 export function describeTree(tree: AgentRunTreeView): string {
   if (tree.nodes.length === 0) return 'No agents under that root.';
-  const depthOf = new Map<string, number>([[tree.rootAgentId, 0]]);
-  const lines: string[] = [];
-  for (const node of tree.nodes) {
-    const parent = node.family.parentAgentId;
-    const depth = parent === undefined ? 0 : (depthOf.get(parent) ?? 0) + 1;
-    depthOf.set(node.agent.agentId, depth);
-    lines.push(`${'  '.repeat(depth)}${node.agent.displayName} `
-      + `[${node.provider.provider}] ${node.run.lifecycle} — ${node.run.id}`);
-  }
-  return lines.join('\n');
+  // L-13: `depth` is the owner's own answer (§12.7), so it is read, not
+  // recomputed. The walk this replaces derived each generation from
+  // `family.parentAgentId` IN ARRAY ORDER — `depthOf.get(parent) ?? 0` — which
+  // silently turned "I have not reached that parent yet" into "it is the root".
+  // Node order is not promised to be parents-first, so a child listed before
+  // its parent was drawn a generation too shallow, and the CLI and the Shell
+  // could print two different families from one answer (FZ-VIEW-034).
+  return tree.nodes.map((node) =>
+    `${'  '.repeat(node.depth)}${node.agent.displayName} `
+    + `[${node.provider.provider}] ${node.run.lifecycle} — ${node.run.id}`).join('\n');
 }
 
 export function describeControls(report: ControlCapabilityFacts): string {

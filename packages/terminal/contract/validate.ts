@@ -11,19 +11,21 @@
 // prefix is rejected on purpose.
 import {
   readBoundary,
-  type AgentRunId, type B3Result, type FieldReader, type LeaseGeneration,
-  type ProviderTurnId, type TerminalSessionId,
+  type AgentRunId, type B3Result, type EventCursor, type FieldReader,
+  type LeaseGeneration, type ProviderTurnId, type TerminalSessionId,
 } from '@novakai/foundation/contract';
 import type {
   AcquireInputLeaseInput, AttachControllerInput, DetachControllerInput,
   CancelReservedNotificationInput, CommitReservedNotificationInput,
   GetProviderTurnInputAttemptInput, IncompleteProviderTurnInputAttemptFilter,
-  ListTerminalSessionsFilter, OpenManagedTerminalInput, ReadTerminalStreamInput,
+  OpenManagedTerminalInput, ReadTerminalStreamInput,
   ReleaseInputLeaseInput, ReserveNotificationInput, ResizeTerminalInput,
+  TerminalSessionFilter,
   SetControllerDraftStateInput, WriteTerminalInput,
 } from './api.js';
 import {
-  CONTROLLER_KINDS, TERMINAL_INPUT_KINDS, type TerminalSessionOwner,
+  CONTROLLER_KINDS, TERMINAL_INPUT_KINDS, TERMINAL_SESSION_STATUSES,
+  type TerminalSessionOwner, type TerminalSessionStatus,
 } from './records.js';
 
 /** A terminal is a window on a screen, not an address space. */
@@ -32,7 +34,6 @@ const LEASE_TTL_LIMIT_MS = 3_600_000;
 const SEQUENCE_LIMIT = Number.MAX_SAFE_INTEGER;
 
 const LEASE_MODES = ['acquire-if-free', 'renew', 'explicit-takeover'] as const;
-const LIST_STATES = ['live', 'final', 'all'] as const;
 const OWNER_KINDS = ['plain-shell', 'agent-run'] as const;
 const CANCEL_REASONS = ['supervision-claim-rejected', 'runtime-compensation'] as const;
 const DRAFT_STATES = ['empty', 'present'] as const;
@@ -272,11 +273,30 @@ export function readTerminalSessionIdInput(
   }));
 }
 
-export function readListTerminalSessionsFilter(
+/**
+ * A5-05: `status` is a set, not one value — "show me everything that is not
+ * finished" is one question, and asking it as three separate calls is how two
+ * pages of one truth get compared.
+ */
+function readStatuses(field: FieldReader): readonly TerminalSessionStatus[] | undefined {
+  const given = field.given('status');
+  if (given === undefined) return undefined;
+  if (!Array.isArray(given) || given.length === 0
+    || !given.every((item) => TERMINAL_SESSION_STATUSES.includes(item as TerminalSessionStatus))) {
+    field.reject('status', `must be a non-empty array of: ${TERMINAL_SESSION_STATUSES.join(', ')}`);
+    return undefined;
+  }
+  return given as readonly TerminalSessionStatus[];
+}
+
+export function readTerminalSessionFilter(
   payload: unknown,
-): B3Result<ListTerminalSessionsFilter> {
+): B3Result<TerminalSessionFilter> {
   return readBoundary(payload, (field) => ({
-    ...optional('state', field.optionalChoice('state', LIST_STATES)),
+    ...(field.given('owner') === undefined ? {} : { owner: readOwner(field) }),
+    ...optional('status', readStatuses(field)),
+    ...optional('cursor', field.optionalText('cursor') as EventCursor | undefined),
+    limit: field.count('limit', 1, 200),
   }));
 }
 

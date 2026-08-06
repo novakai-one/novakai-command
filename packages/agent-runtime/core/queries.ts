@@ -5,9 +5,9 @@
 // live, and whether it is working. "No controller" is not "stopped"; "unknown"
 // is not "zero" (§24.5, red gates 4 and 13).
 import {
-  b3fail, b3ok, mintClientOpId, nowIsoUtc,
+  b3err, b3fail, b3ok, mintClientOpId, nowIsoUtc,
   type ActivityGeneration, type AgentId, type AgentRunId, type AuthenticatedPrincipal, type B3Page,
-  type B3Result, type IsoUtc, type ResolvedLaunchPlanId, type RunOperationId,
+  type B3Result, type EventCursor, type IsoUtc, type ResolvedLaunchPlanId, type RunOperationId,
   type TerminalSessionId,
 } from '@novakai/foundation/contract';
 import type {
@@ -171,6 +171,21 @@ export async function observeTerminalExit(
   return reconciled.ok ? b3ok(null) : b3fail(reconciled.error);
 }
 
+/** No terminal session ⇒ no attachments to hang off one (§7:1165). Truth, not a default. */
+const NO_CONTROLLERS: AgentRunView['controllers'] = { attachedCount: 0, kinds: [] };
+
+/**
+ * §19.1's controllers section, from the one owner of ControllerAttachment and
+ * TerminalInputLease. The Runtime asks Terminal every read and caches nothing
+ * (§3.3), and it never derives this from `launch.surface` (FZ-VIEW-004).
+ */
+async function controllersOfRun(
+  core: RunsCore, principal: AuthenticatedPrincipal, agentRun: AgentRun,
+): Promise<B3Result<AgentRunView['controllers']>> {
+  if (agentRun.terminalSessionId === undefined) return b3ok(NO_CONTROLLERS);
+  return core.terminal.controllerFacts(principal, agentRun.terminalSessionId);
+}
+
 // eslint-disable-next-line sonarjs/cognitive-complexity -- View projection retains explicit custody states.
 export async function viewOfRun(
   core: RunsCore, principal: AuthenticatedPrincipal, stale: AgentRun,
@@ -192,6 +207,13 @@ export async function viewOfRun(
   // Transcript owns this fact; the Runtime asks. A null answer is "no binding",
   // never "no transcript" — the two are told apart in the view below.
   const binding = (await core.transcriptBinding?.(agentRun.id)) ?? null;
+  // §19.1's controllers section, asked of Terminal on every read and never
+  // cached (§3.3). A Run with no terminal session has no attachments to hang
+  // off one (§7:1165), so `{0, []}` there is truth rather than a fallback —
+  // and when Terminal cannot answer, the read FAILS below rather than
+  // fabricating a zero ("unavailable" is not zero, §24.5/FZ-VIEW-010).
+  const controllers = await controllersOfRun(core, principal, agentRun);
+  if (!controllers.ok) return controllers;
   const usage = core.usage === undefined
     ? b3ok(unavailableUsage(agentRun, new Date(core.clock()).toISOString() as IsoUtc))
     : await core.usage(principal, agentRun.id);
@@ -214,6 +236,7 @@ export async function viewOfRun(
       requestedBy: agentRun.requestedBy,
       ...(agentRun.startedAt === undefined ? {} : { startedAt: agentRun.startedAt }),
     },
+    controllers: controllers.value,
     family: {
       ...(parent.value === null ? {} : { parentAgentId: parent.value }),
       childCount: children.value.length,
@@ -247,6 +270,126 @@ export async function getAgentRun(
   return viewOfRun(core, principal, agentRun.value);
 }
 
+const RUN_CURSOR_PREFIX = 'agentRuns.';
+
+interface RunCursorPosition { readonly createdAt: string; readonly id: string }
+
+/**
+ * The opaque keyset position §12.7 gives this listing, over the stable
+ * `(createdAt,id)` order every list method in the build pages by. Minted here
+ * and read here, because a cursor belongs to the stream owner that made it
+ * (FZ-EVT-007) — the prefix is what lets a cursor from another listing be
+ * refused rather than silently misread as a position in this one.
+ */
+function runCursorFor(agentRun: AgentRun): EventCursor {
+  const encoded = Buffer.from(JSON.stringify([agentRun.createdAt, String(agentRun.id)]), 'utf8')
+    .toString('base64url');
+  return `${RUN_CURSOR_PREFIX}${encoded}` as EventCursor;
+}
+
+function readRunCursor(cursor: EventCursor): B3Result<RunCursorPosition> {
+  try {
+    if (!String(cursor).startsWith(RUN_CURSOR_PREFIX)) throw new Error('wrong prefix');
+    const decoded = JSON.parse(Buffer.from(
+      String(cursor).slice(RUN_CURSOR_PREFIX.length), 'base64url',
+    ).toString('utf8')) as unknown;
+    if (!Array.isArray(decoded) || decoded.length !== 2
+      || typeof decoded[0] !== 'string' || typeof decoded[1] !== 'string') {
+      throw new Error('wrong tuple');
+    }
+    return b3ok({ createdAt: decoded[0], id: decoded[1] });
+  } catch {
+    return b3fail(b3err('ValidationFailed', 'run cursor is not an Agent Runtime continuation',
+      { issues: [{ path: 'cursor', message: 'is malformed or belongs to another query' }] },
+      false));
+  }
+}
+
+const afterRunCursor = (agentRun: AgentRun, from: RunCursorPosition): boolean =>
+  agentRun.createdAt > from.createdAt
+  || (agentRun.createdAt === from.createdAt && String(agentRun.id) > from.id);
+
+function matchesRunFilter(agentRun: AgentRun, filter: ListAgentRunsFilter): boolean {
+  if (!filter.includeFinal && FINAL_LIFECYCLES.has(agentRun.lifecycle)) return false;
+  // A5-06. `finalAt` is the owner's decision made observable; asking whether
+  // the lifecycle LOOKS final would be the consumer deriving finality, which
+  // is exactly what OQ-07 forbids.
+  if (filter.onlyFinal === true && agentRun.finalAt === undefined) return false;
+  if (filter.lifecycle && !filter.lifecycle.includes(agentRun.lifecycle)) return false;
+  return filter.launchSurface === undefined || agentRun.launchSurface === filter.launchSurface;
+}
+
+/**
+ * §12.7:2647's attachment filter, applied conjunctively with the record-only
+ * members above.
+ *
+ * It runs BEFORE the page is cut, never after: filtering a already-sliced page
+ * would hand the caller fewer items than it asked for while `nextCursor`
+ * claimed a full window, which is the silent-truncation shape L-11 and L-15
+ * name one capability over. The Terminal read is paid only when the caller
+ * actually states the filter.
+ */
+async function matchesControllerState(
+  core: RunsCore,
+  principal: AuthenticatedPrincipal,
+  agentRun: AgentRun,
+  wanted: NonNullable<ListAgentRunsFilter['controllerState']>,
+): Promise<B3Result<boolean>> {
+  const controllers = await controllersOfRun(core, principal, agentRun);
+  if (!controllers.ok) return controllers;
+  // The ruled equivalence, spelled once: "attached" ⇔ attachedCount > 0, and
+  // "headless" is its exact complement. Never read off `launch.surface`.
+  const attached = controllers.value.attachedCount > 0;
+  return b3ok(wanted === 'attached' ? attached : !attached);
+}
+
+async function narrowByControllerState(
+  core: RunsCore,
+  principal: AuthenticatedPrincipal,
+  candidates: readonly AgentRun[],
+  filter: ListAgentRunsFilter,
+): Promise<B3Result<readonly AgentRun[]>> {
+  if (filter.controllerState === undefined) return b3ok(candidates);
+  const kept: AgentRun[] = [];
+  for (const agentRun of candidates) {
+    const matches = await matchesControllerState(core, principal, agentRun, filter.controllerState);
+    if (!matches.ok) return matches;
+    if (matches.value) kept.push(agentRun);
+  }
+  return b3ok(kept);
+}
+
+/**
+ * The page of Runs a filter selects: ordered by the stable `(createdAt,id)`
+ * key, resumed after the caller's cursor, filtered, then cut to `limit`.
+ *
+ * Separate from the projection below because they answer different questions —
+ * WHICH records this page is, and what each of them looks like to this reader.
+ */
+async function runPageWindow(
+  core: RunsCore,
+  principal: AuthenticatedPrincipal,
+  stored: readonly AgentRun[],
+  filter: ListAgentRunsFilter,
+): Promise<B3Result<{ readonly wanted: readonly AgentRun[]; readonly more: boolean }>> {
+  const position = filter.cursor === undefined ? b3ok(null) : readRunCursor(filter.cursor);
+  if (!position.ok) return position;
+  const ordered = [...stored].sort((left, right) =>
+    left.createdAt.localeCompare(right.createdAt) || String(left.id).localeCompare(String(right.id)));
+  const from = position.value;
+  const byRecord = ordered
+    .filter((agentRun) => from === null || afterRunCursor(agentRun, from))
+    .filter((agentRun) => matchesRunFilter(agentRun, filter));
+  const narrowed = await narrowByControllerState(core, principal, byRecord, filter);
+  if (!narrowed.ok) return narrowed;
+  const matching = narrowed.value;
+  // No owner-side default: `limit` is required (§12.7:2650) and the one default
+  // in the build is the CLI's 200 (A5-01). `?? 500` was a second authority
+  // answering "how big is a page" — the B3d SEVERE-2 shape (A7-03 item 3).
+  const wanted = matching.slice(0, filter.limit);
+  return b3ok({ wanted, more: wanted.length < matching.length });
+}
+
 export async function listAgentRuns(
   core: RunsCore, principal: AuthenticatedPrincipal, filter: ListAgentRunsFilter,
 ): Promise<B3Result<B3Page<AgentRunView>>> {
@@ -254,16 +397,9 @@ export async function listAgentRuns(
     'agentRun', filter.agentId === undefined ? undefined : { agentId: filter.agentId },
   );
   if (!runs.ok) return runs;
-  const wanted = runs.value.filter((agentRun) => {
-    if (!filter.includeFinal && FINAL_LIFECYCLES.has(agentRun.lifecycle)) return false;
-    // A5-06. `finalAt` is the owner's decision made observable; asking whether
-    // the lifecycle LOOKS final would be the consumer deriving finality, which
-    // is exactly what OQ-07 forbids.
-    if (filter.onlyFinal === true && agentRun.finalAt === undefined) return false;
-    if (filter.lifecycle && !filter.lifecycle.includes(agentRun.lifecycle)) return false;
-    if (filter.launchSurface && agentRun.launchSurface !== filter.launchSurface) return false;
-    return true;
-  }).slice(0, filter.limit ?? 500);
+  const page = await runPageWindow(core, principal, runs.value, filter);
+  if (!page.ok) return page;
+  const { wanted, more } = page.value;
 
   const items: AgentRunView[] = [];
   let omitted = 0;
@@ -277,8 +413,13 @@ export async function listAgentRuns(
     }
     items.push(view.value);
   }
+  // Minted from the last record in the PAGE WINDOW, not the last visible item:
+  // a Run counted into `omissions` still occupied a place in the order, and
+  // resuming after the last item would hand it out again on the next page.
+  const nextCursor = more ? runCursorFor(wanted.at(-1)!) : undefined;
   return b3ok({
     items,
+    ...(nextCursor === undefined ? {} : { nextCursor }),
     omissions: omitted === 0 ? [] : [{ reason: 'permission', count: omitted }],
   });
 }

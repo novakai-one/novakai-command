@@ -1,7 +1,7 @@
 #!/usr/bin/env -S npx tsx
 // nvk-terminal — list, inspect, attach to, and detach from real terminals (§17.1).
 //
-//   nvk-terminal list [--state live|final|all]
+//   nvk-terminal list [--limit <n>] [--cursor <EventCursor>] [--state live|final|all]
 //   nvk-terminal inspect <terminalSessionId>
 //   nvk-terminal open [--cwd <path>] [--authority plain-shell|mock-managed]
 //
@@ -16,15 +16,20 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  b3err, b3fail, b3ok, type B3ClientOpId, type B3Result, type TerminalSessionId,
+  b3err, b3fail, b3ok,
+  type B3ClientOpId, type B3Page, type B3Result, type TerminalSessionId,
 } from '@novakai/foundation/contract';
+import {
+  FINAL_TERMINAL_SESSION_STATUSES, UNFINISHED_TERMINAL_SESSION_STATUSES,
+} from '../../terminal/contract/index.js';
 import type {
   ControllerAttachment, TerminalInputAttempt, TerminalInputLease,
-  TerminalOutputFrame, TerminalSession, TerminalSessionView,
+  TerminalOutputFrame, TerminalSession, TerminalSessionStatus, TerminalSessionView,
 } from '../../terminal/contract/index.js';
 import { connectRuntime, type RuntimeClient } from '../core/b3/client.js';
 import {
-  clientOpIdFrom, emit, EXIT, fail, parseFlags, report, type Flags,
+  clientOpIdFrom, emit, EXIT, fail, pageFlags, parseFlags, report, verbOf,
+  type CliCommand, type Flags,
 } from '../core/b3/cli-shared.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -85,24 +90,53 @@ function describeSession(view: TerminalSessionView): string {
     + `${attached.length} controller(s) attached; ${runningLine}.`;
 }
 
-function describeList(views: readonly TerminalSessionView[]): string {
-  if (views.length === 0) return 'No terminal sessions.';
-  return views.map(describeSession).join('\n');
+/**
+ * A5-05 made this a `Page`, so the human line says what the page actually is.
+ * "No terminal sessions" for a page that merely ENDED here would be the CLI
+ * claiming completeness the owner never gave it.
+ */
+function describeList(page: B3Page<TerminalSessionView>): string {
+  const body = page.items.length === 0
+    ? 'No terminal sessions.' : page.items.map(describeSession).join('\n');
+  return page.nextCursor === undefined ? body
+    : `${body}\n  (more sessions follow; continue with --cursor ${page.nextCursor})`;
+}
+
+/**
+ * `--state` is not in §17.1 — it is an out-of-B3e extra this command already
+ * shipped (freeze §5b), kept rather than deleted. What it may NOT do is carry a
+ * vocabulary of its own: A5-05 spells the filter as a set of the owner's own
+ * statuses, so the flag maps onto the lists Terminal publishes. A CLI that
+ * spelled "still going" itself would be a second answer to a question the
+ * capability already answers (CL-P, FZ-VIEW-034).
+ */
+function statusesFor(state: string): B3Result<readonly TerminalSessionStatus[] | undefined> {
+  if (state === 'all') return b3ok(undefined);
+  if (state === 'live') return b3ok(UNFINISHED_TERMINAL_SESSION_STATUSES);
+  if (state === 'final') return b3ok(FINAL_TERMINAL_SESSION_STATUSES);
+  return b3fail(b3err('ValidationFailed', `unknown --state "${state}"`,
+    { issues: [{ path: 'state', message: 'must be live, final or all' }] }, false));
 }
 
 /** One handler per command — a table, so adding a verb never grows a branch. */
 const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
   async list(argFlags) {
-    const state = argFlags.value('state') ?? 'all';
-    emit('terminal list', argFlags, await withClient<readonly TerminalSessionView[]>(
-      (client) => client.call('b3.terminal.list', { state }),
+    const page = pageFlags(argFlags);
+    if (!page.ok) return fail('terminal.list', argFlags, page.error);
+    const statuses = statusesFor(argFlags.value('state') ?? 'all');
+    if (!statuses.ok) return fail('terminal.list', argFlags, statuses.error);
+    emit('terminal.list', argFlags, await withClient<B3Page<TerminalSessionView>>(
+      (client) => client.call('b3.terminal.list', {
+        ...page.value,
+        ...(statuses.value === undefined ? {} : { status: statuses.value }),
+      }),
     ), describeList);
   },
 
   async inspect(argFlags) {
     const terminalSessionId = argFlags.positional[0] as TerminalSessionId | undefined;
-    if (!terminalSessionId) return usage('terminal inspect', argFlags, 'terminalSessionId');
-    emit('terminal inspect', argFlags, await withClient<TerminalSessionView>(
+    if (!terminalSessionId) return usage('terminal.inspect', argFlags, 'terminalSessionId');
+    emit('terminal.inspect', argFlags, await withClient<TerminalSessionView>(
       (client) => client.call('b3.terminal.inspect', { terminalSessionId }),
     ), describeSession);
   },
@@ -134,12 +168,12 @@ const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
    */
   async attach(argFlags) {
     const terminalSessionId = argFlags.positional[0] as TerminalSessionId | undefined;
-    if (!terminalSessionId) return usage('terminal attach', argFlags, 'terminalSessionId');
+    if (!terminalSessionId) return usage('terminal.attach', argFlags, 'terminalSessionId');
     let client: RuntimeClient;
     try {
       client = await connectRuntime({ root, port });
     } catch (cause) {
-      return fail('terminal attach', argFlags, unreachable(cause));
+      return fail('terminal.attach', argFlags, unreachable(cause));
     }
     const attached = await client.call<ControllerAttachment>('b3.terminal.attach', {
       terminalSessionId,
@@ -149,9 +183,9 @@ const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
     }, operationId());
     if (!attached.ok) {
       client.close();
-      return emit('terminal attach', argFlags, attached, () => '');
+      return emit('terminal.attach', argFlags, attached, () => '');
     }
-    report('terminal attach', argFlags, attached,
+    report('terminal.attach', argFlags, attached,
       (attachment) => `attached as ${attachment.id}. Closing this window detaches it; `
         + 'the terminal keeps running. Press Ctrl-C to leave.');
 
@@ -168,9 +202,9 @@ const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
     const attachmentId = argFlags.positional[0];
     const terminalSessionId = argFlags.value('session') as TerminalSessionId | undefined;
     if (!attachmentId || !terminalSessionId) {
-      return usage('terminal detach', argFlags, 'controllerAttachmentId --session <id>');
+      return usage('terminal.detach', argFlags, 'controllerAttachmentId --session <id>');
     }
-    emit('terminal detach', argFlags, await withClient<ControllerAttachment>(
+    emit('terminal.detach', argFlags, await withClient<ControllerAttachment>(
       (client) => client.call(
         'b3.terminal.detach', { terminalSessionId, attachmentId }, operationId(),
       ),
@@ -307,11 +341,21 @@ async function followUntilInterrupted(
   throw new Error('unreachable');
 }
 
+/** X-1's member for a verb. `open`/`write`/`read` are outside §17.1's tree and
+ * keep their space form until the ruling on them lands (X-2 reads `write` as a
+ * command the CLI has no business carrying at all). */
+const TERMINAL_COMMANDS: Readonly<Record<string, CliCommand>> = {
+  list: 'terminal.list', inspect: 'terminal.inspect', attach: 'terminal.attach',
+  detach: 'terminal.detach',
+  open: 'terminal open', write: 'terminal write', read: 'terminal read',
+};
+
 async function runCommand(name: string, argFlags: Flags): Promise<never> {
   // §17.2: a malformed --client-op-id is a usage error, refused before anything
   // runs — a caller that believes it is retrying safely must not be told a lie.
-  if (!mintedOperationId.ok) {
-    return fail(`terminal ${name}`, argFlags, mintedOperationId.error);
+  const command = TERMINAL_COMMANDS[name];
+  if (command !== undefined && !mintedOperationId.ok) {
+    return fail(command, argFlags, mintedOperationId.error);
   }
   const handler = COMMANDS[name];
   if (!handler) {
@@ -329,9 +373,9 @@ function renderFrame(frame: TerminalOutputFrame): string {
   return `\n[terminal exited${frame.exitCode === undefined ? '' : ` (code ${frame.exitCode})`}]\n`;
 }
 
-function usage(command: string, argFlags: Flags, expected: string): never {
+function usage(command: CliCommand, argFlags: Flags, expected: string): never {
   emit(command, argFlags, b3fail(
-    b3err('ValidationFailed', `usage: nvk-terminal ${command.split(' ')[1] ?? ''} ${expected}`,
+    b3err('ValidationFailed', `usage: nvk-terminal ${verbOf(command)} ${expected}`,
       { issues: [{ path: 'argv', message: `expected ${expected}` }] }, false),
   ), () => '');
 }

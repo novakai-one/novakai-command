@@ -11,22 +11,24 @@
 // `ensureDirectThread` operation the wire publishes, not a second path
 // (red gate 23).
 import {
-  b3err, b3fail, type B3ClientOpId, type B3Result,
+  b3err, b3fail, type B3ClientOpId, type B3ContractError, type B3Result,
 } from '@novakai/foundation/contract';
 import type {
   AgentCommunicationItem, ConversationView, MessageAcceptance,
 } from '../../messaging/b3/contract/index.js';
 import type { RuntimeClient } from '../core/b3/client.js';
-import type { Flags } from '../core/b3/cli-shared.js';
+import { pageFlags, type CliCommand, type Flags } from '../core/b3/cli-shared.js';
 
 export interface MessageDeps {
   withClient<Value>(
     work: (client: RuntimeClient) => Promise<B3Result<Value>>,
   ): Promise<B3Result<Value>>;
   emit<Value>(
-    command: string, argFlags: Flags, result: B3Result<Value>, human: (value: Value) => string,
+    command: CliCommand, argFlags: Flags, result: B3Result<Value>, human: (value: Value) => string,
   ): never;
-  usage(command: string, argFlags: Flags, expected: string): never;
+  usage(command: CliCommand, argFlags: Flags, expected: string): never;
+  /** Refuse before dispatch, naming the command that was typed (X-1). */
+  fail(command: CliCommand, argFlags: Flags, error: B3ContractError): never;
   operationId(): B3ClientOpId;
   /** The human principal this CLI speaks for, as Messaging names people. */
   readonly personId: string;
@@ -67,7 +69,7 @@ function describeCommunications(page: Page<AgentCommunicationItem>): string {
 export function messageCommands(
   deps: MessageDeps,
 ): Record<string, (argFlags: Flags) => Promise<never>> {
-  const { withClient, emit, usage, personId } = deps;
+  const { withClient, emit, usage, fail, personId } = deps;
 
   /** Resolve the direct Thread between Chris and one Agent, minting if needed. */
   async function directThread(
@@ -93,9 +95,9 @@ export function messageCommands(
       const target = argFlags.positional[0];
       const text = argFlags.value('text');
       if (target === undefined || text === undefined) {
-        return usage('agent message', argFlags, '<agentId|agentRunId> --text <text>');
+        return usage('agent.message', argFlags, '<agentId|agentRunId> --text <text>');
       }
-      return emit('agent message', argFlags, await withClient<MessageAcceptance>(
+      return emit('agent.message', argFlags, await withClient<MessageAcceptance>(
         async (client) => {
           // An exact-run send still needs a Thread, and the Run alone does not
           // name one. `--thread` lets a script pin the conversation; without
@@ -139,14 +141,18 @@ export function messageCommands(
     async communications(argFlags) {
       const agentId = argFlags.positional[0];
       if (agentId === undefined) {
-        return usage('agent communications', argFlags, '<agentId> [--with <agentId>]');
+        return usage('agent.communications', argFlags, '<agentId> [--with <agentId>]');
       }
       const withAgent = argFlags.value('with');
-      return emit('agent communications', argFlags,
+      // A5-01's flags, through the one shared parser: the CLI hands `limit`
+      // and `cursor` to the list method unchanged and never re-pages.
+      const page = pageFlags(argFlags);
+      if (!page.ok) return fail('agent.communications', argFlags, page.error);
+      return emit('agent.communications', argFlags,
         await withClient<Page<AgentCommunicationItem>>(
           (client) => client.call('b3.messaging.listAgentCommunications', {
             agentIds: withAgent === undefined ? [agentId] : [agentId, withAgent],
-            limit: Number(argFlags.value('limit') ?? 50),
+            ...page.value,
           }),
         ), describeCommunications);
     },

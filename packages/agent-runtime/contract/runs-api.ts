@@ -8,14 +8,14 @@
 // hold that gate is to have exactly one path.
 import type {
   AgentId, AgentRunId, AuthenticatedPrincipal, B3Page, B3Result, CapabilityOwner, CommandContext,
-  ControlReplacementPlanId, EventCursor, HumanPrincipalId, IsoUtc,
+  ControlReplacementPlanId, ControllerAttachmentId, EventCursor, HumanPrincipalId, IsoUtc,
   ProviderSessionId, ProviderTurnId, ActivityGeneration, RecordVersion,
   AgentRoleProfileId, ResolvedLaunchPlanId, RunOperationId, TraceCorrelationId,
   SystemCommandContext,
 } from '@novakai/foundation/contract';
 import type {
   AgentRun, AgentRunLifecycle, ContinuationMode, LaunchConfigurationMode,
-  LaunchSurface, RunOperation, SupervisionAssignment, TreeMutationFence,
+  ControllerState, LaunchSurface, RunOperation, SupervisionAssignment, TreeMutationFence,
 } from './runs.js';
 import type {
   AgentControlFacts, AgentControlOutcomeFacts, AgentRelationshipFacts,
@@ -162,7 +162,45 @@ export interface ListAgentRunsFilter {
    * decided (OQ-07 ruling).
    */
   readonly onlyFinal?: boolean;
-  readonly limit?: number;
+  /**
+   * pass2 §12.7:2647, restored. It carries Chris point 6's direct proof — the
+   * "live/HEADLESS/final list" (pass1:1366) — and is the only surface in Build
+   * 3 that produces the headless third of it. Its two siblings already reach
+   * `includeFinal`/`onlyFinal` through `--state`.
+   *
+   * `"attached"` ⇔ at least one ControllerAttachment in state `attached` for
+   * the Run's terminal session at query time ⇔ `AgentRunView.controllers
+   * .attachedCount > 0`. `"headless"` is its exact complement. Omitted means
+   * no filtering on attachment.
+   *
+   * It is never inferred from and never constrains `launch.surface` (§24.5:
+   * "'Started externally' is not inferred from current attachment"), and it is
+   * not a lifecycle statement: a final Run with no attachments is `headless`,
+   * not stopped.
+   */
+  readonly controllerState?: ControllerState;
+  /**
+   * pass2 §12.7's own field, restored. It was declared in the spec and absent
+   * from this shape, so `nvk agent list --cursor <c>` (A5-01) travelled to the
+   * boundary and was silently dropped there: the caller was handed page one
+   * again while believing it had resumed. An opaque keyset position over
+   * stable `(createdAt,id)`, minted by this owner and by nobody else
+   * (FZ-EVT-007).
+   */
+  readonly cursor?: EventCursor;
+  /**
+   * pass2 §12.7:2650, and the same shape as all six list filters in that
+   * section: REQUIRED, 1–200. It was optional here — the only outlier in its
+   * own section — and the owner then invented `?? 500` behind it, so a wire
+   * caller that omitted it was handed 2.5× the ratified page with no
+   * `nextCursor` discipline to reason about (NVK-KIMI-094 A7-03 items 1–3).
+   *
+   * There is exactly one default in the build and it lives in the ADAPTER:
+   * A5-01's "when `--limit` is omitted the CLI supplies 200". An owner-side
+   * default means a raw wire caller silently gets a page size someone else
+   * chose.
+   */
+  readonly limit: number;
 }
 
 export interface GetAgentRunTreeInput {
@@ -203,6 +241,23 @@ export interface AgentRunView {
     readonly surface: LaunchSurface;
     readonly requestedBy: string;
     readonly startedAt?: IsoUtc;
+  };
+  /**
+   * §19.1 / FZ-VIEW-002. Current attachment truth, asked of Terminal on every
+   * read and never cached (§3.3). Separate from `launch` because "nobody is
+   * watching" and "started somewhere else" are different facts, and neither is
+   * "stopped" (FZ-VIEW-004, §24.5 red gate 4).
+   *
+   * The `ControllerKind` union is inlined rather than imported: Agent Runtime
+   * never imports Terminal (§3.1), and it is the same idiom this file already
+   * uses for `provider`.
+   */
+  readonly controllers: {
+    readonly attachedCount: number;
+    readonly kinds: readonly (
+      'novakai-shell' | 'external-terminal' | 'script' | 'operations'
+    )[];
+    readonly inputLeaseHolder?: ControllerAttachmentId;
   };
   readonly family: {
     readonly parentAgentId?: AgentId;

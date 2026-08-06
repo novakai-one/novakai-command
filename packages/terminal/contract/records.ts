@@ -12,8 +12,25 @@ import type {
   TranscriptTurnCompletionId,
 } from '@novakai/foundation/contract';
 
-export type TerminalSessionStatus =
-  | 'reserved' | 'starting' | 'live' | 'exited' | 'failed' | 'recovery-required';
+/** One list, so the type and the runtime validator can never disagree (§4.2). */
+export const TERMINAL_SESSION_STATUSES = [
+  'reserved', 'starting', 'live', 'exited', 'failed', 'recovery-required',
+] as const;
+
+export type TerminalSessionStatus = typeof TERMINAL_SESSION_STATUSES[number];
+
+/**
+ * The two statuses a session never leaves. Terminal owns finality, so it is
+ * published rather than guessed: A5-05's filter takes a status SET, and a
+ * caller asking for "everything still going" that spelled the set itself would
+ * be re-deriving an owner's fact — the FZ-VIEW-034 failure shape.
+ */
+export const FINAL_TERMINAL_SESSION_STATUSES = ['exited', 'failed'] as const;
+
+/** Its complement, so the two can never disagree about a status they both name. */
+export const UNFINISHED_TERMINAL_SESSION_STATUSES = TERMINAL_SESSION_STATUSES
+  .filter((status): status is Exclude<TerminalSessionStatus, 'exited' | 'failed'> =>
+    !(FINAL_TERMINAL_SESSION_STATUSES as readonly string[]).includes(status));
 
 /** Who the session belongs to. A plain shell has no Agent Run behind it. */
 export type TerminalSessionOwner =

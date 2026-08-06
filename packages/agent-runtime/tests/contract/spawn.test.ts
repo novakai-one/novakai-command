@@ -402,7 +402,7 @@ test('one Agent cannot have two live Runs', async () => {
     // one Agent — which `continueAgent` is the test for. Here we prove the
     // guard itself by asking the store.
     const runs = await rig.runtime.listAgentRuns(rig.principal(), {
-      agentId: first.value.agent.agentId, includeFinal: false,
+      agentId: first.value.agent.agentId, includeFinal: false, limit: 200,
     });
     assert.equal(runs.ok, true);
     if (runs.ok) assert.equal(runs.value.items.length, 1);
