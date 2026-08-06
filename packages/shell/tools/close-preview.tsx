@@ -235,3 +235,41 @@ createRoot(document.querySelector('#preview') as HTMLElement).render(
     screenContext="snapshot-only"
   />,
 );
+
+/**
+ * B3.3's motion reading, taken off a LIVE element rather than the stylesheet.
+ *
+ * §17 says calm is slow (`--motion-structural: 700ms`) and §20/DEC-S2-9 say
+ * every animation collapses when motion is reduced — through TWO doors, the OS
+ * media query and the exposed setting. A token declared correctly in
+ * `tokens.css` proves neither: what matters is the duration that survives the
+ * cascade onto a real node, which is why this measures the real
+ * `.nvkTerminalTruth` rule and then flips the setting and measures again.
+ */
+function readMotion(): string {
+  const probe = document.createElement('div');
+  probe.className = 'nvkTerminalTruth';
+  probe.style.position = 'absolute';
+  probe.style.visibility = 'hidden';
+  document.body.appendChild(probe);
+  // Seconds on the way out of getComputedStyle, milliseconds on the way in.
+  const readMs = (): string => {
+    const seconds = parseFloat(getComputedStyle(probe).transitionDuration.split(',')[0]);
+    return `${Math.round(seconds * 100000) / 100}ms`;
+  };
+  const root = document.documentElement;
+  const before = root.dataset.motion;
+  const structural = readMs();
+  root.dataset.motion = 'reduced';
+  const reduced = readMs();
+  if (before === undefined) delete root.dataset.motion;
+  else root.dataset.motion = before;
+  probe.remove();
+  return `structural ${structural} · reduced ${reduced}`;
+}
+
+// After a frame, so the style the component imported has actually landed.
+requestAnimationFrame(() => {
+  const slot = document.querySelector('#motion');
+  if (slot) slot.textContent = readMotion();
+});

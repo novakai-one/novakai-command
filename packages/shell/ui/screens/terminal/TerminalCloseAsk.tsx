@@ -21,8 +21,15 @@
 //   close` is something to press at twice; the limit and its next step are
 //   stated in the faint tier where the choice would have been. See
 //   contract/terminalClose.ts for why v4 cannot stop a plain shell at all.
+//
+//   `aria-modal` IS A PROMISE THE KEYBOARD HAS TO KEEP. B3.3: Tab used to walk
+//   out of the dialog into the strip and the mode toggle behind it, so the page
+//   was announced inert and demonstrably was not — and after B3.2 the control
+//   the next Return would press sits above a live stop. The trap corrects only
+//   the two moves that would leave (contract/focusTrap.ts).
 import React, { useEffect } from 'react';
 import { Button, Stack, Surface, Text } from '../../kit/index.js';
+import { trapFocus } from '../../../contract/focusTrap.js';
 import {
   describeCloseQuestion,
   type TabCloseChoice, type TabCloseChoiceId, type TabCloseDecision,
@@ -61,6 +68,24 @@ export function TerminalCloseAsk(props: TerminalCloseAskProps): React.JSX.Elemen
   const unreachable = props.decision.choices.filter(
     (choice: TabCloseChoice) => !choice.available,
   );
+  /**
+   * Bound to the dialog itself rather than the document, so `currentTarget` IS
+   * the modal — no ref reaching around the kit, and no querying the page for a
+   * node this component already owns. Only a Tab that would LEAVE is corrected;
+   * every other press keeps the browser's own order (contract/focusTrap.ts).
+   */
+  const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
+    if (event.key !== 'Tab') return;
+    const controls = [...event.currentTarget.querySelectorAll('button')];
+    const landing = trapFocus({
+      count: controls.length,
+      current: controls.indexOf(document.activeElement as HTMLButtonElement),
+      backwards: event.shiftKey,
+    });
+    if (landing === null) return;
+    event.preventDefault();
+    controls[landing].focus();
+  };
   return (
     <Surface
       className="nvkTerminalAsk"
@@ -68,6 +93,7 @@ export function TerminalCloseAsk(props: TerminalCloseAskProps): React.JSX.Elemen
       aria-modal="true"
       aria-label={`Close ${props.tabTitle}`}
       data-testid="terminal-close-ask"
+      onKeyDown={onKeyDown}
     >
       <Stack gap={10}>
         <Text className="nvkTerminalAskTitle">{`Close ${props.tabTitle}`}</Text>

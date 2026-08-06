@@ -16,10 +16,11 @@
         padding: 5px 14px; letter-spacing: 0.04em;
       }
       #preview { display: flex; flex-direction: column; height: 460px; max-width: 1000px; }
-      #readout {
+      #readout, #motion {
         font: 400 11px/1.7 "JetBrains Mono", ui-monospace, monospace;
         color: #8b8b94; padding: 8px 14px; max-width: 1000px;
       }
+      #motion { padding-top: 0; }
     </style>
   </head>
   <body>
@@ -28,6 +29,7 @@
     </div>
     <div id="preview"></div>
     <div id="readout" data-testid="readout"></div>
+    <div id="motion" data-testid="motion-probe"></div>
     <script type="module" src="/tools/close-preview.tsx"></script>
   </body>
 </html>
