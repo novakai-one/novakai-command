@@ -14,7 +14,11 @@ jobs:
           cache: npm
           cache-dependency-path: |
             package-lock.json
-            packages/messaging/package-lock.json
+            packages/*/package-lock.json
       - run: npm ci
-      - run: npm --prefix packages/messaging ci
+      # Packages are NOT npm workspaces — each has its own lockfile and node_modules
+      - name: Install every package
+        run: for p in packages/*/; do (cd "$p" && npm ci); done
+      - name: Build packages that ship a dist
+        run: for p in packages/*/; do node -e "process.exit(require(process.argv[1]).scripts?.build?0:1)" "./$p/package.json" && (cd "$p" && npm run build); done
       - run: npm run test:full

@@ -14,13 +14,14 @@ jobs:
           cache: npm
           cache-dependency-path: |
             package-lock.json
-            packages/messaging/package-lock.json
+            packages/*/package-lock.json
       - run: npm ci
-      - run: npm --prefix packages/messaging ci
-      # Workspace dists don't exist on a fresh CI checkout; guards + messaging tests read them
-      - run: npm --prefix packages/foundation run build
-      - run: npm --prefix packages/artifacts run build
-      - run: npm --prefix packages/projects run build
+      # Packages are NOT npm workspaces — each has its own lockfile and node_modules.
+      # A fresh CI checkout has neither, and guards/tests read package code + dists.
+      - name: Install every package
+        run: for p in packages/*/; do (cd "$p" && npm ci); done
+      - name: Build packages that ship a dist
+        run: for p in packages/*/; do node -e "process.exit(require(process.argv[1]).scripts?.build?0:1)" "./$p/package.json" && (cd "$p" && npm run build); done
       - run: npm run messaging:test
       - run: npm run test:guards
       - run: npx tsc --noEmit
