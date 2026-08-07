@@ -50,6 +50,8 @@ export interface AgentsContext {
 
 export interface ComposeAgentsOptions {
   root: string;                    // .novakai/
+  /** §18.1 canonical JSONL directory (stores/). Defaults to `root` (legacy flat layout). */
+  dataRoot?: string;
   legacyRoot?: string;
   principal: string;               // token-derived at the app seam; CLI passes its authed principal
   lockTimeoutMs?: number;
@@ -82,6 +84,7 @@ export interface ComposeAgentsOptions {
 export function composeAgents(options: ComposeAgentsOptions): AgentsContext {
   const handle = composeHandle({
     root: options.root,
+    ...(options.dataRoot === undefined ? {} : { dataRoot: options.dataRoot }),
     legacyRoot: options.legacyRoot,
     capability: 'agents' as CapabilityId,
     // S2a: agents owns the agent + skill stores (req 10 one-store).
