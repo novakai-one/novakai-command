@@ -234,6 +234,10 @@ export async function bootServer(options: BootOptions): Promise<BootResult> {
   };
   const agentsCtx = composeAgents({
     root: options.root,
+    // CANONICAL route, same as the foundation store above (E-01): composing on
+    // the legacy flat root wrote agents/providerSessions/traces beside their
+    // canonical files, and the route gate then refused every later boot.
+    dataRoot: canonicalDataRoot(options.root),
     principal: human.personId,
     providerRuntimes,
     allowMock: config.dev.allowMock,
