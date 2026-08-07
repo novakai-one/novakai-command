@@ -13,9 +13,9 @@ import path from 'node:path';
 import { WebSocket } from 'ws';
 import { mintClientOpId, queryTraceBound } from '@novakai/foundation/dist/contract/index.js';
 import { composeEngine } from '@novakai/foundation/dist/contract/compose.js';
-import { canonicalDataRoot } from '../core/store-route.js';
-import { bootServer, type NovakaiServer } from '../core/boot.js';
-import { openConfigStore } from '../contract/index.js';
+import { canonicalDataRoot } from '../../core/store-route.js';
+import { bootServer, type NovakaiServer } from '../../core/boot.js';
+import { openConfigStore } from '../../contract/index.js';
 
 const root = (): string => {
   const dir = mkdtempSync(path.join(tmpdir(), 'nvk-supervision-'));
@@ -128,7 +128,7 @@ const rpc = (
 async function spawnCodexConversation(server: NovakaiServer): Promise<{ sessionId: string; conversationId: string }> {
   const methods = (server.runtime as unknown as { __methods?: never });
   void methods;
-  const res = await (await import('../core/methods.js')).buildMethods(server.runtime)
+  const res = await (await import('../../core/methods.js')).buildMethods(server.runtime)
     .spawnAgentConversation({ title: 'Supervised', provider: 'codex' } as never) as
     { ok: boolean; sessionId?: string; conversation?: { id: string }; error?: string };
   assert.equal(res.ok, true, `spawn failed: ${res.error}`);
@@ -148,7 +148,7 @@ test('boot binds all three provider CLIs and reports each one measured, not decl
     assert.match(step4.detail, new RegExp(codex.cliPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
       'the codex CLI actually bound is named in the boot line');
 
-    const methods = (await import('../core/methods.js')).buildMethods(server.runtime);
+    const methods = (await import('../../core/methods.js')).buildMethods(server.runtime);
     const caps = await methods.getCapabilities(undefined as never) as
       { providers: Record<string, boolean> };
     assert.equal(caps.providers.codex, true, 'the fake CLI exists on disk, so codex reports available');
@@ -335,7 +335,7 @@ test('restartSession resumes the original provider thread on the next invocation
     await server.runtime.agents.sendToSession(sessionId as never, 'warm up');
     await server.runtime.providerRuntimes.codex!.drain(sessionId);
 
-    const methods = (await import('../core/methods.js')).buildMethods(server.runtime);
+    const methods = (await import('../../core/methods.js')).buildMethods(server.runtime);
     const res = await methods.restartSession({ sessionId } as never) as
       { ok: boolean; sessionId?: string; error?: unknown };
 
@@ -378,7 +378,7 @@ test('compactSession drops the context and names restart-fresh as the mechanism'
     await server.runtime.agents.sendToSession(sessionId as never, 'warm up');
     await server.runtime.providerRuntimes.codex!.drain(sessionId);
 
-    const methods = (await import('../core/methods.js')).buildMethods(server.runtime);
+    const methods = (await import('../../core/methods.js')).buildMethods(server.runtime);
     const res = await methods.compactSession({ sessionId } as never) as
       { ok: boolean; sessionId?: string; mechanism?: string };
 
@@ -399,7 +399,7 @@ test('getUsageTable returns registry truth plus a stated accounting basis', asyn
   const server = await boot(dir, codex.cliPath);
   try {
     const { sessionId } = await spawnCodexConversation(server);
-    const methods = (await import('../core/methods.js')).buildMethods(server.runtime);
+    const methods = (await import('../../core/methods.js')).buildMethods(server.runtime);
     const table = await methods.getUsageTable(undefined as never) as
       { rows: Array<Record<string, unknown>>; tokenAccounting: string };
 

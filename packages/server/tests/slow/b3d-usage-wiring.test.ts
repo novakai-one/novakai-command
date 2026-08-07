@@ -8,14 +8,14 @@ import { fileURLToPath } from 'node:url';
 import {
   mintClientOpId, mintTraceCorrelationId, type B3Result,
 } from '@novakai/foundation/contract';
-import type { AgentRunView } from '../../agent-runtime/contract/index.js';
-import { createFakeProviderAdapters } from '../../agents/b3/contract/index.js';
-import { createFakePtyHost } from '../../terminal/adapters/pty-host/fake.js';
-import { connectRuntime } from '../core/b3/client.js';
-import { startRuntimeHost } from '../core/b3/host.js';
-import { sanitizeCwd } from '../core/supervision/usage.js';
-import { chatRole } from './governed-role.js';
-import type { AgentRunUsage, AgentUsageSummary } from '../../supervision/contract/index.js';
+import type { AgentRunView } from '../../../agent-runtime/contract/index.js';
+import { createFakeProviderAdapters } from '../../../agents/b3/contract/index.js';
+import { createFakePtyHost } from '../../../terminal/adapters/pty-host/fake.js';
+import { connectRuntime } from '../../core/b3/client.js';
+import { startRuntimeHost } from '../../core/b3/host.js';
+import { sanitizeCwd } from '../../core/supervision/usage.js';
+import { chatRole } from '../governed-role.js';
+import type { AgentRunUsage, AgentUsageSummary } from '../../../supervision/contract/index.js';
 
 const PRINCIPAL = { id: 'person_chris' as never, kind: 'human' as const, verifiedScopes: [] };
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');

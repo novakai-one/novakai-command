@@ -25,18 +25,18 @@ import {
   type ActivityGeneration, type AuthenticatedPrincipal, type B3Result,
   type ProviderTurnId, type SystemCommandContext,
 } from '@novakai/foundation/contract';
-import { createFakePtyHost } from '../../terminal/adapters/pty-host/fake.js';
-import { createFakeProviderAdapters } from '../../agents/b3/contract/index.js';
+import { createFakePtyHost } from '../../../terminal/adapters/pty-host/fake.js';
+import { createFakeProviderAdapters } from '../../../agents/b3/contract/index.js';
 import type {
   SourcePrefixOutcome, SourceReadOutcome, TranscriptSourcePort,
-} from '../../transcript/b3/contract/index.js';
-import { templateDigest, type WatcherTemplate } from '../../supervision/public/index.js';
+} from '../../../transcript/b3/contract/index.js';
+import { templateDigest, type WatcherTemplate } from '../../../supervision/public/index.js';
 import type {
   Notification, NotificationInputReservationId, WatchDeadline,
-} from '../../supervision/contract/index.js';
-import { startRuntimeHost } from '../core/b3/host.js';
-import { connectRuntime } from '../core/b3/client.js';
-import { governedRole } from './governed-role.js';
+} from '../../../supervision/contract/index.js';
+import { startRuntimeHost } from '../../core/b3/host.js';
+import { connectRuntime } from '../../core/b3/client.js';
+import { governedRole } from '../governed-role.js';
 
 const PRINCIPAL: AuthenticatedPrincipal = {
   id: 'person_chris' as never, kind: 'human', verifiedScopes: [],

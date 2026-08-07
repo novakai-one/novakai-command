@@ -23,7 +23,7 @@ import {
 } from '../../shell/contract/terminalTab.js';
 import * as settingsContract from '../../shell/contract/settings.js';
 import { setConversationView } from '../../shell/contract/conversationView.js';
-import type { ScreenContext } from '../../shell/contract/context.js';
+import type { FocusSnapshot } from '../../shell/contract/context.js';
 import type { MethodTable } from '../contract/protocol.js';
 import type { ServerConfig, ProviderName } from '../contract/config.js';
 import type { ConfigStore } from './config/store.js';
@@ -78,7 +78,7 @@ export interface ServerRuntime {
   conversations: Map<string, Conversation>;
   configStore: ConfigStore;
   config: ServerConfig;
-  focus: ScreenContext;
+  focus: FocusSnapshot;
   broadcast(name: string, data: unknown): void;
   holderForPerson(personId: string): Promise<MessagingSessionHolder | null>;
   mintOpId(): string;
@@ -270,7 +270,7 @@ export function buildMethods(runtime: ServerRuntime): MethodTable {
 
     // ── S2b context bus (SHL-008): the server is the focus AUTHORITY ────────
     async publishFocus(params: never) {
-      runtime.focus = params as ScreenContext;
+      runtime.focus = params as FocusSnapshot;
       for (const conversation of runtime.conversations.values()) {
         // §22 ruling 1 + the demo's recorded limit: a between-turn advisory to a
         // PRINT-MODE CLI session is a whole provider turn per focus change —

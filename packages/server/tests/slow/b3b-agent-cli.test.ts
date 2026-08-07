@@ -11,10 +11,10 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createFakePtyHost } from '../../terminal/adapters/pty-host/fake.js';
-import { createFakeProviderAdapters } from '../../agents/b3/contract/index.js';
-import { startRuntimeHost, type RunningRuntimeHost } from '../core/b3/host.js';
-import { connectRuntime, type RuntimeClient } from '../core/b3/client.js';
+import { createFakePtyHost } from '../../../terminal/adapters/pty-host/fake.js';
+import { createFakeProviderAdapters } from '../../../agents/b3/contract/index.js';
+import { startRuntimeHost, type RunningRuntimeHost } from '../../core/b3/host.js';
+import { connectRuntime, type RuntimeClient } from '../../core/b3/client.js';
 
 // From this file, never from the working directory: the same suite is run
 // from the repo root and from `packages/server`, and a cwd-relative root

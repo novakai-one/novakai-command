@@ -29,12 +29,12 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocket } from 'ws';
 import { mintClientOpId } from '@novakai/foundation/contract';
-import { createFakePtyHost } from '../../terminal/adapters/pty-host/fake.js';
-import { createFakeProviderAdapters } from '../../agents/b3/contract/index.js';
-import { listFilterForState } from '../../shell/app/agentRuns.js';
-import { bootServer, type NovakaiServer } from '../core/boot.js';
-import { openConfigStore } from '../core/config/store.js';
-import { chatRole } from './governed-role.js';
+import { createFakePtyHost } from '../../../terminal/adapters/pty-host/fake.js';
+import { createFakeProviderAdapters } from '../../../agents/b3/contract/index.js';
+import { listFilterForState } from '../../../shell/app/agentRuns.js';
+import { bootServer, type NovakaiServer } from '../../core/boot.js';
+import { openConfigStore } from '../../core/config/store.js';
+import { chatRole } from '../governed-role.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '..', '..', '..');

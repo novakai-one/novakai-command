@@ -8,8 +8,8 @@ import { request as requestHttp } from 'node:http';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { WebSocket } from 'ws';
-import { PROTOCOL_VERSION } from '../contract/protocol.js';
-import { startTransport, type RunningTransport } from '../core/transport/server.js';
+import { PROTOCOL_VERSION } from '../../contract/protocol.js';
+import { startTransport, type RunningTransport } from '../../core/transport/server.js';
 import {
   ABSENT,
   type ArtifactId,
@@ -441,7 +441,7 @@ test('Artifact HTTP rejects declared oversized uploads before capability access'
   });
   assert.deepEqual(h.calls, [], 'declared overflow never reaches Artifact capabilities');
 
-  const artifactHttp = await import('../core/b2a/artifact-http.js') as {
+  const artifactHttp = await import('../../core/b2a/artifact-http.js') as {
     MAX_ARTIFACT_UPLOAD_BYTES?: number;
   };
   assert.equal(

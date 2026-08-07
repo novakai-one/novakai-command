@@ -16,11 +16,11 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createFakePtyHost } from '../../terminal/adapters/pty-host/fake.js';
-import { createFakeProviderAdapters } from '../../agents/b3/contract/index.js';
-import { startRuntimeHost, type RunningRuntimeHost } from '../core/b3/host.js';
-import { connectRuntime, type RuntimeClient } from '../core/b3/client.js';
-import { agentRunViewDrift, createShellAgentServices } from '../../shell/app/agentRuns.js';
+import { createFakePtyHost } from '../../../terminal/adapters/pty-host/fake.js';
+import { createFakeProviderAdapters } from '../../../agents/b3/contract/index.js';
+import { startRuntimeHost, type RunningRuntimeHost } from '../../core/b3/host.js';
+import { connectRuntime, type RuntimeClient } from '../../core/b3/client.js';
+import { agentRunViewDrift, createShellAgentServices } from '../../../shell/app/agentRuns.js';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 const tsx = path.join(repoRoot, 'node_modules', 'tsx', 'dist', 'cli.mjs');

@@ -14,10 +14,10 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { createFakePtyHost } from '../../terminal/adapters/pty-host/fake.js';
-import { createFakeProviderAdapters } from '../../agents/b3/contract/index.js';
-import { startRuntimeHost } from '../core/b3/host.js';
-import { connectRuntime } from '../core/b3/client.js';
+import { createFakePtyHost } from '../../../terminal/adapters/pty-host/fake.js';
+import { createFakeProviderAdapters } from '../../../agents/b3/contract/index.js';
+import { startRuntimeHost } from '../../core/b3/host.js';
+import { connectRuntime } from '../../core/b3/client.js';
 
 /** A real id of the WRONG kind — §4.1-legal, just not the one asked for. */
 const ROLE_ID = 'agentRole_019fc000-0000-7000-8000-000000000001';

@@ -10,16 +10,16 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { B3Result } from '@novakai/foundation/dist/contract/index.js';
-import { createFakePtyHost } from '../../terminal/adapters/pty-host/fake.js';
-import type { ControllerAttachment, TerminalSession } from '../../terminal/contract/index.js';
-import type { RuntimeStatus } from '../../agent-runtime/contract/index.js';
-import { startRuntimeHost, type RunningRuntimeHost } from '../core/b3/host.js';
-import { connectRuntime, type RuntimeClient } from '../core/b3/client.js';
+import { createFakePtyHost } from '../../../terminal/adapters/pty-host/fake.js';
+import type { ControllerAttachment, TerminalSession } from '../../../terminal/contract/index.js';
+import type { RuntimeStatus } from '../../../agent-runtime/contract/index.js';
+import { startRuntimeHost, type RunningRuntimeHost } from '../../core/b3/host.js';
+import { connectRuntime, type RuntimeClient } from '../../core/b3/client.js';
 // The page's own public seam: the two pure functions the terminal tab uses to
 // turn a Runtime view into the one sentence it shows.
 import {
   describeTerminal, SHELL_INSTANCE_ID, toTabView,
-} from '../../shell/contract/terminalServices.js';
+} from '../../../shell/contract/terminalServices.js';
 
 function unwrap<Value>(result: B3Result<Value>, what: string): Value {
   if (!result.ok) throw new Error(`${what} failed: ${result.error.code} — ${result.error.message}`);

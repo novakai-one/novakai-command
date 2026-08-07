@@ -8,7 +8,7 @@ import { mkdtempSync, existsSync, readdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { openConfigStore } from '../contract/index.js';
+import { openConfigStore } from '../../contract/index.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const CLI = path.resolve(here, '..', 'cli', 'nvk-token.ts');

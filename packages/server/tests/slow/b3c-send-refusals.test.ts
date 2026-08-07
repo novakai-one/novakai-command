@@ -16,11 +16,11 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { createFakePtyHost } from '../../terminal/adapters/pty-host/fake.js';
-import { createFakeProviderAdapters } from '../../agents/b3/contract/index.js';
-import { startRuntimeHost, type RunningRuntimeHost } from '../core/b3/host.js';
-import { connectRuntime, type RuntimeClient } from '../core/b3/client.js';
-import { governedRole } from './governed-role.js';
+import { createFakePtyHost } from '../../../terminal/adapters/pty-host/fake.js';
+import { createFakeProviderAdapters } from '../../../agents/b3/contract/index.js';
+import { startRuntimeHost, type RunningRuntimeHost } from '../../core/b3/host.js';
+import { connectRuntime, type RuntimeClient } from '../../core/b3/client.js';
+import { governedRole } from '../governed-role.js';
 
 interface Rig {
   readonly host: RunningRuntimeHost;

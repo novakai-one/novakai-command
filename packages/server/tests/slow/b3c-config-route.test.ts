@@ -15,7 +15,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { openConfigStore } from '../contract/index.js';
+import { openConfigStore } from '../../contract/index.js';
 
 /** Every `.jsonl` under a root, as paths relative to it. */
 function jsonlFiles(root: string, prefix = ''): string[] {

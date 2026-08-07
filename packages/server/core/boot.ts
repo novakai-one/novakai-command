@@ -32,7 +32,7 @@ import {
 } from '../../agents/contract/index.js';
 import { composeShellPersistence } from '../../shell/contract/persistence.node.js';
 import { listConversationViews, setConversationView } from '../../shell/contract/conversationView.js';
-import type { ScreenContext } from '../../shell/contract/context.js';
+import type { FocusSnapshot } from '../../shell/contract/context.js';
 import { recordSystemAction } from '@novakai/foundation/dist/contract/index.js';
 import { openConfigStore, type ConfigStore } from './config/store.js';
 import { canonicalDataRoot, StoreRouteConflictError } from './store-route.js';
@@ -646,7 +646,7 @@ export async function bootServer(options: BootOptions): Promise<BootResult> {
     conversations,
     configStore,
     config,
-    focus: { app: 'messaging', ref: 'none' } as ScreenContext,
+    focus: { app: 'messaging', ref: 'none' } as FocusSnapshot,
     broadcast: () => undefined, // replaced once the transport is listening
     holderForPerson: async (personId: string) => {
       const principal = configStore.current().principals.find((p) => p.personId === personId);

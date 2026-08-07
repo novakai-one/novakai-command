@@ -24,9 +24,9 @@ import { fileURLToPath } from 'node:url';
 import {
   mintClientOpId, surveyStoreRoute,
 } from '@novakai/foundation/dist/contract/index.js';
-import { bootServer } from '../core/boot.js';
-import { openConfigStore } from '../contract/index.js';
-import { LIVE_SERVER_PORT, resolveServerLaunch } from '../core/launch-options.js';
+import { bootServer } from '../../core/boot.js';
+import { openConfigStore } from '../../contract/index.js';
+import { LIVE_SERVER_PORT, resolveServerLaunch } from '../../core/launch-options.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '..', '..', '..');

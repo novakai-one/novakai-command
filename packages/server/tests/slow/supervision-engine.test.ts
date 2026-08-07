@@ -18,13 +18,13 @@ import {
   type AskResult,
   type SupervisionFailure,
   type SupervisionDeps,
-} from '../core/supervision/engine.js';
+} from '../../core/supervision/engine.js';
 import {
   createUsageReader,
   type UsageReader,
   type UsageSessionRef,
-} from '../core/supervision/usage.js';
-import type { ProviderSessionRecord } from '../../agents/contract/index.js';
+} from '../../core/supervision/usage.js';
+import type { ProviderSessionRecord } from '../../../agents/contract/index.js';
 
 // ── fakes ──────────────────────────────────────────────────────────────────
 

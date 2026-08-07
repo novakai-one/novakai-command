@@ -24,12 +24,12 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createFakePtyHost } from '../../terminal/adapters/pty-host/fake.js';
-import { createFakeProviderAdapters } from '../../agents/b3/contract/index.js';
-import { startRuntimeHost, type RunningRuntimeHost } from '../core/b3/host.js';
-import { controllersOf } from '../core/b3/run-ports.js';
-import { chatRole } from './governed-role.js';
-import type { ControllerAttachment, TerminalSessionView } from '../../terminal/contract/index.js';
+import { createFakePtyHost } from '../../../terminal/adapters/pty-host/fake.js';
+import { createFakeProviderAdapters } from '../../../agents/b3/contract/index.js';
+import { startRuntimeHost, type RunningRuntimeHost } from '../../core/b3/host.js';
+import { controllersOf } from '../../core/b3/run-ports.js';
+import { chatRole } from '../governed-role.js';
+import type { ControllerAttachment, TerminalSessionView } from '../../../terminal/contract/index.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '..', '..', '..');

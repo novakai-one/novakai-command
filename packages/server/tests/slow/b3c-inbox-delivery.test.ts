@@ -19,11 +19,11 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { createFakePtyHost, type FakePtyHost } from '../../terminal/adapters/pty-host/fake.js';
-import { createFakeProviderAdapters } from '../../agents/b3/contract/index.js';
-import { startRuntimeHost } from '../core/b3/host.js';
-import { connectRuntime } from '../core/b3/client.js';
-import { governedRole } from './governed-role.js';
+import { createFakePtyHost, type FakePtyHost } from '../../../terminal/adapters/pty-host/fake.js';
+import { createFakeProviderAdapters } from '../../../agents/b3/contract/index.js';
+import { startRuntimeHost } from '../../core/b3/host.js';
+import { connectRuntime } from '../../core/b3/client.js';
+import { governedRole } from '../governed-role.js';
 
 const DELIVERED: readonly string[] = [
   'submitted-confirmed', 'submitted-unconfirmed', 'transcript-observed',

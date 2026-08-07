@@ -15,11 +15,11 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { createFakePtyHost } from '../../terminal/adapters/pty-host/fake.js';
-import { createFakeProviderAdapters } from '../../agents/b3/contract/index.js';
-import { startRuntimeHost } from '../core/b3/host.js';
-import { connectRuntime } from '../core/b3/client.js';
-import { LEGACY_MESSAGING_STORE } from '../core/b3/cutover-report.js';
+import { createFakePtyHost } from '../../../terminal/adapters/pty-host/fake.js';
+import { createFakeProviderAdapters } from '../../../agents/b3/contract/index.js';
+import { startRuntimeHost } from '../../core/b3/host.js';
+import { connectRuntime } from '../../core/b3/client.js';
+import { LEGACY_MESSAGING_STORE } from '../../core/b3/cutover-report.js';
 
 /** The Agent the legacy conversation was with. Any id: it is a pre-existing fact. */
 const AGENT_ID = 'agent_11111111-1111-4111-8111-111111111111';

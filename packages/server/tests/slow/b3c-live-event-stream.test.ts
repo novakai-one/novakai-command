@@ -17,14 +17,14 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { createFakePtyHost } from '../../terminal/adapters/pty-host/fake.js';
-import { createFakeProviderAdapters } from '../../agents/b3/contract/index.js';
+import { createFakePtyHost } from '../../../terminal/adapters/pty-host/fake.js';
+import { createFakeProviderAdapters } from '../../../agents/b3/contract/index.js';
 import type {
   SourcePrefixOutcome, SourceReadOutcome, TranscriptSourcePort,
-} from '../../transcript/b3/contract/index.js';
-import { startRuntimeHost } from '../core/b3/host.js';
-import { connectRuntime } from '../core/b3/client.js';
-import { governedRole } from './governed-role.js';
+} from '../../../transcript/b3/contract/index.js';
+import { startRuntimeHost } from '../../core/b3/host.js';
+import { connectRuntime } from '../../core/b3/client.js';
+import { governedRole } from '../governed-role.js';
 
 const TURN = 'a turn worth committing';
 const POSITION = '0000000000';

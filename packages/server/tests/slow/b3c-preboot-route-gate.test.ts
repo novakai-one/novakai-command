@@ -21,10 +21,10 @@ import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createFakePtyHost } from '../../terminal/adapters/pty-host/fake.js';
-import { createFakeProviderAdapters } from '../../agents/b3/contract/index.js';
-import { startRuntimeHost } from '../core/b3/host.js';
-import { openConfigStore } from '../contract/index.js';
+import { createFakePtyHost } from '../../../terminal/adapters/pty-host/fake.js';
+import { createFakeProviderAdapters } from '../../../agents/b3/contract/index.js';
+import { startRuntimeHost } from '../../core/b3/host.js';
+import { openConfigStore } from '../../contract/index.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const MINT_CLI = path.resolve(here, '..', 'cli', 'nvk-token.ts');

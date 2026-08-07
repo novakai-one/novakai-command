@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { mintClientOpId } from '@novakai/foundation/dist/contract/index.js';
-import { openConfigStore } from '../contract/index.js';
+import { openConfigStore } from '../../contract/index.js';
 
 const root = () => mkdtempSync(path.join(tmpdir(), 'nvk-server-config-'));
 const here = path.dirname(fileURLToPath(import.meta.url));

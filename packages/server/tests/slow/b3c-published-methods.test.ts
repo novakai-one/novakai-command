@@ -11,13 +11,13 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { createFakePtyHost } from '../../terminal/adapters/pty-host/fake.js';
-import { createFakeProviderAdapters } from '../../agents/b3/contract/index.js';
-import { startRuntimeHost } from '../core/b3/host.js';
-import { connectRuntime, type RuntimeClient } from '../core/b3/client.js';
-import { governedRole } from './governed-role.js';
-import { buildB3MessagingMethods } from '../core/b3/messaging-methods.js';
-import type { MethodTable } from '../contract/protocol.js';
+import { createFakePtyHost } from '../../../terminal/adapters/pty-host/fake.js';
+import { createFakeProviderAdapters } from '../../../agents/b3/contract/index.js';
+import { startRuntimeHost } from '../../core/b3/host.js';
+import { connectRuntime, type RuntimeClient } from '../../core/b3/client.js';
+import { governedRole } from '../governed-role.js';
+import { buildB3MessagingMethods } from '../../core/b3/messaging-methods.js';
+import type { MethodTable } from '../../contract/protocol.js';
 
 /** The six §16.2 names, verbatim, plus the seven that make them reachable. */
 const PUBLISHED = [

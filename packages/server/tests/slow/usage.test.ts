@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { createUsageReader, parseCodexRollout, parseClaudeTranscript, parseKimiWire } from '../core/supervision/usage.js';
+import { createUsageReader, parseCodexRollout, parseClaudeTranscript, parseKimiWire } from '../../core/supervision/usage.js';
 
 const jsonl = (dir: string, name: string, lines: object[]): string => {
   mkdirSync(dir, { recursive: true });

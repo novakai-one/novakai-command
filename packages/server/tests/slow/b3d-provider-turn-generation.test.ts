@@ -3,16 +3,16 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { createFakeProviderAdapters } from '../../agents/b3/contract/index.js';
+import { createFakeProviderAdapters } from '../../../agents/b3/contract/index.js';
 import {
   createFakePtyHost,
   type FakePty,
-} from '../../terminal/adapters/pty-host/fake.js';
-import { connectRuntime } from '../core/b3/client.js';
-import { startRuntimeHost } from '../core/b3/host.js';
+} from '../../../terminal/adapters/pty-host/fake.js';
+import { connectRuntime } from '../../core/b3/client.js';
+import { startRuntimeHost } from '../../core/b3/host.js';
 import {
   fakeProvidersWithCompletionLimit, governedRole, governedTokens,
-} from './governed-role.js';
+} from '../governed-role.js';
 
 const rows = <T extends { id?: string }>(root: string, kind: string): T[] => {
   const parsed = readFileSync(path.join(root, 'stores', `${kind}.jsonl`), 'utf8')
