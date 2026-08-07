@@ -10,10 +10,17 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import * as artifactsPackage from '../contract/index.js';
 
-const packageRoot = path.resolve(
-  path.dirname(new URL(import.meta.url).pathname),
-  '../..',
-);
+// Source lives at tests/, compiled output at dist/tests/ — the depth
+// differs, so resolve the package root by walking up to tsconfig.json.
+const packageRoot = (() => {
+  let dir = path.dirname(new URL(import.meta.url).pathname);
+  while (!existsSync(path.join(dir, 'tsconfig.json'))) {
+    const parent = path.dirname(dir);
+    if (parent === dir) throw new Error(`package root not found from ${dir}`);
+    dir = parent;
+  }
+  return dir;
+})();
 
 test('package exports expose only the Artifacts contract root and hide private core', () => {
   const packageJson = JSON.parse(

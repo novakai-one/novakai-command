@@ -43,12 +43,16 @@ Snapshot answers "designed well?" today. Git history adds hidden coupling + "get
 - Unit of analysis for git metrics: merged PR, not raw commit. Intent from subject or branch name.
 
 ## Testing standards
-- Vitest, colocated `*.test.ts`.
-- Pure functions: fabricated fixtures, no mocks.
-- Impure edges: one integration test each (temp dirs, cleaned up).
-- Gate logic tested at the boundary (0.69 vs 0.70).
-- Determinism: same input, same output — tested.
-- `npm test` and `npm run typecheck` green before done.
+- Three tiers: fast (every change, seconds), full (merge + nightly),
+  guards (PR gate, structure rules).
+- Test behavior through the public API. One test file per feature.
+- Pure functions: fabricated fixtures, no mocks. Impure edges: one
+  integration test each (temp dirs, cleaned up).
+- No new server-boot, PTY-spawn, or sleep-based tests without Chris's
+  explicit approval. Sleeps in tests are flake debt.
+- A test stays only if all three hold: behavior through a public
+  interface; failure means a user-visible bug; runtime matches its tier.
+- `npm run test:fast` and `npm run typecheck` green before done.
 
 ## Repowise
 External cause-side supplier — github.com/repowise-dev/repowise, AGPL.

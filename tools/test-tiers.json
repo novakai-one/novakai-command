@@ -1,0 +1,11 @@
+{
+  "guards": [
+    "architecture",
+    "surface-manifest",
+    "codegen-freshness",
+    "public-surface",
+    "public-boundary",
+    "journal-boundaries",
+    "storage-boundary"
+  ]
+}

@@ -10,6 +10,7 @@
     "generate": "node tools/generate-ts.mjs",
     "build": "tsc -p tsconfig.json",
     "test": "npm run build && node --test \"dist/tests/**/*.test.js\" && npm run test:b3",
+    "test:fast": "node ../../tools/test-fast.mjs .",
     "typecheck:b3": "tsc -p tsconfig.b3.json",
     "test:b3": "npm run typecheck:b3 && tsx --test \"b3/tests/**/*.test.ts\""
   },

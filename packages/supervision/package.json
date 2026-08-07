@@ -12,7 +12,8 @@
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test:runtime": "tsx --test \"tests/**/*.test.ts\"",
-    "test": "npm run typecheck && npm run test:runtime"
+    "test": "npm run typecheck && npm run test:runtime",
+    "test:fast": "node ../../tools/test-fast.mjs ."
   },
   "dependencies": {
     "@novakai/foundation": "file:../foundation"

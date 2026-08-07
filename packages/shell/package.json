@@ -7,6 +7,7 @@
   "scripts": {
     "test": "vitest run && npm run test:contrast && npm run lint:accent && npm run lint:kit",
     "test:unit": "vitest run",
+    "test:fast": "npm run test:unit",
     "test:contrast": "tsx tools/check-contrast.ts",
     "lint:accent": "node tools/lint-accent.mjs",
     "lint:kit": "node tools/lint-kit.mjs",

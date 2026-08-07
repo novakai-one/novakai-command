@@ -7,7 +7,8 @@
   "engines": { "node": ">=20" },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "npm run typecheck && tsx --test \"tests/**/*.test.ts\""
+    "test": "npm run typecheck && tsx --test \"tests/**/*.test.ts\"",
+    "test:fast": "node ../../tools/test-fast.mjs ."
   },
   "license": "UNLICENSED",
   "dependencies": {

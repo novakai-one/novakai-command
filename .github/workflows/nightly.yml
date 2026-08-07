@@ -1,0 +1,20 @@
+name: Nightly full suite
+on:
+  schedule:
+    - cron: '17 2 * * *'
+  workflow_dispatch:
+jobs:
+  full:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            packages/messaging/package-lock.json
+      - run: npm ci
+      - run: npm --prefix packages/messaging ci
+      - run: npm run test:full
