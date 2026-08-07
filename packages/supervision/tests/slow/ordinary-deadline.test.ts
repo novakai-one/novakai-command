@@ -13,9 +13,9 @@ import {
   deriveDeadlineWatchEvaluationId, deriveNotificationId, notificationDeliveryEffectKey,
   SUPERVISION_RECORD_WRITER,
   type CreateWatchRuleInput, type Notification, type WatchDeadline, type WatchRule,
-} from '../contract/index.js';
-import { composeSupervision } from '../core/compose.js';
-import { createSupervisionStore } from '../core/store.js';
+} from '../../contract/index.js';
+import { composeSupervision } from '../../core/compose.js';
+import { createSupervisionStore } from '../../core/store.js';
 
 const RUN_ID = 'agentRun_019fd000-0000-7000-8000-0000000000d1' as AgentRunId;
 const human = {

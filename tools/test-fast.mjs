@@ -5,7 +5,7 @@
 //   node tools/test-fast.mjs <package-dir> --full     everything, from source (no build)
 // Exit 0 = green or no tests in tier; exit 1 = failures.
 import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 const [, , pkgDir, ...flags] = process.argv;
@@ -41,5 +41,16 @@ if (files.length === 0) {
   process.exit(0);
 }
 console.log(`[test-fast] ${mode}: ${files.length} files in ${pkgDir}`);
-const res = spawnSync('npx', ['tsx', '--test', ...files], { stdio: 'inherit' });
+// Run with the package as cwd — several tests resolve repo/package paths from
+// process.cwd() (written for `npm test`, which runs in the package dir), so
+// the runner must reproduce that whether invoked from the root or in-package.
+// If the package has a leaked-handle guard, load it so hung tests get
+// amputated instead of stacking full timeouts (server has one).
+const args = existsSync(join(pkgDir, 'tests/support/no-leaked-handles.ts'))
+  ? ['tsx', '--import', './tests/support/no-leaked-handles.ts', '--test', ...files.map((f) => resolve(f))]
+  : ['tsx', '--test', ...files.map((f) => resolve(f))];
+const res = spawnSync('npx', args, {
+  stdio: 'inherit',
+  cwd: resolve(pkgDir),
+});
 process.exit(res.status ?? 1);
