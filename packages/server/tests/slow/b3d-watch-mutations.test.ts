@@ -104,6 +104,7 @@ test('watcher mutations accept deterministic UUIDv5 ClientOpIds', () => {
     json: true,
     positional: [],
     value: (name) => name === 'client-op-id' ? clientOpId : undefined,
+    values: (name) => name === 'client-op-id' ? [clientOpId] : [],
   });
   assert.equal(parsed.ok, true);
   if (parsed.ok) assert.equal(parsed.value, clientOpId);
@@ -330,12 +331,16 @@ test('nvk watch update replaces one watcher behind its current version fence', a
     ]);
     assert.equal(added.code, 0, added.out);
     const created = JSON.parse(added.out) as {
-      readonly value: { readonly id: string };
+      readonly value: { readonly id: string; readonly recordVersion: number };
     };
 
+    // A5-02: the fence is the version the CALLER holds — here, the one the
+    // create just returned. The CLI no longer fetches it, so this is the first
+    // version of this test where the word "fence" in its name is true.
     const updated = await runNvk([
       'watch', 'update', created.value.id,
       '--delivery', 'next-turn-context',
+      '--expect-version', String(created.value.recordVersion),
       ...where,
     ]);
     assert.equal(updated.code, 0, updated.out);
@@ -369,9 +374,12 @@ test('nvk watch remove retires its watcher instead of deleting it', async () => 
       ...where,
     ]);
     assert.equal(added.code, 0, added.out);
-    const created = JSON.parse(added.out) as { readonly value: { readonly id: string } };
+    const created = JSON.parse(added.out) as {
+      readonly value: { readonly id: string; readonly recordVersion: number };
+    };
 
-    const removed = await runNvk(['watch', 'remove', created.value.id, ...where]);
+    const removed = await runNvk(['watch', 'remove', created.value.id,
+      '--expect-version', String(created.value.recordVersion), ...where]);
     assert.equal(removed.code, 0, removed.out);
     const retired = JSON.parse(removed.out) as {
       readonly value: { readonly id: string; readonly status: string };
@@ -437,7 +445,9 @@ test('nvk watch add arms activity drift from the live Run generation', async () 
     const listed = await runNvk(['watch', 'list', ...where]);
     const page = JSON.parse(listed.out) as {
       readonly value: {
-        readonly deadlines: readonly { readonly id: string; readonly state: string }[];
+        readonly deadlines: readonly {
+          readonly id: string; readonly state: string; readonly recordVersion: number;
+        }[];
       };
     };
     assert.equal(page.value.deadlines[0]?.state, 'armed');
@@ -452,9 +462,15 @@ test('nvk watch add arms activity drift from the live Run generation', async () 
       'the published operator listing hid the durable deadline identity',
     );
 
+    // A5-02: the version and the reason are the OPERATOR's now. The version is
+    // the one this test just read from the published listing, so the only thing
+    // the owner can find wrong is the episode — which is the conflict this test
+    // has always been about, and is now the ONLY thing it can be about.
     const reset = await runNvk([
       'watch', 'reset-drift', page.value.deadlines[0]!.id,
-      '--episode', 'driftEpisode_' + 'b'.repeat(52),
+      '--expect-version', String(page.value.deadlines[0]!.recordVersion),
+      '--expect-episode', 'driftEpisode_' + 'b'.repeat(52),
+      '--reason', 'the agent was waiting on me, not drifting',
       ...where,
     ]);
     assert.equal(reset.code, 4, reset.out);

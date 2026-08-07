@@ -18,7 +18,8 @@ import type { RuntimeStatus, RuntimeStopOutcome } from '../../agent-runtime/cont
 import { startRuntimeHost } from '../core/b3/host.js';
 import { connectRuntime, type RuntimeClient } from '../core/b3/client.js';
 import {
-  clientOpIdFrom, emit, fail, parseFlags, type CliCommand, type Flags,
+  clientOpIdFrom, confirmedRuns, emit, expectedEpoch, fail, parseFlags,
+  type CliCommand, type Flags,
 } from '../core/b3/cli-shared.js';
 import { buildCutoverReport, describeCutover, LEGACY_MESSAGING_STORE } from '../core/b3/cutover-report.js';
 
@@ -204,6 +205,17 @@ const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
     emit('runtime.cutover-report', argFlags, report, describeCutover);
   },
 
+  /**
+   * A5-02: `--expect-epoch <RuntimeEpochId>` and `--confirmed-run <AgentRunId>`
+   * (repeatable).
+   *
+   * The old comment claimed the `getStatus` made a stop "apply to the runtime
+   * the caller actually saw". It did the opposite: it applied the stop to
+   * whichever Runtime was active a millisecond before the write, which is the
+   * one case the epoch fence exists to refuse. An operator who read `nvk
+   * runtime status`, walked away, and came back to a Runtime that had since
+   * restarted would have stopped the NEW one, believing they stopped the old.
+   */
   async stop(argFlags) {
     const liveRuns = argFlags.value('live-runs') ?? 'refuse';
     if (liveRuns !== 'refuse' && liveRuns !== 'stop-explicitly') {
@@ -212,15 +224,15 @@ const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
           { issues: [{ path: 'live-runs', message: 'unknown value' }] }, false),
       ), () => '');
     }
-    // The epoch is read first so a stop can only ever apply to the runtime the
-    // caller actually saw — never to one that took over in between.
-    const outcome = await withClient<RuntimeStopOutcome>(async (client) => {
-      const status = await client.call<RuntimeStatus>('b3.runtime.getStatus', {});
-      if (!status.ok) return status;
-      return client.call<RuntimeStopOutcome>('b3.runtime.stop', {
-        expectedEpochId: status.value.activeEpochId, liveRuns,
-      }, operationId());
-    });
+    const epoch = expectedEpoch(argFlags);
+    if (!epoch.ok) return fail('runtime.stop', argFlags, epoch.error);
+    const confirmed = confirmedRuns(argFlags);
+    if (!confirmed.ok) return fail('runtime.stop', argFlags, confirmed.error);
+    const outcome = await withClient<RuntimeStopOutcome>(
+      (client) => client.call<RuntimeStopOutcome>('b3.runtime.stop', {
+        expectedEpochId: epoch.value, liveRuns, ...confirmed.value,
+      }, operationId()),
+    );
     emit('runtime.stop', argFlags, outcome, describeStop);
   },
 };

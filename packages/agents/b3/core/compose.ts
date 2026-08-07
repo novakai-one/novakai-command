@@ -21,7 +21,8 @@ import {
 } from './store.js';
 import { OPERATION, versionGuard, type GovernedAgentsCore } from './context.js';
 import {
-  createRoleProfile, getRoleProfile, listRoleProfiles, updateRoleProfile,
+  createRoleProfile, getRoleProfile, listRoleProfiles, resolveRoleProfileByName,
+  updateRoleProfile,
 } from './roles.js';
 import { createAgentFromRole, getAgent } from './agents.js';
 import { getLaunchPlan, resolveLaunchPlan } from './plans.js';
@@ -120,6 +121,8 @@ export function composeGovernedAgents(
     getAgent: (principal, agentId) => getAgent(core, principal, agentId),
     getRoleProfile: (principal, roleProfileId) => getRoleProfile(core, principal, roleProfileId),
     listRoleProfiles: (principal) => listRoleProfiles(core, principal),
+    resolveRoleProfileByName: (principal, displayName) =>
+      resolveRoleProfileByName(core, principal, displayName),
     getLaunchPlan: (principal, launchPlanId) => getLaunchPlan(core, principal, launchPlanId),
     getResolvedLaunchPlan: (principal, launchPlanId) => getLaunchPlan(core, principal, launchPlanId),
     getAgentTree: (principal, input) => getAgentTree(core, principal, input),

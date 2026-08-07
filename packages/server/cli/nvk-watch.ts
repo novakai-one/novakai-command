@@ -5,6 +5,14 @@
 //   nvk watch list           the standing watcher rules and their deadlines
 //   nvk watch notifications  the durable Notification queue
 //   nvk watch acknowledge    settle one Notification you have actually seen
+//   nvk watch update <watchRuleId> --expect-version <n> [field flags]
+//   nvk watch remove <watchRuleId> --expect-version <n>
+//   nvk watch reset-drift <watchDeadlineId> --expect-version <n>
+//                         --expect-episode <driftEpisodeId> --reason <text>
+//
+// A5-02: the preconditions above are the operator's to state. They used to be
+// read from the record about to be written, which is a CAS that cannot refuse
+// the race it exists for.
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -17,7 +25,8 @@ import type {
 import { watchRemoveRetirement } from '../../supervision/contract/index.js';
 import { connectRuntime, type RuntimeClient } from '../core/b3/client.js';
 import {
-  clientOpIdFrom, emit, fail, pageFlags, parseFlags, type Flags,
+  clientOpIdFrom, emit, expectedEpisode, expectedVersion, fail, pageFlags, parseFlags,
+  requiredReason, type Flags,
 } from '../core/b3/cli-shared.js';
 import { addWatchInput, replacementWatchInput } from './nvk-watch-inputs.js';
 
@@ -99,27 +108,12 @@ async function currentRule(
     : b3ok(found);
 }
 
-async function currentDeadline(
-  client: RuntimeClient,
-  watchDeadlineId: string | undefined,
-): Promise<B3Result<WatchDeadline>> {
-  if (watchDeadlineId === undefined
-    || !isValidId(watchDeadlineId, 'watchDeadline', 'base32sha256')) {
-    return b3fail(validationFailed([{
-      path: 'watchDeadlineId', message: 'must be a WatchDeadlineId positional argument',
-    }]));
-  }
-  const listed = await client.call<WatcherListing>(
-    'b3.supervision.listWatchers', { limit: 500 },
-  );
-  if (!listed.ok) return listed;
-  const found = listed.value.deadlines.find((deadline) => deadline.id === watchDeadlineId);
-  return found === undefined
-    ? b3fail(b3err(
-      'WatcherConflict', 'the current WatchDeadline does not exist', { watchDeadlineId }, true,
-    ))
-    : b3ok(found);
-}
+// `currentDeadline` lived here: it listed every watcher, found the deadline the
+// operator had just named, and quoted its version back at the owner as the CAS
+// precondition. A5-02 makes that version the operator's to state, and once it
+// is stated there is nothing left for the lookup to find — the positional IS
+// the WatchDeadlineId. Deleted rather than left unused; a `listWatchers` call
+// on the way to a reset is a page of 500 rules fetched to learn nothing.
 
 function describeAcknowledgement(item: Notification): string {
   return `${item.state}  ${item.summary}\n  ${item.id}`;
@@ -138,7 +132,20 @@ const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
     ), (rule) => `Watching ${JSON.stringify(rule.subject)} for ${rule.condition.kind}.`);
   },
 
+  /**
+   * A5-02. `expectedRecordVersion` is the operator's now, not the CLI's.
+   *
+   * The rule is still READ — `updateWatch` replaces a WatchRule whole, so the
+   * fields the operator did not restate have to come from somewhere. That read
+   * composes the replacement BODY and supplies no precondition, which is the
+   * distinction the amendment draws. It is safe precisely because the CAS is
+   * now honest: if the record moved between this read and the write, the
+   * operator's version no longer matches and the owner refuses the write —
+   * so a body composed from a record the operator never saw can never land.
+   */
   [UPDATE_COMMAND]: async function updateWatcher(argFlags) {
+    const expected = expectedVersion(argFlags);
+    if (!expected.ok) return fail('watch.update', argFlags, expected.error);
     const clientOpId = clientOpIdFrom(argFlags);
     if (!clientOpId.ok) emit('watch.update', argFlags, clientOpId, () => '');
     emit('watch.update', argFlags, await withClient<WatchRule>(async (client) => {
@@ -148,39 +155,63 @@ const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
       if (!replacement.ok) return replacement;
       return client.call('b3.supervision.updateWatch', {
         watchRuleId: current.value.id,
-        expectedRecordVersion: current.value.recordVersion,
+        expectedRecordVersion: expected.value,
         replacement: replacement.value,
       }, clientOpId.value);
     }), (rule) => `Updated ${rule.id} to record version ${String(rule.recordVersion)}.`);
   },
 
   [REMOVE_COMMAND]: async function removeWatcher(argFlags) {
+    const expected = expectedVersion(argFlags);
+    if (!expected.ok) return fail('watch.remove', argFlags, expected.error);
     const clientOpId = clientOpIdFrom(argFlags);
     if (!clientOpId.ok) emit('watch.remove', argFlags, clientOpId, () => '');
     emit('watch.remove', argFlags, await withClient<WatchRule>(async (client) => {
       const current = await currentRule(client, argFlags.positional[0]);
       if (!current.ok) return current;
-      return client.call(
-        'b3.supervision.updateWatch',
-        watchRemoveRetirement(current.value) as unknown as Readonly<Record<string, unknown>>,
-        clientOpId.value,
-      );
+      // Retirement is a full replacement built from the live rule (the body),
+      // fenced by the version the OPERATOR quoted (the precondition).
+      return client.call('b3.supervision.updateWatch', {
+        ...watchRemoveRetirement(current.value),
+        expectedRecordVersion: expected.value,
+      } as unknown as Readonly<Record<string, unknown>>, clientOpId.value);
     }), (rule) => `Retired ${rule.id}.`);
   },
 
+  /**
+   * A5-02, and the site with the most to answer for: it read the deadline for
+   * its version, took the episode from an unratified `--episode`, and wrote the
+   * operator's REASON for them. All three are the operator's to state — a
+   * durable record of why a human overrode a drift alarm, signed by the tool,
+   * is not a record of anything.
+   *
+   * The deadline is no longer read at all: `--expect-version` supplies the
+   * fence and the positional id is the deadline, so there is nothing left to
+   * look up.
+   */
   [RESET_DRIFT_COMMAND]: async function resetDrift(argFlags) {
+    const watchDeadlineId = argFlags.positional[0];
+    const expected = expectedVersion(argFlags);
+    if (!expected.ok) return fail('watch.reset-drift', argFlags, expected.error);
+    const episode = expectedEpisode(argFlags);
+    if (!episode.ok) return fail('watch.reset-drift', argFlags, episode.error);
+    const reason = requiredReason(argFlags);
+    if (!reason.ok) return fail('watch.reset-drift', argFlags, reason.error);
     const clientOpId = clientOpIdFrom(argFlags);
     if (!clientOpId.ok) emit('watch.reset-drift', argFlags, clientOpId, () => '');
-    emit('watch.reset-drift', argFlags, await withClient<WatchDeadline>(async (client) => {
-      const deadline = await currentDeadline(client, argFlags.positional[0]);
-      if (!deadline.ok) return deadline;
-      return client.call('b3.supervision.resetDrift', {
-        watchDeadlineId: deadline.value.id,
-        expectedRecordVersion: deadline.value.recordVersion,
-        expectedEpisodeId: argFlags.value('episode'),
-        reason: argFlags.value('reason') ?? 'reset requested by nvk watch reset-drift',
-      }, clientOpId.value);
-    }), (deadline) => `Reset drift deadline ${deadline.id}.`);
+    if (!isValidId(watchDeadlineId, 'watchDeadline', 'base32sha256')) {
+      return fail('watch.reset-drift', argFlags, validationFailed([{
+        path: 'watchDeadlineId', message: 'must be a WatchDeadlineId positional argument',
+      }]));
+    }
+    emit('watch.reset-drift', argFlags, await withClient<WatchDeadline>(
+      (client) => client.call('b3.supervision.resetDrift', {
+        watchDeadlineId,
+        expectedRecordVersion: expected.value,
+        expectedEpisodeId: episode.value,
+        reason: reason.value,
+      }, clientOpId.value),
+    ), (deadline) => `Reset drift deadline ${deadline.id}.`);
   },
 
   // A5-01: `--limit`/`--cursor` are the published page flags, spelled ONCE in

@@ -35,6 +35,10 @@ const NO_RUNTIME_PORT = '59417';
 const AGENT = 'agent_123e4567-e89b-42d3-a456-426614174000';
 const RUN = 'agentRun_019fd000-0000-7000-8000-0000000000a1';
 const TERMINAL = 'terminalSession_019fd000-0000-7000-8000-0000000000b2';
+// AMD-005 A5-02's preconditions are the operator's to state, so every affected
+// row below carries the flag that used to be filled in by a read.
+const EPOCH = 'runtimeEpoch_019fd000-0000-7000-8000-0000000000c3';
+const EPISODE = `driftEpisode_${'b'.repeat(52)}`;
 
 function runNvk(args: readonly string[]): Promise<{ code: number | null; out: string }> {
   const child = spawn(process.execPath, [nvk, ...args,
@@ -56,22 +60,23 @@ const INVOCATIONS: ReadonlyArray<readonly [string, readonly string[]]> = [
   ['runtime.ensure', ['runtime', 'ensure']],
   ['runtime.status', ['runtime', 'status']],
   ['runtime.doctor', ['runtime', 'doctor']],
-  ['runtime.stop', ['runtime', 'stop', '--live-runs', 'refuse']],
+  ['runtime.stop', ['runtime', 'stop', '--live-runs', 'refuse', '--expect-epoch', EPOCH]],
   ['agent.spawn', ['agent', 'spawn', '--role', 'builder', '--name', 'Nova']],
   ['agent.list', ['agent', 'list']],
   ['agent.tree', ['agent', 'tree', AGENT]],
   ['agent.inspect.run', ['agent', 'inspect', RUN]],
   ['agent.inspect.agent', ['agent', 'inspect', AGENT]],
   ['agent.attach', ['agent', 'attach', RUN]],
-  ['agent.interrupt', ['agent', 'interrupt', RUN]],
+  ['agent.interrupt', ['agent', 'interrupt', RUN, '--expect-version', '1']],
   ['agent.stop', ['agent', 'stop', AGENT, '--run', RUN, '--confirm', 'stop-one']],
   ['agent.stop-tree.prepare', ['agent', 'stop-tree', AGENT, '--prepare']],
   ['agent.stop-tree.confirm',
     ['agent', 'stop-tree', AGENT, '--token', 'tok', '--confirm', 'stop-tree']],
   ['agent.continue', ['agent', 'continue', AGENT, '--from', RUN, '--mode', 'resume']],
-  ['agent.adopt', ['agent', 'adopt', AGENT, '--supervisor', AGENT, '--expect', '1']],
+  ['agent.adopt', ['agent', 'adopt', AGENT, '--supervisor', AGENT, '--expect-version', '1']],
   ['agent.controls', ['agent', 'controls', RUN]],
-  ['agent.control', ['agent', 'control', RUN, '--set', 'model=opus']],
+  ['agent.control', ['agent', 'control', RUN,
+    '--expect-version', '1', '--name', 'model', '--value', 'opus']],
   ['agent.message', ['agent', 'message', AGENT, '--text', 'hello']],
   ['agent.communications', ['agent', 'communications', AGENT]],
   ['agent.usage.run', ['agent', 'usage', RUN]],
@@ -84,11 +89,13 @@ const INVOCATIONS: ReadonlyArray<readonly [string, readonly string[]]> = [
   ['watch.add', ['watch', 'add', '--subject', RUN, '--when', 'run-final',
     '--notify', AGENT, '--delivery', 'queue-only']],
   ['watch.list', ['watch', 'list']],
-  ['watch.update', ['watch', 'update', 'watchRule_x', '--when', 'run-final']],
-  ['watch.remove', ['watch', 'remove', 'watchRule_x']],
+  ['watch.update', ['watch', 'update', 'watchRule_x', '--when', 'run-final',
+    '--expect-version', '1']],
+  ['watch.remove', ['watch', 'remove', 'watchRule_x', '--expect-version', '1']],
   ['watch.notifications', ['watch', 'notifications']],
   ['watch.acknowledge', ['watch', 'acknowledge', 'notification_x']],
-  ['watch.reset-drift', ['watch', 'reset-drift', 'watchDeadline_x']],
+  ['watch.reset-drift', ['watch', 'reset-drift', 'watchDeadline_x', '--expect-version', '1',
+    '--expect-episode', EPISODE, '--reason', 'the agent was waiting on me']],
 ];
 
 const firstEnvelope = (out: string): { command?: string } =>
