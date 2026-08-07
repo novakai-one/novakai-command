@@ -135,6 +135,11 @@ agents and for Chris.
   with automatic delivery-confirmed post-spawn check, process/activity truth,
   latest message, verified kill. PTY "delivered" only means bytes written —
   nvk-agent confirms receipt via the agent's own session transcript.
+- The newer packages/ runtime has its own CLI path: the umbrella `nvk`
+  (`scripts/nvk.mjs`) dispatches to `packages/*/cli/*.ts` —
+  `nvk agent spawn --role <role> --name <name>`, `nvk runtime`, `nvk terminal`,
+  `nvk watch`, etc. See `packages/scripts.md`. These talk to the packages/
+  Runtime (port 5190), not the old src/backend lanes above.
 - `CONTEXT.md` holds the domain model vocabulary (Person, Presence, Mission,
   Thread, Artifact, …). Use those terms in code and docs.
 - Teardown law (learned twice, 2026-07-22/23): never kill processes by
