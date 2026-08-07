@@ -1,10 +1,10 @@
-// Electron thin shell for Novakai Command — the LIVE lane (3030 app / 3031 api).
-// Attaches only to a verified Live snapshot serve on :3030 (identity-checked
-// via /api/health), or spawns `npm run prod` itself — a no-watch deploy
-// snapshot (tools/deploy.mjs) so main merges never restart prod. The dev lane
-// (`npm run dev`, 3130/3131) is a separate stack this shell never attaches to;
-// an unknown 3030 responder fails loud instead of being loaded as Live.
-// The backend (tsx + node-pty) always runs in system Node, never inside Electron.
+// Electron thin shell for Novakai Command — loads the NEW packages/ stack:
+// the shell UI (packages/shell) served by nvk-server (packages/server) on :5180.
+// Attaches only to a verified nvk-server (identity-checked via /bootstrap.json),
+// or spawns `npx tsx packages/server/cli/nvk-server.ts --port 5180` itself.
+// The old Live lane (`npm run prod`, 3030/3031) is untouched and remains
+// available as a fallback; it is just no longer what this window opens.
+// The backend (tsx) always runs in system Node, never inside Electron.
 const { app, BrowserWindow, shell } = require('electron');
 const { spawn, execSync } = require('child_process');
 const fs = require('fs');
@@ -12,8 +12,8 @@ const http = require('http');
 const os = require('os');
 const path = require('path');
 
-const APP_URL = 'http://localhost:3030';
-const PROBE_URL = 'http://127.0.0.1:3030';
+const APP_URL = 'http://localhost:5180';
+const PROBE_URL = 'http://127.0.0.1:5180';
 const STARTUP_TIMEOUT_MS = 90_000;
 const LOG_FILE = path.join(os.homedir(), 'Library', 'Logs', 'NovakaiCommand.log');
 const REPO_DIR = app.isPackaged
@@ -25,20 +25,20 @@ let win = null;
 let quitting = false;
 let recovery = null;
 
-// Identity probe — only a real Live snapshot serve counts:
-//   'live'    /api/health answered with our app id in static (snapshot) mode
-//   'foreign' something answered but it is NOT a Live serve (legacy dev rig,
-//             scratch server, unrelated listener) — never load it
+// Identity probe — only a real nvk-server counts:
+//   'live'    /bootstrap.json answered with our protocol version
+//   'foreign' something answered but it is NOT an nvk-server (old Live lane,
+//             dev rig, unrelated listener) — never load it
 //   'free'    nothing usable on the port
 function probe() {
   return new Promise((resolve) => {
-    const req = http.get(`${PROBE_URL}/api/health`, { timeout: 1000 }, (res) => {
+    const req = http.get(`${PROBE_URL}/bootstrap.json`, { timeout: 1000 }, (res) => {
       let body = '';
       res.on('data', (chunk) => { body += chunk; });
       res.on('end', () => {
         try {
-          const health = JSON.parse(body);
-          resolve(health.application === 'novakai-command' && health.static === true ? 'live' : 'foreign');
+          const bootstrap = JSON.parse(body);
+          resolve(typeof bootstrap.wsUrl === 'string' && bootstrap.protocolVersion === 1 ? 'live' : 'foreign');
         } catch {
           resolve('foreign');
         }
@@ -49,19 +49,19 @@ function probe() {
   });
 }
 
-/** Record who holds 3030 so the fail-loud splash has evidence in the log. */
+/** Record who holds 5180 so the fail-loud splash has evidence in the log. */
 function logConflict() {
   try {
-    const owners = execSync('lsof -nP -iTCP:3030 -sTCP:LISTEN', { encoding: 'utf8' });
-    fs.appendFileSync(LOG_FILE, `\n--- foreign :3030 responder ${new Date().toISOString()} ---\n${owners}`);
+    const owners = execSync('lsof -nP -iTCP:5180 -sTCP:LISTEN', { encoding: 'utf8' });
+    fs.appendFileSync(LOG_FILE, `\n--- foreign :5180 responder ${new Date().toISOString()} ---\n${owners}`);
   } catch { /* lsof empty or unavailable — nothing to record */ }
 }
 
 function startDevServer() {
   const log = fs.openSync(LOG_FILE, 'a');
-  fs.writeSync(log, `\n--- Novakai Command shell: starting prod server ${new Date().toISOString()} ---\n`);
+  fs.writeSync(log, `\n--- Novakai Command shell: starting nvk-server ${new Date().toISOString()} ---\n`);
   // Login shell so a Finder/Dock launch (bare PATH) still finds node/npm.
-  devServer = spawn('/bin/zsh', ['-lc', 'exec npm run prod'], {
+  devServer = spawn('/bin/zsh', ['-lc', 'exec npx tsx packages/server/cli/nvk-server.ts --port 5180'], {
     cwd: REPO_DIR,
     detached: true, // own process group, so quit can tree-kill it
     env: { ...process.env, NOVAKAI_DESKTOP_PID: String(process.pid) },
@@ -117,7 +117,7 @@ async function recover() {
     } else if (status === 'foreign') {
       logConflict();
       await win.loadURL(splashHtml(
-        `Port 3030 is held by a server that is not Novakai Command Live — not loading it. Details in ${LOG_FILE}`,
+        `Port 5180 is held by a server that is not nvk-server — not loading it. Details in ${LOG_FILE}`,
       ));
     } else {
       await win.loadURL(splashHtml(`Servers did not recover. See ${LOG_FILE}`));
@@ -152,7 +152,7 @@ async function launch() {
     return;
   }
 
-  await recover(); // 'free' → spawn prod; 'foreign' → fail-loud splash
+  await recover(); // 'free' → spawn nvk-server; 'foreign' → fail-loud splash
 }
 
 app.whenReady().then(launch);
