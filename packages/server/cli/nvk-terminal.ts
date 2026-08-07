@@ -1,0 +1,383 @@
+#!/usr/bin/env -S npx tsx
+// nvk-terminal — list, inspect, attach to, and detach from real terminals (§17.1).
+//
+//   nvk-terminal list [--limit <n>] [--cursor <EventCursor>] [--state live|final|all]
+//   nvk-terminal inspect <terminalSessionId>
+//   nvk-terminal open [--cwd <path>] [--authority plain-shell|mock-managed]
+//
+// Every command also takes --json and, for mutations, --client-op-id <op_uuid>
+// (§17.2): re-running the same command with the same id resumes the same
+// operation instead of doing it twice.
+//   nvk-terminal attach <terminalSessionId>
+//   nvk-terminal detach <controllerAttachmentId> --session <terminalSessionId>
+//
+// Human output must state BOTH launch origin and current controller truth
+// (§17.2) — "no controller attached" is never the same sentence as "stopped".
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import {
+  b3err, b3fail, b3ok,
+  type B3ClientOpId, type B3Page, type B3Result, type TerminalSessionId,
+} from '@novakai/foundation/contract';
+import {
+  FINAL_TERMINAL_SESSION_STATUSES, UNFINISHED_TERMINAL_SESSION_STATUSES,
+} from '../../terminal/contract/index.js';
+import type {
+  ControllerAttachment, TerminalInputAttempt, TerminalInputLease,
+  TerminalOutputFrame, TerminalSession, TerminalSessionStatus, TerminalSessionView,
+} from '../../terminal/contract/index.js';
+import { connectRuntime, type RuntimeClient } from '../core/b3/client.js';
+import {
+  clientOpIdFrom, emit, EXIT, fail, pageFlags, parseFlags, report, verbOf,
+  type CliCommand, type Flags,
+} from '../core/b3/cli-shared.js';
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+const repoRoot = path.resolve(here, '..', '..', '..');
+
+const [, , command = 'list', ...rest] = process.argv;
+const flags = parseFlags(rest);
+const root = flags.value('root') ?? process.env['NOVAKAI_ROOT'] ?? path.join(repoRoot, '.novakai');
+const port = Number(flags.value('port') ?? process.env['NOVAKAI_RUNTIME_PORT'] ?? 5190);
+
+/**
+ * §17.2: ONE caller-minted operation id per invocation. Every mutation this
+ * command makes carries it, so re-running the exact command resumes the exact
+ * operations instead of doing them again (§4.5, DEC-B3V4-30).
+ */
+const mintedOperationId = clientOpIdFrom(flags);
+/** Safe to read after runCommand's guard has refused a malformed one. */
+const operationId = (): B3ClientOpId =>
+  (mintedOperationId.ok ? mintedOperationId.value : ('' as B3ClientOpId));
+
+const unreachable = (cause: unknown): ReturnType<typeof b3err> => b3err('RuntimeUnavailable',
+  `no Novakai Runtime is reachable on port ${port}: ${cause instanceof Error ? cause.message : String(cause)}`,
+  { reason: 'not-reachable' }, true);
+
+async function withClient<Value>(
+  work: (client: RuntimeClient) => Promise<B3Result<Value>>,
+): Promise<B3Result<Value>> {
+  let client: RuntimeClient;
+  try {
+    client = await connectRuntime({ root, port });
+  } catch (cause) {
+    return b3fail(unreachable(cause));
+  }
+  try {
+    return await work(client);
+  } finally {
+    client.close();
+  }
+}
+
+function originOf(session: TerminalSession): string {
+  return session.owner.kind === 'plain-shell'
+    ? `Started as a plain shell (${session.owner.shellInstanceId})`
+    : `Started for agent run ${session.owner.agentRunId}`;
+}
+
+/**
+ * The sentence Chris actually needs. Three separate facts, never collapsed:
+ * where it came from, who is watching it now, and whether it is running.
+ */
+function describeSession(view: TerminalSessionView): string {
+  const attached = view.attachments.filter((item) => item.state === 'attached');
+  const running = view.session.status === 'live';
+  const runningLine = running
+    ? 'the terminal is still running in the Novakai Runtime'
+    : `the terminal is ${view.session.status}`;
+  return `${view.session.id}\n  ${originOf(view.session)}; currently `
+    + `${attached.length} controller(s) attached; ${runningLine}.`;
+}
+
+/**
+ * A5-05 made this a `Page`, so the human line says what the page actually is.
+ * "No terminal sessions" for a page that merely ENDED here would be the CLI
+ * claiming completeness the owner never gave it.
+ */
+function describeList(page: B3Page<TerminalSessionView>): string {
+  const body = page.items.length === 0
+    ? 'No terminal sessions.' : page.items.map(describeSession).join('\n');
+  return page.nextCursor === undefined ? body
+    : `${body}\n  (more sessions follow; continue with --cursor ${page.nextCursor})`;
+}
+
+/**
+ * `--state` is not in §17.1 — it is an out-of-B3e extra this command already
+ * shipped (freeze §5b), kept rather than deleted. What it may NOT do is carry a
+ * vocabulary of its own: A5-05 spells the filter as a set of the owner's own
+ * statuses, so the flag maps onto the lists Terminal publishes. A CLI that
+ * spelled "still going" itself would be a second answer to a question the
+ * capability already answers (CL-P, FZ-VIEW-034).
+ */
+function statusesFor(state: string): B3Result<readonly TerminalSessionStatus[] | undefined> {
+  if (state === 'all') return b3ok(undefined);
+  if (state === 'live') return b3ok(UNFINISHED_TERMINAL_SESSION_STATUSES);
+  if (state === 'final') return b3ok(FINAL_TERMINAL_SESSION_STATUSES);
+  return b3fail(b3err('ValidationFailed', `unknown --state "${state}"`,
+    { issues: [{ path: 'state', message: 'must be live, final or all' }] }, false));
+}
+
+/** One handler per command — a table, so adding a verb never grows a branch. */
+const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
+  async list(argFlags) {
+    const page = pageFlags(argFlags);
+    if (!page.ok) return fail('terminal.list', argFlags, page.error);
+    const statuses = statusesFor(argFlags.value('state') ?? 'all');
+    if (!statuses.ok) return fail('terminal.list', argFlags, statuses.error);
+    emit('terminal.list', argFlags, await withClient<B3Page<TerminalSessionView>>(
+      (client) => client.call('b3.terminal.list', {
+        ...page.value,
+        ...(statuses.value === undefined ? {} : { status: statuses.value }),
+      }),
+    ), describeList);
+  },
+
+  async inspect(argFlags) {
+    const terminalSessionId = argFlags.positional[0] as TerminalSessionId | undefined;
+    if (!terminalSessionId) return usage('terminal.inspect', argFlags, 'terminalSessionId');
+    emit('terminal.inspect', argFlags, await withClient<TerminalSessionView>(
+      (client) => client.call('b3.terminal.inspect', { terminalSessionId }),
+    ), describeSession);
+  },
+
+  async open(argFlags) {
+    const workingDirectory = argFlags.value('cwd') ?? process.cwd();
+    const authority = argFlags.value('authority') ?? 'plain-shell';
+    // Stable on purpose: the process that runs this command exits immediately
+    // and the session outlives it, so a pid here would make every retry a
+    // DIFFERENT request and put idempotency permanently out of reach (§4.5).
+    const shellInstanceId = argFlags.value('shell-instance') ?? 'cli';
+    emit('terminal open', argFlags, await withClient<TerminalSession>(
+      (client) => client.call('b3.terminal.open', {
+        owner: { kind: 'plain-shell', shellInstanceId },
+        launchAuthorityRef: authority,
+        launchFingerprint: `${authority}:${workingDirectory}`,
+        workingDirectory,
+        columns: viewportColumns(argFlags),
+        rows: viewportRows(argFlags),
+      }, operationId()),
+    ), (session) => `${session.id}\n  ${originOf(session)}; currently 0 controller(s) attached; `
+      + 'the terminal is running in the Novakai Runtime.');
+  },
+
+  /**
+   * Attaching is something you DO for as long as you are here, not a record you
+   * leave behind: this follows the session's output until you interrupt it, and
+   * then detaches. The terminal keeps running — that is the whole point (§13.4).
+   */
+  async attach(argFlags) {
+    const terminalSessionId = argFlags.positional[0] as TerminalSessionId | undefined;
+    if (!terminalSessionId) return usage('terminal.attach', argFlags, 'terminalSessionId');
+    let client: RuntimeClient;
+    try {
+      client = await connectRuntime({ root, port });
+    } catch (cause) {
+      return fail('terminal.attach', argFlags, unreachable(cause));
+    }
+    const attached = await client.call<ControllerAttachment>('b3.terminal.attach', {
+      terminalSessionId,
+      controllerKind: 'external-terminal',
+      columns: viewportColumns(argFlags),
+      rows: viewportRows(argFlags),
+    }, operationId());
+    if (!attached.ok) {
+      client.close();
+      return emit('terminal.attach', argFlags, attached, () => '');
+    }
+    report('terminal.attach', argFlags, attached,
+      (attachment) => `attached as ${attachment.id}. Closing this window detaches it; `
+        + 'the terminal keeps running. Press Ctrl-C to leave.');
+
+    client.onEvent((name, data) => {
+      if (name !== 'b3.terminal.output') return;
+      const event = data as { terminalSessionId: string; frame: TerminalOutputFrame };
+      if (event.terminalSessionId !== terminalSessionId) return;
+      process.stdout.write(renderFrame(event.frame));
+    });
+    return followUntilInterrupted(client, terminalSessionId, attached.value.id);
+  },
+
+  async detach(argFlags) {
+    const attachmentId = argFlags.positional[0];
+    const terminalSessionId = argFlags.value('session') as TerminalSessionId | undefined;
+    if (!attachmentId || !terminalSessionId) {
+      return usage('terminal.detach', argFlags, 'controllerAttachmentId --session <id>');
+    }
+    emit('terminal.detach', argFlags, await withClient<ControllerAttachment>(
+      (client) => client.call(
+        'b3.terminal.detach', { terminalSessionId, attachmentId }, operationId(),
+      ),
+    ), (attachment) => `detached ${attachment.id}. The terminal is still running.`);
+  },
+
+  /**
+   * A one-shot write does not need a window. Without `--attachment` this opens
+   * one, types, and closes it again — so a script can never leave a controller
+   * behind, and never has to own an attachment id that dies with its socket.
+   */
+  async write(argFlags) {
+    const terminalSessionId = argFlags.value('session') as TerminalSessionId | undefined;
+    const attachmentId = argFlags.value('attachment');
+    const text = argFlags.value('text');
+    if (!terminalSessionId || text === undefined) {
+      return usage('terminal write', argFlags, '--session <id> --text <text> [--attachment <id>]');
+    }
+    emit('terminal write', argFlags, await withClient<TerminalInputAttempt>(
+      async (client) => {
+        if (attachmentId) {
+          return sendInput(client, argFlags, { terminalSessionId, attachmentId, text });
+        }
+        const attached = await client.call<ControllerAttachment>('b3.terminal.attach', {
+          terminalSessionId, controllerKind: 'script',
+          columns: viewportColumns(argFlags), rows: viewportRows(argFlags),
+        }, operationId());
+        if (!attached.ok) return attached;
+        const written = await sendInput(client, argFlags, {
+          terminalSessionId, attachmentId: attached.value.id, text,
+        });
+        // Detaching hands back the lease too, so the next writer is never
+        // locked out by a script that has already finished.
+        await client.call('b3.terminal.detach', {
+          terminalSessionId, attachmentId: attached.value.id,
+        }, operationId());
+        return written;
+      },
+    ), (attempt) => `input #${attempt.inputSequence} ${
+      attempt.source === 'provider-turn' ? attempt.effectState.kind : attempt.outcome}`);
+  },
+
+  async read(argFlags) {
+    const terminalSessionId = argFlags.positional[0] as TerminalSessionId | undefined;
+    if (!terminalSessionId) return usage('terminal read', argFlags, 'terminalSessionId');
+    const after = Number(argFlags.value('after') ?? '0');
+    emit('terminal read', argFlags, await withClient<readonly TerminalOutputFrame[]>(
+      (client) => client.call('b3.terminal.read', {
+        terminalSessionId, afterOutputSequence: after,
+      }),
+    ), (frames) => frames.map(renderFrame).join(''));
+  },
+};
+
+const viewportColumns = (argFlags: Flags): number =>
+  Number(argFlags.value('columns') ?? process.stdout.columns ?? 80);
+const viewportRows = (argFlags: Flags): number =>
+  Number(argFlags.value('rows') ?? process.stdout.rows ?? 24);
+
+/**
+ * The sequence this write claims. `--sequence` is an explicit claim and is
+ * obeyed as given; without one, the Runtime is asked where its input stream is,
+ * because a fresh CLI process has no way to know (NVK-KIMI-025 repair 1).
+ */
+async function claimedSequence(
+  client: RuntimeClient, argFlags: Flags, terminalSessionId: TerminalSessionId,
+): Promise<B3Result<number>> {
+  const given = argFlags.value('sequence');
+  if (given !== undefined) return b3ok(Number(given));
+  const view = await client.call<TerminalSessionView>('b3.terminal.inspect', {
+    terminalSessionId,
+  }, operationId());
+  if (!view.ok) return view;
+  return b3ok(view.value.nextInputSequence);
+}
+
+/**
+ * Typing means holding the lease, so acquiring it is part of the act: a script
+ * can never accidentally interleave with whoever is already typing.
+ */
+async function sendInput(
+  client: RuntimeClient,
+  argFlags: Flags,
+  target: { terminalSessionId: TerminalSessionId; attachmentId: string; text: string },
+): Promise<B3Result<TerminalInputAttempt>> {
+  const lease = await client.call<TerminalInputLease>('b3.terminal.acquireLease', {
+    terminalSessionId: target.terminalSessionId,
+    attachmentId: target.attachmentId,
+    mode: 'acquire-if-free',
+    ttlMs: 60_000,
+  }, operationId());
+  if (!lease.ok) return lease;
+  // Where the input stream actually is. Asked AFTER the lease is held, so
+  // nobody can move it between the question and the write. An explicit
+  // --sequence still wins: a caller pinning it is making a claim on purpose.
+  const claimed = await claimedSequence(client, argFlags, target.terminalSessionId);
+  if (!claimed.ok) return claimed;
+  const controlC = argFlags.value('control-c') !== undefined;
+  const written = await client.call<TerminalInputAttempt>('b3.terminal.write', {
+    terminalSessionId: target.terminalSessionId,
+    attachmentId: target.attachmentId,
+    inputLeaseId: lease.value.id,
+    leaseGeneration: lease.value.generation,
+    expectedNextInputSequence: claimed.value,
+    kindOfInput: controlC ? 'raw-control-c' : 'text',
+    ...(controlC ? {} : { utf8Text: target.text }),
+  }, operationId());
+  // A finished script has stopped typing, so it stops holding the keyboard.
+  await client.call('b3.terminal.releaseLease', {
+    terminalSessionId: target.terminalSessionId,
+    attachmentId: target.attachmentId,
+    leaseId: lease.value.id,
+    generation: lease.value.generation,
+  }, operationId());
+  return written;
+}
+
+/**
+ * Stay attached until the operator leaves, then detach — the CLI's half of
+ * "closing a window is detach". A hard kill is covered too: the socket closing
+ * is itself a detach, so no path leaves the count wrong.
+ */
+async function followUntilInterrupted(
+  client: RuntimeClient, terminalSessionId: TerminalSessionId, attachmentId: string,
+): Promise<never> {
+  const leave = async (): Promise<never> => {
+    await client.call('b3.terminal.detach', { terminalSessionId, attachmentId }, operationId());
+    client.close();
+    process.exit(EXIT.success);
+  };
+  process.on('SIGINT', () => { void leave(); });
+  process.on('SIGTERM', () => { void leave(); });
+  await new Promise(() => undefined); // until interrupted
+  throw new Error('unreachable');
+}
+
+/** X-1's member for a verb. `open`/`write`/`read` are outside §17.1's tree and
+ * keep their space form until the ruling on them lands (X-2 reads `write` as a
+ * command the CLI has no business carrying at all). */
+const TERMINAL_COMMANDS: Readonly<Record<string, CliCommand>> = {
+  list: 'terminal.list', inspect: 'terminal.inspect', attach: 'terminal.attach',
+  detach: 'terminal.detach',
+  open: 'terminal open', write: 'terminal write', read: 'terminal read',
+};
+
+async function runCommand(name: string, argFlags: Flags): Promise<never> {
+  // §17.2: a malformed --client-op-id is a usage error, refused before anything
+  // runs — a caller that believes it is retrying safely must not be told a lie.
+  const command = TERMINAL_COMMANDS[name];
+  if (command !== undefined && !mintedOperationId.ok) {
+    return fail(command, argFlags, mintedOperationId.error);
+  }
+  const handler = COMMANDS[name];
+  if (!handler) {
+    return usage('terminal', argFlags, 'list|inspect|open|attach|detach|write|read');
+  }
+  return handler(argFlags);
+}
+
+function renderFrame(frame: TerminalOutputFrame): string {
+  if (frame.kind === 'bytes') return Buffer.from(frame.base64, 'base64').toString('utf8');
+  if (frame.kind === 'gap') {
+    return `\n[output between ${String(frame.requestedAfter ?? 0)} and `
+      + `${frame.earliestAvailable} is no longer buffered]\n`;
+  }
+  return `\n[terminal exited${frame.exitCode === undefined ? '' : ` (code ${frame.exitCode})`}]\n`;
+}
+
+function usage(command: CliCommand, argFlags: Flags, expected: string): never {
+  emit(command, argFlags, b3fail(
+    b3err('ValidationFailed', `usage: nvk-terminal ${verbOf(command)} ${expected}`,
+      { issues: [{ path: 'argv', message: `expected ${expected}` }] }, false),
+  ), () => '');
+}
+
+await runCommand(command, flags);

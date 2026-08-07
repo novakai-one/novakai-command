@@ -25,6 +25,13 @@ const world = snapshotOf({
   'tasks.jsonl': [
     { id: 'task_seed', kind: 'task', ts: TS, title: 'Seed', status: 'todo', updated: TS },
   ],
+  'projects.jsonl': [
+    { id: 'proj_alpha', kind: 'project', ts: TS, title: 'Alpha', status: 'active', path: '~/Programming/alpha' },
+  ],
+  'okrs.jsonl': [
+    { id: 'okr_alpha', kind: 'objective', ts: TS, title: 'Own the quarter', horizon: 'now' },
+    { id: 'kr_alpha', kind: 'kr', ts: TS, objective: 'okr_alpha', body: 'Ship 3 things' },
+  ],
 });
 const index = buildIndex(world);
 const codes = (violations) => violations.map((violation) => violation.code);
@@ -103,9 +110,52 @@ const codes = (violations) => violations.map((violation) => violation.code);
   const neither = { id: 'artifact_c', kind: 'artifact', ts: TS, title: 'Lost', refs: [ref('task', 'task_seed')] };
   assert.ok(codes(validateBlock(neither, { storeFile: 'artifacts.jsonl', index })).includes('FIELD-INVALID'), 'neither path nor url violates');
 
-  const unanchored = { id: 'artifact_d', kind: 'artifact', ts: TS, title: 'Float', path: 'x.md', refs: [ref('log', 'log_x')] };
-  assert.ok(codes(validateBlock(unanchored, { storeFile: 'artifacts.jsonl', index })).includes('RELATION-MISSING'), 'artifact must anchor to mission/task');
+  // Chris, 2026-07-26: an artifact is first-class. Drop a screenshot in and it
+  // exists with no parent; you attach it later, to whatever you like, to as
+  // many things as you like. Nothing owns it.
+  const floating = { id: 'artifact_free', kind: 'artifact', ts: TS, title: 'Loose screenshot', path: 'shots/x.png' };
+  assert.equal(validateBlock(floating, { storeFile: 'artifacts.jsonl', index }).length, 0, 'an artifact with no anchor at all is valid');
+
+  const refsOnly = { id: 'artifact_e', kind: 'artifact', ts: TS, title: 'Float', path: 'x.md', refs: [ref('doc', 'notes.md')] };
+  assert.equal(validateBlock(refsOnly, { storeFile: 'artifacts.jsonl', index }).length, 0, 'a ref that is not an anchor kind does not make an artifact invalid');
+
+  for (const [kind, value] of [
+    ['mission', 'mission_alpha'], ['task', 'task_seed'],
+    ['project', 'proj_alpha'], ['objective', 'okr_alpha'], ['kr', 'kr_alpha'],
+  ]) {
+    const attached = { id: `artifact_on_${kind}`, kind: 'artifact', ts: TS, title: 'Storyboard', path: 'sb.md', refs: [ref(kind, value)] };
+    assert.equal(
+      validateBlock(attached, { storeFile: 'artifacts.jsonl', index }).length, 0,
+      `an artifact attaches to a ${kind}`,
+    );
+  }
+
+  const multi = {
+    id: 'artifact_multi', kind: 'artifact', ts: TS, title: 'Prototype', path: 'proto.html',
+    refs: [ref('project', 'proj_alpha'), ref('task', 'task_seed'), ref('kr', 'kr_alpha')],
+  };
+  assert.equal(validateBlock(multi, { storeFile: 'artifacts.jsonl', index }).length, 0, 'an artifact attaches to several things at once');
   console.log('artifact tests passed');
+}
+
+// --- key result: reaches down to projects AND tasks, 0..many of each ---------
+
+{
+  const toProject = { id: 'kr_p', kind: 'kr', ts: TS, objective: 'okr_alpha', body: 'Ship it', refs: [ref('project', 'proj_alpha')] };
+  assert.equal(validateBlock(toProject, { storeFile: 'okrs.jsonl', index }).length, 0, 'a KR links straight to a project');
+
+  const toTask = { id: 'kr_t', kind: 'kr', ts: TS, objective: 'okr_alpha', body: 'Ship it', refs: [ref('task', 'task_seed')] };
+  assert.equal(validateBlock(toTask, { storeFile: 'okrs.jsonl', index }).length, 0, 'a KR links straight to a task, without a project in between');
+
+  const many = {
+    id: 'kr_many', kind: 'kr', ts: TS, objective: 'okr_alpha', body: 'Ship it',
+    refs: [ref('project', 'proj_alpha'), ref('task', 'task_seed')],
+  };
+  assert.equal(validateBlock(many, { storeFile: 'okrs.jsonl', index }).length, 0, 'a KR links to projects and tasks together');
+
+  const bare = { id: 'kr_bare', kind: 'kr', ts: TS, objective: 'okr_alpha', body: 'Ship it' };
+  assert.equal(validateBlock(bare, { storeFile: 'okrs.jsonl', index }).length, 0, 'a KR with no work linked yet is valid');
+  console.log('key-result link tests passed');
 }
 
 // --- thread: roomId required, exactly one resolvable mission ref -------------

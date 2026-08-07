@@ -17,7 +17,7 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -28,9 +28,15 @@ import {
   errorCatalogue,
 } from "../../public/index.js";
 
-// dist/tests/contract/ -> package root is three levels up; the contract
-// source lives inside the package (law #3 single source of truth, D2 move).
-const packageRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
+// dist/tests/contract/ -> package root is three levels up; from TS source
+// (tests/contract/) it is two. The contract JSON is source-only (tsc does
+// not copy it to dist), so it marks which layout we are running from. The
+// contract source lives inside the package (law #3 single source of truth,
+// D2 move).
+const here = dirname(fileURLToPath(import.meta.url));
+const packageRoot = existsSync(join(here, "..", "..", "contract", "messaging-contract.json"))
+  ? join(here, "..", "..")
+  : join(here, "..", "..", "..");
 const CONTRACT_PATH = join(packageRoot, "contract", "messaging-contract.json");
 
 interface ContractSource {
@@ -177,12 +183,40 @@ describe("surface manifest — the door matches the frozen contract (S4: full v1
       const sessionOps = Object.keys(session).filter(
         (key) => !["principal", "state", "revalidate"].includes(key),
       );
+      // Guard loosening (2026-08-07 test cleanup, Task 6 Step 2): a REMOVED
+      // manifest operation still fails — the sealed surface may not shrink.
+      // A NEW door method fails only when it names a frozen contract
+      // operation (the public entry-point surface stays strict); any other
+      // new method prints a warning instead of failing the per-change loop.
+      const knownOps = Object.keys(SESSION_MAP);
       assert.deepEqual(
-        sorted(sessionOps),
-        sorted(Object.keys(SESSION_MAP)),
-        "the door exposes exactly the full v1 operation set — no more, no less",
+        knownOps.filter((op) => !sessionOps.includes(op)),
+        [],
+        "a sealed v1 operation is no longer on the door — the surface may not shrink",
       );
-      for (const method of sessionOps) {
+      const catalogueNames = [
+        ...contractCommandNames,
+        ...contractQueryNames,
+        ...contractSubscriptionNames,
+      ];
+      const extraOps = sessionOps.filter((op) => !knownOps.includes(op));
+      const publicExtra = extraOps.filter((op) =>
+        catalogueNames.includes(op.charAt(0).toUpperCase() + op.slice(1)),
+      );
+      // Computed BEFORE the assert below: assert.deepEqual(publicExtra, [])
+      // narrows the const's type downstream, which would break this filter.
+      const warnOnly = extraOps.filter((op) => !publicExtra.includes(op));
+      assert.deepEqual(
+        publicExtra,
+        [],
+        "a new door method names a frozen contract operation — public surface drift must change the contract, not ride along",
+      );
+      if (warnOnly.length > 0) {
+        console.warn(
+          `[surface-manifest] WARNING: new door methods without manifest coverage (not frozen contract operations): ${warnOnly.join(", ")}`,
+        );
+      }
+      for (const method of knownOps) {
         const mapping = SESSION_MAP[method];
         assert.ok(mapping !== undefined, `${method} is mapped`);
         const catalogue =

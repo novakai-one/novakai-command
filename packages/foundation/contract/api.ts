@@ -1,0 +1,676 @@
+// §3 Foundation contract functions. Free functions; the engine rides on the
+// scoped handle (composed by composeHandle). Absence is typed data, never a throw.
+import { createHash, randomUUID } from 'node:crypto';
+import { existsSync } from 'node:fs';
+import path from 'node:path';
+import { z } from 'zod';
+import type { CapabilityId, ClientOpId, ObjectId, ObjectKind, ServerOpId } from './brands.js';
+import { Envelope, QuarantineTombstone, Ref } from './schemas.js';
+import type { Envelope as EnvelopeT, QuarantineTombstone as TombstoneT, TraceLine as TraceLineT } from './schemas.js';
+import { err, type StoreError } from './errors.js';
+import {
+  ABSENT, fail, ok, type Absent, type FoundationMutationProvenance, type ListFilter,
+  type Page, type PageOptions, type QuarantineRequestOutcome, type Result,
+  type ScopedStoreHandle, type StoredObject, type TraceFilter,
+} from './types.js';
+import {
+  KIND_FILES, StoreEngine, supportedSchemaVersion,
+} from '../core/store-engine/engine.js';
+import { composeEngine } from './compose.js';
+
+const ENVELOPE_FIELDS = ['kind', 'id', 'schemaVersion', 'createdAt', 'permissionLevel', 'createdBy'] as const;
+
+function engineOf(handle: ScopedStoreHandle): StoreEngine {
+  const engine = handle.__engine as StoreEngine | undefined;
+  if (!engine) throw new Error('handle is not composed — use composeHandle()');
+  engine.boot();
+  return engine;
+}
+
+function principalOf(handle: ScopedStoreHandle): string {
+  return handle.__principal ?? 'sys_ingester';
+}
+
+function scopeCheck(handle: ScopedStoreHandle, kind: string): StoreError | null {
+  if (!(kind in KIND_FILES)) {
+    return err('KindUnknown', `kind "${kind}" is not registered`, { kind, registered: Object.keys(KIND_FILES) }, false);
+  }
+  if (!handle.allowedKinds.has(kind as ObjectKind)) {
+    return err('ScopeViolation',
+      `capability "${handle.capability}" may not write kind "${kind}"`,
+      { capability: handle.capability, kind, allowedKinds: [...handle.allowedKinds] }, false);
+  }
+  return null;
+}
+
+function validateEnvelope(payload: unknown): { flat?: EnvelopeT & Record<string, unknown>; error?: StoreError } {
+  if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) {
+    return {
+      error: err('InvalidEnvelope', 'payload must be a single JSON object',
+        { missingFields: [...ENVELOPE_FIELDS], invalidFields: [] }, false),
+    };
+  }
+  const payloadObject = payload as Record<string, unknown>;
+  const missingFields = ENVELOPE_FIELDS.filter(
+    (fieldName) => !(fieldName in payloadObject)
+      || payloadObject[fieldName] === undefined
+      || payloadObject[fieldName] === null
+      || payloadObject[fieldName] === '',
+  );
+  const parsed = Envelope.safeParse(payloadObject);
+  const invalidFields = parsed.success
+    ? []
+    : parsed.error.issues
+      .filter((issue) => !missingFields.includes(
+        issue.path[0] as typeof ENVELOPE_FIELDS[number],
+      ))
+      .map((issue) => ({ field: issue.path.join('.') || '(root)', reason: issue.message }));
+  if (missingFields.length > 0 || invalidFields.length > 0) {
+    return {
+      error: err('InvalidEnvelope',
+        `envelope rejected: missing [${missingFields.join(', ')}]${invalidFields.length ? `; invalid [${invalidFields.map((issue) => issue.field).join(', ')}]` : ''}`,
+        { missingFields, invalidFields }, false),
+    };
+  }
+  return { flat: payloadObject as EnvelopeT & Record<string, unknown> };
+}
+
+interface PriorOp {
+  opId: ServerOpId;
+  clientOpId: ClientOpId;
+  action: 'create' | 'update';
+  kind: string;
+  id: string;
+  traceComplete: boolean;
+}
+
+/** Dedup lookup (R3-10): clientOpId honored for the object's lifetime. */
+function findPriorOp(engine: StoreEngine, kind: string, clientOpId: ClientOpId): PriorOp | null {
+  const trace = engine.findTraceByClientOpId(clientOpId);
+  if (trace && (trace.action === 'create' || trace.action === 'update')) {
+    return {
+      opId: trace.opId as ServerOpId, clientOpId, action: trace.action,
+      kind: trace.target.kind, id: trace.target.id, traceComplete: true,
+    };
+  }
+  // object line exists but trace missing (incomplete) — retry reconciles
+  const line = engine.findRecordByClientOpId(kind, clientOpId);
+  if (line) {
+    return { opId: line.opId as ServerOpId, clientOpId, action: 'create', kind, id: line.envelope.id, traceComplete: false };
+  }
+  return null;
+}
+
+function readAllRecords(engine: StoreEngine, kind: string) {
+  // all parsed lines, latest per id, via the dual-read shim
+  return [...engine.readLatestEffective(kind).values()];
+}
+
+/**
+ * B3a §4.3: report what Foundation actually knows about the last mutation.
+ * A wrapped record always carries its operation IDs, so the incomplete branch
+ * can never discard them; only a true legacy flat record has none.
+ */
+function provenanceOf(
+  engine: StoreEngine, opId: string, clientOpId: string,
+): FoundationMutationProvenance {
+  if (opId === '') return { state: 'legacy-no-trace' };
+  const trace = engine.findTraceByOpId(opId);
+  if (!trace) {
+    return {
+      state: 'object-appended-trace-missing',
+      serverOpId: opId as ServerOpId,
+      clientOpId: clientOpId as ClientOpId,
+    };
+  }
+  return {
+    state: 'trace-complete',
+    serverOpId: opId as ServerOpId,
+    clientOpId: clientOpId as ClientOpId,
+    traceId: trace.id,
+    committedAt: trace.createdAt,
+  };
+}
+
+function toStoredObject<T>(engine: StoreEngine, recordLine: ReturnType<StoreEngine['readLatestEffective']> extends Map<string, infer R> ? R : never): StoredObject<T> {
+  const flat = { ...recordLine.payload, ...recordLine.envelope } as T & EnvelopeT;
+  const lastMutation = provenanceOf(engine, recordLine.opId, recordLine.clientOpId);
+  const stored: StoredObject<T> = {
+    object: flat,
+    version: recordLine.version,
+    incomplete: lastMutation.state === 'object-appended-trace-missing',
+    lastMutation,
+  };
+  if (recordLine.unsupportedVersion) stored.unsupportedVersion = true;
+  return stored;
+}
+
+/** The public view of a mutation Foundation just committed. */
+function mutationView<T>(
+  engine: StoreEngine,
+  result: { object: Record<string, unknown> & EnvelopeT; version: number; opId: ServerOpId },
+  clientOpId: ClientOpId,
+): StoredObject<T> {
+  const lastMutation = provenanceOf(engine, result.opId, clientOpId);
+  return {
+    object: result.object as T & EnvelopeT,
+    version: result.version,
+    incomplete: lastMutation.state === 'object-appended-trace-missing',
+    lastMutation,
+  };
+}
+
+const DEFAULT_PAGE_LIMIT = 100;
+
+function paginate<T>(items: T[], options?: PageOptions): Page<T> {
+  const offset = options?.cursor ? Number.parseInt(options.cursor, 10) : 0;
+  const limit = options?.limit ?? DEFAULT_PAGE_LIMIT;
+  const slice = items.slice(offset, offset + limit);
+  const next = offset + limit < items.length ? String(offset + limit) : undefined;
+  return next === undefined ? { items: slice } : { items: slice, nextCursor: next };
+}
+
+// ── Mutating ops ────────────────────────────────────────────────────────────
+
+export async function createObject<T>(
+  handle: ScopedStoreHandle,
+  payload: T,
+  clientOpId: ClientOpId,
+): Promise<Result<StoredObject<T>, StoreError>> {
+  const engine = engineOf(handle);
+  const bootFailure = engine.bootError();
+  if (bootFailure) return fail(bootFailure);
+  const { flat, error } = validateEnvelope(payload);
+  if (error) return fail(error);
+  const kind = flat!.kind;
+  const scoped = scopeCheck(handle, kind);
+  if (scoped) return fail(scoped);
+  const supportedVersion = supportedSchemaVersion(kind);
+  if (flat!.schemaVersion > supportedVersion) {
+    return fail(err('KindUnknown',
+      `schemaVersion ${flat!.schemaVersion} is newer than this code supports (${supportedVersion})`,
+      { kind, registered: Object.keys(KIND_FILES) }, false));
+  }
+  // dedup FIRST (R3-10): a retry with the same clientOpId returns the prior
+  // outcome and reconciles a missing trace — even after a restart — instead of
+  // hitting the quarantine gate (S2 ruling).
+  const prior = findPriorOp(engine, kind, clientOpId);
+  if (prior) {
+    if (!prior.traceComplete) {
+      const recordLine = engine.readLatestEffective(kind).get(prior.id);
+      if (recordLine) engine.completeTrace(kind, { ...recordLine.payload, ...recordLine.envelope } as EnvelopeT & Record<string, unknown>, prior.action, prior.opId, clientOpId);
+    }
+    const recordLine = engine.readLatestEffective(kind).get(prior.id);
+    if (recordLine) return ok(toStoredObject<T>(engine, recordLine));
+  }
+  if (engine.isQuarantined(flat!.id)) {
+    const tombstone = engine.readTombstones().find(
+      (candidate) => candidate.quarantinedRef.id === flat!.id && candidate.status === 'open',
+    );
+    return fail(err('Quarantined', `object "${flat!.id}" is quarantined until resolveQuarantine`,
+      { ref: { kind, id: flat!.id }, tombstoneId: tombstone?.id ?? '' }, false));
+  }
+  // red gate 4: createdBy is system-derived from the token principal — always overridden
+  const stamped = { ...flat!, createdBy: principalOf(handle) };
+  // create-CAS runs INSIDE the engine lock (S1): a concurrent create on the
+  // same id loses with CasConflict instead of double-appending.
+  const result = engine.appendMutation(kind, stamped, 'create', clientOpId, 1, undefined, { mustBeAbsent: true });
+  if (!result.ok) return fail(result.error);
+  return ok(mutationView<T>(engine, result.value, clientOpId));
+}
+
+export async function updateObject<T>(
+  handle: ScopedStoreHandle,
+  id: ObjectId,
+  patch: Partial<T>,
+  expectedVersion: number,
+  clientOpId: ClientOpId,
+): Promise<Result<StoredObject<T>, StoreError>> {
+  const engine = engineOf(handle);
+  const bootFailure = engine.bootError();
+  if (bootFailure) return fail(bootFailure);
+  const parsedRef = Ref.safeParse(id && typeof id === 'string'
+    ? { kind: (patch as Record<string, unknown>)?.kind, id } : {});
+  void parsedRef;
+  // locate the object across the handle's allowed kinds (id carries its kind prefix)
+  const allowedKinds = [...handle.allowedKinds];
+  let recordLine: ReturnType<typeof readAllRecords>[number] | undefined;
+  let kind = '';
+  for (const candidateKind of allowedKinds) {
+    const found = engine.readLatestEffective(candidateKind).get(id);
+    if (found) {
+      recordLine = found;
+      kind = candidateKind;
+      break;
+    }
+  }
+  if (!recordLine) {
+    return fail(err('NotFound', `no object with id "${id}"`, { ref: { kind: kind || 'unknown', id } }, false));
+  }
+  const scoped = scopeCheck(handle, kind);
+  if (scoped) return fail(scoped);
+  if (engine.isQuarantined(id)) {
+    const tombstone = engine.readTombstones().find(
+      (candidate) => candidate.quarantinedRef.id === id && candidate.status === 'open',
+    );
+    return fail(err('Quarantined', `object "${id}" is quarantined until resolveQuarantine`,
+      { ref: { kind, id }, tombstoneId: tombstone?.id ?? '' }, false));
+  }
+  const prior = findPriorOp(engine, kind, clientOpId);
+  if (prior) {
+    if (!prior.traceComplete) {
+      engine.completeTrace(kind, { ...recordLine.payload, ...recordLine.envelope } as EnvelopeT & Record<string, unknown>, prior.action, prior.opId, clientOpId);
+    }
+    const current = engine.readLatestEffective(kind).get(id);
+    if (current) return ok(toStoredObject<T>(engine, current));
+  }
+  // merge: envelope identity fields are immutable; createdBy/createdAt preserved from creation
+  const currentFlat = { ...recordLine.payload, ...recordLine.envelope } as Record<string, unknown>;
+  const patchObj = { ...(patch as Record<string, unknown>) };
+  for (const fieldName of ENVELOPE_FIELDS) delete patchObj[fieldName];
+  const merged = { ...currentFlat, ...patchObj, schemaVersion: currentFlat.schemaVersion };
+  // CAS compare runs INSIDE the engine lock (S1): a concurrent updater at the
+  // same expectedVersion loses with CasConflict; the next version derives from
+  // the authoritative locked read.
+  const result = engine.appendMutation(kind, merged as EnvelopeT & Record<string, unknown>, 'update', clientOpId, recordLine.version + 1, undefined, { expectedVersion });
+  if (!result.ok) return fail(result.error);
+  return ok(mutationView<T>(engine, result.value, clientOpId));
+}
+
+// ── Queries ─────────────────────────────────────────────────────────────────
+
+function readObject<T>(
+  engine: StoreEngine,
+  kind: ObjectKind,
+  id: ObjectId,
+): StoredObject<T> | Absent {
+  if (!(kind in KIND_FILES)) return ABSENT({ kind, id });
+  if (engine.isQuarantined(id)) return ABSENT({ kind, id });
+  const recordLine = engine.readLatestEffective(kind).get(id);
+  return recordLine ? toStoredObject<T>(engine, recordLine) : ABSENT({ kind, id });
+}
+
+export async function getObject<T>(
+  handle: ScopedStoreHandle, kind: ObjectKind, id: ObjectId,
+): Promise<Result<StoredObject<T> | Absent, never>> {
+  const engine = engineOf(handle);
+  return ok(readObject<T>(engine, kind, id));
+}
+
+/**
+ * Failure-aware object lookup for capability contracts whose read interface
+ * promises typed Foundation failures. Existing absence-only consumers retain
+ * getObject; opt-in consumers use this explicitly named seam.
+ */
+export async function getObjectWithReadFailure<T>(
+  handle: ScopedStoreHandle,
+  kind: ObjectKind,
+  id: ObjectId,
+): Promise<Result<StoredObject<T> | Absent, StoreError>> {
+  const engine = engineOf(handle);
+  const bootFailure = engine.bootError();
+  if (bootFailure) return fail(bootFailure);
+  return ok(readObject<T>(engine, kind, id));
+}
+
+/**
+ * Looks up the durable result of a prior mutation without re-evaluating the
+ * caller's current mutable preconditions. Capability contracts use this seam
+ * to honor Foundation idempotency before lifecycle gates.
+ */
+export async function getObjectByClientOpId<T>(
+  handle: ScopedStoreHandle,
+  kind: ObjectKind,
+  clientOpId: ClientOpId,
+): Promise<Result<StoredObject<T> | null, StoreError>> {
+  const engine = engineOf(handle);
+  const bootFailure = engine.bootError();
+  if (bootFailure) return fail(bootFailure);
+  if (!(kind in KIND_FILES)) {
+    return fail(err(
+      'KindUnknown',
+      `kind "${kind}" is not registered`,
+      { kind, registered: Object.keys(KIND_FILES) },
+      false,
+    ));
+  }
+  const prior = findPriorOp(engine, kind, clientOpId);
+  if (!prior || prior.kind !== kind) return ok(null);
+  const record = engine.readLatestEffective(kind).get(prior.id);
+  return ok(record ? toStoredObject<T>(engine, record) : null);
+}
+
+export async function listObjects<T>(
+  handle: ScopedStoreHandle, kind: ObjectKind, filter?: ListFilter, page?: PageOptions,
+): Promise<Result<Page<StoredObject<T>>, StoreError>> {
+  const engine = engineOf(handle);
+  const bootFailure = engine.bootError();
+  if (bootFailure) return fail(bootFailure);
+  if (!(kind in KIND_FILES)) {
+    return fail(err('KindUnknown', `kind "${kind}" is not registered`, { kind, registered: Object.keys(KIND_FILES) }, false));
+  }
+  if (filter !== undefined && (filter === null || typeof filter !== 'object' || Array.isArray(filter))) {
+    return fail(err('FilterInvalid', 'filter must be a plain object of field equality checks', { filter, reason: 'not an object' }, false));
+  }
+  const skipped = engine.quarantinedIds();
+  let items = readAllRecords(engine, kind)
+    .filter((recordLine) => !skipped.has(recordLine.envelope.id))
+    .map((recordLine) => toStoredObject<T>(engine, recordLine));
+  if (filter) {
+    for (const [field, value] of Object.entries(filter)) {
+      items = items.filter(
+        (storedObject) => (storedObject.object as Record<string, unknown>)[field] === value,
+      );
+    }
+  }
+  items.sort((left, right) => left.object.createdAt.localeCompare(right.object.createdAt));
+  return ok(paginate(items, page));
+}
+
+export async function resolveRef<T>(
+  handle: ScopedStoreHandle, ref: z.infer<typeof Ref>,
+): Promise<Result<StoredObject<T> | Absent, never>> {
+  return getObject<T>(handle, ref.kind as ObjectKind, ref.id as ObjectId);
+}
+
+// ── Trace (FND-005; read-only — NO update/delete API exists) ────────────────
+
+/** Bound variant — the CLI and in-process consumers pass their composed engine. */
+export async function queryTraceBound(engine: StoreEngine, filter: TraceFilter, page?: PageOptions): Promise<Page<TraceLineT>> {
+  engine.boot();
+  let items = engine.readTraces();
+  if (filter.opId) items = items.filter((trace) => trace.opId === filter.opId);
+  if (filter.clientOpId) {
+    items = items.filter((trace) => trace.clientOpId === filter.clientOpId);
+  }
+  if (filter.target) {
+    items = items.filter((trace) => trace.target.kind === filter.target!.kind
+      && trace.target.id === filter.target!.id);
+  }
+  if (filter.since) items = items.filter((trace) => trace.createdAt >= filter.since!);
+  items.sort((left, right) => left.seq - right.seq);
+  return paginate(items, page);
+}
+
+export async function queryTrace(filter: TraceFilter, page?: PageOptions): Promise<Page<TraceLineT>> {
+  // §3 signature is handle-free; defaults to the ambient root (NOVAKAI_ROOT or ./.novakai).
+  return queryTraceBound(defaultEngine(), filter, page);
+}
+
+// ── Quarantine (R3-4/R3-11) ─────────────────────────────────────────────────
+
+/**
+ * Requests a corrupt-record tombstone without granting the caller ordinary
+ * quarantine write scope. The target kind must already be in the caller's
+ * scoped handle; Foundation constructs and persists the authoritative record.
+ */
+export async function requestQuarantine(
+  handle: ScopedStoreHandle,
+  input: {
+    target: z.infer<typeof Ref>;
+    clientOpId: ClientOpId;
+    /**
+     * The requester's trace correlation (§4.4 trusted context, never request
+     * JSON). Callers holding a `CommandContext` pass `ctx.traceId`; the B2
+     * ingest path has no context, so Foundation mints the correlation rather
+     * than writing a half-provenance (Q10: `requestedBy` is REQUIRED on every
+     * new request-path write).
+     */
+    traceId?: string;
+  },
+): Promise<Result<QuarantineRequestOutcome, StoreError>> {
+  const engine = engineOf(handle);
+  const bootFailure = engine.bootError();
+  if (bootFailure) return fail(bootFailure);
+  const parsedTarget = Ref.safeParse(input.target);
+  if (!parsedTarget.success) {
+    return fail(err(
+      'InvalidEnvelope',
+      'quarantine target rejected',
+      {
+        missingFields: [],
+        invalidFields: parsedTarget.error.issues.map((issue) => ({
+          field: issue.path.join('.') || '(root)',
+          reason: issue.message,
+        })),
+      },
+      false,
+    ));
+  }
+  const scoped = scopeCheck(handle, parsedTarget.data.kind);
+  if (scoped) return fail(scoped);
+  const digest = createHash('sha256')
+    .update(`quarantine-request:${input.clientOpId}`)
+    .digest('hex');
+  // Q10: derived from the authenticated handle and the caller's context —
+  // never from anything a request body could carry.
+  return engine.requestQuarantine({
+    tombstoneId: `quarantine_${digest}`,
+    target: parsedTarget.data,
+    actor: principalOf(handle),
+    clientOpId: input.clientOpId,
+    requestedBy: {
+      capability: String(handle.capability),
+      principalId: principalOf(handle),
+      clientOpId: String(input.clientOpId),
+      traceId: input.traceId ?? `trace_${randomUUID()}`,
+    },
+  });
+}
+
+/** Bound variant. */
+export async function listQuarantineBound(engine: StoreEngine, page?: PageOptions): Promise<Page<TombstoneT>> {
+  engine.boot();
+  const items = engine.readTombstones();
+  return paginate(items, page);
+}
+
+export async function listQuarantine(page?: PageOptions): Promise<Page<TombstoneT>> {
+  return listQuarantineBound(defaultEngine(), page);
+}
+
+export async function resolveQuarantine(
+  handle: ScopedStoreHandle,
+  id: ObjectId,
+  resolution: 'reconcile' | 'dismiss',
+  clientOpId: ClientOpId,
+): Promise<Result<TombstoneT, StoreError>> {
+  const engine = engineOf(handle);
+  const bootFailure = engine.bootError();
+  if (bootFailure) return fail(bootFailure);
+  const scoped = scopeCheck(handle, 'quarantine');
+  if (scoped) return fail(scoped);
+  const tombstone = engine.readTombstones().find((t) => t.id === id);
+  if (!tombstone) {
+    return fail(err('NotFound', `no tombstone with id "${id}"`, { ref: { kind: 'quarantine', id } }, false));
+  }
+  const actor = principalOf(handle);
+  let reconcile: { kind: string; flat: EnvelopeT & Record<string, unknown>; opId: ServerOpId; clientOpId: ClientOpId } | undefined;
+  if (resolution === 'reconcile') {
+    // re-stamp the trace for the orphaned object if it still exists
+    const ref = tombstone.quarantinedRef;
+    if (ref.kind in KIND_FILES) {
+      const rec = engine.readLatestEffective(ref.kind).get(ref.id);
+      if (rec && rec.opId) {
+        reconcile = {
+          kind: ref.kind,
+          flat: { ...rec.payload, ...rec.envelope } as EnvelopeT & Record<string, unknown>,
+          opId: rec.opId as ServerOpId,
+          clientOpId: (rec.clientOpId || `op_${crypto.randomUUID()}`) as ClientOpId,
+        };
+      }
+    }
+  }
+  const version = countTombstoneLines(engine, id) + 1;
+  const next: TombstoneT = QuarantineTombstone.parse({
+    ...tombstone,
+    status: resolution === 'reconcile' ? 'resolved' : 'dismissed',
+    resolution,
+    resolvedAt: new Date().toISOString(),
+    resolvedBy: actor,
+  });
+  // M1: reconcile-trace + tombstone + lifecycle trace commit in ONE lock hold
+  const res = engine.resolveQuarantine({ next, version, actor, clientOpId, ...(reconcile ? { reconcile } : {}) });
+  if (!res.ok) return fail(res.error);
+  return ok(res.value);
+}
+
+function countTombstoneLines(engine: StoreEngine, id: string): number {
+  // version = number of appended lines for this tombstone id so far
+  const rec = engine.readLatestEffective('quarantine').get(id);
+  return rec?.version ?? 0;
+}
+
+// ── Named system actions (S2a; S2-pass1 §22 ruling 3) ───────────────────────
+
+/**
+ * Append a system.action trace line (hook_log / context.inject / hook_error)
+ * through the caller's scoped handle. createdBy derives from the handle
+ * principal (red gate 4); the journal stays append-only (red gate 5).
+ */
+export async function recordSystemAction(
+  handle: ScopedStoreHandle,
+  input: {
+    action: 'hook_log' | 'context.inject' | 'hook_error' | 'session.terminate'
+      | 'artifact.orphan.sweep';
+    target: z.infer<typeof Ref>;
+    clientOpId: ClientOpId;
+    meta?: Record<string, unknown>;
+  },
+): Promise<Result<null, StoreError>> {
+  const engine = engineOf(handle);
+  const bootFailure = engine.bootError();
+  if (bootFailure) return fail(bootFailure);
+  const res = engine.appendSystemActionTrace(
+    input.action, input.target, principalOf(handle), input.clientOpId, input.meta);
+  if (!res.ok) return fail(res.error);
+  return ok(null);
+}
+
+// ── default engine for handle-free reads (CLI composes explicitly) ─────────
+let sharedDefault: StoreEngine | null = null;
+export function defaultEngine(): StoreEngine {
+  if (!sharedDefault) {
+    sharedDefault = new StoreEngine({ root: process.env.NOVAKAI_ROOT ?? '.novakai' });
+  }
+  return sharedDefault;
+}
+/** @internal tests: reset the shared default engine. */
+export function __resetDefaultEngine(): void { sharedDefault = null; }
+
+// ── §18.1 store-route cutover: the Foundation bootstrap ────────────────────
+
+export interface BootstrapCutoverRecord {
+  readonly kind: string;
+  readonly payload: unknown;
+  readonly clientOpId: ClientOpId;
+}
+
+export interface BootstrapCutoverInput {
+  /** `.novakai/` root — the same global lock every mutation uses. */
+  readonly root: string;
+  readonly dataRoot?: string;
+  readonly lockTimeoutMs?: number;
+  /**
+   * §18.1 step 4 — the kinds to byte-copy from a legacy root, whole, inside the
+   * same fence as the converted records. Absent when there is nothing to copy
+   * (a root with only the custom Messaging journal to convert).
+   */
+  readonly copy?: {
+    readonly legacyRoot: string;
+    readonly kinds: readonly string[];
+  };
+  /** The converted operations, in the order they must be replayed. */
+  readonly records: readonly BootstrapCutoverRecord[];
+  /** The `storeRouteCutover` receipt this migration is sealed with. */
+  readonly receipt: BootstrapCutoverRecord;
+}
+
+/**
+ * Run one offline store-route cutover — §18.1 steps 5–7, AMD-001 A-01.
+ *
+ * `storeRouteCutover` is Foundation-bootstrap-only, which is why this is a
+ * Foundation function rather than a handle a capability can hold. A capability
+ * that could obtain that kind could write itself a receipt saying its own
+ * migration succeeded, and canonical dispatch waits on exactly that receipt.
+ * The shipped Messaging cutover granted itself the kind and did precisely this
+ * — while `b3a-registry.test.ts` proved the same handle is refused.
+ *
+ * Everything happens inside ONE lock hold, with the §18.1 fsync choreography:
+ * receipt and trace files durably prepared before either append, file-data
+ * fsync on every append, and a directory barrier after each of the two receipt
+ * appends. `traceComplete` is read back from the trace journal and then written
+ * to disk, so the value dispatch gates on survives this process.
+ */
+export async function bootstrapStoreRouteCutover(
+  input: BootstrapCutoverInput,
+): Promise<Result<{ readonly traceComplete: boolean }, StoreError>> {
+  const engine = composeEngine({
+    root: input.root,
+    ...(input.dataRoot === undefined ? {} : { dataRoot: input.dataRoot }),
+    ...(input.lockTimeoutMs === undefined ? {} : { lockTimeoutMs: input.lockTimeoutMs }),
+    capability: 'foundation' as CapabilityId,
+    allowedKinds: [],
+    principal: 'sys_foundation',
+  });
+  const bootFailure = engine.bootError();
+  if (bootFailure) return fail(bootFailure);
+
+  const prepared: {
+    kind: string; flat: EnvelopeT & Record<string, unknown>; clientOpId: ClientOpId;
+  }[] = [];
+  for (const record of [...input.records, input.receipt]) {
+    const { flat, error } = validateEnvelope(record.payload);
+    if (error) return fail(error);
+    if (!(record.kind in KIND_FILES)) {
+      return fail(err('KindUnknown', `kind "${record.kind}" is not registered`,
+        { kind: record.kind, registered: Object.keys(KIND_FILES) }, false));
+    }
+    // Bootstrap derives `createdBy` the same way every other write does: from
+    // the principal, never from the caller's payload (red gate 4).
+    prepared.push({
+      kind: record.kind,
+      flat: { ...flat!, createdBy: 'sys_foundation' },
+      clientOpId: record.clientOpId,
+    });
+  }
+  const receipt = prepared.pop()!;
+
+  const result = engine.bootstrapStoreRouteCutover({
+    ...(input.copy === undefined ? {} : { copy: input.copy }),
+    records: prepared,
+    receipt,
+  });
+  if (!result.ok) return fail(result.error);
+  return ok({
+    traceComplete: result.value.traceComplete,
+    copiedKinds: result.value.copiedKinds,
+  });
+}
+
+/**
+ * Which registered kinds a legacy root still owns — §18.1 steps 3 and 4, and
+ * the conflict rule that guards them.
+ *
+ * `migratable` is every kind whose legacy file exists and whose canonical
+ * target does not: exactly step 4's condition. `conflicting` is every kind
+ * where BOTH exist, which §18.1's last paragraph turns into a blocked boot —
+ * Foundation's new-root-first fallback would otherwise read the canonical file
+ * and never mention that the legacy one may hold newer truth.
+ *
+ * A pure read. It opens no handle and takes no lock, because it runs before
+ * either is allowed to exist.
+ */
+export function surveyStoreRoute(input: {
+  readonly dataRoot: string;
+  readonly legacyRoot: string;
+}): { readonly migratable: readonly string[]; readonly conflicting: readonly string[] } {
+  const migratable: string[] = [];
+  const conflicting: string[] = [];
+  for (const [kind, file] of Object.entries(KIND_FILES)) {
+    if (!existsSync(path.join(input.legacyRoot, file))) continue;
+    if (existsSync(path.join(input.dataRoot, file))) conflicting.push(kind);
+    else migratable.push(kind);
+  }
+  return { migratable, conflicting };
+}

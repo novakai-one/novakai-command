@@ -1,0 +1,22 @@
+{
+  "name": "@novakai/agent-runtime",
+  "version": "0.1.0",
+  "description": "Novakai Agent Runtime (B3a: runtime-host slice only) — the OS single-instance lease, the durable RuntimeEpoch fence, and honest boot recovery. Agent Runs arrive in B3b.",
+  "type": "module",
+  "private": true,
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run typecheck && tsx --test \"tests/**/*.test.ts\"",
+    "test:fast": "node ../../tools/test-fast.mjs ."
+  },
+  "license": "UNLICENSED",
+  "dependencies": {
+    "@novakai/foundation": "file:../foundation"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.9",
+    "tsx": "^4.15.7",
+    "typescript": "^5.5.2"
+  }
+}

@@ -20,12 +20,18 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
-// dist/tests/architecture/ -> package root is three levels up.
-const packageRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
+// dist/tests/architecture/ -> package root is three levels up; from TS
+// source (tests/architecture/) it is two. The contract JSON is source-only
+// (tsc does not copy it to dist), so it marks which layout we are running
+// from.
+const here = dirname(fileURLToPath(import.meta.url));
+const packageRoot = existsSync(join(here, "..", "..", "contract", "messaging-contract.json"))
+  ? join(here, "..", "..")
+  : join(here, "..", "..", "..");
 const distRoot = join(packageRoot, "dist");
 const testsSourceRoot = join(packageRoot, "tests");
 

@@ -1,0 +1,93 @@
+/* Notification inbox — the attention surface, and therefore the calmest one.
+   Grayscale + spacing + weight carry everything; no accent token appears here
+   at all (the composed viewport owns its single signal, SHL-010). */
+
+.nv-inbox__scroll {
+  flex: 1;
+}
+
+.nv-inbox {
+  gap: 14px;
+  padding: 12px 14px;
+}
+
+.nv-inbox__rows {
+  gap: 0;
+}
+
+/* The one exception. Separated by air and a hairline, not by colour — the row
+   reads as raised out of the list rather than shouted over it. */
+.nv-inbox__row--attention {
+  border-left: 2px solid var(--ink-muted, #a2a2aa);
+  background: var(--panel-2, #1b1b1e);
+}
+
+.nv-inbox__row--attention .k-presence {
+  margin-right: 8px;
+}
+
+/* Finished rows stay in place and stop competing. Calm = slow: the release of
+   the mark is a settle, not a flick. */
+.nv-inbox__row {
+  transition: opacity 700ms ease, background 700ms ease, border-color 700ms ease;
+  border-left: 2px solid transparent;
+  gap: 1px;
+  padding-bottom: 6px;
+}
+
+.nv-inbox__row--settled {
+  opacity: 0.55;
+}
+
+/* A row that cannot be settled must not LOOK settleable. The kit's row is a
+   button everywhere, so a notification nobody can act on would otherwise
+   light up under the pointer and read as an affordance that isn't there.
+
+   Keyed on `--settleable`, NOT on `--attention`: since B2.5 the two are no
+   longer the same set. A `queued` human escalation IS the marked row and still
+   has nothing to press, and a rule keyed on the mark would have drawn that row
+   as a live button the capability refuses.
+   Keyboard focus is left alone — :focus-visible still draws its ring. */
+.nv-inbox__row:not(.nv-inbox__row--settleable) .k-row {
+  cursor: default;
+}
+
+.nv-inbox__row:not(.nv-inbox__row--settleable) .k-row:hover {
+  background: transparent;
+  color: var(--ink-2);
+}
+
+/* Why the notification exists: rule, condition generation, evidence. Quiet —
+   it is the justification, not the message. */
+.nv-inbox__provenance {
+  color: var(--ink-faint, #8b8b94);
+  font-size: 11px;
+  margin: 0;
+  padding-left: 10px;
+}
+
+/* The exception's exception: Supervision is asking a HUMAN to intervene. Full
+   ink, its own line, and the only sentence on this screen — nothing else here
+   competes with it, and nothing else here is allowed to become one. */
+.nv-inbox__escalation {
+  color: var(--ink, #ececee);
+  font-size: 11px;
+  margin: 0;
+  padding-left: 10px;
+}
+
+.nv-inbox__row[data-phase='drift-human-escalation'] {
+  /* Vertical only, NEVER the `padding` shorthand — the shorthand would reset
+     the left padding this row shares with the list and pull the one row that
+     matters out of the left edge. B2.4 shipped exactly that bug once, and no
+     DOM assertion could see it. */
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+
+/* What the answer could not show, said quietly and always last. */
+.nv-inbox__gap {
+  color: var(--ink-muted, #a2a2aa);
+  font-size: 11px;
+  margin: 0;
+}

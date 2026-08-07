@@ -53,20 +53,17 @@
 
 import { constants } from "../public/contract/index.js";
 import { MessagingError } from "../public/contract/index.js";
-import type {
-  DeliveryUpdatedEvent,
-  MessageCommittedEvent,
-  PolicyChangedEvent,
-  Sequence,
-} from "../public/contract/index.js";
+import type { Sequence } from "../public/contract/index.js";
 import type { MessagingStore } from "../seams/store.js";
+import { projectJournalEntry } from "./journalProjection.js";
+import type { CommittedFact } from "./journalProjection.js";
 import { storeDependencyError } from "./storeErrors.js";
 
-/** One committed-fact event, journal-sourced, carrying its global sequence. */
-export type CommittedFact =
-  | { kind: "MessageCommitted"; event: MessageCommittedEvent }
-  | { kind: "DeliveryUpdated"; event: DeliveryUpdatedEvent }
-  | { kind: "PolicyChanged"; event: PolicyChangedEvent };
+/**
+ * Re-exported from the projection that produces it, so consumers keep the
+ * import they have always used while the dependency runs one way only.
+ */
+export type { CommittedFact } from "./journalProjection.js";
 
 export type EventBusFactListener = (fact: CommittedFact) => Promise<void>;
 /** Journal/store failure mid-tail (R1: subscriptions end dependency-lost). */
@@ -116,25 +113,13 @@ export function createEventBus(store: MessagingStore, options?: EventBusOptions)
         return;
       }
       for (const entry of page.value) {
-        // TemplateWritten is skipped here — no public event exists for it.
-        if (entry.kind === "TemplateWritten") {
+        // Entries with no v1 public event (TemplateWritten; the B3c
+        // endpoint/inbox facts) advance the position and produce nothing.
+        const fact = projectJournalEntry(entry);
+        if (fact === null) {
           position = entry.sequence;
           continue;
         }
-        const fact: CommittedFact =
-          entry.kind === "MessageCommitted"
-            ? { kind: "MessageCommitted", event: { sequence: entry.sequence, message: entry.message } }
-            : entry.kind === "DeliveryUpdated"
-              ? { kind: "DeliveryUpdated", event: { sequence: entry.sequence, delivery: entry.delivery } }
-              : {
-                  kind: "PolicyChanged",
-                  event: {
-                    sequence: entry.sequence,
-                    personId: entry.personId,
-                    policy: entry.policy,
-                    revision: entry.revision,
-                  },
-                };
         for (const listener of factListeners) {
           try {
             await listener(fact);

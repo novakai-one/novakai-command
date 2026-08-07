@@ -1,0 +1,259 @@
+// The browser client for b3.terminal.* / b3.runtime.* over nvk-ws v1.
+//
+// Same origin, same frame, same token as everything else the shell speaks. The
+// page is a controller: it can attach, type and leave. It cannot stop anything.
+import {
+  SHELL_INSTANCE_ID, toTabView,
+  type TerminalAttachment, type TerminalFrame, type TerminalOutcome,
+  type TerminalServices, type TerminalTabView,
+} from '../contract/terminalServices.js';
+import { UNFINISHED_TERMINAL_SESSION_STATUSES } from '../../terminal/contract/records.js';
+import { openOperationKey } from '../contract/terminalOpen.js';
+import { fetchBootstrap, type BootstrapDocument } from './serverClient.js';
+
+const PROTOCOL_VERSION = 1;
+/** A5-05's ceiling. The tab strip shows every open shell, so it asks for all it may. */
+const TERMINAL_PAGE_LIMIT = 200;
+/** `op_<uuidv4>` — Foundation's existing ClientOpId shape, carried forward (§4.1). */
+function mintClientOpId(): string {
+  return `op_${crypto.randomUUID()}`;
+}
+
+/** The nvk-ws v1 socket-frame version key. Named because it is one letter. */
+const VERSION_FIELD = 'v';
+
+interface Pending {
+  resolve(value: unknown): void;
+  reject(cause: Error): void;
+}
+
+interface WireResult {
+  ok: boolean;
+  value?: unknown;
+  error?: { code: string; message: string };
+}
+
+function outcomeOf<Value>(payload: unknown): TerminalOutcome<Value> {
+  const result = payload as WireResult | undefined;
+  if (!result || typeof result.ok !== 'boolean') {
+    return { succeeded: false, code: 'RuntimeUnavailable', message: 'the Runtime returned nothing' };
+  }
+  if (result.ok) return { succeeded: true, value: result.value as Value };
+  return {
+    succeeded: false,
+    code: result.error?.code ?? 'RuntimeUnavailable',
+    message: result.error?.message ?? 'the Runtime refused',
+  };
+}
+
+export interface TerminalConnection extends TerminalServices {
+  /** Live output frames, pushed as ordinary v1 event frames. */
+  onOutput(listener: (sessionId: string, frame: TerminalFrame) => void): void;
+  close(): void;
+}
+
+export async function connectTerminalServices(
+  bootstrap?: BootstrapDocument,
+): Promise<TerminalConnection> {
+  const document_ = bootstrap ?? await fetchBootstrap();
+  const socket = new WebSocket(`${document_.wsUrl}?token=${encodeURIComponent(document_.token)}`);
+  const pending = new Map<number, Pending>();
+  const outputListeners: ((sessionId: string, frame: TerminalFrame) => void)[] = [];
+  /** The open operation this connection owns, per directory AND size. */
+  const openIds = new Map<string, string>();
+  let nextId = 1;
+
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('the Runtime did not answer')), 5000);
+    socket.onopen = () => {
+      clearTimeout(timer);
+      resolve();
+    };
+    socket.onerror = () => {
+      clearTimeout(timer);
+      reject(new Error('the Runtime is not reachable'));
+    };
+  });
+
+  socket.onmessage = (event) => {
+    const frame = JSON.parse(String(event.data)) as {
+      type?: string; name?: string; data?: unknown; id?: number; result?: unknown;
+    };
+    if (frame.type === 'event' && frame.name === 'b3.terminal.output') {
+      const payload = frame.data as {
+        terminalSessionId: string;
+        frame: { kind: TerminalFrame['kind']; base64?: string; sequence?: number };
+      };
+      const decoded: TerminalFrame = {
+        kind: payload.frame.kind,
+        text: payload.frame.base64 === undefined ? '' : decodeBase64(payload.frame.base64),
+        ...(payload.frame.sequence === undefined ? {} : { sequence: payload.frame.sequence }),
+      };
+      for (const listener of outputListeners) listener(payload.terminalSessionId, decoded);
+      return;
+    }
+    if (typeof frame.id !== 'number') return;
+    const waiting = pending.get(frame.id);
+    if (!waiting) return;
+    pending.delete(frame.id);
+    waiting.resolve(frame.result);
+  };
+
+  /**
+   * §3.2: the CALLER mints the operation id. Minting it server-side would make
+   * every request a brand-new command, which is what put the whole durable
+   * receipt layer out of reach. `clientOpId` is passed in when a retry must
+   * resume the same operation rather than start another one.
+   */
+  function call<Value>(
+    method: string, payload: unknown, clientOpId: string = mintClientOpId(),
+  ): Promise<TerminalOutcome<Value>> {
+    const id = nextId;
+    nextId += 1;
+    return new Promise<TerminalOutcome<Value>>((resolve) => {
+      pending.set(id, {
+        resolve: (answer) => resolve(outcomeOf<Value>(answer)),
+        reject: () => undefined,
+      });
+      socket.send(JSON.stringify({
+        id, method, [VERSION_FIELD]: PROTOCOL_VERSION,
+        params: { contractVersion: 1, clientOpId, payload },
+      }));
+    });
+  }
+
+  const tabViewOf = toTabView;
+
+  /**
+   * Where the Runtime says the input stream is, right now. Asked AFTER the
+   * lease is held: from that instant nobody else can move the stream, so the
+   * answer is still true when this window types (NVK-KIMI-025 repair 1).
+   */
+  async function streamPosition(terminalSessionId: string): Promise<number> {
+    const inspected = await call<unknown>('b3.terminal.inspect', { terminalSessionId });
+    if (!inspected.succeeded) return 1;
+    return tabViewOf(inspected.value).nextInputSequence;
+  }
+
+  return {
+    onOutput(listener) { outputListeners.push(listener); },
+    close() { socket.close(); },
+
+    async listTerminals() {
+      // A5-05: the method answers a `Page`, and its filter is a set of the
+      // owner's own statuses. The page window is imported rather than spelled
+      // here — a window this client invented would be a second answer to a
+      // question Terminal already answers (CL-P).
+      const listed = await call<{ items: unknown[] }>('b3.terminal.list', {
+        status: UNFINISHED_TERMINAL_SESSION_STATUSES, limit: TERMINAL_PAGE_LIMIT,
+      });
+      if (!listed.succeeded) return listed;
+      return { succeeded: true, value: listed.value.items.map(tabViewOf) };
+    },
+
+    async openTerminal(workingDirectory, columns, rows) {
+      // One id per QUESTION for the life of this connection: a tab that remounts
+      // asks the same question and gets the same shell back, instead of leaving
+      // a second one running behind it. The size is part of the question — the
+      // pty is opened at it — so a differently-sized open is a different
+      // operation, not the same one asked again (contract/terminalOpen.ts).
+      const question = openOperationKey(workingDirectory, columns, rows);
+      const opening = openIds.get(question) ?? mintClientOpId();
+      openIds.set(question, opening);
+      const opened = await call<{ id: string }>('b3.terminal.open', {
+        owner: { kind: 'plain-shell', shellInstanceId: SHELL_INSTANCE_ID },
+        launchAuthorityRef: 'plain-shell',
+        launchFingerprint: `plain-shell:${workingDirectory}`,
+        workingDirectory, columns, rows,
+      }, opening);
+      if (!opened.succeeded) return opened;
+      const inspected = await call<unknown>('b3.terminal.inspect', {
+        terminalSessionId: opened.value.id,
+      });
+      if (!inspected.succeeded) return inspected;
+      return { succeeded: true, value: tabViewOf(inspected.value) };
+    },
+
+    async attach(terminalSessionId, columns, rows) {
+      const attached = await call<{ id: string }>('b3.terminal.attach', {
+        terminalSessionId, controllerKind: 'novakai-shell', columns, rows,
+      });
+      if (!attached.succeeded) return attached;
+      const lease = await call<{ id: string; generation: number }>('b3.terminal.acquireLease', {
+        terminalSessionId, attachmentId: attached.value.id,
+        mode: 'acquire-if-free', ttlMs: 300_000,
+      });
+      if (!lease.succeeded) {
+        // Someone else is typing. That is a legitimate state, not a failure to
+        // attach: this window watches, and says so.
+        return {
+          succeeded: true,
+          value: {
+            attachmentId: attached.value.id, leaseId: '', leaseGeneration: 0,
+            nextInputSequence: 1,
+          },
+        };
+      }
+      return {
+        succeeded: true,
+        value: {
+          attachmentId: attached.value.id,
+          leaseId: lease.value.id,
+          leaseGeneration: lease.value.generation,
+          nextInputSequence: await streamPosition(terminalSessionId),
+        },
+      };
+    },
+
+    async detach(terminalSessionId, attachmentId) {
+      const detached = await call<unknown>('b3.terminal.detach', { terminalSessionId, attachmentId });
+      return detached.succeeded ? { succeeded: true, value: null } : detached;
+    },
+
+    async write(terminalSessionId, attachment, text, sequence) {
+      return call<{ inputSequence: number }>('b3.terminal.write', {
+        terminalSessionId,
+        attachmentId: attachment.attachmentId,
+        inputLeaseId: attachment.leaseId,
+        leaseGeneration: attachment.leaseGeneration,
+        expectedNextInputSequence: sequence,
+        kindOfInput: 'text',
+        utf8Text: text,
+      });
+    },
+
+    async resize(terminalSessionId, attachmentId, columns, rows) {
+      const resized = await call<unknown>('b3.terminal.resize', {
+        terminalSessionId, attachmentId, columns, rows,
+      });
+      if (!resized.succeeded) return resized;
+      return { succeeded: true, value: tabViewOf(resized.value) };
+    },
+
+    async readReplay(terminalSessionId, afterOutputSequence) {
+      const read = await call<{ kind: string; base64?: string; sequence?: number }[]>(
+        'b3.terminal.read', { terminalSessionId, afterOutputSequence },
+      );
+      if (!read.succeeded) return read;
+      return {
+        succeeded: true,
+        value: read.value.map((frame) => ({
+          kind: frame.kind as TerminalFrame['kind'],
+          text: frame.base64 === undefined ? '' : decodeBase64(frame.base64),
+          ...(frame.sequence === undefined ? {} : { sequence: frame.sequence }),
+        })),
+      };
+    },
+
+    async runtimeStatus() {
+      return call('b3.runtime.getStatus', {});
+    },
+  };
+}
+
+function decodeBase64(base64: string): string {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return new TextDecoder().decode(bytes);
+}

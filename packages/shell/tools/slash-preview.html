@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en" data-theme="dark" data-density="comfortable">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Slash continuity — FIXTURE DATA</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+    <style>
+      html, body { background: #0d0d0f; margin: 0; }
+      /* Stamped into every screenshot taken from this page, on purpose. */
+      #fixture-banner {
+        font: 500 11px/1.6 Inter, system-ui, sans-serif;
+        color: #0d0d0f; background: #d0a14b;
+        padding: 5px 14px; letter-spacing: 0.04em;
+      }
+      /* The composer sits LOW, the way it does in the real screen: the palette
+         opens upward off `bottom: 100%`, and a composer near the top of the page
+         pushes its own first row off the viewport — which the first screenshot
+         of this page did, hiding /new. */
+      #preview {
+        display: flex; flex-direction: column; justify-content: flex-end;
+        min-height: 360px; max-width: 900px; padding: 16px 0;
+      }
+      #readout {
+        font: 400 11px/1.7 "JetBrains Mono", ui-monospace, monospace;
+        color: #8b8b94; padding: 8px 14px; max-width: 900px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="fixture-banner" data-testid="fixture-banner">
+      FIXTURE DATA — the REAL Composer over the REAL readSlashInput. No agent, no provider process.
+    </div>
+    <div id="preview"></div>
+    <div id="readout" data-testid="readout"></div>
+    <script type="module" src="/tools/slash-preview.tsx"></script>
+  </body>
+</html>

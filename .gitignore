@@ -4,6 +4,8 @@ node_modules/
 # Worktree-local symlink to the main checkout's node_modules.
 /node_modules
 dist/
+# Built pages (the B3a terminal tab is built, never committed).
+dist-terminal/
 release/
 desktop/package-lock.json
 .novakai-command/agents.json
@@ -30,3 +32,11 @@ node_modules
 .novakai-command/slack-bridge-state.json
 # D-N6-2: agent messaging credentials live here (hash-only, never committed)
 .novakai-command/messaging-v2/
+tsconfig.tsbuildinfo
+
+# B1a: server/watchdog runtime state and browse artifacts (never source)
+.watchdog-sessions.json
+browse-shot.png
+packages/shell/dist/
+# Built pages (the B3a terminal tab is built, never committed).
+dist-terminal/

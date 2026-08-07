@@ -1,0 +1,268 @@
+/* shell/ui/kit/kit.css — component styles. Calm by default: nothing pulses,
+   nothing glows, one accent per viewport. */
+
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; margin: 0; }
+body {
+  font-family: var(--font);
+  font-size: var(--text-1);
+  line-height: var(--leading);
+  color: var(--ink);
+  background: var(--ground);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* §20: focus is always visible. */
+:focus-visible {
+  outline: 1.5px solid var(--focus-ring);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* ── buttons ─────────────────────────────────────────────────────────── */
+.k-btn {
+  appearance: none;
+  font: inherit;
+  color: var(--ink);
+  background: transparent;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  padding: 6px 12px;
+  cursor: pointer;
+  transition: background var(--motion-micro) var(--ease);
+}
+.k-btn:hover { background: var(--hover); }
+.k-btn--primary {
+  background: var(--selected);
+  border-color: transparent;
+}
+.k-btn--primary:hover { background: var(--hover); }
+.k-btn:disabled { opacity: 0.45; cursor: default; }
+
+.k-iconbtn {
+  appearance: none;
+  font: inherit;
+  color: var(--ink-2);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  width: 28px; height: 28px;
+  display: inline-flex; align-items: center; justify-content: center;
+  cursor: pointer;
+  transition: background var(--motion-micro) var(--ease), color var(--motion-micro) var(--ease);
+}
+.k-iconbtn:hover { background: var(--hover); color: var(--ink); }
+
+/* ── inputs ──────────────────────────────────────────────────────────── */
+.k-input {
+  font: inherit;
+  color: var(--ink);
+  background: transparent;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  padding: 7px 10px;
+  width: 100%;
+  transition: border-color var(--motion-micro) var(--ease);
+}
+.k-input:focus { outline: none; border-color: var(--focus-ring); }
+.k-input::placeholder { color: var(--ink-3); }
+
+/* ── list rows ───────────────────────────────────────────────────────── */
+.k-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: var(--row-pad-y) var(--row-pad-x);
+  border-radius: var(--radius);
+  color: var(--ink-2);
+  cursor: pointer;
+  border: none; background: transparent; width: 100%; text-align: left;
+  font: inherit;
+  transition: background var(--motion-micro) var(--ease), color var(--motion-micro) var(--ease);
+}
+.k-row:hover { background: var(--hover); color: var(--ink); }
+.k-row[data-selected="true"] { background: var(--selected); color: var(--ink); } /* 19b: selection persists */
+.k-row__label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.k-row__meta { color: var(--ink-3); font-size: var(--text-3); flex-shrink: 0; }
+
+/* ── badge (quiet; never per-row ornament — §4 exceptions only) ───────── */
+.k-badge {
+  font-size: var(--text-3);
+  color: var(--ink-3);
+  background: var(--hover);
+  border-radius: 999px;
+  padding: 1px 8px;
+  flex-shrink: 0;
+}
+
+/* ── panels ──────────────────────────────────────────────────────────── */
+.k-panel { background: var(--workspace); border-radius: var(--radius); }
+.k-panel__head {
+  padding: 10px 14px 6px;
+  color: var(--ink-3);
+  font-size: var(--text-3);
+  letter-spacing: 0.04em;
+  text-transform: none; /* sentence case — §20 */
+}
+
+/* ── splitter ────────────────────────────────────────────────────────── */
+.k-splitter {
+  flex: 0 0 5px;
+  cursor: col-resize;
+  background: transparent;
+  border: none; padding: 0;
+  position: relative;
+}
+.k-splitter::after {
+  content: ""; position: absolute; inset: 0 2px;
+  background: var(--hairline);
+  transition: background var(--motion-micro) var(--ease);
+}
+.k-splitter:hover::after, .k-splitter[data-dragging="true"]::after { background: var(--focus-ring); }
+.k-splitter--horizontal { cursor: row-resize; }
+.k-splitter--horizontal::after { inset: 2px 0; }
+
+/* ── scroll area ─────────────────────────────────────────────────────── */
+.k-scroll { overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--hairline) transparent; }
+.k-scroll::-webkit-scrollbar { width: 8px; }
+.k-scroll::-webkit-scrollbar-thumb { background: var(--hairline); border-radius: 4px; }
+
+/* ── surface — host for a foreign renderer; it owns its own scrolling ──── */
+.k-surface { position: relative; min-height: 0; overflow: hidden; }
+
+/* ── presence dot — dedicated liveness tokens, NEVER the accent (R3-25) ── */
+.k-presence {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--ink-3);
+  flex-shrink: 0;
+  position: relative;
+}
+.k-presence[data-state="online"] { background: var(--live-dot); }
+.k-presence[data-state="active"] { background: var(--live-dot); }
+/* breathing ink ring says "running" — motion, not colour (law 1).
+   Only rendered when the conversation is focused (M-19). */
+.k-presence[data-state="active"][data-live="true"]::after {
+  content: ""; position: absolute; inset: -3px;
+  border-radius: 50%;
+  border: 1.5px solid var(--live-ring);
+  animation: k-breathe 2.4s var(--ease) infinite;
+}
+@keyframes k-breathe {
+  0%, 100% { transform: scale(0.8); opacity: 0.9; }
+  50% { transform: scale(1.15); opacity: 0.25; }
+}
+
+/* ── typing bubble (iPhone-style; motion only when focused) ───────────── */
+.k-typing {
+  display: inline-flex; gap: 4px; align-items: center;
+  background: var(--bubble-theirs);
+  border-radius: 12px;
+  padding: 9px 12px;
+}
+.k-typing i {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--ink-3);
+}
+.k-typing[data-live="true"] i { animation: k-typing-bob 1.2s var(--ease) infinite; }
+.k-typing[data-live="true"] i:nth-child(2) { animation-delay: 0.15s; }
+.k-typing[data-live="true"] i:nth-child(3) { animation-delay: 0.3s; }
+@keyframes k-typing-bob {
+  0%, 100% { transform: translateY(0); opacity: 0.6; }
+  40% { transform: translateY(-3px); opacity: 1; }
+}
+
+/* ── composer ────────────────────────────────────────────────────────── */
+.k-composer {
+  display: flex; flex-direction: column; gap: 6px;
+  border-top: 1px solid var(--hairline);
+  background: var(--workspace);
+  padding: 10px 14px;
+}
+.k-composer textarea {
+  font: inherit;
+  color: var(--ink);
+  background: transparent;
+  border: none;
+  resize: none;
+  width: 100%;
+  line-height: var(--leading);
+  /* The composer has a FIXED height (it is drag-resizable), so the text area has
+     to be the part that yields. Without this it kept its intrinsic height and a
+     two-line hint overflowed the box and drew ON TOP of the placeholder —
+     read off b31-4, with every assertion green. */
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.k-composer textarea:focus { outline: none; }
+.k-composer__hint {
+  color: var(--ink-3); font-size: var(--text-3);
+  display: flex; justify-content: space-between;
+  flex: 0 0 auto;
+}
+
+/* ── empty states: absence is drawn, not described (law 6/7) ──────────── */
+.k-empty {
+  border: 1px dashed var(--hairline);
+  border-radius: var(--radius);
+  margin: 12px;
+  padding: 28px 16px;
+  text-align: center;
+  color: var(--ink-3);
+  font-size: var(--text-2);
+}
+
+/* ── Choice controls (kit v1.1, M8/DEC-S2-13) ─────────────────────────────── */
+.k-seg { display: inline-flex; border: 1px solid var(--hairline); border-radius: var(--radius); overflow: hidden; }
+.k-seg button {
+  appearance: none; border: none; background: transparent; font: inherit;
+  color: var(--ink-2); padding: 5px 12px; cursor: pointer;
+}
+.k-seg button[data-on="true"] { background: var(--selected); color: var(--ink); }
+.k-seg button:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
+
+.k-select {
+  appearance: none; font: inherit; color: var(--ink);
+  background: transparent; border: 1px solid var(--hairline);
+  border-radius: var(--radius); padding: 6px 28px 6px 10px; cursor: pointer;
+  background-image: linear-gradient(45deg, transparent 50%, var(--ink-3) 50%), linear-gradient(135deg, var(--ink-3) 50%, transparent 50%);
+  background-position: calc(100% - 14px) 55%, calc(100% - 9px) 55%;
+  background-size: 5px 5px;
+  background-repeat: no-repeat;
+}
+.k-select:focus { outline: none; border-color: var(--focus-ring); }
+
+.k-swatch {
+  width: 22px; height: 22px; border-radius: 50%;
+  border: 2px solid transparent; cursor: pointer; padding: 0;
+}
+.k-swatch[data-on="true"] { border-color: var(--ink); }
+.k-swatch:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+
+/* ── Layout + field + inline error (kit v1.1) ─────────────────────────────── */
+.k-stack { display: flex; flex-direction: column; gap: 10px; }
+.k-stack--horizontal { flex-direction: row; align-items: center; }
+.k-field { display: flex; flex-direction: column; gap: 5px; }
+.k-field__label { color: var(--ink); font-size: var(--text-2, 13px); }
+.k-field__hint { color: var(--ink-3); font-size: var(--text-3); }
+.k-error { color: var(--danger); font-size: var(--text-3); }
+
+/* kit v1.2 (F2) — text/heading/description/blockquote/pre/slider/menurow */
+.k-text { color: inherit; }
+p.k-text { margin: 0; }
+.k-heading { margin: 0; font-weight: 600; color: var(--ink); }
+h1.k-heading { font-size: 18px; }
+h2.k-heading { font-size: 14px; margin-top: 18px; }
+h3.k-heading { font-size: 13px; }
+h4.k-heading { font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; opacity: 0.7; }
+.k-dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-size: 13px; }
+.k-dl dt { opacity: 0.6; }
+.k-dl dd { margin: 0; word-break: break-word; }
+.k-blockquote { margin: 0; padding: 8px 12px; border-left: 2px solid var(--hairline, rgba(128,128,128,0.4)); }
+.k-pre { margin: 0; padding: 8px; font-size: 12px; overflow: auto; background: rgba(128,128,128,0.08); border-radius: 6px; }
+.k-slider { accent-color: var(--accent); }
+.k-menurow {
+  display: flex; gap: 8px; align-items: baseline; width: 100%;
+  background: none; border: none; padding: 6px 10px; font: inherit; color: inherit;
+  text-align: left; cursor: pointer;
+}
+.k-menurow[data-selected="true"] { background: rgba(128,128,128,0.12); }
+.k-menurow__meta { opacity: 0.6; flex: 1; }
+.k-menurow__trailing { opacity: 0.5; font-size: 11px; }

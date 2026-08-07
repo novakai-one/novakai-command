@@ -1,0 +1,84 @@
+/* Agent Runs — calm by default. Grayscale, spacing and type weight carry the
+   structure; no accent token appears here at all (the rail owns the single
+   attention signal, SHL-010). A row that needs Chris is separated by AIR and
+   position, never by a badge — a mark on every row is the pattern he
+   rejected outright. */
+
+.nv-runs__scroll {
+  flex: 1;
+}
+
+.nv-runs {
+  gap: 14px;
+  padding: 12px 14px;
+}
+
+.nv-runs__rows {
+  gap: 0;
+}
+
+.nv-runs__row {
+  gap: 2px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--panel-3, #29292d);
+}
+
+/* The exception, and only the exception, gets extra air and a brighter ink —
+   still no chip, still no dot. */
+.nv-runs__row[data-uncertain='true'] {
+  padding: 16px 0;
+}
+
+.nv-runs__id,
+.nv-runs__origin {
+  color: var(--ink-faint, #8b8b94);
+  font-size: 11px;
+  margin: 0;
+  padding-left: 10px;
+}
+
+.nv-runs__origin {
+  color: var(--ink-muted, #a2a2aa);
+  font-size: 12px;
+}
+
+/* FZ-VIEW-003's seven facts. A label column that recedes and a value column
+   that reads — the structure is the alignment, not a border or a chip. */
+.nv-runs__facts {
+  font-size: 11px;
+  padding: 4px 0 0 10px;
+  gap: 2px 14px;
+}
+
+.nv-runs__facts dt {
+  color: var(--ink-faint, #8b8b94);
+  opacity: 1;
+}
+
+.nv-runs__facts dd {
+  color: var(--ink-muted, #a2a2aa);
+}
+
+/* A fact the projection cannot supply reads as an ABSENCE, not an alarm:
+   dimmer than the facts around it, and never mistakable for a measurement.
+   It stays on screen because a gap Chris cannot see is a gap he will one day
+   read as a zero. */
+.nv-runs__facts dt:has([data-source='not-carried']),
+.nv-runs__facts dt:has([data-source='not-carried']) + dd {
+  color: var(--ink-faint, #8b8b94);
+  font-style: italic;
+}
+
+/* The one exception on the row, and the only line that gets full ink. */
+.nv-runs__facts dt:has([data-fact='warnings']),
+.nv-runs__facts dt:has([data-fact='warnings']) + dd {
+  color: var(--ink, #ececee);
+}
+
+/* Provenance, not instruction: what this page could not show, said quietly. */
+.nv-runs__omission {
+  color: var(--ink-muted, #a2a2aa);
+  font-size: 11px;
+  margin: 0;
+  padding-top: 4px;
+}

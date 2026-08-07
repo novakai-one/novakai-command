@@ -1,0 +1,79 @@
+/* shell/ui/frame/frame.css — rail │ workspace │ inspector (DEC-S2).
+   Elevation ascends left to right (law 16a). No gold top bar — ever (SHL-010). */
+.nv-frame {
+  display: flex;
+  height: 100%;
+  background: var(--ground);
+  overflow: hidden;
+}
+.nv-rail {
+  background: var(--rail);
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+  transition: width var(--motion-structural) var(--ease);
+}
+.nv-workspace {
+  background: var(--workspace);
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.nv-inspector {
+  background: var(--inspector);
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+  transition: width var(--motion-structural) var(--ease);
+}
+.nv-inspector__head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--hairline);
+  color: var(--ink-2);
+  font-size: var(--text-2);
+}
+.nv-inspector__title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nv-inspector__body { flex: 1; min-height: 0; }
+
+.nv-wordmark {
+  font-family: var(--mono);
+  font-size: var(--text-2);
+  color: var(--brand); /* 16b: brand amber, never follows the accent */
+  padding: 14px 14px 6px;
+  white-space: nowrap;
+}
+.nv-wordmark span { color: var(--ink-3); font-family: var(--font); }
+
+.nv-breadcrumb {
+  display: flex; align-items: center; gap: 6px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--hairline);
+  color: var(--ink-3);
+  font-size: var(--text-2);
+}
+.nv-breadcrumb button {
+  appearance: none; border: none; background: transparent; font: inherit;
+  color: var(--ink-2); cursor: pointer; padding: 2px 4px; border-radius: var(--radius-sm);
+}
+.nv-breadcrumb button:hover { background: var(--hover); color: var(--ink); }
+.nv-breadcrumb [aria-current] { color: var(--ink); }
+
+/* rail collapse: only the wordmark + app icons remain */
+.nv-rail[data-collapsed="true"] { width: 52px !important; }
+.nv-rail[data-collapsed="true"] .nv-rail__wide { display: none; }
+
+.nv-collapse-btn {
+  margin: auto 8px 10px;
+}
+
+/* M4: small inline persistence error — failures are drawn, never swallowed */
+.nv-persist-error {
+  color: var(--danger, #e06c75);
+  font: 12px/1.4 var(--font-ui, system-ui, sans-serif);
+  z-index: 30;
+}

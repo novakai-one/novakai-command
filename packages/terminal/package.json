@@ -1,0 +1,22 @@
+{
+  "name": "@novakai/terminal",
+  "version": "0.1.0",
+  "description": "Novakai Terminal capability (B3a) — one PTY session and its controller attachments, behind a narrow contract. Closing a controller detaches; it never stops the session.",
+  "type": "module",
+  "private": true,
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run typecheck && tsx --test \"tests/**/*.test.ts\"",
+    "test:fast": "node ../../tools/test-fast.mjs ."
+  },
+  "license": "UNLICENSED",
+  "dependencies": {
+    "@novakai/foundation": "file:../foundation"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.9",
+    "tsx": "^4.15.7",
+    "typescript": "^5.5.2"
+  }
+}

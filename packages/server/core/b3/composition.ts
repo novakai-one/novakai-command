@@ -1,0 +1,813 @@
+// The B3a composition root: the background Novakai Runtime.
+//
+// This process is the runtime. The desktop window is a controller that comes
+// and goes; the PTYs live here (DEC-B3V4-01, red gate 2). Server composes and
+// transports — it owns no Runtime or Terminal domain fact (DEC-B3V4-22).
+import path from 'node:path';
+import {
+  b3err, b3fail, b3ok, deriveClientOpId,
+  type B3Result, type SystemCommandContext, type TerminalSessionId,
+} from '@novakai/foundation/contract';
+import {
+  composeAgentRuns, composeRuntimeHost, createFileInstanceLease,
+  type AgentRunsContract, type ComposedAgentRuns, type RecoverableCapability,
+  type RuntimeCensus, type RuntimeHostContract,
+} from '../../../agent-runtime/contract/index.js';
+import {
+  composeTerminal, type PtyHost, type TerminalContract,
+} from '../../../terminal/contract/index.js';
+import {
+  createLaunchAuthorities, createNodePtyHost,
+  type LaunchAuthorityRegistrar,
+} from '../../../terminal/adapters/pty-host/node-pty.js';
+import {
+  composeGovernedAgents, createProviderAdapters,
+  type GovernedAgentsContract, type ProviderAdapterRegistry,
+} from '../../../agents/b3/contract/index.js';
+import {
+  composeProviderUsageEvidence, type ProviderUsageEvidenceContract,
+} from '../../../agents/contract/index.js';
+import { agentsPort, createRunCredentials, terminalPort } from './run-ports.js';
+import { readAllTerminalSessions } from './terminal-paging.js';
+import { createProviderPort } from './provider-port.js';
+import { composeB3Messaging, composeB3TranscriptFor } from './messaging-composition.js';
+import {
+  messagingEndpointPort, messagingInboxPort, transcriptCustodyPort,
+} from './b3c-ports.js';
+import { canonicalDataRoot, gateStoreRoute } from '../store-route.js';
+import type { AgentMessagingContract } from '../../../messaging/b3/contract/index.js';
+import {
+  createProviderFileLocator, createProviderFileSource, defaultProviderHomes,
+  type B3TranscriptContract, type MirrorPump, type TranscriptSourcePort,
+} from '../../../transcript/b3/contract/index.js';
+import {
+  composeSupervision, createTemplateCatalogue, type SupervisionCore,
+} from '../../../supervision/public/index.js';
+import {
+  ACTIVITY_DRIFT_TEMPLATE_REF,
+  type RecordDriftStatusSubmissionInput, type WatcherTemplate,
+} from '../../../supervision/contract/index.js';
+import {
+  followEventsIntoSupervision, supervisionNotificationDeliveryPort,
+  supervisionWatcherPort, watcherInstallAuthority, watchRuleAccess,
+  watchRuleGeneration,
+} from './supervision-ports.js';
+import { notificationTranscriptObserver } from './notification-transcript-port.js';
+import { createUsageReader } from '../supervision/usage.js';
+import { createTranscriptUsagePort } from './usage-transcript-port.js';
+import { createNotificationDeliveryPump } from './notification-delivery-pump.js';
+import { startWatcherScheduler } from './watcher-scheduler.js';
+
+export interface B3RuntimeOptions {
+  /** `.novakai/` root. Domain records live in `<root>/stores`. */
+  readonly root: string;
+  readonly hostVersion?: string;
+  /** Overridable for tests; production launches real PTYs. */
+  readonly ptyHost?: PtyHost;
+  /** Overridable for tests; production probes the real CLIs. */
+  readonly providers?: ProviderAdapterRegistry;
+  /** Launch authorities the Runtime adds to at spawn time. */
+  readonly authorities?: LaunchAuthorityRegistrar;
+  /** Live output pushed to attached controllers. */
+  readonly publish?: (kind: string, payload: Readonly<Record<string, unknown>>) => void;
+  /**
+   * How long a governed launch waits for its skills confirmation. An operator
+   * tunable — a slow provider on a cold machine needs longer than the default,
+   * and a suite proving the gate's refusals needs far less than two minutes.
+   */
+  readonly gateTimeoutMs?: number;
+  /**
+   * Where transcript bytes come from. Absent means the real provider-file
+   * reader, pointed at each provider's own home — the production wire.
+   *
+   * It shipped the other way round: absent meant a `NO_SOURCE` port that
+   * reported every binding `missing`, and nothing ever passed one, so no
+   * managed Run could mirror a single turn.
+   *
+   * Overridden by tests and by the quarantine suite, which needs a fixture it
+   * can corrupt without touching a provider original (§27).
+   */
+  readonly transcriptSource?: TranscriptSourcePort;
+  /** Where the provider CLIs keep their transcripts. Overridable for tests. */
+  readonly providerHome?: string;
+  /**
+   * How often the mirror pump looks for new transcript lines. An operator
+   * tunable for the same reason `gateTimeoutMs` is one — and a suite proving
+   * the pipeline runs unprompted should not have to wait a production tick.
+   */
+  readonly mirrorIntervalMs?: number;
+  /** How often the inbox delivery loop looks. Same reason as the mirror's. */
+  readonly inboxDeliveryIntervalMs?: number;
+  /** How often Runtime reconciles durable Notification delivery work. */
+  readonly notificationDeliveryIntervalMs?: number;
+  /** How often the Runtime scans durable watcher deadlines. */
+  readonly watcherIntervalMs?: number;
+  /** How often Runtime reconciles incomplete semantic provider turns. */
+  readonly providerTurnReconciliationIntervalMs?: number;
+  /**
+   * B3d: extra pinned watcher templates this host's role catalogue offers, on
+   * top of the ones Supervision ships. The frozen catalogue seam is owned by
+   * role-profile data; this composition root supplies its concrete entries.
+   */
+  readonly watcherTemplates?: readonly WatcherTemplate[];
+}
+
+export interface B3Runtime {
+  readonly runtime: RuntimeHostContract;
+  readonly terminal: TerminalContract;
+  readonly agents: GovernedAgentsContract;
+  readonly usageEvidence: ProviderUsageEvidenceContract;
+  readonly runs: AgentRunsContract;
+  readonly credentials: ReturnType<typeof createRunCredentials>;
+  readonly messaging: AgentMessagingContract & { readonly store: { close(): Promise<void> } };
+  readonly transcript: B3TranscriptContract;
+  /** The live pipeline behind §13.9. Exposed so a host can pump on demand. */
+  readonly mirror: MirrorPump;
+  readonly supervision: SupervisionCore;
+  readonly dataRoot: string;
+  close(): Promise<void>;
+}
+
+/**
+ * Terminal seen through the Runtime's narrow recovery/census seam. This adapter
+ * is the ONLY place the two capabilities meet: neither imports the other's
+ * private code, and neither writes the other's store.
+ */
+function terminalAsRecoverable(terminal: TerminalContract): RecoverableCapability {
+  return {
+    name: 'terminal',
+
+    async reconcile(context, activeRuntimeEpochId) {
+      return terminal.system.reconcileAfterRestart(context, { activeRuntimeEpochId });
+    },
+
+    async census(): Promise<B3Result<RuntimeCensus>> {
+      // Every session, not a page of them: a census that stops at 200 would
+      // under-report exactly the machine that has too much running on it.
+      const listed = await readAllTerminalSessions(
+        terminal, { id: 'sys_agent_runtime', kind: 'system', verifiedScopes: [] },
+      );
+      if (!listed.ok) return listed;
+      const live: TerminalSessionId[] = [];
+      const recovering: TerminalSessionId[] = [];
+      let controllers = 0;
+      for (const view of listed.value) {
+        if (view.session.status === 'live') live.push(view.session.id);
+        if (view.session.status === 'recovery-required') recovering.push(view.session.id);
+        controllers += view.attachments.filter((item) => item.state === 'attached').length;
+      }
+      return b3ok({
+        liveTerminalSessionIds: live,
+        attachedControllerCount: controllers,
+        recoveryRequiredCount: recovering.length,
+        recoveryRequiredSessionIds: recovering,
+      });
+    },
+
+    async stopSession(
+      context: SystemCommandContext<'sys_agent_runtime'>,
+      activeRuntimeEpochId,
+      terminalSessionId,
+    ) {
+      const stopped = await terminal.terminateTerminal(context, {
+        terminalSessionId,
+        expectedRuntimeEpochId: activeRuntimeEpochId,
+        reason: 'stop-one',
+      });
+      return stopped.ok ? b3ok(null) : stopped;
+    },
+  };
+}
+
+/** Q2: prove the supplied drift outcome against Terminal-owned durable facts. */
+function driftSubmissionAuthority(terminal: TerminalContract): {
+  verify(input: RecordDriftStatusSubmissionInput): Promise<B3Result<null>>;
+} {
+  const principal = { id: 'sys_supervision', kind: 'system', verifiedScopes: [] } as const;
+  const mismatch = (reason: string) => b3fail(b3err(
+    'WatcherConflict', 'Terminal facts do not match the drift submission', { reason }, true,
+  ));
+  return {
+    async verify(input) {
+      const reservation = await terminal.getNotificationInputReservation(
+        principal, input.expectedNotificationInputReservationId,
+      );
+      if (!reservation.ok) return reservation;
+      if (reservation.value.state !== 'committed'
+        || reservation.value.notificationId !== input.expectedNotificationId
+        || reservation.value.deliveryEffectKey !== input.expectedEffectKey
+        || reservation.value.terminalInputAttemptId !== input.expectedTerminalInputAttemptId) {
+        return mismatch('reservation-tuple');
+      }
+      const attempt = await terminal.getTerminalInputAttempt(
+        principal, input.expectedTerminalInputAttemptId,
+      );
+      if (!attempt.ok) return attempt;
+      if (attempt.value.source !== 'system-notification'
+        || attempt.value.notificationInputReservationId
+          !== input.expectedNotificationInputReservationId
+        || attempt.value.deliveryEffectKey !== input.expectedEffectKey
+        || attempt.value.outcome !== input.submission.state
+        || attempt.value.submittedAt !== input.submission.submittedAt
+        || attempt.value.providerTurnId !== input.submission.providerTurnId) {
+        return mismatch('terminal-attempt-tuple');
+      }
+      return b3ok(null);
+    },
+  };
+}
+
+export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Runtime> {
+  const dataRoot = canonicalDataRoot(options.root);
+  await gateStoreRoute(options.root, dataRoot);
+  const authorities = options.authorities ?? createLaunchAuthorities();
+  const ptyHost = options.ptyHost ?? await createNodePtyHost({ authorities });
+  const providerAdapters = options.providers ?? createProviderAdapters();
+
+  // Deliberate ordering: the runtime host exists first so Terminal is born
+  // already fenced, then Terminal registers itself for recovery.
+  let terminal: TerminalContract | null = null;
+  const capability: RecoverableCapability = {
+    name: 'terminal',
+    reconcile: async (context, epochId) =>
+      terminalAsRecoverable(terminal!).reconcile(context, epochId),
+    census: async () => terminalAsRecoverable(terminal!).census(),
+    stopSession: async (context, epochId, sessionId) =>
+      terminalAsRecoverable(terminal!).stopSession(context, epochId, sessionId),
+  };
+
+  // Runs reconcile at boot too. Only Terminal was ever registered, so §13.1.6's
+  // "startup reconciles all non-final RunOperation records" simply never ran:
+  // a SIGKILLed spawn left its Run `provisioning` and its operation `running`
+  // forever, under a Runtime reporting `recoveryRequiredCount: 0`.
+  let runs: ComposedAgentRuns | null = null;
+  const runsCapability: RecoverableCapability = {
+    name: 'agent-runs',
+    async reconcile() {
+      const reconciled = await runs!.reconcileAfterRestart();
+      if (!reconciled.ok) return reconciled;
+      // Runs are not terminal sessions; Terminal reports those.
+      return b3ok({ reconciledSessionIds: [] });
+    },
+    async census() {
+      const counted = await runs!.census();
+      if (!counted.ok) return counted;
+      return b3ok({
+        liveTerminalSessionIds: [],
+        attachedControllerCount: 0,
+        recoveryRequiredCount: counted.value.recoveryRequiredCount,
+        recoveryRequiredSessionIds: [],
+        liveAgentRunCount: counted.value.liveAgentRunCount,
+        recoveryRequiredRefs: counted.value.recoveryRequiredRefs,
+      });
+    },
+    async stopSession() {
+      // It owns no terminal sessions, so it is never the one asked. Saying so
+      // beats a silent `ok` that would report a session stopped by nobody.
+      return b3fail(b3err('UnsupportedOperation',
+        'agent-runs owns no terminal sessions to stop',
+        { operation: 'runtime.stopSession', reason: 'not-a-session-owner' }, false));
+    },
+  };
+
+  const runtime = composeRuntimeHost({
+    root: options.root,
+    dataRoot,
+    hostVersion: options.hostVersion ?? 'b3a',
+    lease: createFileInstanceLease({ root: options.root }),
+    capabilities: [capability, runsCapability],
+  });
+
+  // Terminal owns delivery and asks only for framing. The provider session's
+  // provider is Agents-owned, so this is deliberately late-bound across the
+  // composition root instead of inferred from bytes or ids.
+  let agents!: GovernedAgentsContract;
+  terminal = composeTerminal({
+    root: options.root,
+    dataRoot,
+    ptyHost,
+    epochFence: runtime.fence,
+    providerTurnDelivery: async (providerSessionId, utf8Text) => {
+      const session = await agents.getProviderSession(
+        { id: 'sys_terminal', kind: 'system', verifiedScopes: [] }, providerSessionId,
+      );
+      if (!session.ok) throw new Error(`${session.error.code}: ${session.error.message}`);
+      return providerAdapters[session.value.provider].deliverTurn(utf8Text);
+    },
+    // Same late binding, same reason: only the adapter knows what its CLI
+    // paints when it starts reading (NVK-KIMI-079).
+    providerInputReady: async (providerSessionId, screen) => {
+      const session = await agents.getProviderSession(
+        { id: 'sys_terminal', kind: 'system', verifiedScopes: [] }, providerSessionId,
+      );
+      if (!session.ok) throw new Error(`${session.error.code}: ${session.error.message}`);
+      return providerAdapters[session.value.provider].inputReadyOn(screen);
+    },
+    publish: (kind, payload) => {
+      runs?.publishCapabilityEvent(kind, payload, 'terminal');
+    },
+    onUnexpectedExit: (terminalSessionId) => {
+      const activeRuns = runs;
+      if (activeRuns === null) return;
+      void activeRuns.observeTerminalExit(terminalSessionId).then((observed) => {
+        if (observed.ok) return;
+        activeRuns.publishCapabilityEvent('runtime.recovery.required', {
+          terminalSessionId,
+          reason: `${observed.error.code}: ${observed.error.message}`,
+        }, 'agent-runtime');
+      }, (cause: unknown) => {
+        activeRuns.publishCapabilityEvent('runtime.recovery.required', {
+          terminalSessionId,
+          reason: cause instanceof Error ? cause.message : String(cause),
+        }, 'agent-runtime');
+      });
+    },
+  });
+
+  // Agents owns roles, family and grants; Agent Runtime owns Runs. They meet
+  // ONLY through the narrow ports in `run-ports.ts` — neither imports the other.
+  const watcherTemplates = createTemplateCatalogue(options.watcherTemplates ?? []);
+  agents = composeGovernedAgents({
+    root: options.root,
+    dataRoot,
+    providers: providerAdapters,
+    watcherTemplates: {
+      inspect: (templateRef) => {
+        const template = watcherTemplates.resolve(templateRef);
+        if (template === null) return null;
+        return {
+          requiresStartTurn: template.payload.condition.kind === 'activity-drift'
+            || template.payload.deliveryBinding === 'start-turn',
+        };
+      },
+      activityDriftRef: () => watcherTemplates.resolve(ACTIVITY_DRIFT_TEMPLATE_REF)?.templateRef
+        ?? null,
+    },
+  });
+  // Late-bound because Transcript is composed after Messaging and Runs.
+  let transcript: B3TranscriptContract | null = null;
+  const usageEvidence = composeProviderUsageEvidence({
+    root: options.root,
+    dataRoot,
+    publish: (kind, payload, traceId) => {
+      const activeRuns = runs;
+      if (activeRuns === null) return;
+      void (async () => {
+        const published = await activeRuns.publishCapabilityEvent(
+          kind, { ...payload }, 'agents', traceId,
+        );
+        if (!published.ok || kind !== 'agent.provider-usage-evidence.committed') return;
+        const providerSessionId = payload['providerSessionId'];
+        const qualifyingEvidenceRef = payload['id'];
+        if (typeof providerSessionId !== 'string'
+          || typeof qualifyingEvidenceRef !== 'string') return;
+        const source = await activeRuns.resolveUsageRunByProviderSession(
+          { id: 'sys_agent_runtime', kind: 'system', verifiedScopes: [] },
+          providerSessionId as never,
+        );
+        if (!source.ok || source.value === null) return;
+        await activeRuns.publishCapabilityEvent('agent.run.usage.changed', {
+          agentRunId: source.value.agentRunId,
+          providerSessionId: source.value.providerSessionId,
+          activityGeneration: source.value.activityGeneration,
+          qualifyingEvidenceRef,
+        }, 'agent-runtime', traceId);
+      })();
+    },
+    turnCompletion: {
+      // eslint-disable-next-line id-length -- Contract method name is fixed as `get`.
+      async get(id) {
+        if (transcript === null) {
+          return b3fail(b3err('TranscriptSourceUnavailable',
+            'Transcript completion owner is not composed yet', {
+              transcriptTurnCompletionId: id,
+            }, true));
+        }
+        return transcript.getTranscriptTurnCompletion(
+          { id: 'sys_agents', kind: 'system', verifiedScopes: [] }, id,
+        );
+      },
+      async getProviderSession(providerSessionId) {
+        const found = await agents.getProviderSession(
+          { id: 'sys_agents', kind: 'system', verifiedScopes: [] }, providerSessionId,
+        );
+        if (!found.ok) return found;
+        return b3ok({
+          id: found.value.id,
+          providerConversationId: found.value.providerConversationId,
+        });
+      },
+    },
+  });
+  const usageTranscriptReader = createUsageReader({
+    ...(options.providerHome === undefined ? {} : { home: options.providerHome }),
+    transcriptRoot: path.join(options.root, 'transcripts'),
+    // A usage query is a request for current evidence. A five-minute manifest
+    // would render the first completed provider turn unavailable until later.
+    discoveryIntervalMs: 0,
+  });
+  const credentials = createRunCredentials(options.root);
+  // Late-bound on purpose: Transcript is composed AFTER Runs (it needs the
+  // Messaging capability, which needs the store this root opens). The closure
+  // reads whatever is wired by the time somebody asks, and answers `null`
+  // before that — which the view renders as `unbound`, not as a lie.
+  // Messaging and Transcript publish their committed facts into the ONE event
+  // stream the Runtime already owns (§15, §24.4). They do not write each
+  // other's stores and neither writes the Runtime's — the only thing crossing
+  // here is an event and a typed request.
+  // Supervision is composed BEFORE Runs, because the Runs spawn ladder now
+  // genuinely depends on it: §13.5's watcher rung installs through this port.
+  // It writes only its own three kinds and holds no way to reach a PTY.
+  const supervision = composeSupervision({
+    root: options.root,
+    dataRoot,
+    installAuthority: watcherInstallAuthority(agents, () => runs ?? undefined),
+    watchRuleAccess: watchRuleAccess(() => runs ?? undefined),
+    watchRuleGeneration: watchRuleGeneration(() => runs ?? undefined),
+    templates: watcherTemplates,
+    driftSubmissionAuthority: driftSubmissionAuthority(terminal),
+    occurrenceRelationships: {
+      async isDirectManagedChild(principal, input) {
+        let parentAgentId = input.parentAgentId;
+        if (parentAgentId === undefined) {
+          if (input.parentAgentRunId === undefined || runs === null) return b3ok(false);
+          const parent = await runs.getAgentRun(principal, input.parentAgentRunId);
+          if (!parent.ok) return parent;
+          parentAgentId = parent.value.agent.agentId;
+        }
+        const children = await agents.listChildren(principal, parentAgentId);
+        if (!children.ok) return children;
+        return b3ok(children.value.some((relationship) =>
+          relationship.childAgentId === input.childAgentId
+          && (input.parentAgentRunId === undefined
+            || relationship.createdFromRunId === input.parentAgentRunId)));
+      },
+    },
+    usage: {
+      runs: {
+        async getUsageRun(principal, agentRunId) {
+          if (runs === null) {
+            return b3fail(b3err(
+              'RuntimeUnavailable', 'Agent Runtime is not composed', {}, true,
+            ));
+          }
+          return runs.usageRuns.getUsageRun(principal, agentRunId);
+        },
+        async listUsageRuns(principal, agentId) {
+          if (runs === null) {
+            return b3fail(b3err(
+              'RuntimeUnavailable', 'Agent Runtime is not composed', {}, true,
+            ));
+          }
+          return runs.usageRuns.listUsageRuns(principal, agentId);
+        },
+        async resolveUsageRunByProviderSession(principal, providerSessionId) {
+          if (runs === null) {
+            return b3fail(b3err(
+              'RuntimeUnavailable', 'Agent Runtime is not composed', {}, true,
+            ));
+          }
+          return runs.resolveUsageRunByProviderSession(principal, providerSessionId);
+        },
+        async resolveCurrentRunByAgent(principal, agentId) {
+          if (runs === null) {
+            return b3fail(b3err(
+              'RuntimeUnavailable', 'Agent Runtime is not composed', {}, true,
+            ));
+          }
+          return runs.resolveCurrentRunByAgent(principal, agentId);
+        },
+        async getRunOccurrenceEvent(principal, eventId) {
+          if (runs === null) {
+            return b3fail(b3err(
+              'RuntimeUnavailable', 'Agent Runtime is not composed', {}, true,
+            ));
+          }
+          return runs.getRunOccurrenceEvent(principal, eventId);
+        },
+      },
+      evidence: usageEvidence,
+      transcript: createTranscriptUsagePort({ agents, reader: usageTranscriptReader }),
+    },
+  });
+
+  const emit = (owner: 'messaging' | 'transcript') =>
+    (kind: string, payload: Readonly<Record<string, unknown>>): void => {
+      runs?.publishCapabilityEvent(kind, payload, owner);
+    };
+
+  // Messaging is composed BEFORE Runs now, because the Runs lifecycle genuinely
+  // depends on it: §13.5 rows 6 and 10 reserve and activate an endpoint claim,
+  // and §13.6 transfers one. It shipped composed after, so those rungs could
+  // only ever be recorded `not-needed` — which is exactly what they were.
+  const messaging = await composeB3Messaging({
+    root: options.root,
+    dataRoot,
+    emit: emit('messaging'),
+    // Agents owns identity; Messaging asks. This is the whole port: one
+    // question, answered by the capability that can answer it.
+    agents: {
+      async exists(agentId) {
+        const found = await agents.getAgent(
+          { id: 'sys_messaging', kind: 'system', verifiedScopes: [] },
+          agentId as never,
+        );
+        return found.ok;
+      },
+    },
+  });
+
+  const runtimeTerminal = terminalPort(terminal, () => runtime.fence.activeEpochId());
+  const runtimeProviders = createProviderPort(providerAdapters, authorities);
+  runs = composeAgentRuns({
+    root: options.root,
+    dataRoot,
+    agents: agentsPort(agents),
+    terminal: runtimeTerminal,
+    providers: runtimeProviders,
+    credentials,
+    fence: runtime.fence,
+    ...(options.publish === undefined ? {} : { publish: options.publish }),
+    ...(options.gateTimeoutMs === undefined ? {} : { gateTimeoutMs: options.gateTimeoutMs }),
+    messagingEndpoint: messagingEndpointPort(messaging),
+    // §8.1's delivery half. Composed here for the same reason the endpoint port
+    // is: the Runtime owns the terminal, Messaging owns the inbox, and this is
+    // the only place the two are allowed to meet.
+    messagingInbox: messagingInboxPort(messaging),
+    ...(options.inboxDeliveryIntervalMs === undefined
+      ? {} : { inboxDeliveryIntervalMs: options.inboxDeliveryIntervalMs }),
+    watchers: supervisionWatcherPort(supervision),
+    notifications: supervisionNotificationDeliveryPort(supervision),
+    usage: (principal, agentRunId) => supervision.getRunUsage(principal, agentRunId),
+    transcriptCustody: transcriptCustodyPort(() => transcript),
+    providerTurnCompletionEvidence: {
+      async getTranscriptCompletion(id) {
+        if (transcript === null) {
+          return b3fail(b3err('TranscriptSourceUnavailable',
+            'Transcript completion owner is not composed yet', {
+              transcriptTurnCompletionId: id,
+            }, true));
+        }
+        return transcript.getTranscriptTurnCompletion(
+          { id: 'sys_agent_runtime', kind: 'system', verifiedScopes: [] }, id,
+        );
+      },
+      getUsageEvidence: (id) => usageEvidence.getProviderUsageEvidence(
+        { id: 'sys_agent_runtime', kind: 'system', verifiedScopes: [] }, id,
+      ),
+    },
+    async providerTurnCompletionCoordinator(input) {
+      if (transcript === null || runs === null) {
+        return b3fail(b3err('RuntimeUnavailable',
+          'provider-turn completion owners are not composed yet', {
+            reason: 'completion-owners-not-composed',
+          }, true));
+      }
+      const principal = { id: 'sys_reconciler' as const, kind: 'system' as const, verifiedScopes: [] };
+      const base = {
+        principal,
+        traceId: input.traceId,
+        contractVersion: 1 as const,
+      };
+      const reconciled = await transcript.reconcileProviderTurnCompletion({
+        ...base,
+        clientOpId: deriveClientOpId(
+          `transcript.reconcileProviderTurnCompletion:${input.providerTurnId}`,
+        ),
+      }, {
+        providerTurnId: input.providerTurnId,
+        expectedProviderTurnSubmissionId: input.providerTurnSubmissionId,
+      });
+      if (!reconciled.ok) return reconciled;
+      if (reconciled.value.kind !== 'completed') {
+        if (reconciled.value.kind === 'pending') {
+          return b3ok({
+            kind: 'evidence-not-yet-available', missing: ['transcript'], retryable: true,
+          });
+        }
+        return b3ok({
+          kind: 'completion-boundary-unproven',
+          status: reconciled.value.kind,
+          reason: reconciled.value.reason,
+          evidenceRefs: reconciled.value.evidenceRefs,
+          retryable: false,
+        });
+      }
+      const evidence = await usageEvidence.ensureProviderTurnCompletionEvidence({
+        ...base,
+        clientOpId: deriveClientOpId(
+          `agents.ensureProviderTurnCompletionEvidence:${reconciled.value.completion.id}`,
+        ),
+      }, { transcriptTurnCompletionId: reconciled.value.completion.id });
+      if (!evidence.ok) return evidence;
+      return runs.completeProviderTurn({
+        ...base,
+        clientOpId: deriveClientOpId([
+          'agent.completeProviderTurn', input.agentRunId, input.providerTurnId,
+          reconciled.value.completion.id, evidence.value.id,
+        ].join(':')),
+        ...(runtime.fence.activeEpochId() === null
+          ? {}
+          : { runtimeEpochId: runtime.fence.activeEpochId()! }),
+      }, {
+        agentRunId: input.agentRunId,
+        providerTurnId: input.providerTurnId,
+        expectedActiveTuple: {
+          providerTurnId: input.providerTurnId,
+          activityGeneration: input.activityGeneration,
+        },
+        transcriptTurnCompletionId: reconciled.value.completion.id,
+        providerUsageEvidenceId: evidence.value.id,
+      });
+    },
+    // eslint-disable-next-line sonarjs/cognitive-complexity -- Exact owner cursor lookup is exhaustive.
+    async transcriptBinding(agentRunId) {
+      if (transcript === null) return null;
+      const found = await transcript.getTranscriptBinding(
+        { id: 'sys_agent_runtime', kind: 'system', verifiedScopes: [] },
+        agentRunId,
+      );
+      if (!found.ok) return null;
+      // A completion boundary advances the semantic source cursor without
+      // claiming that the Message mirror ingested every line through it. The
+      // next submitted turn must start after that boundary or an old reply can
+      // be reused as its completion. Read the immutable completion owner facts
+      // and expose only their latest cursor through Runtime's narrow lookup.
+      let completionWatermark: string | undefined;
+      let latestObservedAt = '';
+      let cursor: import('@novakai/foundation/contract').EventCursor | undefined;
+      do {
+        const page = await transcript.listTranscriptTurnCompletions(
+          { id: 'sys_agent_runtime', kind: 'system', verifiedScopes: [] }, {
+            agentRunId,
+            ...(cursor === undefined ? {} : { cursor }),
+            limit: 200,
+          },
+        );
+        if (!page.ok) return null;
+        for (const completion of page.value.items) {
+          if (completion.observedAt >= latestObservedAt) {
+            latestObservedAt = completion.observedAt;
+            completionWatermark = completion.completionTranscriptWatermark;
+          }
+        }
+        cursor = page.value.nextCursor;
+      } while (cursor !== undefined);
+      return {
+        bindingId: found.value.id,
+        bindingState: found.value.sourceDiscoveryState,
+        ...(completionWatermark === undefined && found.value.mirrorWatermark === undefined
+          ? {}
+          : { mirrorWatermark: completionWatermark ?? found.value.mirrorWatermark! }),
+      };
+    },
+  });
+  let providerTurnReconciliationInFlight: Promise<void> | null = null;
+  const reconcileProviderTurnsOnce = (): void => {
+    if (providerTurnReconciliationInFlight !== null) return;
+    const started = runs!.reconcileProviderTurns().then(async (result) => {
+      if (result.ok) return;
+      await runs!.publishCapabilityEvent('runtime.recovery.required', {
+        reason: `${result.error.code}: ${result.error.message}`,
+      }, 'agent-runtime');
+    }).finally(() => {
+      if (providerTurnReconciliationInFlight === started) {
+        providerTurnReconciliationInFlight = null;
+      }
+    });
+    providerTurnReconciliationInFlight = started;
+  };
+  const providerTurnReconciliation = setInterval(
+    reconcileProviderTurnsOnce,
+    options.providerTurnReconciliationIntervalMs ?? 1_000,
+  );
+  providerTurnReconciliation.unref();
+
+  // The production source: each provider's own file, read-only, found through
+  // the NATIVE session id that Agents recorded at discovery. A binding whose
+  // provider has not written anything yet locates nothing and stays `waiting`,
+  // which is §25-B3c's honest first state.
+  const source = options.transcriptSource ?? createProviderFileSource({
+    locate: createProviderFileLocator({
+      ...(options.providerHome === undefined
+        ? {} : { homes: defaultProviderHomes(options.providerHome) }),
+      async nativeSessionIdOf(binding) {
+        const session = await agents.getProviderSession(
+          { id: 'sys_transcript', kind: 'system', verifiedScopes: [] },
+          binding.providerSessionId,
+        );
+        if (!session.ok) return null;
+        return session.value.providerConversationId ?? null;
+      },
+    }),
+  });
+
+  // §9.2/§24.4: Supervision reads the ONE published event stream the Runtime
+  // already owns. It is the whole watcher clock — no timer, no poll, and no
+  // second event identity invented on the side.
+  //
+  // B3d/Q11: the same stream, the same pass, now also carries a delivered
+  // Notification past `offered-to-endpoint` when the provider's own transcript
+  // records the turn that delivery caused. Composed here because this is the
+  // only place Transcript and Supervision are allowed to meet, and the observer
+  // itself holds no state and decides nothing the frozen command does not.
+  const following = followEventsIntoSupervision(
+    runs, supervision, notificationTranscriptObserver(supervision),
+  );
+  const notificationDelivery = createNotificationDeliveryPump({
+    supervision,
+    runs,
+    terminal,
+    providers: runtimeProviders,
+    ...(options.notificationDeliveryIntervalMs === undefined
+      ? {} : { intervalMs: options.notificationDeliveryIntervalMs }),
+  });
+  const watcherScheduler = startWatcherScheduler(supervision, {
+    ...(options.watcherIntervalMs === undefined
+      ? {} : { intervalMs: options.watcherIntervalMs }),
+  });
+
+  const composedTranscript = composeB3TranscriptFor({
+    root: options.root,
+    dataRoot,
+    messaging,
+    emit: emit('transcript'),
+    source,
+    turnCompletion: {
+      async getSubmission(providerTurnId) {
+        const found = await runs!.getProviderTurnSubmission(
+          { id: 'sys_transcript', kind: 'system', verifiedScopes: [] }, providerTurnId,
+        );
+        if (!found.ok) return found;
+        return b3ok({
+          id: found.value.id,
+          providerTurnId: found.value.providerTurnId,
+          agentRunId: found.value.agentRunId,
+          providerSessionId: found.value.providerSessionId,
+          providerConversationId: found.value.providerConversationId,
+          transcriptBindingId: found.value.transcriptBindingId,
+          inputDigest: found.value.inputDigest,
+          startTranscriptWatermark: found.value.startTranscriptWatermark,
+        });
+      },
+      async getProviderSession(providerSessionId) {
+        const found = await agents.getProviderSession(
+          { id: 'sys_transcript', kind: 'system', verifiedScopes: [] }, providerSessionId,
+        );
+        if (!found.ok) return found;
+        return b3ok({
+          provider: found.value.provider,
+          providerConversationId: found.value.providerConversationId,
+          providerNativeSessionId: found.value.providerResumeHandle ?? '',
+          providerVersion: found.value.providerVersion ?? 'unknown',
+        });
+      },
+      observe(input) {
+        return providerAdapters[input.provider].observeProviderTurnBoundary(input);
+      },
+    },
+    ...(options.mirrorIntervalMs === undefined
+      ? {} : { mirrorIntervalMs: options.mirrorIntervalMs }),
+  });
+  transcript = composedTranscript.capability;
+
+  // §13.9 is a pipeline, not a verb. The ladder bound this Run's transcript at
+  // spawn so the mirror COULD run; starting it here is what makes it run — and
+  // it starts last, after every capability it reads is composed.
+  composedTranscript.mirror.start();
+  // The other direction of the same promise: an accepted Message becomes
+  // keystrokes in the Agent's own terminal, with nobody asking.
+  runs.inboxDelivery.start();
+  notificationDelivery.start();
+
+  return {
+    runtime,
+    terminal,
+    agents,
+    usageEvidence,
+    runs,
+    credentials,
+    messaging,
+    transcript,
+    mirror: composedTranscript.mirror,
+    supervision,
+    dataRoot,
+    async close() {
+      clearInterval(providerTurnReconciliation);
+      if (providerTurnReconciliationInFlight !== null) {
+        await providerTurnReconciliationInFlight;
+      }
+      await watcherScheduler.stop();
+      await notificationDelivery.stop();
+      // First, and awaited: a pass in flight holds durable Messaging and
+      // Transcript writes, and closing the stores under it is the one way to
+      // manufacture the torn outcome §13.9's watermark law exists to survive.
+      await composedTranscript.mirror.stop();
+      await runs?.inboxDelivery.stop();
+      await terminal?.dispose();
+      await runtime.shutdown();
+      await following.stop();
+      await messaging.store.close();
+    },
+  };
+}

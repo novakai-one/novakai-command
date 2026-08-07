@@ -1,7 +1,7 @@
 {
   "name": "@novakai/messaging",
   "version": "0.1.0",
-  "description": "Novakai Messaging capability — v1 surface sealed through S4: direct lane, rooms (membership seam, frozen snapshots), attention mechanics (DND/urgent, contact policy), the Subscribe stream, and templates (DEC-15); embedded + WS standalone modes; memory/jsonl stores; memory/PTY/WS presence transports.",
+  "description": "Novakai Messaging capability \u2014 v1 surface sealed through S4: direct lane, rooms (membership seam, frozen snapshots), attention mechanics (DND/urgent, contact policy), the Subscribe stream, and templates (DEC-15); embedded + WS standalone modes; memory/jsonl stores; memory/PTY/WS presence transports.",
   "type": "module",
   "engines": {
     "node": ">=20"
@@ -9,7 +9,10 @@
   "scripts": {
     "generate": "node tools/generate-ts.mjs",
     "build": "tsc -p tsconfig.json",
-    "test": "npm run build && node --test \"dist/tests/**/*.test.js\""
+    "test": "npm run build && node --test \"dist/tests/**/*.test.js\" && npm run test:b3",
+    "test:fast": "node ../../tools/test-fast.mjs .",
+    "typecheck:b3": "tsc -p tsconfig.b3.json",
+    "test:b3": "npm run typecheck:b3 && tsx --test \"b3/tests/**/*.test.ts\""
   },
   "license": "UNLICENSED",
   "private": true,
@@ -18,6 +21,7 @@
     "typescript": "^5.5.0"
   },
   "dependencies": {
-    "ws": "^8.21.1"
+    "ws": "^8.21.1",
+    "@novakai/foundation": "file:../foundation"
   }
 }

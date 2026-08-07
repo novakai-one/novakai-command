@@ -1,0 +1,66 @@
+/* Supervision usage table — calm by default. Grayscale + spacing + weight
+   carry the structure; no accent token appears here at all (the rail owns the
+   single attention signal, SHL-010). */
+
+.nv-usage {
+  gap: 14px;
+  padding: 12px 14px;
+}
+
+.nv-usage__rows {
+  gap: 0;
+}
+
+/* A row that needs Chris is separated by air, not colour. */
+.nv-usage__rows .k-presence {
+  margin-right: 8px;
+}
+
+.nv-usage__totals {
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 10px 8px 0;
+  border-top: 1px solid var(--panel-3, #29292d);
+}
+
+.nv-usage__totalLabel {
+  color: var(--ink-muted, #a2a2aa);
+  font-size: 12px;
+}
+
+.nv-usage__totalValue {
+  font-variant-numeric: tabular-nums;
+  color: var(--ink, #ececee);
+}
+
+.nv-usage__basis {
+  color: var(--ink-faint, #8b8b94);
+  font-size: 11px;
+  line-height: 1.5;
+  margin: 0;
+  max-width: 62ch;
+}
+
+/* The per-Run block. Found in a screenshot: as one long `meta` string it ate
+   the row's label — the agent's name disappeared from its own row — and ran off
+   the panel edge, so the values FZ-VIEW-010 requires were on the page and not
+   on the screen. The facts now sit under the name with room to wrap. */
+.nv-usage__run {
+  gap: 0;
+  padding-bottom: 10px;
+}
+
+.nv-usage__runId,
+.nv-usage__runValues {
+  margin: 0;
+  padding: 0 10px;
+  color: var(--ink-faint, #8b8b94);
+  font-size: 11px;
+  line-height: 1.6;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.nv-usage__runValues {
+  font-variant-numeric: tabular-nums;
+}

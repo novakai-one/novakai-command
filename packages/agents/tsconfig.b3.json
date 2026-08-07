@@ -1,0 +1,18 @@
+{
+  "//": "B3b code is held to the same bar as packages/terminal and packages/agent-runtime — including noUncheckedIndexedAccess, which the pre-B3 agents tree predates. New code conforms; old code is not retrofitted (standing rule 2).",
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2022"],
+    "noEmit": true,
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "types": ["node"]
+  },
+  "include": ["b3/**/*.ts"]
+}

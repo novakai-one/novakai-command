@@ -41,6 +41,13 @@ import type {
   Thread,
   ThreadId,
 } from "../public/contract/index.js";
+import type {
+  AgentEndpointClaim,
+  AgentEndpointClaimId,
+  AgentId,
+  AgentInboxItem,
+  AgentInboxItemId,
+} from "../b3/contract/records.js";
 
 // --- §6 failure vocabulary ---------------------------------------------------
 
@@ -142,6 +149,13 @@ export interface AcceptanceInput {
   deliveries: Delivery[];
   /** §11.3: persisted on the AcceptanceRecord so duplicate retries carry the typed outcome (MSG-010). */
   urgentDowngraded?: boolean;
+  /**
+   * B3c §8.1 — durable Agent inbox truth, committed INSIDE the acceptance
+   * transaction. DEC-B3V4-32: a Message addressed to an Agent commits before
+   * any endpoint is chosen, so a Run replaced mid-flight neither loses it nor
+   * takes it twice. Absent for ordinary human-to-human sends.
+   */
+  agentInboxItems?: readonly AgentInboxItem[];
 }
 
 export type AcceptanceOutcome =
@@ -215,7 +229,13 @@ export type JournalEntry =
       policy: PolicyChangedPolicy;
       revision: number;
     }
-  | { sequence: Sequence; kind: "TemplateWritten"; template: Template };
+  | { sequence: Sequence; kind: "TemplateWritten"; template: Template }
+  // B3c (§15): the two committed facts behind `messaging.agent-endpoint.changed`
+  // and `messaging.agent-inbox.changed`. They ride the SAME journal as every
+  // other committed fact so "emit only after durable" needs no second mechanism
+  // — and so a restart replays them in the same order they happened.
+  | { sequence: Sequence; kind: "AgentEndpointChanged"; claim: AgentEndpointClaim }
+  | { sequence: Sequence; kind: "AgentInboxChanged"; item: AgentInboxItem };
 
 // --- the seam ------------------------------------------------------------------
 
@@ -233,6 +253,18 @@ export interface MessagingStore {
    * exists for Thread creation); durable adapters persist the op.
    */
   createRoomThread(room: RoomThreadSpec): Promise<StoreResult<Thread>>;
+
+  /**
+   * B3c §12.5 — materialise a direct Thread BEFORE its first Message.
+   *
+   * Direct Threads have always been created implicitly inside
+   * `commitAcceptance`, which is fine while every Thread starts with a send.
+   * B3c's contract requires a `threadId` on the send itself, so a caller needs
+   * a way to obtain one first. Get-or-create on the canonical sorted pair —
+   * the same identity `commitAcceptance` uses, so the two paths converge on
+   * one Thread rather than racing to create two.
+   */
+  createDirectThread(pair: [PersonId, PersonId]): Promise<StoreResult<Thread>>;
 
   // §4 reads (committed state only; ordered results by sequence ascending)
   getThread(threadId: ThreadId): Promise<StoreResult<Thread>>;
@@ -299,6 +331,82 @@ export interface MessagingStore {
   markEffectsSettled(messageId: MessageId): Promise<StoreResult<void>>;
   scanJournal(sinceSequence?: Sequence, limit?: number): Promise<StoreResult<JournalEntry[]>>;
 
+  // --- B3c §8.1: the durable Agent endpoint and inbox ------------------------
+  //
+  // These are separate seam operations rather than reuse of the generic
+  // record writes because each one is a check-then-act that MUST be
+  // indivisible: the generation CAS and the write have to happen inside the
+  // same serialized stretch, or two Runtimes racing a continuation both
+  // "win" and the Agent ends up with two live endpoints (§13.6).
+
+  /**
+   * Commit a claim, guarded by the generation the caller believes is current.
+   * `expectedEndpointGeneration: -1` means "this Agent has no claim yet".
+   * A mismatch is `RevisionConflict` and writes nothing.
+   */
+  commitAgentEndpointClaim(
+    input: AgentEndpointClaimInput,
+  ): Promise<StoreResult<AgentEndpointClaim>>;
+
+  /**
+   * Move the endpoint from one Run to the next and re-point the named inbox
+   * items in ONE operation (§13.6: "Messaging endpoint claim transferred
+   * atomically"). An item in `submitted-unconfirmed` may never be re-pointed:
+   * its keystrokes already reached the old PTY, so redirecting it would
+   * deliver the same Message twice. That is `StateConflict`, and the whole
+   * transfer is refused rather than partially applied.
+   */
+  transferAgentEndpoint(
+    input: AgentEndpointTransferInput,
+  ): Promise<StoreResult<AgentEndpointTransferOutcome>>;
+
+  /** Write one inbox item state (accept, claim, submit, fail). Journaled. */
+  transitionAgentInboxItem(item: AgentInboxItem): Promise<StoreResult<AgentInboxItem>>;
+
+  /**
+   * One claim by id. The id is a digest of (agentId, generation) and so cannot
+   * be reversed into an Agent — a caller holding only a claim id (which is all
+   * `activateAgentEndpointClaim` receives) has no other way to reach it. The
+   * alternative, remembering the mapping in process memory, would not survive
+   * the hard restart §25-B3c requires queued Messages to survive.
+   */
+  getAgentEndpointClaim(
+    claimId: AgentEndpointClaimId,
+  ): Promise<StoreResult<AgentEndpointClaim | null>>;
+
+  /** The Agent's current (non-closed) endpoint claim, or null. */
+  getAgentEndpoint(agentId: AgentId): Promise<StoreResult<AgentEndpointClaim | null>>;
+  /** Every claim for the Agent, oldest generation first — closed ones included. */
+  listAgentEndpointClaims(agentId: AgentId): Promise<StoreResult<AgentEndpointClaim[]>>;
+  /**
+   * Every claim, for the one question that has no Agent to scope it: "which
+   * Agent does this Run belong to?" An exact-run send names a Run and nothing
+   * else, and the endpoint claim is the durable join between the two.
+   */
+  listAllAgentEndpointClaims(): Promise<StoreResult<AgentEndpointClaim[]>>;
+  listAgentInbox(agentId: AgentId): Promise<StoreResult<AgentInboxItem[]>>;
+  getAgentInboxItem(
+    itemId: AgentInboxItemId,
+  ): Promise<StoreResult<AgentInboxItem | null>>;
+
   /** Release adapter resources (file handles). In-memory: no-op. */
   close(): Promise<void>;
+}
+
+export interface AgentEndpointClaimInput {
+  readonly claim: AgentEndpointClaim;
+  /** The generation the caller believes is current; -1 for "no claim yet". */
+  readonly expectedEndpointGeneration: number;
+}
+
+export interface AgentEndpointTransferInput {
+  readonly oldClaim: AgentEndpointClaim;
+  readonly newClaim: AgentEndpointClaim;
+  readonly inboxItems: readonly AgentInboxItem[];
+  readonly expectedEndpointGeneration: number;
+}
+
+export interface AgentEndpointTransferOutcome {
+  readonly claim: AgentEndpointClaim;
+  readonly inboxItems: readonly AgentInboxItem[];
 }

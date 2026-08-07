@@ -1,0 +1,35 @@
+{
+  "name": "@novakai/server",
+  "version": "0.1.0",
+  "description": "Novakai Server — the production composition root (B1a): boots foundation → messaging → agents → transcript → shell persistence → session layer → HTTP + nvk-ws v1. Replaces packages/shell/demo/bridge.ts.",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run typecheck && tsx --import ./tests/support/no-leaked-handles.ts --test \"tests/**/*.test.ts\"",
+    "test:fast": "node ../../tools/test-fast.mjs ."
+  },
+  "license": "UNLICENSED",
+  "private": true,
+  "dependencies": {
+    "zod": "^3.23.8",
+    "ws": "^8.17.0",
+    "@novakai/foundation": "file:../foundation",
+    "@novakai/agents": "file:../agents",
+    "@novakai/projects": "file:../projects",
+    "@novakai/artifacts": "file:../artifacts",
+    "@novakai/spine": "file:../spine"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.9",
+    "@types/ws": "^8.5.10",
+    "tsx": "^4.15.7",
+    "typescript": "^5.5.2"
+  },
+  "bin": {
+    "nvk-server": "./cli/nvk-server.ts",
+    "nvk-token": "./cli/nvk-token.ts"
+  }
+}

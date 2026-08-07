@@ -1,0 +1,66 @@
+import type {
+  ClientOpId,
+} from '@novakai/foundation/dist/contract/brands.js';
+import type {
+  Page,
+  Result,
+} from '@novakai/foundation/dist/contract/types.js';
+import type {
+  AddMessageToProjectInput,
+  AttachArtifactToProjectInput,
+  SpineWorkflow,
+  SpineWorkflowId,
+} from '../contract/schemas.js';
+import type { SpineError } from '../contract/errors.js';
+import type { SpineContext } from './ports.js';
+export type { MessageExistenceQuery } from './ports.js';
+import * as workflows from './workflows.js';
+
+export interface SpineOperations {
+  addMessageToProject(
+    input: AddMessageToProjectInput,
+    clientOpId: ClientOpId,
+  ): Promise<Result<SpineWorkflow, SpineError>>;
+  attachArtifactToProject(
+    input: AttachArtifactToProjectInput,
+    clientOpId: ClientOpId,
+  ): Promise<Result<SpineWorkflow, SpineError>>;
+  continueWorkflow(
+    workflowId: SpineWorkflowId,
+    clientOpId: ClientOpId,
+  ): Promise<Result<SpineWorkflow, SpineError>>;
+  abandonWorkflow(
+    workflowId: SpineWorkflowId,
+    clientOpId: ClientOpId,
+  ): Promise<Result<SpineWorkflow, SpineError>>;
+  getSpineWorkflows(): Promise<Result<Page<SpineWorkflow>, SpineError>>;
+}
+
+export interface SpineBoot {
+  scanWorkflows(): Promise<Result<Page<SpineWorkflow>, SpineError>>;
+}
+
+export interface SpineHost {
+  readonly operations: SpineOperations;
+  readonly boot: SpineBoot;
+}
+
+export function createSpineHost(ctx: SpineContext): SpineHost {
+  const getSpineWorkflows = () => workflows.getSpineWorkflows(ctx);
+  return {
+    operations: {
+      addMessageToProject: (input, clientOpId) =>
+        workflows.addMessageToProject(ctx, input, clientOpId),
+      attachArtifactToProject: (input, clientOpId) =>
+        workflows.attachArtifactToProject(ctx, input, clientOpId),
+      continueWorkflow: (workflowId, clientOpId) =>
+        workflows.continueWorkflow(ctx, workflowId, clientOpId),
+      abandonWorkflow: (workflowId, clientOpId) =>
+        workflows.abandonWorkflow(ctx, workflowId, clientOpId),
+      getSpineWorkflows,
+    },
+    boot: {
+      scanWorkflows: () => workflows.scanWorkflows(ctx),
+    },
+  };
+}

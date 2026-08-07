@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en" data-theme="dark" data-density="comfortable">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>TreeView — FIXTURE DATA</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+    <style>
+      html, body { background: #0d0d0f; margin: 0; }
+      /* Stamped into every screenshot taken from this page, on purpose. */
+      #fixture-banner {
+        font: 500 11px/1.6 Inter, system-ui, sans-serif;
+        color: #0d0d0f; background: #d0a14b;
+        padding: 5px 14px; letter-spacing: 0.04em;
+      }
+      #preview { display: flex; height: 560px; max-width: 1000px; }
+    </style>
+  </head>
+  <body>
+    <div id="fixture-banner" data-testid="fixture-banner">
+      FIXTURE DATA — TreeView rendered from literal nodes. Not a backed host, not a live Runtime.
+    </div>
+    <div id="preview"></div>
+    <script type="module" src="/tools/tree-preview.tsx"></script>
+  </body>
+</html>
