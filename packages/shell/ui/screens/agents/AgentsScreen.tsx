@@ -10,6 +10,7 @@ import {
 } from '../../kit/index.js';
 import { saveDefinition, saveModel, draftFromAgent, PROVIDER_OPTIONS, type AgentDraft } from './agentsController.js';
 import { dedupeById } from '../../listDedupe.js';
+import { answerFrom } from '../../../contract/listAnswer.js';
 import './agents.css';
 
 const EMPTY_DRAFT: AgentDraft = {
@@ -123,7 +124,9 @@ export function AgentsView(props: {
 
 export function AgentsScreen(props: { services: ShellServices }) {
   const { services } = props;
-  const [agents, setAgents] = useState<AgentDefView[]>([]);
+  // `null` until the roster answers. It used to start `[]`, which drew "No
+  // agents defined yet" before anyone had been asked (contract/listAnswer.ts).
+  const [agents, setAgents] = useState<AgentDefView[] | null>(null);
   const [skills, setSkills] = useState<SkillView[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -140,7 +143,13 @@ export function AgentsScreen(props: { services: ShellServices }) {
     return <EmptyState>Agents service unavailable in this host.</EmptyState>;
   }
 
-  const selected = agents.find((a) => a.id === selectedId) ?? null;
+  const answer = answerFrom({
+    source: agents,
+    failure: null,
+    rowsOf: (roster: AgentDefView[]) => dedupeById(roster), // G5: never paint the same agent twice
+  });
+  const roster = answer.kind === 'rows' ? answer.rows : [];
+  const selected = roster.find((a) => a.id === selectedId) ?? null;
 
   const onSave = async (draft: AgentDraft) => {
     const res = await saveDefinition(services, creating ? null : selected, draft);
@@ -166,7 +175,7 @@ export function AgentsScreen(props: { services: ShellServices }) {
       <Stack gap={0} className="nv-agents-screen__list">
         <Panel head="Agents">
           <ScrollArea style={{ maxHeight: '100%' }}>
-            {dedupeById(agents).map((a) => ( // G5: never paint the same agent twice
+            {roster.map((a) => (
               <ListRow
                 key={a.id}
                 label={a.displayName}
@@ -175,7 +184,8 @@ export function AgentsScreen(props: { services: ShellServices }) {
                 onClick={() => { setCreating(false); setSelectedId(a.id); setError(null); }}
               />
             ))}
-            {agents.length === 0 && <EmptyState>No agents defined yet</EmptyState>}
+            {answer.kind === 'waiting' && <EmptyState>Reading agents…</EmptyState>}
+            {answer.kind === 'none' && <EmptyState>No agents defined yet</EmptyState>}
           </ScrollArea>
           <Stack className="nv-agents-screen__new">
             <Button onClick={() => { setCreating(true); setSelectedId(null); setError(null); }}>

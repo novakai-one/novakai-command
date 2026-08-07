@@ -18,38 +18,49 @@
 import React, { useEffect, useState } from 'react';
 import type { ShellServices } from '../../../contract/index.js';
 import {
-  describeLaunchOrigin, describeRunState, describeRunUsage, orderRuns,
+  AGENT_RUN_MUST_SHOW, describeRunState, orderRuns,
   type AgentRunRowView, type AgentRunsPageView,
 } from '../../../contract/agentRuns.js';
+import { answerFrom, type AnswerFailure } from '../../../contract/listAnswer.js';
 import {
-  EmptyState, InlineError, ListRow, Panel, ScrollArea, Stack, Text,
+  DescriptionList, EmptyState, InlineError, ListRow, Panel, ScrollArea, Stack, Text,
 } from '../../kit/index.js';
 import './runs.css';
 
-export interface RunsViewError {
-  readonly code: string;
-  readonly message: string;
-}
+/**
+ * An ALIAS, not a second declaration. B0 wrote this rule here first; B2.1 moved
+ * it to contract/listAnswer.ts when the audit found four more screens breaking
+ * it, and two structurally-identical copies of one rule is exactly the drift
+ * that made the rule necessary.
+ */
+export type RunsViewError = AnswerFailure;
 
 /** Pure presentational — every value arrives as a prop, nothing is derived. */
 export function RunsView(props: {
   page: AgentRunsPageView | null;
   error: RunsViewError | null;
 }) {
-  const rows = orderRuns(props.page?.items ?? []);
   const omissions = props.page?.omissions ?? [];
+  // Four states, not two. "Nobody has answered yet" is a different fact from
+  // "the answer was none", and drawing the first as the second is the same lie
+  // as drawing an unavailable measurement as a zero (FZ-VIEW-010).
+  const answer = answerFrom({
+    source: props.page,
+    failure: props.error,
+    rowsOf: (page: AgentRunsPageView) => orderRuns(page.items),
+  });
+  const rows = answer.kind === 'rows' ? answer.rows : [];
 
   return (
     <ScrollArea className="nv-runs__scroll">
       <Panel head="Agent Runs">
         <Stack className="nv-runs">
-          {props.error && (
-            <InlineError>{`${props.error.code}: ${props.error.message}`}</InlineError>
+          {answer.kind === 'failed' && (
+            <InlineError>{`${answer.failure.code}: ${answer.failure.message}`}</InlineError>
           )}
-          {!props.error && rows.length === 0 && (
-            <EmptyState>No agent runs yet</EmptyState>
-          )}
-          {rows.length > 0 && (
+          {answer.kind === 'waiting' && <EmptyState>Reading Runs…</EmptyState>}
+          {answer.kind === 'none' && <EmptyState>No agent runs yet</EmptyState>}
+          {answer.kind === 'rows' && (
             <Stack gap={0} className="nv-runs__rows">
               {rows.map((view) => <RunRow key={view.run.id} view={view} />)}
             </Stack>
@@ -74,6 +85,13 @@ export function RunsView(props: {
 function RunRow(props: { view: AgentRunRowView }) {
   const view = props.view;
   const uncertain = view.run.uncertainty.length > 0;
+  // FZ-VIEW-003, from the manifest rather than from memory. A fact with nothing
+  // to say (no warnings) is dropped; a fact this projection cannot supply is
+  // NOT — its absence is the thing Chris needs to see.
+  const facts = AGENT_RUN_MUST_SHOW
+    .map((fact) => [fact, fact.describe(view)] as const)
+    .filter(([, said]) => said !== '');
+
   return (
     <Stack gap={0} className="nv-runs__row" data-uncertain={uncertain ? 'true' : 'false'}>
       <ListRow
@@ -82,14 +100,17 @@ function RunRow(props: { view: AgentRunRowView }) {
       />
       <Text as="p" className="nv-runs__id">{view.run.id}</Text>
       <Text as="p" className="nv-runs__origin">
-        {`${describeLaunchOrigin(view)} · ${view.provider.provider} ${view.provider.modelId}`}
+        {`${view.provider.provider} ${view.provider.modelId}`}
       </Text>
-      <Text as="p" className="nv-runs__usage">{describeRunUsage(view)}</Text>
-      {uncertain && (
-        <Text as="p" className="nv-runs__uncertain">
-          {view.run.uncertainty.join(', ')}
-        </Text>
-      )}
+      <DescriptionList
+        className="nv-runs__facts"
+        items={facts.map(([fact, said]) => [
+          <Text key={`${fact.id}-t`} data-fact={fact.id} data-source={fact.source}>
+            {fact.term}
+          </Text>,
+          said,
+        ])}
+      />
     </Stack>
   );
 }

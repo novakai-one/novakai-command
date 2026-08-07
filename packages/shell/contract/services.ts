@@ -4,11 +4,11 @@
 import type { AgentEvent, LayoutRecord, PresenceSource, SettingsRecord } from './types.js';
 import type { SetSettingError } from './settings.js';
 import type { PersistFailedError } from './errors.js';
-import type { ScreenContext } from './context.js';
+import type { FocusSnapshot } from './context.js';
 import type { RunUsageTableView, UsageTableView } from './usage.js';
 import type { WatcherListView } from './watchers.js';
-import type { NotificationInboxView } from './notifications.js';
 import type { ShellAgentServices } from './agentRuns.js';
+import type { TerminalTabPatch, TerminalTabRecord } from './terminalTab.js';
 
 /**
  * S2a: shell-side view of an agent definition v2 (plain data — the browser
@@ -77,7 +77,7 @@ export interface ChatMessage {
   clientOpId?: string;
   /** S2b (SHL-008): send-time screen context snapshot — present on every
    * human-composed message (red gate 2; {app, ref:'none'} counts). */
-  context?: ScreenContext;
+  context?: FocusSnapshot;
 }
 
 export interface MessagingEvents {
@@ -90,13 +90,31 @@ export interface MessagingEvents {
    */
   onUsage?(table: UsageTableView): void;
   /**
-   * B3d lane C: the supervision notification inbox. Pushed whenever a
-   * Notification's durable state moves, so the ONE row that is the exception
-   * follows the capability rather than a poll interval.
+   * Lane C: something moved in the notification inbox.
+   *
+   * Deliberately CARRIES NOTHING. It used to push a Shell-shaped inbox, which
+   * made the pushed value a second projection of a Notification arriving by a
+   * second path — the FZ-VIEW-034 drift shape. It is a nudge now: the screen
+   * re-reads through the frozen `supervision` door, so there is exactly one
+   * shape of a Notification in the browser and exactly one place it comes from.
    */
-  onNotifications?(inbox: NotificationInboxView): void;
+  onNotifications?(): void;
   /** A committed Agents evidence event says the rebuildable Run rows may have moved. */
   onRunUsageChanged?(): void;
+}
+
+/**
+ * The browser's reach into the `terminalTab` kind. Plain data both ways: the
+ * page never sees a driver, and `clientOpId` is minted at the interaction layer
+ * exactly as it is for every other UI-originated mutation (DEC-S2-12).
+ */
+export interface ShellTerminalTabServices {
+  list(): Promise<TerminalTabRecord[]>;
+  save(id: string, patch: TerminalTabPatch, clientOpId: string):
+    Promise<{ ok: true; value: { record: TerminalTabRecord; version: number } } | { ok: false; error: PersistFailedError }>;
+  /** Detaches this window from the tab. It does not stop the session. */
+  close(id: string, clientOpId: string):
+    Promise<{ ok: true; value: { record: TerminalTabRecord; version: number } } | { ok: false; error: PersistFailedError }>;
 }
 
 export interface ShellServices {
@@ -126,6 +144,18 @@ export interface ShellServices {
   setSetting(key: string, value: unknown, opts: { derivedFrom?: string; theme?: 'dark' | 'light'; clientOpId: string }):
     Promise<{ ok: true; value: SettingsRecord } | { ok: false; error: SetSettingError }>;
 
+  /**
+   * Terminal TABS — the Shell's own durable record of which windows are open
+   * (FZ-VIEW-017), reached the same way layout and settings are.
+   *
+   * Deliberately NOT on `TerminalServices`: that seam is the Runtime's terminal
+   * facade and owns sessions, which outlive every tab. This one is a Shell fact
+   * and goes through the Shell's scoped Foundation handle. Keeping them apart is
+   * what makes "closing a tab does not stop a session" structural rather than a
+   * rule someone has to remember (red gate 1).
+   */
+  terminalTabs: ShellTerminalTabServices;
+
   // agents (S2a: agent-def UI + model picker; shell keeps NO model truth —
   // every write goes through the agents contract via this seam)
   agents?: ShellAgentsServices;
@@ -137,7 +167,7 @@ export interface ShellServices {
   // S2b context bus (SHL-008): the UI publishes every focus change; the shell
   // host (demo bridge / future Electron) is the focus authority and attaches
   // the send-time snapshot to each human-composed message. Fire-and-forget.
-  publishFocus?(focus: ScreenContext): void;
+  publishFocus?(focus: FocusSnapshot): void;
 
   // Demo affordance (SHL-006/007 end-to-end proof): define + spawn a mock
   // agent session so presence dot / typing bubble / activity line move live.
@@ -158,17 +188,15 @@ export interface ShellServices {
   /** Current watcher rules joined to their generation-fenced deadlines. */
   listWatchers?(): Promise<WatcherListView>;
   /**
-   * B3d lane C supervision surface: the current notification inbox, pulled once
-   * so the screen is never blank while it waits for the next push. Absent on
-   * hosts with no supervision engine — the screen draws that.
+   * `getNotificationInbox` and `acknowledgeNotification` used to live here.
+   *
+   * They were Shell-invented methods that no host outside `app/mockServices.ts`
+   * implemented, so against a fully backed server the attention screen drew
+   * "Supervision is not available in this host" forever while the published
+   * `b3.supervision.listNotifications` and `b3.supervision.acknowledge` sat
+   * unread (L-14). Retired in B2.5 — the surface reads through
+   * `agentRuns.supervision` like every other frozen view.
    */
-  getNotificationInbox?(): Promise<NotificationInboxView>;
-  /**
-   * Settle one Notification. The ONLY mutation this surface offers, because the
-   * frozen state machine accepts an acknowledgement from `transcript-observed`
-   * and from nothing else. Resolves when the durable state has moved.
-   */
-  acknowledgeNotification?(notificationId: string): Promise<void>;
   /** B3d Run usage read from Runtime views; older hosts omit or refuse it. */
   getRunUsageTable?(): Promise<RunUsageTableView>;
   /**

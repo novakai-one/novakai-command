@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import type {
   ShellServices, WatchDeadlineView, WatcherListView, WatcherSubjectView,
 } from '../../../contract/index.js';
+import { answerFrom } from '../../../contract/listAnswer.js';
 import {
   EmptyState, ListRow, Panel, ScrollArea, Stack, Text,
 } from '../../kit/index.js';
@@ -31,15 +32,23 @@ function omissionLabel(listing: WatcherListView): string | null {
 }
 
 export function WatchersView(props: { listing: WatcherListView | null }) {
-  const rules = props.listing?.rules ?? [];
+  // Not-yet-answered is not "no rules": a watcher list that reads empty while
+  // it is still being fetched says nothing is being watched, which is the
+  // opposite of what a watcher screen is for (contract/listAnswer.ts).
+  const answer = answerFrom({
+    source: props.listing,
+    failure: null,
+    rowsOf: (listing: WatcherListView) => listing.rules,
+  });
+  const rules = answer.kind === 'rows' ? answer.rows : [];
   const omission = props.listing === null ? null : omissionLabel(props.listing);
   return (
     <ScrollArea className="nv-watchers__scroll">
       <Panel head="Watchers">
         <Stack className="nv-watchers">
-          {rules.length === 0 ? (
-            <EmptyState>No watcher rules yet</EmptyState>
-          ) : (
+          {answer.kind === 'waiting' && <EmptyState>Reading watchers…</EmptyState>}
+          {answer.kind === 'none' && <EmptyState>No watcher rules yet</EmptyState>}
+          {answer.kind === 'rows' && (
             <Stack gap={0} className="nv-watchers__rows">
               {rules.map((rule) => {
                 const deadline = props.listing?.deadlines.find(

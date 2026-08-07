@@ -8,6 +8,7 @@ import {
   type TerminalServices, type TerminalTabView,
 } from '../contract/terminalServices.js';
 import { UNFINISHED_TERMINAL_SESSION_STATUSES } from '../../terminal/contract/records.js';
+import { openOperationKey } from '../contract/terminalOpen.js';
 import { fetchBootstrap, type BootstrapDocument } from './serverClient.js';
 
 const PROTOCOL_VERSION = 1;
@@ -58,7 +59,7 @@ export async function connectTerminalServices(
   const socket = new WebSocket(`${document_.wsUrl}?token=${encodeURIComponent(document_.token)}`);
   const pending = new Map<number, Pending>();
   const outputListeners: ((sessionId: string, frame: TerminalFrame) => void)[] = [];
-  /** The open operation this connection owns, per working directory. */
+  /** The open operation this connection owns, per directory AND size. */
   const openIds = new Map<string, string>();
   let nextId = 1;
 
@@ -151,11 +152,14 @@ export async function connectTerminalServices(
     },
 
     async openTerminal(workingDirectory, columns, rows) {
-      // One id per directory for the life of this connection: a tab that
-      // remounts asks the same question and gets the same shell back, instead
-      // of leaving a second one running behind it.
-      const opening = openIds.get(workingDirectory) ?? mintClientOpId();
-      openIds.set(workingDirectory, opening);
+      // One id per QUESTION for the life of this connection: a tab that remounts
+      // asks the same question and gets the same shell back, instead of leaving
+      // a second one running behind it. The size is part of the question — the
+      // pty is opened at it — so a differently-sized open is a different
+      // operation, not the same one asked again (contract/terminalOpen.ts).
+      const question = openOperationKey(workingDirectory, columns, rows);
+      const opening = openIds.get(question) ?? mintClientOpId();
+      openIds.set(question, opening);
       const opened = await call<{ id: string }>('b3.terminal.open', {
         owner: { kind: 'plain-shell', shellInstanceId: SHELL_INSTANCE_ID },
         launchAuthorityRef: 'plain-shell',

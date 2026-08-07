@@ -7,7 +7,7 @@ import React from 'react';
 import {
   publishFocus, getFocus, subscribeFocus,
   requireContext, attachContext, composeHumanMessage,
-  type ScreenContext,
+  type FocusSnapshot,
 } from '../contract/index.js';
 import { FocusChip } from '../ui/screens/messaging/FocusChip.js';
 import { createMockServices } from '../app/mockServices.js';
@@ -24,7 +24,7 @@ describe('focus model (DEC-S2-7)', () => {
   });
 
   it('publishFocus updates the snapshot and notifies subscribers', () => {
-    const seen: ScreenContext[] = [];
+    const seen: FocusSnapshot[] = [];
     const unsub = subscribeFocus((f) => seen.push(f));
     publishFocus({ kind: 'conversation', id: 'conv_kimi' });
     unsub();
@@ -46,7 +46,7 @@ describe('send-time snapshot (red gate 2)', () => {
   });
 
   it('attachContext stamps the snapshot onto the outbound payload', () => {
-    const ctx: ScreenContext = { app: 'messaging', ref: { kind: 'conversation', id: 'conv_x' } };
+    const ctx: FocusSnapshot = { app: 'messaging', ref: { kind: 'conversation', id: 'conv_x' } };
     const payload = attachContext({ text: 'fix this' }, ctx);
     expect(payload.context).toEqual(ctx);
   });

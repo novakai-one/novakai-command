@@ -172,16 +172,58 @@ export function exceptionOf(usageRow: UsageRowView): 'drift' | 'interrupted' | n
   return null;
 }
 
+/**
+ * A total, and how much of the table it actually covers.
+ *
+ * The coverage is not decoration. Skipping unmeasured sessions is right — a
+ * missing count must not become a zero — but the resulting sum was then
+ * labelled "All sessions", which is a claim about scope that two unmeasured
+ * sessions make false. FZ-VIEW-012 names this failure for the overlap case:
+ * report partial with a limitation, "never a sum or a discard". A sum
+ * presented as the whole is both at once.
+ */
+export interface UsageTotal {
+  /** `null` when nothing was measurable — never 0, which would be a claim. */
+  readonly value: number | null;
+  readonly measured: number;
+  readonly rows: number;
+}
+
+export interface UsageTotals {
+  readonly input: UsageTotal;
+  readonly output: UsageTotal;
+}
+
 /** Totals across every session, skipping the counts that do not exist. */
-export function totals(rows: readonly UsageRowView[]): { input: number | null; output: number | null } {
-  const aggregateKnown = (pick: (usageRow: UsageRowView) => number | null): number | null => {
+export function totals(rows: readonly UsageRowView[]): UsageTotals {
+  const aggregateKnown = (pick: (usageRow: UsageRowView) => number | null): UsageTotal => {
     const known = rows.map(pick).filter((value): value is number => value !== null);
-    return known.length === 0
-      ? null
-      : known.reduce((total, nextValue) => total + nextValue, 0);
+    return {
+      value: known.length === 0
+        ? null
+        : known.reduce((total, nextValue) => total + nextValue, 0),
+      measured: known.length,
+      rows: rows.length,
+    };
   };
   return {
     input: aggregateKnown((usageRow) => usageRow.inputTokens),
     output: aggregateKnown((usageRow) => usageRow.outputTokens),
   };
+}
+
+/**
+ * What the totals row may honestly call itself. Derived, never asserted — the
+ * screen used to write "All sessions" as a literal regardless of what stood
+ * beside it.
+ *
+ * The WEAKEST metric bounds the claim: a line is only as complete as the least
+ * complete number standing in it, so one unmeasured output is enough to stop
+ * the row claiming everything.
+ */
+export function describeTotalsScope(given: UsageTotals): string {
+  const covered = Math.min(given.input.measured, given.output.measured);
+  const { rows } = given.input;
+  if (rows > 0 && covered === rows) return 'All sessions';
+  return `${covered} of ${rows} ${rows === 1 ? 'session' : 'sessions'}`;
 }

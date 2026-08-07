@@ -12,6 +12,59 @@
   color: var(--ink);
 }
 
+/* The tab strip. Rows are the kit's rows, laid along the bar instead of down a
+   list — so selection, hover and ellipsis are the ones every list in the app
+   already uses, and this file only says "horizontal, and only as wide as its
+   name". No accent: the composed viewport's one gold is on the rail. */
+.nvkTerminalStrip {
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.nvkTerminalStrip .k-stack {
+  align-items: center;
+  gap: 0;
+  padding: 6px 10px 6px 6px;
+  overflow-x: auto;
+}
+
+.nvkTabStripRow {
+  width: auto;
+  max-width: 220px;
+  font-size: var(--text-3);
+}
+
+/* Found in a screenshot, not in a test: with only a gap between them, adjacent
+   tabs read as one continuous line of words — "Terminal 000b Needs recovery
+   deploy Session unknown" — and the strip stops looking like tabs at all. A
+   hairline between neighbours is the same structural device the bar below
+   already uses, and it costs no colour and no ornament. */
+.nvkTabStripRow + .nvkTabStripRow {
+  margin-left: 6px;
+  border-left: 1px solid var(--hairline);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  padding-left: 12px;
+}
+
+/* The status word is a whisper next to the name, never its equal — otherwise
+   every marked tab shouts as loudly as the tab itself. */
+.nvkTabStripRow .k-row__meta {
+  font-size: calc(var(--text-3) - 1px);
+  opacity: 0.85;
+}
+
+/* The two rows that earn a mark, marked the quiet way — ink tier and weight,
+   never a dot or a chip. A strip of healthy tabs stays completely flat. */
+.nvkTabStripRow[data-session='unknown'] .k-row__meta,
+.nvkTabStripRow[data-session='attention'] .k-row__meta {
+  color: var(--ink-2);
+}
+
+.nvkTabStripRow[data-session='attention'] .k-row__label {
+  color: var(--ink);
+  font-weight: 500;
+}
+
 .nvkTerminalBar {
   align-items: baseline;
   gap: 14px;
@@ -54,6 +107,23 @@
   color: var(--sage);
 }
 
+/* FZ-VIEW-016's line. It must always be readable — it is the only place that
+   answers "can an agent see this?" — and it must never look like news. Tier 3
+   ink is the same quiet the truth line rests at, so the bar reads as one calm
+   row until something actually happens. */
+.nvkTerminalScreenContext {
+  font-size: var(--text-3);
+  color: var(--ink-3);
+  flex: 0 0 auto;
+  white-space: nowrap;
+  /* Found in a screenshot: at the same ink tier and with only a gap, this ran
+     straight on from the Runtime's truth line and the two read as one
+     sentence — which hands the Shell's statement to the Runtime to say. The
+     hairline is the same device the strip above uses between neighbours. */
+  border-left: 1px solid var(--hairline);
+  padding-left: 14px;
+}
+
 .nvkTerminalButton {
   font-size: var(--text-3);
   color: var(--ink-2);
@@ -79,4 +149,110 @@
 
 .nvkTerminalNotice[data-tone='problem'] {
   color: var(--ink);
+}
+
+/* FZ-VIEW-033's question, over the output it is about.
+
+   The stage exists so the dialog can sit ON the terminal rather than pushing it
+   around: a question that reflows the output you are deciding about makes you
+   re-find your place after answering. Still no accent — the question is the only
+   thing on screen, which is emphasis enough. */
+.nvkTerminalStage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+
+.nvkTerminalAsk {
+  position: absolute;
+  left: 50%;
+  top: 24px;
+  transform: translateX(-50%);
+  max-width: 460px;
+  padding: 16px 18px;
+  background: var(--inspector);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  /* The one thing that lifts it off the terminal. Shadow, not colour. */
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.55);
+}
+
+.nvkTerminalAskTitle {
+  font-size: var(--text-2);
+  font-weight: 500;
+  color: var(--ink);
+}
+
+/* The fact Chris decides with — full ink, and it reads as a sentence. */
+.nvkTerminalAskClaim {
+  font-size: var(--text-2);
+  line-height: var(--leading);
+  color: var(--ink);
+}
+
+.nvkTerminalAskChoices {
+  align-items: center;
+  padding-top: 2px;
+}
+
+/* An unreachable choice is a limit to READ: tier 3, the same quiet the standing
+   screen-context line rests at, so it never competes with the two choices that
+   work. It is not a control and does not look like one. */
+.nvkTerminalAskLimit {
+  font-size: var(--text-3);
+  line-height: var(--leading);
+  color: var(--ink-3);
+  border-top: 1px solid var(--hairline);
+  padding-top: 10px;
+}
+
+/* FOUND IN A SCREENSHOT, not in a test: the kit's primary fill is a 8.5% white
+   wash, which on this panel made "Keep running" and "Cancel" read as two equal
+   choices — the safe default invisible, on the one dialog where a reflex press
+   must not stop a process. Every assertion was green (there WAS exactly one
+   `k-btn--primary`); the picture showed near-parity. Same hazard three seats
+   running: a fact and its emphasis at the same tier.
+
+   Emphasis is ink and weight, the way the rest of this screen draws it. Cancel
+   drops to tier 3 and loses its outline — a way out, not an equal choice. */
+.nvkTerminalAskChoices .nvkTerminalButton {
+  font-size: var(--text-2);
+}
+
+.nvkTerminalAskChoices .k-btn--primary {
+  color: var(--ink);
+  font-weight: 500;
+}
+
+.nvkTerminalAskChoices .k-btn:not(.k-btn--primary) {
+  color: var(--ink-3);
+  border-color: transparent;
+}
+
+.nvkTerminalAskChoices .k-btn:not(.k-btn--primary):hover {
+  color: var(--ink-2);
+}
+
+/* Calm's two numbers. A row that exists only in Calm, under the control that
+   chose it — so the mode's consequence is where the mode was picked. Quiet:
+   labels at tier 3, the numbers themselves the only full-ink thing in it. */
+.nvkTerminalPacingRow {
+  flex: 0 0 auto;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.nvkTerminalPacing {
+  align-items: flex-start;
+}
+
+.nvkTerminalPacing .k-field__label {
+  font-size: var(--text-3);
+  color: var(--ink-3);
+}
+
+.nvkTerminalPacingInput {
+  width: 88px;
+  font-size: var(--text-3);
+  padding: 3px 6px;
 }

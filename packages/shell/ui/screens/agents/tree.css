@@ -1,0 +1,101 @@
+/* Agent family — the shape IS the information. Indentation carries the
+   generations; no connector lines, no chips, no accent (SHL-010). The rows sit
+   close so the family reads as one object rather than a list of cards. */
+
+.nv-tree__scroll {
+  flex: 1;
+}
+
+.nv-tree {
+  gap: 10px;
+  padding: 12px 14px;
+}
+
+.nv-tree__root {
+  color: var(--ink-muted, #a2a2aa);
+  font-size: 11px;
+  margin: 0;
+}
+
+.nv-tree__rows {
+  gap: 0;
+}
+
+.nv-tree__row {
+  gap: 1px;
+  padding: 6px 0;
+}
+
+/* A generation change is a small step, not a rule: the eye follows the left
+   edge, and a border on every row would be the "mark on everything" pattern.
+   One rule per legal depth — `indentFor` clamps to MAX_DRAWN_DEPTH, so the set
+   is finite and lives here rather than in an inline style. */
+.nv-tree__row[data-depth='0'] {
+  padding-top: 10px;
+}
+
+.nv-tree__row[data-depth='1'] {
+  padding-left: 18px;
+}
+
+.nv-tree__row[data-depth='2'] {
+  padding-left: 36px;
+}
+
+.nv-tree__row[data-depth='3'] {
+  padding-left: 54px;
+}
+
+.nv-tree__row[data-depth='4'] {
+  padding-left: 72px;
+}
+
+.nv-tree__row[data-depth='5'] {
+  padding-left: 90px;
+}
+
+.nv-tree__row[data-depth='6'] {
+  padding-left: 108px;
+}
+
+.nv-tree__row[data-depth='7'] {
+  padding-left: 126px;
+}
+
+.nv-tree__row[data-depth='8'] {
+  padding-left: 144px;
+}
+
+
+.nv-tree__meta {
+  color: var(--ink-faint, #8b8b94);
+  font-size: 11px;
+  margin: 0;
+  padding-left: 10px;
+}
+
+/* The exception: the tree and the Run row disagree about who is supervising.
+   Full ink, its own line, and nothing else on this screen competes with it. */
+.nv-tree__disagreement {
+  color: var(--ink, #ececee);
+  font-size: 11px;
+  margin: 0;
+  padding-left: 10px;
+}
+
+.nv-tree__row[data-disagreement='true'] {
+  /* Vertical only, NEVER the `padding` shorthand: the shorthand resets
+     padding-left, and this rule sits after the depth rules — so the one row
+     that was the exception lost its generation and drew at the left margin,
+     which read as "the disagreement is a root". Found in a screenshot; the
+     DOM had the right depth the whole time. */
+  padding-top: 12px;
+  padding-bottom: 12px;
+}
+
+/* What the answer could not show, said quietly and always last. */
+.nv-tree__gap {
+  color: var(--ink-muted, #a2a2aa);
+  font-size: 11px;
+  margin: 0;
+}

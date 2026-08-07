@@ -2,7 +2,7 @@
 // (S2b demo affordance, req 9): shows what will travel with the next message.
 // Kit-composed ONLY (red gate 3 — tools/lint-kit.mjs enforces).
 import React from 'react';
-import type { ScreenContext } from '../../../contract/index.js';
+import type { FocusSnapshot } from '../../../contract/index.js';
 import { Text } from '../../kit/index.js';
 
 const APP_LABELS: Record<string, string> = {
@@ -11,7 +11,7 @@ const APP_LABELS: Record<string, string> = {
   settings: 'Settings',
 };
 
-export function FocusChip(props: { focus: ScreenContext }) {
+export function FocusChip(props: { focus: FocusSnapshot }) {
   const { focus } = props;
   const appLabel = APP_LABELS[focus.app] ?? focus.app;
   return (

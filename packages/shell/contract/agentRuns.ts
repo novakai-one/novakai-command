@@ -24,6 +24,16 @@
 // against a REAL view produced by the real Runtime in
 // `packages/server/tests/b3e-tracer-consistency.test.ts`.
 
+import type {
+  AgentCommunicationsPageView, ListAgentCommunicationsRequest,
+} from './communications.js';
+import type { ShellLifecycleServices, ShellRuntimeServices } from './agentLifecycle.js';
+import type { ShellTerminalServices } from './agentTerminal.js';
+import type { AgentRunTreeView, GetAgentRunTreeRequest } from './agentTree.js';
+import type {
+  ListNotificationsRequest, NotificationPageView, NotificationView,
+} from './notificationRead.js';
+
 /** One sourced Supervision measurement, verbatim (P2 §9.1:1420). */
 export interface RunUsageValue {
   readonly quality: string;
@@ -159,15 +169,122 @@ export interface ListAgentRunsRequest {
 }
 
 /**
- * FZ-VIEW-001's read slice. B3e's tracer ships the Runs read; the lifecycle,
- * terminal, communications and supervision members of the frozen facade are
- * named there and arrive with their lanes.
+ * FZ-VIEW-001's `communications` slice, read half. `sendAgentMessage` and
+ * `openConversationView` are the other two members and arrive with the
+ * compose-and-send path; this door is the one §19.2 inspection reads through.
+ */
+export interface ShellCommunicationServices {
+  listAgentCommunications(
+    request: ListAgentCommunicationsRequest,
+  ): Promise<ShellReadResult<AgentCommunicationsPageView>>;
+}
+
+/**
+ * FZ-VIEW-001's `supervision` slice, as far as the notification surface reaches.
+ *
+ * The read and the one mutation the frozen state machine actually accepts. Both
+ * are published methods (`packages/server/core/b3/supervision-methods.ts`); the
+ * Shell had invented its own pair beside them and reached neither (L-14).
+ * `subscribeNotifications` is the third member and is not wired here — the
+ * screen re-reads through this door instead, so there is no second projection of
+ * a Notification anywhere in the browser.
+ *
+ * B3.2 renamed `acknowledge` to the name the FREEZE gives it. The published wire
+ * method is `b3.supervision.acknowledge` and stays that way; the short name came
+ * first and scripts speak it. But a door member is contract, not transport, and
+ * a second host written from P2 §12.6 reaches for `acknowledgeNotification` —
+ * which until now was `undefined is not a function`. Same hazard the server
+ * itself records for `b3.agent.controls` vs the spec's `getControls`.
+ */
+export interface ShellSupervisionServices {
+  listNotifications(
+    request: ListNotificationsRequest,
+  ): Promise<ShellReadResult<NotificationPageView>>;
+  acknowledgeNotification(notificationId: string): Promise<ShellReadResult<NotificationView>>;
+}
+
+/** `getAgentRun`'s request. One Run, named by id (FZ-VIEW-001's `runs` slice). */
+export interface GetAgentRunRequest {
+  readonly agentRunId: string;
+}
+
+/**
+ * FZ-VIEW-001, whole.
+ *
+ * It was two thirds of a door until B3.2. The tracer shipped `runs` (minus
+ * `getAgentRun`), B2.3 added `communications`, B2.5 added `supervision`, and
+ * `runtime`, `lifecycle` and `terminal` were named in the freeze and built
+ * nowhere — finding L-20. That was not a cosmetic gap: a frozen facade the host
+ * implements two thirds of looks complete from inside the host, so each missing
+ * slice surfaced as a STATED LIMIT on some screen ("this window cannot make that
+ * lifecycle action yet") rather than as the hole it was. Two shipped that way.
+ *
+ * `SHELL_AGENT_SERVICES_SHAPE` below is the machine-readable form of the six
+ * slices, and a test composes the real door and compares. A slice that goes
+ * missing again fails a suite instead of becoming a sentence on a dialog.
  */
 export interface ShellAgentServices {
+  readonly runtime: ShellRuntimeServices;
   readonly runs: {
+    getAgentRun(request: GetAgentRunRequest): Promise<ShellReadResult<AgentRunRowView>>;
     listAgentRuns(request: ListAgentRunsRequest): Promise<ShellReadResult<AgentRunsPageView>>;
+    getAgentRunTree(request: GetAgentRunTreeRequest): Promise<ShellReadResult<AgentRunTreeView>>;
   };
+  readonly lifecycle: ShellLifecycleServices;
+  readonly terminal: ShellTerminalServices;
+  readonly communications: ShellCommunicationServices;
+  readonly supervision: ShellSupervisionServices;
 }
+
+/**
+ * FZ-VIEW-001 as data: every slice, and every member of it, verbatim from
+ * P2 §12.6:2495–2536 — including the members this host has not wired.
+ *
+ * Writing the WHOLE door down is the point. The version of this list that
+ * contained only what the Shell happened to implement is what let three slices
+ * go missing for seven seats: every screen could see a door it was fully using,
+ * and the two thirds that did not exist showed up only as stated limits on
+ * unrelated dialogs. A frozen contract is not a description of the host.
+ */
+export const SHELL_AGENT_SERVICES_FROZEN: Readonly<Record<string, readonly string[]>> = {
+  runtime: ['getRuntimeStatus'],
+  runs: ['getAgentRun', 'listAgentRuns', 'getAgentRunTree'],
+  lifecycle: [
+    'spawnAgent', 'interruptAgentTurn', 'stopAgent', 'prepareStopAgentTree',
+    'stopAgentTree', 'continueAgent', 'adoptAgent',
+  ],
+  terminal: [
+    'attachController', 'detachController', 'acquireInputLease', 'releaseInputLease',
+    'writeInput', 'resizeTerminal', 'readTerminalStream',
+  ],
+  communications: ['sendAgentMessage', 'openConversationView', 'listAgentCommunications'],
+  supervision: [
+    'getRunUsage', 'getAgentUsage', 'listNotifications', 'acknowledgeNotification',
+    'resetDriftEpisode',
+  ],
+} as const;
+
+/**
+ * The frozen members this host has NOT built, and the lane each belongs to.
+ *
+ * Named rather than omitted, so the gap is a fact with a home instead of a
+ * silence. The suite asserts `wired ∪ unwired === frozen`, exactly: wiring a
+ * member without striking it off here fails, and so does inventing one that the
+ * freeze never named.
+ *
+ * `getRunUsage` / `getAgentUsage` are the interesting entry. The usage SCREENS
+ * are built (B2.2) and read `usage` off the Run row the `runs` slice already
+ * carries, which is the frozen projection's own copy — so the Shell is not
+ * missing the numbers, it is missing Supervision's direct read of them. That
+ * distinction is why this list carries a reason per member and not just a name.
+ */
+export const SHELL_AGENT_SERVICES_UNWIRED: Readonly<Record<string, string>> = {
+  'communications.sendAgentMessage': 'compose-and-send; Messaging is the authority (FZ-VIEW-013)',
+  'communications.openConversationView': 'compose-and-send lane',
+  'supervision.getRunUsage': 'usage is read off the Run row the runs slice carries (B2.2)',
+  'supervision.getAgentUsage': 'per-Agent totals; no surface reads them yet',
+  'supervision.resetDriftEpisode': 'drift authoring; no Shell surface owns it',
+} as const;
 
 /**
  * Rule 1, machine-readable: every field name the frozen projection carries, at
@@ -245,6 +362,146 @@ function describeValue(value: RunUsageValue, label: string): string {
 export function describeRunUsage(view: AgentRunRowView): string {
   return `${describeValue(view.usage.inputTokens, 'in')} · `
     + `${describeValue(view.usage.outputTokens, 'out')}`;
+}
+
+/**
+ * FZ-VIEW-003 must-show #2, and the one fact this projection cannot supply.
+ *
+ * The frozen `AgentRunView` (P2 §19.1) carries
+ * `controllers{attachedCount, kinds, inputLeaseHolder?}`. The IMPLEMENTED view
+ * in `packages/agent-runtime/contract/runs-api.ts` does not, and the frozen
+ * Shell door (FZ-VIEW-001) offers no attachment query to fill the hole from —
+ * its `terminal` slice is attach/detach/lease/write/resize/read, with no
+ * `getTerminalSession` and no `listControllerAttachments`.
+ *
+ * So the Shell says so. CL-S forbids a lane from adding the field; drawing a
+ * `0` would be worse than saying nothing, because `0 controllers` is a claim
+ * Chris would read as "nobody is watching this" — one inference away from the
+ * "no controller means stopped" mistake red gate 4 exists to stop.
+ *
+ * Reported to the orchestrator as T-06. When the ruling lands, this function
+ * gets a projection to read and its test stops asserting the gap.
+ */
+export function describeControllers(_view: AgentRunRowView): string {
+  return 'not carried by this projection';
+}
+
+/**
+ * FZ-VIEW-003 must-show #3 — whether the background provider process is live.
+ *
+ * Keyed on `run.finalAt` and on nothing else. The OQ-07 ruling is explicit that
+ * finality is NOT a function of the lifecycle enum ("`interrupted` is final
+ * only after reconciliation confirms no live provider process") and that
+ * `finalAt` is the single published observable. `nvk agent list --state` keys
+ * on the same field, so the Shell and the CLI cannot disagree about who is
+ * still running — FZ-VIEW-034 held by construction rather than by a promise.
+ *
+ * Note what this deliberately does NOT consult: controllers. Nobody attached is
+ * not stopped.
+ */
+export function describeBackgroundProcess(view: AgentRunRowView): string {
+  if (view.run.finalAt === undefined) return 'still running in the Novakai Runtime';
+  const why = view.run.finalReason === undefined ? '' : ` · ${view.run.finalReason}`;
+  return `ended ${readableUtc(view.run.finalAt)}${why}`;
+}
+
+/**
+ * `2026-08-06T03:11:00.000Z` → `2026-08-06 03:11 UTC`.
+ *
+ * Presentation, not derivation: same instant, same zone, fewer characters
+ * between Chris and the fact. An unparseable stamp is handed back untouched —
+ * a projection that sends something unexpected gets SHOWN, never swallowed.
+ */
+function readableUtc(iso: string): string {
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return iso;
+  return `${at.toISOString().slice(0, 10)} ${at.toISOString().slice(11, 16)} UTC`;
+}
+
+/** Who looks after this Agent today — never who spawned it (P2 §6.2). */
+function describeSupervisor(supervisor: RunSupervisorView): string {
+  if (supervisor.kind === 'human') return `supervised by ${supervisor.principalId}`;
+  if (supervisor.kind === 'agent') return `supervised by ${supervisor.agentId}`;
+  return `orphaned · ${supervisor.reason}`;
+}
+
+/**
+ * FZ-VIEW-003 must-show #5 — parent and current supervisor.
+ *
+ * `family.childCount` is a measured number, so a `0` here is a fact and is
+ * drawn as one. That is the opposite call from usage and controllers, and the
+ * difference is the whole point: a zero the owner counted is truth, a zero the
+ * consumer invented is a lie.
+ */
+export function describeFamily(view: AgentRunRowView): string {
+  const parent = view.family.parentAgentId === undefined
+    ? 'no parent'
+    : `parent ${view.family.parentAgentId}`;
+  const children = view.family.childCount === 0
+    ? 'no children'
+    : `${view.family.childCount} children`;
+  return `${describeSupervisor(view.family.supervisor)} · ${parent} · ${children}`;
+}
+
+/** FZ-VIEW-003 must-show #7 — the recovery/uncertainty warnings, verbatim. */
+export function describeWarnings(view: AgentRunRowView): string {
+  return view.run.uncertainty.join(', ');
+}
+
+/**
+ * One entry per line of P2 §19.1's "The view MUST show" list.
+ *
+ * The list is a manifest rather than seven remembered render calls because a
+ * must-show list that lives only in a spec paragraph is a must-show list a
+ * future seat drops one item from while every test stays green. `source` is
+ * the honest part: `not-carried` names a fact the implemented projection
+ * cannot supply, which the screen still draws — as the gap it is.
+ */
+export interface AgentRunMustShowFact {
+  readonly id: string;
+  /** What Chris reads as the label. Also how a test finds the fact on screen. */
+  readonly term: string;
+  readonly source: 'projection' | 'not-carried';
+  /** Drawn only when this returns a non-empty string. */
+  readonly describe: (view: AgentRunRowView) => string;
+}
+
+export const AGENT_RUN_MUST_SHOW: readonly AgentRunMustShowFact[] = [
+  {
+    id: 'launch-origin', term: 'Started from', source: 'projection',
+    describe: (view) => `${describeLaunchOrigin(view)} · by ${view.launch.requestedBy}`,
+  },
+  {
+    id: 'controllers', term: 'Controllers attached', source: 'not-carried',
+    describe: describeControllers,
+  },
+  {
+    id: 'background-process', term: 'Background process', source: 'projection',
+    describe: describeBackgroundProcess,
+  },
+  {
+    id: 'activity', term: 'Working or idle', source: 'projection',
+    describe: (view) => view.run.activity,
+  },
+  {
+    id: 'family', term: 'Family', source: 'projection',
+    describe: describeFamily,
+  },
+  {
+    id: 'usage', term: 'Usage', source: 'projection',
+    describe: describeRunUsage,
+  },
+  {
+    id: 'warnings', term: 'Warnings', source: 'projection',
+    describe: describeWarnings,
+  },
+];
+
+/** Lookup by id. Throws on an unknown id — a typo must not silently draw less. */
+export function mustShowFact(id: string): AgentRunMustShowFact {
+  const found = AGENT_RUN_MUST_SHOW.find((fact) => fact.id === id);
+  if (found === undefined) throw new Error(`no must-show fact "${id}"`);
+  return found;
 }
 
 /**

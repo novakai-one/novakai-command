@@ -17,9 +17,11 @@ import React, { useEffect, useState } from 'react';
 import type { ShellServices } from '../../../contract/index.js';
 import {
   exceptionOf, formatIdentity, formatTokens, orderRows, totals, formatCount,
+  describeTotalsScope,
   formatRunUsage, type RunUsageRowView, type RunUsageTableView,
   type UsageRowView, type UsageTableView,
 } from '../../../contract/usage.js';
+import { answerFrom } from '../../../contract/listAnswer.js';
 import {
   EmptyState, ListRow, Panel, PresenceDot, ScrollArea, Stack, Text,
 } from '../../kit/index.js';
@@ -28,16 +30,23 @@ import './usage.css';
 /** Pure presentational — every value arrives as a prop, nothing is derived. */
 export function UsageView(props: { table: UsageTableView | null }) {
   const table = props.table;
-  const rows = orderRows(table?.rows ?? []);
+  // "Nobody has answered yet" is not "there are no sessions". This screen used
+  // to print the second while meaning the first (contract/listAnswer.ts).
+  const answer = answerFrom({
+    source: table,
+    failure: null,
+    rowsOf: (answered: UsageTableView) => orderRows(answered.rows),
+  });
+  const rows = answer.kind === 'rows' ? answer.rows : [];
   const aggregate = totals(rows);
 
   return (
     <ScrollArea style={{ flex: 1 }}>
       <Panel head="Sessions">
         <Stack className="nv-usage">
-          {rows.length === 0 ? (
-            <EmptyState>No provider sessions yet</EmptyState>
-          ) : (
+          {answer.kind === 'waiting' && <EmptyState>Reading sessions…</EmptyState>}
+          {answer.kind === 'none' && <EmptyState>No provider sessions yet</EmptyState>}
+          {answer.kind === 'rows' && (
             <Stack gap={0} className="nv-usage__rows">
               {rows.map((usageRow) => (
                 <UsageRow key={usageRow.sessionId} row={usageRow} />
@@ -46,9 +55,12 @@ export function UsageView(props: { table: UsageTableView | null }) {
           )}
           {rows.length > 0 && (
             <Stack horizontal className="nv-usage__totals">
-              <Text className="nv-usage__totalLabel">All sessions</Text>
+              {/* Derived, never asserted. "All sessions" was a literal here,
+                  printed beside a sum that skipped the sessions nobody could
+                  measure (FZ-VIEW-012: never a sum or a discard). */}
+              <Text className="nv-usage__totalLabel">{describeTotalsScope(aggregate)}</Text>
               <Text className="nv-usage__totalValue">
-                {`${formatCount(aggregate.input)} in · ${formatCount(aggregate.output)} out`}
+                {`${formatCount(aggregate.input.value)} in · ${formatCount(aggregate.output.value)} out`}
               </Text>
             </Stack>
           )}
@@ -65,16 +77,20 @@ export function UsageView(props: { table: UsageTableView | null }) {
 
 /** B3d's per-Run usage surface; it only renders the Runtime view it receives. */
 export function RunUsageView(props: { table: RunUsageTableView | null }) {
-  const rows = props.table?.rows ?? [];
+  const answer = answerFrom({
+    source: props.table,
+    failure: null,
+    rowsOf: (answered: RunUsageTableView) => answered.rows,
+  });
   return (
     <ScrollArea style={{ flex: 1 }}>
       <Panel head="Agent Runs">
         <Stack className="nv-usage">
-          {rows.length === 0 ? (
-            <EmptyState>No agent runs yet</EmptyState>
-          ) : (
+          {answer.kind === 'waiting' && <EmptyState>Reading agent runs…</EmptyState>}
+          {answer.kind === 'none' && <EmptyState>No agent runs yet</EmptyState>}
+          {answer.kind === 'rows' && (
             <Stack gap={0} className="nv-usage__rows">
-              {rows.map((usageRow) => (
+              {answer.rows.map((usageRow) => (
                 <RunUsageRow key={usageRow.agentRunId} row={usageRow} />
               ))}
             </Stack>
@@ -85,14 +101,27 @@ export function RunUsageView(props: { table: RunUsageTableView | null }) {
   );
 }
 
+/**
+ * Found in a screenshot: this row used to put the run id AND all five metrics
+ * into `meta` as one string joined with a `\n` that HTML does not honour. The
+ * meta grew unbounded, squeezed the label to zero width — so the agent's NAME
+ * vanished from its own row — and ran past the panel edge, cutting off cost and
+ * turns. The values FZ-VIEW-010 insists on were on the page and not on screen.
+ *
+ * Same shape RunsScreen's row already uses: a titled row, then the facts under
+ * it with room to wrap.
+ */
 function RunUsageRow(props: { row: RunUsageRowView }) {
   const usageRow = props.row;
   return (
-    <ListRow
-      label={usageRow.displayName}
-      meta={`${usageRow.provider} · ${usageRow.model} · ${usageRow.lifecycle} · `
-        + `${usageRow.agentRunId}\n${formatRunUsage(usageRow)}`}
-    />
+    <Stack gap={0} className="nv-usage__run">
+      <ListRow
+        label={usageRow.displayName}
+        meta={`${usageRow.provider} · ${usageRow.model} · ${usageRow.lifecycle}`}
+      />
+      <Text as="p" className="nv-usage__runId">{usageRow.agentRunId}</Text>
+      <Text as="p" className="nv-usage__runValues">{formatRunUsage(usageRow)}</Text>
+    </Stack>
   );
 }
 

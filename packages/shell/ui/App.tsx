@@ -12,6 +12,8 @@ import { SettingsScreen } from './screens/settings/SettingsScreen.js';
 import { AgentsScreen } from './screens/agents/AgentsScreen.js';
 import { UsageScreen } from './screens/supervision/UsageScreen.js';
 import { RunsScreen } from './screens/agents/RunsScreen.js';
+import { CommunicationsScreen } from './screens/agents/CommunicationsScreen.js';
+import { TreeScreen } from './screens/agents/TreeScreen.js';
 import { WatchersScreen } from './screens/supervision/WatchersScreen.js';
 import { NotificationInboxScreen } from './screens/supervision/NotificationInboxScreen.js';
 import { Inspector } from './inspector/Inspector.js';
@@ -21,7 +23,8 @@ export function App(props: { services: ShellServices; models?: string[] }) {
   const { services } = props;
   const [settings, setSettings] = useState<SettingsRecord[]>([]);
   const [view, setView] = useState<
-    'messaging' | 'agents' | 'runs' | 'sessions' | 'watchers' | 'notifications' | 'settings'
+    'messaging' | 'agents' | 'runs' | 'family' | 'communications' | 'sessions'
+    | 'watchers' | 'notifications' | 'settings'
   >('messaging');
   const [selectedConvo, setSelectedConvo] = useState<string | null>(null);
   const [inspected, setInspected] = useState<{ title: string; body: React.ReactNode } | null>(null);
@@ -82,6 +85,8 @@ export function App(props: { services: ShellServices; models?: string[] }) {
       <ListRow label="Messages" selected={view === 'messaging'} onClick={() => setView('messaging')} />
       <ListRow label="Agents" selected={view === 'agents'} onClick={() => setView('agents')} />
       <ListRow label="Runs" selected={view === 'runs'} onClick={() => setView('runs')} />
+      <ListRow label="Family" selected={view === 'family'} onClick={() => setView('family')} />
+      <ListRow label="Communications" selected={view === 'communications'} onClick={() => setView('communications')} />
       <ListRow label="Sessions" selected={view === 'sessions'} onClick={() => setView('sessions')} />
       <ListRow label="Watchers" selected={view === 'watchers'} onClick={() => setView('watchers')} />
       <ListRow label="Notifications" selected={view === 'notifications'} onClick={() => setView('notifications')} />
@@ -133,6 +138,10 @@ export function App(props: { services: ShellServices; models?: string[] }) {
         <AgentsScreen services={services} />
       ) : view === 'runs' ? (
         <RunsScreen services={services} />
+      ) : view === 'family' ? (
+        <TreeScreen services={services} />
+      ) : view === 'communications' ? (
+        <CommunicationsScreen services={services} />
       ) : view === 'sessions' ? (
         <UsageScreen services={services} />
       ) : view === 'watchers' ? (

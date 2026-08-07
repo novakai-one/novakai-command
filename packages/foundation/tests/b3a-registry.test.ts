@@ -74,6 +74,8 @@ const EXPECTED: ReadonlyArray<readonly [ObjectKind, string, CapabilityId]> = [
     'notificationDeliveryFenceOperations.jsonl',
     'supervision',
   ],
+  // ── B3e additions ──────────────────────────────────────────────────────
+  ['terminalTab', 'terminalTabs.jsonl', 'shell'],
 ];
 
 /** The three named special cases §18.1 allows to sit outside the ordinary path. */
@@ -119,7 +121,8 @@ test('every B3a/B3c kind round-trips through its owning scoped handle', async ()
   const root = mkdtempSync(path.join(tmpdir(), 'nvk-b3a-registry-'));
   try {
     const b3a = EXPECTED.filter(
-      ([kind]) => B3A_KINDS.has(kind) || B3C_KINDS.has(kind) || B3D_KINDS.has(kind),
+      ([kind]) => B3A_KINDS.has(kind) || B3C_KINDS.has(kind) || B3D_KINDS.has(kind)
+        || B3E_KINDS.has(kind),
     );
     for (const [kind, file, capability] of b3a) {
       const handle = composeHandle({
@@ -195,3 +198,7 @@ const B3D_KINDS = new Set<string>([
 const B3C_KINDS = new Set<string>([
   'messagingStoreOp', 'transcriptBinding', 'observedSubagent', 'storeRouteCutover',
 ]);
+
+// B3e (P2 §10): the Shell's fourth and final allowed kind. FZ-VIEW-018 closes
+// the set at layout/settings/conversationView/terminalTab.
+const B3E_KINDS = new Set<string>(['terminalTab']);

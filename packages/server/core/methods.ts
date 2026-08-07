@@ -18,6 +18,9 @@ import type {
 import type { SupervisionEngine } from './supervision/engine.js';
 import { composeShellPersistence, objectVersion } from '../../shell/contract/persistence.node.js';
 import { getLayoutVersioned, setLayout as writeLayout } from '../../shell/contract/layout.js';
+import {
+  closeTerminalTab, setTerminalTab as writeTerminalTab, type TerminalTabPatch,
+} from '../../shell/contract/terminalTab.js';
 import * as settingsContract from '../../shell/contract/settings.js';
 import { setConversationView } from '../../shell/contract/conversationView.js';
 import type { ScreenContext } from '../../shell/contract/context.js';
@@ -604,6 +607,22 @@ export function buildMethods(runtime: ServerRuntime): MethodTable {
     async setLayout(params: never) {
       const p = params as { patch: Record<string, unknown>; clientOpId: string };
       return writeLayout(runtime.persistence.layoutDriver, p.patch, p.clientOpId);
+    },
+    // FZ-VIEW-017: the Shell's terminal TABS, on the Shell's scoped handle.
+    // Note what these methods cannot do: none of them can stop a session. A tab
+    // closing is a Shell fact; the session belongs to the Runtime (red gate 1).
+    async listTerminalTabs() {
+      return runtime.persistence.terminalTabDriver.list();
+    },
+    async setTerminalTab(params: never) {
+      const sent = params as { id: string; patch: TerminalTabPatch; clientOpId: string };
+      return writeTerminalTab(
+        runtime.persistence.terminalTabDriver, sent.id, sent.patch, sent.clientOpId,
+      );
+    },
+    async closeTerminalTab(params: never) {
+      const sent = params as { id: string; clientOpId: string };
+      return closeTerminalTab(runtime.persistence.terminalTabDriver, sent.id, sent.clientOpId);
     },
     async getSettings() {
       return settingsContract.getSettings(runtime.persistence.settingsDriver);

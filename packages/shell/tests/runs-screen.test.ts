@@ -9,60 +9,9 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import {
   describeLaunchOrigin, describeRunState, describeRunUsage, orderRuns,
-  type AgentRunRowView, type AgentRunsPageView,
 } from '../contract/agentRuns.js';
 import { RunsView } from '../ui/screens/agents/RunsScreen.js';
-
-const unavailable = { quality: 'unavailable', source: 'agents', limitations: [] } as const;
-
-function runRow(partial: {
-  id?: string; name?: string; lifecycle?: string; activity?: string;
-  surface?: string; startedAt?: string; uncertainty?: readonly string[];
-  outputTokens?: AgentRunRowView['usage']['outputTokens'];
-} = {}): AgentRunRowView {
-  return {
-    agent: {
-      agentId: 'agent_1', displayName: partial.name ?? 'Builder',
-      roleProfileId: 'agentRole_1',
-    },
-    run: {
-      id: partial.id ?? 'agentRun_1', kind: 'agentRun', schemaVersion: 1, recordVersion: 3,
-      createdAt: '2026-08-06T01:00:00.000Z', permissionLevel: 'private',
-      createdBy: 'person_chris', lastMutation: { state: 'trace-complete' },
-      agentId: 'agent_1', launchPlanId: 'launchPlan_1', providerSessionId: 'sess_1',
-      lifecycle: partial.lifecycle ?? 'ready', activity: partial.activity ?? 'idle',
-      activityGeneration: 1, launchSurface: partial.surface ?? 'novakai-shell',
-      requestedBy: 'person_chris', rootTraceId: 'trace_1',
-      uncertainty: partial.uncertainty ?? [],
-      ...(partial.startedAt === undefined ? {} : { startedAt: partial.startedAt }),
-    },
-    provider: {
-      provider: 'claude', modelId: 'opus', effort: 'default', providerSessionId: 'sess_1',
-    },
-    launch: {
-      surface: partial.surface ?? 'novakai-shell', requestedBy: 'person_chris',
-      ...(partial.startedAt === undefined ? {} : { startedAt: partial.startedAt }),
-    },
-    controllers: { attachedCount: 0, kinds: [] },
-    family: {
-      childCount: 0, supervisor: { kind: 'human', principalId: 'person_chris' },
-      supervisionVersion: 1,
-    },
-    usage: {
-      agentRunId: partial.id ?? 'agentRun_1',
-      inputTokens: unavailable,
-      outputTokens: partial.outputTokens ?? unavailable,
-      cachedInputTokens: unavailable, costMicros: unavailable, providerTurns: unavailable,
-      observedAt: '2026-08-06T01:00:05.000Z', final: false,
-    },
-    transcript: { bindingState: 'waiting' },
-  };
-}
-
-const pageOf = (items: AgentRunRowView[], omitted = 0): AgentRunsPageView => ({
-  items,
-  omissions: omitted === 0 ? [] : [{ reason: 'permission', count: omitted }],
-});
+import { runRow, pageOf } from './fixtures/agentRunRow.js';
 
 describe('launch origin is history, never inferred (FZ-VIEW-004)', () => {
   it('says where the Run was STARTED, not where it is attached now', () => {

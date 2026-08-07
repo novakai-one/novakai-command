@@ -17,7 +17,12 @@ import path from 'node:path';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { TerminalChrome, toneFor } from '../ui/screens/terminal/TerminalChrome.js';
-import { describeTerminal, type TerminalTabView } from '../contract/terminalServices.js';
+import {
+  describeBootFailure, describeTerminal, type TerminalTabView,
+} from '../contract/terminalServices.js';
+import {
+  SCREEN_CONTEXT_SUPPORT, describeScreenContextSupport,
+} from '../contract/screenContext.js';
 
 const TERMINAL_DIR = path.resolve(import.meta.dirname, '../ui/screens/terminal');
 
@@ -41,6 +46,10 @@ const chrome = (props: Partial<React.ComponentProps<typeof TerminalChrome>> = {}
     problem: null,
     surfaceRef: null,
     onClose: () => {},
+    screenContext: 'unavailable',
+    mode: 'raw' as const,
+    onModeChange: () => {},
+    tabOpen: true,
     ...props,
   }));
 
@@ -61,6 +70,27 @@ describe('the terminal tab obeys the two standing UI laws', () => {
     expect(css.match(/--accent/g) ?? []).toHaveLength(0);
   });
 
+  /**
+   * Found in a screenshot, not in a test — and it is the SAME defect seat 2
+   * found in the strip, one row down. The bar now carries two facts from two
+   * different authorities side by side at the same ink tier:
+   *
+   *   "…running in the background Runtime" — the RUNTIME's, about this session;
+   *   "Screen context: unavailable"        — the SHELL's, about what an agent
+   *                                          can see of this window.
+   *
+   * With only a gap between them they read as one continuous sentence, which
+   * quietly attributes the Shell's statement to the Runtime. The hairline is
+   * the device this stylesheet already uses for exactly this, and it costs no
+   * colour and no ornament.
+   */
+  it('separates the Shell\'s screen-context fact from the Runtime\'s truth line', () => {
+    const css = readFileSync(path.join(TERMINAL_DIR, 'TerminalScreen.css'), 'utf8');
+    const rule = /\.nvkTerminalScreenContext\s*\{[^}]*\}/u.exec(css)?.[0] ?? '';
+    expect(rule).toContain('border-left');
+    expect(rule).toContain('var(--hairline)');
+  });
+
   it('and it does not smuggle the gold back in as a literal', () => {
     // Amber scarcity is about what is on screen, not about which spelling was
     // used to get it there — including the xterm theme the gate cannot see.
@@ -69,6 +99,29 @@ describe('the terminal tab obeys the two standing UI laws', () => {
       expect({ file, gold: src.match(/#(d0a14b|e2ba6e|c98f2f)/gi) ?? [] })
         .toEqual({ file, gold: [] });
     }
+  });
+});
+
+/**
+ * Found in a browser, not in a test: against a host with no nvk-server the
+ * terminal page drew `Unexpected token '<', "<!doctype "... is not valid JSON`.
+ * That is red gate 5 satisfied on a technicality — something IS drawn — while
+ * telling Chris nothing about what is wrong or whether his shells are safe.
+ */
+describe('a boot failure says what could not be reached', () => {
+  it('names the Runtime, and keeps the raw cause instead of replacing it', () => {
+    const said = describeBootFailure(new Error('Unexpected token \'<\', "<!doctype "... is not valid JSON'));
+    expect(said).toContain('Novakai Runtime');
+    expect(said).toContain('is not valid JSON');
+  });
+
+  it('says the terminals are unaffected — the question a person actually has', () => {
+    expect(describeBootFailure(new Error('boom'))).toContain('still running');
+  });
+
+  it('handles a thrown non-Error without turning it into "[object Object]"', () => {
+    expect(describeBootFailure({ nope: true })).toContain('Novakai Runtime');
+    expect(describeBootFailure({ nope: true })).not.toContain('[object Object]');
   });
 });
 
@@ -125,6 +178,24 @@ describe('what the chrome draws', () => {
     expect(html.toLowerCase()).not.toContain('terminate');
   });
 
+  it('with no tab open it draws no control it cannot honour', () => {
+    // Found in a screenshot (B1.6): after the last tab closed, `Close window`
+    // and the Raw/Calm control were still on the bar — two controls that do
+    // nothing, on the calmest state the screen has. The truth line stays, because
+    // what was just said about the closed session is the whole point of it.
+    const html = chrome({ tabOpen: false, truth: 'The session keeps running in the background Runtime.' });
+    expect(html).not.toContain('data-testid="terminal-close"');
+    expect(html).not.toContain('Terminal mode');
+    expect(html).toContain('keeps running in the background Runtime');
+    expect(html).toContain('data-testid="terminal-screen-context"');
+  });
+
+  it('Calm\'s numbers are drawn only in Calm — Raw has no rate to set', () => {
+    const numbers = React.createElement('div', { 'data-testid': 'pacing-stand-in' }, 'the picker');
+    expect(chrome({ mode: 'calm', pacing: numbers })).toContain('data-testid="pacing-stand-in"');
+    expect(chrome({ mode: 'raw', pacing: numbers })).not.toContain('data-testid="pacing-stand-in"');
+  });
+
   it('the watch-only state is stated once, and only while watching', () => {
     expect(chrome({ watchingOnly: true })).toContain('This one is watching');
     expect(chrome({ watchingOnly: false })).not.toContain('This one is watching');
@@ -134,6 +205,63 @@ describe('what the chrome draws', () => {
     expect(chrome({ problem: 'lease-lost: another window took the lease' }))
       .toContain('lease-lost: another window took the lease');
     expect(chrome()).not.toContain('data-testid="terminal-problem"');
+  });
+
+  /**
+   * B1.2: the strip sits ABOVE the truth line, not inside it. The strip says
+   * which windows exist and stays quiet about healthy ones; the truth line says
+   * everything about the one you are looking at. Both are always on screen, so
+   * a quiet strip is never the only thing standing between Chris and a status.
+   */
+  it('hosts the tab strip, and the selected session\'s truth line beside it', () => {
+    const html = chrome({
+      strip: React.createElement('div', { 'data-testid': 'stub-strip' }, 'tabs go here'),
+      truth: describeTerminal(view()),
+    });
+    expect(html).toContain('data-testid="stub-strip"');
+    expect(html).toContain('1 window attached');
+    expect(html.indexOf('stub-strip')).toBeLessThan(html.indexOf('data-testid="terminal-truth"'));
+  });
+
+  it('draws no strip region at all when there is none to draw', () => {
+    expect(chrome()).not.toContain('data-testid="terminal-strip"');
+  });
+
+  /**
+   * B1.4 / FZ-VIEW-016 — the Raw-mode display obligation.
+   *
+   * `screenContext` is a REQUIRED prop, and that is the point: an optional one
+   * can be forgotten, and a forgotten obligation looks exactly like a screen
+   * that has nothing to say. The compiler now refuses to draw a terminal that
+   * does not state what an agent can see of it.
+   *
+   * It is drawn in BOTH modes rather than gated on Raw. Raw is where the freeze
+   * puts the obligation, and a gate is a way to fail it — but the fact itself
+   * is a property of this Shell's capture ability, not of the tab's mode, so a
+   * value that appeared and vanished as Chris switched modes would read as a
+   * bug about the wrong thing.
+   */
+  it('states what an agent can see of this screen — in every one of the three states', () => {
+    for (const support of SCREEN_CONTEXT_SUPPORT) {
+      const html = chrome({ screenContext: support });
+      expect({ support, shown: html.includes(describeScreenContextSupport(support)) })
+        .toEqual({ support, shown: true });
+      expect(html).toContain('data-testid="terminal-screen-context"');
+    }
+  });
+
+  it('draws unavailable as WORDS, never as an absent line', () => {
+    const html = chrome({ screenContext: 'unavailable' });
+    expect(html).toContain('unavailable');
+    // The false-empty defect B0 found on Runs, refused one screen over: the
+    // region exists in the state that has the least to report.
+    expect(html).toContain('data-testid="terminal-screen-context"');
+  });
+
+  it('keeps the screen-context line quiet — it is chrome, not the exception', () => {
+    const html = chrome({ screenContext: 'unavailable' });
+    // No second attention signal: no dot, no chip, no tone attribute of its own.
+    expect(html).not.toMatch(/data-testid="terminal-screen-context"[^>]*data-tone/u);
   });
 
   it('every element it draws is a kit component', () => {

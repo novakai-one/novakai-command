@@ -170,18 +170,20 @@ export function Swatch(props: {
 }
 
 // ── List rows ───────────────────────────────────────────────────────────────
-export function ListRow(props: {
-  label: React.ReactNode;
-  meta?: React.ReactNode;
-  leading?: React.ReactNode;
-  selected?: boolean;
-  onClick?: () => void;
+// Passthrough attributes, the way Button and IconButton already take them: a
+// caller needs to hang `data-*` on the row (state a test or the browse harness
+// can read) without dropping to a raw element and tripping red gate 3.
+export function ListRow(props: Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, 'onClick'> & {
+  label: React.ReactNode; meta?: React.ReactNode; leading?: React.ReactNode;
+  selected?: boolean; onClick?: () => void;
 }) {
+  const { label, meta, leading, selected, className, ...rest } = props;
   return (
-    <button className="k-row" data-selected={props.selected ? 'true' : 'false'} onClick={props.onClick}>
-      {props.leading}
-      <span className="k-row__label">{props.label}</span>
-      {props.meta != null && <span className="k-row__meta">{props.meta}</span>}
+    <button className={`k-row${className ? ` ${className}` : ''}`}
+      data-selected={selected ? 'true' : 'false'} {...rest}>
+      {leading}
+      <span className="k-row__label">{label}</span>
+      {meta != null && <span className="k-row__meta">{meta}</span>}
     </button>
   );
 }
@@ -340,7 +342,12 @@ export function ComposerInput(props: {
   const ref = useRef<HTMLTextAreaElement>(null);
   useEffect(() => { ref.current?.focus(); }, []);
   return (
-    <div className="k-composer" style={{ height: props.height }}>
+    // minHeight, not height: the hint slot below the text area is where a
+    // refusal is drawn, and a FIXED height crushed the input to a strip whose
+    // placeholder was clipped by its own descenders (read off b31-4). The
+    // composer keeps the height Chris dragged it to, and grows only when it has
+    // something more to say — then goes back.
+    <div className="k-composer" style={{ minHeight: props.height }}>
       <Splitter horizontal label="Resize composer" onDelta={(d) => props.onResize(-d)} />
       <textarea
         ref={ref}

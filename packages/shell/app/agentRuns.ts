@@ -17,9 +17,14 @@
 // exercises the real thing rather than a re-implementation of it.
 import {
   AGENT_RUN_VIEW_REQUIRED, AGENT_RUN_VIEW_SHAPE,
-  type AgentRunsPageView, type ListAgentRunsRequest, type ShellAgentServices,
-  type ShellReadResult,
+  type AgentRunRowView, type AgentRunsPageView, type ListAgentRunsRequest,
+  type ShellAgentServices, type ShellReadResult,
 } from '../contract/agentRuns.js';
+import type { AgentRunTreeView } from '../contract/agentTree.js';
+import { createShellCommunicationServices } from './communications.js';
+import { createShellSupervisionServices } from './supervision.js';
+import { createShellLifecycleServices, createShellRuntimeServices } from './agentLifecycle.js';
+import { createShellTerminalServices } from './agentTerminal.js';
 
 /**
  * One nvk-ws v1 call, payload-level: the transport owns the `{contractVersion,
@@ -75,6 +80,43 @@ function readPage(answer: unknown): ShellReadResult<AgentRunsPageView> {
   // CLI prints, so "the same bytes" is a property of the code and not a
   // coincidence two tests happen to agree on.
   return { ok: true, value: page as unknown as AgentRunsPageView };
+}
+
+/**
+ * Parse ONE Run row. The check is `run.id`, because that is the fact the caller
+ * asked about and the one a stop is aimed at — an answer with no `run.id` is not
+ * a Run row, and handing it on would put an undefined into a `StopAgentInput`.
+ */
+function readRow(answer: unknown): ShellReadResult<AgentRunRowView> {
+  const frame = answer as {
+    ok?: unknown; value?: unknown; error?: { code?: unknown; message?: unknown };
+  } | null;
+  if (frame === null || typeof frame !== 'object') {
+    return unavailable('the Runtime returned no answer');
+  }
+  if (frame.ok !== true) return refused(frame.error);
+  const row = frame.value as { run?: { id?: unknown } } | null;
+  if (row === null || typeof row !== 'object' || typeof row.run?.id !== 'string') {
+    return unavailable('the Runtime returned something that is not a Run');
+  }
+  return { ok: true, value: row as unknown as AgentRunRowView };
+}
+
+/** Parse the tree answer from `unknown` at the seam; never trust its shape. */
+function readTree(answer: unknown): ShellReadResult<AgentRunTreeView> {
+  const frame = answer as {
+    ok?: unknown; value?: unknown; error?: { code?: unknown; message?: unknown };
+  } | null;
+  if (frame === null || typeof frame !== 'object') {
+    return unavailable('the Runtime returned no answer');
+  }
+  if (frame.ok !== true) return refused(frame.error);
+  const tree = frame.value as { nodes?: unknown; edges?: unknown } | null;
+  if (tree === null || typeof tree !== 'object'
+    || !Array.isArray(tree.nodes) || !Array.isArray(tree.edges)) {
+    return unavailable('the Runtime returned something that is not an Agent family');
+  }
+  return { ok: true, value: tree as unknown as AgentRunTreeView };
 }
 
 function refused(
@@ -151,7 +193,47 @@ export function createShellAgentServices(
   options: ShellAgentServicesOptions,
 ): ShellAgentServices {
   return {
+    // FZ-VIEW-001 is ONE facade, and after B3.2 it is the WHOLE facade. Every
+    // slice is built here rather than beside its screen, so a surface cannot
+    // acquire half a door — and cannot quietly do without a slice, which is how
+    // `lifecycle` stayed unbuilt while two dialogs explained its absence.
+    runtime: createShellRuntimeServices(options.call),
+    lifecycle: createShellLifecycleServices(options.call),
+    terminal: createShellTerminalServices(options.call),
+    communications: createShellCommunicationServices(options),
+    supervision: createShellSupervisionServices(options),
     runs: {
+      /**
+       * One Run, by id. The terminal tab's route into a stop: a tab carries an
+       * `agentRunId` on `owner.label` and nothing else, and `StopAgentInput`
+       * wants the `agentId` too — so this read is the only honest source of it
+       * (contract/agentLifecycle.ts, rule 3).
+       */
+      async getAgentRun(request) {
+        try {
+          return readRow(await options.call('b3.agent.getRun', {
+            agentRunId: request.agentRunId,
+          }));
+        } catch (cause) {
+          return unavailable(cause instanceof Error ? cause.message : String(cause));
+        }
+      },
+      /**
+       * The family. `maxDepth` is passed only when the caller named one — a
+       * default invented here would silently truncate a tree the owner was
+       * willing to draw whole, and the answer carries no marker to say so
+       * (the AMD-005 residual; see contract/agentTree.ts).
+       */
+      async getAgentRunTree(request) {
+        try {
+          return readTree(await options.call('b3.agent.getTree', {
+            rootAgentId: request.rootAgentId,
+            ...(request.maxDepth === undefined ? {} : { maxDepth: request.maxDepth }),
+          }));
+        } catch (cause) {
+          return unavailable(cause instanceof Error ? cause.message : String(cause));
+        }
+      },
       async listAgentRuns(request) {
         try {
           return readPage(await options.call('b3.agent.listRuns', listFilterForState(request)));
