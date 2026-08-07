@@ -17,6 +17,10 @@ jobs:
             packages/messaging/package-lock.json
       - run: npm ci
       - run: npm --prefix packages/messaging ci
+      # Workspace dists don't exist on a fresh CI checkout; guards + messaging tests read them
+      - run: npm --prefix packages/foundation run build
+      - run: npm --prefix packages/artifacts run build
+      - run: npm --prefix packages/projects run build
       - run: npm run messaging:test
       - run: npm run test:guards
       - run: npx tsc --noEmit
