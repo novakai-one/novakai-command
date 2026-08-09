@@ -7,7 +7,7 @@
 //    `.rescan-<n>` copy record, the original is never touched;
 //  - byte-offset checkpoints in .novakai/transcripts/.state/ (R3-14);
 //  - watch-while-running ONLY (OD-D1): no start, no watching, no error.
-import { readdirSync, statSync, mkdirSync, appendFileSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { readdirSync, statSync, mkdirSync, appendFileSync, writeFileSync, existsSync, openSync, readSync, closeSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import path from 'node:path';
@@ -17,6 +17,27 @@ import { loadCheckpoints, saveCheckpoints, type CheckpointTable } from './checkp
 const TAIL = 64;
 const tailHash = (buf: Buffer, offset: number): string =>
   createHash('sha256').update(buf.subarray(Math.max(0, offset - TAIL), offset)).digest('hex');
+
+/** Ranged read — the scan's ONLY content-read primitive (2026-08-09 churn
+ * fix: a steady-state tick must read changed bytes, never whole files). A
+ * short read (file shrank mid-scan) returns what was there; the next tick's
+ * tail check catches the tear and rescans, same tolerance as before. */
+function readRangeSync(filePath: string, from: number, length: number): Buffer {
+  if (length <= 0) return Buffer.alloc(0);
+  const buffer = Buffer.allocUnsafe(length);
+  const fd = openSync(filePath, 'r');
+  try {
+    let read = 0;
+    while (read < length) {
+      const count = readSync(fd, buffer, read, length - read, from + read);
+      if (count === 0) break;
+      read += count;
+    }
+    return read === length ? buffer : buffer.subarray(0, read);
+  } finally {
+    closeSync(fd);
+  }
+}
 
 /** OD-S2-7 spike result (2026-07-28, verified on Chris's machine):
  *  - kimi:   ~/.kimi-code           (server/events/*.jsonl; recursive covers future layouts)
@@ -50,6 +71,7 @@ function listJsonl(dir: string, prefix = ''): string[] {
 
 export function createTranscriptWatcher(options: WatcherOptions): TranscriptWatcher {
   const intervalMs = options.intervalMs ?? 1000;
+  const readRange = options.readRange ?? readRangeSync;
   const transcriptsRoot = path.join(options.root, 'transcripts');
   const stateDir = path.join(transcriptsRoot, '.state');
   let checkpoints: CheckpointTable = {};
@@ -78,40 +100,57 @@ export function createTranscriptWatcher(options: WatcherOptions): TranscriptWatc
             const prev = checkpoints[srcKey];
             const destBase = path.join(transcriptsRoot, source.provider, rel);
             tracked.add(srcKey);
-            const buf = st.size > 0 ? readFileSync(src) : Buffer.alloc(0);
+
+            // Steady state (the overwhelming majority of file-visits): same
+            // inode, same size — ZERO content bytes read. The old code read
+            // the whole file here every tick; at real transcript volume that
+            // was GB/s of churn (the Aug 3/8 "ingester leak").
+            if (prev && prev.inode === inode && st.size === prev.offset) continue;
 
             const rescan = (rescans: number): void => {
+              const buf = st.size > 0 ? readRange(src, 0, st.size) : Buffer.alloc(0);
               const rescanDest = `${destBase.replace(/\.jsonl$/, '')}.rescan-${rescans}.jsonl`;
               mkdirSync(path.dirname(rescanDest), { recursive: true });
-              if (st.size > 0) {
+              if (buf.length > 0) {
                 writeFileSync(rescanDest, buf);
-                bytesCopied += st.size;
+                bytesCopied += buf.length;
               }
-              checkpoints[srcKey] = { offset: st.size, inode, rescans, tail: tailHash(buf, st.size) };
+              checkpoints[srcKey] = { offset: st.size, inode, rescans, tail: tailHash(buf, buf.length) };
             };
 
             if (!prev) {
-              // first sight: full copy
-              if (st.size > 0) {
-                mkdirSync(path.dirname(destBase), { recursive: true });
-                appendFileSync(destBase, buf);
-                bytesCopied += st.size;
-              } else mkdirSync(path.dirname(destBase), { recursive: true });
-              checkpoints[srcKey] = { offset: st.size, inode, rescans: 0, tail: tailHash(buf, st.size) };
-            } else if (
-              prev.inode !== inode
-              || st.size < prev.offset
-              || (st.size > prev.offset && prev.offset > 0 && tailHash(buf, prev.offset) !== prev.tail)
-            ) {
-              // rotation/truncation/regrowth-over-rewritten-bytes (R3-14): full
-              // re-copy into a NEW copy record; the original copy is immutable;
-              // S2 tolerates duplicate raws (§13.4).
-              rescan(prev.rescans + 1);
-            } else if (st.size > prev.offset) {
+              // first sight: full copy (the one legitimate whole-file read)
+              const buf = st.size > 0 ? readRange(src, 0, st.size) : Buffer.alloc(0);
               mkdirSync(path.dirname(destBase), { recursive: true });
-              appendFileSync(destBase, buf.subarray(prev.offset, st.size));
-              bytesCopied += st.size - prev.offset;
-              checkpoints[srcKey] = { ...prev, offset: st.size, tail: tailHash(buf, st.size) };
+              if (buf.length > 0) {
+                appendFileSync(destBase, buf);
+                bytesCopied += buf.length;
+              }
+              checkpoints[srcKey] = { offset: st.size, inode, rescans: 0, tail: tailHash(buf, buf.length) };
+            } else if (prev.inode !== inode || st.size < prev.offset) {
+              // rotation/truncation (R3-14): full re-copy into a NEW copy
+              // record; the original copy is immutable; S2 tolerates
+              // duplicate raws (§13.4).
+              rescan(prev.rescans + 1);
+            } else {
+              // growth: read the TAIL-byte window before the checkpoint (the
+              // regrowth-over-rewritten-bytes check) plus the delta — never
+              // the whole file.
+              const windowLength = Math.min(TAIL, prev.offset);
+              const window = readRange(src, prev.offset - windowLength, windowLength);
+              if (prev.offset > 0 && tailHash(window, window.length) !== prev.tail) {
+                rescan(prev.rescans + 1);
+              } else {
+                const delta = readRange(src, prev.offset, st.size - prev.offset);
+                mkdirSync(path.dirname(destBase), { recursive: true });
+                appendFileSync(destBase, delta);
+                bytesCopied += delta.length;
+                // New tail window = last TAIL bytes of window+delta (their
+                // concat covers [prev.offset - TAIL, st.size) — a superset of
+                // [st.size - TAIL, st.size) since st.size > prev.offset).
+                const joined = Buffer.concat([window, delta]);
+                checkpoints[srcKey] = { ...prev, offset: st.size, tail: tailHash(joined, joined.length) };
+              }
             }
           } catch (cause) {
             // typed skip: recorded once per file, surfaced via status, scan continues
