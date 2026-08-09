@@ -6,7 +6,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import {
   appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync,
   readSync, readdirSync, renameSync, copyFileSync, fsyncSync, statSync,
-  writeFileSync,
+  truncateSync, writeFileSync,
 } from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
@@ -15,7 +15,7 @@ import { mintServerOpId } from '../../contract/brands.js';
 import { Envelope, QuarantineRequestProvenance, QuarantineTombstone, Ref, TraceLine } from '../../contract/schemas.js';
 import type { Envelope as EnvelopeT, RecordLine as RecordLineT, QuarantineTombstone as TombstoneT, TraceLine as TraceLineT } from '../../contract/schemas.js';
 import { err, type StoreError } from '../../contract/errors.js';
-import { acquireLock, releaseLock, LockTimeout } from './lock.js';
+import { acquireLock, acquireLockAsync, releaseLock, LockTimeout } from './lock.js';
 
 export const CURRENT_SCHEMA_VERSION = 1;
 
@@ -41,6 +41,7 @@ export const KIND_FILES: Readonly<Record<Exclude<ObjectKind, 'token'>, string>> 
   transcriptLine: 'transcriptLines.jsonl',     // B2b DEC-B2-4: transcript authority
   transcriptJournal: 'transcriptJournal.jsonl',
   transcriptCheckpoint: 'transcriptCheckpoints.jsonl',
+  transcriptIngestBatch: 'transcriptIngestBatches.jsonl', // 2026-08-09: one durable receipt per ingest batch commit
   runtimeEpoch: 'runtimeEpochs.jsonl',                 // B3a DEC-B3V4-27
   commandReceipt: 'commandReceipts.jsonl',             // B3a DEC-B3V4-30
   terminalSession: 'terminalSessions.jsonl',           // B3a DEC-B3V4-01
@@ -83,7 +84,7 @@ export const RECORD_KINDS: readonly string[] = [
   'agent', 'skill', 'layout', 'settings', 'conversationView', 'config',
   'providerSession', 'project', 'projectItem', 'quarantine',
   'artifact', 'spineStep', 'transcriptLine', 'transcriptJournal',
-  'transcriptCheckpoint',
+  'transcriptCheckpoint', 'transcriptIngestBatch',
   'runtimeEpoch', 'commandReceipt', 'terminalSession',
   'controllerAttachment', 'terminalInputLease', 'terminalInputAttempt',
   'notificationInputReservation', 'terminalTab',
@@ -97,6 +98,12 @@ export const RECORD_KINDS: readonly string[] = [
   'watchRule', 'watchDeadline', 'notification', 'watchEvaluation',
   'notificationDeliveryFenceOperation',
 ];
+
+// 2026-08-09: kinds whose payloads dominate store size (full transcript text).
+// Their index entries keep envelope + meta only; the payload is re-read from
+// its recorded byte range on access. Without this, resident memory tracks the
+// store file size (a 1.5 GB transcriptLines store held ~3 GB RSS).
+const HEAVY_PAYLOAD_KINDS: ReadonlySet<string> = new Set(['transcriptLine']);
 
 // Lazy upgrade registry (DEC-F10): pure v_n → v_n+1 transforms per kind,
 // applied in memory on read; the stored line is NEVER rewritten.
@@ -207,19 +214,43 @@ export class StoreEngine {
     } finally {
       closeSync(fd);
     }
+    this.bustStampCache(); // own write: freshness memos are now stale
+  }
+
+  /** N lines, ONE fsync — the group-commit boundary for batch mutations. */
+  private appendLinesFsync(filePath: string, lines: string[]): void {
+    if (lines.length === 0) return;
+    mkdirSync(path.dirname(filePath), { recursive: true });
+    const fd = openSync(filePath, 'a');
+    try {
+      appendFileSync(fd, lines.join('\n') + '\n');
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
+    this.bustStampCache(); // own write: freshness memos are now stale
   }
 
   /** Torn final line → truncate-on-open (R3-3). Returns the truncation (if any). */
+  /** 2026-08-09: tail-window scan + truncateSync — a multi-GB store must not be
+   * fully read (or fully rewritten) just to trim a torn final line. */
   private truncateTornLine(filePath: string): { truncatedBytes: number } | null {
     if (!existsSync(filePath)) return null;
-    const buf = readFileSync(filePath);
-    if (buf.length === 0 || buf[buf.length - 1] === 0x0a) return null;
+    const size = statSync(filePath).size;
+    if (size === 0) return null;
+    if (this.readBytes(filePath, size - 1, 1)[0] === 0x0a) return null;
+    const WINDOW = 4 * 1024 * 1024;
     let lastNewline = -1;
-    for (let i = buf.length - 1; i >= 0; i -= 1) {
-      if (buf[i] === 0x0a) { lastNewline = i; break; }
+    let searchEnd = size;
+    while (searchEnd > 0) {
+      const start = Math.max(0, searchEnd - WINDOW);
+      const window = this.readBytes(filePath, start, searchEnd - start);
+      const found = window.lastIndexOf(0x0a);
+      if (found >= 0) { lastNewline = start + found; break; }
+      searchEnd = start;
     }
-    const truncatedBytes = buf.length - (lastNewline + 1);
-    writeFileSync(filePath, buf.subarray(0, lastNewline + 1));
+    const truncatedBytes = size - (lastNewline + 1);
+    truncateSync(filePath, lastNewline + 1);
     const fd = openSync(filePath, 'r');
     try {
       fsyncSync(fd); // M2: the truncate is durable before boot proceeds
@@ -237,14 +268,34 @@ export class StoreEngine {
     return text.split('\n').filter((candidate) => candidate.length > 0);
   }
 
+  /** 2026-08-09: 50 ms stamp memo. Freshness checks (readTraces,
+   * readLatestFrom) stat their file on EVERY call; per-record provenance
+   * lookups multiplied that into ~1M syscalls per large-store scan. The memo
+   * is busted whenever this engine acquires the mutation lock and after every
+   * append it performs, so in-lock CAS reads always re-stat — only lock-free
+   * reads can be up to 50 ms stale, which concurrent-writer reads always were. */
+  private readonly stampCache = new Map<string, { at: number; stamp: FileStamp | null }>();
+
+  /** @internal drop memoized freshness stamps (lock acquired / file written). */
+  private bustStampCache(): void {
+    this.stampCache.clear();
+  }
+
   private fileStamp(filePath: string): FileStamp | null {
-    if (!existsSync(filePath)) return null;
-    const stat = statSync(filePath);
-    return {
-      size: stat.size,
-      mtimeMs: stat.mtimeMs,
-      ino: Number(stat.ino),
-    };
+    const cached = this.stampCache.get(filePath);
+    const now = Date.now();
+    if (cached && now - cached.at <= 50) return cached.stamp;
+    const stamp = ((): FileStamp | null => {
+      if (!existsSync(filePath)) return null;
+      const stat = statSync(filePath);
+      return {
+        size: stat.size,
+        mtimeMs: stat.mtimeMs,
+        ino: Number(stat.ino),
+      };
+    })();
+    this.stampCache.set(filePath, { at: now, stamp });
+    return stamp;
   }
 
   private readBytes(filePath: string, from: number, length: number): Buffer {
@@ -264,22 +315,44 @@ export class StoreEngine {
     }
   }
 
-  private completeLines(
+  /** 2026-08-09: chunked scan. The old implementation stringified the whole
+   * unindexed span at once — a >512 MB store file hit Node's max string length
+   * and threw, making the store unreadable. Bounded 64 MB windows instead;
+   * each complete line is delivered with its absolute byte offset + length so
+   * heavy kinds can re-read payloads lazily. Returns the new indexedSize. */
+  private forEachCompleteLine(
     filePath: string,
     from: number,
     size: number,
-  ): { lines: string[]; indexedSize: number } {
-    const bytes = this.readBytes(filePath, from, size - from);
-    const lastNewline = bytes.lastIndexOf(0x0a);
-    if (lastNewline < 0) return { lines: [], indexedSize: from };
-    return {
-      lines: bytes
-        .subarray(0, lastNewline)
-        .toString('utf8')
-        .split('\n')
-        .filter((line) => line.length > 0),
-      indexedSize: from + lastNewline + 1,
-    };
+    onLine: (line: string, offset: number, byteLength: number) => void,
+  ): number {
+    const CHUNK = 64 * 1024 * 1024;
+    let carry: Buffer = Buffer.alloc(0);
+    let carryStart = from;
+    let pos = from;
+    while (pos < size) {
+      const length = Math.min(CHUNK, size - pos);
+      const chunk = this.readBytes(filePath, pos, length);
+      pos += length;
+      const buffer = carry.length ? Buffer.concat([carry, chunk]) : chunk;
+      const bufferStart = carryStart;
+      let lineStart = 0;
+      for (;;) {
+        const newline = buffer.indexOf(0x0a, lineStart);
+        if (newline < 0) break;
+        if (newline > lineStart) {
+          onLine(
+            buffer.subarray(lineStart, newline).toString('utf8'),
+            bufferStart + lineStart,
+            newline - lineStart,
+          );
+        }
+        lineStart = newline + 1;
+      }
+      carry = buffer.subarray(lineStart);
+      carryStart = bufferStart + lineStart;
+    }
+    return carryStart;
   }
 
   /**
@@ -332,6 +405,28 @@ export class StoreEngine {
   }
 
   // ── record parsing + lazy upgrade (DEC-F10) ──────────────────────────
+
+  /** Replace an indexed record's payload with a lazy re-read of its byte
+   * range (heavy kinds only). Ranges stay valid because stores are append-only
+   * and torn-line truncation only removes bytes past every indexed line. */
+  private detachPayload(
+    rec: ReadRecord,
+    filePath: string,
+    offset: number,
+    byteLength: number,
+  ): void {
+    const engine = this;
+    Object.defineProperty(rec, 'payload', {
+      configurable: true,
+      enumerable: true,
+      get(): Record<string, unknown> {
+        const raw = engine.readBytes(filePath, offset, byteLength).toString('utf8');
+        const parsed = engine.parseRecordLine(raw);
+        return parsed ? parsed.payload : {};
+      },
+    });
+  }
+
   /** Parse one line into a normalized record. v0 flat records upgrade in memory. */
   private parseRecordLine(line: string): ReadRecord | null {
     let parsed: unknown;
@@ -465,26 +560,26 @@ export class StoreEngine {
       this.traceIndex = index;
       return index!.traces;
     }
-    const complete = this.completeLines(
+    const indexedSize = this.forEachCompleteLine(
       filePath,
       index!.indexedSize,
       stamp.size,
+      (line) => {
+        try {
+          const parsed = TraceLine.safeParse(JSON.parse(line));
+          if (!parsed.success) return;
+          index!.traces.push(parsed.data);
+          index!.byClientOpId.set(parsed.data.clientOpId, parsed.data);
+          // Every appended trace line mints its own opId (or replays the exact
+          // opId of the object mutation it completes), so this is 1:1.
+          index!.byOpId.set(parsed.data.opId, parsed.data);
+          index!.opIds.add(parsed.data.opId);
+          index!.nextSeq = Math.max(index!.nextSeq, parsed.data.seq + 1);
+        } catch { /* skipped + traced at boot */ }
+      },
     );
-    for (const line of complete.lines) {
-      try {
-        const parsed = TraceLine.safeParse(JSON.parse(line));
-        if (!parsed.success) continue;
-        index!.traces.push(parsed.data);
-        index!.byClientOpId.set(parsed.data.clientOpId, parsed.data);
-        // Every appended trace line mints its own opId (or replays the exact
-        // opId of the object mutation it completes), so this is 1:1.
-        index!.byOpId.set(parsed.data.opId, parsed.data);
-        index!.opIds.add(parsed.data.opId);
-        index!.nextSeq = Math.max(index!.nextSeq, parsed.data.seq + 1);
-      } catch { /* skipped + traced at boot */ }
-    }
     index!.stamp = stamp;
-    index!.indexedSize = complete.indexedSize;
+    index!.indexedSize = indexedSize;
     index!.prefixFingerprint = this.indexedPrefixFingerprint(
       filePath,
       index!.indexedSize,
@@ -634,18 +729,24 @@ export class StoreEngine {
       this.recordIndexes.set(filePath, current);
       return current.latest;
     }
-    const complete = this.completeLines(filePath, current.indexedSize, stamp.size);
-    for (const line of complete.lines) {
-      const rec = this.parseRecordLine(line);
-      if (!rec) continue;
-      current.latest.set(rec.envelope.id, rec);
-      current.byClientOpId.set(rec.clientOpId, rec);
-      if (current.tombstones) {
-        this.indexTombstone(current.tombstones, rec);
-      }
-    }
+    const lazyPayloads = HEAVY_PAYLOAD_KINDS.has(kind);
+    const indexedSize = this.forEachCompleteLine(
+      filePath,
+      current.indexedSize,
+      stamp.size,
+      (line, offset, byteLength) => {
+        const rec = this.parseRecordLine(line);
+        if (!rec) return;
+        if (lazyPayloads) this.detachPayload(rec, filePath, offset, byteLength);
+        current.latest.set(rec.envelope.id, rec);
+        current.byClientOpId.set(rec.clientOpId, rec);
+        if (current.tombstones) {
+          this.indexTombstone(current.tombstones, rec);
+        }
+      },
+    );
     current.stamp = stamp;
-    current.indexedSize = complete.indexedSize;
+    current.indexedSize = indexedSize;
     current.prefixFingerprint = this.indexedPrefixFingerprint(
       filePath,
       current.indexedSize,
@@ -796,10 +897,13 @@ export class StoreEngine {
     return { envelope, payload, meta };
   }
 
-  private withLock<T>(fn: () => EngineResult<T>): EngineResult<T> {
+  /** Async lock wait: contenders queue in the timer queue, so the event loop
+   * (HTTP, SIGTERM handlers) stays live while this thread waits its turn. The
+   * critical section itself remains synchronous — nothing yields mid-write. */
+  private async withLock<T>(fn: () => EngineResult<T>): Promise<EngineResult<T>> {
     let lock;
     try {
-      lock = acquireLock(this.root, { timeoutMs: this.lockTimeoutMs });
+      lock = await acquireLockAsync(this.root, { timeoutMs: this.lockTimeoutMs });
     } catch (error) {
       if (error instanceof LockTimeout) {
         return {
@@ -809,6 +913,7 @@ export class StoreEngine {
       }
       throw error;
     }
+    this.bustStampCache(); // lock epoch: in-lock reads must see other writers' appends
     try {
       return fn();
     } finally {
@@ -828,7 +933,7 @@ export class StoreEngine {
     version: number,
     opId: ServerOpId = mintServerOpId(),
     cas?: { mustBeAbsent?: boolean; expectedVersion?: number },
-  ): EngineResult<MutationResult> {
+  ): Promise<EngineResult<MutationResult>> {
     return this.withLock(() => {
       if (cas) {
         const existing = this.readLatestEffective(kind).get(flat.id);
@@ -901,11 +1006,90 @@ export class StoreEngine {
     }); // (3) lock released
   }
 
+  /**
+   * Group commit (2026-08-09, ingestion churn fix): N heterogeneous mutations +
+   * ONE durable batch receipt + ONE trace, all inside ONE lock hold with ONE
+   * fsync per touched file. Every member line shares the batch's server opId,
+   * and the single trace line carries that opId targeting the receipt object —
+   * so provenance lookups find a trace for every member (no incomplete flags)
+   * and boot reconciliation sees a trace whose target exists (no orphans).
+   *
+   * CAS discipline: mustBeAbsent creates that find an existing id are reported
+   * as 'duplicate' and skipped (content-addressed dedup, not an error). Updates
+   * derive their version from the authoritative in-lock read — last-writer-wins
+   * under the lock, which is exactly the pre-existing serialization guarantee.
+   */
+  appendMutationBatch(input: {
+    ops: Array<{
+      kind: string;
+      flat: EnvelopeT & Record<string, unknown>;
+      action: 'create' | 'update';
+      clientOpId: ClientOpId;
+      mustBeAbsent?: boolean;
+    }>;
+    receipt: { flat: EnvelopeT & Record<string, unknown>; clientOpId: ClientOpId };
+  }): Promise<EngineResult<{
+    outcomes: Array<{ id: string; kind: string; outcome: 'applied' | 'duplicate'; version: number }>;
+    opId: ServerOpId;
+  }>> {
+    return this.withLock(() => {
+      const opId = mintServerOpId();
+      const outcomes: Array<{ id: string; kind: string; outcome: 'applied' | 'duplicate'; version: number }> = [];
+      const linesByKind = new Map<string, string[]>();
+      const batchIds = new Set<string>();
+      for (const op of input.ops) {
+        const existing = this.readLatestEffective(op.kind).get(op.flat.id);
+        if (op.mustBeAbsent && (existing || batchIds.has(op.flat.id))) {
+          outcomes.push({ id: op.flat.id, kind: op.kind, outcome: 'duplicate', version: existing?.version ?? 1 });
+          continue;
+        }
+        const version = op.action === 'update' ? (existing?.version ?? 0) + 1 : 1;
+        const line = JSON.stringify(this.wrapRecord(op.flat, { opId, clientOpId: op.clientOpId, version }));
+        const lines = linesByKind.get(op.kind) ?? [];
+        lines.push(line);
+        linesByKind.set(op.kind, lines);
+        batchIds.add(op.flat.id);
+        outcomes.push({ id: op.flat.id, kind: op.kind, outcome: 'applied', version });
+      }
+      try {
+        for (const [kind, lines] of linesByKind) {
+          this.appendLinesFsync(this.storePath(kind), lines); // members first…
+        }
+        const receiptLine = JSON.stringify(this.wrapRecord(input.receipt.flat, {
+          opId, clientOpId: input.receipt.clientOpId, version: 1,
+        }));
+        this.appendLineFsync(this.storePath('transcriptIngestBatch'), receiptLine); // …receipt as commit marker…
+      } catch (cause) {
+        return {
+          ok: false,
+          error: err('ObjectWriteFailed', `batch append failed: ${String(cause)}`, { opId, cause: String(cause) }, true),
+        };
+      }
+      const traces = this.readTraces();
+      const trace: TraceLineT = {
+        kind: 'trace', id: `trace_${randomUUID()}`, schemaVersion: 1,
+        createdAt: nowIso(), permissionLevel: 'team', createdBy: input.receipt.flat.createdBy,
+        seq: this.nextSeq(traces), opId, clientOpId: input.receipt.clientOpId, action: 'create',
+        target: { kind: 'transcriptIngestBatch', id: input.receipt.flat.id },
+        meta: { batch: true, members: outcomes.filter((o) => o.outcome === 'applied').length },
+      };
+      try {
+        this.appendLineFsync(this.storePath('trace'), JSON.stringify(trace)); // …trace last
+      } catch (cause) {
+        return {
+          ok: false,
+          error: err('TraceWriteFailed', `batch trace append failed: ${String(cause)}`, { opId, cause: String(cause) }, true),
+        };
+      }
+      return { ok: true, value: { outcomes, opId } };
+    });
+  }
+
   /** Complete a missing trace for an already-appended object (retry reconciliation). */
   completeTrace(
     kind: string, flat: EnvelopeT & Record<string, unknown>, action: 'create' | 'update',
     opId: ServerOpId, clientOpId: ClientOpId,
-  ): EngineResult<null> {
+  ): Promise<EngineResult<null>> {
     return this.withLock(() => {
       const traces = this.readTraces();
       const trace: TraceLineT = {
@@ -923,7 +1107,7 @@ export class StoreEngine {
   appendLifecycleTrace(
     action: 'quarantine' | 'resolveQuarantine', target: z.infer<typeof Ref>,
     actor: string, clientOpId: ClientOpId, meta?: Record<string, unknown>,
-  ): EngineResult<null> {
+  ): Promise<EngineResult<null>> {
     return this.withLock(() => {
       const traces = this.readTraces();
       const trace: TraceLineT = {
@@ -954,10 +1138,10 @@ export class StoreEngine {
     clientOpId: ClientOpId;
     /** Q10: who asked. Foundation is the writer either way. */
     requestedBy?: z.infer<typeof QuarantineRequestProvenance>;
-  }): EngineResult<{
+  }): Promise<EngineResult<{
     outcome: 'created' | 'already_requested';
     tombstone: TombstoneT;
-  }> {
+  }>> {
     return this.withLock<{
       outcome: 'created' | 'already_requested';
       tombstone: TombstoneT;
@@ -1118,7 +1302,7 @@ export class StoreEngine {
     actor: string;
     clientOpId: ClientOpId;
     reconcile?: { kind: string; flat: EnvelopeT & Record<string, unknown>; opId: ServerOpId; clientOpId: ClientOpId };
-  }): EngineResult<TombstoneT> {
+  }): Promise<EngineResult<TombstoneT>> {
     return this.withLock(() => {
       let seq = this.nextSeq(this.readTraces());
       const appendTrace = (trace: TraceLineT): void => {
@@ -1161,7 +1345,7 @@ export class StoreEngine {
     action: 'hook_log' | 'context.inject' | 'hook_error' | 'session.terminate'
       | 'artifact.orphan.sweep', target: z.infer<typeof Ref>,
     actor: string, clientOpId: ClientOpId, meta?: Record<string, unknown>,
-  ): EngineResult<null> {
+  ): Promise<EngineResult<null>> {
     return this.withLock(() => {
       const traces = this.readTraces();
       const prior = traces.find((line) =>
@@ -1252,11 +1436,11 @@ export class StoreEngine {
       readonly flat: EnvelopeT & Record<string, unknown>;
       readonly clientOpId: ClientOpId;
     };
-  }): EngineResult<{
+  }): Promise<EngineResult<{
     readonly traceComplete: boolean;
     readonly receiptOpId: ServerOpId;
     readonly copiedKinds: readonly string[];
-  }> {
+  }>> {
     return this.withLock(() => {
       const touched = new Set<string>();
       const receiptPath = this.storePath(input.receipt.kind);

@@ -43,6 +43,7 @@ export const OBJECT_KINDS = [
   'transcriptLine',       // B2b DEC-B2-4: transcript-owned normalized line
   'transcriptJournal',    // B2b DEC-B2-4: transcript-owned ingestion journal
   'transcriptCheckpoint', // B2b DEC-B2-4: transcript-owned incremental cursor
+  'transcriptIngestBatch', // 2026-08-09: durable per-batch ingest commit receipt
   // B3a (B3V4-P2 §18.1, AMD-001 A-01): additive registration only — Build 3
   // records ride Foundation's existing engine, envelope, lock, CAS and trace.
   'runtimeEpoch',         // DEC-B3V4-27: runtime-host-owned split-brain fence

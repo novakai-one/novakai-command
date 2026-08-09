@@ -36,28 +36,53 @@ function sleepSync(milliseconds: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
 }
 
+const sleep = (milliseconds: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+/** One acquisition attempt: the Lock on success, 'busy' while a live holder exists. */
+function tryAcquire(lockDir: string, token: string): Lock | 'busy' | 'retry' {
+  try {
+    mkdirSync(lockDir);
+    writeFileSync(path.join(lockDir, 'owner.json'), JSON.stringify({ pid: process.pid, token }) + '\n');
+    return { lockDir, token };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+    const owner = readLockOwner(lockDir);
+    if (owner && Number.isInteger(owner.pid) && !isPidAlive(owner.pid as number)) {
+      rmSync(lockDir, { recursive: true, force: true }); // dead holder — contenders re-race
+      return 'retry';
+    }
+    return 'busy';
+  }
+}
+
 export function acquireLock(root: string, { timeoutMs = 5000, pollMs = 50 } = {}): Lock {
   const lockDir = path.join(root, 'lock');
   const token = randomUUID();
   const start = Date.now();
   const deadline = start + timeoutMs;
   for (;;) {
-    try {
-      mkdirSync(lockDir);
-      writeFileSync(path.join(lockDir, 'owner.json'), JSON.stringify({ pid: process.pid, token }) + '\n');
-      return { lockDir, token };
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-      const owner = readLockOwner(lockDir);
-      if (owner && Number.isInteger(owner.pid) && !isPidAlive(owner.pid as number)) {
-        rmSync(lockDir, { recursive: true, force: true }); // dead holder — contenders re-race
-        continue;
-      }
-      if (Date.now() >= deadline) {
-        throw new LockTimeout(Date.now() - start, timeoutMs);
-      }
-      sleepSync(pollMs);
-    }
+    const attempt = tryAcquire(lockDir, token);
+    if (attempt === 'retry') continue;
+    if (attempt !== 'busy') return attempt;
+    if (Date.now() >= deadline) throw new LockTimeout(Date.now() - start, timeoutMs);
+    sleepSync(pollMs);
+  }
+}
+
+/** Same protocol as acquireLock, but waits in the timer queue — the event loop
+ * (HTTP, signal handlers) stays live while this contender queues. */
+export async function acquireLockAsync(root: string, { timeoutMs = 5000, pollMs = 50 } = {}): Promise<Lock> {
+  const lockDir = path.join(root, 'lock');
+  const token = randomUUID();
+  const start = Date.now();
+  const deadline = start + timeoutMs;
+  for (;;) {
+    const attempt = tryAcquire(lockDir, token);
+    if (attempt === 'retry') continue;
+    if (attempt !== 'busy') return attempt;
+    if (Date.now() >= deadline) throw new LockTimeout(Date.now() - start, timeoutMs);
+    await sleep(pollMs);
   }
 }
 

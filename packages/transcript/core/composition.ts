@@ -27,6 +27,11 @@ export interface TranscriptContext {
   readonly failpoint: TranscriptFailpoint;
   readonly yieldAfterItems: number;
   readonly yieldToHost: () => Promise<void>;
+  /** 2026-08-09: journal index survives across ingest() calls — this process
+   * is the sole journal writer, and rebuilding it from a 400k-record store on
+   * every 1 s tick was continuous whole-store churn. Holds whatever `ingest`
+   * caches; typed loosely to keep the core's index type package-private. */
+  readonly ingestCache: { journalIndex?: unknown };
 }
 
 export function composeTranscript(
@@ -43,6 +48,7 @@ export function composeTranscript(
         'transcriptLine',
         'transcriptJournal',
         'transcriptCheckpoint',
+        'transcriptIngestBatch',
       ],
       principal: 'sys_ingester',
       lockTimeoutMs: options.lockTimeoutMs,
@@ -57,5 +63,6 @@ export function composeTranscript(
     yieldAfterItems: 4,
     yieldToHost: () =>
       new Promise<void>((resolve) => setImmediate(resolve)),
+    ingestCache: {},
   });
 }
