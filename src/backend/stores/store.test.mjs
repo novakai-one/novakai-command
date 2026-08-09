@@ -250,4 +250,29 @@ function assertUnchanged(before, dir) {
   rmSync(dir, { recursive: true, force: true });
 }
 
+// --- foreign-engine files are invisible (2026-08-09 churn fix) ---------------
+// .novakai/stores is shared with the packages/foundation store-engine, whose
+// telemetry files (traces.jsonl, commandReceipts.jsonl, ...) are not ours and
+// grow without bound. Globbing them made every read/write O(entire dir) — the
+// Aug 3/8/9 incidents. They must be excluded from reads, checksums, AND never
+// poison audits even when their content is invalid JSONL.
+
+{
+  const dir = freshDir();
+  writeFileSync(path.join(dir, 'traces.jsonl'), 'not json at all\n{"half":\n');
+  writeFileSync(path.join(dir, 'commandReceipts.jsonl'), '{"kind":"receipt","id":"receipt_x"}\n');
+  const snapshot = readStoreDir(dir);
+  assert.ok(!('traces.jsonl' in snapshot.files), 'foreign traces.jsonl excluded from readStoreDir');
+  assert.ok(!('commandReceipts.jsonl' in snapshot.files), 'foreign commandReceipts.jsonl excluded from readStoreDir');
+  assert.equal(Object.keys(snapshot.files).length, 9, 'snapshot still covers exactly the schema-recognized files');
+  const checksums = checksumStores(dir);
+  assert.ok(!('traces.jsonl' in checksums), 'foreign file excluded from checksums');
+  assert.ok(!('commandReceipts.jsonl' in checksums), 'foreign file excluded from checksums');
+  const { audit } = auditDir(dir);
+  assert.deepEqual(audit.findings, [], 'invalid foreign content cannot poison the audit');
+  // the write path ignores foreign files too: a normal append still validates + lands
+  appendLine(dir, 'captains-log.jsonl', JSON.stringify({ id: 'log_2026-08-09-900', kind: 'log', ts: TS, body: 'append with foreign files present' }));
+  rmSync(dir, { recursive: true, force: true });
+}
+
 console.log('store shell tests passed');

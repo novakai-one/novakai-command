@@ -37,6 +37,10 @@ export interface WatcherOptions {
   sources: WatcherSource[];
   /** Poll interval. fs.watch is flaky across editors/atomics; polling is the honest mechanism. */
   intervalMs?: number;
+  /** Test seam: ranged content read (byte offset + length). EVERY content
+   * read the scan performs goes through this, so a test can count bytes —
+   * the 2026-08-09 churn fix's contract is "unchanged files read ZERO". */
+  readRange?: (filePath: string, from: number, length: number) => Buffer;
 }
 
 export interface WatcherStatus {

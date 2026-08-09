@@ -44,11 +44,17 @@ export class StoreConflictError extends StoreRefusalError {
 
 const sha256 = (buffer) => createHash('sha256').update(buffer).digest('hex');
 
+// Only schema-recognized store files. The dir is shared with the packages/
+// foundation store-engine, whose telemetry files (traces, commandReceipts, …)
+// grow without bound — globbing *.jsonl made every read/write here O(entire
+// dir), the 2026-08-09 churn incident. Foreign files are not ours to parse.
 function storeFileNames(storeDir) {
-  return readdirSync(storeDir).filter((name) => name.endsWith('.jsonl')).sort();
+  return readdirSync(storeDir)
+    .filter((name) => Object.hasOwn(STORE_KINDS, name))
+    .sort();
 }
 
-/** sha256 of every *.jsonl in the store dir. */
+/** sha256 of every schema-recognized store file in the dir. */
 export function checksumStores(storeDir) {
   const checksums = {};
   for (const name of storeFileNames(storeDir)) {

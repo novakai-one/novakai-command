@@ -66,6 +66,54 @@ test('watcher copies parent AND subagent transcript files (ruling 8)', async () 
   assert.equal(readFileSync(subCopy, 'utf8'), '{"role":"user","text":"subagent task"}\n');
 });
 
+// 2026-08-09 churn fix: the scan's content reads are metered through the
+// readRange seam. Output-based tests cannot catch this regression — the old
+// whole-file-every-tick code produced byte-identical copies while allocating
+// GB/s at real transcript volume (the Aug 3/8 "ingester leak").
+test('steady-state reads ZERO content bytes; growth reads at most tail window + delta', async () => {
+  const f = makeFixture();
+  let bytesRead = 0;
+  const countingRead = (filePath: string, from: number, length: number): Buffer => {
+    bytesRead += Math.max(0, length);
+    return readFileSync(filePath).subarray(from, from + length);
+  };
+  const watchOnce = async () => {
+    // start() runs one immediate scan; the huge interval means no timer ticks.
+    const w = createTranscriptWatcher({
+      root: f.root,
+      sources: [
+        { provider: 'claude', dir: f.srcClaude },
+        { provider: 'kimi', dir: f.srcKimi },
+      ],
+      intervalMs: 3_600_000,
+      readRange: countingRead,
+    });
+    await w.start();
+    await w.stop();
+  };
+
+  await watchOnce(); // first sight: full copies, reads are legitimate here
+
+  bytesRead = 0;
+  await watchOnce(); // nothing changed anywhere
+  assert.equal(bytesRead, 0, 'unchanged checkpointed files must read zero content bytes');
+
+  const delta = '{"role":"assistant","text":"reply"}\n';
+  appendFileSync(f.parentFile, delta);
+  bytesRead = 0;
+  await watchOnce(); // one grown file: tail window (≤64) + delta, nothing else
+  assert.ok(
+    bytesRead <= 64 + delta.length,
+    `growth read ${bytesRead} bytes — must be at most 64 (tail window) + ${delta.length} (delta)`,
+  );
+  const copy = path.join(f.root, 'transcripts', 'claude', '-Users-chris-app', 'sess_1.jsonl');
+  assert.equal(
+    readFileSync(copy, 'utf8'),
+    '{"role":"user","text":"hi"}\n' + delta,
+    'ranged reads still produce a byte-faithful copy',
+  );
+});
+
 test('appended content is copied incrementally (byte-offset checkpoint)', async () => {
   const f = makeFixture();
   const w = watch(f);
