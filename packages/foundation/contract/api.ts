@@ -172,6 +172,49 @@ function paginate<T>(items: T[], options?: PageOptions): Page<T> {
 
 // ── Mutating ops ────────────────────────────────────────────────────────────
 
+/** One heterogeneous mutation per array entry, committed as ONE group under
+ * ONE lock hold with ONE fsync per touched file and ONE trace targeting the
+ * durable batch receipt (2026-08-09 ingestion churn fix). mustBeAbsent
+ * conflicts come back as 'duplicate' outcomes, not errors. */
+export async function commitMutationBatch(
+  handle: ScopedStoreHandle,
+  ops: Array<{
+    kind: string;
+    flat: Record<string, unknown>;
+    action: 'create' | 'update';
+    clientOpId: ClientOpId;
+    mustBeAbsent?: boolean;
+  }>,
+  receipt: { flat: Record<string, unknown>; clientOpId: ClientOpId },
+): Promise<Result<{
+  outcomes: Array<{ id: string; kind: string; outcome: 'applied' | 'duplicate'; version: number }>;
+  opId: string;
+}, StoreError>> {
+  const engine = engineOf(handle);
+  const bootFailure = engine.bootError();
+  if (bootFailure) return fail(bootFailure);
+  const createdBy = principalOf(handle);
+  for (const op of ops) {
+    const scoped = scopeCheck(handle, op.kind);
+    if (scoped) return fail(scoped);
+  }
+  const result = await engine.appendMutationBatch({
+    ops: ops.map((op) => ({
+      kind: op.kind,
+      flat: { ...op.flat, createdBy } as EnvelopeT & Record<string, unknown>,
+      action: op.action,
+      clientOpId: op.clientOpId,
+      ...(op.mustBeAbsent !== undefined ? { mustBeAbsent: op.mustBeAbsent } : {}),
+    })),
+    receipt: {
+      flat: { ...receipt.flat, createdBy } as EnvelopeT & Record<string, unknown>,
+      clientOpId: receipt.clientOpId,
+    },
+  });
+  if (!result.ok) return fail(result.error);
+  return ok(result.value);
+}
+
 export async function createObject<T>(
   handle: ScopedStoreHandle,
   payload: T,
@@ -198,7 +241,7 @@ export async function createObject<T>(
   if (prior) {
     if (!prior.traceComplete) {
       const recordLine = engine.readLatestEffective(kind).get(prior.id);
-      if (recordLine) engine.completeTrace(kind, { ...recordLine.payload, ...recordLine.envelope } as EnvelopeT & Record<string, unknown>, prior.action, prior.opId, clientOpId);
+      if (recordLine) await engine.completeTrace(kind, { ...recordLine.payload, ...recordLine.envelope } as EnvelopeT & Record<string, unknown>, prior.action, prior.opId, clientOpId);
     }
     const recordLine = engine.readLatestEffective(kind).get(prior.id);
     if (recordLine) return ok(toStoredObject<T>(engine, recordLine));
@@ -214,7 +257,7 @@ export async function createObject<T>(
   const stamped = { ...flat!, createdBy: principalOf(handle) };
   // create-CAS runs INSIDE the engine lock (S1): a concurrent create on the
   // same id loses with CasConflict instead of double-appending.
-  const result = engine.appendMutation(kind, stamped, 'create', clientOpId, 1, undefined, { mustBeAbsent: true });
+  const result = await engine.appendMutation(kind, stamped, 'create', clientOpId, 1, undefined, { mustBeAbsent: true });
   if (!result.ok) return fail(result.error);
   return ok(mutationView<T>(engine, result.value, clientOpId));
 }
@@ -259,7 +302,7 @@ export async function updateObject<T>(
   const prior = findPriorOp(engine, kind, clientOpId);
   if (prior) {
     if (!prior.traceComplete) {
-      engine.completeTrace(kind, { ...recordLine.payload, ...recordLine.envelope } as EnvelopeT & Record<string, unknown>, prior.action, prior.opId, clientOpId);
+      await engine.completeTrace(kind, { ...recordLine.payload, ...recordLine.envelope } as EnvelopeT & Record<string, unknown>, prior.action, prior.opId, clientOpId);
     }
     const current = engine.readLatestEffective(kind).get(id);
     if (current) return ok(toStoredObject<T>(engine, current));
@@ -272,7 +315,7 @@ export async function updateObject<T>(
   // CAS compare runs INSIDE the engine lock (S1): a concurrent updater at the
   // same expectedVersion loses with CasConflict; the next version derives from
   // the authoritative locked read.
-  const result = engine.appendMutation(kind, merged as EnvelopeT & Record<string, unknown>, 'update', clientOpId, recordLine.version + 1, undefined, { expectedVersion });
+  const result = await engine.appendMutation(kind, merged as EnvelopeT & Record<string, unknown>, 'update', clientOpId, recordLine.version + 1, undefined, { expectedVersion });
   if (!result.ok) return fail(result.error);
   return ok(mutationView<T>(engine, result.value, clientOpId));
 }
@@ -352,19 +395,57 @@ export async function listObjects<T>(
   if (filter !== undefined && (filter === null || typeof filter !== 'object' || Array.isArray(filter))) {
     return fail(err('FilterInvalid', 'filter must be a plain object of field equality checks', { filter, reason: 'not an object' }, false));
   }
+  // 2026-08-09: filter/sort on RAW records and materialize only the returned
+  // page. toStoredObject runs provenance lookups per record; running it on
+  // every record for every page made a paged scan of a 470k-record store
+  // O(pages × records) — hundreds of millions of materializations.
   const skipped = engine.quarantinedIds();
-  let items = readAllRecords(engine, kind)
-    .filter((recordLine) => !skipped.has(recordLine.envelope.id))
-    .map((recordLine) => toStoredObject<T>(engine, recordLine));
+  let records = readAllRecords(engine, kind)
+    .filter((recordLine) => !skipped.has(recordLine.envelope.id));
   if (filter) {
     for (const [field, value] of Object.entries(filter)) {
-      items = items.filter(
-        (storedObject) => (storedObject.object as Record<string, unknown>)[field] === value,
-      );
+      records = records.filter((recordLine) => {
+        // same flattening precedence as toStoredObject: envelope over payload
+        const envelopeValue = (recordLine.envelope as unknown as Record<string, unknown>)[field];
+        return (envelopeValue !== undefined ? envelopeValue : recordLine.payload[field]) === value;
+      });
     }
   }
-  items.sort((left, right) => left.object.createdAt.localeCompare(right.object.createdAt));
-  return ok(paginate(items, page));
+  records.sort((left, right) => left.envelope.createdAt.localeCompare(right.envelope.createdAt));
+  const pageOut = paginate(records, page);
+  return ok({
+    items: pageOut.items.map((recordLine) => toStoredObject<T>(engine, recordLine)),
+    ...(pageOut.nextCursor !== undefined ? { nextCursor: pageOut.nextCursor } : {}),
+  });
+}
+
+/**
+ * Visit a snapshot of the latest effective objects without retaining or
+ * returning the complete store. Intended for capabilities building a compact
+ * derived projection from a high-cardinality store.
+ */
+export async function visitObjects<T>(
+  handle: ScopedStoreHandle,
+  kind: ObjectKind,
+  visitor: (object: T) => void,
+): Promise<Result<{ visited: number }, StoreError>> {
+  const engine = engineOf(handle);
+  const bootFailure = engine.bootError();
+  if (bootFailure) return fail(bootFailure);
+  if (!(kind in KIND_FILES)) {
+    return fail(err('KindUnknown', `kind "${kind}" is not registered`, {
+      kind,
+      registered: Object.keys(KIND_FILES),
+    }, false));
+  }
+  const skipped = engine.quarantinedIds();
+  let visited = 0;
+  engine.visitLatestEffective(kind, (recordLine) => {
+    if (skipped.has(recordLine.envelope.id)) return;
+    visitor({ ...recordLine.payload, ...recordLine.envelope } as T);
+    visited += 1;
+  });
+  return ok({ visited });
 }
 
 export async function resolveRef<T>(
@@ -444,7 +525,7 @@ export async function requestQuarantine(
     .digest('hex');
   // Q10: derived from the authenticated handle and the caller's context —
   // never from anything a request body could carry.
-  return engine.requestQuarantine({
+  return await engine.requestQuarantine({
     tombstoneId: `quarantine_${digest}`,
     target: parsedTarget.data,
     actor: principalOf(handle),
@@ -510,7 +591,7 @@ export async function resolveQuarantine(
     resolvedBy: actor,
   });
   // M1: reconcile-trace + tombstone + lifecycle trace commit in ONE lock hold
-  const res = engine.resolveQuarantine({ next, version, actor, clientOpId, ...(reconcile ? { reconcile } : {}) });
+  const res = await engine.resolveQuarantine({ next, version, actor, clientOpId, ...(reconcile ? { reconcile } : {}) });
   if (!res.ok) return fail(res.error);
   return ok(res.value);
 }
@@ -541,7 +622,7 @@ export async function recordSystemAction(
   const engine = engineOf(handle);
   const bootFailure = engine.bootError();
   if (bootFailure) return fail(bootFailure);
-  const res = engine.appendSystemActionTrace(
+  const res = await engine.appendSystemActionTrace(
     input.action, input.target, principalOf(handle), input.clientOpId, input.meta);
   if (!res.ok) return fail(res.error);
   return ok(null);
@@ -636,7 +717,7 @@ export async function bootstrapStoreRouteCutover(
   }
   const receipt = prepared.pop()!;
 
-  const result = engine.bootstrapStoreRouteCutover({
+  const result = await engine.bootstrapStoreRouteCutover({
     ...(input.copy === undefined ? {} : { copy: input.copy }),
     records: prepared,
     receipt,

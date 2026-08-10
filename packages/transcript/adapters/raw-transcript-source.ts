@@ -158,7 +158,17 @@ class RawTranscriptSource implements TranscriptSourceAdapter {
       if (!stat.isFile() || stat.isSymbolicLink()) {
         throw new Error('transcript source is not a regular file');
       }
-      let buffered = Buffer.alloc(0);
+      // 2026-08-09: nothing new past the checkpoint — skip the stream open.
+      // Without this, every 1 s ingest tick opened a read stream on every
+      // tracked source (~2,700 opens/s), a continuous ~1-core burn at idle.
+      if (stat.size <= fromOffset) return;
+      // 2026-08-09: chunk-list buffering. The previous Buffer.concat-per-chunk
+      // was O(line²) for a line spanning many chunks — a single multi-MB
+      // transcript line (large tool outputs) turned into gigabytes of copying
+      // per file and starved the watcher sharing this thread. Partial-line
+      // chunks accumulate in a list and are joined ONCE per completed line.
+      let pending: Buffer[] = [];
+      let pendingBytes = 0;
       let cursor = fromOffset;
       let currentRelations = relationState;
       let nextTurnIndex = readCursor?.nextTurnIndex ?? 0;
@@ -169,12 +179,20 @@ class RawTranscriptSource implements TranscriptSourceAdapter {
           { start: fromOffset },
         )
       ) {
-        buffered = Buffer.concat([buffered, chunk as Buffer]);
-        let newline = buffered.indexOf(0x0a);
-        while (newline >= 0) {
-          let raw = buffered.subarray(0, newline);
+        const buffer = chunk as Buffer;
+        let searchFrom = 0;
+        for (;;) {
+          const newline = buffer.indexOf(0x0a, searchFrom);
+          if (newline < 0) break;
+          const head = buffer.subarray(searchFrom, newline);
+          const lineBytes = pendingBytes + head.length;
+          let raw: Buffer = pending.length
+            ? Buffer.concat([...pending, head], lineBytes)
+            : head;
+          pending = [];
+          pendingBytes = 0;
           if (raw.at(-1) === 0x0d) raw = raw.subarray(0, -1);
-          const nextOffset = cursor + newline + 1;
+          const nextOffset = cursor + lineBytes + 1;
           const item = normalizeProviderLine(
             source.provider,
             raw.toString('utf8'),
@@ -209,9 +227,13 @@ class RawTranscriptSource implements TranscriptSourceAdapter {
             );
           }
           yield item;
-          buffered = buffered.subarray(newline + 1);
           cursor = nextOffset;
-          newline = buffered.indexOf(0x0a);
+          searchFrom = newline + 1;
+        }
+        const rest = buffer.subarray(searchFrom);
+        if (rest.length > 0) {
+          pending.push(rest);
+          pendingBytes += rest.length;
         }
       }
     } finally {

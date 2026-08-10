@@ -154,13 +154,14 @@ function median(values: number[]): number {
   return sorted[Math.floor(sorted.length / 2)]!;
 }
 
-function appendSamples(root: string, prefix: string): number[] {
+async function appendSamples(root: string, prefix: string): Promise<number[]> {
   const engine = new StoreEngine({ root });
   engine.boot();
-  return Array.from({ length: SAMPLE_COUNT }, (_, index) => {
+  const samples: number[] = [];
+  for (let index = 0; index < SAMPLE_COUNT; index += 1) {
     const id = `settings_${prefix}_${index}`;
     const startedAt = performance.now();
-    const appended = engine.appendMutation(
+    const appended = await engine.appendMutation(
       'settings',
       {
         kind: 'settings',
@@ -180,8 +181,9 @@ function appendSamples(root: string, prefix: string): number[] {
     );
     const elapsed = performance.now() - startedAt;
     assert.equal(appended.ok, true);
-    return elapsed;
-  });
+    samples.push(elapsed);
+  }
+  return samples;
 }
 
 async function readSamples(root: string): Promise<number[]> {
@@ -209,14 +211,14 @@ async function readSamples(root: string): Promise<number[]> {
   return samples;
 }
 
-test('one append to a 5k-line store costs less than twice an empty-store append', (t) => {
+test('one append to a 5k-line store costs less than twice an empty-store append', async (t) => {
   const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-flat-append-'));
   const populatedRoot = path.join(workspace, 'populated');
   const emptyRoot = path.join(workspace, 'empty');
   try {
     seedStore(populatedRoot);
-    const populatedMs = median(appendSamples(populatedRoot, 'populated'));
-    const emptyMs = median(appendSamples(emptyRoot, 'empty'));
+    const populatedMs = median(await appendSamples(populatedRoot, 'populated'));
+    const emptyMs = median(await appendSamples(emptyRoot, 'empty'));
     t.diagnostic(
       `5k median ${populatedMs.toFixed(2)}ms; empty median `
       + `${emptyMs.toFixed(2)}ms; ratio `

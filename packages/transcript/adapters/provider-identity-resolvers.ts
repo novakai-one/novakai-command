@@ -1,3 +1,4 @@
+import path from 'node:path';
 import {
   composeHandle,
   listObjects,
@@ -74,6 +75,7 @@ export async function loadProviderIdentityRecords(
 ): Promise<ProviderIdentityRecord[]> {
   const handle = composeHandle({
     root,
+    dataRoot: path.join(root, 'stores'),
     capability: 'agents',
     allowedKinds: ['providerSession'],
     principal: 'sys_ingester',

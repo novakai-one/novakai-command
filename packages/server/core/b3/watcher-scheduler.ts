@@ -16,7 +16,10 @@ export interface WatcherSchedulerOptions {
   readonly reportFailure?: (message: string) => void;
 }
 
-const DEFAULT_INTERVAL_MS = 100;
+// 2026-08-09: 100 ms ticks wrote a commandReceipt pair (create+settle, with
+// traces and fsyncs) ~10×/second forever — ~0.7 GB/day of receipt+trace growth
+// for deadlines whose own cadence is 300 s. 1 s granularity is ample.
+const DEFAULT_INTERVAL_MS = 1000;
 
 /** Start one bounded, non-overlapping deadline pass loop. */
 export function startWatcherScheduler(

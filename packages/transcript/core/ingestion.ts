@@ -1,12 +1,12 @@
 import { createHash } from 'node:crypto';
 import {
-  createObject,
+  commitMutationBatch,
   err,
   getObjectWithReadFailure,
   isAbsent,
   listObjects,
   requestQuarantine,
-  updateObject,
+  visitObjects,
   type ClientOpId,
   type ObjectId,
   type Result,
@@ -39,9 +39,18 @@ import {
 import type { TranscriptContext } from './composition.js';
 import { TranscriptFailpointCrash } from './failpoints.js';
 import {
-  persistTranscriptRelation,
+  stageTranscriptRelation,
   restoreTranscriptRelationState,
 } from './relations.js';
+
+/** One buffered store mutation awaiting the next group commit (2026-08-09). */
+export interface StagedMutation {
+  kind: string;
+  flat: Record<string, unknown>;
+  action: 'create' | 'update';
+  clientOpId: ClientOpId;
+  mustBeAbsent?: boolean;
+}
 
 const hash = (value: string): string =>
   createHash('sha256').update(value).digest('hex');
@@ -212,71 +221,89 @@ async function readCheckpoint(
     : parsed;
 }
 
-async function advanceCheckpoint(
+/**
+ * Group commit (2026-08-09 churn fix): everything a scan staged — lines,
+ * journal entries, relations — plus ONE checkpoint advance and ONE durable
+ * batch receipt, committed under ONE lock hold with one fsync per file.
+ * The checkpoint rides in the same commit as the members it covers, so a
+ * crash never leaves the cursor ahead of durable truth; an un-flushed batch
+ * simply re-scans from the previous checkpoint and dedups to 'duplicate'.
+ */
+async function flushIngestBatch(
   context: TranscriptContext,
   source: TranscriptSourceT,
-  nextOffset: number,
-  nextTurnIndex: number,
-  lastTurnId: string | undefined,
-): Promise<Result<TranscriptCheckpointT, TranscriptError>> {
-  for (;;) {
-    const current = await readCheckpoint(context, source);
-    if (!current.ok) return current;
-    if (current.value && current.value.object.offset >= nextOffset) {
-      return { ok: true, value: current.value.object };
-    }
-    const now = new Date().toISOString();
-    if (!current.value) {
-      const draft = TranscriptCheckpoint.parse({
+  ops: StagedMutation[],
+  lineIds: Set<string>,
+  cursor: { fromOffset: number; nextOffset: number; nextTurnIndex: number; lastTurnId: string | undefined },
+  result: IngestResult,
+): Promise<Result<null, TranscriptError>> {
+  if (ops.length === 0 && cursor.nextOffset <= cursor.fromOffset) {
+    return { ok: true, value: null };
+  }
+  const now = new Date().toISOString();
+  const current = await readCheckpoint(context, source);
+  if (!current.ok) return current;
+  if (!current.value || current.value.object.offset < cursor.nextOffset) {
+    const base = current.value?.object;
+    ops.push({
+      kind: 'transcriptCheckpoint',
+      flat: TranscriptCheckpoint.parse({
         kind: 'transcriptCheckpoint',
         id: checkpointId(source),
         schemaVersion: 1,
-        createdAt: now,
+        createdAt: base?.createdAt ?? now,
         permissionLevel: 'private',
         createdBy: 'overridden-by-foundation',
         provider: source.provider,
         sourceId: source.sourceId,
-        offset: nextOffset,
-        nextTurnIndex,
-        ...(lastTurnId ? { lastTurnId } : {}),
+        offset: cursor.nextOffset,
+        nextTurnIndex: cursor.nextTurnIndex,
+        ...(cursor.lastTurnId ? { lastTurnId: cursor.lastTurnId } : {}),
         updatedAt: now,
-      });
-      const created = await createObject<TranscriptCheckpointT>(
-        context.handle,
-        draft,
-        operationId(`checkpoint:create:${draft.id}:${nextOffset}`),
-      );
-      if (created.ok) return parseCheckpoint(created.value.object);
-      if (created.error.code === 'CasConflict') continue;
-      return created;
-    }
-    const patch: Partial<TranscriptCheckpointT> = {
-      offset: nextOffset,
-      nextTurnIndex,
-      lastTurnId,
-      updatedAt: now,
-    };
-    const updated = await updateObject<TranscriptCheckpointT>(
-      context.handle,
-      current.value.object.id as ObjectId,
-      patch,
-      current.value.version,
-      operationId(
-        `checkpoint:update:${current.value.object.id}:${nextOffset}:`
-        + `${nextTurnIndex}`,
+      }) as unknown as Record<string, unknown>,
+      action: base ? 'update' : 'create',
+      clientOpId: operationId(
+        `checkpoint:${checkpointId(source)}:${cursor.nextOffset}:${cursor.nextTurnIndex}`,
       ),
-    );
-    if (updated.ok) return parseCheckpoint(updated.value.object);
-    if (updated.error.code === 'CasConflict') continue;
-    return updated;
+    });
   }
+  const memberIds = ops.map((op) => String(op.flat.id));
+  const receiptId = `transcriptIngestBatch_${hash(
+    `${source.provider}:${source.sourceId}:${cursor.fromOffset}:${cursor.nextOffset}:${memberIds.length}`,
+  )}`;
+  const committed = await commitMutationBatch(context.handle, ops, {
+    flat: {
+      kind: 'transcriptIngestBatch',
+      id: receiptId,
+      schemaVersion: 1,
+      createdAt: now,
+      permissionLevel: 'private',
+      createdBy: 'overridden-by-foundation',
+      provider: source.provider,
+      sourceId: source.sourceId,
+      fromOffset: cursor.fromOffset,
+      toOffset: cursor.nextOffset,
+      members: memberIds.length,
+      memberDigest: hash(memberIds.join('\n')),
+    },
+    clientOpId: operationId(`ingestBatch:${receiptId}`),
+  });
+  if (!committed.ok) return committed; // StoreError is a TranscriptError member
+  for (const outcome of committed.value.outcomes) {
+    if (!lineIds.has(outcome.id)) continue;
+    result[outcome.outcome === 'applied' ? 'added' : 'duplicates'] += 1;
+  }
+  ops.length = 0;
+  lineIds.clear();
+  cursor.fromOffset = cursor.nextOffset;
+  return { ok: true, value: null };
 }
 
-async function persistSkip(
-  context: TranscriptContext,
+function stageSkip(
   source: TranscriptSourceT,
   item: TranscriptSourceSkip,
-): Promise<Result<TranscriptSkipJournalEntryT, TranscriptError>> {
+  ops: StagedMutation[],
+): Result<TranscriptSkipJournalEntryT, TranscriptError> {
   const id = `transcriptJournal_${hash(
     `${source.provider}:${source.sourceId}:${item.offset}`,
   )}`;
@@ -295,34 +322,17 @@ async function persistSkip(
     outcome: 'skipped',
     skip: item.reason,
   });
-  const created = await createObject<TranscriptJournalEntryT>(
-    context.handle,
-    draft,
-    operationId(`journal:${id}`),
-  );
-  if (created.ok) {
-    const parsed = parseJournal(created.value.object);
-    if (parsed.ok && parsed.value.outcome === 'skipped') {
-      return { ok: true, value: parsed.value };
-    }
-    return {
-      ok: false,
-      error: invalidRecord(
-        'transcriptJournal',
-        id,
-        [{ path: ['outcome'], message: 'expected skipped entry' }],
-      ),
-    };
-  }
-  if (created.error.code !== 'CasConflict') return created;
-  const found = await getObjectWithReadFailure<TranscriptJournalEntryT>(
-    context.handle,
-    'transcriptJournal',
-    id as ObjectId,
-  );
-  if (!found.ok) return found;
-  if (isAbsent(found.value)) return created;
-  const parsed = parseJournal(found.value.object);
+  // Staged (2026-08-09): content-addressed id + mustBeAbsent makes a re-scan's
+  // duplicate a 'duplicate' outcome at flush, same net state as the old
+  // write-then-CasConflict dance, without a store write per skipped line.
+  ops.push({
+    kind: 'transcriptJournal',
+    flat: draft as unknown as Record<string, unknown>,
+    action: 'create',
+    clientOpId: operationId(`journal:${id}`),
+    mustBeAbsent: true,
+  });
+  const parsed = parseJournal(draft);
   if (parsed.ok && parsed.value.outcome === 'skipped') {
     return { ok: true, value: parsed.value };
   }
@@ -354,12 +364,12 @@ async function quarantineRejectedItem(
     : requested;
 }
 
-async function persistDiagnostic(
-  context: TranscriptContext,
+function stageDiagnostic(
   source: TranscriptSourceT,
   item: TranscriptSourceCandidate,
   diagnostic: TranscriptDiagnostic,
-): Promise<Result<TranscriptDiagnosticJournalEntryT, TranscriptError>> {
+  ops: StagedMutation[],
+): Result<TranscriptDiagnosticJournalEntryT, TranscriptError> {
   const id = `transcriptJournal_${hash(
     `${source.provider}:${source.sourceId}:diagnostic:${diagnostic.code}`,
   )}`;
@@ -378,34 +388,14 @@ async function persistDiagnostic(
     outcome: 'diagnostic',
     diagnostic,
   });
-  const created = await createObject<TranscriptJournalEntryT>(
-    context.handle,
-    draft,
-    operationId(`journal:${id}`),
-  );
-  if (created.ok) {
-    const parsed = parseJournal(created.value.object);
-    if (parsed.ok && parsed.value.outcome === 'diagnostic') {
-      return { ok: true, value: parsed.value };
-    }
-    return {
-      ok: false,
-      error: invalidRecord(
-        'transcriptJournal',
-        id,
-        [{ path: ['outcome'], message: 'expected diagnostic entry' }],
-      ),
-    };
-  }
-  if (created.error.code !== 'CasConflict') return created;
-  const found = await getObjectWithReadFailure<TranscriptJournalEntryT>(
-    context.handle,
-    'transcriptJournal',
-    id as ObjectId,
-  );
-  if (!found.ok) return found;
-  if (isAbsent(found.value)) return created;
-  const parsed = parseJournal(found.value.object);
+  ops.push({
+    kind: 'transcriptJournal',
+    flat: draft as unknown as Record<string, unknown>,
+    action: 'create',
+    clientOpId: operationId(`journal:${id}`),
+    mustBeAbsent: true,
+  });
+  const parsed = parseJournal(draft);
   if (parsed.ok && parsed.value.outcome === 'diagnostic') {
     return { ok: true, value: parsed.value };
   }
@@ -440,18 +430,17 @@ async function loadTranscriptJournalIndex(
     diagnosticCodes: new Map(),
     relations: new Map(),
   };
-  let cursor: string | undefined;
-  do {
-    const listed = await listObjects<TranscriptJournalEntryT>(
-      context.handle,
-      'transcriptJournal',
-      undefined,
-      { ...(cursor ? { cursor } : {}), limit: 1_000 },
-    );
-    if (!listed.ok) return listed;
-    for (const stored of listed.value.items) {
-      const parsed = parseJournal(stored.object);
-      if (!parsed.ok) return parsed;
+  let parseFailure: TranscriptError | undefined;
+  const visited = await visitObjects<TranscriptJournalEntryT>(
+    context.handle,
+    'transcriptJournal',
+    (object) => {
+      if (parseFailure) return;
+      const parsed = parseJournal(object);
+      if (!parsed.ok) {
+        parseFailure = parsed.error;
+        return;
+      }
       const key = sourceJournalKey(parsed.value);
       if (parsed.value.outcome === 'diagnostic') {
         const emitted = index.diagnosticCodes.get(key) ?? new Set();
@@ -462,44 +451,22 @@ async function loadTranscriptJournalIndex(
         relations.push(parsed.value);
         index.relations.set(key, relations);
       }
-    }
-    cursor = listed.value.nextCursor;
-  } while (cursor);
+    },
+  );
+  if (!visited.ok) return visited;
+  if (parseFailure) return { ok: false, error: parseFailure };
   return { ok: true, value: index };
 }
 
-async function persistCandidate(
+async function stageCandidate(
   context: TranscriptContext,
   source: TranscriptSourceT,
   item: TranscriptSourceCandidate,
-): Promise<Result<'added' | 'duplicate', TranscriptError>> {
+  ops: StagedMutation[],
+  lineIds: Set<string>,
+): Promise<Result<'staged', TranscriptError>> {
   const key = dedupKey(source, item);
   const id = `transcriptLine_${hash(key)}`;
-  const existing = await getObjectWithReadFailure<TranscriptLineT>(
-    context.handle,
-    'transcriptLine',
-    id as ObjectId,
-  );
-  if (!existing.ok) return existing;
-  if (!isAbsent(existing.value)) {
-    const parsed = parseLine(existing.value.object);
-    if (!parsed.ok) return parsed;
-    return parsed.value.dedupKey === key
-      ? { ok: true, value: 'duplicate' }
-      : {
-          ok: false,
-          error: err(
-            'CasConflict',
-            `dedup id collision for "${id}"`,
-            {
-              id: id as ObjectId,
-              expectedVersion: 0,
-              actualVersion: existing.value.version,
-            },
-            false,
-          ),
-        };
-  }
   const now = new Date().toISOString();
   const line: NormalizedTranscriptLine = item.line;
   const nativeId = line.nativeId ?? line.turnId;
@@ -534,30 +501,22 @@ async function persistCandidate(
       : {}),
     ...(line.sessionRef ? { sessionRef: line.sessionRef } : {}),
   });
-  const created = await createObject<TranscriptLineT>(
-    context.handle,
-    draft,
-    operationId(
+  // Staged (2026-08-09): the in-lock mustBeAbsent check at flush is the same
+  // create-CAS the old per-line createObject ran; a same-batch or concurrent
+  // duplicate comes back as a 'duplicate' outcome and is tallied there.
+  const parsed = parseLine(draft);
+  if (!parsed.ok) return parsed;
+  ops.push({
+    kind: 'transcriptLine',
+    flat: draft as unknown as Record<string, unknown>,
+    action: 'create',
+    clientOpId: operationId(
       `line:${source.provider}:${source.sourceId}:${item.offset}`,
     ),
-  );
-  if (created.ok) {
-    const parsed = parseLine(created.value.object);
-    return parsed.ok ? { ok: true, value: 'added' } : parsed;
-  }
-  if (created.error.code !== 'CasConflict') return created;
-  const winner = await getObjectWithReadFailure<TranscriptLineT>(
-    context.handle,
-    'transcriptLine',
-    id as ObjectId,
-  );
-  if (!winner.ok) return winner;
-  if (isAbsent(winner.value)) return created;
-  const parsed = parseLine(winner.value.object);
-  if (!parsed.ok) return parsed;
-  return parsed.value.dedupKey === key
-    ? { ok: true, value: 'duplicate' }
-    : created;
+    mustBeAbsent: true,
+  });
+  lineIds.add(id);
+  return { ok: true, value: 'staged' };
 }
 
 export async function ingest(
@@ -570,7 +529,11 @@ export async function ingest(
     diagnostics: [],
   };
   let rawSources: AsyncIterable<TranscriptSourceT>;
-  let journalIndex: TranscriptJournalIndex | undefined;
+  // 2026-08-09: cached across ingest() calls — this process is the sole
+  // journal writer, so its own staged entries keep the cache coherent.
+  let journalIndex = context.ingestCache.journalIndex as
+    | TranscriptJournalIndex
+    | undefined;
   let itemsSinceYield = 0;
   try {
     rawSources = context.source.sources();
@@ -593,10 +556,22 @@ export async function ingest(
       let nextTurnIndex =
         checkpoint.value?.object.nextTurnIndex ?? 0;
       let lastTurnId = checkpoint.value?.object.lastTurnId;
+      // Group-commit buffer (2026-08-09): staged mutations flush as ONE locked
+      // commit per BATCH_MAX items and once more at end of source.
+      const BATCH_MAX = 200;
+      const ops: StagedMutation[] = [];
+      const lineIds = new Set<string>();
+      const cursor = {
+        fromOffset,
+        nextOffset: fromOffset,
+        nextTurnIndex,
+        lastTurnId,
+      };
       if (!journalIndex) {
         const loaded = await loadTranscriptJournalIndex(context);
         if (!loaded.ok) return loaded;
         journalIndex = loaded.value;
+        context.ingestCache.journalIndex = journalIndex;
       }
       const journalKey = sourceJournalKey(source);
       const diagnosticCodes =
@@ -631,14 +606,14 @@ export async function ingest(
           }
           const item = parsedItem.data;
           if ('relation' in item && item.relation) {
-            const persisted = await persistTranscriptRelation(
-              context,
+            const staged = stageTranscriptRelation(
               source,
               item,
               item.relation,
+              ops,
             );
-            if (!persisted.ok) return persisted;
-            relationEntries.push(persisted.value);
+            if (!staged.ok) return staged;
+            relationEntries.push(staged.value);
             context.failpoint.hit(
               'transcript.afterRelationBeforeCheckpoint',
             );
@@ -656,7 +631,7 @@ export async function ingest(
                 'transcript.afterQuarantineBeforeSkip',
               );
             }
-            const skipped = await persistSkip(context, source, item);
+            const skipped = stageSkip(source, item, ops);
             if (!skipped.ok) return skipped;
             context.failpoint.hit(
               'transcript.afterSkipJournalBeforeCheckpoint',
@@ -664,19 +639,18 @@ export async function ingest(
             result.skipped.push(skipped.value);
           } else {
             context.failpoint.hit('transcript.beforeLineAppend');
-            const persisted = await persistCandidate(context, source, item);
-            if (!persisted.ok) return persisted;
-            result[persisted.value === 'added' ? 'added' : 'duplicates'] += 1;
+            const staged = await stageCandidate(context, source, item, ops, lineIds);
+            if (!staged.ok) return staged;
             context.failpoint.hit(
               'transcript.afterLineAppendBeforeCheckpoint',
             );
             for (const diagnostic of item.diagnostics ?? []) {
               if (diagnosticCodes.has(diagnostic.code)) continue;
-              const journaled = await persistDiagnostic(
-                context,
+              const journaled = stageDiagnostic(
                 source,
                 item,
                 diagnostic,
+                ops,
               );
               if (!journaled.ok) return journaled;
               context.failpoint.hit(
@@ -695,21 +669,27 @@ export async function ingest(
           } else if (item.kind === 'candidate') {
             nextTurnIndex += 1;
           }
-          context.failpoint.hit('transcript.beforeCheckpointAppend');
-          const advanced = await advanceCheckpoint(
-            context,
-            source,
-            item.nextOffset,
-            nextTurnIndex,
-            lastTurnId,
-          );
-          if (!advanced.ok) return advanced;
+          cursor.nextOffset = item.nextOffset;
+          cursor.nextTurnIndex = nextTurnIndex;
+          cursor.lastTurnId = lastTurnId;
+          if (ops.length >= BATCH_MAX) {
+            context.failpoint.hit('transcript.beforeCheckpointAppend');
+            const flushed = await flushIngestBatch(
+              context, source, ops, lineIds, cursor, result,
+            );
+            if (!flushed.ok) return flushed;
+          }
           itemsSinceYield += 1;
           if (itemsSinceYield >= context.yieldAfterItems) {
             itemsSinceYield = 0;
             await context.yieldToHost();
           }
         }
+        context.failpoint.hit('transcript.beforeCheckpointAppend');
+        const flushed = await flushIngestBatch(
+          context, source, ops, lineIds, cursor, result,
+        );
+        if (!flushed.ok) return flushed;
       } catch (cause) {
         if (cause instanceof TranscriptFailpointCrash) throw cause;
         return { ok: false, error: sourceFailure(source.sourceId, cause) };
@@ -733,7 +713,7 @@ async function allLines(
       context.handle,
       'transcriptLine',
       filter,
-      { ...(cursor ? { cursor } : {}), limit: 1_000 },
+      { ...(cursor ? { cursor } : {}), limit: 1_000_000 },
     );
     if (!listed.ok) return listed;
     for (const stored of listed.value.items) {

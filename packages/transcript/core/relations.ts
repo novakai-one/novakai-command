@@ -1,11 +1,7 @@
 import { createHash } from 'node:crypto';
 import {
-  createObject,
   err,
-  getObjectWithReadFailure,
-  isAbsent,
   type ClientOpId,
-  type ObjectId,
   type Result,
 } from '@novakai/foundation/dist/contract/index.js';
 import type { TranscriptError } from '../contract/errors.js';
@@ -18,7 +14,6 @@ import {
   type TranscriptSourceCandidate,
   type TranscriptSourceContext,
 } from '../contract/schemas.js';
-import type { TranscriptContext } from './composition.js';
 
 const hash = (value: string): string =>
   createHash('sha256').update(value).digest('hex');
@@ -112,12 +107,21 @@ export function applyTranscriptRelationDelta(
   };
 }
 
-export async function persistTranscriptRelation(
-  context: TranscriptContext,
+/** Staged (2026-08-09): builds the relation journal draft and buffers it for
+ * the scan's group commit; a re-scan duplicate resolves as a 'duplicate'
+ * outcome at flush (content-addressed id + mustBeAbsent). */
+export function stageTranscriptRelation(
   source: TranscriptSourceT,
   item: TranscriptSourceContext | TranscriptSourceCandidate,
   relation: TranscriptRelationDelta,
-): Promise<Result<TranscriptRelationJournalEntryT, TranscriptError>> {
+  ops: Array<{
+    kind: string;
+    flat: Record<string, unknown>;
+    action: 'create' | 'update';
+    clientOpId: ClientOpId;
+    mustBeAbsent?: boolean;
+  }>,
+): Result<TranscriptRelationJournalEntryT, TranscriptError> {
   const id = `transcriptJournal_${hash(
     `${source.provider}:${source.sourceId}:${item.offset}:relation`,
   )}`;
@@ -136,24 +140,14 @@ export async function persistTranscriptRelation(
     outcome: 'relation',
     relation,
   });
-  const created = await createObject<TranscriptRelationJournalEntryT>(
-    context.handle,
-    draft,
-    operationId(`journal:${id}`),
-  );
-  if (created.ok) return parseRelationJournal(created.value.object);
-  if (created.error.code !== 'CasConflict') return created;
-
-  const found = await getObjectWithReadFailure<
-    TranscriptRelationJournalEntryT
-  >(
-    context.handle,
-    'transcriptJournal',
-    id as ObjectId,
-  );
-  if (!found.ok) return found;
-  if (isAbsent(found.value)) return created;
-  return parseRelationJournal(found.value.object);
+  ops.push({
+    kind: 'transcriptJournal',
+    flat: draft as unknown as Record<string, unknown>,
+    action: 'create',
+    clientOpId: operationId(`journal:${id}`),
+    mustBeAbsent: true,
+  });
+  return parseRelationJournal(draft);
 }
 
 export function restoreTranscriptRelationState(

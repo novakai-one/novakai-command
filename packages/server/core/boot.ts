@@ -201,7 +201,6 @@ export async function bootServer(options: BootOptions): Promise<BootResult> {
   const persistence = composeShellPersistence({
     root: options.root,
     dataRoot: canonicalDataRoot(options.root),
-    legacyRoot: options.root,
     principal: human.personId,
   });
   note(2, 'foundation', `store open at ${options.root} as ${human.personId}`);

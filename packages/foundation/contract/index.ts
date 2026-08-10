@@ -22,8 +22,8 @@ export {
 // contract/compose.js directly.
 export { composeHandle, type ComposeOptions } from './compose.js';
 export {
-  createObject, updateObject, getObject, getObjectWithReadFailure,
-  getObjectByClientOpId, listObjects, resolveRef,
+  createObject, updateObject, commitMutationBatch, getObject, getObjectWithReadFailure,
+  getObjectByClientOpId, listObjects, visitObjects, resolveRef,
   queryTrace, queryTraceBound, listQuarantine, listQuarantineBound,
   requestQuarantine, resolveQuarantine, recordSystemAction,
   defaultEngine, __resetDefaultEngine,
