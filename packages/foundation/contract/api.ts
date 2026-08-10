@@ -419,6 +419,35 @@ export async function listObjects<T>(
   });
 }
 
+/**
+ * Visit a snapshot of the latest effective objects without retaining or
+ * returning the complete store. Intended for capabilities building a compact
+ * derived projection from a high-cardinality store.
+ */
+export async function visitObjects<T>(
+  handle: ScopedStoreHandle,
+  kind: ObjectKind,
+  visitor: (object: T) => void,
+): Promise<Result<{ visited: number }, StoreError>> {
+  const engine = engineOf(handle);
+  const bootFailure = engine.bootError();
+  if (bootFailure) return fail(bootFailure);
+  if (!(kind in KIND_FILES)) {
+    return fail(err('KindUnknown', `kind "${kind}" is not registered`, {
+      kind,
+      registered: Object.keys(KIND_FILES),
+    }, false));
+  }
+  const skipped = engine.quarantinedIds();
+  let visited = 0;
+  engine.visitLatestEffective(kind, (recordLine) => {
+    if (skipped.has(recordLine.envelope.id)) return;
+    visitor({ ...recordLine.payload, ...recordLine.envelope } as T);
+    visited += 1;
+  });
+  return ok({ visited });
+}
+
 export async function resolveRef<T>(
   handle: ScopedStoreHandle, ref: z.infer<typeof Ref>,
 ): Promise<Result<StoredObject<T> | Absent, never>> {

@@ -157,6 +157,10 @@ interface RecordIndex extends IndexedFile {
   tombstones?: TombstoneIndex;
 }
 
+interface RecordVersionIndex extends IndexedFile {
+  latestVersion: Map<string, number>;
+}
+
 interface TombstoneIndex {
   latest: Map<string, TombstoneT>;
   openRefCounts: Map<string, number>;
@@ -189,6 +193,7 @@ export class StoreEngine {
   /** @internal test seam: fail the next object append once. */
   failNextObjectAppend?: { cause: string };
   private readonly recordIndexes = new Map<string, RecordIndex>();
+  private readonly recordVersionIndexes = new Map<string, RecordVersionIndex>();
   private traceIndex?: TraceIndex;
 
   constructor(options: EngineOptions) {
@@ -427,6 +432,68 @@ export class StoreEngine {
     });
   }
 
+  /** Extract identity metadata from a wrapped line without parsing its often
+   * multi-megabyte payload. Legacy flat records fall back to the full parser. */
+  private parseRecordIdentity(
+    line: string,
+  ): { id: string; version: number } | null {
+    const envelopeJson = this.objectValueForKey(line, 'envelope');
+    if (envelopeJson && line.includes('"payload"')) {
+      try {
+        const envelope = Envelope.safeParse(JSON.parse(envelopeJson));
+        if (!envelope.success) return null;
+        const metaJson = this.objectValueForKey(line, 'meta', true);
+        const meta = metaJson
+          ? JSON.parse(metaJson) as { version?: unknown }
+          : {};
+        return {
+          id: envelope.data.id,
+          version: typeof meta.version === 'number' ? meta.version : 1,
+        };
+      } catch {
+        return null;
+      }
+    }
+    const record = this.parseRecordLine(line);
+    return record
+      ? { id: record.envelope.id, version: record.version }
+      : null;
+  }
+
+  /** Return one JSON object value without materializing sibling values. */
+  private objectValueForKey(
+    line: string,
+    key: string,
+    fromEnd = false,
+  ): string | null {
+    const marker = `"${key}"`;
+    const keyAt = fromEnd ? line.lastIndexOf(marker) : line.indexOf(marker);
+    if (keyAt < 0) return null;
+    const colonAt = line.indexOf(':', keyAt + marker.length);
+    if (colonAt < 0) return null;
+    let start = colonAt + 1;
+    while (/\s/u.test(line[start] ?? '')) start += 1;
+    if (line[start] !== '{') return null;
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    for (let index = start; index < line.length; index += 1) {
+      const char = line[index];
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (char === '\\') escaped = true;
+        else if (char === '"') inString = false;
+        continue;
+      }
+      if (char === '"') inString = true;
+      else if (char === '{') depth += 1;
+      else if (char === '}' && --depth === 0) {
+        return line.slice(start, index + 1);
+      }
+    }
+    return null;
+  }
+
   /** Parse one line into a normalized record. v0 flat records upgrade in memory. */
   private parseRecordLine(line: string): ReadRecord | null {
     let parsed: unknown;
@@ -609,6 +676,31 @@ export class StoreEngine {
     return this.traceIndex?.byOpId.get(opId);
   }
 
+  /** Visit a stable trace-file snapshot without populating the query index. */
+  private visitTraceSnapshot(visitor: (trace: TraceLineT) => void): void {
+    const filePath = this.storePath('trace');
+    const stamp = this.fileStamp(filePath);
+    if (!stamp) return;
+    this.forEachCompleteLine(filePath, 0, stamp.size, (line) => {
+      try {
+        const parsed = TraceLine.safeParse(JSON.parse(line));
+        if (parsed.success) visitor(parsed.data);
+      } catch { /* corrupt lines are ignored by the indexed reader too */ }
+    });
+  }
+
+  /** Visit valid ids without constructing a retained record projection. */
+  private visitRecordIds(kind: string, visitor: (id: string) => void): void {
+    const root = this.effectiveReadRoot(kind);
+    const filePath = this.storePath(kind, root);
+    const stamp = this.fileStamp(filePath);
+    if (!stamp) return;
+    this.forEachCompleteLine(filePath, 0, stamp.size, (line) => {
+      const identity = this.parseRecordIdentity(line);
+      if (identity) visitor(identity.id);
+    });
+  }
+
   // ── quarantine ────────────────────────────────────────────────────────
   readTombstones(): TombstoneT[] {
     return [...this.readTombstoneIndex().latest.values()]
@@ -759,6 +851,86 @@ export class StoreEngine {
     return this.readLatestFrom(this.effectiveReadRoot(kind), kind);
   }
 
+  /** Compact existence/version projection used by create-only batch CAS. */
+  private readLatestVersions(kind: string): Map<string, number> {
+    const root = this.effectiveReadRoot(kind);
+    const filePath = this.storePath(kind, root);
+    const stamp = this.fileStamp(filePath);
+    let index = this.recordVersionIndexes.get(filePath);
+    const canExtend = this.canExtendIndex(filePath, stamp, index);
+    const unchanged = (
+      canExtend
+      && stamp!.size === index!.stamp!.size
+      && stamp!.mtimeMs === index!.stamp!.mtimeMs
+    );
+    if (unchanged) return index!.latestVersion;
+    if (!canExtend) {
+      index = {
+        filePath,
+        stamp: null,
+        indexedSize: 0,
+        prefixFingerprint: null,
+        latestVersion: new Map(),
+      };
+    }
+    if (!stamp) {
+      index!.stamp = null;
+      index!.indexedSize = 0;
+      index!.prefixFingerprint = null;
+      this.recordVersionIndexes.set(filePath, index!);
+      return index!.latestVersion;
+    }
+    index!.indexedSize = this.forEachCompleteLine(
+      filePath,
+      index!.indexedSize,
+      stamp.size,
+      (line) => {
+        const identity = this.parseRecordIdentity(line);
+        if (identity) {
+          index!.latestVersion.set(identity.id, identity.version);
+        }
+      },
+    );
+    index!.stamp = stamp;
+    index!.prefixFingerprint = this.indexedPrefixFingerprint(
+      filePath,
+      index!.indexedSize,
+    );
+    this.recordVersionIndexes.set(filePath, index!);
+    return index!.latestVersion;
+  }
+
+  /**
+   * Visit the latest effective record for every id without retaining a full
+   * object index. The first bounded pass records only id -> byte offset; the
+   * second pass materializes each winning record for the duration of the
+   * callback. This is the projection path for very large append-only stores.
+   */
+  visitLatestEffective(
+    kind: string,
+    visitor: (record: ReadRecord) => void,
+  ): number {
+    const root = this.effectiveReadRoot(kind);
+    const filePath = this.storePath(kind, root);
+    const stamp = this.fileStamp(filePath);
+    if (!stamp) return 0;
+
+    const latestOffsets = new Map<string, number>();
+    this.forEachCompleteLine(filePath, 0, stamp.size, (line, offset) => {
+      const identity = this.parseRecordIdentity(line);
+      if (identity) latestOffsets.set(identity.id, offset);
+    });
+
+    let visited = 0;
+    this.forEachCompleteLine(filePath, 0, stamp.size, (line, offset) => {
+      const record = this.parseRecordLine(line);
+      if (!record || latestOffsets.get(record.envelope.id) !== offset) return;
+      visitor(record);
+      visited += 1;
+    });
+    return visited;
+  }
+
   findRecordByClientOpId(
     kind: string,
     clientOpId: string,
@@ -834,12 +1006,25 @@ export class StoreEngine {
     // Tombstones apply ONLY to trace-without-object orphans surfaced for
     // human resolution (and corrupt/unparseable records, which never parse
     // into a readable object in the first place).
-    const traces = this.readTraces();
-    const knownIds = new Map<string, string>(); // id → kind
+    // Start with the much smaller set of trace targets, then stream object ids
+    // to discharge the ones that have durable records. Building full indexes
+    // for nearly one million objects here made reconciliation's scratch graph
+    // the process high-water mark even after the graph was released.
+    const unmatchedTraces = new Map<string, z.infer<typeof Ref>>();
+    this.visitTraceSnapshot((trace) => {
+      if (trace.action === 'truncate') return;
+      if (
+        trace.target.kind === 'transcriptLine'
+        && (
+          trace.action === 'quarantine'
+          || trace.action === 'resolveQuarantine'
+        )
+      ) return;
+      if (trace.opKind === 'system.action') return;
+      unmatchedTraces.set(trace.target.id, trace.target);
+    });
     for (const kind of RECORD_KINDS) {
-      for (const rec of this.readLatestEffective(kind).values()) {
-        knownIds.set(rec.envelope.id, kind);
-      }
+      this.visitRecordIds(kind, (id) => unmatchedTraces.delete(id));
     }
     const openTombstones = new Set(
       this.readTombstones().filter((t) => t.status === 'open')
@@ -860,23 +1045,18 @@ export class StoreEngine {
       );
       openTombstones.add(`${ref.id}:${reason}`);
     };
-    // trace w/o object
-    for (const t of traces) {
-      if (t.action === 'truncate') continue;
-      if (
-        t.target.kind === 'transcriptLine'
-        && (
-          t.action === 'quarantine'
-          || t.action === 'resolveQuarantine'
-        )
-      ) continue;
-      // S2a: system.action lines (hook_log/context.inject/hook_error) are
-      // event records, not mutation evidence — never orphan-tombstoned.
-      if (t.opKind === 'system.action') continue;
-      if (!knownIds.has(t.target.id)) {
-        stampTombstone(t.target, 'orphan_trace_no_object');
-      }
+    // S2a system.action and transcript quarantine traces were excluded above:
+    // they are event records, not mutation evidence.
+    for (const target of unmatchedTraces.values()) {
+      stampTombstone(target, 'orphan_trace_no_object');
     }
+
+    // Reconciliation needs a whole-store view while it proves trace/object
+    // integrity, but that view is scratch state — not the query working set.
+    // Keeping it here made every scoped handle permanently retain every store.
+    this.recordIndexes.clear();
+    this.recordVersionIndexes.clear();
+    this.traceIndex = undefined;
   }
 
   // ── writes ────────────────────────────────────────────────────────────
@@ -1038,12 +1218,14 @@ export class StoreEngine {
       const linesByKind = new Map<string, string[]>();
       const batchIds = new Set<string>();
       for (const op of input.ops) {
-        const existing = this.readLatestEffective(op.kind).get(op.flat.id);
-        if (op.mustBeAbsent && (existing || batchIds.has(op.flat.id))) {
-          outcomes.push({ id: op.flat.id, kind: op.kind, outcome: 'duplicate', version: existing?.version ?? 1 });
+        const existingVersion = op.mustBeAbsent
+          ? this.readLatestVersions(op.kind).get(op.flat.id)
+          : this.readLatestEffective(op.kind).get(op.flat.id)?.version;
+        if (op.mustBeAbsent && (existingVersion !== undefined || batchIds.has(op.flat.id))) {
+          outcomes.push({ id: op.flat.id, kind: op.kind, outcome: 'duplicate', version: existingVersion ?? 1 });
           continue;
         }
-        const version = op.action === 'update' ? (existing?.version ?? 0) + 1 : 1;
+        const version = op.action === 'update' ? (existingVersion ?? 0) + 1 : 1;
         const line = JSON.stringify(this.wrapRecord(op.flat, { opId, clientOpId: op.clientOpId, version }));
         const lines = linesByKind.get(op.kind) ?? [];
         lines.push(line);
@@ -1461,6 +1643,7 @@ export class StoreEngine {
       // route as empty — which is exactly what a pre-cutover Message would look
       // like to a client afterwards.
       this.recordIndexes.clear();
+      this.recordVersionIndexes.clear();
       this.traceIndex = undefined;
 
       const migrateFailure = this.migrateCutoverRecords(input.records, tracePath, touched);

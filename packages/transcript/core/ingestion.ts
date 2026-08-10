@@ -6,6 +6,7 @@ import {
   isAbsent,
   listObjects,
   requestQuarantine,
+  visitObjects,
   type ClientOpId,
   type ObjectId,
   type Result,
@@ -429,20 +430,17 @@ async function loadTranscriptJournalIndex(
     diagnosticCodes: new Map(),
     relations: new Map(),
   };
-  let cursor: string | undefined;
-  do {
-    // 2026-08-09: one big page — a tight 1k-page loop over a 470k-record
-    // store re-scanned the whole store per page.
-    const listed = await listObjects<TranscriptJournalEntryT>(
-      context.handle,
-      'transcriptJournal',
-      undefined,
-      { ...(cursor ? { cursor } : {}), limit: 1_000_000 },
-    );
-    if (!listed.ok) return listed;
-    for (const stored of listed.value.items) {
-      const parsed = parseJournal(stored.object);
-      if (!parsed.ok) return parsed;
+  let parseFailure: TranscriptError | undefined;
+  const visited = await visitObjects<TranscriptJournalEntryT>(
+    context.handle,
+    'transcriptJournal',
+    (object) => {
+      if (parseFailure) return;
+      const parsed = parseJournal(object);
+      if (!parsed.ok) {
+        parseFailure = parsed.error;
+        return;
+      }
       const key = sourceJournalKey(parsed.value);
       if (parsed.value.outcome === 'diagnostic') {
         const emitted = index.diagnosticCodes.get(key) ?? new Set();
@@ -453,9 +451,10 @@ async function loadTranscriptJournalIndex(
         relations.push(parsed.value);
         index.relations.set(key, relations);
       }
-    }
-    cursor = listed.value.nextCursor;
-  } while (cursor);
+    },
+  );
+  if (!visited.ok) return visited;
+  if (parseFailure) return { ok: false, error: parseFailure };
   return { ok: true, value: index };
 }
 
@@ -465,34 +464,9 @@ async function stageCandidate(
   item: TranscriptSourceCandidate,
   ops: StagedMutation[],
   lineIds: Set<string>,
-): Promise<Result<'staged' | 'duplicate', TranscriptError>> {
+): Promise<Result<'staged', TranscriptError>> {
   const key = dedupKey(source, item);
   const id = `transcriptLine_${hash(key)}`;
-  const existing = await getObjectWithReadFailure<TranscriptLineT>(
-    context.handle,
-    'transcriptLine',
-    id as ObjectId,
-  );
-  if (!existing.ok) return existing;
-  if (!isAbsent(existing.value)) {
-    const parsed = parseLine(existing.value.object);
-    if (!parsed.ok) return parsed;
-    return parsed.value.dedupKey === key
-      ? { ok: true, value: 'duplicate' }
-      : {
-          ok: false,
-          error: err(
-            'CasConflict',
-            `dedup id collision for "${id}"`,
-            {
-              id: id as ObjectId,
-              expectedVersion: 0,
-              actualVersion: existing.value.version,
-            },
-            false,
-          ),
-        };
-  }
   const now = new Date().toISOString();
   const line: NormalizedTranscriptLine = item.line;
   const nativeId = line.nativeId ?? line.turnId;
@@ -667,7 +641,6 @@ export async function ingest(
             context.failpoint.hit('transcript.beforeLineAppend');
             const staged = await stageCandidate(context, source, item, ops, lineIds);
             if (!staged.ok) return staged;
-            if (staged.value === 'duplicate') result.duplicates += 1;
             context.failpoint.hit(
               'transcript.afterLineAppendBeforeCheckpoint',
             );

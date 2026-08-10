@@ -23,7 +23,7 @@ export {
 export { composeHandle, type ComposeOptions } from './compose.js';
 export {
   createObject, updateObject, commitMutationBatch, getObject, getObjectWithReadFailure,
-  getObjectByClientOpId, listObjects, resolveRef,
+  getObjectByClientOpId, listObjects, visitObjects, resolveRef,
   queryTrace, queryTraceBound, listQuarantine, listQuarantineBound,
   requestQuarantine, resolveQuarantine, recordSystemAction,
   defaultEngine, __resetDefaultEngine,

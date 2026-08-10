@@ -41,6 +41,7 @@ let timer: ReturnType<typeof setTimeout> | null = null;
 let activeIngest: Promise<void> | null = null;
 let stopping: Promise<void> | null = null;
 let triggerRequests: string[] = [];
+let lastSuccessfulCustodyRevision: number | undefined;
 
 function postStatus(): void {
   parentPort?.postMessage({
@@ -82,6 +83,14 @@ function fail(cause: unknown): void {
 async function runIngest(requestId?: string): Promise<void> {
   if (requestId) triggerRequests.push(requestId);
   if (!running || ingesting) return;
+  const custodyRevision = watcher.status().bytesCopied;
+  if (
+    requestId === undefined
+    && lastSuccessfulCustodyRevision === custodyRevision
+  ) {
+    schedule(input.ingestIntervalMs);
+    return;
+  }
   ingesting = true;
   postStatus();
   let outcome: Awaited<ReturnType<typeof transcript.ingest>> | undefined;
@@ -91,6 +100,7 @@ async function runIngest(requestId?: string): Promise<void> {
     outcome = result;
     runs += 1;
     if (result.ok) {
+      lastSuccessfulCustodyRevision = custodyRevision;
       lastResult = result.value;
       lastError = undefined;
     } else {
