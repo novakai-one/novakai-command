@@ -8,18 +8,20 @@ import type { ShellServices } from '../../contract/services.js';
 import { mintShellOpId } from '../../contract/services.js';
 import { IconButton, Splitter } from '../kit/index.js';
 import { shouldAutoOpenInspector } from './inspectorVisibility.js';
+import { NavigationRail, type RailItem } from './NavigationRail.js';
 import './frame.css';
 
 export interface BreadcrumbItem { id: string; label: string }
 
 export function Frame(props: {
   services: ShellServices;
-  rail: React.ReactNode;
+  navItems: readonly RailItem[];
+  currentView: string;
+  onSelectView(key: string): void;
   workspace: React.ReactNode;
   inspector: { title: string; body: React.ReactNode } | null;
   breadcrumb: BreadcrumbItem[];
   onBreadcrumb(id: string | null): void;
-  railTop?: React.ReactNode;
 }) {
   const [layout, setLayoutState] = useState<LayoutRecord | null>(null);
   const [persistError, setPersistError] = useState<string | null>(null);
@@ -76,25 +78,16 @@ export function Frame(props: {
   }
 
   const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
+  // The rail is the ported sandbox NavigationRail: fixed sandbox widths (its
+  // CSS owns them), so the old width splitter is gone; collapse remains the
+  // persisted layout fact it always was (SHL-002).
   const railEl = (
-    <nav className="nv-rail" data-collapsed={layout.rail.collapsed ? 'true' : 'false'}
-         style={{ width: layout.rail.collapsed ? 52 : layout.rail.width }}
-         aria-label="Rail">
-      <div className="nv-wordmark">&gt;_ <span>Novakai</span></div>
-      {props.railTop}
-      {props.rail}
-      <IconButton
-        className="nv-collapse-btn"
-        label={layout.rail.collapsed ? 'Expand rail' : 'Collapse rail'}
-        onClick={() => applyPatch({ rail: { ...layout.rail, collapsed: !layout.rail.collapsed } })}
-      >{layout.rail.collapsed ? '»' : '«'}</IconButton>
-    </nav>
-  );
-
-  const railSplitter = !layout.rail.collapsed && (
-    <Splitter label="Resize rail"
-      onDelta={(d) => applyPatch({ rail: { ...layout.rail, width: clamp(layout.rail.width + (layout.rail.side === 'left' ? d : -d), 180, 480) } })}
-      onDoubleClick={() => applyPatch({ rail: { ...layout.rail, collapsed: true } })}
+    <NavigationRail
+      items={props.navItems}
+      currentKey={props.currentView}
+      onSelect={props.onSelectView}
+      collapsed={layout.rail.collapsed}
+      onToggleCollapse={() => applyPatch({ rail: { ...layout.rail, collapsed: !layout.rail.collapsed } })}
     />
   );
 
@@ -123,7 +116,7 @@ export function Frame(props: {
           Layout change not saved: {persistError}
         </p>
       )}
-      {layout.rail.side === 'left' && <>{railEl}{railSplitter}</>}
+      {layout.rail.side === 'left' && railEl}
       <main className="nv-workspace" style={{ minWidth: layout.workspace.minWidth }}>
         {props.breadcrumb.length > 0 && (
           <nav className="nv-breadcrumb" aria-label="Breadcrumb">
@@ -145,7 +138,7 @@ export function Frame(props: {
         />
       )}
       {inspectorEl}
-      {layout.rail.side === 'right' && <>{railSplitter}{railEl}</>}
+      {layout.rail.side === 'right' && railEl}
     </div>
   );
 }

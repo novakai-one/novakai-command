@@ -1,0 +1,49 @@
+.bench-blocked-banner {
+  position: absolute;
+  z-index: 2;
+  left: 50%;
+  top: var(--space-5);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-3);
+  width: min(720px, calc(100vw - 180px));
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid color-mix(in srgb, var(--bench-danger) 62%, var(--bench-rule-soft));
+  border-radius: var(--bench-radius-card);
+  color: var(--bench-ink-primary);
+  background: var(--bench-overlay-surface-solid);
+  box-shadow: var(--bench-shadow-overlay);
+  pointer-events: auto;
+  transform: translateX(-50%);
+}
+
+.bench-blocked-banner > div strong {
+  overflow: hidden;
+  color: var(--bench-ink-secondary);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bench-blocked-banner__actions {
+  display: flex;
+  gap: var(--space-2);
+  --bench-control-padding: 7px 10px;
+}
+
+.bench-blocked-banner__form {
+  width: min(340px, 42vw);
+}
+
+.bench-zen:has(.bench-blocked-banner) .bench-zen__thread {
+  height: min(700px, calc(100% - 136px));
+  margin-top: 88px;
+}
+
+@media (max-width: 760px) {
+  .bench-blocked-banner { top: var(--space-2); width: calc(100vw - 88px); }
+  .bench-blocked-banner > div strong { white-space: normal; }
+  .bench-blocked-banner__form { width: 100%; }
+}

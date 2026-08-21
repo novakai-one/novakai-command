@@ -1,0 +1,25 @@
+.bench-inspection-wire {
+  fill: none;
+  stroke: var(--bench-scribe);
+  stroke-width: 1.35;
+  opacity: 0.68;
+}
+
+.bench-inspection-wire[data-emphasized='true'] {
+  stroke: var(--bench-scribe-bright);
+  stroke-width: 1.8;
+  opacity: 0.9;
+}
+
+.bench-inspection-wire__label {
+  position: absolute;
+  padding: 2px 5px;
+  border: 1px solid var(--bench-rule-soft);
+  border-radius: 3px;
+  color: var(--bench-scribe-bright);
+  background: var(--bench-overlay-surface-solid);
+  font: 8px var(--bench-font-record);
+  letter-spacing: .03em;
+  white-space: nowrap;
+  pointer-events: none;
+}

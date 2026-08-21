@@ -88,12 +88,12 @@ export function createServerServices(
 
     ws.onopen = () => {
       clearTimeout(timeout);
-      void call<{ providers?: { mock?: boolean } }>('getCapabilities').then((caps) => {
-        // Mock spawning is a DEV affordance now, gated by server config (M10).
-        if (caps.providers?.mock) {
-          api.spawnMockAgent = (title) => call('spawnAgentConversation', { title, provider: 'mock' });
-        }
-      }).catch(() => undefined).finally(() => resolve(api));
+      // D32: availability is MEASURED once at connect; the UI offers a "new
+      // agent" entry only for providers the server says it can actually spawn.
+      void call<{ providers?: Partial<Record<'kimi' | 'claude' | 'codex' | 'mock', boolean>> }>('getCapabilities')
+        .then((caps) => {
+          if (caps.providers) api.providerAvailability = caps.providers;
+        }).catch(() => undefined).finally(() => resolve(api));
     };
     ws.onerror = () => { clearTimeout(timeout); reject(new Error('server unreachable')); };
     ws.onmessage = (ev) => {
@@ -120,7 +120,17 @@ export function createServerServices(
     const convListeners = new Set<(c: unknown) => void>();
     const usageListeners = new Set<(t: unknown) => void>();
     const runUsageListeners = new Set<() => void>();
+    // A dead socket must fail loudly, not strand optimistic rows as pending
+    // forever: reject in-flight calls when the connection drops, and refuse new
+    // calls outright while it is down (the UI draws the typed failure inline).
+    ws.onclose = () => {
+      for (const p of pending.values()) p.reject(new Error('connection lost — the server closed or is unreachable'));
+      pending.clear();
+    };
     const call = <T>(method: string, params: unknown = {}): Promise<T> => {
+      if (ws.readyState !== WebSocket.OPEN) {
+        return Promise.reject(new Error('connection lost — the server closed or is unreachable'));
+      }
       const id = ++seq;
       ws.send(JSON.stringify({ id, method, params, v: PROTOCOL_VERSION }));
       return new Promise<T>((res, rej) => pending.set(id, { resolve: res as (v: unknown) => void, reject: rej }));
@@ -155,12 +165,15 @@ export function createServerServices(
       createConversation: (title, kind, clientOpId) => call('createConversation', { title, kind, clientOpId }),
       pinConversation: (id, pinned, clientOpId) => call('pinConversation', { id, pinned, clientOpId }),
       archiveConversation: (id, archived, clientOpId) => call('archiveConversation', { id, archived, clientOpId }),
+      markConversationRead: (conversationId, lastMessageId, clientOpId) =>
+        call('markConversationRead', { conversationId, lastMessageId, clientOpId }),
       getMessages: (conversationId) => call('getMessages', { conversationId }),
       sendMessage: (conversationId, text, clientOpId) =>
         call('sendMessage', { conversationId, text, clientOpId }),
       publishFocus: (focus) => { void call('publishFocus', focus).catch(() => undefined); },
-      // The one spawn path (§7): a real provider session on the configured CLI.
-      spawnRealKimiAgent: (title) => call('spawnAgentConversation', { title, provider: 'kimi' }),
+      // The one spawn path (§7/D30): existing agent OR new agent on a provider.
+      spawnAgentConversation: (input, clientOpId) =>
+        call('spawnAgentConversation', { ...input, clientOpId }),
       subscribe(events) {
         const ml = (m: unknown) => events.onMessage?.(m as never);
         const cl = (c: unknown) => events.onConversation?.(c as never);

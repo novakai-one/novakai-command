@@ -1,0 +1,35 @@
+.bench-zen {
+  --bench-message-max-width: 82%;
+  position: absolute;
+  z-index: var(--bench-layer-zen);
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: var(--space-5);
+  pointer-events: none;
+}
+
+.bench-zen__thread {
+  width: min(720px, calc(100vw - 40px));
+  height: min(760px, calc(100% - 48px));
+  pointer-events: auto;
+}
+
+.bench-zen__exit {
+  position: absolute;
+  right: var(--space-5);
+  top: var(--space-5);
+  padding: 8px 11px;
+  border: 1px solid var(--bench-rule-strong);
+  border-radius: var(--bench-radius-control);
+  color: var(--bench-ink-secondary);
+  background: var(--bench-overlay-surface-solid);
+  font: var(--text-xs) var(--bench-font-record);
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+@media (max-width: 760px) {
+  .bench-zen { padding: var(--space-2); }
+  .bench-zen__thread { width: calc(100vw - 16px); height: calc(100vh - 64px); }
+}

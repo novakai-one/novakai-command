@@ -1,0 +1,51 @@
+/* ui/styles/kit-compat.css — legacy kit variable names → sandbox tokens.
+   The sandbox design system (./tokens.css, ported byte-identical) is the one
+   token source. This file exists ONLY so screens still written against the old
+   kit names keep rendering; no sandbox-ported file imports or reads it. Delete
+   each mapping as its last legacy consumer is restyled or replaced.
+   Dark only — the sandbox system ships one theme. */
+:root {
+  color-scheme: dark;
+
+  /* surfaces (old elevation ramp → sandbox surface ladder) */
+  --ground: var(--surface-page);
+  --rail: var(--surface-1);
+  --workspace: var(--surface-2);
+  --inspector: var(--surface-3);
+
+  /* ink (--ink is defined by the sandbox tokens themselves) */
+  --ink-2: var(--ink-muted);
+  --ink-3: var(--ink-faint);
+
+  /* signals */
+  --accent: var(--attention);
+  --brand: var(--attention);
+  --sage: var(--settled);
+  --live-dot: var(--settled);
+  --live-ring: var(--settled-wash);
+  --danger: var(--danger-strong); /* legacy screens use --danger as foreground */
+
+  /* lines + interaction washes (no sandbox equivalent for the washes) */
+  --hairline: var(--rule-hair);
+  --hover: rgba(236, 236, 238, 0.045);
+  --selected: rgba(236, 236, 238, 0.085);
+  --focus-ring: var(--focus-color);
+
+  /* bubbles */
+  --bubble-theirs: var(--surface-3);
+  --bubble-mine: #2e2e33;
+
+  /* type (--radius / --radius-sm / --motion-structural come from sandbox tokens) */
+  --font: var(--font-ui);
+  --mono: var(--font-mono);
+  --text-1: var(--text-base);
+  --text-2: var(--text-sm);
+  --text-3: var(--text-xs);
+  --leading: var(--leading-normal);
+  --motion-micro: var(--motion-panel);
+  --ease: var(--ease-standard);
+
+  /* density (old comfortable defaults; compact setting no longer varies them) */
+  --row-pad-y: 8px;
+  --row-pad-x: 12px;
+}

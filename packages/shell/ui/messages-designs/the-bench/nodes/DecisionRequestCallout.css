@@ -1,0 +1,28 @@
+.bench-decision-callout {
+  position: absolute;
+  z-index: 1300;
+  right: 14px;
+  bottom: calc(100% + 10px);
+  display: grid;
+  width: min(292px, calc(100% - 28px));
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid color-mix(in srgb, var(--bench-danger) 62%, var(--bench-rule-soft));
+  border-radius: var(--bench-radius-card);
+  color: var(--bench-ink-primary);
+  background: var(--bench-overlay-surface-solid);
+  box-shadow: var(--bench-shadow-card);
+}
+
+.bench-decision-callout::after {
+  content: '';
+  position: absolute;
+  right: 20px;
+  bottom: -7px;
+  width: 12px;
+  height: 12px;
+  border-right: 1px solid var(--bench-danger);
+  border-bottom: 1px solid var(--bench-danger);
+  background: var(--bench-overlay-surface-solid);
+  transform: rotate(45deg);
+}

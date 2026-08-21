@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { ChatMessage, ShellServices } from '../contract/index.js';
-import { resendFailedMessage } from '../ui/screens/messaging/MessagingScreen.js';
+import { resendFailedMessage } from '../ui/screens/messaging/benchCommands.js';
 import { settleOptimisticMessage } from '../ui/screens/messaging/messageList.js';
 
 describe('manual resend idempotency', () => {

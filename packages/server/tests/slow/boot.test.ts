@@ -310,7 +310,7 @@ test('boot archives a legacy thread-less conversation and send refuses it with a
       pinned: true,
       archived: true,
       lastActivityAt: '2026-07-27T12:00:00.000Z',
-      unreadCount: 0,
+      lastReadMessageId: undefined,
       agentId: undefined,
     });
 
@@ -850,7 +850,7 @@ test('M5: shell resend reuses clientOpId so messaging stores one human post', as
   const server = await boot(dir, { cliPath: fakeKimi().cliPath });
   try {
     const services = await createServerServices(await fetchBootstrap(server.url), () => undefined);
-    const spawned = await services.spawnRealKimiAgent!('Kimi');
+    const spawned = await services.spawnAgentConversation!({ provider: 'kimi', title: 'Kimi' }, 'op_m5_spawn');
     assert.equal(spawned.ok, true);
     if (!spawned.ok) return;
     const send = services.sendMessage as unknown as (

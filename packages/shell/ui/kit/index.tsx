@@ -3,7 +3,10 @@
 // v1.1 (M8/DEC-S2-13, additive): RadioGroup, Select, Swatch — needed by the
 // agent-def UI, accent picker, density picker. Old screens unbroken.
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import './tokens.css';
+// Design system: the ported sandbox stack (ui/styles) is the one token source;
+// kit-compat maps the old kit variable names for screens not yet restyled.
+import '../styles/global.css';
+import '../styles/kit-compat.css';
 import './kit.css';
 
 // ── Text + headings (kit v1.2, F2) — screens never write raw span/p/hN ──────

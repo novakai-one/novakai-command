@@ -1,0 +1,15 @@
+.bench-offscreen-marker {
+  position: absolute;
+  z-index: var(--bench-layer-overlay);
+  right: var(--space-5);
+  top: 50%;
+  padding: 8px 11px;
+  border: 1px solid var(--bench-scribe);
+  border-radius: var(--bench-radius-pill);
+  color: var(--bench-scribe-bright);
+  background: var(--bench-overlay-surface-solid);
+  box-shadow: var(--bench-shadow-overlay);
+  font: var(--text-xs) var(--bench-font-record);
+  cursor: pointer;
+}
+

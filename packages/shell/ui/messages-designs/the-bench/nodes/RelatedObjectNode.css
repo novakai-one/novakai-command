@@ -1,0 +1,35 @@
+.bench-related-node {
+  --bench-record-mark: var(--bench-rule-strong);
+  border-left: 3px solid var(--bench-record-mark);
+}
+
+.bench-related-node:is(
+  [data-record-kind='project'],
+  [data-record-kind='mission'],
+  [data-record-kind='stage']
+) {
+  --bench-record-mark: var(--bench-scribe);
+}
+
+.bench-related-node:is(
+  [data-record-kind='agent'],
+  [data-record-kind='agentRoleProfile'],
+  [data-record-kind='principal'],
+  [data-record-kind='agentRun']
+) {
+  --bench-record-mark: var(--bench-scribe-bright);
+}
+
+.bench-related-node:is(
+  [data-record-kind='decision'],
+  [data-record-kind='request'],
+  [data-record-kind='issue']
+) {
+  --bench-record-mark: var(--bench-danger);
+}
+
+.bench-related-node__body {
+  max-height: 420px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}

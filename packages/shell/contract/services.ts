@@ -61,7 +61,9 @@ export interface ConversationSummary {
   pinned: boolean;
   archived: boolean;
   lastActivityAt: string;
-  unreadCount: number;
+  /** S3 (M3-01): the read cursor. Unread is DERIVED (cursor + loaded
+   * messages) — a stored count was the fabrication M1-04 forbids. */
+  lastReadMessageId?: string;
   agentId?: string;       // when kind === 'agent' — drives the presence dot
 }
 
@@ -126,6 +128,10 @@ export interface ShellServices {
   // clientOpId REQUIRED (R3-10 — minted at the interaction layer).
   pinConversation(id: string, pinned: boolean, clientOpId: string): Promise<void>;
   archiveConversation(id: string, archived: boolean, clientOpId: string): Promise<void>;
+  /** S3 (M3-01): advance the read cursor — the transcript was actually seen to
+   * this message. Optional: hosts without read-state simply never badge. */
+  markConversationRead?(conversationId: string, lastMessageId: string, clientOpId: string):
+    Promise<{ ok: boolean; error?: unknown }>;
 
   // messages
   getMessages(conversationId: string): Promise<ChatMessage[]>;
@@ -169,14 +175,27 @@ export interface ShellServices {
   // the send-time snapshot to each human-composed message. Fire-and-forget.
   publishFocus?(focus: FocusSnapshot): void;
 
-  // Demo affordance (SHL-006/007 end-to-end proof): define + spawn a mock
-  // agent session so presence dot / typing bubble / activity line move live.
-  // Optional: only demo backends implement it.
-  spawnMockAgent?(title?: string): Promise<{ ok: true; conversation: ConversationSummary } | { ok: false; error: string }>;
-  // Demo affordance: spawn a REAL kimi-CLI-backed agent (present only when
-  // the demo bridge reports the CLI is installed). Replies stream through the
-  // agents live-lane into the thread.
-  spawnRealKimiAgent?(title?: string): Promise<{ ok: true; conversation: ConversationSummary } | { ok: false; error: string }>;
+  /**
+   * S2 (D30/D31): the ONE way a UI starts an agent conversation. Exactly one
+   * of `agentId` (existing agent) or `provider` (define + spawn a new one).
+   * `conversationId` is client-minted (`conv_<uuid>`) so spatial layout is
+   * keyed by the real id from the first frame. Replaces the retired
+   * spawnMockAgent/spawnRealKimiAgent demo affordances.
+   */
+  spawnAgentConversation?(input: {
+    agentId?: string; provider?: AgentDefView['provider'];
+    title?: string; conversationId?: string;
+  }, clientOpId: string): Promise<
+    { ok: true; conversation: ConversationSummary }
+    | { ok: false; error: string | { code: string; message?: string } }
+  >;
+
+  /**
+   * Which providers this host can actually spawn on (measured by the server's
+   * getCapabilities at connect). Absent on hosts with no spawn capability —
+   * the UI then offers existing agents only, never a dead "new agent" entry.
+   */
+  providerAvailability?: Readonly<Partial<Record<AgentDefView['provider'], boolean>>>;
 
   /**
    * B1b §8 supervision surface (DEC-B1-11): the current usage table, pulled
