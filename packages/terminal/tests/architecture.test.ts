@@ -37,6 +37,9 @@ function sourceFiles(target: string): string[] {
 
 const ALL_FILES = B3A_ROOTS.flatMap(sourceFiles);
 
+/** The src/ fence covers every package, not just the B3a roots. */
+const ALL_PACKAGE_FILES = sourceFiles('packages');
+
 function importsOf(file: string): string[] {
   const text = readFileSync(file, 'utf8');
   return [...text.matchAll(/from\s+'([^']+)'|import\('([^']+)'\)/g)]
@@ -44,11 +47,20 @@ function importsOf(file: string): string[] {
     .filter(Boolean);
 }
 
-test('no Build 3 module imports the legacy src/ lane', () => {
-  const offenders = ALL_FILES.filter((file) =>
-    importsOf(file).some((specifier) =>
-      specifier.includes('/src/') || specifier.startsWith('../../../src')));
-  assert.deepEqual(offenders.map((file) => path.relative(repoRoot, file)), []);
+test('no package imports the legacy src/ lane', () => {
+  const offenders: string[] = [];
+  for (const file of ALL_PACKAGE_FILES) {
+    const lines = readFileSync(file, 'utf8').split('\n');
+    lines.forEach((line, index) => {
+      const match = line.match(/from\s+'([^']+)'|import\('([^']+)'\)/);
+      const specifier = match?.[1] ?? match?.[2];
+      if (!specifier) return;
+      if (specifier.includes('/src/') || /^(\.\.\/)+src\//.test(specifier)) {
+        offenders.push(`${path.relative(repoRoot, file)}:${index + 1} -> ${specifier}`);
+      }
+    });
+  }
+  assert.deepEqual(offenders, []);
 });
 
 test('no Build 3 module imports a Foundation dist/ or private path', () => {
