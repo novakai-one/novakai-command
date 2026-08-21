@@ -68,7 +68,7 @@ function refusalRow(conversationId: string, typed: string, because: string, inst
  * an existing agent (D22's mirror-thread trap). Count upward until free. */
 function nextAgentTitle(api: BenchDataApi, provider: string): string {
   const base = provider.charAt(0).toUpperCase() + provider.slice(1);
-  const taken = new Set(api.data.graph.byKind('agent').map((a) => a.title));
+  const taken = new Set(api.data.graph.byKind('agent').map((agent) => agent.title));
   let n = 1;
   while (taken.has(`${base} ${n}`)) n += 1;
   return `${base} ${n}`;
@@ -131,21 +131,21 @@ export function createBenchCommands(props: {
         // dock, search), so the way BACK is this door: bare = list, with an
         // argument = restore. The card returns at its old placement — canvas
         // memory never dropped it.
-        const archived = api.conversations.filter((c) => c.archived);
+        const archived = api.conversations.filter((convo) => convo.archived);
         const wanted = args.trim().toLowerCase();
         if (!wanted) {
           api.appendLocal(refusalRow(conversationId, typed,
             archived.length
-              ? `Archived: ${archived.map((c) => c.title).join(', ')}.`
+              ? `Archived: ${archived.map((convo) => convo.title).join(', ')}.`
               : 'No archived conversations.',
             archived.length ? 'Use: /unarchive <title>' : null));
           break;
         }
-        const match = archived.find((c) => c.title.toLowerCase() === wanted || c.id === args.trim());
+        const match = archived.find((convo) => convo.title.toLowerCase() === wanted || convo.id === args.trim());
         if (!match) {
           api.appendLocal(refusalRow(conversationId, typed,
             `No archived conversation called "${args.trim()}".`,
-            archived.length ? `Archived: ${archived.map((c) => c.title).join(', ')}` : null));
+            archived.length ? `Archived: ${archived.map((convo) => convo.title).join(', ')}` : null));
           break;
         }
         await services.archiveConversation(match.id, false, mintShellOpId());

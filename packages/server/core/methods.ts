@@ -559,16 +559,16 @@ export function buildMethods(runtime: ServerRuntime): MethodTable {
      * every window's derived unread agrees.
      */
     async markConversationRead(params: never) {
-      const p = params as { conversationId: string; lastMessageId: string; clientOpId: string };
-      const c = runtime.conversations.get(p.conversationId);
-      if (!c) return { ok: false, error: 'unknown conversation' };
-      if (!p.lastMessageId || !p.clientOpId) {
+      const sent = params as { conversationId: string; lastMessageId: string; clientOpId: string };
+      const convo = runtime.conversations.get(sent.conversationId);
+      if (!convo) return { ok: false, error: 'unknown conversation' };
+      if (!sent.lastMessageId || !sent.clientOpId) {
         return { ok: false, error: 'lastMessageId and clientOpId are required' };
       }
-      if (c.lastReadMessageId === p.lastMessageId) return { ok: true };
-      c.lastReadMessageId = p.lastMessageId;
-      await persistView(runtime, c, p.clientOpId);
-      runtime.broadcast('conversation', summarize(c));
+      if (convo.lastReadMessageId === sent.lastMessageId) return { ok: true };
+      convo.lastReadMessageId = sent.lastMessageId;
+      await persistView(runtime, convo, sent.clientOpId);
+      runtime.broadcast('conversation', summarize(convo));
       return { ok: true };
     },
 

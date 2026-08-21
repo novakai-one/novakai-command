@@ -126,9 +126,9 @@ export function unreadMessages(
   convo: ConversationSummary, loaded: readonly ChatMessage[],
 ): ChatMessage[] {
   const cutoff = convo.lastReadMessageId
-    ? loaded.findIndex((m) => m.id === convo.lastReadMessageId)
+    ? loaded.findIndex((msg) => msg.id === convo.lastReadMessageId)
     : -1;
-  return loaded.slice(cutoff + 1).filter((m) => m.senderId !== SELF_ID && !m.pending && !m.failed);
+  return loaded.slice(cutoff + 1).filter((msg) => msg.senderId !== SELF_ID && !msg.pending && !msg.failed);
 }
 
 /** The ported Bench draws a thread's badge from notification records related
@@ -137,12 +137,12 @@ export function unreadMessages(
 function unreadNotificationRecords(
   convo: ConversationSummary, loaded: readonly ChatMessage[],
 ): ObjectRecord[] {
-  return unreadMessages(convo, loaded).map((m) => ({
-    id: `notif_unread_${m.id}`,
+  return unreadMessages(convo, loaded).map((msg) => ({
+    id: `notif_unread_${msg.id}`,
     kind: 'notification',
-    title: m.text,
-    createdAt: m.createdAt,
-    fields: { status: 'unread', messageId: m.id },
+    title: msg.text,
+    createdAt: msg.createdAt,
+    fields: { status: 'unread', messageId: msg.id },
     refs: [{ kind: 'thread', value: convo.id }],
   }));
 }
@@ -183,7 +183,7 @@ export function useBenchData(props: {
   const refreshConversations = useCallback(async () => {
     const list = await services.listConversations();
     setConversations(list);
-    setPendingConvos((prev) => prev.filter((p) => !list.some((c) => c.id === p.id)));
+    setPendingConvos((prev) => prev.filter((held) => !list.some((convo) => convo.id === held.id)));
     // S2: a spawn defines agents mid-session — refresh defs with conversations
     // so a new participant renders its displayName, never a raw id.
     void services.agents?.listAgents().then(setAgents).catch(() => {});
@@ -192,8 +192,8 @@ export function useBenchData(props: {
   }, [services, loadMessagesFor]);
 
   const allConversations = useMemo(() => {
-    const known = new Set(conversations.map((c) => c.id));
-    return [...conversations, ...pendingConvos.filter((p) => !known.has(p.id))];
+    const known = new Set(conversations.map((convo) => convo.id));
+    return [...conversations, ...pendingConvos.filter((held) => !known.has(held.id))];
   }, [conversations, pendingConvos]);
 
   useEffect(() => { void refreshConversations(); }, [refreshConversations]);
@@ -213,7 +213,7 @@ export function useBenchData(props: {
   }), [services, refreshConversations]);
 
   const appendLocalConversation = useCallback((summary: ConversationSummary) => {
-    setPendingConvos((prev) => (prev.some((c) => c.id === summary.id) ? prev : [...prev, summary]));
+    setPendingConvos((prev) => (prev.some((convo) => convo.id === summary.id) ? prev : [...prev, summary]));
   }, []);
 
   const appendLocal = useCallback((message: ChatMessage) => {
@@ -234,12 +234,12 @@ export function useBenchData(props: {
 
   const data = useMemo<MessagesDesignData>(() => {
     const threads = allConversations.map(threadRecord);
-    const agentByConvo = new Map(allConversations.map((c) => [c.id, c.agentId]));
+    const agentByConvo = new Map(allConversations.map((convo) => [convo.id, convo.agentId]));
     const messages = [...messagesByConvo.values()].flat()
-      .map((m) => messageRecord(m, agentByConvo.get(m.conversationId)));
+      .map((msg) => messageRecord(msg, agentByConvo.get(msg.conversationId)));
     const knownAgentIds = new Set(agents.map((a) => a.id));
     const referencedAgentIds = new Set(
-      allConversations.map((c) => c.agentId).filter((id): id is string => Boolean(id)),
+      allConversations.map((convo) => convo.agentId).filter((id): id is string => Boolean(id)),
     );
     const agentRecords = [
       ...agents.filter((a) => a.status !== 'archived').map((a) => agentRecord(a, tracker)),
@@ -249,8 +249,8 @@ export function useBenchData(props: {
     const self: ObjectRecord = {
       id: SELF_ID, kind: 'principal', title: SELF_TITLE, createdAt: '', fields: {}, refs: [],
     };
-    const unreadNotifs = allConversations.flatMap((c) => (
-      unreadNotificationRecords(c, messagesByConvo.get(c.id) ?? [])
+    const unreadNotifs = allConversations.flatMap((convo) => (
+      unreadNotificationRecords(convo, messagesByConvo.get(convo.id) ?? [])
     ));
     const graph = buildGraph([self, ...agentRecords, ...threads, ...messages, ...unreadNotifs]);
     // S2 (D32): the draft picker offers existing agents not already holding a
@@ -258,7 +258,7 @@ export function useBenchData(props: {
     // "new agent" pseudo-entry per provider the host can actually spawn on.
     // Pseudo-entries feed ONLY this picker list — never the graph (M1-04).
     const conversedAgentIds = new Set(
-      allConversations.filter((c) => !c.archived && c.agentId).map((c) => c.agentId),
+      allConversations.filter((convo) => !convo.archived && convo.agentId).map((convo) => convo.agentId),
     );
     const spawnable = services.providerAvailability ?? {};
     const liveAgents: ObjectRecord[] = [
@@ -287,14 +287,14 @@ export function useBenchData(props: {
   }, [allConversations, messagesByConvo, agents, tracker, services, props.selectedId, presenceTick]);
 
   const findMessage = useCallback((conversationId: string, messageId: string) => (
-    messagesByConvo.get(conversationId)?.find((m) => m.id === messageId)
+    messagesByConvo.get(conversationId)?.find((msg) => msg.id === messageId)
   ), [messagesByConvo]);
 
   // S3: the newest COMMITTED message — the cursor never advances onto a
   // pending/failed local row (those ids are not truth).
   const lastMessageId = useCallback((conversationId: string) => (
     [...(messagesByConvo.get(conversationId) ?? [])]
-      .filter((m) => !m.pending && !m.failed)
+      .filter((msg) => !msg.pending && !msg.failed)
       .at(-1)?.id
   ), [messagesByConvo]);
 

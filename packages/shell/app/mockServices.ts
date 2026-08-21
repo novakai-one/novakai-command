@@ -152,9 +152,9 @@ export function createMockServices(opts: { seeded?: boolean } = {}): ShellServic
       emit((l) => { const c = convos.find((x) => x.id === id); if (c) l.onConversation?.(c); });
     },
     async markConversationRead(id, lastMessageId, _clientOpId) {
-      convos = convos.map((c) => (c.id === id ? { ...c, lastReadMessageId: lastMessageId } : c));
-      const c = convos.find((x) => x.id === id);
-      if (c) emit((l) => l.onConversation?.(c));
+      convos = convos.map((convo) => (convo.id === id ? { ...convo, lastReadMessageId: lastMessageId } : convo));
+      const marked = convos.find((convo) => convo.id === id);
+      if (marked) emit((listener) => listener.onConversation?.(marked));
       return { ok: true as const };
     },
     async archiveConversation(id, archived, _clientOpId) {

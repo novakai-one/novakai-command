@@ -51,7 +51,7 @@ export function MessagingScreen(props: {
   const latest = selectedId ? api.lastMessageId(selectedId) : undefined;
   useEffect(() => {
     if (!selectedId || !latest || !services.markConversationRead) return;
-    const convo = api.conversations.find((c) => c.id === selectedId);
+    const convo = api.conversations.find((entry) => entry.id === selectedId);
     if (!convo || convo.lastReadMessageId === latest) return;
     void services.markConversationRead(selectedId, latest, mintShellOpId());
   }, [selectedId, latest, services, api.conversations]);
