@@ -165,12 +165,13 @@ export function createMockServices(opts: { seeded?: boolean } = {}): ShellServic
       return { ok: true as const, message: m };
     },
     subscribe(events) { listeners.add(events); return () => listeners.delete(events); },
-    async spawnMockAgent(title) {
-      const agentId = `agent_mock_${Math.random().toString(36).slice(2, 8)}`;
+    providerAvailability: { mock: true },
+    async spawnAgentConversation(input, _clientOpId) {
+      const agentId = input.agentId ?? `agent_mock_${Math.random().toString(36).slice(2, 8)}`;
       const c: ConversationSummary = {
-        id: `conv_${Math.random().toString(36).slice(2, 10)}`,
+        id: input.conversationId ?? `conv_${Math.random().toString(36).slice(2, 10)}`,
         threadId: `thread_${Math.random().toString(36).slice(2, 10)}`,
-        title: title?.trim() || 'Mock agent', kind: 'agent', pinned: false, archived: false,
+        title: input.title?.trim() || 'Mock agent', kind: 'agent', pinned: false, archived: false,
         lastActivityAt: new Date().toISOString(), unreadCount: 0, agentId,
       };
       convos = [c, ...convos];

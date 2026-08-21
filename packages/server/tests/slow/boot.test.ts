@@ -850,7 +850,7 @@ test('M5: shell resend reuses clientOpId so messaging stores one human post', as
   const server = await boot(dir, { cliPath: fakeKimi().cliPath });
   try {
     const services = await createServerServices(await fetchBootstrap(server.url), () => undefined);
-    const spawned = await services.spawnRealKimiAgent!('Kimi');
+    const spawned = await services.spawnAgentConversation!({ provider: 'kimi', title: 'Kimi' }, 'op_m5_spawn');
     assert.equal(spawned.ok, true);
     if (!spawned.ok) return;
     const send = services.sendMessage as unknown as (

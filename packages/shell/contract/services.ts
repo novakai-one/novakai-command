@@ -169,14 +169,27 @@ export interface ShellServices {
   // the send-time snapshot to each human-composed message. Fire-and-forget.
   publishFocus?(focus: FocusSnapshot): void;
 
-  // Demo affordance (SHL-006/007 end-to-end proof): define + spawn a mock
-  // agent session so presence dot / typing bubble / activity line move live.
-  // Optional: only demo backends implement it.
-  spawnMockAgent?(title?: string): Promise<{ ok: true; conversation: ConversationSummary } | { ok: false; error: string }>;
-  // Demo affordance: spawn a REAL kimi-CLI-backed agent (present only when
-  // the demo bridge reports the CLI is installed). Replies stream through the
-  // agents live-lane into the thread.
-  spawnRealKimiAgent?(title?: string): Promise<{ ok: true; conversation: ConversationSummary } | { ok: false; error: string }>;
+  /**
+   * S2 (D30/D31): the ONE way a UI starts an agent conversation. Exactly one
+   * of `agentId` (existing agent) or `provider` (define + spawn a new one).
+   * `conversationId` is client-minted (`conv_<uuid>`) so spatial layout is
+   * keyed by the real id from the first frame. Replaces the retired
+   * spawnMockAgent/spawnRealKimiAgent demo affordances.
+   */
+  spawnAgentConversation?(input: {
+    agentId?: string; provider?: AgentDefView['provider'];
+    title?: string; conversationId?: string;
+  }, clientOpId: string): Promise<
+    { ok: true; conversation: ConversationSummary }
+    | { ok: false; error: string | { code: string; message?: string } }
+  >;
+
+  /**
+   * Which providers this host can actually spawn on (measured by the server's
+   * getCapabilities at connect). Absent on hosts with no spawn capability —
+   * the UI then offers existing agents only, never a dead "new agent" entry.
+   */
+  providerAvailability?: Readonly<Partial<Record<AgentDefView['provider'], boolean>>>;
 
   /**
    * B1b §8 supervision surface (DEC-B1-11): the current usage table, pulled

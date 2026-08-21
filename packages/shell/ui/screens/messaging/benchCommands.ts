@@ -63,6 +63,17 @@ function refusalRow(conversationId: string, typed: string, because: string, inst
   };
 }
 
+/** "New kimi agent" cards need a unique displayName: the server's ensureAgent
+ * reuses a definition with the same name+provider, which would silently rebind
+ * an existing agent (D22's mirror-thread trap). Count upward until free. */
+function nextAgentTitle(api: BenchDataApi, provider: string): string {
+  const base = provider.charAt(0).toUpperCase() + provider.slice(1);
+  const taken = new Set(api.data.graph.byKind('agent').map((a) => a.title));
+  let n = 1;
+  while (taken.has(`${base} ${n}`)) n += 1;
+  return `${base} ${n}`;
+}
+
 export function createBenchCommands(props: {
   services: ShellServices;
   api: BenchDataApi;
@@ -175,10 +186,52 @@ export function createBenchCommands(props: {
       }
     },
 
-    // S1: unreachable — useBenchData supplies no liveAgents, so no draft can be
-    // accepted. S2 wires createAgentConversation and owns the sync-id contract.
-    startConversation(): string {
-      return `unsupported_${mintShellOpId()}`;
+    // S2 (D30/D31): the draft picker's accept. The conversation id is minted
+    // HERE, synchronously — the Bench keys placement by it from frame one and
+    // the server adopts it, so no id ever swaps. The card appears optimistic
+    // and the echo (same id) replaces it; a failed spawn explains itself with
+    // a typed row and leaves nothing behind on reload.
+    startConversation(agent: ObjectRecord): string {
+      const conversationId = `conv_${globalThis.crypto.randomUUID()}`;
+      const isNew = agent.id.startsWith('new:');
+      const title = isNew ? nextAgentTitle(api, String(agent.fields.provider)) : agent.title;
+      api.appendLocalConversation({
+        id: conversationId, threadId: conversationId, title, kind: 'agent',
+        pinned: false, archived: false, lastActivityAt: new Date().toISOString(),
+        unreadCount: 0, ...(isNew ? {} : { agentId: agent.id }),
+      });
+      const input = isNew
+        ? { provider: agent.fields.provider as 'kimi' | 'claude' | 'codex' | 'mock', title, conversationId }
+        : { agentId: agent.id, conversationId };
+      void (async () => {
+        if (!services.spawnAgentConversation) {
+          api.appendLocal(refusalRow(conversationId, title, 'This host cannot spawn agent conversations.'));
+          return;
+        }
+        try {
+          const res = await services.spawnAgentConversation(input, mintShellOpId());
+          if (!res.ok) {
+            const reason = typeof res.error === 'string'
+              ? res.error
+              : (res.error.message ?? res.error.code);
+            api.appendLocal(refusalRow(conversationId, `Start ${title}`, `Agent spawn failed: ${reason}`));
+            return;
+          }
+          await api.refreshConversations();
+        } catch (cause) {
+          api.appendLocal(refusalRow(conversationId, `Start ${title}`,
+            `Agent spawn failed: ${rejectedSendMessage(cause)}`));
+        }
+      })();
+      return conversationId;
+    },
+
+    // D34: the failed row's affordance — SAME clientOpId, one committed post.
+    resendMessage(threadId: string, messageId: string): void {
+      const message = api.findMessage(threadId, messageId);
+      if (!message?.failed) return;
+      void resendFailedMessage(services, message)
+        .then((res) => api.settleLocal(threadId, messageId, res));
     },
 
     // S3 owns read-state; badges are hidden until then (never fake a count).

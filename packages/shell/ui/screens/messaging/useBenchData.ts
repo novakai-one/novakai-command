@@ -38,6 +38,11 @@ export interface BenchDataApi {
   appendLocal(message: ChatMessage): void;
   /** Settle an optimistic row against the send outcome (same id in = one row out). */
   settleLocal(conversationId: string, optimisticId: string, outcome: SendOutcome): void;
+  /** Draw one conversation immediately (optimistic spawn, D31); the server echo
+   * with the same client-minted id replaces it on the next refresh. */
+  appendLocalConversation(summary: ConversationSummary): void;
+  /** Look up a loaded/local message (the resend affordance needs its opId). */
+  findMessage(conversationId: string, messageId: string): ChatMessage | undefined;
   refreshConversations(): Promise<void>;
 }
 
@@ -114,6 +119,10 @@ export function useBenchData(props: {
 }): BenchDataApi {
   const { services, tracker } = props;
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
+  // D31: optimistic conversations live here until the server echo (same id)
+  // lands in a refresh; a failed spawn leaves its card explained by a failed
+  // row and gone on reload (nothing exists server-side).
+  const [pendingConvos, setPendingConvos] = useState<ConversationSummary[]>([]);
   const [messagesByConvo, setMessagesByConvo] = useState<ReadonlyMap<string, ChatMessage[]>>(new Map());
   const [agents, setAgents] = useState<AgentDefView[]>([]);
   const [presenceTick, setPresenceTick] = useState(0);
@@ -139,9 +148,15 @@ export function useBenchData(props: {
   const refreshConversations = useCallback(async () => {
     const list = await services.listConversations();
     setConversations(list);
+    setPendingConvos((prev) => prev.filter((p) => !list.some((c) => c.id === p.id)));
     await loadMessagesFor(list.map((c) => c.id));
     setReady(true);
   }, [services, loadMessagesFor]);
+
+  const allConversations = useMemo(() => {
+    const known = new Set(conversations.map((c) => c.id));
+    return [...conversations, ...pendingConvos.filter((p) => !known.has(p.id))];
+  }, [conversations, pendingConvos]);
 
   useEffect(() => { void refreshConversations(); }, [refreshConversations]);
   useEffect(() => {
@@ -158,6 +173,10 @@ export function useBenchData(props: {
     },
     onConversation: () => { void refreshConversations(); },
   }), [services, refreshConversations]);
+
+  const appendLocalConversation = useCallback((summary: ConversationSummary) => {
+    setPendingConvos((prev) => (prev.some((c) => c.id === summary.id) ? prev : [...prev, summary]));
+  }, []);
 
   const appendLocal = useCallback((message: ChatMessage) => {
     setMessagesByConvo((current) => {
@@ -176,11 +195,11 @@ export function useBenchData(props: {
   }, []);
 
   const data = useMemo<MessagesDesignData>(() => {
-    const threads = conversations.map(threadRecord);
+    const threads = allConversations.map(threadRecord);
     const messages = [...messagesByConvo.values()].flat().map(messageRecord);
     const knownAgentIds = new Set(agents.map((a) => a.id));
     const referencedAgentIds = new Set(
-      conversations.map((c) => c.agentId).filter((id): id is string => Boolean(id)),
+      allConversations.map((c) => c.agentId).filter((id): id is string => Boolean(id)),
     );
     const agentRecords = [
       ...agents.filter((a) => a.status !== 'archived').map((a) => agentRecord(a, tracker)),
@@ -191,20 +210,45 @@ export function useBenchData(props: {
       id: SELF_ID, kind: 'principal', title: SELF_TITLE, createdAt: '', fields: {}, refs: [],
     };
     const graph = buildGraph([self, ...agentRecords, ...threads, ...messages]);
+    // S2 (D32): the draft picker offers existing agents not already holding a
+    // live conversation (one person per agent = one thread, D22/D30), plus one
+    // "new agent" pseudo-entry per provider the host can actually spawn on.
+    // Pseudo-entries feed ONLY this picker list — never the graph (M1-04).
+    const conversedAgentIds = new Set(
+      allConversations.filter((c) => !c.archived && c.agentId).map((c) => c.agentId),
+    );
+    const spawnable = services.providerAvailability ?? {};
+    const liveAgents: ObjectRecord[] = [
+      ...agentRecords.filter((a) => !conversedAgentIds.has(a.id)),
+      ...(['kimi', 'claude', 'codex', 'mock'] as const)
+        .filter((provider) => spawnable[provider])
+        .map((provider): ObjectRecord => ({
+          id: `new:${provider}`,
+          kind: 'agent',
+          title: `New ${provider} agent`,
+          createdAt: '',
+          fields: { provider },
+          refs: [],
+        })),
+    ];
     return {
       graph,
       selfId: SELF_ID,
       threads,
-      // S1: the Bench draft flow needs a synchronous conversation id the async
-      // createConversation contract cannot give, so no agents are offered to
-      // accept a draft with. S2 (createAgentConversation) owns this.
-      liveAgents: [],
+      liveAgents,
       selected: props.selectedId ? graph.get(props.selectedId) ?? null : null,
       attentionSubjectId: null,
     };
     // presenceTick: agent status/composing fields are derived from the tracker,
     // so a presence event must rebuild the records even though it is not state.
-  }, [conversations, messagesByConvo, agents, tracker, props.selectedId, presenceTick]);
+  }, [allConversations, messagesByConvo, agents, tracker, services, props.selectedId, presenceTick]);
 
-  return { data, ready, conversations, appendLocal, settleLocal, refreshConversations };
+  const findMessage = useCallback((conversationId: string, messageId: string) => (
+    messagesByConvo.get(conversationId)?.find((m) => m.id === messageId)
+  ), [messagesByConvo]);
+
+  return {
+    data, ready, conversations: allConversations,
+    appendLocal, settleLocal, appendLocalConversation, findMessage, refreshConversations,
+  };
 }

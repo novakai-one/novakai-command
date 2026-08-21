@@ -114,3 +114,16 @@
   font-size: var(--text-xs);
   color: var(--bench-danger);
 }
+
+/* D34: retry a failed send (same clientOpId). Quiet control beside the reason. */
+.bench-message__resend {
+  align-self: flex-start;
+  margin: 2px 0 0 44px;
+  padding: 1px 8px;
+  font-size: var(--text-xs);
+  color: var(--bench-danger);
+  background: none;
+  border: 1px solid var(--bench-danger);
+  border-radius: 999px;
+  cursor: pointer;
+}

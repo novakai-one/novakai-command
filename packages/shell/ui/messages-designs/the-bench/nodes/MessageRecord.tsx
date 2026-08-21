@@ -67,6 +67,16 @@ export function MessageRecord({
         </span>
       </button>
 
+      {message.failed && typeof message.record.fields.clientOpId === 'string' && (
+        <button
+          type="button"
+          className="bench-message__resend nodrag"
+          onClick={() => actions.resendMessage?.(threadId, message.record.id)}
+        >
+          Send again
+        </button>
+      )}
+
       <Handle
         id={`message:${message.record.id}:inspect`}
         className="bench-message__source"
