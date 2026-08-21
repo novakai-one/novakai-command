@@ -1,14 +1,56 @@
 import { useEffect, useMemo, useRef } from 'react';
+import type React from 'react';
 import type { ObjectRecord } from '../../contract';
 import type { BenchConversation, BenchNodeActions } from '../model/bench-model';
-import { LibraryCard } from './LibraryCard';
-import { LibraryDayStack } from './LibraryDayStack';
+import { LibraryAgedView } from './LibraryAgedView';
 import { LibraryRow } from './LibraryRow';
 import { LibrarySection } from './LibrarySection';
 import { buildLibraryView, searchLibrary } from './library-model';
 import { useLibraryPanel } from './useLibraryPanel';
 import './library.css';
 import './library-entries.css';
+
+/** The one-row collapsed state: name, count, and the amber needs-you dot. */
+function CollapsedLibrary({ total, needsYouCount, onOpen }: {
+  total: number;
+  needsYouCount: number;
+  onOpen: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className="library-collapsed"
+      onClick={onOpen}
+      aria-label={`Open the conversation library (${total} conversations)`}
+    >
+      {needsYouCount > 0 && <i className="library-needs-dot" aria-label={`${needsYouCount} need you`} />}
+      <strong>Library</strong>
+      <span>{total}</span>
+    </button>
+  );
+}
+
+/** The panel's search input; Escape clears, a second Escape collapses. */
+function LibrarySearchInput({ panel, searchRef }: {
+  panel: ReturnType<typeof useLibraryPanel>;
+  searchRef: React.RefObject<HTMLInputElement>;
+}) {
+  return (
+    <input
+      ref={searchRef}
+      className="library-panel__search"
+      value={panel.query}
+      placeholder="Search conversations…"
+      onChange={(event) => panel.setQuery(event.target.value)}
+      onKeyDown={(event) => {
+        if (event.key !== 'Escape') return;
+        event.stopPropagation();
+        if (panel.query) panel.setQuery('');
+        else panel.setExpanded(false);
+      }}
+    />
+  );
+}
 
 /**
  * The conversation Library: every conversation ever, aged so it stays clean —
@@ -50,16 +92,11 @@ export function LibraryPanel({
 
   if (!panel.expanded) {
     return (
-      <button
-        type="button"
-        className="library-collapsed"
-        onClick={() => panel.setExpanded(true)}
-        aria-label={`Open the conversation library (${view.total} conversations)`}
-      >
-        {view.needsYouCount > 0 && <i className="library-needs-dot" aria-label={`${view.needsYouCount} need you`} />}
-        <strong>Library</strong>
-        <span>{view.total}</span>
-      </button>
+      <CollapsedLibrary
+        total={view.total}
+        needsYouCount={view.needsYouCount}
+        onOpen={() => panel.setExpanded(true)}
+      />
     );
   }
 
@@ -79,19 +116,7 @@ export function LibraryPanel({
           ‹
         </button>
       </header>
-      <input
-        ref={searchRef}
-        className="library-panel__search"
-        value={panel.query}
-        placeholder="Search conversations…"
-        onChange={(event) => panel.setQuery(event.target.value)}
-        onKeyDown={(event) => {
-          if (event.key !== 'Escape') return;
-          event.stopPropagation();
-          if (panel.query) panel.setQuery('');
-          else panel.setExpanded(false);
-        }}
-      />
+      <LibrarySearchInput panel={panel} searchRef={searchRef} />
       <div className="library-panel__body">
         {searching ? (
           <LibrarySection label="Matches" count={results.length}>
@@ -101,68 +126,15 @@ export function LibraryPanel({
             {results.length === 0 && <p className="library-panel__empty">No conversations match.</p>}
           </LibrarySection>
         ) : (
-          <>
-            {view.pinned.length > 0 && (
-              <LibrarySection label="Pinned">
-                {view.pinned.map((entry) => (
-                  <LibraryCard key={entry.threadId} entry={entry} actions={actions} onReveal={onReveal} />
-                ))}
-              </LibrarySection>
-            )}
-            {view.today.length > 0 && (
-              <LibrarySection label="Today">
-                {view.today.map((entry) => (
-                  <LibraryCard key={entry.threadId} entry={entry} actions={actions} onReveal={onReveal} />
-                ))}
-              </LibrarySection>
-            )}
-            {view.thisWeek.length > 0 && (
-              <LibrarySection label="This week">
-                {view.thisWeek.map((entry) => (
-                  <LibraryRow key={entry.threadId} entry={entry} actions={actions} onReveal={onReveal} />
-                ))}
-              </LibrarySection>
-            )}
-            {view.older.length > 0 && (
-              <LibrarySection label="Older">
-                {view.older.map((group) => (
-                  <LibraryDayStack
-                    key={group.key}
-                    group={group}
-                    isOpen={panel.openStackKeys.has(group.key)}
-                    onToggle={panel.toggleStack}
-                    actions={actions}
-                    onReveal={onReveal}
-                  />
-                ))}
-              </LibrarySection>
-            )}
-            {view.archived.length > 0 && (
-              <LibrarySection label="Archive" count={view.archived.length}>
-                {panel.archiveOpen ? view.archived.map((archived) => (
-                  <div key={archived.threadId} className="library-row" data-on-canvas={false}>
-                    <span className="library-row__body library-row__archived">
-                      <strong>{archived.title}</strong>
-                    </span>
-                    <span className="library-verbs">
-                      <button type="button" onClick={() => actions.unarchiveConversation(archived.threadId)}>
-                        Restore
-                      </button>
-                    </span>
-                  </div>
-                )) : (
-                  <button
-                    type="button"
-                    className="library-panel__archive-toggle"
-                    onClick={() => panel.setArchiveOpen(true)}
-                  >
-                    Show archived
-                  </button>
-                )}
-              </LibrarySection>
-            )}
-            {view.total === 0 && <p className="library-panel__empty">No conversations yet.</p>}
-          </>
+          <LibraryAgedView
+            view={view}
+            archiveOpen={panel.archiveOpen}
+            onOpenArchive={() => panel.setArchiveOpen(true)}
+            openStackKeys={panel.openStackKeys}
+            onToggleStack={panel.toggleStack}
+            actions={actions}
+            onReveal={onReveal}
+          />
         )}
       </div>
       <div

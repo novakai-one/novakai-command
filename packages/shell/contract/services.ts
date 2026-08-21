@@ -26,6 +26,7 @@ export interface AgentDefView {
   version: number; // CAS version for updateAgent
 }
 
+/** One registered skill, as the agents registry lists it. */
 export interface SkillView {
   id: string;
   name: string;
@@ -33,8 +34,10 @@ export interface SkillView {
   description: string;
 }
 
+/** Typed failure surface for agent-registry operations. */
 export type AgentOpError = { code: string; message: string };
 
+/** The agents-registry seam (S2a): definitions, models, skills. */
 export interface ShellAgentsServices {
   listAgents(): Promise<AgentDefView[]>;
   defineAgent(input: {
@@ -61,6 +64,7 @@ export interface SessionView {
   status: string;
 }
 
+/** One conversation as the wire lists it — the Bench/Library row source. */
 export interface ConversationSummary {
   id: string;             // ConversationId — shell-side conversation identity
   threadId: string;       // messaging ThreadId backing it
@@ -75,6 +79,7 @@ export interface ConversationSummary {
   agentId?: string;       // when kind === 'agent' — drives the presence dot
 }
 
+/** One rendered chat message, including optimistic/failed local rows. */
 export interface ChatMessage {
   id: string;
   conversationId: string;
@@ -90,6 +95,7 @@ export interface ChatMessage {
   context?: FocusSnapshot;
 }
 
+/** Live messaging event hooks a host may subscribe to. */
 export interface MessagingEvents {
   onMessage?(m: ChatMessage): void;
   onConversation?(c: ConversationSummary): void;
@@ -127,6 +133,7 @@ export interface ShellTerminalTabServices {
     Promise<{ ok: true; value: { record: TerminalTabRecord; version: number } } | { ok: false; error: PersistFailedError }>;
 }
 
+/** THE host seam: everything a shell screen may ask of its host. */
 export interface ShellServices {
   // conversations (messaging owns CRUD — §11 ruling 9; shell calls its contract)
   listConversations(): Promise<ConversationSummary[]>;

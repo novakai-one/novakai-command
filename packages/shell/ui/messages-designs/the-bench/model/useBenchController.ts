@@ -53,7 +53,7 @@ type PlacementRollback = {
 };
 
 /** Complete view-facing contract returned by the Bench orchestrator. */
-export type BenchController = {
+type BenchController = {
   readonly state: BenchState;
   readonly model: BenchModel;
   readonly projection: BenchCanvasProjection;

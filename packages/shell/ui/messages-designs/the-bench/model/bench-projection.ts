@@ -34,7 +34,7 @@ import type {
 const MISSION_TONES: readonly BenchMissionTone[] = ['slate', 'oxide', 'moss', 'violet'];
 
 /** A user-chosen node size supplied by the composition seam (canvas size memory). */
-export type BenchNodeSizeLookup = (nodeId: string) => { width: number; height: number } | undefined;
+type BenchNodeSizeLookup = (nodeId: string) => { width: number; height: number } | undefined;
 
 /** Typed React Flow node union produced only at the projection seam. */
 export type BenchConversationCanvasNode = Node<ConversationNodeData, 'bench-conversation'>;

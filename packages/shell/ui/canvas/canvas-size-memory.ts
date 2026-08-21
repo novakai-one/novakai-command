@@ -5,7 +5,7 @@
 const SIZE_MEMORY_STORAGE_KEY = 'novakai:world-canvas:sizes:v1';
 
 /** One remembered node size in world units. */
-export type RememberedNodeSize = {
+type RememberedNodeSize = {
   readonly width: number;
   readonly height: number;
 };
@@ -38,7 +38,7 @@ function loadBrowserSizes(): void {
     try {
       window.localStorage.removeItem(SIZE_MEMORY_STORAGE_KEY);
     } catch {
-      // The in-memory maps remain the same-runtime fallback.
+      browserSizesAvailable = false; // in-memory maps stay the runtime fallback
     }
   }
 }

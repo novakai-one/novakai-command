@@ -25,13 +25,13 @@ export type LibraryDayGroup = {
 };
 
 /** One archived conversation — title only; restore brings the rest back. */
-export type LibraryArchivedEntry = {
+type LibraryArchivedEntry = {
   readonly threadId: ObjectId;
   readonly title: string;
 };
 
 /** The complete aged view the panel renders. Empty sections are simply empty. */
-export type LibraryView = {
+type LibraryView = {
   readonly pinned: readonly LibraryEntry[];
   readonly today: readonly LibraryEntry[];
   readonly thisWeek: readonly LibraryEntry[];

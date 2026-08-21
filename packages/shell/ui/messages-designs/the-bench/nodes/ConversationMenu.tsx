@@ -43,10 +43,38 @@ export function ConversationMenu({
         •••
       </button>
       {isOpen && (
-        <div className="bench-conversation-menu__popover" role="menu">
+        <ConversationMenuItems
+          conversation={conversation}
+          missions={missions}
+          actions={actions}
+          missionId={missionId}
+          setMissionId={setMissionId}
+          copied={copied}
+          setCopied={setCopied}
+          close={() => setOpen(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+
+/** The popover's menu items — one button per verb, none triggers another. */
+function ConversationMenuItems({ conversation, missions, actions, missionId, setMissionId, copied, setCopied, close }: {
+  conversation: BenchConversation;
+  missions: readonly ObjectRecord[];
+  actions: BenchNodeActions;
+  missionId: string;
+  setMissionId: (id: string) => void;
+  copied: boolean;
+  setCopied: (copied: boolean) => void;
+  close: () => void;
+}) {
+  return (
+    <div className="bench-conversation-menu__popover" role="menu">
           <button type="button" role="menuitem" onClick={() => {
             actions.markThreadRead(conversation.thread.id);
-            setOpen(false);
+            close();
           }}>
             Mark read
           </button>
@@ -64,7 +92,7 @@ export function ConversationMenu({
             disabled={!missionId}
             onClick={() => {
               if (missionId) actions.attachThreadToMission(conversation.thread.id, missionId);
-              setOpen(false);
+              close();
             }}
           >
             Attach Mission
@@ -76,13 +104,13 @@ export function ConversationMenu({
           </button>
           <button type="button" role="menuitem" onClick={() => {
             actions.pinConversation(conversation.thread.id, conversation.thread.fields.pinned !== true);
-            setOpen(false);
+            close();
           }}>
             {conversation.thread.fields.pinned === true ? 'Unpin' : 'Pin'}
           </button>
           <button type="button" role="menuitem" onClick={() => {
             actions.shelveConversation(conversation.thread.id);
-            setOpen(false);
+            close();
           }}>
             Remove from canvas
           </button>
@@ -92,7 +120,7 @@ export function ConversationMenu({
             className="bench-conversation-menu__danger"
             onClick={() => {
               actions.killAgent(conversation.thread.id);
-              setOpen(false);
+              close();
             }}
           >
             Kill agent
@@ -106,7 +134,5 @@ export function ConversationMenu({
             Archive
           </button>
         </div>
-      )}
-    </div>
   );
 }

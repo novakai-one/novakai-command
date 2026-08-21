@@ -5,7 +5,7 @@ import type { Dispatch, MutableRefObject } from 'react';
 import type { MessagesDesignCommands } from '../../contract';
 import type { BenchAction, BenchModel, BenchNodeActions } from './bench-model';
 
-export type BenchNodeActionDeps = {
+type BenchNodeActionDeps = {
   readonly dispatch: Dispatch<BenchAction>;
   readonly commandsRef: MutableRefObject<MessagesDesignCommands>;
   readonly modelRef: MutableRefObject<BenchModel>;
@@ -15,22 +15,12 @@ export type BenchNodeActionDeps = {
   readonly rememberSize: (nodeId: string, size: { width: number; height: number }) => void;
 };
 
-/** Builds the node action surface (moved verbatim; new Library verbs at the end). */
-export function createBenchNodeActions(deps: BenchNodeActionDeps): BenchNodeActions {
-  const { dispatch, commandsRef, modelRef, zenThreadId, exitZen, removeFrame, rememberSize } = deps;
-  const leaveZenIfShowing = (threadId: string): void => {
-    if (zenThreadId === threadId) {
-      exitZen();
-      commandsRef.current.select(null);
-    }
-  };
-
+/** The inspection-trail and travel slice of the action surface (moved verbatim). */
+function inspectionActions(deps: BenchNodeActionDeps): Pick<BenchNodeActions,
+  'inspectMessage' | 'expandMessageRelation' | 'expandRelation' | 'closeTrailStep'
+  | 'answerDecisionRequest' | 'selectRecord' | 'canTravel' | 'travel'> {
+  const { dispatch, commandsRef, modelRef } = deps;
   return {
-    openConversation: (threadId) => {
-      dispatch({ type: 'open-conversation', threadId });
-      commandsRef.current.select(modelRef.current.recordsById.get(threadId) ?? null);
-    },
-    collapseConversation: (threadId) => dispatch({ type: 'collapse-conversation', threadId }),
     inspectMessage: (threadId, messageId) => {
       dispatch({ type: 'inspect-message', threadId, messageId });
       commandsRef.current.select(modelRef.current.recordsById.get(messageId) ?? null);
@@ -65,6 +55,26 @@ export function createBenchNodeActions(deps: BenchNodeActionDeps): BenchNodeActi
       const record = modelRef.current.recordsById.get(recordId);
       if (record && commandsRef.current.canOpen(record)) commandsRef.current.open(record);
     },
+  };
+}
+
+/** Builds the node action surface (moved verbatim; new Library verbs at the end). */
+export function createBenchNodeActions(deps: BenchNodeActionDeps): BenchNodeActions {
+  const { dispatch, commandsRef, modelRef, zenThreadId, exitZen, removeFrame, rememberSize } = deps;
+  const leaveZenIfShowing = (threadId: string): void => {
+    if (zenThreadId === threadId) {
+      exitZen();
+      commandsRef.current.select(null);
+    }
+  };
+
+  return {
+    ...inspectionActions(deps),
+    openConversation: (threadId) => {
+      dispatch({ type: 'open-conversation', threadId });
+      commandsRef.current.select(modelRef.current.recordsById.get(threadId) ?? null);
+    },
+    collapseConversation: (threadId) => dispatch({ type: 'collapse-conversation', threadId }),
     sendMessage: (threadId, body) => {
       const trimmedBody = body.trim();
       if (trimmedBody) commandsRef.current.send(threadId, trimmedBody);

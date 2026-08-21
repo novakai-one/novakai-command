@@ -24,7 +24,7 @@ const rejectedSendMessage = (cause: unknown): string => {
 };
 
 /** RPC error frames reject; the interaction seam turns them back into typed UI data. */
-export async function sendMessageFromInteraction(
+async function sendMessageFromInteraction(
   services: ShellServices,
   conversationId: string,
   text: string,

@@ -6,7 +6,7 @@ import type {
 import { reconcileInspectionTrails, reduceInspectionTrails } from './bench-trails';
 
 /** Creates the empty semantic session used on a first visit. */
-export function createEmptyBenchSession(): BenchSessionSnapshot {
+function createEmptyBenchSession(): BenchSessionSnapshot {
   return {
     openThreadIds: [],
     shelvedThreadIds: [],

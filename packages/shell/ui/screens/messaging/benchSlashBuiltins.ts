@@ -23,6 +23,7 @@ export function refusalRow(
   };
 }
 
+/** Everything a builtin needs from the host: services, the data api, select. */
 export type SlashBuiltinDeps = {
   readonly services: ShellServices;
   readonly api: BenchDataApi;
