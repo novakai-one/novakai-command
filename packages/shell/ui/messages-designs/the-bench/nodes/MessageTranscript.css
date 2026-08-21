@@ -1,0 +1,37 @@
+.bench-transcript {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: var(--space-2) 0 var(--space-6);
+  scrollbar-color: var(--bench-rule-strong) transparent;
+}
+
+.bench-transcript__empty {
+  margin: var(--space-10) auto;
+  max-width: 28ch;
+  color: var(--bench-ink-faint);
+  font-size: var(--text-sm);
+  line-height: var(--leading-relaxed);
+  text-align: center;
+}
+
+.bench-transcript__composing {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: var(--space-3) 0 0;
+  color: var(--bench-ink-faint);
+  font-size: var(--text-xs);
+}
+
+.bench-transcript__composing span {
+  display: flex;
+  gap: 3px;
+}
+
+.bench-transcript__composing i {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: var(--bench-scribe);
+}

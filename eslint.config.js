@@ -21,6 +21,23 @@ export default [
     },
   },
   {
+    // Bench migration M1-03: these trees are byte-identical ports of the
+    // sandbox prototype (main 9df2842, import lines excepted) — the sandbox is
+    // their source of truth, so this repo's naming/size ratchet does not
+    // govern them. Editing them to satisfy it would break the identity law.
+    files: [
+      'packages/shell/ui/canvas/**/*.{ts,tsx}',
+      'packages/shell/ui/messages-designs/**/*.{ts,tsx}',
+    ],
+    rules: {
+      'id-length': 'off',
+      'max-lines': 'off',
+      'sonarjs/cognitive-complexity': 'off',
+      'no-restricted-syntax': 'off',
+      'max-statements-per-line': 'off',
+    },
+  },
+  {
     // ponytail: max-lines-per-function is .ts-only — React components dominate
     // .tsx and are exempt by standard; add a tiny AST rule if lowercase
     // .tsx helpers start leaking past the 20-line bar.

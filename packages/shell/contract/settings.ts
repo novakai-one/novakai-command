@@ -54,6 +54,13 @@ export const SETTING_KEYS: Record<string, KeyRule> = {
     pattern: /^motion$/,
     validate: (v) => (v === 'full' || v === 'reduced' ? null : 'motion must be "full" or "reduced"'),
   },
+  // M1-07: which Messages design renders. Any non-empty string is storable;
+  // the ui registry resolves unknown ids to the default design (M1-06), so the
+  // contract does not depend on the ui-side design list.
+  messagesDesign: {
+    pattern: /^messagesDesign$/,
+    validate: (v) => (typeof v === 'string' && v.length > 0 ? null : 'messagesDesign must be a non-empty string'),
+  },
   'renderSpeed.default': speedRule,
   lastUsedModel: {
     pattern: /^lastUsedModel$/,

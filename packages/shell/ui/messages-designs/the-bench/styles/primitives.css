@@ -1,0 +1,107 @@
+.bench-icon-control,
+.bench-panel-control {
+  display: grid;
+  place-items: center;
+  width: var(--bench-icon-control-width, 30px);
+  height: var(--bench-icon-control-height, 30px);
+  padding: 0;
+  border: 1px solid var(--bench-rule-soft);
+  border-radius: var(--bench-radius-control);
+  color: var(--bench-ink-secondary);
+  background: var(--bench-surface-inset);
+  font: inherit;
+  font-size: var(--bench-icon-control-font-size, var(--text-xl));
+  cursor: pointer;
+}
+
+.bench-avatar {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--bench-rule-strong);
+  border-radius: 50%;
+  color: var(--bench-ink-primary);
+  background: var(--bench-surface-lifted);
+  font-family: var(--bench-font-display);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+}
+
+.bench-avatar[data-status='live'] {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--settled) 14%, transparent);
+}
+
+.bench-stack-compact {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.bench-action-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.bench-control-button {
+  padding: var(--bench-control-padding, 6px 9px);
+  border: 1px solid var(--bench-control-border-color, var(--bench-rule-strong));
+  border-radius: var(--bench-radius-control);
+  color: var(--bench-control-color, var(--bench-ink-secondary));
+  background: var(--bench-surface-inset);
+  font: var(--text-xs) var(--bench-font-record);
+  cursor: pointer;
+}
+
+.bench-danger-action {
+  --bench-control-border-color: var(--bench-danger);
+  --bench-control-color: var(--bench-ink-primary);
+}
+
+.bench-danger-eyebrow {
+  color: var(--bench-danger);
+  font-family: var(--bench-font-record);
+  font-size: var(--text-eyebrow);
+  letter-spacing: .05em;
+  text-transform: uppercase;
+}
+
+.bench-eyebrow {
+  color: var(--bench-scribe-bright);
+  font-family: var(--bench-font-record);
+  font-size: var(--text-eyebrow);
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+
+.bench-detail-label {
+  color: var(--bench-scribe-bright);
+  font-family: var(--bench-font-record);
+  font-size: var(--text-eyebrow);
+  letter-spacing: .05em;
+  text-transform: uppercase;
+}
+
+.bench-muted-eyebrow {
+  color: var(--bench-ink-faint);
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.bench-compact-copy {
+  margin: 0;
+  color: var(--bench-ink-secondary);
+  font-size: var(--text-xs);
+  line-height: var(--leading-relaxed);
+}
+
+.bench-hover-wash:hover,
+.bench-hover-wash:focus-visible {
+  background: var(--bench-scribe-wash);
+}
+
+.bench-scribe-selection[data-selected='true'] {
+  border-color: var(--bench-scribe);
+}

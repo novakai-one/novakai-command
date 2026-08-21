@@ -1,0 +1,136 @@
+/**
+ * Novakai prototype design tokens.
+ *
+ * The single shared visual vocabulary for the six Rooms. Every stylesheet under
+ * The prototype reads these; none redefines them. Dark is the only theme here.
+ */
+:root {
+  --density: 1;
+  --text-scale: 1;
+
+  /* Spacing — 4px base grid. All padding, gap and margin come from here. */
+  --space-1: calc(4px * var(--density));
+  --space-2: calc(8px * var(--density));
+  --space-3: calc(12px * var(--density));
+  --space-4: calc(16px * var(--density));
+  --space-5: calc(20px * var(--density));
+  --space-6: calc(24px * var(--density));
+  --space-8: calc(32px * var(--density));
+  --space-10: calc(40px * var(--density));
+  --space-12: calc(48px * var(--density));
+  --space-16: calc(64px * var(--density));
+
+  /* Type — two roles from one superfamily. Mono is the wordmark only. */
+  --font-display: 'Inter Display', 'Inter', ui-sans-serif, system-ui, sans-serif;
+  --font-ui: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+
+  --text-eyebrow: calc(10px * var(--text-scale));
+  --text-xs: calc(11px * var(--text-scale));
+  --text-sm: calc(12px * var(--text-scale));
+  --text-base: calc(13px * var(--text-scale));
+  --text-lg: calc(15px * var(--text-scale));
+  --text-xl: calc(19px * var(--text-scale));
+  --text-2xl: calc(26px * var(--text-scale));
+
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+
+  --leading-tight: 1.25;
+  --leading-normal: 1.45;
+  --leading-relaxed: 1.6;
+
+  --tracking-display: -0.018em;
+  --tracking-eyebrow: 0.1em;
+
+  /* Surfaces — page darkest, three panel levels, children lighter than parents. */
+  --surface-page: #0d0d0f;
+  --surface-1: #121214;
+  --surface-2: #1b1b1e;
+  --surface-3: #252529;
+  --surface-sunken: #0a0a0c;
+  --surface-overlay: rgba(9, 9, 11, 0.72);
+
+  /* Ink */
+  --ink: #ececee;
+  --ink-muted: #a2a2aa;
+  --ink-faint: #8b8b94;
+  --ink-on-gold: #17130a;
+
+  /* Lines — the drafting vocabulary. Four weights, four jobs. */
+  --rule-hair: #1e1e22;
+  --rule: #2c2c31;
+  --rule-strong: #3b3b42;
+  --rule-spine: #4a4a53;
+
+  /* Accent — gold is scarce: exactly one elected subject at a time. */
+  --attention: #d0a14b;
+  --attention-bright: #e2ba6e;
+  --attention-wash: rgba(208, 161, 75, 0.1);
+  --settled: #78a886;
+  --settled-wash: rgba(120, 168, 134, 0.1);
+
+  /* Danger — never a resting state. */
+  --danger: #5a433a;
+  --danger-strong: #c8a798;
+
+  /* Relationship wires */
+  --wire: #62626c;
+  --wire-strong: #8a8a94;
+  --wire-dim: #35353b;
+
+  /* Form and elevation */
+  --radius-sm: 3px;
+  --radius: 5px;
+  --radius-lg: 8px;
+  --border: 1px;
+  --border-emphasis: 2px;
+
+  --shadow-raised: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-panel: 0 8px 24px rgba(0, 0, 0, 0.45);
+  --shadow-dialog: 0 24px 64px rgba(0, 0, 0, 0.55);
+
+  /* Focus */
+  --focus-color: var(--attention-bright);
+  --focus-width: 2px;
+  --focus-offset: 2px;
+
+  /* Motion — feedback is quick; anything structural is calm. */
+  --motion-feedback: 120ms;
+  --motion-select: 180ms;
+  --motion-disclose: 220ms;
+  --motion-panel: 260ms;
+  --motion-projection: 420ms;
+  --motion-structural: 700ms;
+  --motion-reveal-stagger: 90ms;
+  --motion-attention-release: 700ms;
+  --motion-attention-hold: 180ms;
+
+  --ease-out: cubic-bezier(0.33, 1, 0.68, 1);
+  --ease-enter: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-exit: cubic-bezier(0.4, 0, 1, 1);
+  --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-draw: cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* Layout */
+  --rail-width: 232px;
+  --rail-width-collapsed: 60px;
+  --header-height: 60px;
+  --inspector-width: 380px;
+  --gutter: var(--space-6);
+  --content-max: 1180px;
+
+  --layer-canvas: 0;
+  --layer-nodes: 10;
+  --layer-selected: 20;
+  --layer-chrome: 30;
+  --layer-inspector: 40;
+  --layer-dialog: 50;
+
+  /* Semantic zoom — the LOOK of a tier. Thresholds live in interaction/semantic-zoom.ts. */
+  --zoom-tier-transition: 200ms;
+  --zoom-overview-detail-opacity: 0;
+  --zoom-readable-detail-opacity: 1;
+  --zoom-nonfocal-opacity: 0.55;
+}

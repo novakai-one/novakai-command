@@ -120,7 +120,17 @@ export function createServerServices(
     const convListeners = new Set<(c: unknown) => void>();
     const usageListeners = new Set<(t: unknown) => void>();
     const runUsageListeners = new Set<() => void>();
+    // A dead socket must fail loudly, not strand optimistic rows as pending
+    // forever: reject in-flight calls when the connection drops, and refuse new
+    // calls outright while it is down (the UI draws the typed failure inline).
+    ws.onclose = () => {
+      for (const p of pending.values()) p.reject(new Error('connection lost — the server closed or is unreachable'));
+      pending.clear();
+    };
     const call = <T>(method: string, params: unknown = {}): Promise<T> => {
+      if (ws.readyState !== WebSocket.OPEN) {
+        return Promise.reject(new Error('connection lost — the server closed or is unreachable'));
+      }
       const id = ++seq;
       ws.send(JSON.stringify({ id, method, params, v: PROTOCOL_VERSION }));
       return new Promise<T>((res, rej) => pending.set(id, { resolve: res as (v: unknown) => void, reject: rej }));
