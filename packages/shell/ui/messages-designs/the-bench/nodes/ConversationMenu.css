@@ -1,0 +1,66 @@
+.bench-conversation-menu {
+  position: relative;
+}
+
+.bench-conversation-menu__trigger {
+  --bench-icon-control-width: auto;
+  --bench-icon-control-font-size: var(--text-xs);
+  min-width: 34px;
+  letter-spacing: 1px;
+}
+
+.bench-conversation-menu__popover {
+  position: absolute;
+  z-index: 20;
+  right: 0;
+  top: calc(100% + 8px);
+  display: grid;
+  width: 224px;
+  padding: var(--space-2);
+  border: 1px solid var(--bench-rule-strong);
+  border-radius: var(--bench-radius-card);
+  background: var(--bench-overlay-surface-solid);
+  box-shadow: var(--bench-shadow-overlay);
+}
+
+.bench-conversation-menu__popover button {
+  width: 100%;
+  height: auto;
+  padding: 8px;
+  border: 0;
+  color: var(--bench-ink-secondary);
+  background: transparent;
+  font: var(--text-xs) var(--bench-font-body);
+  text-align: left;
+}
+
+.bench-conversation-menu__popover button:hover {
+  color: var(--bench-ink-primary);
+  background: var(--bench-scribe-wash);
+}
+
+.bench-conversation-menu__popover label {
+  display: grid;
+  gap: 4px;
+  padding: 8px;
+  border-top: 1px solid var(--bench-rule-soft);
+  color: var(--bench-ink-faint);
+  font-family: var(--bench-font-record);
+  font-size: var(--text-eyebrow);
+}
+
+.bench-conversation-menu__popover select {
+  min-width: 0;
+  padding: 6px;
+  border: 1px solid var(--bench-rule-soft);
+  border-radius: var(--bench-radius-control);
+  color: var(--bench-ink-primary);
+  background: var(--bench-surface-inset);
+  font: var(--text-xs) var(--bench-font-body);
+}
+
+.bench-conversation-menu__popover .bench-conversation-menu__danger {
+  margin-top: 4px;
+  border-top: 1px solid var(--bench-rule-soft);
+  color: var(--bench-danger);
+}

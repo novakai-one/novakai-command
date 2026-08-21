@@ -1,0 +1,116 @@
+.bench-message {
+  --bench-message-body-offset: 0px;
+  position: relative;
+  display: flex;
+  padding: 3px var(--space-5);
+}
+
+.bench-message[data-mine='true'] {
+  --bench-message-body-offset: var(--space-6);
+}
+
+.bench-message[data-group-start='true'] {
+  padding-top: var(--space-5);
+}
+
+.bench-message:first-child {
+  padding-top: var(--space-4);
+}
+
+.bench-message__trigger {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  gap: var(--space-3);
+  width: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: var(--bench-radius-control);
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.bench-message__trigger:hover,
+.bench-message__trigger:focus-visible {
+  background: color-mix(in srgb, var(--bench-surface-lifted) 32%, transparent);
+}
+
+.bench-message__avatar {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  visibility: hidden;
+  border: 1px solid var(--bench-rule-strong);
+  border-radius: 50%;
+  color: var(--bench-ink-secondary);
+  background: var(--bench-surface-inset);
+  font-family: var(--bench-font-record);
+  font-size: var(--text-eyebrow);
+  font-weight: var(--weight-semibold);
+}
+
+.bench-message[data-group-start='true'] .bench-message__avatar {
+  visibility: visible;
+}
+
+.bench-message[data-mine='true'] .bench-message__avatar {
+  border-color: var(--bench-scribe);
+  color: var(--bench-scribe-bright);
+}
+
+.bench-message__content {
+  width: 100%;
+  max-width: var(--bench-message-max-width, 90%);
+  min-width: 0;
+}
+
+.bench-message__meta {
+  display: flex;
+  align-items: baseline;
+  min-height: 16px;
+}
+
+.bench-message__meta time {
+  color: var(--bench-ink-faint);
+  font-family: var(--bench-font-record);
+  font-size: var(--text-eyebrow);
+}
+
+.bench-message__body {
+  display: block;
+  width: calc(100% - var(--bench-message-body-offset));
+  margin-left: var(--bench-message-body-offset);
+  color: var(--bench-ink-primary);
+  font-size: var(--text-lg);
+  line-height: var(--leading-relaxed);
+  overflow-wrap: anywhere;
+}
+
+.bench-message[data-group-start='true'] .bench-message__body {
+  margin-top: 5px;
+}
+
+.bench-message__source {
+  right: -21px;
+  width: 7px;
+  height: 7px;
+  border: 1px solid var(--bench-scribe-bright);
+  background: var(--bench-surface-open);
+  opacity: 0;
+}
+
+.bench-message:hover .bench-message__source,
+.bench-message:focus-within .bench-message__source {
+  opacity: 1;
+}
+
+/* Failed send — never silent (red gate 5). Typed reason inline on the card. */
+.bench-message__failed {
+  display: block;
+  margin-top: 2px;
+  font-size: var(--text-xs);
+  color: var(--bench-danger);
+}

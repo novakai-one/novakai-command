@@ -1,0 +1,89 @@
+.the-bench {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  color: var(--bench-ink-primary);
+  background: var(--bench-canvas-deep);
+  font-family: var(--bench-font-body);
+}
+
+.the-bench:focus-visible {
+  outline: var(--focus-width) solid var(--focus-color);
+  outline-offset: calc(-1 * var(--focus-width));
+}
+
+.the-bench__canvas {
+  background: var(--bench-canvas-deep);
+}
+
+.the-bench__canvas .react-flow__pane { cursor: grab; }
+.the-bench__canvas .react-flow__pane.dragging { cursor: grabbing; }
+
+.the-bench__canvas .react-flow__node {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.the-bench__canvas .react-flow__node:focus-visible,
+.the-bench :where(button, input, textarea, select):focus-visible {
+  outline: var(--focus-width) solid var(--focus-color);
+  outline-offset: var(--focus-offset);
+}
+
+.the-bench__field {
+  position: absolute;
+  z-index: var(--bench-layer-field);
+  left: -2400px;
+  top: -1800px;
+  width: 7200px;
+  height: 5600px;
+  pointer-events: none;
+}
+
+.the-bench__scale {
+  position: absolute;
+  z-index: var(--bench-layer-screen);
+  right: var(--space-5);
+  bottom: 72px;
+  display: grid;
+  grid-template-columns: auto auto;
+  align-items: baseline;
+  gap: 2px var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--bench-rule-soft);
+  border-radius: var(--bench-radius-control);
+  color: var(--bench-ink-faint);
+  background: color-mix(in srgb, var(--bench-canvas-deep) 88%, transparent);
+  font-family: var(--bench-font-record);
+  font-size: var(--text-eyebrow);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  pointer-events: none;
+}
+
+.the-bench__scale strong {
+  color: var(--bench-scribe-bright);
+  font-weight: var(--weight-semibold);
+}
+
+.the-bench__scale small {
+  grid-column: 1 / -1;
+  color: var(--bench-ink-faint);
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.the-bench__scale kbd {
+  font: inherit;
+  color: var(--bench-ink-secondary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .the-bench {
+    --bench-motion-feedback: 0ms;
+    --bench-motion-open: 0ms;
+  }
+}

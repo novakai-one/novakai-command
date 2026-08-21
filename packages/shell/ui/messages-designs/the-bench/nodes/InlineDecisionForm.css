@@ -1,0 +1,27 @@
+.bench-decision-form {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.bench-decision-form > label {
+  color: var(--bench-ink-faint);
+  font-family: var(--bench-font-record);
+  font-size: var(--text-eyebrow);
+}
+
+.bench-decision-form textarea {
+  width: 100%;
+  resize: vertical;
+  border: 1px solid var(--bench-rule-soft);
+  border-radius: var(--bench-radius-control);
+  padding: var(--space-2);
+  color: var(--bench-ink-primary);
+  background: var(--bench-canvas-deep);
+  font: var(--text-xs) / var(--leading-relaxed) var(--bench-font-body);
+}
+
+.bench-decision-form button:disabled {
+  border-color: var(--bench-rule-soft);
+  color: var(--bench-ink-faint);
+  cursor: not-allowed;
+}

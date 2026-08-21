@@ -1,0 +1,40 @@
+.bench-conversation {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.bench-conversation__mission-pool {
+  position: absolute;
+  z-index: -1;
+  inset: 20% -14% -22%;
+  border-radius: 50%;
+  opacity: 0;
+  filter: blur(22px);
+  pointer-events: none;
+}
+
+.bench-conversation {
+  transition: opacity var(--bench-motion-open) var(--bench-ease), filter var(--bench-motion-open) var(--bench-ease);
+}
+
+.bench-conversation[data-mission-tone='slate'] .bench-conversation__mission-pool {
+  background: var(--bench-mission-slate);
+  opacity: 1;
+}
+
+.bench-conversation[data-mission-tone='oxide'] .bench-conversation__mission-pool {
+  background: var(--bench-mission-oxide);
+  opacity: 1;
+}
+
+.bench-conversation[data-mission-tone='moss'] .bench-conversation__mission-pool {
+  background: var(--bench-mission-moss);
+  opacity: 1;
+}
+
+.bench-conversation[data-mission-tone='violet'] .bench-conversation__mission-pool {
+  background: var(--bench-mission-violet);
+  opacity: 1;
+}
