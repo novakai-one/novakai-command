@@ -8,7 +8,7 @@ import { randomUUID } from 'node:crypto';
 import type { ServerRuntime, Conversation } from '../methods.js';
 import { summarize, persistView } from '../methods.js';
 
-const now = (): string => new Date().toISOString();
+const nowIso = (): string => new Date().toISOString();
 
 export interface DoorPrincipal {
   personId: string;
@@ -16,7 +16,7 @@ export interface DoorPrincipal {
 
 /** Bearer → configured principal. Refusal is null — never a weaker identity. */
 export function principalForBearer(runtime: ServerRuntime, bearer: string): DoorPrincipal | null {
-  const principal = runtime.configStore.current().principals.find((p) => p.token === bearer);
+  const principal = runtime.configStore.current().principals.find((entry) => entry.token === bearer);
   return principal ? { personId: principal.personId } : null;
 }
 
@@ -39,7 +39,7 @@ export async function addressBook(runtime: ServerRuntime): Promise<AddressBook> 
   const bindings = runtime.configStore.current().bindings;
   const agents: AddressBookEntry[] = [];
   for (const binding of bindings) {
-    const agent = listed.ok ? listed.value?.items.find((a) => a.id === binding.agentId) : undefined;
+    const agent = listed.ok ? listed.value?.items.find((item) => item.id === binding.agentId) : undefined;
     if (!agent || agent.status === 'archived') continue;
     agents.push({ personId: binding.personId, name: agent.displayName, provider: agent.provider, status: agent.status });
   }
@@ -50,8 +50,8 @@ export async function addressBook(runtime: ServerRuntime): Promise<AddressBook> 
 export async function resolvePersonByName(runtime: ServerRuntime, name: string): Promise<string | null> {
   if (name === 'chris' || name === runtime.human.personId) return runtime.human.personId;
   const book = await addressBook(runtime);
-  const hit = book.agents.find((a) => a.name.toLowerCase() === name.toLowerCase() || a.personId === name);
-  return hit?.personId ?? null;
+  const entry = book.agents.find((agent) => agent.name.toLowerCase() === name.toLowerCase() || agent.personId === name);
+  return entry?.personId ?? null;
 }
 
 export interface AgentSendInput {
@@ -73,7 +73,7 @@ export async function agentSend(
   const holder = await runtime.holderForPerson(caller.personId);
   if (!holder) return { ok: false, status: 401, error: `no messaging principal for ${caller.personId}` };
   const clientMessageId = input.clientMessageId ?? `cmsg_${randomUUID()}`;
-  const sent = await holder.call((s) => (s as { sendMessage(i: object): Promise<unknown> }).sendMessage({
+  const sent = await holder.call((session) => (session as { sendMessage(input: object): Promise<unknown> }).sendMessage({
     address: `person:${targetId}`,
     body: { text: input.body },
     priority: input.interrupt ? 'urgent' : 'normal',
@@ -90,13 +90,13 @@ export async function agentSend(
   // caller's Bench conversation (created on first contact), broadcast live.
   if (targetId === runtime.human.personId) {
     const conversation = await conversationForAgentPerson(runtime, caller.personId, sent.value.threadId);
-    conversation.lastActivityAt = now();
+    conversation.lastActivityAt = nowIso();
     runtime.broadcast('message', {
       id: sent.value.messageId,
       conversationId: conversation.id,
       senderId: caller.personId,
       text: input.body,
-      createdAt: now(),
+      createdAt: nowIso(),
     });
     runtime.broadcast('conversation', summarize(conversation));
   }
@@ -111,8 +111,8 @@ export async function agentSend(
 async function conversationForAgentPerson(
   runtime: ServerRuntime, personId: string, threadId: string,
 ): Promise<Conversation> {
-  const existing = [...runtime.conversations.values()].find((c) =>
-    !c.archived && (c.personId === personId || c.address === `person:${personId}` || c.threadId === threadId));
+  const existing = [...runtime.conversations.values()].find((view) =>
+    !view.archived && (view.personId === personId || view.address === `person:${personId}` || view.threadId === threadId));
   if (existing) {
     if (!existing.threadId) {
       existing.threadId = threadId;
@@ -121,17 +121,17 @@ async function conversationForAgentPerson(
     return existing;
   }
   const book = await addressBook(runtime);
-  const entry = book.agents.find((a) => a.personId === personId);
-  const binding = runtime.configStore.current().bindings.find((b) => b.personId === personId);
+  const named = book.agents.find((agent) => agent.personId === personId);
+  const binding = runtime.configStore.current().bindings.find((bound) => bound.personId === personId);
   const conversation: Conversation = {
     id: `conv_${randomUUID().slice(0, 8)}`,
     address: `person:${personId}`,
     threadId,
-    title: entry?.name ?? personId,
+    title: named?.name ?? personId,
     kind: 'agent',
     pinned: false,
     archived: false,
-    lastActivityAt: now(),
+    lastActivityAt: nowIso(),
     personId,
     ...(binding ? { agentId: binding.agentId } : {}),
   };
@@ -160,22 +160,22 @@ export async function agentMessages(
   if (!targetId) return { ok: false, status: 404, error: `unknown person "${withName}"` };
   const holder = await runtime.holderForPerson(caller.personId);
   if (!holder) return { ok: false, status: 401, error: `no messaging principal for ${caller.personId}` };
-  const threads = await holder.call((s) =>
-    (s as { listThreadsForPerson(i: object): Promise<unknown> }).listThreadsForPerson({})) as
+  const threads = await holder.call((session) =>
+    (session as { listThreadsForPerson(input: object): Promise<unknown> }).listThreadsForPerson({})) as
     { kind: string; value?: { threads: Array<{ id: string; direct?: { pair: string[] } }> } };
   if (threads.kind !== 'ok' || !threads.value) return { ok: true, messages: [] };
-  const thread = threads.value.threads.find((t) => t.direct?.pair.includes(targetId));
+  const thread = threads.value.threads.find((candidate) => candidate.direct?.pair.includes(targetId));
   if (!thread) return { ok: true, messages: [] };
-  const page = await holder.call((s) =>
-    (s as { getMessages(i: object): Promise<unknown> }).getMessages({ threadId: thread.id, limit: 200 })) as
+  const page = await holder.call((session) =>
+    (session as { getMessages(input: object): Promise<unknown> }).getMessages({ threadId: thread.id, limit: 200 })) as
     { kind: string; value?: { messages: Array<{
       id: string; senderId: string; createdAt: string; priority: string; body: { text: string };
     }> } };
   if (page.kind !== 'ok' || !page.value) return { ok: true, messages: [] };
   return {
     ok: true,
-    messages: page.value.messages.map((m) => ({
-      id: m.id, senderId: m.senderId, createdAt: m.createdAt, priority: m.priority, body: { text: m.body.text },
+    messages: page.value.messages.map((message) => ({
+      id: message.id, senderId: message.senderId, createdAt: message.createdAt, priority: message.priority, body: { text: message.body.text },
     })),
   };
 }

@@ -12,7 +12,9 @@ export default [
     rules: {
       'max-lines': ['warn', { max: 300, skipBlankLines: true, skipComments: true }],
       'max-statements-per-line': ['warn', { max: 2 }],
-      'id-length': ['warn', { min: 4, exceptions: ['id', 'el', 'cwd', 'env'] }],
+      // properties: 'never' — property names are contract shapes ({ok}, {to}),
+      // not identifiers a writer chooses; the rule governs chosen names only.
+      'id-length': ['warn', { min: 4, exceptions: ['id', 'el', 'cwd', 'env'], properties: 'never' }],
       'sonarjs/cognitive-complexity': ['warn', 10],
       'no-restricted-syntax': ['warn', {
         selector: "JSXAttribute[name.name='style']",

@@ -1,1 +1,0 @@
-{"id":"mission_fixture-prime","kind":"mission","ts":"2026-07-21T12:00:00+10:00","title":"Fixture mission","owner":"chief-kimi","status":"done","refs":[{"kind":"project","value":"proj_fixture"},{"kind":"doc","value":"docs/fixture.md","label":"design doc"}]}

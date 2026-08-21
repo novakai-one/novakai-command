@@ -6,4 +6,4 @@
 #   browse goto <url> | click <sel> | type <sel> <text> | press <key> | text | shot <path> | release
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-exec npx tsx "$DIR/src/backend/browser/cli.ts" "$@"
+exec npx tsx "$DIR/packages/browser/cli.ts" "$@"

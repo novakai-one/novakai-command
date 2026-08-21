@@ -58,7 +58,7 @@ function appToken() {
 }
 const SLACK_API = (process.env.NVK_SLACK_API_BASE ?? 'https://slack.com/api').replace(/\/$/, '');
 
-const HUMAN_PERSON_ID = 'person_user-chris'; // mirrors src/frontend/lib/messagingV2 (CHRIS)
+const HUMAN_PERSON_ID = process.env.NVK_HUMAN_PERSON_ID ?? 'person_chris'; // the nvk-server human principal
 const META_TAG = 'nvk_slack_bridge';         // Slack metadata event_type ([a-z0-9_], ≤30)
 const RETRY_DELAY_MS = Number(process.env.NVK_SLACK_BRIDGE_RETRY_MS) || 5000; // Slack post retry (mirror precedent)
 const PING_MS = Number(process.env.NVK_SLACK_BRIDGE_PING_MS) || 30_000;       // zombie-socket heartbeat

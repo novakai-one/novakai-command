@@ -17,7 +17,7 @@ export async function ensureAgent(
   const listed = await runtime.agents.listAgents() as
     { ok: boolean; value?: { items: Array<{ id: string; displayName: string; provider: string; status: string }> } };
   const existing = listed.ok
-    ? listed.value?.items.find((a) => a.displayName === displayName && a.provider === provider && a.status !== 'archived')
+    ? listed.value?.items.find((item) => item.displayName === displayName && item.provider === provider && item.status !== 'archived')
     : undefined;
   if (existing) return existing.id;
   const defined = await runtime.agents.defineAgent(
@@ -36,7 +36,7 @@ export async function ensureAgent(
  */
 export async function ensureAgentPerson(runtime: ServerRuntime, agentId: string): Promise<string> {
   const config = runtime.configStore.current();
-  const bound = config.bindings.find((b) => b.agentId === agentId);
+  const bound = config.bindings.find((binding) => binding.agentId === agentId);
   if (bound) {
     await openContactPolicy(runtime, bound.personId);
     return bound.personId;
@@ -62,16 +62,16 @@ export async function ensureAgentPerson(runtime: ServerRuntime, agentId: string)
 export async function openContactPolicy(runtime: ServerRuntime, personId: string): Promise<void> {
   const holder = await runtime.holderForPerson(personId);
   if (!holder) return;
-  await holder.call((s) => (s as { setContactPolicy(p: object): Promise<unknown> })
+  await holder.call((session) => (session as { setContactPolicy(policy: object): Promise<unknown> })
     .setContactPolicy({ allowlist: [runtime.human.personId], defaultRule: 'deny' }));
 }
 
 /** Chris's own allowlist grows to include every provisioned agent person. */
 export async function allowHumanToReach(runtime: ServerRuntime, _personId: string): Promise<void> {
   const others = runtime.configStore.current().principals
-    .map((p) => p.personId)
+    .map((principal) => principal.personId)
     .filter((id) => id !== runtime.human.personId);
-  await runtime.human.holder.call((s) => (s as { setContactPolicy(p: object): Promise<unknown> })
+  await runtime.human.holder.call((session) => (session as { setContactPolicy(policy: object): Promise<unknown> })
     .setContactPolicy({ allowlist: others, defaultRule: 'deny' }));
 }
 

@@ -2,7 +2,7 @@
 //
 // Same posture as the transport it plugs into: loopback is the boundary, the
 // bearer decides WHO. Two credential classes, never interchangeable:
-//   • a principal bearer (nvkt_…)  → an agent acting as itself (send/read)
+//   • a principal bearer (nvk_…)   → an agent acting as itself (send/read)
 //   • the connection token          → a local process acting for Chris
 //     (register, roster, user verbs — the Slack bridge)
 // An unauthenticated request is refused with a named error and nothing stored.
@@ -11,7 +11,7 @@ import type { MethodTable } from '../../contract/protocol.js';
 import type { ServerRuntime } from '../methods.js';
 import type { ProviderName } from '../../contract/config.js';
 import {
-  addressBook, agentMessages, agentSend, principalForBearer,
+  addressBook, agentMessages, agentSend, principalForBearer, type DoorPrincipal,
 } from './messages.js';
 import { registerExternalAgent } from './provision.js';
 import { roster, userMessages, userSend, userThreads } from './user.js';
@@ -31,7 +31,16 @@ export interface DoorDeps {
   methods: MethodTable;
 }
 
-const json = (response: ServerResponse, status: number, body: unknown): void => {
+interface DoorCall {
+  deps: DoorDeps;
+  request: IncomingMessage;
+  response: ServerResponse;
+  requestUrl: URL;
+  bearer: string | null;
+  connectionToken: string;
+}
+
+const respond = (response: ServerResponse, status: number, body: unknown): void => {
   response.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
   response.end(JSON.stringify(body));
 };
@@ -58,6 +67,134 @@ async function readJsonBody(request: IncomingMessage): Promise<Record<string, un
   }
 }
 
+/** The local-process credential, or a 401 already written. */
+function requireLocalProcess(call: DoorCall): boolean {
+  if (call.bearer === call.connectionToken) return true;
+  respond(call.response, 401, { error: 'this verb needs the connection token (.novakai/server/ws-token)' });
+  return false;
+}
+
+/** The agent's own principal, or a 401 already written. */
+function requirePrincipal(call: DoorCall): DoorPrincipal | null {
+  const principal = call.bearer ? principalForBearer(call.deps.runtime, call.bearer) : null;
+  if (!principal) {
+    respond(call.response, 401, { error: 'no valid identity token — register first or check NVK_AGENT_TOKEN' });
+  }
+  return principal;
+}
+
+// ── agent-side verbs (principal bearer) ────────────────────────────────────
+
+async function handleAddressBook(call: DoorCall): Promise<void> {
+  const principal = requirePrincipal(call);
+  if (principal) respond(call.response, 200, await addressBook(call.deps.runtime));
+}
+
+async function handleAgentSend(call: DoorCall): Promise<void> {
+  const principal = requirePrincipal(call);
+  if (!principal) return;
+  const body = await readJsonBody(call.request);
+  if (!body || typeof body.to !== 'string' || typeof body.body !== 'string' || !body.body.trim()) {
+    respond(call.response, 400, { error: 'expected {to, body} with a non-empty body' });
+    return;
+  }
+  const sent = await agentSend(call.deps.runtime, principal, {
+    to: body.to,
+    body: body.body,
+    interrupt: body.interrupt === true,
+    ...(typeof body.clientMessageId === 'string' ? { clientMessageId: body.clientMessageId } : {}),
+  });
+  if (sent.ok) {
+    respond(call.response, 200, {
+      ok: true, messageId: sent.messageId, ...(sent.urgentDowngraded ? { urgentDowngraded: true } : {}),
+    });
+  } else {
+    respond(call.response, sent.status, { error: sent.error });
+  }
+}
+
+async function handleAgentMessages(call: DoorCall): Promise<void> {
+  const principal = requirePrincipal(call);
+  if (!principal) return;
+  const withName = call.requestUrl.searchParams.get('with');
+  if (!withName) {
+    respond(call.response, 400, { error: 'expected ?with=<name>' });
+    return;
+  }
+  const result = await agentMessages(call.deps.runtime, principal, withName);
+  if (result.ok) respond(call.response, 200, { messages: result.messages });
+  else respond(call.response, result.status, { error: result.error });
+}
+
+// ── local-process verbs (connection token) ─────────────────────────────────
+
+async function handleRegister(call: DoorCall): Promise<void> {
+  if (!requireLocalProcess(call)) return;
+  const body = await readJsonBody(call.request);
+  const name = typeof body?.name === 'string' ? body.name.trim() : '';
+  const provider = typeof body?.provider === 'string' ? body.provider : '';
+  if (!name || !PROVIDERS.has(provider)) {
+    respond(call.response, 400, { error: 'expected {name, provider: claude|codex|kimi|mock}' });
+    return;
+  }
+  try {
+    const registered = await registerExternalAgent(call.deps.runtime, name, provider as ProviderName);
+    respond(call.response, 200, { ok: true, ...registered });
+  } catch (cause) {
+    respond(call.response, 500, { error: cause instanceof Error ? cause.message : String(cause) });
+  }
+}
+
+async function handleRoster(call: DoorCall): Promise<void> {
+  if (requireLocalProcess(call)) respond(call.response, 200, await roster(call.deps.runtime));
+}
+
+async function handleUserThreads(call: DoorCall): Promise<void> {
+  if (requireLocalProcess(call)) respond(call.response, 200, await userThreads(call.deps.runtime));
+}
+
+async function handleUserMessages(call: DoorCall): Promise<void> {
+  if (!requireLocalProcess(call)) return;
+  const threadId = call.requestUrl.searchParams.get('threadId');
+  if (!threadId) {
+    respond(call.response, 400, { error: 'expected ?threadId=' });
+    return;
+  }
+  respond(call.response, 200, await userMessages(call.deps.runtime, threadId));
+}
+
+/** The bridge sends body as {text}; older callers send a bare string. */
+function textOfBody(rawBody: unknown): string {
+  if (typeof rawBody === 'string') return rawBody;
+  const nested = (rawBody as { text?: unknown })?.text;
+  return typeof nested === 'string' ? nested : '';
+}
+
+async function handleUserSend(call: DoorCall): Promise<void> {
+  if (!requireLocalProcess(call)) return;
+  const body = await readJsonBody(call.request);
+  const toName = typeof body?.to === 'string' ? body.to : '';
+  const text = textOfBody(body?.body);
+  if (!toName || !text.trim()) {
+    respond(call.response, 400, { error: 'expected {to, body}' });
+    return;
+  }
+  const sent = await userSend(call.deps.runtime, call.deps.methods, toName, text);
+  if (sent.ok) respond(call.response, 200, { ok: true, ...(sent.messageId ? { messageId: sent.messageId } : {}) });
+  else respond(call.response, sent.status, { error: sent.error, ...(sent.roster ? { roster: sent.roster } : {}) });
+}
+
+const ROUTES: Record<string, (call: DoorCall) => Promise<void>> = {
+  'GET /api/door/address-book': handleAddressBook,
+  'POST /api/door/send': handleAgentSend,
+  'GET /api/door/messages': handleAgentMessages,
+  'POST /api/door/register': handleRegister,
+  'GET /api/door/agents': handleRoster,
+  'GET /api/door/user/threads': handleUserThreads,
+  'GET /api/door/user/messages': handleUserMessages,
+  'POST /api/door/user/send': handleUserSend,
+};
+
 /**
  * Handle one door request. Returns false when the path is not the door's —
  * the transport then falls through to bootstrap/static, exactly like the
@@ -67,103 +204,14 @@ export async function handleDoorHttpRequest(
   deps: DoorDeps, context: DoorRequestContext,
 ): Promise<boolean> {
   const { request, response, connectionToken } = context;
-  const url = new URL(request.url ?? '/', 'http://127.0.0.1');
-  if (!url.pathname.startsWith('/api/door/')) return false;
-  const route = `${request.method} ${url.pathname}`;
-  const bearer = bearerOf(request);
-
-  const asLocalProcess = (): boolean => {
-    if (bearer === connectionToken) return true;
-    json(response, 401, { error: 'this verb needs the connection token (.novakai/ws-token)' });
-    return false;
-  };
-  const asPrincipal = (): ReturnType<typeof principalForBearer> => {
-    const principal = bearer ? principalForBearer(deps.runtime, bearer) : null;
-    if (!principal) json(response, 401, { error: 'no valid identity token — register first or check NVK_AGENT_TOKEN' });
-    return principal;
-  };
-
-  // ── agent-side verbs (principal bearer) ──────────────────────────────────
-  if (route === 'GET /api/door/address-book') {
-    const principal = asPrincipal();
-    if (principal) json(response, 200, await addressBook(deps.runtime));
+  const requestUrl = new URL(request.url ?? '/', 'http://127.0.0.1');
+  if (!requestUrl.pathname.startsWith('/api/door/')) return false;
+  const route = `${request.method} ${requestUrl.pathname}`;
+  const handler = ROUTES[route];
+  if (!handler) {
+    respond(response, 404, { error: `unknown door route ${route}` });
     return true;
   }
-  if (route === 'POST /api/door/send') {
-    const principal = asPrincipal();
-    if (!principal) return true;
-    const body = await readJsonBody(request);
-    if (!body || typeof body.to !== 'string' || typeof body.body !== 'string' || !body.body.trim()) {
-      json(response, 400, { error: 'expected {to, body} with a non-empty body' });
-      return true;
-    }
-    const sent = await agentSend(deps.runtime, principal, {
-      to: body.to,
-      body: body.body,
-      interrupt: body.interrupt === true,
-      ...(typeof body.clientMessageId === 'string' ? { clientMessageId: body.clientMessageId } : {}),
-    });
-    if (sent.ok) json(response, 200, { ok: true, messageId: sent.messageId, ...(sent.urgentDowngraded ? { urgentDowngraded: true } : {}) });
-    else json(response, sent.status, { error: sent.error });
-    return true;
-  }
-  if (route === 'GET /api/door/messages') {
-    const principal = asPrincipal();
-    if (!principal) return true;
-    const withName = url.searchParams.get('with');
-    if (!withName) { json(response, 400, { error: 'expected ?with=<name>' }); return true; }
-    const result = await agentMessages(deps.runtime, principal, withName);
-    if (result.ok) json(response, 200, { messages: result.messages });
-    else json(response, result.status, { error: result.error });
-    return true;
-  }
-
-  // ── local-process verbs (connection token) ───────────────────────────────
-  if (route === 'POST /api/door/register') {
-    if (!asLocalProcess()) return true;
-    const body = await readJsonBody(request);
-    const name = typeof body?.name === 'string' ? body.name.trim() : '';
-    const provider = typeof body?.provider === 'string' ? body.provider : '';
-    if (!name || !PROVIDERS.has(provider)) {
-      json(response, 400, { error: 'expected {name, provider: claude|codex|kimi|mock}' });
-      return true;
-    }
-    try {
-      const registered = await registerExternalAgent(deps.runtime, name, provider as ProviderName);
-      json(response, 200, { ok: true, ...registered });
-    } catch (cause) {
-      json(response, 500, { error: cause instanceof Error ? cause.message : String(cause) });
-    }
-    return true;
-  }
-  if (route === 'GET /api/door/agents') {
-    if (asLocalProcess()) json(response, 200, await roster(deps.runtime));
-    return true;
-  }
-  if (route === 'GET /api/door/user/threads') {
-    if (asLocalProcess()) json(response, 200, await userThreads(deps.runtime));
-    return true;
-  }
-  if (route === 'GET /api/door/user/messages') {
-    if (!asLocalProcess()) return true;
-    const threadId = url.searchParams.get('threadId');
-    if (!threadId) { json(response, 400, { error: 'expected ?threadId=' }); return true; }
-    json(response, 200, await userMessages(deps.runtime, threadId));
-    return true;
-  }
-  if (route === 'POST /api/door/user/send') {
-    if (!asLocalProcess()) return true;
-    const body = await readJsonBody(request);
-    const to = typeof body?.to === 'string' ? body.to : '';
-    const raw = body?.body;
-    const text = typeof raw === 'string' ? raw : typeof (raw as { text?: unknown })?.text === 'string' ? (raw as { text: string }).text : '';
-    if (!to || !text.trim()) { json(response, 400, { error: 'expected {to, body}' }); return true; }
-    const sent = await userSend(deps.runtime, deps.methods, to, text);
-    if (sent.ok) json(response, 200, { ok: true, ...(sent.messageId ? { messageId: sent.messageId } : {}) });
-    else json(response, sent.status, { error: sent.error, ...(sent.roster ? { roster: sent.roster } : {}) });
-    return true;
-  }
-
-  json(response, 404, { error: `unknown door route ${route}` });
+  await handler({ deps, request, response, requestUrl, bearer: bearerOf(request), connectionToken });
   return true;
 }
