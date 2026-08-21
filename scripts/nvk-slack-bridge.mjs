@@ -45,7 +45,17 @@ const CONFIG_FILE = process.env.NVK_SLACK_BRIDGE_CONFIG
   ?? path.join(ROOT, '.novakai-command', 'slack-bridge.json');
 const STATE_FILE = process.env.NVK_SLACK_BRIDGE_STATE
   ?? path.join(ROOT, '.novakai-command', 'slack-bridge-state.json');
-const APP_BASE = (process.env.NVK_SLACK_BRIDGE_APP_BASE ?? 'http://localhost:3131').replace(/\/$/, '');
+const APP_BASE = (process.env.NVK_SLACK_BRIDGE_APP_BASE ?? 'http://localhost:5180').replace(/\/$/, '');
+// The nvk-server connection token (loopback trust): read fresh per call — the
+// server rewrites it on every restart.
+const NVK_ROOT = process.env.NVK_ROOT ?? path.join(process.env.HOME ?? '', 'Programming', 'Novakai-Command', '.novakai');
+function appToken() {
+  try {
+    return fs.readFileSync(path.join(NVK_ROOT, 'server', 'ws-token'), 'utf8').trim();
+  } catch {
+    return '';
+  }
+}
 const SLACK_API = (process.env.NVK_SLACK_API_BASE ?? 'https://slack.com/api').replace(/\/$/, '');
 
 const HUMAN_PERSON_ID = 'person_user-chris'; // mirrors src/frontend/lib/messagingV2 (CHRIS)
@@ -251,14 +261,17 @@ async function postToSlack(payload, channelId = dmChannelId) {
 let roster = []; // AgentInfo[] — REST at boot/refresh, agents-changed in between
 
 async function appRest(pathname) {
-  const response = await fetch(`${APP_BASE}${pathname}`, { signal: AbortSignal.timeout(10_000) });
+  const response = await fetch(`${APP_BASE}${pathname}`, {
+    signal: AbortSignal.timeout(10_000),
+    headers: { authorization: `Bearer ${appToken()}` },
+  });
   if (!response.ok) throw new Error(`GET ${pathname} → HTTP ${response.status}`);
   return response.json();
 }
 
 async function refreshRoster() {
   try {
-    const data = await appRest('/api/agents');
+    const data = await appRest('/api/door/agents');
     if (Array.isArray(data.agents)) roster = data.agents;
   } catch (error) {
     warn(`roster fetch failed (${error.message}) — names may degrade to personIds`);
@@ -267,7 +280,7 @@ async function refreshRoster() {
 
 function nameForPersonId(personId) {
   if (personId === HUMAN_PERSON_ID) return 'chris';
-  const found = roster.find((agent) => `person_${agent.agentId.replaceAll('_', '-')}` === personId);
+  const found = roster.find((agent) => agent.personId === personId);
   return found?.title ?? personId;
 }
 
@@ -327,7 +340,7 @@ async function postParts(message, parts, channelId, rootTs, onFirstPart) {
 
 async function refreshThreads() {
   await refreshRoster();
-  const data = await appRest('/api/messaging/v2/user/threads');
+  const data = await appRest('/api/door/user/threads');
   threadCache.clear();
   for (const thread of data.threads ?? []) threadCache.set(thread.id, thread);
 }
@@ -359,7 +372,7 @@ async function resolveChannels() {
   if (config.channels.length === 0) return;
   let threads;
   try {
-    const data = await appRest('/api/messaging/v2/user/threads');
+    const data = await appRest('/api/door/user/threads');
     threads = data.threads ?? [];
   } catch (error) {
     warn(`channel resolution failed (${error.message}) — channels dormant this boot; retrying on the next app-ws connect`);
@@ -500,7 +513,7 @@ async function refetchFromTip() {
   try {
     await refreshThreads();
     for (const thread of threadCache.values()) {
-      const data = await appRest(`/api/messaging/v2/user/messages?threadId=${encodeURIComponent(thread.id)}`);
+      const data = await appRest(`/api/door/user/messages?threadId=${encodeURIComponent(thread.id)}`);
       fresh.push(...(data.messages ?? []).filter(
         (message) => Number.isFinite(message.sequence) && message.sequence > state.cursor,
       ));
@@ -523,62 +536,13 @@ async function refetchFromTip() {
 
 let appSocket = null;
 let appRetryCount = 0;
-let everLive = false;
-let endedRetryCount = 0;
 
-const appWsUrl = () => `${APP_BASE.replace(/^http/, 'ws')}/ws`;
-
-function subscribeLive() {
-  if (appSocket === null || appSocket.readyState !== WebSocket.OPEN) return;
-  const since = state.cursor > 0 ? `s_${state.cursor}` : undefined;
-  appSocket.send(JSON.stringify({ type: 'messaging-v2-sub', ...(since === undefined ? {} : { since }) }));
-  vlog(`subscribed (since ${since ?? 'tip'})`);
-}
+const appWsUrl = () => `${APP_BASE.replace(/^http/, 'ws')}/ws?token=${appToken()}`;
 
 function backoffMs(retryCount) {
   return Math.min(BACKOFF_BASE_MS * 2 ** retryCount, BACKOFF_MAX_MS);
 }
 
-function handleEnded(frame) {
-  const backoff = backoffMs(endedRetryCount);
-  endedRetryCount += 1;
-  if (frame.reason === 'dependency-lost' && !everLive) {
-    warn(`capability unavailable — resubscribing in ${backoff}ms (no refetch)`);
-    setTimeout(subscribeLive, backoff);
-    return;
-  }
-  warn(`subscription ended (${frame.reason ?? 'unknown'}) — refetching from the tip in ${backoff}ms`);
-  setTimeout(() => { void enqueueFrame(refetchFromTip).then(subscribeLive); }, backoff);
-}
-
-async function handleCapabilityFrame(payload) {
-  if (payload === null || typeof payload !== 'object') return;
-  if (payload.kind === 'started') {
-    everLive = true;
-    endedRetryCount = 0;
-    vlog('subscription live');
-    return;
-  }
-  if (payload.kind === 'ended') return handleEnded(payload);
-  if (payload.kind !== 'event' || payload.event === undefined) return;
-  const message = payload.event.message;
-  const delivery = payload.event.delivery;
-  const sequence = message?.sequence
-    ?? (delivery !== undefined ? payload.sequence : undefined)
-    ?? payload.sequence;
-  if (sequence !== undefined && sequence <= state.cursor) return; // at-least-once dupe
-  if (message !== undefined) {
-    // F4: the cursor moves only once the message is settled — a failed Slack
-    // post leaves it behind so the server's replay gets bridged.
-    if (await bridgeMessage(message) && sequence !== undefined) advanceCursor(sequence);
-    return;
-  }
-  if (delivery !== undefined) {
-    await bridgeDelivery(delivery); // advisory notice — the cursor always moves
-    if (sequence !== undefined) advanceCursor(sequence);
-  }
-  // PresenceChanged frames are intentionally ignored (the feed does the same).
-}
 
 /** Zombie-socket detection (audit F6): ping every PING_MS; a socket that
  * missed its last pong is terminated — 'close' fires and the normal backoff
@@ -607,8 +571,10 @@ function connectAppSocket() {
   heartbeat(appSocket, 'app');
   appSocket.on('open', () => {
     appRetryCount = 0;
-    log(`app socket connected (${appWsUrl()})`);
-    subscribeLive();
+    log(`app socket connected (${APP_BASE}/ws)`);
+    // The nvk-ws server has no server-side resume: the REST refetch (sequence
+    // cursor, F1 global order, F4 settle-before-advance) IS the catch-up path.
+    void enqueueFrame(refetchFromTip);
     // F2: configured-but-unresolved channels retry resolution on every
     // (re)connect — an app recovery brings the lane up without a restart.
     if (channelsPending()) void resolveChannels();
@@ -620,16 +586,16 @@ function connectAppSocket() {
     } catch {
       return;
     }
-    if (frame?.type === 'agents-changed' && Array.isArray(frame.agents)) {
-      roster = frame.agents;
-      return;
-    }
-    if (frame?.event === 'messaging-v2') enqueueFrame(() => handleCapabilityFrame(frame.payload));
+    if (frame?.type !== 'event') return;
+    // 'message' fires for every accepted send (Bench, door, or lane); the
+    // refetch dedupes via the sequence cursor. 'presence' keeps names fresh.
+    if (frame.name === 'message') { void enqueueFrame(refetchFromTip); return; }
+    if (frame.name === 'presence' || frame.name === 'conversation') void refreshRoster();
   });
   appSocket.on('close', () => {
     const backoff = backoffMs(appRetryCount);
     appRetryCount += 1;
-    warn(`app socket closed — reconnecting in ${backoff}ms (is \`npm run dev\` up on ${APP_BASE}?)`);
+    warn(`app socket closed — reconnecting in ${backoff}ms (is nvk-server up on ${APP_BASE}?)`);
     setTimeout(connectAppSocket, backoff);
   });
   appSocket.on('error', (error) => vlog(`app socket error: ${error.message}`)); // close follows
@@ -638,9 +604,9 @@ function connectAppSocket() {
 // --- inbound: Slack → capability -------------------------------------------------
 
 async function sendToAgent(agentName, body) {
-  const response = await fetch(`${APP_BASE}/api/messaging/v2/user/send`, {
+  const response = await fetch(`${APP_BASE}/api/door/user/send`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${appToken()}` },
     body: JSON.stringify({ to: agentName, body }),
     signal: AbortSignal.timeout(10_000),
   });
