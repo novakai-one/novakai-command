@@ -7,7 +7,7 @@ import {
   PresenceTracker, SlashRegistry, publishFocus, getFocus, settingValue,
 } from '../contract/index.js';
 import { Frame, type BreadcrumbItem } from './frame/Frame.js';
-import { MessagingScreen, MessagingRail } from './screens/messaging/MessagingScreen.js';
+import { MessagingScreen } from './screens/messaging/MessagingScreen.js';
 import { SettingsScreen } from './screens/settings/SettingsScreen.js';
 import { AgentsScreen } from './screens/agents/AgentsScreen.js';
 import { UsageScreen } from './screens/supervision/UsageScreen.js';
@@ -17,7 +17,6 @@ import { TreeScreen } from './screens/agents/TreeScreen.js';
 import { WatchersScreen } from './screens/supervision/WatchersScreen.js';
 import { NotificationInboxScreen } from './screens/supervision/NotificationInboxScreen.js';
 import { Inspector } from './inspector/Inspector.js';
-import { ListRow } from './kit/index.js';
 
 export function App(props: { services: ShellServices; models?: string[] }) {
   const { services } = props;
@@ -30,7 +29,6 @@ export function App(props: { services: ShellServices; models?: string[] }) {
   const [inspected, setInspected] = useState<{ title: string; body: React.ReactNode } | null>(null);
   const [expanded, setExpanded] = useState<{ title: string; body: React.ReactNode } | null>(null);
   const [breadcrumb, setBreadcrumb] = useState<BreadcrumbItem[]>([]);
-  const [composerHeight, setComposerHeight] = useState(132);
 
   const tracker = useMemo(() => new PresenceTracker(), []);
   const registry = useMemo(() => new SlashRegistry(), []);
@@ -75,30 +73,25 @@ export function App(props: { services: ShellServices; models?: string[] }) {
     setExpanded(null);
   }, [inspected]);
 
-  const rail = view === 'messaging' ? (
-    <MessagingRail services={services} tracker={tracker} selectedId={selectedConvo}
-      onSelect={(id) => onSelectConvo(id)} />
-  ) : null;
-
-  const railTop = (
-    <div className="nv-rail__wide" style={{ padding: '2px 6px' }}>
-      <ListRow label="Messages" selected={view === 'messaging'} onClick={() => setView('messaging')} />
-      <ListRow label="Agents" selected={view === 'agents'} onClick={() => setView('agents')} />
-      <ListRow label="Runs" selected={view === 'runs'} onClick={() => setView('runs')} />
-      <ListRow label="Family" selected={view === 'family'} onClick={() => setView('family')} />
-      <ListRow label="Communications" selected={view === 'communications'} onClick={() => setView('communications')} />
-      <ListRow label="Sessions" selected={view === 'sessions'} onClick={() => setView('sessions')} />
-      <ListRow label="Watchers" selected={view === 'watchers'} onClick={() => setView('watchers')} />
-      <ListRow label="Notifications" selected={view === 'notifications'} onClick={() => setView('notifications')} />
-      <ListRow label="Settings" selected={view === 'settings'} onClick={() => setView('settings')} />
-    </div>
-  );
+  // The sandbox rail's rows: exactly the screens this App mounts (M1-11).
+  const navItems = [
+    { key: 'messaging', label: 'Messages' },
+    { key: 'agents', label: 'Agents' },
+    { key: 'runs', label: 'Runs' },
+    { key: 'family', label: 'Family' },
+    { key: 'communications', label: 'Communications' },
+    { key: 'sessions', label: 'Sessions' },
+    { key: 'watchers', label: 'Watchers' },
+    { key: 'notifications', label: 'Notifications' },
+    { key: 'settings', label: 'Settings' },
+  ] as const;
 
   return (
     <Frame
       services={services}
-      railTop={railTop}
-      rail={rail}
+      navItems={navItems}
+      currentView={view}
+      onSelectView={(key) => setView(key as typeof view)}
       breadcrumb={breadcrumb}
       onBreadcrumb={onBreadcrumb}
       inspector={inspected}
@@ -107,32 +100,12 @@ export function App(props: { services: ShellServices; models?: string[] }) {
       ) : view === 'messaging' ? (
         <MessagingScreen
           services={services}
-          composerHeight={composerHeight}
-          onComposerResize={(d) => setComposerHeight((h) => Math.min(320, Math.max(96, h + d)))}
-          selectedId={selectedConvo}
-          onSelect={onSelectConvo}
-          onInspectConversation={(c) => setInspected({
-            title: c.title,
-            body: <Inspector kind="conversation" refId={c.id}
-              envelope={{ kind: 'conversation', id: c.id, title: c.title, conversationKind: c.kind }}
-              payload={c} />,
-          })}
-          onInspectMessage={(m) => {
-            // G2/S2: click → publish focus → peek in the inspector.
-            publishFocus({ kind: 'message', id: m.id });
-            services.publishFocus?.(getFocus());
-            setInspected({
-              title: `Message · ${m.senderId}`,
-              body: <Inspector kind="message" refId={m.id}
-                envelope={{ kind: 'message', id: m.id }}
-                payload={m} />,
-            });
-          }}
-          onOpenSettings={() => setView('settings')}
           registry={registry}
           tracker={tracker}
           settings={settings}
           refreshSettings={refreshSettings}
+          selectedId={selectedConvo}
+          onSelect={onSelectConvo}
         />
       ) : view === 'agents' ? (
         <AgentsScreen services={services} />

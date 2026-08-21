@@ -1,0 +1,210 @@
+// shell/ui/screens/messaging/useBenchData.ts — THE projection: ShellServices →
+// MessagesDesignData. The only module that maps contract data (conversations,
+// messages, agents, presence) into the object-graph shapes every Messages
+// design consumes (M1-06: one data path, many designs). The graph is rebuilt
+// from service data on each refresh and never fetches or stores (M1-02).
+//
+// Send correctness lives at this seam (M1-05): optimistic append, socket-echo
+// dedupe and stale-load merge reuse the proven messageList.ts helpers — moved
+// call-site, not rewritten logic.
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import type {
+  AgentDefView, ChatMessage, ConversationSummary, ShellServices,
+} from '../../../contract/index.js';
+import { PresenceTracker } from '../../../contract/index.js';
+import type { MessagesDesignData } from '../../messages-designs/contract';
+import type { ObjectRecord } from '../../messages-designs/contract';
+import { buildGraph } from '../../messages-designs/graph';
+import { appendDedup, reconcileLoadedMessages, settleOptimisticMessage } from './messageList.js';
+
+/** The signed-in person at this seam. The server maps the human's personId to
+ * the literal 'me' on every ChatMessage it serves (server/core/methods.ts), so
+ * this IS the wire contract, not a guess. */
+export const SELF_ID = 'me';
+const SELF_TITLE = 'Chris';
+
+type SendOutcome = Awaited<ReturnType<ShellServices['sendMessage']>>;
+
+export interface BenchDataApi {
+  data: MessagesDesignData;
+  /** True once the first conversations+messages load has landed. The Bench
+   * reconciles its restored session against the model on mount, so mounting it
+   * before real data arrives would strip every restored open thread/frame —
+   * the sandbox mounted against synchronous fixtures; this flag restores that
+   * data-at-mount contract for async services. */
+  ready: boolean;
+  conversations: readonly ConversationSummary[];
+  /** Draw one message immediately (optimistic send / visible slash refusal). */
+  appendLocal(message: ChatMessage): void;
+  /** Settle an optimistic row against the send outcome (same id in = one row out). */
+  settleLocal(conversationId: string, optimisticId: string, outcome: SendOutcome): void;
+  refreshConversations(): Promise<void>;
+}
+
+function threadRecord(c: ConversationSummary): ObjectRecord {
+  return {
+    id: c.id,
+    kind: 'thread',
+    title: c.title,
+    createdAt: c.lastActivityAt,
+    fields: {
+      archived: c.archived,
+      pinned: c.pinned,
+      kind: c.kind,
+      ...(c.agentId ? { agentId: c.agentId } : {}),
+    },
+    refs: c.agentId ? [{ kind: 'agent', value: c.agentId }] : [],
+  };
+}
+
+function messageRecord(m: ChatMessage): ObjectRecord {
+  return {
+    id: m.id,
+    kind: 'message',
+    title: m.text,
+    createdAt: m.createdAt,
+    fields: {
+      threadId: m.conversationId,
+      senderId: m.senderId,
+      body: m.text,
+      createdAt: m.createdAt,
+      ...(m.pending ? { pending: true } : {}),
+      ...(m.failed ? { failed: m.failed } : {}),
+      ...(m.clientOpId ? { clientOpId: m.clientOpId } : {}),
+    },
+    refs: [],
+  };
+}
+
+function agentRecord(a: AgentDefView, tracker: PresenceTracker): ObjectRecord {
+  const presence = tracker.get(a.id);
+  return {
+    id: a.id,
+    kind: 'agent',
+    title: a.displayName,
+    createdAt: '',
+    fields: {
+      provider: a.provider,
+      model: a.model,
+      status: presence.state,
+      composing: presence.state === 'active',
+    },
+    refs: [],
+  };
+}
+
+/** Agents referenced by conversations but absent from the agent list still get
+ * a graph record, so participant chips render their id instead of vanishing. */
+function placeholderAgent(id: string, tracker: PresenceTracker): ObjectRecord {
+  const presence = tracker.get(id);
+  return {
+    id,
+    kind: 'agent',
+    title: id,
+    createdAt: '',
+    fields: { status: presence.state, composing: presence.state === 'active' },
+    refs: [],
+  };
+}
+
+export function useBenchData(props: {
+  services: ShellServices;
+  tracker: PresenceTracker;
+  selectedId: string | null;
+}): BenchDataApi {
+  const { services, tracker } = props;
+  const [conversations, setConversations] = useState<ConversationSummary[]>([]);
+  const [messagesByConvo, setMessagesByConvo] = useState<ReadonlyMap<string, ChatMessage[]>>(new Map());
+  const [agents, setAgents] = useState<AgentDefView[]>([]);
+  const [presenceTick, setPresenceTick] = useState(0);
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => tracker.subscribe(() => setPresenceTick((n) => n + 1)), [tracker]);
+
+  const loadMessagesFor = useCallback(async (convoIds: readonly string[]) => {
+    const loadedEntries = await Promise.all(convoIds.map(async (id) => {
+      const loaded = await services.getMessages(id).catch(() => [] as ChatMessage[]);
+      return [id, loaded] as const;
+    }));
+    setMessagesByConvo((current) => {
+      const next = new Map(current);
+      for (const [id, loaded] of loadedEntries) {
+        // A slow load must never erase newer optimistic/live messages (M1-05).
+        next.set(id, reconcileLoadedMessages(current.get(id) ?? [], loaded, id));
+      }
+      return next;
+    });
+  }, [services]);
+
+  const refreshConversations = useCallback(async () => {
+    const list = await services.listConversations();
+    setConversations(list);
+    await loadMessagesFor(list.map((c) => c.id));
+    setReady(true);
+  }, [services, loadMessagesFor]);
+
+  useEffect(() => { void refreshConversations(); }, [refreshConversations]);
+  useEffect(() => {
+    void services.agents?.listAgents().then(setAgents).catch(() => {});
+  }, [services]);
+
+  useEffect(() => services.subscribe({
+    onMessage: (m) => {
+      setMessagesByConvo((current) => {
+        const next = new Map(current);
+        next.set(m.conversationId, appendDedup(current.get(m.conversationId) ?? [], m));
+        return next;
+      });
+    },
+    onConversation: () => { void refreshConversations(); },
+  }), [services, refreshConversations]);
+
+  const appendLocal = useCallback((message: ChatMessage) => {
+    setMessagesByConvo((current) => {
+      const next = new Map(current);
+      next.set(message.conversationId, appendDedup(current.get(message.conversationId) ?? [], message));
+      return next;
+    });
+  }, []);
+
+  const settleLocal = useCallback((conversationId: string, optimisticId: string, outcome: SendOutcome) => {
+    setMessagesByConvo((current) => {
+      const next = new Map(current);
+      next.set(conversationId, settleOptimisticMessage(current.get(conversationId) ?? [], optimisticId, outcome));
+      return next;
+    });
+  }, []);
+
+  const data = useMemo<MessagesDesignData>(() => {
+    const threads = conversations.map(threadRecord);
+    const messages = [...messagesByConvo.values()].flat().map(messageRecord);
+    const knownAgentIds = new Set(agents.map((a) => a.id));
+    const referencedAgentIds = new Set(
+      conversations.map((c) => c.agentId).filter((id): id is string => Boolean(id)),
+    );
+    const agentRecords = [
+      ...agents.filter((a) => a.status !== 'archived').map((a) => agentRecord(a, tracker)),
+      ...[...referencedAgentIds].filter((id) => !knownAgentIds.has(id))
+        .map((id) => placeholderAgent(id, tracker)),
+    ];
+    const self: ObjectRecord = {
+      id: SELF_ID, kind: 'principal', title: SELF_TITLE, createdAt: '', fields: {}, refs: [],
+    };
+    const graph = buildGraph([self, ...agentRecords, ...threads, ...messages]);
+    return {
+      graph,
+      selfId: SELF_ID,
+      threads,
+      // S1: the Bench draft flow needs a synchronous conversation id the async
+      // createConversation contract cannot give, so no agents are offered to
+      // accept a draft with. S2 (createAgentConversation) owns this.
+      liveAgents: [],
+      selected: props.selectedId ? graph.get(props.selectedId) ?? null : null,
+      attentionSubjectId: null,
+    };
+    // presenceTick: agent status/composing fields are derived from the tracker,
+    // so a presence event must rebuild the records even though it is not state.
+  }, [conversations, messagesByConvo, agents, tracker, props.selectedId, presenceTick]);
+
+  return { data, ready, conversations, appendLocal, settleLocal, refreshConversations };
+}

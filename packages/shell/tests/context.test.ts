@@ -9,7 +9,6 @@ import {
   requireContext, attachContext, composeHumanMessage,
   type FocusSnapshot,
 } from '../contract/index.js';
-import { FocusChip } from '../ui/screens/messaging/FocusChip.js';
 import { createMockServices } from '../app/mockServices.js';
 
 beforeEach(() => {
@@ -82,22 +81,5 @@ describe('services seam (payload inspection end-to-end)', () => {
     const res = await services.sendMessage('conv_kimi', 'hello', 'op_context_default');
     expect(res.ok).toBe(true);
     if (res.ok) expect(res.message.context).toEqual({ app: 'messaging', ref: 'none' });
-  });
-});
-
-describe('composer context chip (demo affordance)', () => {
-  it('renders the focused object', () => {
-    const html = renderToStaticMarkup(
-      React.createElement(FocusChip, { focus: { app: 'messaging', ref: { kind: 'conversation', id: 'conv_x' } } }),
-    );
-    expect(html).toContain('conv_x');
-    expect(html).toContain('👁');
-  });
-
-  it('renders "nothing focused" for ref none', () => {
-    const html = renderToStaticMarkup(
-      React.createElement(FocusChip, { focus: { app: 'messaging', ref: 'none' } }),
-    );
-    expect(html).toContain('nothing focused');
   });
 });
