@@ -127,6 +127,8 @@ export type BenchPendingDraft = {
 /** Semantic session state that deliberately excludes canvas placement and zoom. */
 export type BenchSessionSnapshot = {
   readonly openThreadIds: readonly ObjectId[];
+  /** Conversations removed from the canvas — they live only in the Library. */
+  readonly shelvedThreadIds: readonly ObjectId[];
   readonly trails: readonly BenchInspectionTrail[];
   readonly frames: readonly BenchConversationFrame[];
   readonly scrollTopByThreadId: Readonly<Record<ObjectId, number>>;
@@ -177,6 +179,8 @@ export type BenchAction =
   | { readonly type: 'set-frame-membership'; readonly threadId: ObjectId; readonly frameId: string | null }
   | { readonly type: 'remove-frame'; readonly frameId: string }
   | { readonly type: 'clear-trails' }
+  | { readonly type: 'shelve-conversation'; readonly threadId: ObjectId }
+  | { readonly type: 'unshelve-conversation'; readonly threadId: ObjectId }
   | { readonly type: 'prune-conversation'; readonly threadId: ObjectId }
   | {
       readonly type: 'reconcile-session';
@@ -215,6 +219,15 @@ export type BenchNodeActions = {
   resendMessage?(threadId: ObjectId, messageId: ObjectId): void;
   attachThreadToMission(threadId: ObjectId, missionId: ObjectId): void;
   archiveConversation(threadId: ObjectId): void;
+  /** Removes the card from the canvas; the conversation stays in the Library. */
+  shelveConversation(threadId: ObjectId): void;
+  /** Restores an archived conversation to the Library and canvas. */
+  unarchiveConversation(threadId: ObjectId): void;
+  pinConversation(threadId: ObjectId, pinned: boolean): void;
+  /** Stops the conversation's live agent session; the conversation stays put. */
+  killAgent(threadId: ObjectId): void;
+  /** A settled node resize — persisted and re-projected in the same beat. */
+  rememberNodeSize(nodeId: string, size: { width: number; height: number }): void;
   renameFrame(frameId: string, name: string): void;
   removeFrame(frameId: string): void;
 };

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { NodeProps } from '@xyflow/react';
 import type { BenchConversationFrameCanvasNode } from '../model/bench-projection';
+import { NodeResizeHandle } from './NodeResizeHandle';
 import './ConversationFrameNode.css';
 
 /** A named semantic grouping whose canvas parent mechanics stay in WorldCanvas. */
@@ -16,6 +17,7 @@ export function ConversationFrameNode({ data, selected }: NodeProps<BenchConvers
 
   return (
     <section className="bench-scribe-selection bench-frame" data-selected={selected}>
+      <NodeResizeHandle nodeId={data.frame.id} minWidth={420} minHeight={280} onSettled={data.actions.rememberNodeSize} />
       <header className="bench-frame__header">
         <span className="bench-eyebrow" aria-hidden="true">Frame</span>
         <input

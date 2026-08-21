@@ -11,6 +11,7 @@ import {
   mintShellOpId, readSlashInput, SHELL_SLASH_DOORS,
 } from '../../../contract/index.js';
 import type { MessagesDesignCommands, ObjectRecord } from '../../messages-designs/contract';
+import { refusalRow, runBuiltinSlash } from './benchSlashBuiltins.js';
 import type { BenchDataApi } from './useBenchData.js';
 import { SELF_ID } from './useBenchData.js';
 
@@ -48,19 +49,6 @@ export function resendFailedMessage(services: ShellServices, message: ChatMessag
     });
   }
   return sendMessageFromInteraction(services, message.conversationId, message.text, message.clientOpId);
-}
-
-/** A refusal drawn where the send would have appeared: local row, failed text,
- * nothing committed. The row is client-only and disappears on the next load. */
-function refusalRow(conversationId: string, typed: string, because: string, instead?: string | null): ChatMessage {
-  return {
-    id: `refusal_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-    conversationId,
-    senderId: SELF_ID,
-    text: typed,
-    createdAt: new Date().toISOString(),
-    failed: instead ? `${because} ${instead}` : because,
-  };
 }
 
 /** "New kimi agent" cards need a unique displayName: the server's ensureAgent
@@ -106,71 +94,6 @@ export function createBenchCommands(props: {
     api.settleLocal(conversationId, optimistic.id, res);
   };
 
-  const runBuiltin = async (conversationId: string, typed: string, name: string, args: string) => {
-    switch (name) {
-      case 'new': {
-        const c = await services.createConversation(args.trim() || 'New chat', 'agent', mintShellOpId());
-        await api.refreshConversations();
-        onSelect(c.id);
-        break;
-      }
-      case 'pin': {
-        const convo = api.conversations.find((c) => c.id === conversationId);
-        await services.pinConversation(conversationId, !(convo?.pinned ?? false), mintShellOpId());
-        await api.refreshConversations();
-        break;
-      }
-      case 'archive': {
-        const convo = api.conversations.find((c) => c.id === conversationId);
-        await services.archiveConversation(conversationId, !(convo?.archived ?? false), mintShellOpId());
-        await api.refreshConversations();
-        break;
-      }
-      case 'unarchive': {
-        // D39: the ported Bench model excludes archived conversations (canvas,
-        // dock, search), so the way BACK is this door: bare = list, with an
-        // argument = restore. The card returns at its old placement — canvas
-        // memory never dropped it.
-        const archived = api.conversations.filter((convo) => convo.archived);
-        const wanted = args.trim().toLowerCase();
-        if (!wanted) {
-          api.appendLocal(refusalRow(conversationId, typed,
-            archived.length
-              ? `Archived: ${archived.map((convo) => convo.title).join(', ')}.`
-              : 'No archived conversations.',
-            archived.length ? 'Use: /unarchive <title>' : null));
-          break;
-        }
-        const match = archived.find((convo) => convo.title.toLowerCase() === wanted || convo.id === args.trim());
-        if (!match) {
-          api.appendLocal(refusalRow(conversationId, typed,
-            `No archived conversation called "${args.trim()}".`,
-            archived.length ? `Archived: ${archived.map((convo) => convo.title).join(', ')}` : null));
-          break;
-        }
-        await services.archiveConversation(match.id, false, mintShellOpId());
-        await api.refreshConversations();
-        onSelect(match.id);
-        break;
-      }
-      case 'theme':
-        // The sandbox design system ships one theme; the setting still validates
-        // but no longer changes the palette. Say so instead of pretending.
-        api.appendLocal(refusalRow(conversationId, typed,
-          'Themes left with the old design system — the app has one designed look now.'));
-        break;
-      case 'speed':
-        // Named product removal: /speed went with the old screen. A silent
-        // no-op here is the exact defect FZ-VIEW-032 exists to prevent.
-        api.appendLocal(refusalRow(conversationId, typed,
-          'The /speed render-speed setting was removed with the old Messages screen.'));
-        break;
-      default:
-        api.appendLocal(refusalRow(conversationId, typed,
-          `/${name} is reserved but has no handler on this screen, so nothing was sent.`));
-    }
-  };
-
   return {
     select(record: ObjectRecord | null): void {
       onSelect(record && record.kind === 'thread' ? record.id : null);
@@ -190,7 +113,7 @@ export function createBenchCommands(props: {
           void sendChat(threadId, answer.text);
           break;
         case 'novakai':
-          void runBuiltin(threadId, body, answer.name, answer.args);
+          void runBuiltinSlash({ services, api, onSelect }, threadId, body, answer.name, answer.args);
           break;
         case 'provider-control':
           // B3e's ShellAgentServices is read-only — no control door on this
@@ -273,6 +196,42 @@ export function createBenchCommands(props: {
     archiveThread(threadId: string): void {
       void services.archiveConversation(threadId, true, mintShellOpId())
         .then(() => api.refreshConversations());
+    },
+
+    unarchiveThread(threadId: string): void {
+      void services.archiveConversation(threadId, false, mintShellOpId())
+        .then(() => api.refreshConversations())
+        .then(() => onSelect(threadId));
+    },
+
+    pinThread(threadId: string, pinned: boolean): void {
+      void services.pinConversation(threadId, pinned, mintShellOpId())
+        .then(() => api.refreshConversations());
+    },
+
+    // Kill ≠ remove ≠ archive (Chris ruling 2026-08-21): this stops the
+    // agent's live session and touches nothing else. When there is nothing to
+    // stop, that is said out loud on the card — never a silent no-op.
+    killAgent(threadId: string): void {
+      void (async () => {
+        const conversation = api.conversations.find((convo) => convo.id === threadId);
+        const agentId = conversation?.agentId;
+        const sessions = services.sessions;
+        if (!agentId || !sessions) {
+          api.appendLocal(refusalRow(threadId, 'Kill agent', 'This conversation has no agent session to stop.'));
+          return;
+        }
+        const running = (await sessions.list().catch(() => []))
+          .filter((session) => session.agentId === agentId && session.status === 'running');
+        if (running.length === 0) {
+          api.appendLocal(refusalRow(threadId, 'Kill agent', 'No live session for this agent — nothing to stop.'));
+          return;
+        }
+        for (const session of running) {
+          await sessions.terminate(session.sessionId).catch(() => undefined);
+        }
+        await api.refreshConversations();
+      })();
     },
 
     // No missions capability: the picker gates on byKind('mission'), which is

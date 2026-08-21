@@ -208,6 +208,11 @@ export function createServerServices(
       getSettings: () => call('getSettings'),
       setSetting: async (key, value, opts) =>
         call<{ ok: true; value: SettingsRecord } | { ok: false; error: SetSettingError }>('setSetting', { key, value, opts }),
+      // The Library's Kill verb: the server's existing session registry doors.
+      sessions: {
+        list: () => call('listSessions'),
+        terminate: (sessionId) => call('terminateSession', { sessionId }),
+      },
       agents: {
         listAgents: () => call('listAgents'),
         defineAgent: (input, clientOpId) => call('defineAgent', { input, clientOpId }),

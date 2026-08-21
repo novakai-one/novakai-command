@@ -3,6 +3,7 @@ import type { BenchConversationCanvasNode } from '../model/bench-projection';
 import { ConversationCard } from './ConversationCard';
 import { DecisionRequestCallout } from './DecisionRequestCallout';
 import { ConversationThread } from './ConversationThread';
+import { NodeResizeHandle } from './NodeResizeHandle';
 import './ConversationNode.css';
 
 /** Keeps one canvas node identity while switching between card and open-thread views. */
@@ -14,6 +15,9 @@ export function ConversationNode({ data }: NodeProps<BenchConversationCanvasNode
       data-tier={data.tier}
       data-mission-tone={data.conversation.mission?.tone ?? 'none'}
     >
+      {data.isOpen && (
+        <NodeResizeHandle nodeId={data.conversation.thread.id} minWidth={340} minHeight={360} onSettled={data.actions.rememberNodeSize} />
+      )}
       {data.conversation.mission && (
         <div className="bench-conversation__mission-pool" aria-hidden="true" />
       )}

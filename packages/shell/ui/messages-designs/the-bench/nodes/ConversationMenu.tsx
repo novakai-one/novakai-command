@@ -74,6 +74,29 @@ export function ConversationMenu({
           }}>
             {copied ? 'ID copied' : 'Copy thread ID'}
           </button>
+          <button type="button" role="menuitem" onClick={() => {
+            actions.pinConversation(conversation.thread.id, conversation.thread.fields.pinned !== true);
+            setOpen(false);
+          }}>
+            {conversation.thread.fields.pinned === true ? 'Unpin' : 'Pin'}
+          </button>
+          <button type="button" role="menuitem" onClick={() => {
+            actions.shelveConversation(conversation.thread.id);
+            setOpen(false);
+          }}>
+            Remove from canvas
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className="bench-conversation-menu__danger"
+            onClick={() => {
+              actions.killAgent(conversation.thread.id);
+              setOpen(false);
+            }}
+          >
+            Kill agent
+          </button>
           <button
             type="button"
             role="menuitem"

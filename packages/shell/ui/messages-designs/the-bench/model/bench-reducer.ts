@@ -9,6 +9,7 @@ import { reconcileInspectionTrails, reduceInspectionTrails } from './bench-trail
 export function createEmptyBenchSession(): BenchSessionSnapshot {
   return {
     openThreadIds: [],
+    shelvedThreadIds: [],
     trails: [],
     frames: [],
     scrollTopByThreadId: {},
@@ -31,6 +32,8 @@ export function createInitialBenchState(
     session: {
       ...session,
       openThreadIds,
+      // A routed thread must be visible even if it was shelved last session.
+      shelvedThreadIds: session.shelvedThreadIds.filter((id) => id !== initialThreadId),
       trails: session.trails.map((trail) => ({
         ...trail,
         steps: trail.steps.map((step) => ({ ...step })),
@@ -88,12 +91,37 @@ function pruneConversation(
   return {
     ...session,
     openThreadIds: session.openThreadIds.filter((id) => id !== threadId),
+    shelvedThreadIds: session.shelvedThreadIds.filter((id) => id !== threadId),
     trails: session.trails.filter((trail) => trail.threadId !== threadId),
     frames: session.frames.map((frame) => ({
       ...frame,
       conversationIds: frame.conversationIds.filter((id) => id !== threadId),
     })),
     scrollTopByThreadId: remainingScroll,
+    focusedThreadId: session.focusedThreadId === threadId ? null : session.focusedThreadId,
+  };
+}
+
+/**
+ * Removing from canvas ≠ archive and ≠ kill (Chris ruling 2026-08-21): the card
+ * leaves the canvas, everything else about the conversation stays. Scroll
+ * memory is kept so re-revealing restores the reading position.
+ */
+function shelveConversation(
+  session: BenchSessionSnapshot,
+  threadId: string,
+): BenchSessionSnapshot {
+  return {
+    ...session,
+    openThreadIds: session.openThreadIds.filter((id) => id !== threadId),
+    shelvedThreadIds: session.shelvedThreadIds.includes(threadId)
+      ? session.shelvedThreadIds
+      : [...session.shelvedThreadIds, threadId],
+    trails: session.trails.filter((trail) => trail.threadId !== threadId),
+    frames: session.frames.map((frame) => ({
+      ...frame,
+      conversationIds: frame.conversationIds.filter((id) => id !== threadId),
+    })),
     focusedThreadId: session.focusedThreadId === threadId ? null : session.focusedThreadId,
   };
 }
@@ -108,6 +136,7 @@ function reconcileSession(
   return {
     ...session,
     openThreadIds: session.openThreadIds.filter((id) => threadIds.has(id)),
+    shelvedThreadIds: session.shelvedThreadIds.filter((id) => threadIds.has(id)),
     trails: reconcileInspectionTrails(
       session.trails.filter((trail) => threadIds.has(trail.threadId)),
       action,
@@ -128,9 +157,17 @@ export function reduceBenchState(state: BenchState, action: BenchAction): BenchS
   const session = state.session;
   switch (action.type) {
     case 'open-conversation':
-      return session.openThreadIds.includes(action.threadId)
-        ? state
-        : { ...state, session: { ...session, openThreadIds: [...session.openThreadIds, action.threadId] } };
+      // Opening always surfaces the card — a shelved conversation un-shelves.
+      return {
+        ...state,
+        session: {
+          ...session,
+          openThreadIds: session.openThreadIds.includes(action.threadId)
+            ? session.openThreadIds
+            : [...session.openThreadIds, action.threadId],
+          shelvedThreadIds: session.shelvedThreadIds.filter((id) => id !== action.threadId),
+        },
+      };
     case 'collapse-conversation':
       return {
         ...state,
@@ -158,7 +195,15 @@ export function reduceBenchState(state: BenchState, action: BenchAction): BenchS
     case 'set-zoom-tier':
       return action.tier === state.zoomTier ? state : { ...state, zoomTier: action.tier };
     case 'focus-conversation':
-      return { ...state, session: { ...session, focusedThreadId: action.threadId } };
+      // Focus is a reveal — it also returns a shelved card to the canvas.
+      return {
+        ...state,
+        session: {
+          ...session,
+          focusedThreadId: action.threadId,
+          shelvedThreadIds: session.shelvedThreadIds.filter((id) => id !== action.threadId),
+        },
+      };
     case 'clear-focus':
       return { ...state, session: { ...session, focusedThreadId: null } };
     case 'create-draft':
@@ -200,6 +245,16 @@ export function reduceBenchState(state: BenchState, action: BenchAction): BenchS
       };
     case 'clear-trails':
       return { ...state, session: { ...session, trails: [] } };
+    case 'shelve-conversation':
+      return { ...state, session: shelveConversation(session, action.threadId) };
+    case 'unshelve-conversation':
+      return {
+        ...state,
+        session: {
+          ...session,
+          shelvedThreadIds: session.shelvedThreadIds.filter((id) => id !== action.threadId),
+        },
+      };
     case 'prune-conversation':
       return { ...state, session: pruneConversation(session, action.threadId) };
     case 'reconcile-session':

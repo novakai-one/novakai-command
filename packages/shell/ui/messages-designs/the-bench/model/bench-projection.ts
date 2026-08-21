@@ -31,8 +31,10 @@ import type {
   DraftConversationNodeData,
 } from './bench-model';
 
-const RECENT_CONVERSATION_LIMIT = 10;
 const MISSION_TONES: readonly BenchMissionTone[] = ['slate', 'oxide', 'moss', 'violet'];
+
+/** A user-chosen node size supplied by the composition seam (canvas size memory). */
+export type BenchNodeSizeLookup = (nodeId: string) => { width: number; height: number } | undefined;
 
 /** Typed React Flow node union produced only at the projection seam. */
 export type BenchConversationCanvasNode = Node<ConversationNodeData, 'bench-conversation'>;
@@ -195,32 +197,20 @@ function conversationFor(data: MessagesDesignData, thread: ObjectRecord): BenchC
   };
 }
 
-function recentConversations(
-  conversations: readonly BenchConversation[],
-  initialThreadId?: string,
-): BenchConversation[] {
-  const sorted = conversations
-    .slice()
+/**
+ * Builds the immutable Bench model from the host's normalized relational graph.
+ * Every non-archived conversation is modelled (the old most-recent-10 cap is
+ * gone): the Library lists them all, and canvas membership is decided by the
+ * shelved set at projection time, not by silent truncation here.
+ */
+export function buildBenchModel(data: MessagesDesignData): BenchModel {
+  const conversations = data.threads
+    .filter((thread) => thread.fields.archived !== true)
+    .map((thread) => conversationFor(data, thread))
     .sort((left, right) => (
       right.lastActivityAt.localeCompare(left.lastActivityAt)
       || left.thread.id.localeCompare(right.thread.id)
     ));
-  const recent = sorted.slice(0, RECENT_CONVERSATION_LIMIT);
-  const routed = initialThreadId
-    ? conversations.find((conversation) => conversation.thread.id === initialThreadId)
-    : undefined;
-  if (!routed || recent.some((conversation) => conversation.thread.id === routed.thread.id)) return recent;
-  return [...recent.slice(0, RECENT_CONVERSATION_LIMIT - 1), routed];
-}
-
-/** Builds the immutable Bench model from the host's normalized relational graph. */
-export function buildBenchModel(data: MessagesDesignData): BenchModel {
-  const conversations = recentConversations(
-    data.threads
-      .filter((thread) => thread.fields.archived !== true)
-      .map((thread) => conversationFor(data, thread)),
-    data.initialThreadId,
-  );
   const relationsByRecordId = new Map(data.graph.all.map((record) => (
     [record.id, relationsForRecord(data.graph, record)] as const
   )));
@@ -250,6 +240,7 @@ function frameNodes(
   placements: readonly BenchPlacement[],
   frameSeedPoints: ReadonlyMap<string, WorldPoint>,
   actions: BenchNodeActions,
+  sizeOf: BenchNodeSizeLookup,
 ): BenchConversationFrameCanvasNode[] {
   const placementMap = placementMapOf(placements);
   return state.session.frames.map((frame, index) => ({
@@ -264,7 +255,7 @@ function frameNodes(
       frame,
       actions,
     },
-    style: { width: BENCH_FRAME_SIZE.width, height: BENCH_FRAME_SIZE.height },
+    style: sizeOf(frame.id) ?? { width: BENCH_FRAME_SIZE.width, height: BENCH_FRAME_SIZE.height },
     zIndex: 1,
   }));
 }
@@ -274,11 +265,15 @@ function conversationNodes(
   state: BenchState,
   placements: readonly BenchPlacement[],
   actions: BenchNodeActions,
+  sizeOf: BenchNodeSizeLookup,
 ): BenchCanvasNode[] {
   const placementMap = placementMapOf(placements);
-  return model.conversations.map((conversation, index) => {
+  const shelved = new Set(state.session.shelvedThreadIds);
+  return model.conversations.filter((conversation) => !shelved.has(conversation.thread.id)).map((conversation, index) => {
     const isOpen = state.session.openThreadIds.includes(conversation.thread.id);
-    const size = isOpen ? BENCH_THREAD_SIZE : BENCH_CARD_SIZE;
+    // A person-chosen size only ever applies to the open thread view; the
+    // resting card keeps its uniform size so the canvas stays scannable.
+    const size = isOpen ? sizeOf(conversation.thread.id) ?? BENCH_THREAD_SIZE : BENCH_CARD_SIZE;
     const parentId = frameForConversation(state, conversation.thread.id);
     return {
       id: conversation.thread.id,
@@ -341,11 +336,14 @@ export function projectBenchCanvas(
     readonly frameSeedPoints: ReadonlyMap<string, WorldPoint>;
     readonly acceptDraft: (agent: ObjectRecord) => void;
     readonly cancelDraft: () => void;
+    /** Person-chosen node sizes; absent lookups fall back to the layout defaults. */
+    readonly sizeOf?: BenchNodeSizeLookup;
   },
 ): BenchCanvasProjection {
   const activePlacements = placements ?? [];
-  const frames = frameNodes(state, activePlacements, options.frameSeedPoints, actions);
-  const conversations = conversationNodes(model, state, activePlacements, actions);
+  const sizeOf: BenchNodeSizeLookup = options.sizeOf ?? (() => undefined);
+  const frames = frameNodes(state, activePlacements, options.frameSeedPoints, actions, sizeOf);
+  const conversations = conversationNodes(model, state, activePlacements, actions, sizeOf);
   const drafts = draftNodes(
     model,
     state,

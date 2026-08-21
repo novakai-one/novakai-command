@@ -53,6 +53,14 @@ export interface ShellAgentsServices {
 /** Mint a clientOpId at the interaction layer (M5/DEC-S2-12). Browser + node safe. */
 export const mintShellOpId = (): string => `op_${globalThis.crypto.randomUUID()}`;
 
+/** The slice of a provider-session registry record the shell reads. */
+export interface SessionView {
+  sessionId: string;
+  agentId: string;
+  provider: string;
+  status: string;
+}
+
 export interface ConversationSummary {
   id: string;             // ConversationId — shell-side conversation identity
   threadId: string;       // messaging ThreadId backing it
@@ -218,6 +226,17 @@ export interface ShellServices {
    */
   /** B3d Run usage read from Runtime views; older hosts omit or refuse it. */
   getRunUsageTable?(): Promise<RunUsageTableView>;
+
+  /**
+   * Provider-session lifecycle (DEC-B1-6 made visible in the UI): list the
+   * registry's sessions and stop one. Backed by the server's existing
+   * listSessions/terminateSession methods; absent on hosts with no runtime —
+   * the Kill affordance then explains itself instead of pretending.
+   */
+  sessions?: {
+    list(): Promise<SessionView[]>;
+    terminate(sessionId: string): Promise<{ ok: boolean; error?: unknown }>;
+  };
   /**
    * B3e: the frozen read door onto Agent Runs (FZ-VIEW-001). Screens that show
    * a Run read it HERE and render the projection as it arrives — the same

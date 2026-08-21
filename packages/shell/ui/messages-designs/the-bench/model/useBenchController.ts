@@ -1,20 +1,18 @@
 import {
   useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useReducer,
   useRef,
   useState,
-  type Dispatch,
 } from 'react';
 import type {
-  CanvasNodePlacement,
   CanvasPlacementChange,
   CanvasPlacementCommand,
   CanvasPlacementCommandOutcome,
   WorldPoint,
 } from '../../../canvas/WorldCanvas';
+import { readRememberedNodeSize, rememberNodeSize } from '../../../canvas/canvas-size-memory';
 import type { WorldCameraCommand, WorldViewport } from '../../../canvas/world-camera';
 import type { ObjectId, ObjectRecord } from '../../contract';
 import type { MessagesDesignProps } from '../../contract';
@@ -22,19 +20,25 @@ import {
   buildRevealConversationCommand,
   buildRevealNodeCommand,
   interpretBenchKey,
-  resolveBenchZoomTier,
   type BenchKeyInput,
 } from './bench-interaction';
 import { firstFreePoint, resolveBenchFrameDrop } from './bench-layout';
-import type {
-  BenchAction,
-  BenchConversation,
-  BenchModel,
-  BenchNodeActions,
-  BenchOffscreenCandidate,
-  BenchSessionSnapshot,
-  BenchState,
+import {
+  BENCH_VIEWPORT_KEY,
+  type BenchConversation,
+  type BenchModel,
+  type BenchNodeActions,
+  type BenchOffscreenCandidate,
+  type BenchSessionSnapshot,
+  type BenchState,
 } from './bench-model';
+import {
+  nextBenchIdentity,
+  useBenchPlacements,
+  useBenchViewportPolicy,
+} from './bench-controller-support';
+import { createBenchNodeActions } from './bench-node-actions';
+import { useOffscreenCandidates } from './useOffscreenCandidates';
 import { createInitialBenchState, reduceBenchState } from './bench-reducer';
 import { readBenchSession, rememberBenchSession } from './bench-session-memory';
 import {
@@ -42,11 +46,6 @@ import {
   projectBenchCanvas,
   type BenchCanvasProjection,
 } from './bench-projection';
-
-type SearchResult = {
-  readonly conversation: BenchConversation;
-  readonly matchedBy: 'conversation' | 'agent' | 'mission' | 'message';
-};
 
 type PlacementRollback = {
   readonly session: BenchSessionSnapshot;
@@ -64,9 +63,6 @@ export type BenchController = {
   readonly actions: BenchNodeActions;
   readonly zenThreadId: ObjectId | null;
   readonly zenConversation: BenchConversation | null;
-  readonly isSearchOpen: boolean;
-  readonly searchQuery: string;
-  readonly searchResults: readonly SearchResult[];
   readonly offscreenCandidates: readonly BenchOffscreenCandidate[];
   readonly onCanvasSelect: (recordId: string | null) => void;
   readonly onPlacementChange: (change: CanvasPlacementChange) => void;
@@ -80,101 +76,8 @@ export type BenchController = {
   readonly revealConversation: (threadId: ObjectId) => void;
   readonly revealOffscreenNode: (nodeId: string) => void;
   readonly acknowledgeOffscreenNodes: (nodeIds: readonly string[]) => void;
-  readonly openSearch: () => void;
-  readonly closeSearch: () => void;
-  readonly setSearchQuery: (query: string) => void;
   readonly exitZen: () => void;
 };
-
-let benchIdentitySequence = 0;
-
-function nextBenchIdentity(prefix: 'draft' | 'frame' | 'placement'): string {
-  benchIdentitySequence += 1;
-  return `${prefix}:bench:${Date.now().toString(36)}:${benchIdentitySequence.toString(36)}`;
-}
-
-function placementSignature(placements: readonly CanvasNodePlacement[]): string {
-  return placements
-    .map((placement) => `${placement.id}:${placement.position.x}:${placement.position.y}:${placement.parentId ?? ''}`)
-    .sort()
-    .join('|');
-}
-
-function useBenchPlacements(): {
-  readonly placementChange: CanvasPlacementChange | null;
-  readonly rememberPlacementChange: (change: CanvasPlacementChange) => void;
-} {
-  const [placementChange, setPlacementChange] = useState<CanvasPlacementChange | null>(null);
-  const placementSignatureRef = useRef<string | null>(null);
-  const rememberPlacementChange = useCallback((change: CanvasPlacementChange) => {
-    const signature = `${change.cause}:${change.movedNodeId ?? ''}:${placementSignature(change.placements)}`;
-    if (signature === placementSignatureRef.current) return;
-    placementSignatureRef.current = signature;
-    setPlacementChange({
-      ...change,
-      placements: change.placements.map((placement) => ({
-        ...placement,
-        position: { ...placement.position },
-      })),
-    });
-  }, []);
-
-  return { placementChange, rememberPlacementChange };
-}
-
-function useBenchViewportPolicy(dispatch: Dispatch<BenchAction>) {
-  const viewportRef = useRef<WorldViewport>({ x: 0, y: 0, zoom: 0.82 });
-  const onViewportChange = useCallback((viewport: WorldViewport) => {
-    viewportRef.current = { ...viewport };
-  }, []);
-  const onZoomChange = useCallback((zoom: number) => {
-    dispatch({ type: 'set-zoom-tier', tier: resolveBenchZoomTier(zoom) });
-  }, [dispatch]);
-  return { viewportRef, onViewportChange, onZoomChange };
-}
-
-function searchBench(model: BenchModel, query: string): SearchResult[] {
-  const normalized = query.trim().toLocaleLowerCase();
-  if (!normalized) return model.conversations.map((conversation) => ({
-    conversation,
-    matchedBy: 'conversation' as const,
-  }));
-
-  return model.conversations.flatMap<SearchResult>((conversation) => {
-    if (`${conversation.thread.title} ${conversation.thread.id}`.toLocaleLowerCase().includes(normalized)) {
-      return [{ conversation, matchedBy: 'conversation' as const }];
-    }
-    if (conversation.participants.some((participant) => (
-      participant.record.title.toLocaleLowerCase().includes(normalized)
-    ))) return [{ conversation, matchedBy: 'agent' as const }];
-    if (conversation.mission?.record.title.toLocaleLowerCase().includes(normalized)) {
-      return [{ conversation, matchedBy: 'mission' as const }];
-    }
-    if (conversation.messages.some((message) => message.body.toLocaleLowerCase().includes(normalized))) {
-      return [{ conversation, matchedBy: 'message' as const }];
-    }
-    return [];
-  });
-}
-
-type EligibleNode = {
-  readonly kind: BenchOffscreenCandidate['kind'];
-  readonly isOpen: boolean;
-};
-
-function eligibleNodes(projection: BenchCanvasProjection): Map<string, EligibleNode> {
-  const eligible = new Map<string, EligibleNode>();
-  for (const node of projection.nodes) {
-    if (node.data.kind === 'conversation') {
-      eligible.set(node.id, { kind: 'conversation', isOpen: node.data.isOpen });
-    } else if (node.data.kind === 'message-inspector') {
-      eligible.set(node.id, { kind: 'message-inspector', isOpen: true });
-    } else if (node.data.kind === 'related-object') {
-      eligible.set(node.id, { kind: 'related-object', isOpen: true });
-    }
-  }
-  return eligible;
-}
 
 /** Coordinates host commands, semantic state, projection, and neutral canvas callbacks. */
 export function useBenchController({ data, commands }: MessagesDesignProps): BenchController {
@@ -186,16 +89,13 @@ export function useBenchController({ data, commands }: MessagesDesignProps): Ben
   const [cameraCommand, setCameraCommand] = useState<WorldCameraCommand | null>(null);
   const [placementCommand, setPlacementCommand] = useState<CanvasPlacementCommand | null>(null);
   const [zenThreadId, setZenThreadId] = useState<ObjectId | null>(null);
-  const [isSearchOpen, setSearchOpen] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
   const [draftPoint, setDraftPoint] = useState<WorldPoint | null>(null);
-  const [offscreenCandidates, setOffscreenCandidates] = useState<readonly BenchOffscreenCandidate[]>([]);
+  // Bumped when a resize settles so the projection re-applies the stored size
+  // in the same beat instead of waiting for the next unrelated state change.
+  const [sizesRevision, setSizesRevision] = useState(0);
   const frameSeedPointsRef = useRef(new Map<string, WorldPoint>());
   const placementRollbackRef = useRef<PlacementRollback | null>(null);
   const preZenViewportRef = useRef<WorldViewport | null>(null);
-  const offscreenSequenceRef = useRef(0);
-  const offscreenReadyRef = useRef(false);
-  const previousEligibleNodesRef = useRef(new Map<string, EligibleNode>());
   const model = useMemo(() => buildBenchModel(data), [data]);
   const stateRef = useRef(state);
   const modelRef = useRef(model);
@@ -250,76 +150,14 @@ export function useBenchController({ data, commands }: MessagesDesignProps): Ben
     );
   }, [issuePlacementCommand]);
 
-  const nodeActions = useMemo<BenchNodeActions>(() => ({
-    openConversation: (threadId) => {
-      dispatch({ type: 'open-conversation', threadId });
-      commandsRef.current.select(modelRef.current.recordsById.get(threadId) ?? null);
-    },
-    collapseConversation: (threadId) => dispatch({ type: 'collapse-conversation', threadId }),
-    inspectMessage: (threadId, messageId) => {
-      dispatch({ type: 'inspect-message', threadId, messageId });
-      commandsRef.current.select(modelRef.current.recordsById.get(messageId) ?? null);
-    },
-    expandMessageRelation: (threadId, messageId, relation, recordId) => {
-      dispatch({
-        type: 'expand-message-relation',
-        threadId,
-        messageId,
-        relation,
-        recordId,
-      });
-      commandsRef.current.select(modelRef.current.recordsById.get(recordId) ?? null);
-    },
-    expandRelation: (trailId, parentStepId, relation, recordId) => {
-      dispatch({ type: 'expand-relation', trailId, parentStepId, relation, recordId });
-      commandsRef.current.select(modelRef.current.recordsById.get(recordId) ?? null);
-    },
-    closeTrailStep: (trailId, stepId) => dispatch({ type: 'close-trail-step', trailId, stepId }),
-    answerDecisionRequest: (context, ruling) => {
-      const trimmedRuling = ruling.trim();
-      if (!trimmedRuling) return;
-      const decisionId = commandsRef.current.answerDecisionRequest({
-        requestId: context.requestId,
-        ruling: trimmedRuling,
-      });
-      dispatch({ type: 'append-decision', context, decisionId });
-      commandsRef.current.select(modelRef.current.recordsById.get(context.requestId) ?? null);
-    },
-    selectRecord: (recordId) => commandsRef.current.select(
-      recordId ? modelRef.current.recordsById.get(recordId) ?? null : null,
-    ),
-    canTravel: (recordId) => {
-      const record = modelRef.current.recordsById.get(recordId);
-      return record ? commandsRef.current.canOpen(record) : false;
-    },
-    travel: (recordId) => {
-      const record = modelRef.current.recordsById.get(recordId);
-      if (record && commandsRef.current.canOpen(record)) commandsRef.current.open(record);
-    },
-    sendMessage: (threadId, body) => {
-      const trimmedBody = body.trim();
-      if (trimmedBody) commandsRef.current.send(threadId, trimmedBody);
-    },
-    rememberTranscriptScroll: (threadId, scrollTop) => {
-      dispatch({ type: 'remember-scroll', threadId, scrollTop });
-    },
-    markThreadRead: (threadId) => commandsRef.current.markThreadRead(threadId),
-    // D34: hosts without a resend route simply render no affordance.
-    resendMessage: (threadId, messageId) => commandsRef.current.resendMessage?.(threadId, messageId),
-    attachThreadToMission: (threadId, missionId) => (
-      commandsRef.current.attachThreadToMission(threadId, missionId)
-    ),
-    archiveConversation: (threadId) => {
-      if (zenThreadId === threadId) {
-        exitZen();
-        commandsRef.current.select(null);
-      }
-      commandsRef.current.archiveThread(threadId);
-      dispatch({ type: 'prune-conversation', threadId });
-    },
-    renameFrame: (frameId, name) => dispatch({ type: 'rename-frame', frameId, name }),
-    removeFrame,
-  }), [exitZen, removeFrame, zenThreadId]);
+  const rememberSize = useCallback((nodeId: string, size: { width: number; height: number }) => {
+    rememberNodeSize(BENCH_VIEWPORT_KEY, nodeId, size);
+    setSizesRevision((revision) => revision + 1);
+  }, []);
+
+  const nodeActions = useMemo<BenchNodeActions>(() => createBenchNodeActions({
+    dispatch, commandsRef, modelRef, zenThreadId, exitZen, removeFrame, rememberSize,
+  }), [exitZen, rememberSize, removeFrame, zenThreadId]);
 
   const acceptDraft = useCallback((agent: ObjectRecord) => {
     const draft = stateRef.current.session.pendingDraft;
@@ -346,8 +184,11 @@ export function useBenchController({ data, commands }: MessagesDesignProps): Ben
       frameSeedPoints: frameSeedPointsRef.current,
       acceptDraft,
       cancelDraft,
+      sizeOf: (nodeId) => readRememberedNodeSize(BENCH_VIEWPORT_KEY, nodeId),
     }),
-    [acceptDraft, cancelDraft, draftPoint, model, nodeActions, placements, state],
+    // sizesRevision: stored sizes are read inside sizeOf — a settled resize
+    // must re-project even though no other input changed.
+    [acceptDraft, cancelDraft, draftPoint, model, nodeActions, placements, state, sizesRevision],
   );
 
   useEffect(() => {
@@ -363,32 +204,10 @@ export function useBenchController({ data, commands }: MessagesDesignProps): Ben
     });
   }, [model]);
 
-  useLayoutEffect(() => {
-    const current = eligibleNodes(projection);
-    if (!offscreenReadyRef.current) {
-      if (placementChange?.cause !== 'restore') return;
-      previousEligibleNodesRef.current = current;
-      offscreenReadyRef.current = true;
-      return;
-    }
-
-    const previous = previousEligibleNodesRef.current;
-    const opened: BenchOffscreenCandidate[] = [];
-    for (const [nodeId, node] of current) {
-      const prior = previous.get(nodeId);
-      const newlyOpened = !prior || (node.kind === 'conversation' && node.isOpen && !prior.isOpen);
-      if (!newlyOpened) continue;
-      offscreenSequenceRef.current += 1;
-      opened.push({ nodeId, kind: node.kind, openedSequence: offscreenSequenceRef.current });
-    }
-    previousEligibleNodesRef.current = current;
-    setOffscreenCandidates((candidates) => {
-      const next = candidates
-        .filter((candidate) => current.has(candidate.nodeId))
-        .filter((candidate) => !opened.some((item) => item.nodeId === candidate.nodeId));
-      return opened.length > 0 || next.length !== candidates.length ? [...next, ...opened] : candidates;
-    });
-  }, [placementChange?.cause, projection]);
+  const { offscreenCandidates, acknowledgeOffscreenNodes } = useOffscreenCandidates(
+    projection,
+    placementChange?.cause,
+  );
 
   const handleFramePlacement = useCallback((change: CanvasPlacementChange) => {
     if (change.cause !== 'drag-end' || !change.movedNodeId) return;
@@ -448,20 +267,10 @@ export function useBenchController({ data, commands }: MessagesDesignProps): Ben
     dispatch({ type: 'focus-conversation', threadId });
     commandsRef.current.select(modelRef.current.recordsById.get(threadId) ?? null);
     setCameraCommand(buildRevealConversationCommand(threadId));
-    setSearchOpen(false);
-    setSearchQuery('');
   }, []);
 
   const revealOffscreenNode = useCallback((nodeId: string) => {
     setCameraCommand(buildRevealNodeCommand(nodeId));
-  }, []);
-
-  const acknowledgeOffscreenNodes = useCallback((nodeIds: readonly string[]) => {
-    if (nodeIds.length === 0) return;
-    const acknowledged = new Set(nodeIds);
-    setOffscreenCandidates((candidates) => candidates.filter((candidate) => (
-      !acknowledged.has(candidate.nodeId)
-    )));
   }, []);
 
   const requestedDraftPoint = useCallback((requested?: WorldPoint): WorldPoint => {
@@ -497,16 +306,8 @@ export function useBenchController({ data, commands }: MessagesDesignProps): Ben
   }, [requestedDraftPoint]);
 
   const onKeyInput = useCallback((input: Omit<BenchKeyInput, 'currentZoom'>) => {
-    if ((input.metaKey || input.ctrlKey) && input.key.toLocaleLowerCase() === 'k') {
-      setSearchOpen(true);
-      return;
-    }
     if (input.key === 'Escape') {
       if (zenThreadId) exitZen();
-      else {
-        setSearchOpen(false);
-        setSearchQuery('');
-      }
       return;
     }
     if (input.key.toLocaleLowerCase() === 'f') {
@@ -535,9 +336,6 @@ export function useBenchController({ data, commands }: MessagesDesignProps): Ben
     actions: nodeActions,
     zenThreadId,
     zenConversation: zenThreadId ? model.conversationsById.get(zenThreadId) ?? null : null,
-    isSearchOpen,
-    searchQuery,
-    searchResults: searchBench(model, searchQuery),
     offscreenCandidates,
     onCanvasSelect,
     onPlacementChange,
@@ -551,12 +349,6 @@ export function useBenchController({ data, commands }: MessagesDesignProps): Ben
     revealConversation,
     revealOffscreenNode,
     acknowledgeOffscreenNodes,
-    openSearch: () => setSearchOpen(true),
-    closeSearch: () => {
-      setSearchOpen(false);
-      setSearchQuery('');
-    },
-    setSearchQuery,
     exitZen,
   };
 }

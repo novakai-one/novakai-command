@@ -43,6 +43,7 @@ const storedBenchSessionSchema = z.object({
   schemaVersion: z.literal(1),
   session: z.object({
     openThreadIds: z.array(z.string().min(1)),
+    shelvedThreadIds: z.array(z.string().min(1)).optional(),
     trails: z.array(trailSchema),
     frames: z.array(frameSchema),
     scrollTopByThreadId: z.record(z.string(), z.number().finite().nonnegative()),
@@ -78,6 +79,7 @@ function copyFrame(frame: BenchConversationFrame): BenchConversationFrame {
 function copySnapshot(snapshot: BenchSessionSnapshot): BenchSessionSnapshot {
   return {
     openThreadIds: [...snapshot.openThreadIds],
+    shelvedThreadIds: [...snapshot.shelvedThreadIds],
     trails: snapshot.trails.map(copyTrail),
     frames: snapshot.frames.map(copyFrame),
     scrollTopByThreadId: { ...snapshot.scrollTopByThreadId },
@@ -139,6 +141,7 @@ function normalizedSession(stored: StoredBenchSessionV1['session']): BenchSessio
   const framedConversationIds = new Set<string>();
   return {
     openThreadIds: unique(stored.openThreadIds),
+    shelvedThreadIds: unique(stored.shelvedThreadIds ?? []),
     trails: stored.trails
       .filter((trail) => {
         if (trailIds.has(trail.id)) return false;
@@ -213,6 +216,7 @@ export function rememberBenchSession(snapshot: BenchSessionSnapshot): void {
       schemaVersion: 1,
       session: {
         openThreadIds: [...copy.openThreadIds],
+        shelvedThreadIds: [...copy.shelvedThreadIds],
         trails: copy.trails.map((trail) => ({
           ...trail,
           steps: trail.steps.map((step) => ({ ...step })),

@@ -1,11 +1,12 @@
 import { type EdgeTypes, type NodeTypes } from '@xyflow/react';
-import type { KeyboardEvent } from 'react';
+import { useState, type KeyboardEvent } from 'react';
 import './styles/tokens.css';
 import './styles/canvas.css';
 import './styles/primitives.css';
 import { WorldCanvas } from '../../canvas/WorldCanvas';
 import type { WorldCanvasInteraction } from '../../canvas/canvas-interaction';
 import type { MessagesDesignProps } from '../contract';
+import { LibraryPanel } from './library/LibraryPanel';
 import { BENCH_VIEWPORT_KEY } from './model/bench-model';
 import { useBenchController } from './model/useBenchController';
 import { ConversationNode } from './nodes/ConversationNode';
@@ -14,8 +15,6 @@ import { DraftConversationNode } from './nodes/DraftConversationNode';
 import { InspectionWire } from './nodes/InspectionWire';
 import { MessageInspectorNode } from './nodes/MessageInspectorNode';
 import { RelatedObjectNode } from './nodes/RelatedObjectNode';
-import { BenchDock } from './overlays/BenchDock';
-import { ConversationSearch } from './overlays/ConversationSearch';
 import { OffscreenNodeMarker } from './overlays/OffscreenNodeMarker';
 import { ZenLayer } from './overlays/ZenLayer';
 import './styles/bench-state.css';
@@ -57,6 +56,8 @@ function isTextInput(target: EventTarget | null): boolean {
 /** Composes the Bench controller with shared canvas contracts and no private mechanics. */
 export function TheBench(props: MessagesDesignProps) {
   const controller = useBenchController(props);
+  // ⌘K opens the Library's search; the panel owns all search state.
+  const [librarySearchSignal, setLibrarySearchSignal] = useState(0);
   const activeThreadId = props.data.selected?.kind === 'thread'
     ? props.data.selected.id
     : [...controller.state.session.openThreadIds]
@@ -66,7 +67,12 @@ export function TheBench(props: MessagesDesignProps) {
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (isTextInput(event.target)) return;
     const isSearchGesture = (event.metaKey || event.ctrlKey) && event.key.toLocaleLowerCase() === 'k';
-    if (!isSearchGesture && !['f', 'F', '[', ']', 'Escape'].includes(event.key)) return;
+    if (isSearchGesture) {
+      event.preventDefault();
+      setLibrarySearchSignal((signal) => signal + 1);
+      return;
+    }
+    if (!['f', 'F', '[', ']', 'Escape'].includes(event.key)) return;
     event.preventDefault();
     controller.onKeyInput({
       key: event.key,
@@ -116,13 +122,14 @@ export function TheBench(props: MessagesDesignProps) {
               <small><kbd>[</kbd><kbd>]</kbd> scale · <kbd>F</kbd> focus</small>
             </div>
             {!controller.zenThreadId && (
-              <BenchDock
+              <LibraryPanel
                 conversations={controller.model.conversations}
-                openThreadIds={controller.state.session.openThreadIds}
+                archivedThreads={props.data.threads.filter((thread) => thread.fields.archived === true)}
+                shelvedThreadIds={controller.state.session.shelvedThreadIds}
+                actions={controller.actions}
                 onReveal={controller.revealConversation}
                 onCreate={controller.createDraft}
-                onSearch={controller.openSearch}
-                onClearTrails={controller.clearTrails}
+                searchSignal={librarySearchSignal}
               />
             )}
             {!controller.zenThreadId && (
@@ -131,9 +138,6 @@ export function TheBench(props: MessagesDesignProps) {
                 onAcknowledge={controller.acknowledgeOffscreenNodes}
                 onReveal={controller.revealOffscreenNode}
               />
-            )}
-            {controller.isSearchOpen && !controller.zenThreadId && (
-              <ConversationSearch controller={controller} />
             )}
             {controller.zenConversation && (
               <ZenLayer

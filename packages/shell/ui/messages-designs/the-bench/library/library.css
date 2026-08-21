@@ -1,0 +1,144 @@
+/* library.css — the conversation Library panel. Consumes bench semantic
+   tokens only; no literal colors. Same overlay layer + surface language as
+   the dock it replaces. */
+
+.library-collapsed {
+  position: absolute;
+  z-index: var(--bench-layer-overlay);
+  top: var(--space-4);
+  left: var(--space-4);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 7px 12px;
+  border: 1px solid var(--bench-rule-soft);
+  border-radius: var(--bench-radius-pill);
+  color: var(--bench-ink-secondary);
+  background: var(--bench-overlay-surface);
+  box-shadow: var(--bench-shadow-overlay);
+  backdrop-filter: blur(18px);
+  font: inherit;
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.library-collapsed strong {
+  color: var(--bench-ink-primary);
+  font-weight: var(--weight-semibold);
+}
+
+.library-collapsed span {
+  color: var(--bench-ink-faint);
+  font-family: var(--bench-font-record);
+  font-size: var(--text-xs);
+}
+
+.library-panel {
+  position: absolute;
+  z-index: var(--bench-layer-overlay);
+  top: var(--space-4);
+  left: var(--space-4);
+  bottom: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--bench-rule-soft);
+  border-radius: var(--bench-radius-frame);
+  background: var(--bench-overlay-surface);
+  box-shadow: var(--bench-shadow-overlay);
+  backdrop-filter: blur(18px);
+}
+
+.library-panel__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-3) var(--space-2);
+}
+
+.library-panel__head strong {
+  color: var(--bench-ink-primary);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+}
+
+.library-panel__count {
+  margin-right: auto;
+  color: var(--bench-ink-faint);
+  font-family: var(--bench-font-record);
+  font-size: var(--text-xs);
+}
+
+.library-panel__search {
+  margin: 0 var(--space-3) var(--space-2);
+  padding: 7px 10px;
+  border: 1px solid var(--bench-rule-soft);
+  border-radius: var(--bench-radius-control);
+  color: var(--bench-ink-primary);
+  background: var(--bench-surface-inset);
+  font: inherit;
+  font-size: var(--text-sm);
+}
+
+.library-panel__search::placeholder {
+  color: var(--bench-ink-faint);
+}
+
+.library-panel__search:focus {
+  border-color: var(--bench-rule-strong);
+  outline: none;
+}
+
+.library-panel__body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 var(--space-2) var(--space-3);
+}
+
+.library-panel__empty {
+  margin: var(--space-2) var(--space-2) 0;
+  color: var(--bench-ink-faint);
+  font-size: var(--text-xs);
+}
+
+.library-panel__resize {
+  position: absolute;
+  top: 0;
+  right: -4px;
+  bottom: 0;
+  width: 8px;
+  cursor: ew-resize;
+}
+
+.library-panel__resize:hover {
+  background: linear-gradient(to right, transparent, var(--bench-scribe-wash));
+}
+
+.library-section {
+  margin-top: var(--space-3);
+}
+
+.library-section__label {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin: 0 var(--space-2) var(--space-1);
+  color: var(--bench-ink-faint);
+  font-family: var(--bench-font-record);
+  font-size: var(--text-eyebrow);
+  font-weight: var(--weight-medium);
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.library-section__label span {
+  font-size: var(--text-eyebrow);
+  letter-spacing: 0;
+}
+
+.library-needs-dot {
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--attention);
+}

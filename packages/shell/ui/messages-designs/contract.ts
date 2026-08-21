@@ -217,6 +217,14 @@ export type MessagesDesignCommands = {
   resendMessage?(threadId: string, messageId: string): void;
   markThreadRead(threadId: string): void;
   archiveThread(threadId: string): void;
+  /** Returns an archived thread to the living set. Optional — hosts without
+   * archive storage render no Archive section. */
+  unarchiveThread?(threadId: string): void;
+  /** Persists the pinned flag (Library ordering). Optional like resend. */
+  pinThread?(threadId: string, pinned: boolean): void;
+  /** Stops the thread's live agent session — the thread itself is untouched.
+   * Kill ≠ remove ≠ archive; each is its own explicit command. */
+  killAgent?(threadId: string): void;
   attachThreadToMission(threadId: string, missionId: string): void;
   answerDecisionRequest(input: AnswerDecisionRequestInput): ObjectId;
 };

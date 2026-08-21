@@ -105,3 +105,26 @@
 .bench-scribe-selection[data-selected='true'] {
   border-color: var(--bench-scribe);
 }
+
+/* The one resize affordance every resizable Bench node shares. */
+.bench-resize-control {
+  background: transparent;
+  border: 0;
+}
+
+.bench-resize-handle {
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  width: 10px;
+  height: 10px;
+  border-right: 2px solid var(--bench-rule-strong);
+  border-bottom: 2px solid var(--bench-rule-strong);
+  border-bottom-right-radius: 4px;
+  opacity: .55;
+}
+
+.bench-resize-handle:hover {
+  border-color: var(--bench-scribe);
+  opacity: 1;
+}
