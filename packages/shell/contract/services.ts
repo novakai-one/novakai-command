@@ -61,7 +61,9 @@ export interface ConversationSummary {
   pinned: boolean;
   archived: boolean;
   lastActivityAt: string;
-  unreadCount: number;
+  /** S3 (M3-01): the read cursor. Unread is DERIVED (cursor + loaded
+   * messages) — a stored count was the fabrication M1-04 forbids. */
+  lastReadMessageId?: string;
   agentId?: string;       // when kind === 'agent' — drives the presence dot
 }
 
@@ -126,6 +128,10 @@ export interface ShellServices {
   // clientOpId REQUIRED (R3-10 — minted at the interaction layer).
   pinConversation(id: string, pinned: boolean, clientOpId: string): Promise<void>;
   archiveConversation(id: string, archived: boolean, clientOpId: string): Promise<void>;
+  /** S3 (M3-01): advance the read cursor — the transcript was actually seen to
+   * this message. Optional: hosts without read-state simply never badge. */
+  markConversationRead?(conversationId: string, lastMessageId: string, clientOpId: string):
+    Promise<{ ok: boolean; error?: unknown }>;
 
   // messages
   getMessages(conversationId: string): Promise<ChatMessage[]>;

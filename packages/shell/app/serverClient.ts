@@ -165,6 +165,8 @@ export function createServerServices(
       createConversation: (title, kind, clientOpId) => call('createConversation', { title, kind, clientOpId }),
       pinConversation: (id, pinned, clientOpId) => call('pinConversation', { id, pinned, clientOpId }),
       archiveConversation: (id, archived, clientOpId) => call('archiveConversation', { id, archived, clientOpId }),
+      markConversationRead: (conversationId, lastMessageId, clientOpId) =>
+        call('markConversationRead', { conversationId, lastMessageId, clientOpId }),
       getMessages: (conversationId) => call('getMessages', { conversationId }),
       sendMessage: (conversationId, text, clientOpId) =>
         call('sendMessage', { conversationId, text, clientOpId }),

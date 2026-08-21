@@ -13,7 +13,7 @@ import { readSlashInput, SHELL_SLASH_DOORS } from '../contract/slashContinuity.j
 describe('the Shell command registry', () => {
   it('built-in set is exactly the S1 list (no invented commands)', () => {
     expect(SHELL_BUILTINS.map((c) => c.name).sort()).toEqual(
-      ['archive', 'new', 'pin', 'speed', 'theme'].sort(),
+      ['archive', 'new', 'pin', 'speed', 'theme', 'unarchive'].sort(),
     );
   });
 

@@ -68,7 +68,7 @@ function refusalRow(conversationId: string, typed: string, because: string, inst
  * an existing agent (D22's mirror-thread trap). Count upward until free. */
 function nextAgentTitle(api: BenchDataApi, provider: string): string {
   const base = provider.charAt(0).toUpperCase() + provider.slice(1);
-  const taken = new Set(api.data.graph.byKind('agent').map((a) => a.title));
+  const taken = new Set(api.data.graph.byKind('agent').map((agent) => agent.title));
   let n = 1;
   while (taken.has(`${base} ${n}`)) n += 1;
   return `${base} ${n}`;
@@ -124,6 +124,33 @@ export function createBenchCommands(props: {
         const convo = api.conversations.find((c) => c.id === conversationId);
         await services.archiveConversation(conversationId, !(convo?.archived ?? false), mintShellOpId());
         await api.refreshConversations();
+        break;
+      }
+      case 'unarchive': {
+        // D39: the ported Bench model excludes archived conversations (canvas,
+        // dock, search), so the way BACK is this door: bare = list, with an
+        // argument = restore. The card returns at its old placement — canvas
+        // memory never dropped it.
+        const archived = api.conversations.filter((convo) => convo.archived);
+        const wanted = args.trim().toLowerCase();
+        if (!wanted) {
+          api.appendLocal(refusalRow(conversationId, typed,
+            archived.length
+              ? `Archived: ${archived.map((convo) => convo.title).join(', ')}.`
+              : 'No archived conversations.',
+            archived.length ? 'Use: /unarchive <title>' : null));
+          break;
+        }
+        const match = archived.find((convo) => convo.title.toLowerCase() === wanted || convo.id === args.trim());
+        if (!match) {
+          api.appendLocal(refusalRow(conversationId, typed,
+            `No archived conversation called "${args.trim()}".`,
+            archived.length ? `Archived: ${archived.map((convo) => convo.title).join(', ')}` : null));
+          break;
+        }
+        await services.archiveConversation(match.id, false, mintShellOpId());
+        await api.refreshConversations();
+        onSelect(match.id);
         break;
       }
       case 'theme':
@@ -198,7 +225,7 @@ export function createBenchCommands(props: {
       api.appendLocalConversation({
         id: conversationId, threadId: conversationId, title, kind: 'agent',
         pinned: false, archived: false, lastActivityAt: new Date().toISOString(),
-        unreadCount: 0, ...(isNew ? {} : { agentId: agent.id }),
+        ...(isNew ? {} : { agentId: agent.id }),
       });
       const input = isNew
         ? { provider: agent.fields.provider as 'kimi' | 'claude' | 'codex' | 'mock', title, conversationId }
@@ -234,8 +261,14 @@ export function createBenchCommands(props: {
         .then((res) => api.settleLocal(threadId, messageId, res));
     },
 
-    // S3 owns read-state; badges are hidden until then (never fake a count).
-    markThreadRead(): void {},
+    // S3 (M3-01): the card menu's explicit "Mark read" — cursor to the newest
+    // committed message. No messages → nothing to mark.
+    markThreadRead(threadId: string): void {
+      const latest = api.lastMessageId(threadId);
+      if (!latest || !services.markConversationRead) return;
+      void services.markConversationRead(threadId, latest, mintShellOpId())
+        .then(() => api.refreshConversations());
+    },
 
     archiveThread(threadId: string): void {
       void services.archiveConversation(threadId, true, mintShellOpId())

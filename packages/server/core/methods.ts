@@ -46,6 +46,8 @@ export interface Conversation {
   archived: boolean;
   lastActivityAt: string;
   agentId?: string;
+  /** S3 (M3-01): the read cursor; unread is DERIVED from it, never stored. */
+  lastReadMessageId?: string;
   /** The live provider session this conversation talks to, when spawned. */
   sessionId?: string;
   personId?: string;
@@ -89,10 +91,12 @@ const now = () => new Date().toISOString();
 /** The send-time snapshot line prepended to session-bound input (AGT-006). */
 const contextLine = (focus: unknown): string => `[novakai context] ${JSON.stringify(focus)}`;
 
+// S3: the wire carries the read CURSOR (truth), never a stored count — the
+// shell derives unread from cursor + the messages it already loads (M3-01).
 const summarize = (c: Conversation) => ({
   id: c.id, threadId: c.threadId ?? c.address, title: c.title, kind: c.kind,
   pinned: c.pinned, archived: c.archived, lastActivityAt: c.lastActivityAt,
-  unreadCount: 0, agentId: c.agentId,
+  agentId: c.agentId, lastReadMessageId: c.lastReadMessageId,
 });
 
 /**
@@ -112,6 +116,7 @@ async function persistView(runtime: ServerRuntime, c: Conversation, clientOpId: 
     // S2 (M2-01): the binding is durable truth — sessions die, this must not.
     ...(c.agentId ? { agentId: c.agentId } : {}),
     ...(c.provider ? { provider: c.provider } : {}),
+    ...(c.lastReadMessageId ? { lastReadMessageId: c.lastReadMessageId } : {}),
   }, clientOpId);
   if (!res.ok) {
     console.error(`[nvk-server] conversationView persist failed for ${c.id}: ${res.error?.code} ${res.error?.message}`);
@@ -545,6 +550,25 @@ export function buildMethods(runtime: ServerRuntime): MethodTable {
       c.lastActivityAt = now();
       await persistView(runtime, c, p.clientOpId);
       runtime.broadcast('conversation', summarize(c));
+      return { ok: true };
+    },
+
+    /**
+     * S3 (M3-01): advance the read cursor. The caller says WHERE the transcript
+     * was seen to; the server stores that fact and rebroadcasts the summary so
+     * every window's derived unread agrees.
+     */
+    async markConversationRead(params: never) {
+      const sent = params as { conversationId: string; lastMessageId: string; clientOpId: string };
+      const convo = runtime.conversations.get(sent.conversationId);
+      if (!convo) return { ok: false, error: 'unknown conversation' };
+      if (!sent.lastMessageId || !sent.clientOpId) {
+        return { ok: false, error: 'lastMessageId and clientOpId are required' };
+      }
+      if (convo.lastReadMessageId === sent.lastMessageId) return { ok: true };
+      convo.lastReadMessageId = sent.lastMessageId;
+      await persistView(runtime, convo, sent.clientOpId);
+      runtime.broadcast('conversation', summarize(convo));
       return { ok: true };
     },
 
