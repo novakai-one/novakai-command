@@ -4,7 +4,9 @@
 // engine can actually enforce rather than a habit it hopes to keep:
 //
 //   DEC-B1-10  skills confirmed BEFORE any work            (two-turn gate)
-//   DEC-B1-12  drift check-ins every 5–10 min, CHEAP FIRST (SR-1)
+//   DEC-B1-12  drift check-ins every 5–10 min, FREE ONLY   (SR-1; amended
+//              2026-08-21 — the paid "Status check" ping is deleted, staleness
+//              is read from free evidence and flagged, never asked about)
 //   DEC-B1-13  terminate after meaningful work + restart   (+ compact option)
 //   DEC-B1-11  a real per-session usage table every 5–10 min
 //
@@ -17,9 +19,9 @@
 // candidate rather than smuggled in here.
 //
 // The engine depends on SEAMS, never on the server's runtime object: a
-// registry, a way to ask a session something, a usage reader, a trace sink, a
-// broadcaster and an escalation channel. That is what makes the rules above
-// testable without a socket, a provider or a store.
+// registry, a way to ask a session something, a usage reader, a trace sink
+// and a broadcaster. That is what makes the rules above testable without a
+// socket, a provider or a store.
 import { buildGatePrompt, buildWorkPrompt, declaresTaskComplete, hasSubagentSkillsStatement, validateSkillsMarker, type GateFailure } from './gate.js';
 import type { SessionUsage, UsageReader } from './usage.js';
 import type { ProviderName, SupervisionPolicy } from '../../contract/config.js';
@@ -108,8 +110,6 @@ export interface SupervisionDeps {
   broadcast(name: string, data: unknown): void | Promise<void>;
   /** Append rows to `.novakai/supervision/usage.jsonl` — server is sole writer. */
   appendUsage(rows: UsageRow[]): Promise<void>;
-  /** Tell Chris, through messaging, that a session has drifted (DEC-B1-12). */
-  escalate(text: string): Promise<void>;
   policy: SupervisionPolicy;
   /** Absolute skill-file paths demanded at the gate. */
   skillPaths: string[];
@@ -122,14 +122,12 @@ export interface SupervisionDeps {
 
 export interface SupervisionFailure {
   code:
-    | 'EscalationFailed'
     | 'UsageAppendFailed'
     | 'UsageBackfillFailed'
     | 'UsageBroadcastFailed'
     | 'UsageTickFailed'
     | 'DriftTickFailed';
   operation:
-    | 'escalate'
     | 'backfillUsage'
     | 'appendUsage'
     | 'broadcastUsage'
@@ -177,7 +175,7 @@ export type GateOutcome =
   | { ok: true; sessionId: string; confirmed: string[]; reply: string; work: string; taskComplete: boolean; subagentSkillsStated: boolean }
   | { ok: false; sessionId: string; reason: GateFailure | 'send-failed'; reply: string };
 
-export type DriftAction = 'none' | 'pinged' | 'drift' | 'escalated';
+export type DriftAction = 'none' | 'drift';
 
 export interface DriftRow {
   sessionId: string;
@@ -185,7 +183,6 @@ export interface DriftRow {
   live: boolean;
   /** Consecutive check intervals with no free evidence of activity. */
   staleIntervals: number;
-  consecutiveDrift: number;
   action: DriftAction;
   lastActivityAt: string;
 }
@@ -193,8 +190,8 @@ export interface DriftRow {
 export interface DriftReport {
   at: string;
   rows: DriftRow[];
-  /** SR-1's audit number: how many REAL provider turns this check-in cost. */
-  providerTurnsSpent: number;
+  /** SR-1's audit number. The check is free evidence only, so it is always 0. */
+  providerTurnsSpent: 0;
 }
 
 export type LifecycleResult =
@@ -226,7 +223,6 @@ export interface SupervisionEngine {
 interface DriftState {
   lastSeenActivityAt: string;
   staleIntervals: number;
-  consecutiveDrift: number;
   drifting: boolean;
 }
 
@@ -340,12 +336,14 @@ export function createSupervisionEngine(deps: SupervisionDeps): SupervisionEngin
     };
   };
 
-  // ── cheap-first drift (SR-1) ─────────────────────────────────────────────
+  // ── passive drift (SR-1, free evidence only) ─────────────────────────────
 
   /**
    * FREE liveness evidence only: the registry's own activity stamp and the
-   * provider transcript's newest line. No provider turn is spent to learn
-   * whether a session is alive — that is the whole point of SR-1.
+   * provider transcript's newest line. No provider turn is EVER spent — a
+   * quiet session gets a drift flag Chris can see, never a "Status check"
+   * prompt that costs money and interrupts the agent (amended 2026-08-21;
+   * the old paid ping is in git history at 9446e41c).
    */
   const freeActivityOf = (record: SupervisionRecord, usage: SessionUsage): string => {
     const fromTranscript = usage.lastActivityAt;
@@ -358,7 +356,6 @@ export function createSupervisionEngine(deps: SupervisionDeps): SupervisionEngin
     const at = now();
     const intervalMs = deps.policy.driftIntervalSec * 1000;
     const rows: DriftRow[] = [];
-    let providerTurnsSpent = 0;
     const records = await running();
     const usageBySession = await deps.usage.readMany(records.map(usageRefOf));
 
@@ -368,102 +365,56 @@ export function createSupervisionEngine(deps: SupervisionDeps): SupervisionEngin
         ? freeActivityOf(record, usage)
         : record.lastActivityAt;
       const state = driftStates.get(record.sessionId) ?? {
-        lastSeenActivityAt: activityAt, staleIntervals: 0, consecutiveDrift: 0, drifting: false,
+        lastSeenActivityAt: activityAt, staleIntervals: 0, drifting: false,
       };
       const quiet = Date.parse(at) - Date.parse(activityAt) >= intervalMs;
       const moved = Date.parse(activityAt) > Date.parse(state.lastSeenActivityAt);
       state.lastSeenActivityAt = activityAt;
 
       if (!quiet || moved) {
-        // Alive on free evidence. Nothing is spent, nothing is escalated.
+        // Alive on free evidence. The flag clears itself the same way it rose.
         state.staleIntervals = 0;
-        state.consecutiveDrift = 0;
         state.drifting = false;
         driftFlags.delete(record.sessionId);
         driftStates.set(record.sessionId, state);
         rows.push({
           sessionId: record.sessionId, agentId: record.agentId, live: true,
-          staleIntervals: 0, consecutiveDrift: 0, action: 'none', lastActivityAt: activityAt,
+          staleIntervals: 0, action: 'none', lastActivityAt: activityAt,
         });
         continue;
       }
 
       state.staleIntervals += 1;
       // §13 disposition 8: stale = no activity for TWO consecutive intervals.
-      // One quiet interval buys no turn — a thinking agent is not a dead one.
+      // One quiet interval raises no flag — a thinking agent is not a dead one.
       if (state.staleIntervals < 2) {
         driftStates.set(record.sessionId, state);
         rows.push({
           sessionId: record.sessionId, agentId: record.agentId, live: false,
-          staleIntervals: state.staleIntervals, consecutiveDrift: state.consecutiveDrift,
-          action: 'none', lastActivityAt: activityAt,
+          staleIntervals: state.staleIntervals, action: 'none', lastActivityAt: activityAt,
         });
         continue;
       }
 
-      // Only now is a real turn spent, via the lawful ask path (never stdin
-      // injection — red gate S2-3).
-      providerTurnsSpent += 1;
-      const ping = await deps.transport.ask(
-        record.sessionId,
-        'Status check: reply with one line — what are you working on right now?',
-      );
-      await traced('supervision.ping', record.sessionId, {
-        agentId: record.agentId, staleIntervals: state.staleIntervals, answered: ping.ok,
-      });
-
-      if (ping.ok && ping.text.trim()) {
-        state.staleIntervals = 0;
-        state.consecutiveDrift = 0;
-        state.drifting = false;
-        driftFlags.delete(record.sessionId);
-        driftStates.set(record.sessionId, state);
-        rows.push({
-          sessionId: record.sessionId, agentId: record.agentId, live: true,
-          staleIntervals: 0, consecutiveDrift: 0, action: 'pinged', lastActivityAt: activityAt,
-        });
-        continue;
-      }
-
-      state.consecutiveDrift += 1;
+      // Stale on free evidence alone. The whole action is a visible flag: the
+      // usage table row carries drift=true until real activity clears it. The
+      // trace is written once per drift episode, not once per quiet tick.
+      const becameDrifting = !state.drifting;
       state.drifting = true;
-      state.staleIntervals = 2; // stay stale so the next interval pings again
       driftFlags.add(record.sessionId);
       driftStates.set(record.sessionId, state);
-      await traced('supervision.drift', record.sessionId, {
-        agentId: record.agentId, consecutiveDrift: state.consecutiveDrift, cause: 'no-reply-to-ping',
-      });
-
-      let action: DriftAction = 'drift';
-      if (state.consecutiveDrift >= 3) {
-        try {
-          await deps.escalate(
-            `Session ${record.sessionId} (agent ${record.agentId}, ${record.provider}) has not answered `
-            + `${state.consecutiveDrift} consecutive check-ins. Last activity ${activityAt}.`,
-          );
-          action = 'escalated';
-          await traced('supervision.escalate', record.sessionId, {
-            agentId: record.agentId, consecutiveDrift: state.consecutiveDrift,
-          });
-          state.consecutiveDrift = 0; // escalated once; the counter restarts
-          driftStates.set(record.sessionId, state);
-        } catch (cause) {
-          const failure = reportFailure('EscalationFailed', 'escalate', cause);
-          await traced('supervision.escalate.failed', record.sessionId, {
-            agentId: record.agentId,
-            consecutiveDrift: state.consecutiveDrift,
-            error: failure,
-          });
-        }
+      if (becameDrifting) {
+        await traced('supervision.drift', record.sessionId, {
+          agentId: record.agentId, staleIntervals: state.staleIntervals, cause: 'no-free-activity',
+        });
       }
       rows.push({
         sessionId: record.sessionId, agentId: record.agentId, live: false,
-        staleIntervals: state.staleIntervals, consecutiveDrift: state.consecutiveDrift,
-        action, lastActivityAt: activityAt,
+        staleIntervals: state.staleIntervals, action: 'drift', lastActivityAt: activityAt,
       });
     }
 
-    return { at, rows, providerTurnsSpent };
+    return { at, rows, providerTurnsSpent: 0 };
   };
 
   const checkDrift: SupervisionEngine['checkDrift'] = () => {

@@ -612,16 +612,6 @@ export async function bootServer(options: BootOptions): Promise<BootResult> {
       const failure = usageLog.append({ at: new Date().toISOString(), rows });
       if (failure) console.error(`[nvk-server] usage.jsonl append failed: ${failure}`);
     },
-    async escalate(text) {
-      // DEC-B1-12: escalation reaches Chris through messaging, on the lawful
-      // holder path — never a console line he will never read.
-      await humanHolder.value.call((s) => (s as { sendMessage(i: object): Promise<unknown> }).sendMessage({
-        address: `person:${human.personId}`,
-        body: { text: `⚠️ supervision: ${text}` },
-        priority: 'normal',
-        clientMessageId: `cmsg_${randomUUID()}`,
-      }));
-    },
     policy: config.supervision,
     // The gate demands the skills that are actually REGISTERED (DEC-S2-4's
     // provider-neutral registry). An empty registry means the gate still runs

@@ -1,13 +1,14 @@
 // B1b slice 5b — the SUPERVISION ENGINE (§8, DEC-B1-10…15).
 //
 // The engine owns four behaviours Chris asked for by name: the skills gate
-// before any work, cheap-first drift check-ins, terminate-and-restart after
-// meaningful work, and a usage table every 5–10 minutes. Every one of them is a
-// trace line (DEC-B1-15, red gate 7) — this suite fails if any goes silent.
+// before any work, passive drift flags (free evidence only — no paid pings,
+// amended 2026-08-21), terminate-and-restart after meaningful work, and a
+// usage table every 5–10 minutes. Every one of them is a trace line
+// (DEC-B1-15, red gate 7) — this suite fails if any goes silent.
 //
-// It runs against fakes for the four seams the engine crosses (registry,
-// transport, trace, escalation), so the RULES are what is under test, not a
-// provider or a socket.
+// It runs against fakes for the seams the engine crosses (registry,
+// transport, trace), so the RULES are what is under test, not a provider or
+// a socket.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync } from 'node:fs';
@@ -50,7 +51,6 @@ function harness(options: {
   now?: () => string;
   canResume?: boolean;
   ask?: (sessionId: string, prompt: string) => Promise<AskResult>;
-  escalate?: (text: string) => Promise<void>;
   broadcast?: (name: string, data: unknown) => void | Promise<void>;
   usage?: UsageReader;
   policy?: Partial<SupervisionDeps['policy']>;
@@ -59,7 +59,6 @@ function harness(options: {
   const asked: Array<{ sessionId: string; prompt: string }> = [];
   const closed: string[] = [];
   const spawned: string[] = [];
-  const escalations: string[] = [];
   const broadcasts: Array<{ name: string; data: unknown }> = [];
   const appended: unknown[][] = [];
   const failures: SupervisionFailure[] = [];
@@ -152,10 +151,6 @@ function harness(options: {
       return options.broadcast?.(name, data);
     },
     async appendUsage(rows) { appended.push(rows); },
-    async escalate(text) {
-      escalations.push(text);
-      await options.escalate?.(text);
-    },
     policy: {
       usageIntervalSec: 300,
       driftIntervalSec: 300,
@@ -169,7 +164,7 @@ function harness(options: {
 
   return {
     engine: createSupervisionEngine(deps),
-    traces, asked, closed, spawned, escalations, broadcasts, appended, usageReads, failures,
+    traces, asked, closed, spawned, broadcasts, appended, usageReads, failures,
     setRecords: (next: ProviderSessionRecord[]) => { records = next; },
     getRecords: () => records,
     advance: (seconds: number) => { clock += seconds * 1000; },
@@ -255,7 +250,7 @@ test('a work reply with no subagent statement is reported, not silently accepted
     'Chris made the supervisor responsible for the cascade — an unstated cascade is visible');
 });
 
-// ── cheap-first drift (DEC-B1-12 / SR-1) ───────────────────────────────────
+// ── passive drift (DEC-B1-12 / SR-1, amended 2026-08-21) ───────────────────
 
 test('a LIVE session costs ZERO provider turns to check (SR-1: never burn a turn on a timer)', async () => {
   const h = harness();
@@ -270,96 +265,67 @@ test('a LIVE session costs ZERO provider turns to check (SR-1: never burn a turn
   assert.equal(report.providerTurnsSpent, 0);
 });
 
-test('staleness needs TWO consecutive quiet intervals before a turn is spent (§13 disposition 8)', async () => {
-  const h = harness({ replies: ['still here'] });
+test('two quiet intervals raise the drift flag — and STILL cost zero provider turns', async () => {
+  const h = harness({ replies: ['a reply the engine must never ask for'] });
   // Activity stopped at 10:00:00 and never resumes.
   h.setRecords([record({ lastActivityAt: '2026-07-28T10:00:00.000Z' })]);
 
   h.advance(301); // one interval of silence
   const first = await h.engine.checkDrift();
-  assert.equal(first.providerTurnsSpent, 0, 'one quiet interval is not yet stale');
+  assert.equal(first.rows[0]!.action, 'none', 'one quiet interval is not yet stale (§13 disposition 8)');
   assert.equal(first.rows[0]!.staleIntervals, 1);
 
   h.advance(301); // a second interval of silence
   const second = await h.engine.checkDrift();
-  assert.equal(second.providerTurnsSpent, 1, 'now, and only now, a paid ping');
-  assert.equal(second.rows[0]!.action, 'pinged');
-  assert.ok(actions(h.traces).includes('supervision.ping'));
+  assert.equal(second.rows[0]!.action, 'drift');
+  assert.equal(second.providerTurnsSpent, 0);
+  assert.equal(h.asked.length, 0, 'the paid "Status check" ping is gone — quiet is flagged, never asked about');
+  assert.ok(actions(h.traces).includes('supervision.drift'));
+  const table = await h.engine.usageTable();
+  assert.equal(table.rows[0]!.drift, true, 'the flag is where Chris looks: the usage table');
 });
 
-test('a stale session that answers the ping is healthy again — no drift event', async () => {
-  const h = harness({ replies: ['still here, mid-build'] });
-  h.setRecords([record({ lastActivityAt: '2026-07-28T10:00:00.000Z' })]);
-  h.advance(301); await h.engine.checkDrift();
-  h.advance(301);
-
-  const report = await h.engine.checkDrift();
-
-  assert.equal(report.rows[0]!.action, 'pinged');
-  assert.equal(actions(h.traces).includes('supervision.drift'), false, 'it answered — that is not drift');
-});
-
-test('an overlapping slow drift tick is coalesced — one ping and one counter transition', async () => {
-  let releasePing!: (answer: AskResult) => void;
-  const slowPing = new Promise<AskResult>((resolve) => { releasePing = resolve; });
-  const h = harness({ ask: async () => slowPing });
+test('a long drift episode traces ONCE, and new activity clears the flag without a turn', async () => {
+  const h = harness();
   h.setRecords([record({ lastActivityAt: '2026-07-28T10:00:00.000Z' })]);
 
-  h.advance(301);
-  await h.engine.checkDrift(); // first quiet interval: no paid turn
-  h.advance(301);
-  const first = h.engine.checkDrift();
-  await new Promise<void>((resolve) => setImmediate(resolve));
-  const overlapping = h.engine.checkDrift();
-  assert.equal(h.asked.length, 1, 'a second interval callback cannot start a second paid ping');
+  for (let i = 0; i < 4; i++) { h.advance(301); await h.engine.checkDrift(); }
+  assert.equal(actions(h.traces).filter((event) => event === 'supervision.drift').length, 1,
+    'one drift episode is one trace line, not one per quiet tick');
 
-  releasePing({ ok: true, text: 'still working' });
-  const [a, b] = await Promise.all([first, overlapping]);
-  assert.equal(h.asked.length, 1, 'completion still contains one provider invocation');
-  assert.equal(actions(h.traces).filter((event) => event === 'supervision.ping').length, 1);
-  assert.deepEqual(b, a, 'the skipped caller observes the one authoritative tick result');
-  assert.equal(a.providerTurnsSpent, 1);
-  assert.equal(a.rows[0]!.action, 'pinged');
-  assert.equal(a.rows[0]!.staleIntervals, 0, 'the state counter advances exactly once');
+  // The agent produces real activity again.
+  h.setRecords([record({ lastActivityAt: '2026-07-28T10:25:00.000Z' })]);
+  h.advance(301);
+  const recovered = await h.engine.checkDrift();
+
+  assert.equal(recovered.rows[0]!.live, true);
+  assert.equal(recovered.rows[0]!.action, 'none');
+  assert.equal((await h.engine.usageTable()).rows[0]!.drift, false, 'the flag clears on free evidence');
+  assert.equal(h.asked.length, 0, 'recovery is also free');
 });
 
-test('no reply to the ping is a drift event + trace; three in a row escalates to Chris', async () => {
-  const h = harness({ replies: [] }); // the agent never answers again
-  h.setRecords([record({ lastActivityAt: '2026-07-28T10:00:00.000Z' })]);
-
-  const seen: string[] = [];
-  for (let i = 0; i < 4; i++) {
-    h.advance(301);
-    const report = await h.engine.checkDrift();
-    seen.push(report.rows[0]!.action);
-  }
-
-  assert.deepEqual(seen, ['none', 'drift', 'drift', 'escalated'],
-    'one quiet interval, then three unanswered pings, then Chris hears about it');
-  assert.equal(h.escalations.length, 1);
-  assert.match(h.escalations[0]!, /sess_1/);
-  assert.ok(actions(h.traces).includes('supervision.escalate'));
-});
-
-test('a rejected escalation is contained and leaves drift eligible for retry', async () => {
+test('an overlapping slow drift tick is coalesced into one authoritative result', async () => {
+  let releaseRead!: () => void;
+  const slowRead = new Promise<void>((resolve) => { releaseRead = resolve; });
+  const base = createUsageReader({ home: mkdtempSync(path.join(tmpdir(), 'nvk-usage-home-')) });
   const h = harness({
-    replies: [],
-    escalate: async () => { throw new Error('messaging offline'); },
+    usage: {
+      trackSession: base.trackSession,
+      forget: base.forget,
+      read: base.read,
+      async readMany(sessions: UsageSessionRef[]) { await slowRead; return base.readMany(sessions); },
+    },
   });
   h.setRecords([record({ lastActivityAt: '2026-07-28T10:00:00.000Z' })]);
 
-  for (let i = 0; i < 3; i++) {
-    h.advance(301);
-    await h.engine.checkDrift();
-  }
   h.advance(301);
-  const report = await h.engine.checkDrift();
+  const first = h.engine.checkDrift();
+  const overlapping = h.engine.checkDrift();
+  releaseRead();
+  const [a, b] = await Promise.all([first, overlapping]);
 
-  assert.equal(report.rows[0]!.action, 'drift',
-    'a failed delivery is not falsely reported as an escalation');
-  assert.equal(report.rows[0]!.consecutiveDrift, 3,
-    'the counter is retained so the next interval retries escalation');
-  assert.deepEqual(h.failures.map((failure) => failure.code), ['EscalationFailed']);
+  assert.deepEqual(b, a, 'the skipped caller observes the one authoritative tick result');
+  assert.equal(a.rows[0]!.staleIntervals, 1, 'the state counter advances exactly once');
 });
 
 test('a closed session is not checked for drift and never costs a turn', async () => {
@@ -526,7 +492,6 @@ test('a failing trace write is surfaced, not swallowed', async () => {
     trace: async () => ({ ok: false, error: { code: 'TraceIncomplete', message: 'disk full' } }),
     broadcast: () => undefined,
     appendUsage: async () => undefined,
-    escalate: async () => undefined,
     policy: { usageIntervalSec: 300, driftIntervalSec: 300, idleTimeoutSec: 900 },
     skillPaths: ['/skills/tdd/SKILL.md'],
     onTraceFailure: (reason) => failures.push(reason),
