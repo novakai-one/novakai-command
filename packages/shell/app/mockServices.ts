@@ -17,9 +17,9 @@ import { createOfflineAgentServices } from './mockAgentRuns.js';
 
 export function createMockServices(opts: { seeded?: boolean } = {}): ShellServices {
   let convos: ConversationSummary[] = opts.seeded === false ? [] : [
-    { id: 'conv_kimi', threadId: 'thread_kimi', title: 'Kimi', kind: 'agent', pinned: true, archived: false, lastActivityAt: new Date().toISOString(), unreadCount: 0, agentId: 'agent_kimi' },
-    { id: 'conv_fable', threadId: 'thread_fable', title: 'Fable', kind: 'agent', pinned: false, archived: false, lastActivityAt: new Date().toISOString(), unreadCount: 0, agentId: 'agent_fable' },
-    { id: 'conv_build', threadId: 'thread_build', title: 'Build room', kind: 'room', pinned: false, archived: false, lastActivityAt: new Date().toISOString(), unreadCount: 0 },
+    { id: 'conv_kimi', threadId: 'thread_kimi', title: 'Kimi', kind: 'agent', pinned: true, archived: false, lastActivityAt: new Date().toISOString(), agentId: 'agent_kimi' },
+    { id: 'conv_fable', threadId: 'thread_fable', title: 'Fable', kind: 'agent', pinned: false, archived: false, lastActivityAt: new Date().toISOString(), agentId: 'agent_fable' },
+    { id: 'conv_build', threadId: 'thread_build', title: 'Build room', kind: 'room', pinned: false, archived: false, lastActivityAt: new Date().toISOString() },
   ];
   const messages = new Map<string, ChatMessage[]>();
   const listeners = new Set<MessagingEvents>();
@@ -141,7 +141,7 @@ export function createMockServices(opts: { seeded?: boolean } = {}): ShellServic
         id: `conv_${Math.random().toString(36).slice(2, 10)}`,
         threadId: `thread_${Math.random().toString(36).slice(2, 10)}`,
         title, kind, pinned: false, archived: false,
-        lastActivityAt: new Date().toISOString(), unreadCount: 0,
+        lastActivityAt: new Date().toISOString(),
       };
       convos = [c, ...convos];
       emit((l) => l.onConversation?.(c));
@@ -150,6 +150,12 @@ export function createMockServices(opts: { seeded?: boolean } = {}): ShellServic
     async pinConversation(id, pinned, _clientOpId) {
       convos = convos.map((c) => (c.id === id ? { ...c, pinned } : c));
       emit((l) => { const c = convos.find((x) => x.id === id); if (c) l.onConversation?.(c); });
+    },
+    async markConversationRead(id, lastMessageId, _clientOpId) {
+      convos = convos.map((c) => (c.id === id ? { ...c, lastReadMessageId: lastMessageId } : c));
+      const c = convos.find((x) => x.id === id);
+      if (c) emit((l) => l.onConversation?.(c));
+      return { ok: true as const };
     },
     async archiveConversation(id, archived, _clientOpId) {
       convos = convos.map((c) => (c.id === id ? { ...c, archived } : c));
@@ -172,7 +178,7 @@ export function createMockServices(opts: { seeded?: boolean } = {}): ShellServic
         id: input.conversationId ?? `conv_${Math.random().toString(36).slice(2, 10)}`,
         threadId: `thread_${Math.random().toString(36).slice(2, 10)}`,
         title: input.title?.trim() || 'Mock agent', kind: 'agent', pinned: false, archived: false,
-        lastActivityAt: new Date().toISOString(), unreadCount: 0, agentId,
+        lastActivityAt: new Date().toISOString(), agentId,
       };
       convos = [c, ...convos];
       emit((l) => l.onConversation?.(c));

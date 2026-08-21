@@ -310,7 +310,7 @@ test('boot archives a legacy thread-less conversation and send refuses it with a
       pinned: true,
       archived: true,
       lastActivityAt: '2026-07-27T12:00:00.000Z',
-      unreadCount: 0,
+      lastReadMessageId: undefined,
       agentId: undefined,
     });
 

@@ -18,6 +18,7 @@ export const SHELL_BUILTINS: SlashCommand[] = [
   { name: 'new', description: 'Start a new chat', source: 'shell' },
   { name: 'pin', description: 'Pin this chat', source: 'shell' },
   { name: 'archive', description: 'Archive this chat', source: 'shell' },
+  { name: 'unarchive', description: 'Restore an archived chat (no args lists them)', source: 'shell' },
   { name: 'speed', description: 'Set thread render speed', source: 'shell' },
   { name: 'theme', description: 'Switch theme (dark | light)', source: 'shell' },
 ];

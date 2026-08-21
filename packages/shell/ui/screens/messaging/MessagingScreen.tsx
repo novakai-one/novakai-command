@@ -44,6 +44,18 @@ export function MessagingScreen(props: {
     return () => window.removeEventListener('keydown', h);
   }, [newChat]);
 
+  // S3 (M3-01): the read cursor advances only while a conversation is SELECTED
+  // — its transcript is in front of Chris and auto-follows new messages.
+  // Opening the app or the room advances nothing; the server persists the
+  // cursor and rebroadcasts, so the derived badges settle everywhere.
+  const latest = selectedId ? api.lastMessageId(selectedId) : undefined;
+  useEffect(() => {
+    if (!selectedId || !latest || !services.markConversationRead) return;
+    const convo = api.conversations.find((c) => c.id === selectedId);
+    if (!convo || convo.lastReadMessageId === latest) return;
+    void services.markConversationRead(selectedId, latest, mintShellOpId());
+  }, [selectedId, latest, services, api.conversations]);
+
   const design = resolveMessagesDesign(settingValue<string>(props.settings, MESSAGES_DESIGN_SETTING));
 
   return (

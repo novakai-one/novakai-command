@@ -43,6 +43,8 @@ export interface BenchDataApi {
   appendLocalConversation(summary: ConversationSummary): void;
   /** Look up a loaded/local message (the resend affordance needs its opId). */
   findMessage(conversationId: string, messageId: string): ChatMessage | undefined;
+  /** Newest committed message id, or undefined (S3 read-cursor target). */
+  lastMessageId(conversationId: string): string | undefined;
   refreshConversations(): Promise<void>;
 }
 
@@ -115,6 +117,34 @@ function placeholderAgent(id: string, tracker: PresenceTracker): ObjectRecord {
     fields: { status: presence.state, composing: presence.state === 'active' },
     refs: [],
   };
+}
+
+/** S3 (M3-01): the unread DERIVATION — cursor + loaded messages, no stored
+ * counts. No cursor means never marked read: every non-self message is
+ * honestly unread. */
+export function unreadMessages(
+  convo: ConversationSummary, loaded: readonly ChatMessage[],
+): ChatMessage[] {
+  const cutoff = convo.lastReadMessageId
+    ? loaded.findIndex((m) => m.id === convo.lastReadMessageId)
+    : -1;
+  return loaded.slice(cutoff + 1).filter((m) => m.senderId !== SELF_ID && !m.pending && !m.failed);
+}
+
+/** The ported Bench draws a thread's badge from notification records related
+ * via 'notified' (bench-projection). Mint one per unread message — 1:1 mirrors
+ * of persisted facts, never invented (M1-04). */
+function unreadNotificationRecords(
+  convo: ConversationSummary, loaded: readonly ChatMessage[],
+): ObjectRecord[] {
+  return unreadMessages(convo, loaded).map((m) => ({
+    id: `notif_unread_${m.id}`,
+    kind: 'notification',
+    title: m.text,
+    createdAt: m.createdAt,
+    fields: { status: 'unread', messageId: m.id },
+    refs: [{ kind: 'thread', value: convo.id }],
+  }));
 }
 
 export function useBenchData(props: {
@@ -219,7 +249,10 @@ export function useBenchData(props: {
     const self: ObjectRecord = {
       id: SELF_ID, kind: 'principal', title: SELF_TITLE, createdAt: '', fields: {}, refs: [],
     };
-    const graph = buildGraph([self, ...agentRecords, ...threads, ...messages]);
+    const unreadNotifs = allConversations.flatMap((c) => (
+      unreadNotificationRecords(c, messagesByConvo.get(c.id) ?? [])
+    ));
+    const graph = buildGraph([self, ...agentRecords, ...threads, ...messages, ...unreadNotifs]);
     // S2 (D32): the draft picker offers existing agents not already holding a
     // live conversation (one person per agent = one thread, D22/D30), plus one
     // "new agent" pseudo-entry per provider the host can actually spawn on.
@@ -257,8 +290,17 @@ export function useBenchData(props: {
     messagesByConvo.get(conversationId)?.find((m) => m.id === messageId)
   ), [messagesByConvo]);
 
+  // S3: the newest COMMITTED message — the cursor never advances onto a
+  // pending/failed local row (those ids are not truth).
+  const lastMessageId = useCallback((conversationId: string) => (
+    [...(messagesByConvo.get(conversationId) ?? [])]
+      .filter((m) => !m.pending && !m.failed)
+      .at(-1)?.id
+  ), [messagesByConvo]);
+
   return {
     data, ready, conversations: allConversations,
-    appendLocal, settleLocal, appendLocalConversation, findMessage, refreshConversations,
+    appendLocal, settleLocal, appendLocalConversation, findMessage, lastMessageId,
+    refreshConversations,
   };
 }

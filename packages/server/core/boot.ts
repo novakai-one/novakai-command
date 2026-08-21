@@ -292,6 +292,7 @@ export async function bootServer(options: BootOptions): Promise<BootResult> {
       // S2 (M2-01): restore the durable agent binding (session or not).
       ...(view.agentId ? { agentId: view.agentId } : {}),
       ...(view.provider ? { provider: view.provider } : {}),
+      ...(view.lastReadMessageId ? { lastReadMessageId: view.lastReadMessageId } : {}),
     });
   }
 
