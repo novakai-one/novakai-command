@@ -6,13 +6,15 @@
   <key>ProgramArguments</key>
   <array>
     <string>/usr/local/bin/node</string>
-    <string>/Users/christopherdasca/Programming/Novakai-Command/tools/deploy.mjs</string>
-    <string>serve</string>
+    <string>/Users/christopherdasca/Programming/Novakai-Command/node_modules/tsx/dist/cli.mjs</string>
+    <string>/Users/christopherdasca/Programming/Novakai-Command/packages/server/cli/nvk-server.ts</string>
+    <string>--port</string><string>5180</string>
+    <string>--static</string><string>/Users/christopherdasca/Programming/Novakai-Command/packages/shell/dist</string>
   </array>
   <key>WorkingDirectory</key><string>/Users/christopherdasca/Programming/Novakai-Command</string>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
-  <key>StandardOutPath</key><string>/Users/christopherdasca/Programming/Novakai-Command/.novakai-command/deploy/serve.out</string>
-  <key>StandardErrorPath</key><string>/Users/christopherdasca/Programming/Novakai-Command/.novakai-command/deploy/serve.out</string>
+  <key>StandardOutPath</key><string>/Users/christopherdasca/Programming/Novakai-Command/.novakai/server/launchd.log</string>
+  <key>StandardErrorPath</key><string>/Users/christopherdasca/Programming/Novakai-Command/.novakai/server/launchd.log</string>
 </dict>
 </plist>
