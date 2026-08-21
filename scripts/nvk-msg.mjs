@@ -10,13 +10,17 @@
 //   node scripts/nvk-msg.mjs send --to <name> [--interrupt] [--thread <id>] "body"
 //   node scripts/nvk-msg.mjs read <name|#team> [--since ISO]
 //   node scripts/nvk-msg.mjs names
+//   node scripts/nvk-msg.mjs register --name <name> --provider <claude|codex|kimi>
+//     (a terminal agent enrols itself; prints the NVK_AGENT_TOKEN to export.
+//      Uses the local connection token at .novakai/server/ws-token, so it works
+//      only on the machine the server runs on.)
 //
 // Token: --token or NVK_AGENT_TOKEN (injected into every spawned PTY's env).
-// Server: NVK_COMMAND_URL (default http://127.0.0.1:3031).
+// Server: NVK_COMMAND_URL (default http://127.0.0.1:5180 — the one nvk-server).
 
 import crypto from 'node:crypto';
 
-const SERVER = process.env.NVK_COMMAND_URL || 'http://127.0.0.1:3031';
+const SERVER = process.env.NVK_COMMAND_URL || 'http://127.0.0.1:5180';
 
 const args = process.argv.slice(2);
 const cmd = args.shift();
@@ -24,8 +28,8 @@ const flag = (name) => { const i = args.indexOf(name); return i >= 0 ? args.spli
 const opt = (name) => { const i = args.indexOf(name); return i >= 0 ? args.splice(i, 2)[1] : undefined; };
 
 const token = opt('--token') || process.env.NVK_AGENT_TOKEN;
-if (!token) {
-  console.error('nvk-msg: no identity token — pass --token <nvkt_…> or run inside a spawned agent (NVK_AGENT_TOKEN is set for you)');
+if (!token && cmd !== 'register') {
+  console.error('nvk-msg: no identity token — pass --token <nvkt_…>, run inside a spawned agent (NVK_AGENT_TOKEN is set for you), or enrol with: nvk-msg register --name <name> --provider <claude|codex|kimi>');
   process.exit(1);
 }
 
@@ -52,7 +56,7 @@ const printV2Message = (message, nameFor) => console.log(
   `${message.priority === 'urgent' ? ' (interrupt)' : ''}\n  ${message.body.text.replace(/\n/g, '\n  ')}`);
 
 async function addressBookNames() {
-  const { agents = [], humans = [] } = await api('/api/messaging/v2/address-book');
+  const { agents = [], humans = [] } = await api('/api/door/address-book');
   return new Map([...agents, ...humans].map((entry) => [entry.personId, entry.name]));
 }
 
@@ -73,7 +77,7 @@ if (cmd === 'send') {
   }
   const body = args.join(' ').trim();
   if (!to || !body) { console.error('usage: nvk-msg send --to <name> [--interrupt] [--thread <id>] "body"'); process.exit(1); }
-  const result = await api('/api/messaging/v2/send', {
+  const result = await api('/api/door/send', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ to, body, interrupt, clientMessageId: `msg_${crypto.randomUUID()}` }),
@@ -86,7 +90,7 @@ if (cmd === 'send') {
   if (!who) { console.error('usage: nvk-msg read <name|#team> [--since ISO]'); process.exit(1); }
 
   const names = await addressBookNames();
-  const { messages = [] } = await api(`/api/messaging/v2/messages?with=${encodeURIComponent(who)}`);
+  const { messages = [] } = await api(`/api/door/messages?with=${encodeURIComponent(who)}`);
   const visible = since ? messages.filter((m) => m.createdAt >= since) : messages;
   if (!visible.length) { console.log('(no messages)'); process.exit(0); }
   const nameFor = (personId) => names.get(personId) ?? personId;
@@ -96,11 +100,40 @@ if (cmd === 'send') {
   if (messages.length >= 200) console.log('(page is full at 200 — older messages exist beyond this read)');
 
 } else if (cmd === 'names') {
-  const { agents = [], humans = [] } = await api('/api/messaging/v2/address-book');
+  const { agents = [], humans = [] } = await api('/api/door/address-book');
   const lines = agents.map((agent) => `${agent.name} (${agent.provider})${agent.status ? ` [${agent.status}]` : ''}`);
   for (const human of humans) lines.push(`${human.name} (human)`);
   console.log(lines.join('\n') || '(no live agents)');
 
+} else if (cmd === 'register') {
+  const name = opt('--name');
+  const provider = opt('--provider');
+  if (!name || !provider) { console.error('usage: nvk-msg register --name <name> --provider <claude|codex|kimi>'); process.exit(1); }
+  const { readFileSync } = await import('node:fs');
+  const { join } = await import('node:path');
+  const root = process.env.NVK_ROOT || join(process.env.HOME ?? '', 'Programming', 'Novakai-Command', '.novakai');
+  let connectionToken;
+  try {
+    connectionToken = readFileSync(join(root, 'server', 'ws-token'), 'utf8').trim();
+  } catch {
+    fail(`cannot read ${join(root, 'server', 'ws-token')} — is the server running on this machine? (set NVK_ROOT if the store lives elsewhere)`);
+  }
+  let response;
+  try {
+    response = await fetch(`${SERVER}/api/door/register`, {
+      method: 'POST',
+      signal: AbortSignal.timeout(10_000),
+      headers: { 'authorization': `Bearer ${connectionToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ name, provider }),
+    });
+  } catch (error) {
+    fail(`server unreachable at ${SERVER} (${error?.cause?.code ?? error?.message ?? 'unknown'})`);
+  }
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) fail(`${response.status}: ${payload.error || 'unknown error'}`);
+  console.log(`registered ${name} (${payload.agentId} / ${payload.personId})`);
+  console.log(`export NVK_AGENT_TOKEN=${payload.token}`);
+
 } else {
-  console.error('usage: nvk-msg <send|read|names>'); process.exit(1);
+  console.error('usage: nvk-msg <send|read|names|register>'); process.exit(1);
 }

@@ -46,6 +46,7 @@ import { createSupervisedTransport } from './supervision/transport.js';
 import { createSupervisionEngine, type SupervisionEngine, type SupervisionRecord } from './supervision/engine.js';
 import { startTransport, type RunningTransport } from './transport/server.js';
 import { buildMethods, restoreLiveSessions, type ServerRuntime, type Conversation } from './methods.js';
+import { handleDoorHttpRequest } from './door/routes.js';
 import { composeB3Wire } from './b3/runtime-wire.js';
 import type { B3RuntimeOptions } from './b3/composition.js';
 import { composeB2aServerCapabilities } from './b2a/composition.js';
@@ -736,6 +737,9 @@ export async function bootServer(options: BootOptions): Promise<BootResult> {
     ...(options.staticDir ? { staticDir: options.staticDir } : {}),
     methods,
     artifacts: b2a.artifacts,
+    // S3 decommission: the HTTP door — agent CLIs and the Slack bridge reach
+    // the same runtime + method table this socket serves, on this same port.
+    door: (context) => handleDoorHttpRequest({ runtime, methods }, context),
     // An Agent Run presenting its credential on this socket is identified as
     // ITSELF here too — the Shell's server is a lawful place for a spawned
     // Agent to call from, and a forged credential is refused rather than

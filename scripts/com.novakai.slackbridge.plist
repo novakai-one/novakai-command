@@ -14,7 +14,7 @@
   <key>EnvironmentVariables</key>
   <dict>
     <key>NVK_SLACK_BRIDGE_APP_BASE</key>
-    <string>http://localhost:3030</string>
+    <string>http://localhost:5180</string>
   </dict>
   <key>RunAtLoad</key>
   <true/>

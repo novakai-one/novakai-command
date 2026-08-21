@@ -2,40 +2,25 @@
   "name": "novakai-command",
   "version": "1.0.0",
   "description": "Local AI Multi-Agent Operations Command Center",
-  "main": "src/index.ts",
   "type": "module",
   "bin": {
     "nvk": "./scripts/nvk.mjs"
   },
   "scripts": {
-    "dev:backend": "NOVAKAI_SERVER_PORT=${NOVAKAI_SERVER_PORT:-3131} tsx watch src/backend/index.ts",
-    "dev:frontend": "vite --host",
     "prototype:messaging": "python3 -m http.server 3040 --bind 127.0.0.1 --directory docs",
-    "predev": "node tools/dev-lane.mjs clean",
-    "dev": "concurrently --restart-tries -1 --restart-after 1000 -n backend,frontend \"npm run dev:backend\" \"npm run dev:frontend\"",
-    "snapshot": "node tools/deploy.mjs snapshot",
-    "prod": "node tools/deploy.mjs serve",
-    "redeploy": "node tools/deploy.mjs redeploy",
-    "build": "vite build",
     "lint": "node tools/gates/standards.mjs",
-    "stores:audit": "node scripts/nvk-store.mjs audit --dir .novakai/stores",
-    "stores:gate": "node tools/gates/stores.mjs",
-    "stores:test": "npx tsx src/backend/stores/validate.test.mjs && npx tsx src/backend/stores/objectmodel.test.mjs && npx tsx src/backend/stores/transition.test.mjs && npx tsx src/backend/stores/store.test.mjs && npx tsx src/backend/stores/cli.test.mjs && npx tsx tools/gates/stores.test.mjs && npx tsx scripts/nvk-mission.test.mjs",
     "messaging:test": "npm --prefix packages/messaging test && node packages/messaging/contract/check-map-drift.mjs",
     "test:fast": "npm --prefix packages/shell run test:fast && for p in packages/*; do [ \"$p\" = \"packages/shell\" ] && continue; node tools/test-fast.mjs \"$p\" || exit 1; done",
     "test:guards": "for p in packages/*; do [ \"$p\" = \"packages/shell\" ] && continue; node tools/test-fast.mjs \"$p\" --guards || exit 1; done; npm --prefix packages/shell run test:contrast",
     "test:full": "for p in packages/*; do (cd \"$p\" && npm test) || exit 1; done",
     "app": "electron desktop",
     "app:build": "electron-builder --mac --config electron-builder.yml",
-    "postinstall": "chmod +x node_modules/node-pty/prebuilds/*/spawn-helper 2>/dev/null || true",
-    "start": "node dist/index.js"
+    "postinstall": "chmod +x node_modules/node-pty/prebuilds/*/spawn-helper 2>/dev/null || true"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
     "@xyflow/react": "^12.11.2",
-    "cors": "^2.8.5",
-    "express": "^4.19.2",
     "lucide-react": "^0.395.0",
     "node-pty": "^1.1.0",
     "playwright-core": "^1.61.1",
@@ -44,21 +29,16 @@
     "ws": "^8.17.0"
   },
   "devDependencies": {
-    "@types/cors": "^2.8.17",
-    "@types/express": "^4.17.21",
     "@types/node": "^20.14.9",
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
     "@types/ws": "^8.5.10",
-    "@vitejs/plugin-react": "^4.3.1",
-    "concurrently": "^8.2.2",
     "electron": "^33.2.0",
     "electron-builder": "^25.1.8",
     "eslint": "^10.6.0",
     "eslint-plugin-sonarjs": "^4.1.0",
     "tsx": "^4.15.7",
     "typescript": "^5.5.2",
-    "typescript-eslint": "^8.63.0",
-    "vite": "^5.3.1"
+    "typescript-eslint": "^8.63.0"
   }
 }

@@ -1,2 +1,0 @@
-{"id":"request_fixture-pending","kind":"request","ts":"2026-07-21T12:00:00+10:00","question":"Fixture question?","options":["option a","option b"],"status":"pending"}
-{"id":"request_fixture-answered","kind":"request","ts":"2026-07-21T12:00:00+10:00","question":"Second question?","options":["yes","no"],"status":"answered","decision":"DEC-2026-07-21-101"}

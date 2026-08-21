@@ -24,12 +24,4 @@ jobs:
         run: for p in foundation spine projects artifacts terminal transcript messaging supervision agent-runtime agents server shell; do node -e "process.exit(require(process.argv[1]).scripts?.build?0:1)" "./packages/$p/package.json" && (cd "packages/$p" && npm run build); done
       - run: npm run messaging:test
       - run: npm run test:guards
-      - run: npx tsc --noEmit
-      # ponytail: no test runner in repo; plain tsx scripts, discovered by name
-      - run: |
-          for t in $(find src -name '*.test.ts' -not -path '*/node_modules/*'); do
-            npx tsx "$t"
-          done
-      - run: npm run stores:test
       - run: npm run lint
-      - run: npm run build

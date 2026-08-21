@@ -1,2 +1,0 @@
-{"id":"task_fixture-alpha","kind":"task","ts":"2026-07-21T12:00:00+10:00","title":"Fixture task","status":"todo","refs":[{"kind":"mission","value":"mission_fixture-prime"}]}
-{"id":"task_fixture-refiled","kind":"task","ts":"2026-07-21T12:00:00+10:00","status":"refiled","refiledTo":"mission_fixture-prime","updated":"2026-07-21T12:00:00+10:00"}

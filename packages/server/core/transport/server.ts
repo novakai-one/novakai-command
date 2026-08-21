@@ -34,6 +34,15 @@ export interface StartTransportOptions {
   methods: MethodTable;
   /** B2a: the sole network adapter allowed to carry Artifact bytes. */
   artifacts?: Pick<ArtifactsHost, 'operations' | 'http'>;
+  /**
+   * S3 decommission: the HTTP door for agent CLIs and the Slack bridge.
+   * Tried after artifacts; returning false falls through to bootstrap/static.
+   */
+  door?(context: {
+    request: IncomingMessage;
+    response: ServerResponse;
+    connectionToken: string;
+  }): Promise<boolean>;
   /** Internal Artifact HTTP adapter override for bounded tests. */
   artifactMaxUploadBytes?: number;
   /** Called for every dispatched method (boot tracing / supervision). */
@@ -124,6 +133,9 @@ export async function startTransport(options: StartTransportOptions): Promise<Ru
         maxUploadBytes: options.artifactMaxUploadBytes,
       })
     ) {
+      return;
+    }
+    if (options.door && await options.door({ request: req, response: res, connectionToken: token })) {
       return;
     }
     const url = new URL(req.url ?? '/', `http://${HOST}`);

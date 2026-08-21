@@ -33,6 +33,7 @@ import type { B2aServerCapabilities } from './b2a/composition.js';
 import { buildB2aMethods } from './b2a/methods.js';
 import type { TranscriptServerHost } from './b2b/composition.js';
 import { buildTranscriptMethods } from './b2b/methods.js';
+import { ensureAgent, ensureAgentPerson } from './door/provision.js';
 
 type ShellPersistence = ReturnType<typeof composeShellPersistence>;
 
@@ -93,7 +94,7 @@ const contextLine = (focus: unknown): string => `[novakai context] ${JSON.string
 
 // S3: the wire carries the read CURSOR (truth), never a stored count — the
 // shell derives unread from cursor + the messages it already loads (M3-01).
-const summarize = (c: Conversation) => ({
+export const summarize = (c: Conversation) => ({
   id: c.id, threadId: c.threadId ?? c.address, title: c.title, kind: c.kind,
   pinned: c.pinned, archived: c.archived, lastActivityAt: c.lastActivityAt,
   agentId: c.agentId, lastReadMessageId: c.lastReadMessageId,
@@ -105,7 +106,7 @@ const summarize = (c: Conversation) => ({
  * a thread is created on the first send, and a view still holding threadRef
  * null cannot be relinked to its provider session on the next boot.
  */
-async function persistView(runtime: ServerRuntime, c: Conversation, clientOpId: string): Promise<void> {
+export async function persistView(runtime: ServerRuntime, c: Conversation, clientOpId: string): Promise<void> {
   const res = await setConversationView(runtime.persistence.conversationViewDriver, c.id, {
     threadRef: c.threadId ? { kind: 'thread', id: c.threadId } : null,
     address: c.address,
@@ -206,72 +207,6 @@ export function buildMethods(runtime: ServerRuntime): MethodTable {
     return null;
   };
 
-  /**
-   * G4 lesson, promoted (§9): look the definition up by displayName+provider
-   * before defining, so a restart never appends a duplicate agent.
-   */
-  const ensureAgent = async (displayName: string, provider: ProviderName): Promise<string> => {
-    const listed = await runtime.agents.listAgents() as
-      { ok: boolean; value?: { items: Array<{ id: string; displayName: string; provider: string; status: string }> } };
-    const existing = listed.ok
-      ? listed.value?.items.find((a) => a.displayName === displayName && a.provider === provider && a.status !== 'archived')
-      : undefined;
-    if (existing) return existing.id;
-    const defined = await runtime.agents.defineAgent(
-      { displayName, provider, model: runtime.configStore.current().providers[provider].defaultModel },
-      runtime.mintOpId() as never,
-    ) as { ok: boolean; value?: { id: string }; error?: { message: string } };
-    if (!defined.ok || !defined.value) throw new Error(`defineAgent failed: ${defined.error?.message ?? 'unknown'}`);
-    return defined.value.id;
-  };
-
-  /**
-   * DEC-B1-8: no pools. An agent that can hold conversations binds exactly ONE
-   * person, provisioned through config, idempotently (existing binding reused,
-   * never duplicated) — and the person opens its own door to Chris (DEC-14:
-   * each principal owns its ContactPolicy).
-   */
-  const ensureAgentPerson = async (agentId: string): Promise<string> => {
-    const config = runtime.configStore.current();
-    const bound = config.bindings.find((b) => b.agentId === agentId);
-    if (bound) {
-      await openContactPolicy(bound.personId);
-      return bound.personId;
-    }
-    const personId = `person_a${randomUUID().replaceAll('-', '').slice(0, 12)}`;
-    // A messaging-only principal writes no objects: an empty grant set is the
-    // honest scope, not a borrowed one.
-    const token = runtime.configStore.mintPrincipalToken({ personId, roles: ['Worker'], grants: [] });
-    await runtime.configStore.set(
-      { configKind: 'principal', personId, roles: ['Worker'], tokenId: token.id },
-      runtime.mintOpId() as never,
-    );
-    await runtime.configStore.set(
-      { configKind: 'agentPersonBinding', agentId, personId },
-      runtime.mintOpId() as never,
-    );
-    await openContactPolicy(personId);
-    await allowHumanToReach(personId);
-    return personId;
-  };
-
-  /** The agent person allows Chris and denies everyone else (demo pattern). */
-  const openContactPolicy = async (personId: string): Promise<void> => {
-    const holder = await runtime.holderForPerson(personId);
-    if (!holder) return;
-    await holder.call((s) => (s as { setContactPolicy(p: object): Promise<unknown> })
-      .setContactPolicy({ allowlist: [runtime.human.personId], defaultRule: 'deny' }));
-  };
-
-  /** Chris's own allowlist grows to include every provisioned agent person. */
-  const allowHumanToReach = async (_personId: string): Promise<void> => {
-    const others = runtime.configStore.current().principals
-      .map((p) => p.personId)
-      .filter((id) => id !== runtime.human.personId);
-    await runtime.human.holder.call((s) => (s as { setContactPolicy(p: object): Promise<unknown> })
-      .setContactPolicy({ allowlist: others, defaultRule: 'deny' }));
-  };
-
   return {
     ...buildB2aMethods(runtime.b2a),
     ...buildTranscriptMethods(runtime.transcript.operations),
@@ -308,8 +243,8 @@ export function buildMethods(runtime: ServerRuntime): MethodTable {
       let agentId: string | undefined;
       let personId: string | undefined;
       if (p.kind === 'agent') {
-        agentId = await ensureAgent(p.title, 'kimi');
-        personId = await ensureAgentPerson(agentId);
+        agentId = await ensureAgent(runtime, p.title, 'kimi');
+        personId = await ensureAgentPerson(runtime, agentId);
         address = `person:${personId}`;
       }
       const conversation: Conversation = {
@@ -374,9 +309,9 @@ export function buildMethods(runtime: ServerRuntime): MethodTable {
       } else {
         provider = p.provider ?? 'kimi';
         title = p.title?.trim() || `Agent ${runtime.conversations.size + 1}`;
-        agentId = await ensureAgent(title, provider);
+        agentId = await ensureAgent(runtime, title, provider);
       }
-      const personId = await ensureAgentPerson(agentId);
+      const personId = await ensureAgentPerson(runtime, agentId);
 
       const spawn = await runtime.agents.spawnAgent(agentId as never) as
         { ok: boolean; value?: { sessionId: string; model: string }; error?: { message: string } };
