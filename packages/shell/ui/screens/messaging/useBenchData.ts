@@ -62,7 +62,12 @@ function threadRecord(c: ConversationSummary): ObjectRecord {
   };
 }
 
-function messageRecord(m: ChatMessage): ObjectRecord {
+function messageRecord(m: ChatMessage, conversationAgentId?: string): ObjectRecord {
+  // S2: the wire says an agent reply's sender is its messaging PERSON, an id
+  // the graph never carries. The conversation's agent IS that participant's
+  // graph identity, so a non-self sender in an agent conversation renders as
+  // the agent — never as "Unknown sender".
+  const senderId = m.senderId !== SELF_ID && conversationAgentId ? conversationAgentId : m.senderId;
   return {
     id: m.id,
     kind: 'message',
@@ -70,7 +75,7 @@ function messageRecord(m: ChatMessage): ObjectRecord {
     createdAt: m.createdAt,
     fields: {
       threadId: m.conversationId,
-      senderId: m.senderId,
+      senderId,
       body: m.text,
       createdAt: m.createdAt,
       ...(m.pending ? { pending: true } : {}),
@@ -149,6 +154,9 @@ export function useBenchData(props: {
     const list = await services.listConversations();
     setConversations(list);
     setPendingConvos((prev) => prev.filter((p) => !list.some((c) => c.id === p.id)));
+    // S2: a spawn defines agents mid-session — refresh defs with conversations
+    // so a new participant renders its displayName, never a raw id.
+    void services.agents?.listAgents().then(setAgents).catch(() => {});
     await loadMessagesFor(list.map((c) => c.id));
     setReady(true);
   }, [services, loadMessagesFor]);
@@ -196,7 +204,9 @@ export function useBenchData(props: {
 
   const data = useMemo<MessagesDesignData>(() => {
     const threads = allConversations.map(threadRecord);
-    const messages = [...messagesByConvo.values()].flat().map(messageRecord);
+    const agentByConvo = new Map(allConversations.map((c) => [c.id, c.agentId]));
+    const messages = [...messagesByConvo.values()].flat()
+      .map((m) => messageRecord(m, agentByConvo.get(m.conversationId)));
     const knownAgentIds = new Set(agents.map((a) => a.id));
     const referencedAgentIds = new Set(
       allConversations.map((c) => c.agentId).filter((id): id is string => Boolean(id)),
