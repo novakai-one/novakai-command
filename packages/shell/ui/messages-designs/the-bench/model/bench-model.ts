@@ -211,6 +211,8 @@ export type BenchNodeActions = {
   sendMessage(threadId: ObjectId, body: string): void;
   rememberTranscriptScroll(threadId: ObjectId, scrollTop: number): void;
   markThreadRead(threadId: ObjectId): void;
+  /** D34: retry a failed send with its ORIGINAL clientOpId (never a new post). */
+  resendMessage?(threadId: ObjectId, messageId: ObjectId): void;
   attachThreadToMission(threadId: ObjectId, missionId: ObjectId): void;
   archiveConversation(threadId: ObjectId): void;
   renameFrame(frameId: string, name: string): void;

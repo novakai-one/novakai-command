@@ -212,6 +212,9 @@ export type MessagesDesignCommands = {
   open(record: ObjectRecord): void;
   send(threadId: string, body: string): void;
   startConversation(agent: ObjectRecord): string;
+  /** D34 (S2): retry a failed send reusing its original clientOpId. Optional —
+   * designs render the affordance only where the host wires it. */
+  resendMessage?(threadId: string, messageId: string): void;
   markThreadRead(threadId: string): void;
   archiveThread(threadId: string): void;
   attachThreadToMission(threadId: string, missionId: string): void;

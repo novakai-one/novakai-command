@@ -88,12 +88,12 @@ export function createServerServices(
 
     ws.onopen = () => {
       clearTimeout(timeout);
-      void call<{ providers?: { mock?: boolean } }>('getCapabilities').then((caps) => {
-        // Mock spawning is a DEV affordance now, gated by server config (M10).
-        if (caps.providers?.mock) {
-          api.spawnMockAgent = (title) => call('spawnAgentConversation', { title, provider: 'mock' });
-        }
-      }).catch(() => undefined).finally(() => resolve(api));
+      // D32: availability is MEASURED once at connect; the UI offers a "new
+      // agent" entry only for providers the server says it can actually spawn.
+      void call<{ providers?: Partial<Record<'kimi' | 'claude' | 'codex' | 'mock', boolean>> }>('getCapabilities')
+        .then((caps) => {
+          if (caps.providers) api.providerAvailability = caps.providers;
+        }).catch(() => undefined).finally(() => resolve(api));
     };
     ws.onerror = () => { clearTimeout(timeout); reject(new Error('server unreachable')); };
     ws.onmessage = (ev) => {
@@ -169,8 +169,9 @@ export function createServerServices(
       sendMessage: (conversationId, text, clientOpId) =>
         call('sendMessage', { conversationId, text, clientOpId }),
       publishFocus: (focus) => { void call('publishFocus', focus).catch(() => undefined); },
-      // The one spawn path (§7): a real provider session on the configured CLI.
-      spawnRealKimiAgent: (title) => call('spawnAgentConversation', { title, provider: 'kimi' }),
+      // The one spawn path (§7/D30): existing agent OR new agent on a provider.
+      spawnAgentConversation: (input, clientOpId) =>
+        call('spawnAgentConversation', { ...input, clientOpId }),
       subscribe(events) {
         const ml = (m: unknown) => events.onMessage?.(m as never);
         const cl = (c: unknown) => events.onConversation?.(c as never);

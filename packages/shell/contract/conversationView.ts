@@ -38,6 +38,14 @@ export const ConversationViewRecord = z.object({
    */
   openedForPrincipalId: z.string().min(1).optional(),
   membershipKind: z.enum(['direct', 'group']).optional(),
+  /**
+   * S2 (M2-01): the durable agent binding. Without it a restart forgets which
+   * agent a conversation talks to (sessions are ephemeral, the binding is not)
+   * and the draft picker re-offers an already-conversed agent — the D22
+   * mirror-thread trap. Additive: pre-S2 records simply have no binding.
+   */
+  agentId: z.string().min(1).optional(),
+  provider: z.enum(['kimi', 'claude', 'codex', 'mock']).optional(),
 });
 export type ConversationViewRecord = z.infer<typeof ConversationViewRecord>;
 
@@ -60,6 +68,8 @@ export interface ConversationViewPatch {
   lastActivityAt?: string;
   openedForPrincipalId?: string;
   membershipKind?: 'direct' | 'group';
+  agentId?: string;
+  provider?: 'kimi' | 'claude' | 'codex' | 'mock';
 }
 
 /**
@@ -91,6 +101,8 @@ export async function setConversationView(
       ...(patch.openedForPrincipalId !== undefined
         ? { openedForPrincipalId: patch.openedForPrincipalId } : {}),
       ...(patch.membershipKind !== undefined ? { membershipKind: patch.membershipKind } : {}),
+      ...(patch.agentId !== undefined ? { agentId: patch.agentId } : {}),
+      ...(patch.provider !== undefined ? { provider: patch.provider } : {}),
     };
     ConversationViewRecord.parse(record); // never persist a record the schema rejects
     return driver.create(record, clientOpId);

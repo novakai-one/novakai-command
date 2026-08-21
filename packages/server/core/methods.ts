@@ -109,6 +109,9 @@ async function persistView(runtime: ServerRuntime, c: Conversation, clientOpId: 
     archived: c.archived,
     lastActivityAt: c.lastActivityAt,
     titleOverride: c.title,
+    // S2 (M2-01): the binding is durable truth — sessions die, this must not.
+    ...(c.agentId ? { agentId: c.agentId } : {}),
+    ...(c.provider ? { provider: c.provider } : {}),
   }, clientOpId);
   if (!res.ok) {
     console.error(`[nvk-server] conversationView persist failed for ${c.id}: ${res.error?.code} ${res.error?.message}`);
@@ -319,12 +322,55 @@ export function buildMethods(runtime: ServerRuntime): MethodTable {
      * The demo's spawnMockAgent + spawnRealKimi, unified (§7). One path: define
      * (idempotently) → provision the person → spawn on the configured provider
      * → register the session → bind the live lane.
+     *
+     * S2 (D30/D31): the caller may name an EXISTING agent (`agentId`) instead
+     * of a provider, and may mint the conversation id client-side
+     * (`conversationId`) so the UI's spatial layout is keyed by the real id
+     * from the first frame. Neither given → the original default-kimi path.
      */
     async spawnAgentConversation(params: never) {
-      const p = (params ?? {}) as { title?: string; provider?: 'kimi' | 'claude' | 'codex' | 'mock' };
-      const provider = p.provider ?? 'kimi';
-      const title = p.title?.trim() || `Agent ${runtime.conversations.size + 1}`;
-      const agentId = await ensureAgent(title, provider);
+      const p = (params ?? {}) as {
+        title?: string; provider?: 'kimi' | 'claude' | 'codex' | 'mock';
+        agentId?: string; conversationId?: string; clientOpId?: string;
+      };
+      if (p.agentId && p.provider) {
+        return { ok: false as const, error: 'pass agentId OR provider, not both' };
+      }
+      if (p.conversationId !== undefined) {
+        if (!/^conv_[A-Za-z0-9-]{4,64}$/.test(p.conversationId)) {
+          return { ok: false as const, error: `invalid conversationId "${p.conversationId}"` };
+        }
+        if (runtime.conversations.has(p.conversationId)) {
+          return { ok: false as const, error: `conversation "${p.conversationId}" already exists` };
+        }
+      }
+      let provider: ProviderName;
+      let title: string;
+      let agentId: string;
+      if (p.agentId) {
+        const found = await runtime.agents.getAgent(p.agentId as never) as
+          { ok: boolean; value?: { absent?: boolean; displayName?: string; provider?: ProviderName } };
+        if (!found.ok || !found.value || found.value.absent || !found.value.provider) {
+          return { ok: false as const, error: `no agent with id "${p.agentId}"` };
+        }
+        agentId = p.agentId;
+        provider = found.value.provider;
+        title = p.title?.trim() || found.value.displayName || `Agent ${runtime.conversations.size + 1}`;
+        // One person per agent (DEC-B1-8) means one direct thread: a second
+        // conversation on the same agent would MIRROR the first (D22). Refuse.
+        const existing = [...runtime.conversations.values()]
+          .find((c) => c.agentId === agentId && !c.archived);
+        if (existing) {
+          return {
+            ok: false as const,
+            error: `agent already has conversation "${existing.title}" — open it instead`,
+          };
+        }
+      } else {
+        provider = p.provider ?? 'kimi';
+        title = p.title?.trim() || `Agent ${runtime.conversations.size + 1}`;
+        agentId = await ensureAgent(title, provider);
+      }
       const personId = await ensureAgentPerson(agentId);
 
       const spawn = await runtime.agents.spawnAgent(agentId as never) as
@@ -340,13 +386,13 @@ export function buildMethods(runtime: ServerRuntime): MethodTable {
       });
 
       const conversation: Conversation = {
-        id: `conv_${randomUUID().slice(0, 8)}`,
+        id: p.conversationId ?? `conv_${randomUUID().slice(0, 8)}`,
         address: `person:${personId}`,
         title, kind: 'agent', pinned: false, archived: false,
         lastActivityAt: now(), agentId, sessionId, personId, provider,
       };
       runtime.conversations.set(conversation.id, conversation);
-      await persistView(runtime, conversation, runtime.mintOpId());
+      await persistView(runtime, conversation, p.clientOpId ?? runtime.mintOpId());
       attachLane(runtime, conversation, sessionId, personId);
 
       const summary = summarize(conversation);

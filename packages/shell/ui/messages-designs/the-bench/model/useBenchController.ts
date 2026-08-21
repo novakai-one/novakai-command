@@ -304,6 +304,8 @@ export function useBenchController({ data, commands }: MessagesDesignProps): Ben
       dispatch({ type: 'remember-scroll', threadId, scrollTop });
     },
     markThreadRead: (threadId) => commandsRef.current.markThreadRead(threadId),
+    // D34: hosts without a resend route simply render no affordance.
+    resendMessage: (threadId, messageId) => commandsRef.current.resendMessage?.(threadId, messageId),
     attachThreadToMission: (threadId, missionId) => (
       commandsRef.current.attachThreadToMission(threadId, missionId)
     ),

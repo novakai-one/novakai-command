@@ -289,6 +289,9 @@ export async function bootServer(options: BootOptions): Promise<BootResult> {
       archived: view.archived,
       lastActivityAt: view.lastActivityAt,
       ...(view.threadRef?.kind === 'thread' ? { threadId: view.threadRef.id } : {}),
+      // S2 (M2-01): restore the durable agent binding (session or not).
+      ...(view.agentId ? { agentId: view.agentId } : {}),
+      ...(view.provider ? { provider: view.provider } : {}),
     });
   }
 
