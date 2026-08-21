@@ -293,12 +293,19 @@ function WorldCanvasSurface<NodeType extends Node, EdgeType extends Edge>({
       ? restoreNodePlacements(viewportKey, incomingNodes)
       : [...incomingNodes];
 
-    setNodes(restoredNodes.map((node) => ({
-      ...node,
-      selected: isNodeSelected
-        ? isNodeSelected(node, selectedId)
-        : node.id === selectedId,
-    })));
+    // React Flow stores each node's measured DOM size on the node object; a
+    // wholesale replace would drop it and leave nodes visibility:hidden until
+    // a re-measure that rapid successive refreshes can starve. Carry it over.
+    setNodes((currentNodes) => {
+      const measuredById = new Map(currentNodes.map((node) => [node.id, node.measured]));
+      return restoredNodes.map((node) => ({
+        ...node,
+        measured: measuredById.get(node.id) ?? node.measured,
+        selected: isNodeSelected
+          ? isNodeSelected(node, selectedId)
+          : node.id === selectedId,
+      }));
+    });
 
     if (!emittedRestoreRef.current || placementCommandEmissionRef.current) {
       emittedRestoreRef.current = true;
