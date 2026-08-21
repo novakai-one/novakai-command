@@ -98,6 +98,10 @@ export const summarize = (c: Conversation) => ({
   id: c.id, threadId: c.threadId ?? c.address, title: c.title, kind: c.kind,
   pinned: c.pinned, archived: c.archived, lastActivityAt: c.lastActivityAt,
   agentId: c.agentId, lastReadMessageId: c.lastReadMessageId,
+  // The conversation's LIVE session, when one is attached. This is what lets
+  // the UI offer Kill only where something can actually be killed, and kill
+  // exactly this session — never a sweep over the agent's other sessions.
+  sessionId: c.sessionId,
 });
 
 /**

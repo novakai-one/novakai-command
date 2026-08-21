@@ -352,8 +352,18 @@ export function projectBenchCanvas(
     options.acceptDraft,
     options.cancelDraft,
   );
+  // A shelved conversation's inspection trails hide WITH its card — the
+  // session state underneath is untouched, so un-shelving restores them.
+  const shelved = new Set(state.session.shelvedThreadIds);
+  const visibleState: BenchState = shelved.size === 0 ? state : {
+    ...state,
+    session: {
+      ...state.session,
+      trails: state.session.trails.filter((trail) => !shelved.has(trail.threadId)),
+    },
+  };
   const trails = placements === null
     ? { nodes: [], edges: [] }
-    : projectInspectionTrails(model, state, placements, actions);
+    : projectInspectionTrails(model, visibleState, placements, actions);
   return { nodes: [...frames, ...conversations, ...drafts, ...trails.nodes], edges: trails.edges };
 }

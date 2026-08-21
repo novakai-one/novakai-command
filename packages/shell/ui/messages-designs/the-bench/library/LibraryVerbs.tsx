@@ -34,17 +34,19 @@ export function LibraryVerbs({ entry, actions }: {
           Remove
         </button>
       )}
-      <button
-        type="button"
-        className="library-verbs__danger"
-        title="Stop this agent's live session — the conversation stays"
-        onClick={(event) => {
-          event.stopPropagation();
-          actions.killAgent(threadId);
-        }}
-      >
-        Kill
-      </button>
+      {entry.liveSessionId !== null && (
+        <button
+          type="button"
+          className="library-verbs__danger"
+          title="Stop this agent's live session — the conversation stays"
+          onClick={(event) => {
+            event.stopPropagation();
+            actions.killAgent(threadId);
+          }}
+        >
+          Kill
+        </button>
+      )}
       <button
         type="button"
         title="Move to the Archive section at the bottom of this panel"

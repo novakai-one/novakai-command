@@ -8,10 +8,10 @@ import type { buildLibraryView } from './library-model';
 type AgedView = ReturnType<typeof buildLibraryView>;
 
 /** The default (no search) panel body: pinned, aged sections, archive. */
-export function LibraryAgedView({ view, archiveOpen, onOpenArchive, openStackKeys, onToggleStack, actions, onReveal }: {
+export function LibraryAgedView({ view, archiveOpen, onToggleArchive, openStackKeys, onToggleStack, actions, onReveal }: {
   view: AgedView;
   archiveOpen: boolean;
-  onOpenArchive: () => void;
+  onToggleArchive: (open: boolean) => void;
   openStackKeys: ReadonlySet<string>;
   onToggleStack: (key: string) => void;
   actions: BenchNodeActions;
@@ -56,7 +56,15 @@ export function LibraryAgedView({ view, archiveOpen, onOpenArchive, openStackKey
       )}
       {view.archived.length > 0 && (
         <LibrarySection label="Archive" count={view.archived.length}>
-          {archiveOpen ? view.archived.map((archived) => (
+          <button
+            type="button"
+            className="library-panel__archive-toggle"
+            aria-expanded={archiveOpen}
+            onClick={() => onToggleArchive(!archiveOpen)}
+          >
+            {archiveOpen ? 'Hide archived' : 'Show archived'}
+          </button>
+          {archiveOpen && view.archived.map((archived) => (
             <div key={archived.threadId} className="library-row" data-on-canvas={false}>
               <span className="library-row__body library-row__archived">
                 <strong>{archived.title}</strong>
@@ -67,11 +75,7 @@ export function LibraryAgedView({ view, archiveOpen, onOpenArchive, openStackKey
                 </button>
               </span>
             </div>
-          )) : (
-            <button type="button" className="library-panel__archive-toggle" onClick={onOpenArchive}>
-              Show archived
-            </button>
-          )}
+          ))}
         </LibrarySection>
       )}
       {view.total === 0 && <p className="library-panel__empty">No conversations yet.</p>}

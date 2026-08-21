@@ -114,21 +114,22 @@ function ConversationMenuItems({ conversation, missions, actions, missionId, set
           }}>
             Remove from canvas
           </button>
+          {typeof conversation.thread.fields.sessionId === 'string' && (
+            <button
+              type="button"
+              role="menuitem"
+              className="bench-conversation-menu__danger"
+              onClick={() => {
+                actions.killAgent(conversation.thread.id);
+                close();
+              }}
+            >
+              Kill agent
+            </button>
+          )}
           <button
             type="button"
             role="menuitem"
-            className="bench-conversation-menu__danger"
-            onClick={() => {
-              actions.killAgent(conversation.thread.id);
-              close();
-            }}
-          >
-            Kill agent
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            className="bench-conversation-menu__danger"
             onClick={() => actions.archiveConversation(conversation.thread.id)}
           >
             Archive

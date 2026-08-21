@@ -171,9 +171,15 @@
   top: 4px;
   right: 4px;
   display: flex;
-  gap: 3px;
+  gap: 4px;
   opacity: 0;
   transition: opacity var(--motion-feedback) var(--ease-out);
+}
+
+/* Cards (Pinned / Today) keep a faint resting hint so the verbs are
+   discoverable without hovering; rows stay fully quiet until approached. */
+.library-card .library-verbs {
+  opacity: .4;
 }
 
 .library-card:hover .library-verbs,
@@ -184,7 +190,9 @@
 }
 
 .library-verbs button {
-  padding: 3px 7px;
+  position: relative;
+  min-height: 26px;
+  padding: 4px 9px;
   border: 1px solid var(--bench-rule-soft);
   border-radius: var(--bench-radius-control);
   color: var(--bench-ink-secondary);
@@ -194,13 +202,27 @@
   cursor: pointer;
 }
 
+/* Extend each verb's hit area beyond its quiet visual footprint. */
+.library-verbs button::before {
+  content: '';
+  position: absolute;
+  inset: -7px -3px;
+}
+
 .library-verbs button:hover {
   border-color: var(--bench-rule-strong);
   color: var(--bench-ink-primary);
 }
 
+/* Kill is the one destructive verb: marked at rest, louder on approach. */
+.library-verbs .library-verbs__danger {
+  border-color: color-mix(in srgb, var(--bench-danger) 55%, var(--bench-rule-soft));
+  color: var(--bench-danger);
+}
+
 .library-verbs .library-verbs__danger:hover {
   border-color: var(--bench-danger);
+  color: var(--bench-ink-primary);
 }
 
 .library-panel__archive-toggle {

@@ -59,6 +59,7 @@ function threadRecord(c: ConversationSummary): ObjectRecord {
       pinned: c.pinned,
       kind: c.kind,
       ...(c.agentId ? { agentId: c.agentId } : {}),
+      ...(c.sessionId ? { sessionId: c.sessionId } : {}),
     },
     refs: c.agentId ? [{ kind: 'agent', value: c.agentId }] : [],
   };

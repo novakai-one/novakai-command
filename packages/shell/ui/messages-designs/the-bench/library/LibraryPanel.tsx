@@ -1,11 +1,9 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type React from 'react';
 import type { ObjectRecord } from '../../contract';
 import type { BenchConversation, BenchNodeActions } from '../model/bench-model';
 import { LibraryAgedView } from './LibraryAgedView';
-import { LibraryRow } from './LibraryRow';
-import { LibrarySection } from './LibrarySection';
-import { buildLibraryView, searchLibrary } from './library-model';
+import { buildLibraryView, matchesLibraryQuery } from './library-model';
 import { useLibraryPanel } from './useLibraryPanel';
 import './library.css';
 import './library-entries.css';
@@ -28,6 +26,18 @@ function CollapsedLibrary({ total, needsYouCount, onOpen }: {
       <span>{total}</span>
     </button>
   );
+}
+
+/** Re-renders the aged view when the local calendar day turns over. */
+function useLocalDayTick(): number {
+  const [dayTick, setDayTick] = useState(0);
+  useEffect(() => {
+    const now = new Date();
+    const nextMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+    const timer = setTimeout(() => setDayTick((tick) => tick + 1), nextMidnight.getTime() - now.getTime() + 1000);
+    return () => clearTimeout(timer);
+  }, [dayTick]);
+  return dayTick;
 }
 
 /** The panel's search input; Escape clears, a second Escape collapses. */
@@ -72,14 +82,28 @@ export function LibraryPanel({
 }) {
   const panel = useLibraryPanel();
   const searchRef = useRef<HTMLInputElement>(null);
+  const dayTick = useLocalDayTick();
   const shelved = useMemo(() => new Set(shelvedThreadIds), [shelvedThreadIds]);
-  const view = useMemo(
-    () => buildLibraryView({ conversations, archivedThreads, shelvedThreadIds: shelved, now: new Date() }),
-    [conversations, archivedThreads, shelved],
-  );
-  const results = useMemo(
-    () => searchLibrary(conversations, shelved, panel.query),
-    [conversations, shelved, panel.query],
+  const query = panel.query.trim();
+  const searching = query.length > 0;
+  // Search keeps the aged sections: filter the inputs, re-age what remains.
+  const view = useMemo(() => {
+    const matching = searching
+      ? conversations.filter((conversation) => matchesLibraryQuery(conversation, query))
+      : conversations;
+    const matchingArchived = searching
+      ? archivedThreads.filter((thread) => thread.title.toLocaleLowerCase().includes(query.toLocaleLowerCase()))
+      : archivedThreads;
+    return buildLibraryView({
+      conversations: matching, archivedThreads: matchingArchived,
+      shelvedThreadIds: shelved, now: new Date(),
+    });
+    // dayTick: the sections re-age when local midnight passes.
+  }, [conversations, archivedThreads, shelved, searching, query, dayTick]);
+  // While searching, every matching day stack is open and the archive shows.
+  const openStackKeys = useMemo(
+    () => (searching ? new Set(view.older.map((group) => group.key)) : panel.openStackKeys),
+    [searching, view.older, panel.openStackKeys],
   );
 
   const { setExpanded } = panel;
@@ -100,7 +124,6 @@ export function LibraryPanel({
     );
   }
 
-  const searching = panel.query.trim().length > 0;
   return (
     <aside className="library-panel" style={{ width: panel.width }} aria-label="Conversation library">
       <header className="library-panel__head">
@@ -118,31 +141,33 @@ export function LibraryPanel({
       </header>
       <LibrarySearchInput panel={panel} searchRef={searchRef} />
       <div className="library-panel__body">
-        {searching ? (
-          <LibrarySection label="Matches" count={results.length}>
-            {results.map((entry) => (
-              <LibraryRow key={entry.threadId} entry={entry} actions={actions} onReveal={onReveal} />
-            ))}
-            {results.length === 0 && <p className="library-panel__empty">No conversations match.</p>}
-          </LibrarySection>
-        ) : (
-          <LibraryAgedView
-            view={view}
-            archiveOpen={panel.archiveOpen}
-            onOpenArchive={() => panel.setArchiveOpen(true)}
-            openStackKeys={panel.openStackKeys}
-            onToggleStack={panel.toggleStack}
-            actions={actions}
-            onReveal={onReveal}
-          />
+        <LibraryAgedView
+          view={view}
+          archiveOpen={searching || panel.archiveOpen}
+          onToggleArchive={panel.setArchiveOpen}
+          openStackKeys={openStackKeys}
+          onToggleStack={panel.toggleStack}
+          actions={actions}
+          onReveal={onReveal}
+        />
+        {searching && view.total === 0 && view.archived.length === 0 && (
+          <p className="library-panel__empty">No conversations match.</p>
         )}
       </div>
       <div
         className="library-panel__resize"
         role="separator"
+        tabIndex={0}
         aria-orientation="vertical"
         aria-label="Resize the library"
+        aria-valuemin={280}
+        aria-valuemax={560}
+        aria-valuenow={panel.width}
         onPointerDown={panel.startResize}
+        onKeyDown={(event) => {
+          if (event.key === 'ArrowLeft') panel.nudgeWidth(-16);
+          if (event.key === 'ArrowRight') panel.nudgeWidth(16);
+        }}
       />
     </aside>
   );

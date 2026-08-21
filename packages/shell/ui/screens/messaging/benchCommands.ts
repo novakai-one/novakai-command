@@ -195,40 +195,46 @@ export function createBenchCommands(props: {
 
     archiveThread(threadId: string): void {
       void services.archiveConversation(threadId, true, mintShellOpId())
-        .then(() => api.refreshConversations());
+        .then(() => api.refreshConversations())
+        .catch((cause) => api.appendLocal(refusalRow(threadId, 'Archive',
+          `Not archived: ${rejectedSendMessage(cause)}`)));
     },
 
     unarchiveThread(threadId: string): void {
       void services.archiveConversation(threadId, false, mintShellOpId())
         .then(() => api.refreshConversations())
-        .then(() => onSelect(threadId));
+        .then(() => onSelect(threadId))
+        .catch((cause) => api.appendLocal(refusalRow(threadId, 'Restore',
+          `Not restored: ${rejectedSendMessage(cause)}`)));
     },
 
     pinThread(threadId: string, pinned: boolean): void {
       void services.pinConversation(threadId, pinned, mintShellOpId())
-        .then(() => api.refreshConversations());
+        .then(() => api.refreshConversations())
+        .catch((cause) => api.appendLocal(refusalRow(threadId, pinned ? 'Pin' : 'Unpin',
+          `Not saved: ${rejectedSendMessage(cause)}`)));
     },
 
-    // Kill ≠ remove ≠ archive (Chris ruling 2026-08-21): this stops the
-    // agent's live session and touches nothing else. When there is nothing to
-    // stop, that is said out loud on the card — never a silent no-op.
+    // Kill ≠ remove ≠ archive (Chris ruling 2026-08-21): this stops exactly
+    // THIS conversation's live session — never a sweep over the agent's other
+    // sessions. Nothing to stop, or a failed stop, is said out loud on the
+    // card — never a silent no-op.
     killAgent(threadId: string): void {
       void (async () => {
         const conversation = api.conversations.find((convo) => convo.id === threadId);
-        const agentId = conversation?.agentId;
+        const sessionId = conversation?.sessionId;
         const sessions = services.sessions;
-        if (!agentId || !sessions) {
-          api.appendLocal(refusalRow(threadId, 'Kill agent', 'This conversation has no agent session to stop.'));
+        if (!sessionId || !sessions) {
+          api.appendLocal(refusalRow(threadId, 'Kill agent — nothing stopped',
+            'No live session on this conversation.'));
           return;
         }
-        const running = (await sessions.list().catch(() => []))
-          .filter((session) => session.agentId === agentId && session.status === 'running');
-        if (running.length === 0) {
-          api.appendLocal(refusalRow(threadId, 'Kill agent', 'No live session for this agent — nothing to stop.'));
+        const ended = await sessions.terminate(sessionId)
+          .catch((cause) => ({ ok: false as const, error: cause }));
+        if (!ended.ok) {
+          api.appendLocal(refusalRow(threadId, 'Kill agent — the session did not stop',
+            rejectedSendMessage(ended.error)));
           return;
-        }
-        for (const session of running) {
-          await sessions.terminate(session.sessionId).catch(() => undefined);
         }
         await api.refreshConversations();
       })();

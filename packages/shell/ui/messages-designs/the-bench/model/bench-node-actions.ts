@@ -90,8 +90,10 @@ export function createBenchNodeActions(deps: BenchNodeActionDeps): BenchNodeActi
     ),
     archiveConversation: (threadId) => {
       leaveZenIfShowing(threadId);
+      // No optimistic prune: the card leaves when the refreshed model drops
+      // the thread and reconcile-session sweeps its state. A failed archive
+      // therefore changes nothing (and says so on the card).
       commandsRef.current.archiveThread(threadId);
-      dispatch({ type: 'prune-conversation', threadId });
     },
     shelveConversation: (threadId) => {
       leaveZenIfShowing(threadId);

@@ -1,5 +1,5 @@
 import { type EdgeTypes, type NodeTypes } from '@xyflow/react';
-import { useState, type KeyboardEvent } from 'react';
+import { useEffect, useState, type KeyboardEvent } from 'react';
 import './styles/tokens.css';
 import './styles/canvas.css';
 import './styles/primitives.css';
@@ -56,8 +56,19 @@ function isTextInput(target: EventTarget | null): boolean {
 /** Composes the Bench controller with shared canvas contracts and no private mechanics. */
 export function TheBench(props: MessagesDesignProps) {
   const controller = useBenchController(props);
-  // ⌘K opens the Library's search; the panel owns all search state.
+  // ⌘K opens the Library's search; the panel owns all search state. The
+  // listener is window-level so the shortcut works wherever focus sits.
   const [librarySearchSignal, setLibrarySearchSignal] = useState(0);
+  useEffect(() => {
+    const onWindowKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey) || event.key.toLocaleLowerCase() !== 'k') return;
+      if (isTextInput(event.target)) return;
+      event.preventDefault();
+      setLibrarySearchSignal((signal) => signal + 1);
+    };
+    window.addEventListener('keydown', onWindowKeyDown);
+    return () => window.removeEventListener('keydown', onWindowKeyDown);
+  }, []);
   const activeThreadId = props.data.selected?.kind === 'thread'
     ? props.data.selected.id
     : [...controller.state.session.openThreadIds]
@@ -66,12 +77,6 @@ export function TheBench(props: MessagesDesignProps) {
 
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (isTextInput(event.target)) return;
-    const isSearchGesture = (event.metaKey || event.ctrlKey) && event.key.toLocaleLowerCase() === 'k';
-    if (isSearchGesture) {
-      event.preventDefault();
-      setLibrarySearchSignal((signal) => signal + 1);
-      return;
-    }
     if (!['f', 'F', '[', ']', 'Escape'].includes(event.key)) return;
     event.preventDefault();
     controller.onKeyInput({

@@ -14,6 +14,8 @@ export type LibraryEntry = {
   readonly unreadCount: number;
   readonly pinned: boolean;
   readonly onCanvas: boolean;
+  /** The live provider session, when one is attached — gates the Kill verb. */
+  readonly liveSessionId: string | null;
   readonly conversation: BenchConversation;
 };
 
@@ -64,6 +66,9 @@ function entryFor(conversation: BenchConversation, shelved: ReadonlySet<string>)
     unreadCount: conversation.unreadCount,
     pinned: conversation.thread.fields.pinned === true,
     onCanvas: !shelved.has(conversation.thread.id),
+    liveSessionId: typeof conversation.thread.fields.sessionId === 'string'
+      ? conversation.thread.fields.sessionId
+      : null,
     conversation,
   };
 }
@@ -80,7 +85,8 @@ export function buildLibraryView(input: {
     .sort((left, right) => right.lastActivityAt.localeCompare(left.lastActivityAt));
 
   const todayKey = localDayKey(input.now);
-  const weekFloor = input.now.getTime() - 7 * DAY_MS;
+  // Calendar-day boundary: one day never splits across This week and Older.
+  const weekFloorKey = localDayKey(new Date(input.now.getTime() - 7 * DAY_MS));
   const pinned: LibraryEntry[] = [];
   const today: LibraryEntry[] = [];
   const thisWeek: LibraryEntry[] = [];
@@ -95,7 +101,7 @@ export function buildLibraryView(input: {
     const activityKey = localDayKey(activity);
     if (activityKey === todayKey) {
       today.push(entry);
-    } else if (activity.getTime() >= weekFloor) {
+    } else if (activityKey >= weekFloorKey) {
       thisWeek.push(entry);
     } else {
       const group = olderByDay.get(activityKey) ?? { label: dayLabel(activity), entries: [] };
@@ -119,23 +125,20 @@ export function buildLibraryView(input: {
   };
 }
 
-/** Live filter across title, participants, mission, and message text. */
-export function searchLibrary(
-  conversations: readonly BenchConversation[],
-  shelvedThreadIds: ReadonlySet<string>,
-  query: string,
-): readonly LibraryEntry[] {
+/**
+ * The one search predicate: title, participants, mission, and message text.
+ * The panel filters its inputs with this and re-ages what remains, so search
+ * keeps the same sections a person already knows how to read.
+ */
+export function matchesLibraryQuery(conversation: BenchConversation, query: string): boolean {
   const normalized = query.trim().toLocaleLowerCase();
-  if (!normalized) return [];
-  return conversations
-    .filter((conversation) => (
-      `${conversation.thread.title} ${conversation.thread.id}`.toLocaleLowerCase().includes(normalized)
-      || conversation.participants.some((participant) => (
-        participant.record.title.toLocaleLowerCase().includes(normalized)
-      ))
-      || conversation.mission?.record.title.toLocaleLowerCase().includes(normalized)
-      || conversation.messages.some((message) => message.body.toLocaleLowerCase().includes(normalized))
+  if (!normalized) return true;
+  return (
+    `${conversation.thread.title} ${conversation.thread.id}`.toLocaleLowerCase().includes(normalized)
+    || conversation.participants.some((participant) => (
+      participant.record.title.toLocaleLowerCase().includes(normalized)
     ))
-    .map((conversation) => entryFor(conversation, shelvedThreadIds))
-    .sort((left, right) => right.lastActivityAt.localeCompare(left.lastActivityAt));
+    || conversation.mission?.record.title.toLocaleLowerCase().includes(normalized) === true
+    || conversation.messages.some((message) => message.body.toLocaleLowerCase().includes(normalized))
+  );
 }

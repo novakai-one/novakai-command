@@ -60,9 +60,13 @@ function useResizeDrag(
     };
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
+    window.addEventListener('blur', onUp);
     return () => {
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
+      window.removeEventListener('blur', onUp);
     };
   }, [persist, setWidth, widthRef]);
 
@@ -81,6 +85,8 @@ export function useLibraryPanel(): {
   readonly toggleStack: (key: string) => void;
   readonly setArchiveOpen: (open: boolean) => void;
   readonly startResize: (event: { clientX: number; preventDefault(): void }) => void;
+  /** Keyboard resizing for the separator (arrow keys). */
+  readonly nudgeWidth: (delta: number) => void;
 } {
   const [stored] = useState(readStoredPanelState);
   const [expanded, setExpandedState] = useState(stored.expanded);
@@ -115,8 +121,14 @@ export function useLibraryPanel(): {
 
   const startResize = useResizeDrag(widthRef, setWidth, persist);
 
+  const nudgeWidth = useCallback((delta: number) => {
+    const next = clampWidth(widthRef.current + delta);
+    setWidth(next);
+    persist({ expanded: true, width: next });
+  }, [persist]);
+
   return {
     expanded, width, query, openStackKeys, archiveOpen,
-    setExpanded, setQuery, toggleStack, setArchiveOpen, startResize,
+    setExpanded, setQuery, toggleStack, setArchiveOpen, startResize, nudgeWidth,
   };
 }

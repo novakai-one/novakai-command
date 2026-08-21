@@ -103,9 +103,10 @@ function pruneConversation(
 }
 
 /**
- * Removing from canvas ≠ archive and ≠ kill (Chris ruling 2026-08-21): the card
- * leaves the canvas, everything else about the conversation stays. Scroll
- * memory is kept so re-revealing restores the reading position.
+ * Removing from canvas ≠ archive and ≠ kill (Chris ruling 2026-08-21): the
+ * card leaves the canvas and NOTHING else changes — open state, inspection
+ * trails, frame membership, and scroll all stay, so un-shelving restores the
+ * exact workspace. Hiding the shelved thread's nodes is the projection's job.
  */
 function shelveConversation(
   session: BenchSessionSnapshot,
@@ -113,15 +114,9 @@ function shelveConversation(
 ): BenchSessionSnapshot {
   return {
     ...session,
-    openThreadIds: session.openThreadIds.filter((id) => id !== threadId),
     shelvedThreadIds: session.shelvedThreadIds.includes(threadId)
       ? session.shelvedThreadIds
       : [...session.shelvedThreadIds, threadId],
-    trails: session.trails.filter((trail) => trail.threadId !== threadId),
-    frames: session.frames.map((frame) => ({
-      ...frame,
-      conversationIds: frame.conversationIds.filter((id) => id !== threadId),
-    })),
     focusedThreadId: session.focusedThreadId === threadId ? null : session.focusedThreadId,
   };
 }

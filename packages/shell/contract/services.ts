@@ -77,6 +77,9 @@ export interface ConversationSummary {
    * messages) — a stored count was the fabrication M1-04 forbids. */
   lastReadMessageId?: string;
   agentId?: string;       // when kind === 'agent' — drives the presence dot
+  /** The live provider session attached to this conversation, when one is.
+   * Presence + Kill availability come from THIS, never from a guess. */
+  sessionId?: string;
 }
 
 /** One rendered chat message, including optimistic/failed local rows. */
