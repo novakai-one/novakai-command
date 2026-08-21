@@ -109,6 +109,9 @@ async function persistView(runtime: ServerRuntime, c: Conversation, clientOpId: 
     archived: c.archived,
     lastActivityAt: c.lastActivityAt,
     titleOverride: c.title,
+    // S2 (M2-01): the binding is durable truth — sessions die, this must not.
+    ...(c.agentId ? { agentId: c.agentId } : {}),
+    ...(c.provider ? { provider: c.provider } : {}),
   }, clientOpId);
   if (!res.ok) {
     console.error(`[nvk-server] conversationView persist failed for ${c.id}: ${res.error?.code} ${res.error?.message}`);
