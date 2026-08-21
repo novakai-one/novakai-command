@@ -1,2 +1,0 @@
-/* Rail row visuals live in tokens.css via --msg-* vars; this file exists to
-   satisfy the tsx-module-has-css structural rule and hosts nothing bespoke. */

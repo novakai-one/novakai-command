@@ -1,7 +1,0 @@
-/* Files tab — the wrapper contributes no box of its own: display:contents
-   promotes the rail and detail workspace to shell-row flex items, so each is
-   its own floating card and the shell's gap/padding rhythm applies between
-   them (docs/design.md §8). */
-.fd-panel {
-  display: contents;
-}

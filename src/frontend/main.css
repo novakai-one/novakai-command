@@ -1,4 +1,0 @@
-/* Entry-module stylesheet (structural law: a .tsx module owns a .css file).
-   The scrollbar-reveal behavior main.tsx drives via [data-scrolling] keeps
-   its selector documented here; the thumb styling itself lives in
-   css/index.css with the rest of the global chrome. */
