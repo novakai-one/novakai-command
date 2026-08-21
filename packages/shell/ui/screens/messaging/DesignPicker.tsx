@@ -2,11 +2,11 @@
 // Kit-composed (M1-08); the choice persists as the shell setting
 // 'messagesDesign' and survives reload (M1-07). One registered design still
 // renders the control, so the setting round-trip stays drivable.
-import React from 'react';
+import React, { useState } from 'react';
 import type { ShellServices } from '../../../contract/index.js';
 import { mintShellOpId } from '../../../contract/index.js';
 import { listMessagesDesigns } from '../../messages-designs/registry';
-import { Select, Stack } from '../../kit/index.js';
+import { Select, Stack, Text } from '../../kit/index.js';
 import { MESSAGES_DESIGN_SETTING } from './MessagingScreen.js';
 
 export function DesignPicker(props: {
@@ -15,6 +15,8 @@ export function DesignPicker(props: {
   refreshSettings(): Promise<void>;
 }) {
   const designs = listMessagesDesigns();
+  // M4: a failed persist surfaces inline — never void-swallowed.
+  const [error, setError] = useState<string | null>(null);
   return (
     <Stack
       className="nv-design-picker"
@@ -27,9 +29,17 @@ export function DesignPicker(props: {
         onChange={(id) => {
           void props.services
             .setSetting(MESSAGES_DESIGN_SETTING, id, { clientOpId: mintShellOpId() })
-            .then(() => props.refreshSettings());
+            .then(async (res) => {
+              setError(res.ok ? null : res.error.message);
+              if (res.ok) await props.refreshSettings();
+            });
         }}
       />
+      {error && (
+        <Text role="alert" style={{ color: 'var(--danger)', fontSize: 'var(--text-xs, 11px)' }}>
+          Design not saved: {error}
+        </Text>
+      )}
     </Stack>
   );
 }
