@@ -6,8 +6,11 @@ import type {
 import { reconcileInspectionTrails, reduceInspectionTrails } from './bench-trails';
 
 /** Creates the empty semantic session used on a first visit. */
-export function createEmptyBenchSession(): BenchSessionSnapshot {
+export function createEmptyBenchSession(
+  initialPlacedThreadIds: readonly string[] = [],
+): BenchSessionSnapshot {
   return {
+    placedThreadIds: [...new Set(initialPlacedThreadIds)],
     openThreadIds: [],
     trails: [],
     frames: [],
@@ -20,9 +23,16 @@ export function createEmptyBenchSession(): BenchSessionSnapshot {
 /** Creates reducer state from remembered semantics and an optional routed thread. */
 export function createInitialBenchState(
   snapshot: BenchSessionSnapshot | null,
-  initialThreadId?: string,
+  options: {
+    readonly initialPlacedThreadIds?: readonly string[];
+    readonly initialThreadId?: string;
+  } = {},
 ): BenchState {
-  const session = snapshot ?? createEmptyBenchSession();
+  const session = snapshot ?? createEmptyBenchSession(options.initialPlacedThreadIds);
+  const initialThreadId = options.initialThreadId;
+  const placedThreadIds = initialThreadId && !session.placedThreadIds.includes(initialThreadId)
+    ? [...session.placedThreadIds, initialThreadId]
+    : [...session.placedThreadIds];
   const openThreadIds = initialThreadId && !session.openThreadIds.includes(initialThreadId)
     ? [...session.openThreadIds, initialThreadId]
     : [...session.openThreadIds];
@@ -30,6 +40,7 @@ export function createInitialBenchState(
   return {
     session: {
       ...session,
+      placedThreadIds,
       openThreadIds,
       trails: session.trails.map((trail) => ({
         ...trail,
@@ -87,6 +98,7 @@ function pruneConversation(
   const { [threadId]: _removedScroll, ...remainingScroll } = session.scrollTopByThreadId;
   return {
     ...session,
+    placedThreadIds: session.placedThreadIds.filter((id) => id !== threadId),
     openThreadIds: session.openThreadIds.filter((id) => id !== threadId),
     trails: session.trails.filter((trail) => trail.threadId !== threadId),
     frames: session.frames.map((frame) => ({
@@ -107,6 +119,7 @@ function reconcileSession(
     .filter(([threadId]) => threadIds.has(threadId)));
   return {
     ...session,
+    placedThreadIds: session.placedThreadIds.filter((id) => threadIds.has(id)),
     openThreadIds: session.openThreadIds.filter((id) => threadIds.has(id)),
     trails: reconcileInspectionTrails(
       session.trails.filter((trail) => threadIds.has(trail.threadId)),
@@ -127,8 +140,23 @@ function reconcileSession(
 export function reduceBenchState(state: BenchState, action: BenchAction): BenchState {
   const session = state.session;
   switch (action.type) {
+    case 'place-conversation':
+      return session.placedThreadIds.includes(action.threadId)
+        ? state
+        : {
+            ...state,
+            session: {
+              ...session,
+              placedThreadIds: [...session.placedThreadIds, action.threadId],
+            },
+          };
+    case 'remove-conversation':
+      return session.placedThreadIds.includes(action.threadId)
+        ? { ...state, session: pruneConversation(session, action.threadId) }
+        : state;
     case 'open-conversation':
-      return session.openThreadIds.includes(action.threadId)
+      return !session.placedThreadIds.includes(action.threadId)
+        || session.openThreadIds.includes(action.threadId)
         ? state
         : { ...state, session: { ...session, openThreadIds: [...session.openThreadIds, action.threadId] } };
     case 'collapse-conversation':
@@ -158,7 +186,9 @@ export function reduceBenchState(state: BenchState, action: BenchAction): BenchS
     case 'set-zoom-tier':
       return action.tier === state.zoomTier ? state : { ...state, zoomTier: action.tier };
     case 'focus-conversation':
-      return { ...state, session: { ...session, focusedThreadId: action.threadId } };
+      return session.placedThreadIds.includes(action.threadId)
+        ? { ...state, session: { ...session, focusedThreadId: action.threadId } }
+        : state;
     case 'clear-focus':
       return { ...state, session: { ...session, focusedThreadId: null } };
     case 'create-draft':
@@ -173,6 +203,9 @@ export function reduceBenchState(state: BenchState, action: BenchAction): BenchS
         session: {
           ...session,
           pendingDraft: null,
+          placedThreadIds: session.placedThreadIds.includes(action.threadId)
+            ? session.placedThreadIds
+            : [...session.placedThreadIds, action.threadId],
           openThreadIds: session.openThreadIds.includes(action.threadId)
             ? session.openThreadIds
             : [...session.openThreadIds, action.threadId],

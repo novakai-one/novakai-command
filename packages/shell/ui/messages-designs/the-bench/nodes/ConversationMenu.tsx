@@ -74,6 +74,12 @@ export function ConversationMenu({
           }}>
             {copied ? 'ID copied' : 'Copy thread ID'}
           </button>
+          <button type="button" role="menuitem" onClick={() => {
+            actions.removeConversationFromBench(conversation.thread.id);
+            setOpen(false);
+          }}>
+            Remove from Bench
+          </button>
           <button
             type="button"
             role="menuitem"

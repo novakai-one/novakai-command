@@ -21,6 +21,14 @@
 .the-bench__canvas .react-flow__pane { cursor: grab; }
 .the-bench__canvas .react-flow__pane.dragging { cursor: grabbing; }
 
+.the-bench[data-placement-mode='active'] .the-bench__canvas .react-flow__pane {
+  cursor: copy;
+}
+
+.the-bench[data-placement-mode='active'] .the-bench__scale {
+  opacity: 0.24;
+}
+
 .the-bench__canvas .react-flow__node {
   border: 0;
   background: transparent;

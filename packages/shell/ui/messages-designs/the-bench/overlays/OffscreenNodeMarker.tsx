@@ -3,15 +3,15 @@ import { useCanvasRuntime } from '../../../canvas/canvas-runtime-context';
 import type { BenchOffscreenCandidate } from '../model/bench-model';
 import './OffscreenNodeMarker.css';
 
-/** Explicit reveal affordance for newly opened content outside the visible canvas. */
+/** Explicit locate affordance for newly opened content outside the visible canvas. */
 export function OffscreenNodeMarker({
   candidates,
   onAcknowledge,
-  onReveal,
+  onLocate,
 }: {
   candidates: readonly BenchOffscreenCandidate[];
   onAcknowledge(nodeIds: readonly string[]): void;
-  onReveal(nodeId: string): void;
+  onLocate(nodeId: string): void;
 }) {
   const runtime = useCanvasRuntime();
   const visibleIds = candidates
@@ -32,8 +32,8 @@ export function OffscreenNodeMarker({
     <button
       type="button"
       className="bench-offscreen-marker"
-      onClick={() => onReveal(latest.nodeId)}
-      aria-label={`Reveal ${offscreen.length} new offscreen ${offscreen.length === 1 ? 'item' : 'items'}`}
+      onClick={() => onLocate(latest.nodeId)}
+      aria-label={`Locate ${offscreen.length} new offscreen ${offscreen.length === 1 ? 'item' : 'items'}`}
     >
       → {offscreen.length} new
     </button>

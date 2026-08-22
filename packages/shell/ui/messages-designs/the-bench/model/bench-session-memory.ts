@@ -39,19 +39,36 @@ const frameSchema = z.object({
   conversationIds: z.array(z.string().min(1)),
 }).strict();
 
-const storedBenchSessionSchema = z.object({
-  schemaVersion: z.literal(1),
-  session: z.object({
-    openThreadIds: z.array(z.string().min(1)),
-    trails: z.array(trailSchema),
-    frames: z.array(frameSchema),
-    scrollTopByThreadId: z.record(z.string(), z.number().finite().nonnegative()),
-    focusedThreadId: z.string().min(1).nullable(),
-    pendingDraft: z.object({ id: z.string().min(1) }).strict().nullable().optional(),
-  }).strict(),
+const sessionV1Schema = z.object({
+  openThreadIds: z.array(z.string().min(1)),
+  trails: z.array(trailSchema),
+  frames: z.array(frameSchema),
+  scrollTopByThreadId: z.record(z.string(), z.number().finite().nonnegative()),
+  focusedThreadId: z.string().min(1).nullable(),
+  pendingDraft: z.object({ id: z.string().min(1) }).strict().nullable().optional(),
 }).strict();
 
-type StoredBenchSessionV1 = z.infer<typeof storedBenchSessionSchema>;
+const storedBenchSessionV1Schema = z.object({
+  schemaVersion: z.literal(1),
+  session: sessionV1Schema,
+}).strict();
+
+const sessionV2Schema = sessionV1Schema.extend({
+  placedThreadIds: z.array(z.string().min(1)),
+}).strict();
+
+const storedBenchSessionV2Schema = z.object({
+  schemaVersion: z.literal(2),
+  session: sessionV2Schema,
+}).strict();
+
+const storedBenchSessionSchema = z.discriminatedUnion('schemaVersion', [
+  storedBenchSessionV1Schema,
+  storedBenchSessionV2Schema,
+]);
+
+type StoredBenchSession = z.infer<typeof storedBenchSessionSchema>;
+type StoredBenchSessionV2 = z.infer<typeof storedBenchSessionV2Schema>;
 type PersistenceBackend = 'browser' | 'volatile';
 
 let backend: PersistenceBackend = 'browser';
@@ -77,6 +94,7 @@ function copyFrame(frame: BenchConversationFrame): BenchConversationFrame {
 
 function copySnapshot(snapshot: BenchSessionSnapshot): BenchSessionSnapshot {
   return {
+    placedThreadIds: [...snapshot.placedThreadIds],
     openThreadIds: [...snapshot.openThreadIds],
     trails: snapshot.trails.map(copyTrail),
     frames: snapshot.frames.map(copyFrame),
@@ -87,7 +105,7 @@ function copySnapshot(snapshot: BenchSessionSnapshot): BenchSessionSnapshot {
 }
 
 function normalizedTrailSteps(
-  trail: StoredBenchSessionV1['session']['trails'][number],
+  trail: StoredBenchSession['session']['trails'][number],
 ): BenchTrailStep[] {
   const seenIds = new Set<string>();
   const retainedIds = new Set<string>();
@@ -133,11 +151,18 @@ function normalizedTrailSteps(
   return steps;
 }
 
-function normalizedSession(stored: StoredBenchSessionV1['session']): BenchSessionSnapshot {
+function normalizedSession(
+  stored: StoredBenchSession['session'],
+  initialPlacedThreadIds: readonly string[],
+): BenchSessionSnapshot {
   const trailIds = new Set<string>();
   const frameIds = new Set<string>();
   const framedConversationIds = new Set<string>();
+  const placedThreadIds = 'placedThreadIds' in stored
+    ? unique(stored.placedThreadIds)
+    : unique([...initialPlacedThreadIds, ...stored.openThreadIds]);
   return {
+    placedThreadIds,
     openThreadIds: unique(stored.openThreadIds),
     trails: stored.trails
       .filter((trail) => {
@@ -176,7 +201,9 @@ function removeInvalidBrowserSnapshot(): void {
 }
 
 /** Reads and validates the cumulative semantic Bench session through one owned seam. */
-export function readBenchSession(): BenchSessionSnapshot | null {
+export function readBenchSession(
+  initialPlacedThreadIds: readonly string[] = [],
+): BenchSessionSnapshot | null {
   if (backend === 'volatile' || typeof window === 'undefined') {
     return volatileSession ? copySnapshot(volatileSession) : null;
   }
@@ -189,7 +216,7 @@ export function readBenchSession(): BenchSessionSnapshot | null {
       removeInvalidBrowserSnapshot();
       return null;
     }
-    return normalizedSession(parsed.data.session);
+    return normalizedSession(parsed.data.session, initialPlacedThreadIds);
   } catch (error) {
     if (error instanceof SyntaxError) {
       removeInvalidBrowserSnapshot();
@@ -209,9 +236,10 @@ export function rememberBenchSession(snapshot: BenchSessionSnapshot): void {
   }
 
   try {
-    const stored: StoredBenchSessionV1 = {
-      schemaVersion: 1,
+    const stored: StoredBenchSessionV2 = {
+      schemaVersion: 2,
       session: {
+        placedThreadIds: [...copy.placedThreadIds],
         openThreadIds: [...copy.openThreadIds],
         trails: copy.trails.map((trail) => ({
           ...trail,

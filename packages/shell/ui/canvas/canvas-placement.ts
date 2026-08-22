@@ -23,6 +23,15 @@ export type CanvasPlacementChange = {
 /** A semantic placement mutation that never exposes coordinates to callers. */
 export type CanvasPlacementMutation =
   | {
+      readonly type: 'set-node-position';
+      readonly nodeId: string;
+      readonly position: WorldPoint;
+    }
+  | {
+      readonly type: 'remove-node';
+      readonly nodeId: string;
+    }
+  | {
       readonly type: 'replace-node-identity';
       readonly fromNodeId: string;
       readonly toNodeId: string;

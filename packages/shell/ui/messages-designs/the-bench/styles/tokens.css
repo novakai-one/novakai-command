@@ -18,6 +18,8 @@
   --bench-scribe: #bd8f55;
   --bench-scribe-bright: #d3ad75;
   --bench-scribe-wash: rgba(189, 143, 85, 0.13);
+  --bench-selection: #78a9d4;
+  --bench-selection-wash: rgba(120, 169, 212, 0.13);
   --bench-danger: #a87969;
   --bench-mission-slate: rgba(91, 117, 127, 0.26);
   --bench-mission-oxide: rgba(130, 92, 75, 0.23);

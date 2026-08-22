@@ -1,8 +1,5 @@
 import type { ObjectId, ObjectRecord, RelationType } from '../../contract';
 
-/** Stable shared-canvas memory key for The Bench. */
-export const BENCH_VIEWPORT_KEY = 'messages:the-bench';
-
 /** The amount of conversation detail visible at the current optical zoom. */
 export type BenchZoomTier = 'far' | 'mid' | 'near';
 
@@ -126,6 +123,7 @@ export type BenchPendingDraft = {
 
 /** Semantic session state that deliberately excludes canvas placement and zoom. */
 export type BenchSessionSnapshot = {
+  readonly placedThreadIds: readonly ObjectId[];
   readonly openThreadIds: readonly ObjectId[];
   readonly trails: readonly BenchInspectionTrail[];
   readonly frames: readonly BenchConversationFrame[];
@@ -142,6 +140,8 @@ export type BenchState = {
 
 /** Every legal semantic state transition owned by the Bench reducer. */
 export type BenchAction =
+  | { readonly type: 'place-conversation'; readonly threadId: ObjectId }
+  | { readonly type: 'remove-conversation'; readonly threadId: ObjectId }
   | { readonly type: 'open-conversation'; readonly threadId: ObjectId }
   | { readonly type: 'collapse-conversation'; readonly threadId: ObjectId }
   | { readonly type: 'inspect-message'; readonly threadId: ObjectId; readonly messageId: ObjectId }
@@ -190,6 +190,7 @@ export type BenchAction =
 export type BenchNodeActions = {
   openConversation(threadId: ObjectId): void;
   collapseConversation(threadId: ObjectId): void;
+  removeConversationFromBench(threadId: ObjectId): void;
   inspectMessage(threadId: ObjectId, messageId: ObjectId): void;
   expandMessageRelation(
     threadId: ObjectId,

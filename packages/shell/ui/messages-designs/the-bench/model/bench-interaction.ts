@@ -39,15 +39,14 @@ export function buildFocusConversationCommand(threadId: string): WorldCameraComm
   };
 }
 
-/** Builds the explicit reveal command used by dock, search and offscreen controls. */
+/** Builds the explicit locate command while preserving the user's current zoom. */
 export function buildRevealNodeCommand(nodeId: string): WorldCameraCommand {
   return {
     type: 'focus-node-at-anchor',
     key: `bench:reveal:${nodeId}:${Date.now()}`,
     nodeId,
     anchor: { horizontalRatio: 0.5, verticalRatio: 0.5 },
-    zoom: 0.88,
-    duration: 360,
+    duration: 220,
   };
 }
 

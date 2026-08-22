@@ -34,6 +34,20 @@ _Avoid_: Ticket, issue, task
 Evidence produced or used by a Mission, such as a diff, terminal run, decision, or design revision.
 _Avoid_: Attachment, card
 
+## Interaction
+
+**Bench**:
+A Person's spatial working surface within the World, where Threads and related evidence are placed and acted upon.
+_Avoid_: Inbox, Conversation Library, overlay
+
+**Placement**:
+The relationship that makes one object present at a meaningful position on a Bench. Removing a Placement makes the object absent from that Bench without deleting or archiving its identity or history.
+_Avoid_: Recent item, search result, reveal
+
+**Instrument**:
+A temporary control that helps a Person find, place, locate, or focus objects on a Bench without becoming the surface where those objects are used.
+_Avoid_: Workspace, owner, inbox
+
 ## Memory
 
 **Thread**:

@@ -1,18 +1,13 @@
 .bench-card {
   position: relative;
-  display: grid;
-  grid-template-columns: 64px 1fr;
   width: 100%;
   height: 100%;
-  padding: 0;
   overflow: hidden;
   border: var(--bench-border-card);
   border-radius: var(--bench-radius-card);
   color: var(--bench-ink-primary);
   background: var(--bench-surface-rest);
   box-shadow: var(--bench-shadow-card);
-  font: inherit;
-  text-align: left;
   cursor: grab;
   transition:
     border-color var(--bench-motion-feedback) var(--bench-ease),
@@ -23,10 +18,50 @@
 .bench-card:active {
   cursor: grabbing;
 }
+
+.bench-card__open {
+  display: grid;
+  grid-template-columns: 64px 1fr;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: inherit;
+}
+
 .bench-card:hover {
   border-color: var(--bench-rule-strong);
   background: var(--bench-surface-lifted);
   transform: translateY(-2px);
+}
+
+.bench-card__remove {
+  position: absolute;
+  z-index: 2;
+  right: 7px;
+  top: 7px;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--bench-radius-control);
+  color: var(--bench-ink-faint);
+  background: color-mix(in srgb, var(--bench-surface-rest) 82%, transparent);
+  font: var(--text-lg) var(--bench-font-body);
+  cursor: pointer;
+}
+
+.bench-card__remove:hover,
+.bench-card__remove:focus-visible {
+  border-color: var(--bench-rule-strong);
+  color: var(--bench-ink-primary);
+  background: var(--bench-surface-lifted);
 }
 
 .bench-card__spine {
@@ -70,7 +105,7 @@
   flex-direction: column;
   justify-content: center;
   gap: var(--space-2);
-  padding: var(--space-3) var(--space-4);
+  padding: var(--space-3) 48px var(--space-3) var(--space-4);
 }
 
 .bench-card__context {
@@ -123,6 +158,19 @@
   grid-template-columns: 64px;
   width: 64px;
   border-color: var(--bench-rule-soft);
+}
+
+.bench-conversation[data-tier='far'] .bench-card__open {
+  grid-template-columns: 64px;
+}
+
+.bench-conversation[data-tier='far'] .bench-card__remove {
+  right: 3px;
+  top: 3px;
+  width: 25px;
+  height: 25px;
+  background: color-mix(in srgb, var(--bench-surface-rest) 90%, transparent);
+  font-size: var(--text-base);
 }
 
 .bench-conversation[data-tier='far'] .bench-card__spine {
