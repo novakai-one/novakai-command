@@ -16,7 +16,7 @@ import {
  * and nothing else (§3.3).
  */
 export const GOVERNED_AGENT_KINDS: readonly ObjectKind[] = [
-  'agent', 'providerSession',
+  'agent', 'providerSession', 'providerSessionHandle',
   'agentRoleProfile', 'resolvedLaunchPlan', 'agentRelationship',
   'delegationGrant', 'controlReplacementPlan',
 ];

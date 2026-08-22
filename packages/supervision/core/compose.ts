@@ -55,6 +55,7 @@ import {
   createUsageProjection, type UsageProjection, type UsageProjectionOptions,
 } from './usage/index.js';
 import { createSupervisionOwnerLinearizer } from './owner-linearizer.js';
+import { dueDeadlineEvaluationClientOpId, selectDueDeadlines } from './receipt-identity.js';
 import {
   getWatchEvaluationProgress, listWatchEvaluationProgress,
 } from './watch-evaluation-progress.js';
@@ -198,10 +199,20 @@ export function composeSupervision(options: SupervisionCoreOptions): Supervision
       },
       () => evaluateEvent(evaluation, context, input),
     )),
-    evaluateDueDeadlines: (observedAt) => {
+    evaluateDueDeadlines: async (observedAt) => {
+      // SUPFIX-06: peek first, through the same due-selection authority the
+      // evaluator uses. An idle pass reads and returns — no command, no
+      // receipt, no trace, zero durable writes. (Before: every 1 s pass wrote
+      // a receipt pair keyed by the timestamp, forever.)
+      const deadlines = await store.list<WatchDeadline>('watchDeadline');
+      if (!deadlines.ok) return b3fail(deadlines.error);
+      const due = selectDueDeadlines(deadlines.value, observedAt);
+      if (due.length === 0) return b3ok([] as readonly Notification[]);
       const context = {
         principal: { id: 'sys_supervision' as const, kind: 'system' as const, verifiedScopes: [] },
-        clientOpId: deriveClientOpId(`b3v4:evaluate-due-deadlines:${String(observedAt)}`),
+        // Identity = the due work, not the clock: a crash-and-retry of the
+        // same due set replays the same command instead of minting a new one.
+        clientOpId: dueDeadlineEvaluationClientOpId(due),
         traceId: mintTraceCorrelationId(),
         contractVersion: 1 as const,
       };

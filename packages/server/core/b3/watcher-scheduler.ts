@@ -19,6 +19,13 @@ export interface WatcherSchedulerOptions {
 // 2026-08-09: 100 ms ticks wrote a commandReceipt pair (create+settle, with
 // traces and fsyncs) ~10×/second forever — ~0.7 GB/day of receipt+trace growth
 // for deadlines whose own cadence is 300 s. 1 s granularity is ample.
+//
+// 2026-08-22 (SUPFIX-06): slowing the poll only shrank the leak. The real fix
+// lives in compose.evaluateDueDeadlines: an idle pass is now a pure read —
+// no due deadline means no command, no receipt, no trace, zero durable
+// writes — and a due set derives its clientOpId from the deadlines
+// themselves, so a crash-and-retry replays the same command. This 1 s tick
+// is therefore free when nothing is due.
 const DEFAULT_INTERVAL_MS = 1000;
 
 /** Start one bounded, non-overlapping deadline pass loop. */

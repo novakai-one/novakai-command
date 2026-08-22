@@ -24,9 +24,7 @@ export async function registerProviderSession(
   if (!read.ok) return read;
   const request = read.value;
 
-  const existing = await core.store.read<ProviderSessionView>(
-    'providerSession', request.expectedProviderSessionId,
-  );
+  const existing = await readEitherKind(core, request.expectedProviderSessionId);
   if (!existing.ok) return existing;
   if (existing.value !== null) {
     // Registering the same reservation twice is the retry path, not a conflict
@@ -39,7 +37,7 @@ export async function registerProviderSession(
   }
 
   const record: Persisted<ProviderSessionView> = {
-    kind: 'providerSession',
+    kind: 'providerSessionHandle',
     id: request.expectedProviderSessionId,
     schemaVersion: 1,
     createdAt: nowIsoUtc(),
@@ -62,7 +60,7 @@ export async function getProviderSession(
   _principal: AuthenticatedPrincipal,
   providerSessionId: ProviderSessionId,
 ): Promise<B3Result<ProviderSessionView>> {
-  const found = await core.store.read<ProviderSessionView>('providerSession', providerSessionId);
+  const found = await readEitherKind(core, providerSessionId);
   if (!found.ok) return found;
   if (found.value === null) {
     return b3fail(reservationConflict(providerSessionId, 'names no provider session'));
@@ -71,6 +69,21 @@ export async function getProviderSession(
   // promise. They are read past, never rewritten (§3.5, AMD-001 A-04): the
   // stored line stays exactly as the earlier build left it.
   return b3ok(normaliseToB3View(found.value));
+}
+
+/**
+ * SUPFIX-04: B3 handles live under `providerSessionHandle`; pre-split B3
+ * records and pre-B3 v1 records are read from the legacy `providerSession`
+ * kind. Reads only — B3 never writes the legacy kind again.
+ */
+async function readEitherKind(
+  core: GovernedAgentsCore, providerSessionId: ProviderSessionId,
+): Promise<B3Result<ProviderSessionView | null>> {
+  const handle = await core.store.read<ProviderSessionView>(
+    'providerSessionHandle', providerSessionId,
+  );
+  if (!handle.ok || handle.value !== null) return handle;
+  return core.store.read<ProviderSessionView>('providerSession', providerSessionId);
 }
 
 /** The in-memory v1 → B3 mapping. Reading never appends (AMD-001 A-04). */
