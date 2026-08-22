@@ -35,6 +35,7 @@ import {
 } from './watch-evaluation-progress.js';
 import type { WatchOccurrenceRelationshipAuthority } from '../contract/api.js';
 import { rebindDeliveryFences } from './delivery-fences.js';
+import { selectDueDeadlines } from './receipt-identity.js';
 
 export interface EvaluateDependencies extends UsageThresholdDependencies {
   readonly store: SupervisionStore;
@@ -516,11 +517,9 @@ export async function evaluateDueDeadlines(
 ): Promise<B3Result<readonly Notification[]>> {
   const deadlines = await deps.store.list<WatchDeadline>('watchDeadline');
   if (!deadlines.ok) return b3fail(deadlines.error);
-  const dueDeadlines = deadlines.value
-    .filter((deadline) => deadline.state === 'armed' || deadline.state === 'claimed')
-    .filter((deadline) => String(deadline.dueAt) <= String(observedAt))
-    .sort((left, right) => String(left.dueAt).localeCompare(String(right.dueAt))
-      || String(left.id).localeCompare(String(right.id)));
+  // SUPFIX-06: due-selection is one shared authority, so the compose-level
+  // idle peek can never disagree with the work it gates.
+  const dueDeadlines = selectDueDeadlines(deadlines.value, observedAt);
   const queued: Notification[] = [];
   for (const deadline of dueDeadlines) {
     const settled = await settleOne(deps, SUPERVISION_RECORD_WRITER, deadline, {
