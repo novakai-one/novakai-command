@@ -258,6 +258,30 @@ export function applyCanvasPlacementCommand(
   const next = new Map([...current].map(([id, placement]) => [id, copyPlacement(placement)]));
 
   for (const mutation of command.mutations) {
+    if (mutation.type === 'set-node-position') {
+      if (!mutation.nodeId || !isWorldPoint(mutation.position)) {
+        return rejected(command.key, 'invalid-command');
+      }
+      const node = next.get(mutation.nodeId);
+      if (!node) return rejected(command.key, 'node-missing');
+      next.set(mutation.nodeId, {
+        ...node,
+        position: { ...mutation.position },
+      });
+      continue;
+    }
+
+    if (mutation.type === 'remove-node') {
+      if (!mutation.nodeId) return rejected(command.key, 'invalid-command');
+      next.delete(mutation.nodeId);
+      for (const [id, placement] of next) {
+        if (placement.parentId === mutation.nodeId) {
+          next.set(id, { position: { ...placement.position } });
+        }
+      }
+      continue;
+    }
+
     if (mutation.type === 'replace-node-identity') {
       if (!mutation.fromNodeId || !mutation.toNodeId || mutation.fromNodeId === mutation.toNodeId) {
         return rejected(command.key, 'invalid-command');

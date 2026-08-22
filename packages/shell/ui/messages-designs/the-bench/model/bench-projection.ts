@@ -1,6 +1,6 @@
 import type { Edge, Node } from '@xyflow/react';
 import { relationsFor } from '../../record-content';
-import { KIND_LABEL, RELATION_LABEL, type ObjectRecord } from '../../contract';
+import { KIND_LABEL, RELATION_LABEL, type ObjectId, type ObjectRecord } from '../../contract';
 import { field, type ObjectGraph } from '../../graph';
 import type { WorldPoint } from '../../../canvas/WorldCanvas';
 import type { MessagesDesignData } from '../../contract';
@@ -195,32 +195,35 @@ function conversationFor(data: MessagesDesignData, thread: ObjectRecord): BenchC
   };
 }
 
-function recentConversations(
-  conversations: readonly BenchConversation[],
-  initialThreadId?: string,
-): BenchConversation[] {
-  const sorted = conversations
-    .slice()
+/** Projects the complete active conversation catalog before canvas presentation caps. */
+export function projectBenchConversationCatalog(data: MessagesDesignData): BenchConversation[] {
+  return data.threads
+    .filter((thread) => thread.fields.archived !== true)
+    .map((thread) => conversationFor(data, thread))
     .sort((left, right) => (
       right.lastActivityAt.localeCompare(left.lastActivityAt)
       || left.thread.id.localeCompare(right.thread.id)
     ));
-  const recent = sorted.slice(0, RECENT_CONVERSATION_LIMIT);
-  const routed = initialThreadId
-    ? conversations.find((conversation) => conversation.thread.id === initialThreadId)
-    : undefined;
-  if (!routed || recent.some((conversation) => conversation.thread.id === routed.thread.id)) return recent;
-  return [...recent.slice(0, RECENT_CONVERSATION_LIMIT - 1), routed];
+}
+
+/** Seeds a first Bench once; explicit Placement membership owns every later change. */
+export function initialBenchPlacementIds(
+  catalog: readonly BenchConversation[],
+): ObjectId[] {
+  return catalog.slice(0, RECENT_CONVERSATION_LIMIT).map((conversation) => conversation.thread.id);
 }
 
 /** Builds the immutable Bench model from the host's normalized relational graph. */
-export function buildBenchModel(data: MessagesDesignData): BenchModel {
-  const conversations = recentConversations(
-    data.threads
-      .filter((thread) => thread.fields.archived !== true)
-      .map((thread) => conversationFor(data, thread)),
-    data.initialThreadId,
-  );
+export function buildBenchModel(
+  data: MessagesDesignData,
+  catalog = projectBenchConversationCatalog(data),
+  placedThreadIds: readonly ObjectId[] = initialBenchPlacementIds(catalog),
+): BenchModel {
+  const catalogById = new Map(catalog.map((conversation) => [conversation.thread.id, conversation]));
+  const conversations = placedThreadIds.flatMap((threadId) => {
+    const conversation = catalogById.get(threadId);
+    return conversation ? [conversation] : [];
+  });
   const relationsByRecordId = new Map(data.graph.all.map((record) => (
     [record.id, relationsForRecord(data.graph, record)] as const
   )));

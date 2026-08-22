@@ -1,90 +1,20 @@
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useReducer,
-  useRef,
-  useState,
-  type Dispatch,
-} from 'react';
-import type {
-  CanvasNodePlacement,
-  CanvasPlacementChange,
-  CanvasPlacementCommand,
-  CanvasPlacementCommandOutcome,
-  WorldPoint,
-} from '../../../canvas/WorldCanvas';
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
+import type { CanvasPlacementCommand, CanvasPlacementCommandOutcome, WorldPoint } from '../../../canvas/WorldCanvas';
 import type { WorldCameraCommand, WorldViewport } from '../../../canvas/world-camera';
 import type { ObjectId, ObjectRecord } from '../../contract';
 import type { MessagesDesignProps } from '../../contract';
-import {
-  buildRevealConversationCommand,
-  buildRevealNodeCommand,
-  interpretBenchKey,
-  resolveBenchZoomTier,
-  type BenchKeyInput,
-} from './bench-interaction';
-import { firstFreePoint, resolveBenchFrameDrop } from './bench-layout';
-import type {
-  BenchAction,
-  BenchConversation,
-  BenchModel,
-  BenchNodeActions,
-  BenchOffscreenCandidate,
-  BenchSessionSnapshot,
-  BenchState,
-} from './bench-model';
+import { buildRevealConversationCommand, buildRevealNodeCommand, interpretBenchKey, type BenchKeyInput } from './bench-interaction';
+import type { BenchModel, BenchNodeActions, BenchState } from './bench-model';
+import type { BenchController } from './bench-controller';
 import { createInitialBenchState, reduceBenchState } from './bench-reducer';
 import { readBenchSession, rememberBenchSession } from './bench-session-memory';
-import {
-  buildBenchModel,
-  projectBenchCanvas,
-  type BenchCanvasProjection,
-} from './bench-projection';
-
-type SearchResult = {
-  readonly conversation: BenchConversation;
-  readonly matchedBy: 'conversation' | 'agent' | 'mission' | 'message';
-};
-
-type PlacementRollback = {
-  readonly session: BenchSessionSnapshot;
-  readonly frameSeedId?: string;
-};
-
-/** Complete view-facing contract returned by the Bench orchestrator. */
-export type BenchController = {
-  readonly state: BenchState;
-  readonly model: BenchModel;
-  readonly projection: BenchCanvasProjection;
-  readonly selectedId: ObjectId | null;
-  readonly cameraCommand: WorldCameraCommand | null;
-  readonly placementCommand: CanvasPlacementCommand | null;
-  readonly actions: BenchNodeActions;
-  readonly zenThreadId: ObjectId | null;
-  readonly zenConversation: BenchConversation | null;
-  readonly isSearchOpen: boolean;
-  readonly searchQuery: string;
-  readonly searchResults: readonly SearchResult[];
-  readonly offscreenCandidates: readonly BenchOffscreenCandidate[];
-  readonly onCanvasSelect: (recordId: string | null) => void;
-  readonly onPlacementChange: (change: CanvasPlacementChange) => void;
-  readonly onPlacementCommandOutcome: (outcome: CanvasPlacementCommandOutcome) => void;
-  readonly onViewportChange: (viewport: WorldViewport) => void;
-  readonly onZoomChange: (zoom: number) => void;
-  readonly onPaneDoubleClick: (position: WorldPoint) => void;
-  readonly onKeyInput: (input: Omit<BenchKeyInput, 'currentZoom'>) => void;
-  readonly createDraft: () => void;
-  readonly clearTrails: () => void;
-  readonly revealConversation: (threadId: ObjectId) => void;
-  readonly revealOffscreenNode: (nodeId: string) => void;
-  readonly acknowledgeOffscreenNodes: (nodeIds: readonly string[]) => void;
-  readonly openSearch: () => void;
-  readonly closeSearch: () => void;
-  readonly setSearchQuery: (query: string) => void;
-  readonly exitZen: () => void;
-};
+import { buildBenchModel, initialBenchPlacementIds, projectBenchConversationCatalog, projectBenchCanvas } from './bench-projection';
+import { useBenchFirstFreePoint, useBenchPlacements, useBenchViewportPolicy } from './use-bench-canvas-state';
+import { useBenchFramePlacement, type BenchPlacementRollback } from './use-bench-frame-placement';
+import { useBenchConversationActions } from './use-bench-conversation-actions';
+import { useBenchOffscreenTracking } from './use-bench-offscreen-tracking';
+import { useBenchPlacementInteraction } from './use-bench-placement-interaction';
+import { useBenchRemoval } from './use-bench-removal';
 
 let benchIdentitySequence = 0;
 
@@ -93,110 +23,32 @@ function nextBenchIdentity(prefix: 'draft' | 'frame' | 'placement'): string {
   return `${prefix}:bench:${Date.now().toString(36)}:${benchIdentitySequence.toString(36)}`;
 }
 
-function placementSignature(placements: readonly CanvasNodePlacement[]): string {
-  return placements
-    .map((placement) => `${placement.id}:${placement.position.x}:${placement.position.y}:${placement.parentId ?? ''}`)
-    .sort()
-    .join('|');
-}
-
-function useBenchPlacements(): {
-  readonly placementChange: CanvasPlacementChange | null;
-  readonly rememberPlacementChange: (change: CanvasPlacementChange) => void;
-} {
-  const [placementChange, setPlacementChange] = useState<CanvasPlacementChange | null>(null);
-  const placementSignatureRef = useRef<string | null>(null);
-  const rememberPlacementChange = useCallback((change: CanvasPlacementChange) => {
-    const signature = `${change.cause}:${change.movedNodeId ?? ''}:${placementSignature(change.placements)}`;
-    if (signature === placementSignatureRef.current) return;
-    placementSignatureRef.current = signature;
-    setPlacementChange({
-      ...change,
-      placements: change.placements.map((placement) => ({
-        ...placement,
-        position: { ...placement.position },
-      })),
-    });
-  }, []);
-
-  return { placementChange, rememberPlacementChange };
-}
-
-function useBenchViewportPolicy(dispatch: Dispatch<BenchAction>) {
-  const viewportRef = useRef<WorldViewport>({ x: 0, y: 0, zoom: 0.82 });
-  const onViewportChange = useCallback((viewport: WorldViewport) => {
-    viewportRef.current = { ...viewport };
-  }, []);
-  const onZoomChange = useCallback((zoom: number) => {
-    dispatch({ type: 'set-zoom-tier', tier: resolveBenchZoomTier(zoom) });
-  }, [dispatch]);
-  return { viewportRef, onViewportChange, onZoomChange };
-}
-
-function searchBench(model: BenchModel, query: string): SearchResult[] {
-  const normalized = query.trim().toLocaleLowerCase();
-  if (!normalized) return model.conversations.map((conversation) => ({
-    conversation,
-    matchedBy: 'conversation' as const,
-  }));
-
-  return model.conversations.flatMap<SearchResult>((conversation) => {
-    if (`${conversation.thread.title} ${conversation.thread.id}`.toLocaleLowerCase().includes(normalized)) {
-      return [{ conversation, matchedBy: 'conversation' as const }];
-    }
-    if (conversation.participants.some((participant) => (
-      participant.record.title.toLocaleLowerCase().includes(normalized)
-    ))) return [{ conversation, matchedBy: 'agent' as const }];
-    if (conversation.mission?.record.title.toLocaleLowerCase().includes(normalized)) {
-      return [{ conversation, matchedBy: 'mission' as const }];
-    }
-    if (conversation.messages.some((message) => message.body.toLocaleLowerCase().includes(normalized))) {
-      return [{ conversation, matchedBy: 'message' as const }];
-    }
-    return [];
-  });
-}
-
-type EligibleNode = {
-  readonly kind: BenchOffscreenCandidate['kind'];
-  readonly isOpen: boolean;
-};
-
-function eligibleNodes(projection: BenchCanvasProjection): Map<string, EligibleNode> {
-  const eligible = new Map<string, EligibleNode>();
-  for (const node of projection.nodes) {
-    if (node.data.kind === 'conversation') {
-      eligible.set(node.id, { kind: 'conversation', isOpen: node.data.isOpen });
-    } else if (node.data.kind === 'message-inspector') {
-      eligible.set(node.id, { kind: 'message-inspector', isOpen: true });
-    } else if (node.data.kind === 'related-object') {
-      eligible.set(node.id, { kind: 'related-object', isOpen: true });
-    }
-  }
-  return eligible;
-}
-
 /** Coordinates host commands, semantic state, projection, and neutral canvas callbacks. */
 export function useBenchController({ data, commands }: MessagesDesignProps): BenchController {
+  const conversationCatalog = useMemo(() => projectBenchConversationCatalog(data), [data]);
+  const initialPlacedThreadIds = useMemo(
+    () => initialBenchPlacementIds(conversationCatalog),
+    [conversationCatalog],
+  );
   const [state, dispatch] = useReducer(
     reduceBenchState,
     undefined,
-    () => createInitialBenchState(readBenchSession(), data.initialThreadId),
+    () => createInitialBenchState(readBenchSession(initialPlacedThreadIds), {
+      initialPlacedThreadIds,
+      initialThreadId: data.initialThreadId,
+    }),
   );
   const [cameraCommand, setCameraCommand] = useState<WorldCameraCommand | null>(null);
   const [placementCommand, setPlacementCommand] = useState<CanvasPlacementCommand | null>(null);
   const [zenThreadId, setZenThreadId] = useState<ObjectId | null>(null);
-  const [isSearchOpen, setSearchOpen] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
   const [draftPoint, setDraftPoint] = useState<WorldPoint | null>(null);
-  const [offscreenCandidates, setOffscreenCandidates] = useState<readonly BenchOffscreenCandidate[]>([]);
   const frameSeedPointsRef = useRef(new Map<string, WorldPoint>());
-  const placementRollbackRef = useRef<PlacementRollback | null>(null);
+  const placementRollbackRef = useRef<BenchPlacementRollback | null>(null);
   const preZenViewportRef = useRef<WorldViewport | null>(null);
-  const offscreenSequenceRef = useRef(0);
-  const offscreenReadyRef = useRef(false);
-  const previousEligibleNodesRef = useRef(new Map<string, EligibleNode>());
-  const model = useMemo(() => buildBenchModel(data), [data]);
+  const model = useMemo(
+    () => buildBenchModel(data, conversationCatalog, state.session.placedThreadIds),
+    [conversationCatalog, data, state.session.placedThreadIds],
+  );
   const stateRef = useRef(state);
   const modelRef = useRef(model);
   const commandsRef = useRef(commands);
@@ -206,6 +58,18 @@ export function useBenchController({ data, commands }: MessagesDesignProps): Ben
   const { placementChange, rememberPlacementChange } = useBenchPlacements();
   const placements = placementChange?.placements ?? null;
   const { viewportRef, onViewportChange, onZoomChange } = useBenchViewportPolicy(dispatch);
+  const firstFreeVisiblePoint = useBenchFirstFreePoint(placements, viewportRef);
+  const {
+    pendingPlacement,
+    removalUndo,
+    beginPlacement,
+    movePlacement,
+    takePlacement,
+    cancelPlacement,
+    offerRemovalUndo,
+    takeRemovalUndo,
+    dismissRemovalUndo,
+  } = useBenchPlacementInteraction(conversationCatalog, firstFreeVisiblePoint);
 
   const exitZen = useCallback(() => {
     if (!zenThreadId) return;
@@ -224,7 +88,7 @@ export function useBenchController({ data, commands }: MessagesDesignProps): Ben
 
   const issuePlacementCommand = useCallback((
     mutations: CanvasPlacementCommand['mutations'],
-    rollback: PlacementRollback,
+    rollback: BenchPlacementRollback,
   ) => {
     placementRollbackRef.current = rollback;
     setPlacementCommand({
@@ -233,19 +97,82 @@ export function useBenchController({ data, commands }: MessagesDesignProps): Ben
       mutations,
     });
   }, []);
+  const nextFrameId = useCallback(() => nextBenchIdentity('frame'), []);
+
+  const onPlacementChange = useBenchFramePlacement({
+    stateRef,
+    modelRef,
+    frameSeedPointsRef,
+    dispatch,
+    issuePlacementCommand,
+    rememberPlacementChange,
+    nextFrameId,
+  });
+
+  const locateConversation = useCallback((threadId: ObjectId) => {
+    if (!stateRef.current.session.placedThreadIds.includes(threadId)) return;
+    cancelPlacement();
+    commandsRef.current.select(modelRef.current.recordsById.get(threadId) ?? null);
+    setCameraCommand(buildRevealConversationCommand(threadId));
+  }, [cancelPlacement]);
+
+  const commitPendingPlacement = useCallback((pointer: WorldPoint) => {
+    const placement = takePlacement(pointer);
+    if (!placement) return;
+    const threadId = placement.threadId;
+    if (stateRef.current.session.placedThreadIds.includes(threadId)) return;
+    const rollback = { session: stateRef.current.session };
+    dispatch({ type: 'place-conversation', threadId });
+    commandsRef.current.select(modelRef.current.recordsById.get(threadId) ?? null);
+    issuePlacementCommand([{
+      type: 'set-node-position',
+      nodeId: threadId,
+      position: placement.point,
+    }], rollback);
+  }, [issuePlacementCommand, takePlacement]);
+
+  const { removeConversationFromBench, undoRemoval } = useBenchRemoval({
+    catalog: conversationCatalog,
+    placements,
+    selectedId: data.selected?.id ?? null,
+    zenThreadId,
+    stateRef,
+    commandsRef,
+    dispatch,
+    exitZen,
+    issuePlacementCommand,
+    offerUndo: offerRemovalUndo,
+    takeUndo: takeRemovalUndo,
+  });
+
+  const { actOnConversation } = useBenchConversationActions({
+    stateRef,
+    modelRef,
+    commandsRef,
+    locateConversation,
+    beginPlacement,
+    removeConversation: removeConversationFromBench,
+  });
+  const removableThreadIds = useMemo(() => {
+    if (!placements) return [];
+    const placedIds = new Set(state.session.placedThreadIds);
+    return placements.flatMap((placement) => placedIds.has(placement.id) ? [placement.id] : []);
+  }, [placements, state.session.placedThreadIds]);
 
   const removeFrame = useCallback((frameId: string) => {
     const frame = stateRef.current.session.frames.find((candidate) => candidate.id === frameId);
     if (!frame) return;
     const rollback = { session: stateRef.current.session };
     dispatch({ type: 'remove-frame', frameId });
-    if (frame.conversationIds.length === 0) return;
     issuePlacementCommand(
-      frame.conversationIds.map((nodeId) => ({
-        type: 'set-node-parent' as const,
-        nodeId,
-        parentId: null,
-      })),
+      [
+        ...frame.conversationIds.map((nodeId) => ({
+          type: 'set-node-parent' as const,
+          nodeId,
+          parentId: null,
+        })),
+        { type: 'remove-node' as const, nodeId: frameId },
+      ],
       rollback,
     );
   }, [issuePlacementCommand]);
@@ -256,6 +183,7 @@ export function useBenchController({ data, commands }: MessagesDesignProps): Ben
       commandsRef.current.select(modelRef.current.recordsById.get(threadId) ?? null);
     },
     collapseConversation: (threadId) => dispatch({ type: 'collapse-conversation', threadId }),
+    removeConversationFromBench,
     inspectMessage: (threadId, messageId) => {
       dispatch({ type: 'inspect-message', threadId, messageId });
       commandsRef.current.select(modelRef.current.recordsById.get(messageId) ?? null);
@@ -310,16 +238,12 @@ export function useBenchController({ data, commands }: MessagesDesignProps): Ben
       commandsRef.current.attachThreadToMission(threadId, missionId)
     ),
     archiveConversation: (threadId) => {
-      if (zenThreadId === threadId) {
-        exitZen();
-        commandsRef.current.select(null);
-      }
       commandsRef.current.archiveThread(threadId);
-      dispatch({ type: 'prune-conversation', threadId });
+      removeConversationFromBench(threadId);
     },
     renameFrame: (frameId, name) => dispatch({ type: 'rename-frame', frameId, name }),
     removeFrame,
-  }), [exitZen, removeFrame, zenThreadId]);
+  }), [removeConversationFromBench, removeFrame]);
 
   const acceptDraft = useCallback((agent: ObjectRecord) => {
     const draft = stateRef.current.session.pendingDraft;
@@ -349,6 +273,10 @@ export function useBenchController({ data, commands }: MessagesDesignProps): Ben
     }),
     [acceptDraft, cancelDraft, draftPoint, model, nodeActions, placements, state],
   );
+  const { offscreenCandidates, acknowledgeOffscreenNodes } = useBenchOffscreenTracking(
+    projection,
+    placementChange?.cause ?? null,
+  );
 
   useEffect(() => {
     rememberBenchSession(state.session);
@@ -357,133 +285,29 @@ export function useBenchController({ data, commands }: MessagesDesignProps): Ben
   useEffect(() => {
     dispatch({
       type: 'reconcile-session',
-      threadIds: model.conversations.map((conversation) => conversation.thread.id),
-      messageIds: [...model.messagesById.keys()],
-      recordIds: [...model.recordsById.keys()],
+      threadIds: conversationCatalog.map((conversation) => conversation.thread.id),
+      messageIds: conversationCatalog.flatMap((conversation) => (
+        conversation.messages.map((message) => message.record.id)
+      )),
+      recordIds: data.graph.all.map((record) => record.id),
     });
-  }, [model]);
-
-  useLayoutEffect(() => {
-    const current = eligibleNodes(projection);
-    if (!offscreenReadyRef.current) {
-      if (placementChange?.cause !== 'restore') return;
-      previousEligibleNodesRef.current = current;
-      offscreenReadyRef.current = true;
-      return;
-    }
-
-    const previous = previousEligibleNodesRef.current;
-    const opened: BenchOffscreenCandidate[] = [];
-    for (const [nodeId, node] of current) {
-      const prior = previous.get(nodeId);
-      const newlyOpened = !prior || (node.kind === 'conversation' && node.isOpen && !prior.isOpen);
-      if (!newlyOpened) continue;
-      offscreenSequenceRef.current += 1;
-      opened.push({ nodeId, kind: node.kind, openedSequence: offscreenSequenceRef.current });
-    }
-    previousEligibleNodesRef.current = current;
-    setOffscreenCandidates((candidates) => {
-      const next = candidates
-        .filter((candidate) => current.has(candidate.nodeId))
-        .filter((candidate) => !opened.some((item) => item.nodeId === candidate.nodeId));
-      return opened.length > 0 || next.length !== candidates.length ? [...next, ...opened] : candidates;
-    });
-  }, [placementChange?.cause, projection]);
-
-  const handleFramePlacement = useCallback((change: CanvasPlacementChange) => {
-    if (change.cause !== 'drag-end' || !change.movedNodeId) return;
-    const intent = resolveBenchFrameDrop(
-      change.movedNodeId,
-      change.placements,
-      modelRef.current,
-      stateRef.current,
-    );
-    if (intent.type === 'none') return;
-    const rollback = { session: stateRef.current.session };
-
-    if (intent.type === 'create') {
-      const frameId = nextBenchIdentity('frame');
-      frameSeedPointsRef.current.set(frameId, intent.position);
-      dispatch({
-        type: 'create-frame',
-        frame: {
-          id: frameId,
-          name: 'Untitled frame',
-          conversationIds: [intent.threadId, intent.targetThreadId],
-        },
-      });
-      issuePlacementCommand([
-        { type: 'set-node-parent', nodeId: intent.threadId, parentId: frameId },
-        { type: 'set-node-parent', nodeId: intent.targetThreadId, parentId: frameId },
-      ], { ...rollback, frameSeedId: frameId });
-      return;
-    }
-
-    const parentId = intent.type === 'join' ? intent.frameId : null;
-    dispatch({ type: 'set-frame-membership', threadId: intent.threadId, frameId: parentId });
-    issuePlacementCommand([{
-      type: 'set-node-parent',
-      nodeId: intent.threadId,
-      parentId,
-    }], rollback);
-  }, [issuePlacementCommand]);
-
-  const onPlacementChange = useCallback((change: CanvasPlacementChange) => {
-    rememberPlacementChange(change);
-    handleFramePlacement(change);
-  }, [handleFramePlacement, rememberPlacementChange]);
+  }, [conversationCatalog, data.graph]);
 
   const onPlacementCommandOutcome = useCallback((outcome: CanvasPlacementCommandOutcome) => {
     if (outcome.status === 'rejected' && placementRollbackRef.current) {
       dispatch({ type: 'restore-session', session: placementRollbackRef.current.session });
+      dismissRemovalUndo();
       if (placementRollbackRef.current.frameSeedId) {
         frameSeedPointsRef.current.delete(placementRollbackRef.current.frameSeedId);
       }
     }
     placementRollbackRef.current = null;
     setPlacementCommand(null);
-  }, []);
+  }, [dismissRemovalUndo]);
 
-  const revealConversation = useCallback((threadId: ObjectId) => {
-    dispatch({ type: 'focus-conversation', threadId });
-    commandsRef.current.select(modelRef.current.recordsById.get(threadId) ?? null);
-    setCameraCommand(buildRevealConversationCommand(threadId));
-    setSearchOpen(false);
-    setSearchQuery('');
-  }, []);
-
-  const revealOffscreenNode = useCallback((nodeId: string) => {
+  const locateOffscreenNode = useCallback((nodeId: string) => {
     setCameraCommand(buildRevealNodeCommand(nodeId));
   }, []);
-
-  const acknowledgeOffscreenNodes = useCallback((nodeIds: readonly string[]) => {
-    if (nodeIds.length === 0) return;
-    const acknowledged = new Set(nodeIds);
-    setOffscreenCandidates((candidates) => candidates.filter((candidate) => (
-      !acknowledged.has(candidate.nodeId)
-    )));
-  }, []);
-
-  const requestedDraftPoint = useCallback((requested?: WorldPoint): WorldPoint => {
-    const viewport = viewportRef.current;
-    const canvasWidth = typeof window === 'undefined' ? 1200 : Math.max(640, window.innerWidth - 324);
-    const canvasHeight = typeof window === 'undefined' ? 760 : Math.max(480, window.innerHeight - 213);
-    const point = requested ?? {
-      x: (canvasWidth * 0.5 - viewport.x) / viewport.zoom,
-      y: (canvasHeight * 0.42 - viewport.y) / viewport.zoom,
-    };
-    const visibleBounds = requested ? undefined : {
-      minX: (-viewport.x / viewport.zoom) + 24,
-      maxX: ((canvasWidth - viewport.x) / viewport.zoom) - 344,
-      minY: (-viewport.y / viewport.zoom) + 24,
-      maxY: ((canvasHeight - viewport.y) / viewport.zoom) - 344,
-    };
-    return firstFreePoint(
-      point,
-      (placements ?? []).map((placement) => placement.position),
-      visibleBounds,
-    );
-  }, [placements, viewportRef]);
 
   const createDraftAt = useCallback((requested?: WorldPoint) => {
     const existing = stateRef.current.session.pendingDraft;
@@ -492,21 +316,17 @@ export function useBenchController({ data, commands }: MessagesDesignProps): Ben
       return;
     }
     const draftId = nextBenchIdentity('draft');
-    setDraftPoint(requestedDraftPoint(requested));
+    setDraftPoint(firstFreeVisiblePoint(requested));
     dispatch({ type: 'create-draft', draftId });
-  }, [requestedDraftPoint]);
+  }, [firstFreeVisiblePoint]);
 
   const onKeyInput = useCallback((input: Omit<BenchKeyInput, 'currentZoom'>) => {
-    if ((input.metaKey || input.ctrlKey) && input.key.toLocaleLowerCase() === 'k') {
-      setSearchOpen(true);
-      return;
-    }
     if (input.key === 'Escape') {
-      if (zenThreadId) exitZen();
-      else {
-        setSearchOpen(false);
-        setSearchQuery('');
+      if (pendingPlacement) {
+        cancelPlacement();
+        return;
       }
+      if (zenThreadId) exitZen();
       return;
     }
     if (input.key.toLocaleLowerCase() === 'f') {
@@ -519,7 +339,7 @@ export function useBenchController({ data, commands }: MessagesDesignProps): Ben
     const result = interpretBenchKey({ ...input, currentZoom: viewportRef.current.zoom });
     if (result.action) dispatch(result.action);
     if (result.cameraCommand) setCameraCommand(result.cameraCommand);
-  }, [exitZen, viewportRef, zenThreadId]);
+  }, [cancelPlacement, exitZen, pendingPlacement, viewportRef, zenThreadId]);
 
   const onCanvasSelect = useCallback((recordId: string | null) => {
     nodeActions.selectRecord(recordId);
@@ -528,35 +348,37 @@ export function useBenchController({ data, commands }: MessagesDesignProps): Ben
   return {
     state,
     model,
+    conversationCatalog,
+    removableThreadIds,
     projection,
     selectedId: data.selected?.id ?? null,
     cameraCommand,
     placementCommand,
+    pendingPlacement,
+    removalUndo,
     actions: nodeActions,
     zenThreadId,
     zenConversation: zenThreadId ? model.conversationsById.get(zenThreadId) ?? null : null,
-    isSearchOpen,
-    searchQuery,
-    searchResults: searchBench(model, searchQuery),
     offscreenCandidates,
     onCanvasSelect,
     onPlacementChange,
     onPlacementCommandOutcome,
     onViewportChange,
     onZoomChange,
-    onPaneDoubleClick: (position) => createDraftAt(position),
+    onPaneDoubleClick: (position) => {
+      if (!pendingPlacement) createDraftAt(position);
+    },
+    onPaneClick: commitPendingPlacement,
+    onPanePointerMove: movePlacement,
     onKeyInput,
     createDraft: () => createDraftAt(),
     clearTrails: () => dispatch({ type: 'clear-trails' }),
-    revealConversation,
-    revealOffscreenNode,
+    actOnConversation,
+    cancelPlacement,
+    undoRemoval,
+    dismissRemovalUndo,
+    locateOffscreenNode,
     acknowledgeOffscreenNodes,
-    openSearch: () => setSearchOpen(true),
-    closeSearch: () => {
-      setSearchOpen(false);
-      setSearchQuery('');
-    },
-    setSearchQuery,
     exitZen,
   };
 }

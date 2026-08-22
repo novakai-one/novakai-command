@@ -29,7 +29,7 @@ export function ZenLayer({
 
   return (
     <section className="bench-zen" aria-label={`Focused conversation with ${conversation.primaryParticipant?.record.title ?? 'agent'}`}>
-      <button type="button" className="bench-zen__exit" onClick={onExit}>Exit focus <kbd>Esc</kbd></button>
+      <button type="button" className="bench-zen__exit" onClick={onExit} autoFocus>Exit focus <kbd>Esc</kbd></button>
       {pendingRequest && (
         <BlockedAgentBanner
           request={pendingRequest}

@@ -23,6 +23,7 @@ import {
   useRef,
   useState,
   type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
   type ReactNode,
   type RefObject,
 } from 'react';
@@ -85,6 +86,8 @@ export interface WorldCanvasProps<NodeType extends Node = Node, EdgeType extends
   onZoomChange?: (zoom: number) => void;
   onViewportChange?: (viewport: WorldViewport) => void;
   dragGrid?: CanvasDragGrid;
+  onPaneClick?: (position: WorldPoint) => void;
+  onPanePointerMove?: (position: WorldPoint) => void;
   onPaneDoubleClick?: (position: WorldPoint) => void;
   onPlacementChange?: (change: CanvasPlacementChange) => void;
   placementCommand?: CanvasPlacementCommand | null;
@@ -179,6 +182,8 @@ function WorldCanvasSurface<NodeType extends Node, EdgeType extends Edge>({
   onZoomChange,
   onViewportChange,
   dragGrid,
+  onPaneClick,
+  onPanePointerMove,
   onPaneDoubleClick,
   onPlacementChange,
   placementCommand,
@@ -279,9 +284,14 @@ function WorldCanvasSurface<NodeType extends Node, EdgeType extends Edge>({
     const replacementTargets = new Set(placementCommand.mutations
       .filter((mutation) => mutation.type === 'replace-node-identity')
       .map((mutation) => mutation.toNodeId));
+    const removedTargets = new Set(placementCommand.mutations
+      .filter((mutation) => mutation.type === 'remove-node')
+      .map((mutation) => mutation.nodeId));
     rememberInitialNodePlacements(
       viewportKey,
-      incomingNodes.filter((node) => !replacementTargets.has(node.id)),
+      incomingNodes.filter((node) => (
+        !replacementTargets.has(node.id) && !removedTargets.has(node.id)
+      )),
     );
     const outcome = applyCanvasPlacementCommand(viewportKey, placementCommand);
     if (outcome.status === 'applied') placementCommandEmissionRef.current = true;
@@ -460,6 +470,22 @@ function WorldCanvasSurface<NodeType extends Node, EdgeType extends Edge>({
     }));
   }, [onPaneDoubleClick, reactFlow]);
 
+  const handlePaneClick = useCallback((event: ReactMouseEvent) => {
+    onSelect(null);
+    onPaneClick?.(reactFlow.screenToFlowPosition({
+      x: event.clientX,
+      y: event.clientY,
+    }));
+  }, [onPaneClick, onSelect, reactFlow]);
+
+  const handlePanePointerMove = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!onPanePointerMove) return;
+    onPanePointerMove(reactFlow.screenToFlowPosition({
+      x: event.clientX,
+      y: event.clientY,
+    }));
+  }, [onPanePointerMove, reactFlow]);
+
   const handleMove: OnMove = useCallback((_, nextViewport) => {
     setCurrentViewport(nextViewport);
     onZoomChange?.(nextViewport.zoom);
@@ -474,7 +500,11 @@ function WorldCanvasSurface<NodeType extends Node, EdgeType extends Edge>({
 
   return (
     <CanvasRuntimeProvider runtime={runtime}>
-      <div className="world-canvas__event-surface" onDoubleClick={handlePaneDoubleClick}>
+      <div
+        className="world-canvas__event-surface"
+        onDoubleClick={handlePaneDoubleClick}
+        onPointerMove={handlePanePointerMove}
+      >
         <ReactFlow<NodeType, EdgeType>
         className={['world-canvas__surface', surfaceClassName].filter(Boolean).join(' ')}
         nodes={nodes}
@@ -486,7 +516,7 @@ function WorldCanvasSurface<NodeType extends Node, EdgeType extends Edge>({
           resolveSelectionId ? resolveSelectionId(node) : node.id,
         )}
         onNodeDragStop={handleNodeDragStop}
-        onPaneClick={() => onSelect(null)}
+        onPaneClick={handlePaneClick}
         onMove={handleMove}
         onMoveEnd={handleMoveEnd}
         onInit={markCanvasInitialized}

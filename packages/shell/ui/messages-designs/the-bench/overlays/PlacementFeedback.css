@@ -1,0 +1,178 @@
+.bench-placement-ghost {
+  position: absolute;
+  z-index: calc(var(--bench-layer-field) + 4);
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr);
+  align-items: center;
+  width: 320px;
+  height: 128px;
+  overflow: hidden;
+  border: 1px dashed var(--bench-scribe-bright);
+  border-radius: var(--bench-radius-card);
+  color: var(--bench-ink-primary);
+  background: color-mix(in srgb, var(--bench-surface-rest) 76%, transparent);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.34);
+  opacity: 0.82;
+  pointer-events: none;
+}
+
+.bench-placement-ghost__avatar {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  margin: 0 auto;
+  border: 1px solid var(--bench-rule-strong);
+  border-radius: 50%;
+  color: var(--bench-scribe-bright);
+  background: var(--bench-surface-inset);
+  font: var(--text-xs) var(--bench-font-record);
+}
+
+.bench-placement-ghost__copy {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  padding-right: 20px;
+}
+
+.bench-placement-ghost__copy strong {
+  overflow: hidden;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bench-placement-ghost__copy small {
+  color: var(--bench-ink-secondary);
+  font: var(--text-eyebrow) var(--bench-font-record);
+  letter-spacing: 0.035em;
+  text-transform: uppercase;
+}
+
+.bench-placement-mode,
+.bench-placement-undo {
+  position: absolute;
+  z-index: var(--bench-layer-overlay);
+  left: 50%;
+  display: flex;
+  align-items: center;
+  border: 1px solid var(--bench-rule-strong);
+  border-radius: var(--bench-radius-control);
+  color: var(--bench-ink-secondary);
+  background: color-mix(in srgb, var(--bench-overlay-surface-solid) 96%, transparent);
+  box-shadow: var(--bench-shadow-overlay);
+  backdrop-filter: blur(16px);
+  transform: translateX(-50%);
+}
+
+.bench-placement-mode {
+  top: 20px;
+  display: grid;
+  grid-template-columns: minmax(0, auto) auto;
+  gap: 2px 18px;
+  min-width: 390px;
+  padding: 10px 10px 10px 14px;
+}
+
+.bench-placement-mode span {
+  overflow: hidden;
+  color: var(--bench-ink-primary);
+  font-size: var(--text-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bench-placement-mode span strong {
+  padding-right: 5px;
+  color: var(--bench-scribe-bright);
+}
+
+.bench-placement-mode small {
+  color: var(--bench-ink-faint);
+  font: var(--text-eyebrow) var(--bench-font-record);
+}
+
+.bench-placement-mode button {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  min-width: 64px;
+  min-height: 36px;
+  border: 1px solid var(--bench-rule-soft);
+  border-radius: var(--bench-radius-control);
+  color: var(--bench-ink-secondary);
+  background: var(--bench-surface-inset);
+  font: var(--text-xs) var(--bench-font-body);
+  cursor: pointer;
+}
+
+.bench-placement-undo {
+  bottom: 24px;
+  gap: 12px;
+  min-height: 46px;
+  padding: 6px 7px 6px 14px;
+  font-size: var(--text-xs);
+}
+
+.bench-placement-undo span {
+  max-width: 360px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bench-placement-undo span strong {
+  color: var(--bench-ink-primary);
+  font-weight: var(--weight-semibold);
+}
+
+.bench-placement-undo button {
+  min-height: 34px;
+  border-radius: var(--bench-radius-control);
+  font: var(--text-xs) var(--bench-font-body);
+  cursor: pointer;
+}
+
+.bench-placement-undo__action {
+  min-width: 58px;
+  border: 1px solid color-mix(in srgb, var(--bench-scribe) 50%, var(--bench-rule-soft));
+  color: var(--bench-scribe-bright);
+  background: var(--bench-scribe-wash);
+}
+
+.bench-placement-undo__dismiss {
+  width: 34px;
+  padding: 0;
+  border: 0;
+  color: var(--bench-ink-faint);
+  background: transparent;
+  font-size: var(--text-base);
+}
+
+.bench-placement-mode button:hover,
+.bench-placement-undo button:hover {
+  border-color: var(--bench-rule-strong);
+  color: var(--bench-ink-primary);
+  background: var(--bench-surface-lifted);
+}
+
+@media (max-width: 760px) {
+  .bench-placement-mode {
+    top: 12px;
+    min-width: 0;
+    width: calc(100% - 24px);
+  }
+
+  .bench-placement-undo {
+    bottom: 12px;
+    width: calc(100% - 24px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bench-placement-mode,
+  .bench-placement-undo {
+    scroll-behavior: auto;
+  }
+}
