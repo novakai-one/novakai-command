@@ -264,9 +264,15 @@ export interface AgentControl {
  * `AgentRun`, working directory and model to `ResolvedLaunchPlan`, usage to
  * evidence records — this record stopped being four authorities wearing one
  * name (AMD-001 A-04).
+ *
+ * SUPFIX-04: stored under its OWN kind, `providerSessionHandle`. Writing this
+ * shape under kind `providerSession` put a cwd-less record in front of the B1
+ * registry and killed every usage tick from 2026-08-21 09:07. One kind, one
+ * writer, one shape. Legacy v1 records are still READ from `providerSession`
+ * (normaliseToB3View), never written.
  */
 export interface ProviderSessionView
-  extends RecordEnvelope<ProviderSessionId, 'providerSession'> {
+  extends RecordEnvelope<ProviderSessionId, 'providerSessionHandle'> {
   readonly agentId: AgentId;
   readonly provider: ProviderKind;
   readonly providerConversationId: string | null;

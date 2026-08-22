@@ -36,6 +36,7 @@ export const OBJECT_KINDS = [
   'conversationView', // S2 F1/DEC-S2-11: shell-owned pin/archive view state
   'config',           // B1 DEC-B1-3: server-owned typed config objects
   'providerSession',  // B1 DEC-B1-6: agents-owned resumable provider handles
+  'providerSessionHandle', // SUPFIX-04: B3 handle view — own kind, never mixed into providerSession
   'project',          // B2a DEC-B2-1: projects-owned durable identity/lifecycle
   'projectItem',      // B2a DEC-B2-1: projects-owned reference membership
   'artifact',         // B2a DEC-B2-2: artifacts-owned metadata; bytes stay outside JSONL

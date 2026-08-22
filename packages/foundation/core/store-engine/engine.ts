@@ -34,6 +34,7 @@ export const KIND_FILES: Readonly<Record<Exclude<ObjectKind, 'token'>, string>> 
   conversationView: 'conversationViews.jsonl', // S2 F1/DEC-S2-11 (shell-owned)
   config: 'config.jsonl',                      // B1 DEC-B1-3 (server-owned)
   providerSession: 'providerSessions.jsonl',   // B1 DEC-B1-6 (agents-owned)
+  providerSessionHandle: 'providerSessionHandles.jsonl', // SUPFIX-04: B3 resumable handle view (agents-owned)
   project: 'projects.jsonl',                   // B2a DEC-B2-1 (projects-owned)
   projectItem: 'projectItems.jsonl',           // B2a DEC-B2-1 (projects-owned)
   artifact: 'artifacts.jsonl',                 // B2a DEC-B2-2 (artifacts-owned metadata)
@@ -82,7 +83,7 @@ export const KIND_FILES: Readonly<Record<Exclude<ObjectKind, 'token'>, string>> 
 // deliberately absent: it keeps its engine-private journal line (AMD-001 A-01).
 export const RECORD_KINDS: readonly string[] = [
   'agent', 'skill', 'layout', 'settings', 'conversationView', 'config',
-  'providerSession', 'project', 'projectItem', 'quarantine',
+  'providerSession', 'providerSessionHandle', 'project', 'projectItem', 'quarantine',
   'artifact', 'spineStep', 'transcriptLine', 'transcriptJournal',
   'transcriptCheckpoint', 'transcriptIngestBatch',
   'runtimeEpoch', 'commandReceipt', 'terminalSession',
