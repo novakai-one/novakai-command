@@ -236,6 +236,23 @@ export function createUsageReader(options: UsageReaderOptions = {}): UsageReader
       };
   };
 
+  /**
+   * SUPFIX-02: one session's failure is that session's unavailable row, never
+   * the batch's rejection. The wrong-shape record that killed every usage tick
+   * for a day reached a sync throw inside candidate selection — this boundary
+   * makes that class of failure a per-row outcome.
+   */
+  const isolated = async (session: UsageSessionRef, files: string[]): Promise<SessionUsage> => {
+    try {
+      return await readFromManifest(session, files);
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : String(cause);
+      return unavailable(
+        `usage read failed for session "${session.sessionId}" (${session.provider}): ${message}`,
+      );
+    }
+  };
+
   return {
     trackSession(sessionId, trackOptions) {
       if (trackOptions.threadPreexisting) {
@@ -257,7 +274,7 @@ export function createUsageReader(options: UsageReaderOptions = {}): UsageReader
       const needsManifest = Boolean(
         providerHasTranscript(session.provider) && session.providerConversationId,
       );
-      return readFromManifest(session, needsManifest ? await intervalManifest() : []);
+      return isolated(session, needsManifest ? await intervalManifest() : []);
     },
 
     async readMany(sessions) {
@@ -268,7 +285,7 @@ export function createUsageReader(options: UsageReaderOptions = {}): UsageReader
       );
       const files = needsManifest ? await intervalManifest() : [];
       const rows = await Promise.all(sessions.map(async (session) =>
-        [session.sessionId, await readFromManifest(session, files)] as const));
+        [session.sessionId, await isolated(session, files)] as const));
       return new Map(rows);
     },
   };

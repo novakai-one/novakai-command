@@ -36,7 +36,15 @@ export function createUsageTable(internals: SupervisionInternals): {
   const usageTable: SupervisionEngine['usageTable'] = async () => {
     const records = await deps.sessions.list();
     const usageBySession = await deps.usage.readMany(records.map(usageRefOf));
-    const rows = records.map((record) => rowFor(record, usageBySession.get(record.sessionId)!));
+    const rows = records.map((record) => {
+      const usage = usageBySession.get(record.sessionId);
+      return usage ? rowFor(record, usage) : rowFor(record, {
+        inputTokens: null, outputTokens: null, cacheReadTokens: null, cacheCreationTokens: null,
+        lastActivityAt: null, basis: 'unavailable', providerTotal: null, baseline: null,
+        cumulativeAdjusted: false, usagePartial: false, source: null,
+        note: 'usage reader returned no row for this session',
+      });
+    });
     return {
       at: now(),
       rows,
@@ -51,6 +59,7 @@ export function createUsageTable(internals: SupervisionInternals): {
   const emitUsage: SupervisionEngine['emitUsage'] = async () => {
     const table = await usageTable();
     for (const row of table.rows) {
+      try {
       const backfilled = row.inputTokens !== null
         && row.outputTokens !== null
         && row.cacheReadTokens !== null
@@ -77,6 +86,11 @@ export function createUsageTable(internals: SupervisionInternals): {
           'backfillUsage',
           backfilled.error ?? `providerSession usage backfill failed for ${row.sessionId}`,
         );
+      }
+      } catch (cause) {
+        // SUPFIX-03: a throwing backfill loses one row's backfill, never the
+        // table, the append, or the other rows.
+        reportFailure('UsageBackfillFailed', 'backfillUsage', cause);
       }
     }
     try {

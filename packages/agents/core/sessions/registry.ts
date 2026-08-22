@@ -14,8 +14,7 @@ import type { ProviderName } from '../../contract/schemas.js';
 import type { AgentsContext } from '../composition.js';
 import {
   inFlightFrom,
-  normalizeInFlight,
-  type InFlightState,
+  parseProviderSessionRecord,
   type ProviderSessionRecord,
   type ProviderSessionStatus,
   type ProviderSessionUsageMeasurement,
@@ -68,39 +67,67 @@ export interface ProviderSessionRegistry {
 const now = () => new Date().toISOString();
 const mintOpId = (): ClientOpId => `op_${globalThis.crypto.randomUUID()}` as ClientOpId;
 
-type StoredShape = ProviderSessionRecord & { id: string; kind: 'providerSession' };
-
-function toRecord(object: Record<string, unknown>): ProviderSessionRecord {
-  const raw = object as unknown as StoredShape;
-  return {
-    sessionId: raw.sessionId, agentId: raw.agentId, provider: raw.provider,
-    providerConversationId: raw.providerConversationId ?? null,
-    cwd: raw.cwd, model: raw.model,
-    spawnedAt: raw.spawnedAt, lastActivityAt: raw.lastActivityAt,
-    turns: raw.turns ?? 0, status: raw.status,
-    inFlight: normalizeInFlight(raw.inFlight as Partial<InFlightState> | undefined),
-    lastInterruption: raw.lastInterruption ?? null,
-    tokenUsage: raw.tokenUsage ?? null,
-    usageUnavailable: raw.usageUnavailable ?? null,
-  };
+export interface ProviderSessionRegistryOptions {
+  /**
+   * SUPFIX-01: called once per bad record — an object stored under kind
+   * `providerSession` that does not parse as a registry record. The record is
+   * skipped, never thrown. Default reports to console.error once per id.
+   */
+  onBadRecord?: (id: string, reason: string) => void;
 }
 
 export function createProviderSessionRegistry(
   ctx: AgentsContext,
   probe: ProcessProbe = osProcessProbe,
+  options: ProviderSessionRegistryOptions = {},
 ): ProviderSessionRegistry {
   const idOf = (sessionId: string): ObjectId => sessionId as ObjectId;
+  const reportedBadIds = new Set<string>();
+  const reportBadRecord = (id: string, reason: string): void => {
+    if (reportedBadIds.has(id)) return;
+    reportedBadIds.add(id);
+    const report = options.onBadRecord
+      ?? ((badId: string, badReason: string) =>
+        console.error(`[providerSession-registry] skipped bad record "${badId}": ${badReason}`));
+    report(id, reason);
+  };
+  const parsedOrError = (
+    object: Record<string, unknown>, sessionId: string,
+  ): Result<ProviderSessionRecord, StoreError> => {
+    const parsed = parseProviderSessionRecord(object);
+    return parsed.ok
+      ? { ok: true, value: parsed.record }
+      : {
+        ok: false,
+        error: {
+          code: 'InvalidEnvelope', message: parsed.reason,
+          details: { missingFields: [], invalidFields: [{ field: sessionId, reason: parsed.reason }] },
+          retryable: false,
+        },
+      };
+  };
 
   const readAll = async (): Promise<Array<{ record: ProviderSessionRecord; version: number }>> => {
     const res = await listObjects<Record<string, unknown>>(ctx.handle, 'providerSession', undefined, { limit: 10_000 });
     if (!res.ok) return [];
-    return res.value.items.map((item) => ({ record: toRecord(item.object as Record<string, unknown>), version: item.version }));
+    const out: Array<{ record: ProviderSessionRecord; version: number }> = [];
+    for (const item of res.value.items) {
+      const parsed = parseProviderSessionRecord(item.object as Record<string, unknown>);
+      if (parsed.ok) out.push({ record: parsed.record, version: item.version });
+      else reportBadRecord(parsed.id, parsed.reason);
+    }
+    return out;
   };
 
   const readOne = async (sessionId: string): Promise<{ record: ProviderSessionRecord; version: number } | null> => {
     const res = await getObject<Record<string, unknown>>(ctx.handle, 'providerSession', idOf(sessionId));
     if (!res.ok || isAbsent(res.value)) return null;
-    return { record: toRecord(res.value.object as Record<string, unknown>), version: res.value.version };
+    const parsed = parseProviderSessionRecord(res.value.object as Record<string, unknown>);
+    if (!parsed.ok) {
+      reportBadRecord(parsed.id, parsed.reason);
+      return null;
+    }
+    return { record: parsed.record, version: res.value.version };
   };
 
   /** Single-object mutation (R3-18): read → patch → CAS write, one object. */
@@ -122,7 +149,7 @@ export function createProviderSessionRegistry(
       mutate(found.record) as Record<string, unknown>,
       found.version, mintOpId(),
     );
-    return res.ok ? { ok: true, value: toRecord(res.value.object as Record<string, unknown>) } : { ok: false, error: res.error };
+    return res.ok ? parsedOrError(res.value.object as Record<string, unknown>, sessionId) : { ok: false, error: res.error };
   };
 
   return {
@@ -151,7 +178,7 @@ export function createProviderSessionRegistry(
         usageUnavailable: null,
       };
       const res = await createObject<Record<string, unknown>>(ctx.handle, record, mintOpId());
-      return res.ok ? { ok: true, value: toRecord(res.value.object as Record<string, unknown>) } : { ok: false, error: res.error };
+      return res.ok ? parsedOrError(res.value.object as Record<string, unknown>, input.sessionId) : { ok: false, error: res.error };
     },
 
     async get(sessionId) {

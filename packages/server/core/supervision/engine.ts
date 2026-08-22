@@ -35,16 +35,23 @@ export function createSupervisionEngine(deps: SupervisionDeps): SupervisionEngin
   const driftFlags = new Set<string>();
   let usageTimer: ReturnType<typeof setInterval> | null = null;
   let driftTimer: ReturnType<typeof setInterval> | null = null;
+  const seenFailureStacks = new Set<string>();
   const reportFailure = (
     code: SupervisionFailure['code'],
     operation: SupervisionFailure['operation'],
     cause: unknown,
   ): SupervisionFailure => {
-    const failure: SupervisionFailure = {
-      code,
-      operation,
-      message: cause instanceof Error ? cause.message : String(cause),
-    };
+    // SUPFIX-07: the FIRST occurrence of a distinct failure carries its full
+    // stack; repeats stay one line. 157 identical stackless lines is how the
+    // wrong-shape-record crash stayed misdiagnosed for a day.
+    const base = cause instanceof Error ? cause.message : String(cause);
+    const key = `${code}:${operation}:${base}`;
+    const firstSighting = !seenFailureStacks.has(key);
+    if (firstSighting) seenFailureStacks.add(key);
+    const message = firstSighting && cause instanceof Error && cause.stack
+      ? `${base}\n${cause.stack}`
+      : base;
+    const failure: SupervisionFailure = { code, operation, message };
     deps.onFailure?.(failure);
     return failure;
   };
