@@ -141,7 +141,11 @@ export async function bootServer(options: BootOptions): Promise<BootResult> {
     note(7, 'sessions', `${restored} session(s) reattached to their conversations`);
   }
 
-  const b3Wire = await composeB3Wire({ ...(options.b3 ?? {}), root: options.root });
+  const b3Wire = await composeB3Wire({
+    ...(options.b3 ?? {}),
+    root: options.root,
+    messagingRuntime: transcript.runtime,
+  });
   note(12, 'runtime', `b3.* composed on ${b3Wire.runtime.dataRoot}`);
   const methods = { ...buildMethods(runtime), ...b3Wire.methods };
   const transport: RunningTransport = await startTransport({

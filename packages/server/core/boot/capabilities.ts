@@ -1,6 +1,5 @@
 /** Boot steps 3–5: Messaging, Agents/provider runtimes and Transcript. */
 
-import path from 'node:path';
 import * as messaging from '../../../messaging/contract/index.js';
 import {
   composeAgents,
@@ -29,8 +28,10 @@ export async function composeCapabilities(input: {
   const { options, note, configStore, humanPersonId, cwd } = input;
   const config = configStore.current();
   const clock = messaging.createSystemClock();
-  const store = await messaging.openJsonlStore(clock, {
-    path: path.join(options.root, 'messaging.jsonl'),
+  const dataRoot = canonicalDataRoot(options.root);
+  const store = await messaging.openFoundationMessagingStore(clock, {
+    root: options.root,
+    dataRoot,
   });
   const authority = createLiveAuthority({ snapshot: () => configStore.current(), clock });
   const embedded = messaging.createEmbeddedMessaging({
@@ -71,7 +72,7 @@ export async function composeCapabilities(input: {
   > = { kimi: kimiRuntime, codex: codexRuntime, claude: claudeRuntime };
   const agentsCtx = composeAgents({
     root: options.root,
-    dataRoot: canonicalDataRoot(options.root),
+    dataRoot,
     principal: humanPersonId,
     providerRuntimes,
     allowMock: config.dev.allowMock,
@@ -95,8 +96,8 @@ export async function composeCapabilities(input: {
     5,
     'transcript',
     config.transcript.ingest
-      ? 'copy custody + ingestion enabled (starts after transport)'
-      : 'copy custody + ingestion disabled (config transcript.ingest=false)',
+      ? 'Messaging transcript-first ingestion enabled (starts after transport)'
+      : 'Messaging transcript-first ingestion disabled (config transcript.ingest=false)',
   );
   return {
     embedded,

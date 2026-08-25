@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // GENERATED FILE — DO NOT EDIT.
 // Source: contract/messaging-contract.json (law #3 single source of truth).
-// contractVersion 1.1.0 · schemaVersion 1 · sha256:56bc675fca0f6169
+// contractVersion 1.1.0 · schemaVersion 1 · sha256:6df08803e3e2c3eb
 // Regenerate: npm run generate
 // ---------------------------------------------------------------------------
 
@@ -39,6 +39,12 @@ export type SubscriptionId = string & Brand<"SubscriptionId">;
 export type Timestamp = string & Brand<"Timestamp">;
 export type Sequence = number & Brand<"Sequence">;
 export type Cursor = string & Brand<"Cursor">;
+export type ProviderSessionId = string & Brand<"ProviderSessionId">;
+export type ProviderResumeId = string & Brand<"ProviderResumeId">;
+export type TranscriptSourceId = string & Brand<"TranscriptSourceId">;
+export type TranscriptLineId = string & Brand<"TranscriptLineId">;
+export type IngestCheckpointId = string & Brand<"IngestCheckpointId">;
+export type EventCursor = string & Brand<"EventCursor">;
 export type RequestHash = string & Brand<"RequestHash">;
 export type ClientMessageId = string & Brand<"ClientMessageId">;
 export type Address = string & Brand<"Address">;
@@ -57,6 +63,11 @@ export const idPatterns = {
   PolicyId: "^(contactpolicy|dndpolicy)_[A-Za-z0-9-]+$",
   SubscriptionId: "^subscription_[A-Za-z0-9-]+$",
   Cursor: "^s_[0-9]+$",
+  ProviderSessionId: "^sess_[0-9a-f-]{36}$",
+  TranscriptSourceId: "^source_[0-9a-f]{64}$",
+  TranscriptLineId: "^transcriptLine_[0-9a-f]{64}$",
+  IngestCheckpointId: "^ingestCheckpoint_[0-9a-f]{64}$",
+  EventCursor: "^event_[0-9]+$",
   RequestHash: "^[0-9a-f]{64}$",
   Address: "^(person:person_|thread:thread_)[A-Za-z0-9-]+$",
 } as const;
@@ -145,6 +156,12 @@ export type PresenceKind = (typeof presenceKindValue)[number];
 // source path: Priority
 export const priorityValues = ["normal","urgent"] as const;
 export type Priority = (typeof priorityValues)[number];
+// source path: ProviderName
+export const providerNameValues = ["claude","codex","kimi"] as const;
+export type ProviderName = (typeof providerNameValues)[number];
+// source path: ProviderSessionStatus
+export const providerSessionStatusValues = ["discovered-only","assignment-pending","adoption-pending","idle","busy","closed","failed"] as const;
+export type ProviderSessionStatus = (typeof providerSessionStatusValues)[number];
 // source path: RecipientSnapshot.kind
 export const recipientSnapshotKindValue = ["recipient-snapshot"] as const;
 export type RecipientSnapshotKind = (typeof recipientSnapshotKindValue)[number];
@@ -175,6 +192,12 @@ export type ThreadKind = (typeof threadKindValues)[number];
 // source path: Thread.kind
 export const threadRecordKindValue = ["thread"] as const;
 export type ThreadRecordKind = (typeof threadRecordKindValue)[number];
+// source path: TranscriptEventKind
+export const transcriptEventKindValues = ["provider-session.registered","transcript-line.appended"] as const;
+export type TranscriptEventKind = (typeof transcriptEventKindValues)[number];
+// source path: TranscriptRole
+export const transcriptRoleValues = ["user","assistant","system","hook","tool","tool_call","tool_result","attachment"] as const;
+export type TranscriptRole = (typeof transcriptRoleValues)[number];
 // source path: TransportKind
 export const transportKindValues = ["ws","pty"] as const;
 export type TransportKind = (typeof transportKindValues)[number];

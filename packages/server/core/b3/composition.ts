@@ -35,9 +35,11 @@ import {
   messagingEndpointPort, messagingInboxPort, transcriptCustodyPort,
 } from './b3c-ports.js';
 import { canonicalDataRoot, gateStoreRoute } from '../store-route.js';
-import type { AgentMessagingContract } from '../../../messaging/contract/index.js';
+import type {
+  AgentMessagingContract,
+  MessagingRuntimeApi,
+} from '../../../messaging/contract/index.js';
 import {
-  createProviderFileLocator, createProviderFileSource, defaultProviderHomes,
   type B3TranscriptContract, type MirrorPump, type TranscriptSourcePort,
 } from '../../../transcript/b3/contract/index.js';
 import {
@@ -57,6 +59,7 @@ import { createUsageReader } from '../supervision/usage.js';
 import { createTranscriptUsagePort } from './usage-transcript-port.js';
 import { createNotificationDeliveryPump } from './notification-delivery-pump.js';
 import { startWatcherScheduler } from './watcher-scheduler.js';
+import { createStoredTranscriptSource } from './stored-transcript-source.js';
 
 export interface B3RuntimeOptions {
   /** `.novakai/` root. Domain records live in `<root>/stores`. */
@@ -88,6 +91,8 @@ export interface B3RuntimeOptions {
    * can corrupt without touching a provider original (§27).
    */
   readonly transcriptSource?: TranscriptSourcePort;
+  /** Production Server supplies Messaging's one-door ingestion runtime. */
+  readonly messagingRuntime?: Pick<MessagingRuntimeApi, 'listTranscriptLines'>;
   /** Where the provider CLIs keep their transcripts. Overridable for tests. */
   readonly providerHome?: string;
   /**
@@ -683,24 +688,26 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
   );
   providerTurnReconciliation.unref();
 
-  // The production source: each provider's own file, read-only, found through
-  // the NATIVE session id that Agents recorded at discovery. A binding whose
-  // provider has not written anything yet locates nothing and stays `waiting`,
-  // which is §25-B3c's honest first state.
-  const source = options.transcriptSource ?? createProviderFileSource({
-    locate: createProviderFileLocator({
-      ...(options.providerHome === undefined
-        ? {} : { homes: defaultProviderHomes(options.providerHome) }),
-      async nativeSessionIdOf(binding) {
+  // Production reads committed Messaging lines. Tests may replace that one
+  // doorway with an explicit source fixture; neither path reads provider files
+  // from Server.
+  const messagingRuntime = options.messagingRuntime;
+  let source = options.transcriptSource;
+  if (source === undefined) {
+    if (messagingRuntime === undefined) {
+      throw new Error('Messaging Runtime or an explicit transcript fixture is required');
+    }
+    source = createStoredTranscriptSource({
+      messaging: messagingRuntime,
+      async resumeIdOf(binding) {
         const session = await agents.getProviderSession(
           { id: 'sys_transcript', kind: 'system', verifiedScopes: [] },
           binding.providerSessionId,
         );
-        if (!session.ok) return null;
-        return session.value.providerConversationId ?? null;
+        return session.ok ? session.value.providerConversationId ?? null : null;
       },
-    }),
-  });
+    });
+  }
 
   // §9.2/§24.4: Supervision reads the ONE published event stream the Runtime
   // already owns. It is the whole watcher clock — no timer, no poll, and no

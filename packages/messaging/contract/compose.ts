@@ -13,6 +13,13 @@ export {
   DEFAULT_STANDALONE_PORT,
   STANDALONE_PROTOCOL_VERSION,
 } from "./compose/standalone.js";
+export { createMessagingRuntime } from "../core/ingestion/watch.js";
+export type { MessagingRuntimeOptions } from "../core/ingestion/watch.js";
+export { createDefaultMessagingRuntime } from "./compose/ingestion.js";
+export type {
+  ComposedMessagingRuntime,
+  DefaultMessagingRuntimeOptions,
+} from "./compose/ingestion.js";
 export type {
   StandaloneMessaging,
   StandaloneMessagingOptions,

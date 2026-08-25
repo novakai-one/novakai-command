@@ -15,6 +15,7 @@
  */
 
 import type { MessagingError } from "./types.js";
+import type { Outcome } from "./outcome.js";
 import type {
   CapabilityView,
   DeliveryListResult,
@@ -75,8 +76,7 @@ import type {
   SubscriptionSink,
 } from "./subscriptions.js";
 
-/** The door's outcome shape: typed outcomes, never leaked exceptions. */
-export type Outcome<T> = { kind: "ok"; value: T } | { kind: "error"; error: MessagingError };
+export type { Outcome } from "./outcome.js";
 
 export type SessionState = "active" | "degraded" | "ended";
 
@@ -131,3 +131,9 @@ export type EmbeddedAuthOutcome =
   | { kind: "authenticated"; principal: Principal; session: MessagingSession }
   | { kind: "rejected"; error: MessagingError }
   | { kind: "unavailable"; error: MessagingError };
+
+export type {
+  IngestResult,
+  MessagingHealth,
+  MessagingRuntimeApi,
+} from "./runtime.js";

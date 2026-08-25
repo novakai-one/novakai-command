@@ -9,7 +9,8 @@
 // beside the Shell's own methods on one port. Neither owns the method table, so
 // the headless host and the backed Shell cannot be handed different surfaces.
 import { startTransport, type RunningTransport } from '../transport/server.js';
-import { composeB3Wire, type B3WireOptions } from './runtime-wire.js';
+import { createDefaultMessagingRuntime } from '../../../messaging/contract/index.js';
+import { composeB3Wire, type B3Wire, type B3WireOptions } from './runtime-wire.js';
 import type { B3Runtime } from './composition.js';
 
 export interface RuntimeHostProcessOptions extends B3WireOptions {
@@ -30,7 +31,26 @@ export interface RunningRuntimeHost {
 export async function startRuntimeHost(
   options: RuntimeHostProcessOptions,
 ): Promise<RunningRuntimeHost> {
-  const wire = await composeB3Wire(options);
+  const ingestion = options.transcriptSource === undefined
+    && options.messagingRuntime === undefined
+    ? await createDefaultMessagingRuntime({
+        root: options.root,
+        ...(options.providerHome === undefined ? {} : { providerHome: options.providerHome }),
+        ...(options.mirrorIntervalMs === undefined
+          ? {} : { intervalMs: options.mirrorIntervalMs }),
+      })
+    : null;
+  if (ingestion !== null) await ingestion.runtime.start();
+  let wire: B3Wire;
+  try {
+    wire = await composeB3Wire({
+      ...options,
+      ...(ingestion === null ? {} : { messagingRuntime: ingestion.runtime }),
+    });
+  } catch (cause) {
+    await ingestion?.close();
+    throw cause;
+  }
 
   const transport = await startTransport({
     root: options.root,
@@ -49,6 +69,7 @@ export async function startRuntimeHost(
     // gives the port back rather than sitting on it half-composed.
     await transport.close();
     await wire.close();
+    await ingestion?.close();
     throw cause;
   }
 
@@ -61,6 +82,7 @@ export async function startRuntimeHost(
     async close() {
       await transport.close();
       await wire.close();
+      await ingestion?.close();
     },
   };
 }

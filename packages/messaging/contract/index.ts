@@ -2,7 +2,25 @@
 export * from "./schemas.js";
 export * from "./brands.js";
 export * from "./api.js";
+export * from "./outcome.js";
+export * from "./runtime.js";
 export * from "./compose.js";
+export * from "./records/index.js";
+export type {
+  NormalizedProviderLine,
+  ProviderLineExtent,
+  ProviderNormalizer,
+  ProviderSourceGrowth,
+  ProviderSourceStat,
+  ProviderTranscriptSource,
+} from "./ports/provider-transcript-source.js";
+export type {
+  TranscriptBatchInput,
+  TranscriptBatchResult,
+  TranscriptEvent,
+  TranscriptLineQuery,
+  TranscriptStore,
+} from "./ports/transcript-store.js";
 
 export { WS_PROTOCOL_VERSION } from "./standalone/frames.js";
 export type {
@@ -16,6 +34,12 @@ export { createSystemClock } from "../adapters/clock-system.js";
 export { createSeededClock } from "../adapters/clock-seeded.js";
 export type { SeededClock, SeededClockOptions } from "../adapters/clock-seeded.js";
 export { createMemoryStore } from "../adapters/store-memory.js";
+export { createMemoryTranscriptStore } from "../adapters/stores/memory.js";
+export { openFoundationTranscriptStore } from "../adapters/stores/jsonl.js";
+export type { FoundationTranscriptStoreOptions } from "../adapters/stores/jsonl.js";
+export { createProviderTranscriptSource } from "../adapters/provider-transcripts/source.js";
+export type { ProviderTranscriptRoots } from "../adapters/provider-transcripts/source.js";
+export { providerNormalizer } from "../adapters/provider-transcripts/normalizers/index.js";
 export { openJsonlStore } from "../adapters/store-jsonl.js";
 export { createConfigAuthority, DEFAULT_ROLE_GRANTS } from "../adapters/authority-config.js";
 export type {

@@ -1,17 +1,12 @@
 import { z } from 'zod';
-import {
-  ProviderName,
-  SessionRef,
-  type SessionRef as SessionRefT,
-} from '../../../transcript/contract/index.js';
 import type { MethodTable } from '../../contract/protocol.js';
 import type { TranscriptServerOperations } from './composition.js';
 
 const LinesBySessionInput = z.object({
-  sessionRef: SessionRef,
+  sessionRef: z.string().min(1),
 }).strict();
 const LinesByProviderInput = z.object({
-  provider: ProviderName,
+  provider: z.enum(['claude', 'codex', 'kimi']),
   since: z.string().datetime({ offset: true }).optional(),
 }).strict();
 const SubagentTreeInput = z.object({
@@ -80,9 +75,7 @@ export function buildTranscriptMethods(
         params,
       );
       if (!parsed.ok) return parsed;
-      return transcript.linesBySession(
-        parsed.value.sessionRef as SessionRefT,
-      );
+      return transcript.linesBySession(parsed.value.sessionRef);
     },
     async linesByProvider(params: never) {
       const parsed = parseInput(

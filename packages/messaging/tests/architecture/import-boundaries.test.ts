@@ -89,16 +89,16 @@ describe("architecture — one Messaging doorway", () => {
   it("core imports declaration-only contract modules, never behavior or wiring", () => {
     const allowed = new Set([
       "types", "schemas", "brands", "errors", "records", "events", "subscriptions",
-      "commands", "queries",
+      "commands", "queries", "outcome", "runtime",
     ]);
     const offenders: string[] = [];
     for (const file of listFiles(join(sourceRoot, "core"), ".ts")) {
       for (const specifier of importSpecifiers(file)) {
-        const match = /\.\.\/contract\/([^/]+)\.js$/.exec(specifier);
+        if (specifier.includes("/contract/ports/")) continue;
+        const match = /\/contract\/([^/]+)\.js$/.exec(specifier);
         if (match && !allowed.has(match[1] ?? "")) {
           offenders.push(`${relative(sourceRoot, file)} → ${specifier}`);
         }
-        if (specifier.includes("/contract/ports/")) continue;
         if (specifier.includes("/contract/api.js")
           || specifier.includes("/contract/compose")
           || specifier.includes("/contract/index.js")) {
@@ -174,6 +174,51 @@ describe("architecture — graph health", () => {
       return lines > 300 ? [`${relative(repoRoot, file)}: ${lines}`] : [];
     });
     assert.deepEqual(oversized, []);
+  });
+
+  it("TF-01 production modules stay within the 300-line ceiling", () => {
+    const files = [
+      ...listFiles(join(sourceRoot, "core", "ingestion"), ".ts"),
+      join(sourceRoot, "core", "event-bus.ts"),
+      ...listFiles(join(sourceRoot, "adapters", "provider-transcripts"), ".ts"),
+      ...listFiles(join(sourceRoot, "adapters", "stores"), ".ts"),
+      join(repoRoot, "packages", "server", "core", "b2b", "composition.ts"),
+      join(repoRoot, "packages", "server", "core", "b3", "stored-transcript-source.ts"),
+    ];
+    const oversized = files.flatMap((file) => {
+      const lines = readFileSync(file, "utf8").split(/\r?\n/u).length;
+      return lines > 300 ? [`${relative(repoRoot, file)}: ${lines}`] : [];
+    });
+    assert.deepEqual(oversized, []);
+  });
+
+  it("the production Server reaches provider transcripts only through Messaging", () => {
+    const offenders: string[] = [];
+    const serverCore = join(repoRoot, "packages", "server", "core");
+    for (const file of listFiles(serverCore, ".ts")) {
+      for (const specifier of importSpecifiers(file)) {
+        if (/transcript\/(?:adapters|core|b3\/adapters)/u.test(specifier)) {
+          offenders.push(`${relative(repoRoot, file)} → ${specifier}`);
+        }
+      }
+    }
+    assert.deepEqual(offenders, []);
+  });
+
+  it("legacy provider readers are unwired from production contract doors", () => {
+    const transcriptRoot = join(repoRoot, "packages", "transcript");
+    const legacyDoor = readFileSync(join(transcriptRoot, "contract", "index.ts"), "utf8");
+    const legacyB3Door = readFileSync(join(transcriptRoot, "b3", "contract", "index.ts"), "utf8");
+    assert.equal(existsSync(join(
+      repoRoot,
+      "packages",
+      "server",
+      "core",
+      "b2b",
+      "watcher-worker.ts",
+    )), false);
+    assert.doesNotMatch(legacyDoor, /createTranscriptWatcher|defaultSources/u);
+    assert.doesNotMatch(legacyB3Door, /createProviderFileSource|createProviderFileLocator/u);
   });
 
   it("adapter families do not import other adapter families", () => {

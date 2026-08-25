@@ -22,10 +22,3 @@ export {
   createMirrorPump,
   type MirrorPump, type MirrorPumpOptions, type MirrorPumpPass, type MirrorPumpPorts,
 } from '../core/pump.js';
-export {
-  createProviderFileSource, type ProviderFileSourceOptions,
-} from '../adapters/source-provider-file.js';
-export {
-  createProviderFileLocator, defaultProviderHomes,
-  type ProviderFileLocatorOptions, type ProviderHomes,
-} from '../adapters/locate-provider-file.js';

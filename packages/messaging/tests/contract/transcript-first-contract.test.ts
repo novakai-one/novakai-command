@@ -1,0 +1,174 @@
+import assert from "node:assert/strict";
+import { mkdtemp, readdir } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import test from "node:test";
+import {
+  createMemoryTranscriptStore,
+  createMessagingRuntime,
+  openFoundationTranscriptStore,
+  providerNormalizer,
+  type ProviderSourceGrowth,
+  type ProviderSourceStat,
+  type ProviderTranscriptSource,
+  type TranscriptStore,
+} from "../../contract/index.js";
+
+const row = JSON.stringify({
+  type: "assistant",
+  uuid: "row-1",
+  sessionId: "provider-native-session",
+  message: { role: "assistant", content: [{ type: "text", text: "hello" }] },
+});
+const bytes = Buffer.from(`${row}\n`);
+
+const sourceStat: ProviderSourceStat = {
+  sourceId: `source_${"a".repeat(64)}` as never,
+  provider: "claude",
+  size: bytes.length,
+  device: "1",
+  inode: "2",
+};
+
+function fixtureSource(): ProviderTranscriptSource & { reads: number } {
+  return {
+    reads: 0,
+    scan: async () => [sourceStat],
+    async readGrowth(_source, checkpoint): Promise<ProviderSourceGrowth> {
+      this.reads += 1;
+      return {
+        sourceId: sourceStat.sourceId,
+        provider: "claude",
+        sourceEpoch: checkpoint?.sourceEpoch ?? 0,
+        fromOffset: checkpoint?.offset ?? 0,
+        priorTail: Buffer.alloc(0),
+        bytes: checkpoint === null ? bytes : Buffer.alloc(0),
+        signatureAtRead: { device: "1", inode: "2" },
+      };
+    },
+  };
+}
+
+const normalizers = {
+  claude: providerNormalizer("claude"),
+  codex: providerNormalizer("codex"),
+  kimi: providerNormalizer("kimi"),
+} as const;
+
+test("registration, line and checkpoint commit once in durable event order", async () => {
+  const store = createMemoryTranscriptStore();
+  const source = fixtureSource();
+  const runtime = createMessagingRuntime({
+    store,
+    source,
+    normalizers,
+    now: () => "2026-08-25T00:00:00.000Z",
+  });
+
+  const first = await runtime.ingestNow();
+  assert.equal(first.kind, "ok");
+  if (first.kind !== "ok") return;
+  assert.deepEqual(first.value, {
+    sources: 1,
+    added: 1,
+    duplicates: 0,
+    sessionsRegistered: 1,
+  });
+  const sessions = await store.listProviderSessions();
+  const lines = await store.listTranscriptLines();
+  assert.equal(sessions.length, 1);
+  assert.equal(lines.length, 1);
+  assert.equal(lines[0]?.sessionId, sessions[0]?.id);
+  assert.equal(lines[0]?.raw, row);
+  assert.notEqual(sessions[0]?.id, sessions[0]?.resumeId,
+    "Novakai Session ID and provider Resume ID stay distinct");
+  assert.deepEqual(
+    (await store.scanTranscriptEvents()).map((event) => event.kind),
+    ["provider-session.registered", "transcript-line.appended"],
+  );
+
+  const replay = await runtime.ingestNow();
+  assert.equal(replay.kind, "ok");
+  if (replay.kind === "ok") assert.equal(replay.value.added, 0);
+  assert.equal(source.reads, 1, "unchanged source reads zero content bytes");
+  assert.equal((await store.listTranscriptLines()).length, 1);
+});
+
+test("a pre-commit crash retries to one TranscriptLine", async () => {
+  const durable = createMemoryTranscriptStore();
+  let fail = true;
+  const store: TranscriptStore = {
+    ...durable,
+    async commitIngestBatch(input) {
+      if (fail) {
+        fail = false;
+        throw new Error("injected before checkpoint commit");
+      }
+      return durable.commitIngestBatch(input);
+    },
+  };
+  const runtime = createMessagingRuntime({
+    store,
+    source: fixtureSource(),
+    normalizers,
+    now: () => "2026-08-25T00:00:00.000Z",
+  });
+  assert.equal((await runtime.ingestNow()).kind, "error");
+  assert.equal((await runtime.ingestNow()).kind, "ok");
+  assert.equal((await durable.listTranscriptLines()).length, 1);
+});
+
+test("the same provider event in a moved source remains one TranscriptLine", async () => {
+  const store = createMemoryTranscriptStore();
+  const movedSource: ProviderTranscriptSource = {
+    scan: async () => [
+      sourceStat,
+      { ...sourceStat, sourceId: `source_${"d".repeat(64)}` as never, inode: "3" },
+    ],
+    async readGrowth(source, checkpoint) {
+      return {
+        sourceId: source.sourceId,
+        provider: source.provider,
+        sourceEpoch: checkpoint?.sourceEpoch ?? 0,
+        fromOffset: checkpoint?.offset ?? 0,
+        priorTail: Buffer.alloc(0),
+        bytes: checkpoint === null ? bytes : Buffer.alloc(0),
+        signatureAtRead: { device: source.device, inode: source.inode },
+      };
+    },
+  };
+  const runtime = createMessagingRuntime({
+    store,
+    source: movedSource,
+    normalizers,
+    now: () => "2026-08-25T00:00:00.000Z",
+  });
+  const result = await runtime.ingestNow();
+  assert.equal(result.kind, "ok");
+  if (result.kind !== "ok") return;
+  assert.equal(result.value.added, 1);
+  assert.equal(result.value.duplicates, 1);
+  assert.equal((await store.listProviderSessions()).length, 1);
+  assert.equal((await store.listTranscriptLines()).length, 1);
+});
+
+test("Foundation adapter writes and replays only the canonical Messaging database", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "nvk-messaging-ingest-"));
+  const dataRoot = path.join(root, "stores");
+  const store = await openFoundationTranscriptStore({ root, dataRoot });
+  const runtime = createMessagingRuntime({
+    store,
+    source: fixtureSource(),
+    normalizers,
+    now: () => "2026-08-25T00:00:00.000Z",
+  });
+  assert.equal((await runtime.ingestNow()).kind, "ok");
+  await store.close();
+
+  const messagingFiles = (await readdir(dataRoot))
+    .filter((name) => name.toLowerCase().includes("messaging"));
+  assert.deepEqual(messagingFiles, ["messagingStoreOps.jsonl"]);
+  const reopened = await openFoundationTranscriptStore({ root, dataRoot });
+  assert.equal((await reopened.listTranscriptLines()).length, 1);
+  await reopened.close();
+});
