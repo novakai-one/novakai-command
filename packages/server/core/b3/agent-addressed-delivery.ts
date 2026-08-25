@@ -48,7 +48,8 @@ export async function sendAgentCommand(
       text: payload.text,
       clientOpId,
       ...(payload.threadId === undefined ? {} : { threadId: payload.threadId }),
-      ...(payload.screenContext === undefined ? {} : { screenContext: payload.screenContext }),
+      ...(payload.screenContext === undefined
+        ? {} : { screenContext: { ...payload.screenContext } }),
     }),
   });
 }

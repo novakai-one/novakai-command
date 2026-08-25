@@ -20,7 +20,7 @@ export interface ExternalAdoptionOptions {
   readonly roots: ProviderTranscriptRoots;
   readonly limitPerTick?: number;
   readonly assignment: AdoptionAssignment;
-  readonly conversations: ConversationDirectory;
+  readonly conversations?: ConversationDirectory;
 }
 
 /** Production roots and cadence accepted by the Messaging composition door. */
@@ -32,6 +32,7 @@ export interface DefaultMessagingRuntimeOptions {
   readonly agentDirectory?: AgentDirectory;
   readonly providerSend?: ProviderSend;
   readonly conversations?: ConversationDirectory;
+  readonly conversationPrincipalId?: string;
   readonly installIdentityHooks?: boolean;
   readonly externalAdoption?: ExternalAdoptionOptions;
 }
@@ -80,10 +81,13 @@ export async function createDefaultMessagingRuntime(
     ...(options.agentDirectory === undefined ? {} : { agentDirectory: options.agentDirectory }),
     ...(options.providerSend === undefined ? {} : { providerSend: options.providerSend }),
     ...(options.conversations === undefined ? {} : { conversations: options.conversations }),
+    ...(options.conversationPrincipalId === undefined
+      ? {} : { conversationPrincipalId: options.conversationPrincipalId }),
     ...(options.externalAdoption === undefined ? {} : {
       adoption: {
         assignment: options.externalAdoption.assignment,
-        conversations: options.externalAdoption.conversations,
+        ...(options.externalAdoption.conversations === undefined
+          ? {} : { conversations: options.externalAdoption.conversations }),
         limitPerTick: options.externalAdoption.limitPerTick ?? 10,
       },
     }),

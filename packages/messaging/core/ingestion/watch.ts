@@ -9,18 +9,8 @@ import type {
   ProviderNormalizer,
   ProviderTranscriptSource,
 } from "../../contract/ports/provider-transcript-source.js";
-import type {
-  TranscriptLineQuery,
-  TranscriptStore,
-} from "../../contract/ports/transcript-store.js";
-import type { ProviderSession } from "../../contract/records/provider-session.js";
-import type { TranscriptLine } from "../../contract/records/transcript-line.js";
-import type {
-  ProviderName,
-  ProviderResumeId,
-  ProviderSessionId,
-  TranscriptSourceId,
-} from "../../contract/types.js";
+import type { TranscriptStore } from "../../contract/ports/transcript-store.js";
+import type { ProviderName } from "../../contract/types.js";
 import { MessagingError } from "../../contract/types.js";
 import { createDurableTranscriptEventBus, type DurableTranscriptEventBus } from "../event-bus.js";
 import { ingestNow as runIngest } from "./ingest.js";
@@ -30,17 +20,11 @@ import type {
 } from "../../contract/ports/agent-directory.js";
 import type { ConversationDirectory } from "../../contract/ports/conversation-directory.js";
 import type { ProviderSend } from "../../contract/ports/provider-send.js";
-import type { ConversationSendAcceptance, ConversationSendInput } from "../../contract/commands.js";
-import type { SendJournal } from "../../contract/records/send-journal.js";
-import { sendConversationMessage } from "../send/send.js";
 import { AmbiguousProviderSessionEvidenceError } from "./reconcile.js";
 import { AddressedDeliveryReconciler } from '../delivery/queue-addressed.js';
 import { routePendingDeliveries } from '../delivery/router.js';
-import type {
-  AgentCommunicationPage,
-  AgentCommunicationsQuery,
-} from '../../contract/communications.js';
-import { listAgentCommunications as communicationQuery } from '../communications/queries.js';
+import { createStoredConversationDirectory } from '../conversations/directory.js';
+import { createCommittedRecordsApi } from '../runtime/committed-records.js';
 
 /** Dependencies and cadence for the provider-transcript ingestion runtime. */
 export interface MessagingRuntimeOptions {
@@ -53,9 +37,10 @@ export interface MessagingRuntimeOptions {
   readonly agentDirectory?: AgentDirectory;
   readonly providerSend?: ProviderSend;
   readonly conversations?: ConversationDirectory;
+  readonly conversationPrincipalId?: string;
   readonly adoption?: {
     readonly assignment: AdoptionAssignment;
-    readonly conversations: ConversationDirectory;
+    readonly conversations?: ConversationDirectory;
     readonly limitPerTick: number;
   };
 }
@@ -86,24 +71,6 @@ const ingestFailure = <T>(cause: unknown): Outcome<T> => {
   return unavailable(cause);
 };
 
-function lineQuery(input: unknown): TranscriptLineQuery {
-  if (input === undefined) return {};
-  if (typeof input !== "object" || input === null || Array.isArray(input)) {
-    throw new Error("Transcript line query must be an object");
-  }
-  const value = input as Record<string, unknown>;
-  return {
-    ...(typeof value.sessionId === "string"
-      ? { sessionId: value.sessionId as ProviderSessionId } : {}),
-    ...(value.provider === "claude" || value.provider === "codex" || value.provider === "kimi"
-      ? { provider: value.provider } : {}),
-    ...(typeof value.sourceId === "string"
-      ? { sourceId: value.sourceId as TranscriptSourceId } : {}),
-    ...(typeof value.resumeId === "string"
-      ? { resumeId: value.resumeId as ProviderResumeId } : {}),
-  };
-}
-
 class IngestionRuntime implements MessagingRuntimeApi {
   readonly eventBus: DurableTranscriptEventBus;
   private readonly clock: () => string;
@@ -117,11 +84,27 @@ class IngestionRuntime implements MessagingRuntimeApi {
   private deliveryInFlight: Promise<Outcome<DeliveryRunResult>> | undefined;
   private lastDeliveryRunAt: string | undefined;
   private readonly addressedDeliveries = new AddressedDeliveryReconciler();
+  private readonly conversations: ConversationDirectory | undefined;
+  private readonly records: ReturnType<typeof createCommittedRecordsApi>;
 
   constructor(private readonly options: MessagingRuntimeOptions) {
     this.clock = options.now ?? (() => new Date().toISOString());
     this.intervalMs = options.intervalMs ?? 1_000;
     this.eventBus = options.eventBus ?? createDurableTranscriptEventBus(options.store);
+    this.conversations = options.conversations ?? options.adoption?.conversations
+      ?? (options.conversationPrincipalId === undefined
+      ? undefined
+      : createStoredConversationDirectory({
+          store: options.store,
+          humanPrincipalId: options.conversationPrincipalId,
+          now: this.clock,
+        }));
+    this.records = createCommittedRecordsApi({
+      store: options.store,
+      now: this.clock,
+      ...(options.agentDirectory === undefined ? {} : { agentDirectory: options.agentDirectory }),
+      ...(options.providerSend === undefined ? {} : { providerSend: options.providerSend }),
+    });
   }
 
   async start(): Promise<Outcome<void>> {
@@ -170,7 +153,8 @@ class IngestionRuntime implements MessagingRuntimeApi {
         now: this.clock,
         ...(this.options.agentDirectory === undefined
           ? {} : { agentDirectory: this.options.agentDirectory }),
-        ...(this.options.adoption === undefined ? {} : { adoption: this.options.adoption }),
+        ...(this.options.adoption === undefined || this.conversations === undefined
+          ? {} : { adoption: { ...this.options.adoption, conversations: this.conversations } }),
       });
       await this.addressedDeliveries.reconcile(this.options.store);
       if (this.deliveryComposed()) {
@@ -205,7 +189,7 @@ class IngestionRuntime implements MessagingRuntimeApi {
       const value = await routePendingDeliveries({
         store: this.options.store,
         agents: this.options.agentDirectory!,
-        conversations: this.options.conversations!,
+        conversations: this.conversations!,
         providerSend: this.options.providerSend!,
         now: this.clock,
       });
@@ -221,63 +205,31 @@ class IngestionRuntime implements MessagingRuntimeApi {
   private deliveryComposed(): boolean {
     return this.options.agentDirectory !== undefined
       && this.options.providerSend !== undefined
-      && this.options.conversations !== undefined;
+      && this.conversations !== undefined;
   }
 
-  async listProviderSessions(): Promise<Outcome<readonly ProviderSession[]>> {
-    try {
-      return { kind: "ok" as const, value: await this.options.store.listProviderSessions() };
-    } catch (cause) {
-      return unavailable(cause);
-    }
-  }
-
-  async sendConversationMessage(
-    input: ConversationSendInput,
-  ): Promise<Outcome<ConversationSendAcceptance>> {
-    try {
-      if (this.options.agentDirectory === undefined || this.options.providerSend === undefined) {
-        throw new Error("Messaging send dependencies are not composed");
-      }
-      const value = await sendConversationMessage({
-        store: this.options.store,
-        agentDirectory: this.options.agentDirectory,
-        providerSend: this.options.providerSend,
-        now: this.clock,
-      }, input);
-      return { kind: "ok", value };
-    } catch (cause) {
-      return unavailable(cause);
-    }
-  }
-
-  async listTranscriptLines(input?: unknown): Promise<Outcome<readonly TranscriptLine[]>> {
-    try {
-      const value = await this.options.store.listTranscriptLines(lineQuery(input));
-      return { kind: "ok" as const, value };
-    } catch (cause) {
-      return unavailable(cause);
-    }
-  }
-
-
-  async listSendJournals(): Promise<Outcome<readonly SendJournal[]>> {
-    try {
-      return { kind: "ok", value: await this.options.store.listSendJournals() };
-    } catch (cause) {
-      return unavailable(cause);
-    }
-  }
-
-  async listAgentCommunications(
-    input: AgentCommunicationsQuery,
-  ): Promise<Outcome<AgentCommunicationPage>> {
-    try {
-      return { kind: 'ok' as const, value: await communicationQuery(this.options.store, input) };
-    } catch (cause) {
-      return unavailable(cause);
-    }
-  }
+  ensureConversationView: MessagingRuntimeApi['ensureConversationView'] =
+    (input) => this.records.ensureConversationView(input);
+  updateConversationView: MessagingRuntimeApi['updateConversationView'] =
+    (input) => this.records.updateConversationView(input);
+  getConversationView: MessagingRuntimeApi['getConversationView'] =
+    (id) => this.records.getConversationView(id);
+  listConversationViews: MessagingRuntimeApi['listConversationViews'] =
+    () => this.records.listConversationViews();
+  rebuildProjections: MessagingRuntimeApi['rebuildProjections'] =
+    () => this.records.rebuildProjections();
+  readProjections: MessagingRuntimeApi['readProjections'] =
+    () => this.records.readProjections();
+  listProviderSessions: MessagingRuntimeApi['listProviderSessions'] =
+    () => this.records.listProviderSessions();
+  sendConversationMessage: MessagingRuntimeApi['sendConversationMessage'] =
+    (input) => this.records.sendConversationMessage(input);
+  listTranscriptLines: MessagingRuntimeApi['listTranscriptLines'] =
+    (input) => this.records.listTranscriptLines(input);
+  listSendJournals: MessagingRuntimeApi['listSendJournals'] =
+    () => this.records.listSendJournals();
+  listAgentCommunications: MessagingRuntimeApi['listAgentCommunications'] =
+    (input) => this.records.listAgentCommunications(input);
 
   subscribeTranscriptEvents(sink: Parameters<DurableTranscriptEventBus["subscribe"]>[0]) {
     return this.eventBus.subscribe(sink);

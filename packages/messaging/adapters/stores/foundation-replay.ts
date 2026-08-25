@@ -7,15 +7,24 @@ import {
   type PersistedTranscriptBatch,
 } from './transcript-state.js';
 import { messagingStoreRecord } from './foundation-operations.js';
+import {
+  ConversationViewState,
+  type PersistedConversationMutation,
+} from './conversation-view-state.js';
+import { ProjectionState, type PersistedProjectionRebuild } from './projection-state.js';
 
 /** Fully replayed semantic state and the next sequence in each mutation lane. */
 export interface RestoredFoundationMessagingStore {
   readonly transcripts: TranscriptState;
   readonly sends: SendJournalState;
   readonly deliveries: PendingDeliveryState;
+  readonly conversations: ConversationViewState;
+  readonly projections: ProjectionState;
   readonly transcriptSequence: number;
   readonly sendSequence: number;
   readonly deliverySequence: number;
+  readonly conversationSequence: number;
+  readonly projectionSequence: number;
 }
 
 /** Replays the one Messaging store into its three private state owners. */
@@ -33,9 +42,13 @@ export async function restoreFoundationMessagingStore(
   const sessions: PersistedProviderSession[] = [];
   const sends: PersistedSendMutation[] = [];
   const deliveries: PersistedPendingDeliveryMutation[] = [];
+  const conversations: PersistedConversationMutation[] = [];
+  const projections: PersistedProjectionRebuild[] = [];
   let transcriptSequence = 0;
   let sendSequence = 0;
   let deliverySequence = 0;
+  let conversationSequence = 0;
+  let projectionSequence = 0;
   for (const item of listed.value.items) {
     const record = messagingStoreRecord(item.object);
     if (record === undefined) continue;
@@ -51,10 +64,18 @@ export async function restoreFoundationMessagingStore(
       const sequence = record.sendSequence ?? 0;
       sendSequence = Math.max(sendSequence, sequence);
       sends.push({ sequence, journals: record.storeOp.journals });
-    } else {
+    } else if (record.storeOp.op === 'pending-delivery-mutation') {
       const sequence = record.deliverySequence ?? 0;
       deliverySequence = Math.max(deliverySequence, sequence);
       deliveries.push({ sequence, deliveries: record.storeOp.deliveries });
+    } else if (record.storeOp.op === 'conversation-view-mutation') {
+      const sequence = record.conversationSequence ?? 0;
+      conversationSequence = Math.max(conversationSequence, sequence);
+      conversations.push({ sequence, mutation: record.storeOp.mutation });
+    } else {
+      const sequence = record.projectionSequence ?? 0;
+      projectionSequence = Math.max(projectionSequence, sequence);
+      projections.push({ sequence, result: record.storeOp.result });
     }
   }
   const transcripts = new TranscriptState();
@@ -64,12 +85,20 @@ export async function restoreFoundationMessagingStore(
   sendState.restore(sends);
   const deliveryState = new PendingDeliveryState();
   deliveryState.restore(deliveries);
+  const conversationState = new ConversationViewState();
+  conversationState.restore(conversations);
+  const projectionState = new ProjectionState();
+  projectionState.restore(projections);
   return {
     transcripts,
     sends: sendState,
     deliveries: deliveryState,
+    conversations: conversationState,
+    projections: projectionState,
     transcriptSequence,
     sendSequence,
     deliverySequence,
+    conversationSequence,
+    projectionSequence,
   };
 }

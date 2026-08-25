@@ -18,12 +18,16 @@ import type { ProviderSessionId } from "../../contract/types.js";
 import { SendJournalState } from "./send-journal-state.js";
 import { PendingDeliveryState } from './pending-delivery-state.js';
 import { TranscriptState } from "./transcript-state.js";
+import { ConversationViewState } from './conversation-view-state.js';
+import { ProjectionState } from './projection-state.js';
 
 /** Creates a contract-faithful volatile TranscriptStore for tests and embeds. */
 export function createMemoryTranscriptStore(): TranscriptStore {
   const state = new TranscriptState();
   const sends = new SendJournalState();
   const deliveries = new PendingDeliveryState();
+  const conversations = new ConversationViewState();
+  const projections = new ProjectionState();
   return {
     getCheckpoint: async (sourceId: TranscriptSourceId): Promise<IngestCheckpoint | null> =>
       state.getCheckpoint(sourceId),
@@ -46,6 +50,11 @@ export function createMemoryTranscriptStore(): TranscriptStore {
     acceptPendingDelivery: (input) => deliveries.accept(input.delivery),
     transitionPendingDelivery: (input) => deliveries.transition(input),
     listPendingDeliveries: async () => deliveries.list(),
+    setConversationView: (input) => conversations.set(input, async () => undefined),
+    getConversationView: async (id) => conversations.get(id),
+    listConversationViews: async () => conversations.list(),
+    replaceProjections: (result) => projections.replace(result, async () => undefined),
+    readProjections: async () => projections.read(),
     scanTranscriptEvents: async (after?: EventCursor, limit?: number): Promise<readonly TranscriptEvent[]> =>
       state.scanEvents(after, limit),
     close: async () => undefined,

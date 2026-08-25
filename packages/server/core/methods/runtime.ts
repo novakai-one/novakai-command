@@ -7,7 +7,6 @@ import type {
   ProviderSessionRegistry,
 } from '../../../agents/contract/index.js';
 import { composeShellPersistence } from '../../../shell/contract/persistence.node.js';
-import { setConversationView } from '../../../shell/contract/conversationView.js';
 import type { FocusSnapshot } from '../../../shell/contract/context.js';
 import type { MethodTable } from '../../contract/protocol.js';
 import type { ServerConfig, ProviderName } from '../../contract/config.js';
@@ -85,27 +84,25 @@ export async function persistView(
   conversation: Conversation,
   clientOpId: string,
 ): Promise<void> {
-  const result = await setConversationView(
-    runtime.persistence.conversationViewDriver,
-    conversation.id,
-    {
-      threadRef: conversation.threadId ? { kind: 'thread', id: conversation.threadId } : null,
-      address: conversation.address,
-      pinned: conversation.pinned,
-      archived: conversation.archived,
-      lastActivityAt: conversation.lastActivityAt,
-      titleOverride: conversation.title,
-      ...(conversation.agentId ? { agentId: conversation.agentId } : {}),
-      ...(conversation.provider ? { provider: conversation.provider } : {}),
-      ...(conversation.lastReadMessageId
-        ? { lastReadMessageId: conversation.lastReadMessageId }
-        : {}),
-    },
+  const participant = conversation.agentId ?? conversation.personId ?? conversation.id;
+  const result = await runtime.transcript.runtime.ensureConversationView({
+    conversationId: conversation.id,
+    participantIds: [runtime.human.personId, participant],
     clientOpId,
-  );
-  if (!result.ok) {
+    address: conversation.address,
+    pinned: conversation.pinned,
+    archived: conversation.archived,
+    lastActivityAt: conversation.lastActivityAt,
+    titleOverride: conversation.title,
+    ...(conversation.agentId ? { agentId: conversation.agentId } : {}),
+    ...(conversation.provider ? { provider: conversation.provider } : {}),
+    ...(conversation.lastReadMessageId
+      ? { lastReadLineId: conversation.lastReadMessageId }
+      : {}),
+  });
+  if (result.kind === 'error') {
     console.error(
-      `[nvk-server] conversationView persist failed for ${conversation.id}: ${result.error?.code} ${result.error?.message}`,
+      `[nvk-server] Conversation View persist failed for ${conversation.id}: ${result.error.message}`,
     );
   }
 }

@@ -8,3 +8,8 @@ export type {
   SendJournal,
 } from "./send-journal.js";
 export type { PendingDelivery } from './pending-delivery.js';
+export type {
+  ProjectionRebuildResult,
+  ToolCallIndex,
+  UsageRollup,
+} from './projections.js';

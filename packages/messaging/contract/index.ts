@@ -7,6 +7,7 @@ export * from "./runtime.js";
 export * from "./agent-identity.js";
 export * from './agent-delivery-marker.js';
 export * from './communications.js';
+export * from './conversations.js';
 export * from "./commands.js";
 export * from "./compose.js";
 export * from "./records/index.js";

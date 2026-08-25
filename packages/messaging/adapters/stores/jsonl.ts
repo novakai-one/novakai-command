@@ -37,7 +37,7 @@ function storeFacade(
   restored: RestoredFoundationMessagingStore,
   writer: FoundationMessagingWriter,
 ): TranscriptStore {
-  const { transcripts, sends, deliveries } = restored;
+  const { transcripts, sends, deliveries, conversations, projections } = restored;
   return {
     getCheckpoint: async (sourceId: TranscriptSourceId): Promise<IngestCheckpoint | null> =>
       transcripts.getCheckpoint(sourceId),
@@ -63,6 +63,13 @@ function storeFacade(
     transitionPendingDelivery: (input) =>
       deliveries.transition(input, (items) => writer.persistDeliveries(items)),
     listPendingDeliveries: async () => deliveries.list(),
+    setConversationView: (input) =>
+      conversations.set(input, (mutation) => writer.persistConversation(mutation)),
+    getConversationView: async (id) => conversations.get(id),
+    listConversationViews: async () => conversations.list(),
+    replaceProjections: (result) =>
+      projections.replace(result, (value) => writer.persistProjections(value)),
+    readProjections: async () => projections.read(),
     scanTranscriptEvents: async (
       after?: EventCursor,
       limit?: number,
@@ -89,6 +96,8 @@ export async function openFoundationTranscriptStore(
     restored.transcriptSequence,
     restored.sendSequence,
     restored.deliverySequence,
+    restored.conversationSequence,
+    restored.projectionSequence,
   );
   return storeFacade(restored, writer);
 }

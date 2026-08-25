@@ -96,6 +96,7 @@ export interface ComposeTranscriptServerHostOptions {
   providerSend?: ProviderSend;
   externalAdoption?: ExternalAdoptionOptions;
   conversations?: import('../../../messaging/contract/index.js').ConversationDirectory;
+  conversationPrincipalId?: string;
 }
 
 const legacyLine = (line: TranscriptLine): LegacyTranscriptLine => ({
@@ -149,6 +150,8 @@ export function composeTranscriptServerHost(
       ...(options.agentDirectory === undefined ? {} : { agentDirectory: options.agentDirectory }),
       ...(options.providerSend === undefined ? {} : { providerSend: options.providerSend }),
       ...(options.conversations === undefined ? {} : { conversations: options.conversations }),
+      ...(options.conversationPrincipalId === undefined
+        ? {} : { conversationPrincipalId: options.conversationPrincipalId }),
       ...(options.externalAdoption === undefined
         ? {} : { externalAdoption: options.externalAdoption }),
   });
@@ -184,6 +187,14 @@ export function composeTranscriptServerHost(
     health: async (): Promise<MessagingHealth> => (await ready).runtime.health(),
     ingestNow: ingest,
     routePending: async () => (await ready).runtime.routePending(),
+    ensureConversationView: async (input) =>
+      (await ready).runtime.ensureConversationView(input),
+    updateConversationView: async (input) =>
+      (await ready).runtime.updateConversationView(input),
+    getConversationView: async (id) => (await ready).runtime.getConversationView(id),
+    listConversationViews: async () => (await ready).runtime.listConversationViews(),
+    rebuildProjections: async () => (await ready).runtime.rebuildProjections(),
+    readProjections: async () => (await ready).runtime.readProjections(),
     sendConversationMessage: async (input) =>
       (await ready).runtime.sendConversationMessage(input),
     listProviderSessions: async () => (await ready).runtime.listProviderSessions(),

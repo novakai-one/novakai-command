@@ -54,9 +54,12 @@ export async function bootServer(options: BootOptions): Promise<BootResult> {
     kimiRuntime,
     providerRuntimes,
     transcript,
-    adoptedConversations,
   } = capabilities;
-  const hydrated = await hydrateConversations(persistence.conversationViewDriver);
+  const hydrated = await hydrateConversations(
+    persistence.conversationViewDriver,
+    transcript.runtime,
+    human.personId,
+  );
   const appendSystemAction = options.recordSystemAction ?? recordSystemAction;
   const prepared = await prepareSessions({
     options,
@@ -130,19 +133,6 @@ export async function bootServer(options: BootOptions): Promise<BootResult> {
     mintOpId: () => `op_${randomUUID()}`,
   };
   runtimeRef.current = runtime;
-  const adoptedConversationSubscription = adoptedConversations.subscribe((conversation) => {
-    runtime.conversations.set(conversation.id, conversation);
-    runtime.broadcast('conversation', {
-      id: conversation.id,
-      threadId: conversation.threadId ?? conversation.address,
-      title: conversation.title,
-      kind: conversation.kind,
-      pinned: conversation.pinned,
-      archived: conversation.archived,
-      lastActivityAt: conversation.lastActivityAt,
-      agentId: conversation.agentId,
-    });
-  });
 
   const others = config.principals
     .map((principal) => principal.personId)
@@ -183,7 +173,6 @@ export async function bootServer(options: BootOptions): Promise<BootResult> {
   try {
     await b3Wire.serve(transport);
   } catch (cause) {
-    adoptedConversationSubscription.close();
     await transport.close();
     await b3Wire.close();
     await embedded.close();
@@ -220,7 +209,6 @@ export async function bootServer(options: BootOptions): Promise<BootResult> {
         configWatcher.close();
         await transcript.topology.stop();
         transcriptEvents.close();
-        adoptedConversationSubscription.close();
         await transport.close();
         await b3Wire.close();
         await embedded.close();

@@ -4,6 +4,11 @@ import type { TranscriptLine } from "../records/transcript-line.js";
 import type { SendAttempt, SendJournal } from "../records/send-journal.js";
 import type { PendingDelivery } from '../records/pending-delivery.js';
 import type {
+  ConversationView,
+  ConversationViewMutation,
+} from '../records/conversation-view.js';
+import type { ProjectionRebuildResult } from '../records/projections.js';
+import type {
   EventCursor,
   PendingDeliveryState,
   ProviderName,
@@ -107,6 +112,11 @@ export interface TranscriptStore {
     input: PendingDeliveryTransitionInput,
   ): Promise<PendingDeliveryTransitionResult>;
   listPendingDeliveries(): Promise<readonly PendingDelivery[]>;
+  setConversationView(input: ConversationViewMutation): Promise<ConversationView>;
+  getConversationView(id: string): Promise<ConversationView | null>;
+  listConversationViews(): Promise<readonly ConversationView[]>;
+  replaceProjections(result: ProjectionRebuildResult): Promise<ProjectionRebuildResult>;
+  readProjections(): Promise<ProjectionRebuildResult>;
   scanTranscriptEvents(after?: EventCursor, limit?: number): Promise<readonly TranscriptEvent[]>;
   close(): Promise<void>;
 }

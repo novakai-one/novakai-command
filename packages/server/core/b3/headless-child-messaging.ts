@@ -3,22 +3,18 @@ import { b3err, b3fail, b3ok, mintClientOpId } from '@novakai/foundation/contrac
 import type { HeadlessChildMessagingPort } from '../../../agent-runtime/contract/index.js';
 import type { AgentsContract } from '../../../agents/contract/index.js';
 import type { MessagingRuntimeApi } from '../../../messaging/contract/index.js';
-import { setConversationView } from '../../../shell/contract/conversationView.js';
-import { composeShellPersistence } from '../../../shell/contract/persistence.node.js';
 
 interface HeadlessChildOptions {
-  readonly root: string;
-  readonly dataRoot: string;
-  readonly messaging: Pick<MessagingRuntimeApi, 'sendConversationMessage'>;
+  readonly messaging: Pick<
+    MessagingRuntimeApi,
+    'ensureConversationView' | 'sendConversationMessage'
+  >;
   readonly agents: Pick<AgentsContract, 'spawnAgent'>;
   readonly emit?: (kind: string, payload: Readonly<Record<string, unknown>>) => void;
 }
 
 type PrepareInput = Parameters<HeadlessChildMessagingPort['prepare']>[0];
 type DispatchInput = Parameters<HeadlessChildMessagingPort['dispatchBrief']>[0];
-type ConversationViewDriver = ReturnType<
-  typeof composeShellPersistence
->['conversationViewDriver'];
 
 const conversationIdFor = (agentId: string): string =>
   `conv_child_${createHash('sha256').update(agentId).digest('hex').slice(0, 32)}`;
@@ -27,28 +23,33 @@ const conversationIdFor = (agentId: string): string =>
 export function createHeadlessChildMessagingPort(
   options: HeadlessChildOptions,
 ): HeadlessChildMessagingPort {
-  const { conversationViewDriver } = composeShellPersistence({
-    root: options.root,
-    dataRoot: options.dataRoot,
-    principal: 'sys_shell',
-  });
   return {
-    prepare: (input) => prepareChild(options, conversationViewDriver, input),
+    prepare: (input) => prepareChild(options, input),
     dispatchBrief: (input) => dispatchBrief(options, input),
   };
 }
 
 async function prepareChild(
   options: HeadlessChildOptions,
-  conversationViewDriver: ConversationViewDriver,
   input: PrepareInput,
 ) {
   const conversationId = conversationIdFor(input.agentId);
   const lastActivityAt = new Date().toISOString();
-  const view = await persistConversationView(
-    conversationViewDriver, input, conversationId, lastActivityAt,
-  );
-  if (!view.ok) return view;
+  const view = await options.messaging.ensureConversationView({
+    conversationId,
+    participantIds: [input.rootHumanPrincipalId, input.agentId],
+    clientOpId: String(input.clientOpId),
+    titleOverride: input.displayName,
+    address: `agent:${input.agentId}`,
+    agentId: input.agentId,
+    provider: input.provider,
+    lastActivityAt,
+  });
+  if (view.kind === 'error') {
+    return b3fail(b3err('StoreUnavailable', view.error.message, {
+      owner: 'messaging', cause: view.error.name,
+    }, view.error.retryable));
+  }
 
   // Runtime creation is in-memory preparation only. Provider execution starts
   // after Agent Runtime has issued the child's delegation grants.
@@ -63,31 +64,6 @@ async function prepareChild(
   }
   emitConversation(options, input, conversationId, lastActivityAt);
   return b3ok({ conversationId });
-}
-
-async function persistConversationView(
-  driver: ConversationViewDriver,
-  input: PrepareInput,
-  conversationId: string,
-  lastActivityAt: string,
-) {
-  const view = await setConversationView(driver, conversationId, {
-    threadRef: null,
-    address: `agent:${input.agentId}`,
-    pinned: false,
-    archived: false,
-    titleOverride: input.displayName,
-    lastActivityAt,
-    openedForPrincipalId: input.rootHumanPrincipalId,
-    membershipKind: 'direct',
-    agentId: input.agentId,
-    provider: input.provider,
-  }, String(input.clientOpId));
-  return view.ok
-    ? b3ok(null)
-    : b3fail(b3err('StoreUnavailable', view.error.message, {
-        owner: 'shell', cause: view.error.code,
-      }, view.error.retryable));
 }
 
 function emitConversation(

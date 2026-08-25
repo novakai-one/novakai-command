@@ -95,7 +95,7 @@ export interface B3RuntimeOptions {
   /** Production Server supplies Messaging's one-door ingestion runtime. */
   readonly messagingRuntime?: Pick<
     MessagingRuntimeApi,
-    'listTranscriptLines' | 'sendConversationMessage'
+    'ensureConversationView' | 'listTranscriptLines' | 'sendConversationMessage'
   >;
   /** Target Agents door used only to prepare a headless child's CLI runtime. */
   readonly providerAgents?: Pick<AgentsContract, 'spawnAgent'>;
@@ -532,8 +532,6 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
     || options.providerAgents === undefined
     ? undefined
     : createHeadlessChildMessagingPort({
-        root: options.root,
-        dataRoot,
         messaging: options.messagingRuntime,
         agents: options.providerAgents,
         ...(options.publish === undefined ? {} : { emit: options.publish }),

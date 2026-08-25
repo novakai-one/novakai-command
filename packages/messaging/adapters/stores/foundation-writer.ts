@@ -13,9 +13,11 @@ import type { TranscriptBatchInput } from '../../contract/ports/transcript-store
 import type { PendingDelivery } from '../../contract/records/pending-delivery.js';
 import type { ProviderSession } from '../../contract/records/provider-session.js';
 import type { SendJournal } from '../../contract/records/send-journal.js';
+import type { ConversationViewMutation } from '../../contract/records/conversation-view.js';
+import type { ProjectionRebuildResult } from '../../contract/records/projections.js';
 import type { MessagingStoreOp, MessagingStoreRecord } from './foundation-operations.js';
 
-type MutationLane = 'transcript' | 'send' | 'delivery';
+type MutationLane = 'transcript' | 'send' | 'delivery' | 'conversation' | 'projection';
 
 /** Serializes all Foundation appends while preserving per-lane replay order. */
 export class FoundationMessagingWriter {
@@ -26,6 +28,8 @@ export class FoundationMessagingWriter {
     private transcriptSequence: number,
     private sendSequence: number,
     private deliverySequence: number,
+    private conversationSequence: number,
+    private projectionSequence: number,
   ) {}
 
   persistTranscript(input: TranscriptBatchInput): Promise<void> {
@@ -61,6 +65,24 @@ export class FoundationMessagingWriter {
       { op: 'pending-delivery-mutation', deliveries },
       deliveries[0]?.updatedAt ?? new Date().toISOString(),
       'delivery',
+    );
+  }
+
+  persistConversation(mutation: ConversationViewMutation): Promise<void> {
+    return this.persistContent(
+      `conversation-view:${mutation.clientOpId}`,
+      { op: 'conversation-view-mutation', mutation },
+      mutation.view.updatedAt,
+      'conversation',
+    );
+  }
+
+  persistProjections(result: ProjectionRebuildResult): Promise<void> {
+    return this.persistContent(
+      'projection-rebuild',
+      { op: 'projection-rebuild', result },
+      new Date().toISOString(),
+      'projection',
     );
   }
 
@@ -117,12 +139,16 @@ export class FoundationMessagingWriter {
   private sequence(lane: MutationLane): object {
     if (lane === 'transcript') return { transcriptSequence: this.transcriptSequence };
     if (lane === 'send') return { sendSequence: this.sendSequence };
-    return { deliverySequence: this.deliverySequence };
+    if (lane === 'delivery') return { deliverySequence: this.deliverySequence };
+    if (lane === 'conversation') return { conversationSequence: this.conversationSequence };
+    return { projectionSequence: this.projectionSequence };
   }
 
   private increment(lane: MutationLane, amount: number): void {
     if (lane === 'transcript') this.transcriptSequence += amount;
     else if (lane === 'send') this.sendSequence += amount;
-    else this.deliverySequence += amount;
+    else if (lane === 'delivery') this.deliverySequence += amount;
+    else if (lane === 'conversation') this.conversationSequence += amount;
+    else this.projectionSequence += amount;
   }
 }

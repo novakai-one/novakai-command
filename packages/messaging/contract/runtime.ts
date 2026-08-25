@@ -5,6 +5,12 @@ import type { SendJournal } from "./records/send-journal.js";
 import type { ConversationSendAcceptance, ConversationSendInput } from "./commands.js";
 import type { TranscriptEvent } from "./ports/transcript-store.js";
 import type { AgentCommunicationPage, AgentCommunicationsQuery } from './communications.js';
+import type {
+  EnsureConversationViewInput,
+  UpdateConversationViewInput,
+} from './conversations.js';
+import type { ConversationView } from './records/conversation-view.js';
+import type { ProjectionRebuildResult } from './records/projections.js';
 
 /** Counts from one idle-boundary delivery pass. */
 export interface DeliveryRunResult {
@@ -42,6 +48,12 @@ export interface MessagingRuntimeApi {
   health(): Promise<MessagingHealth>;
   ingestNow(): Promise<Outcome<IngestResult>>;
   routePending(): Promise<Outcome<DeliveryRunResult>>;
+  ensureConversationView(input: EnsureConversationViewInput): Promise<Outcome<ConversationView>>;
+  updateConversationView(input: UpdateConversationViewInput): Promise<Outcome<ConversationView>>;
+  getConversationView(id: string): Promise<Outcome<ConversationView | null>>;
+  listConversationViews(): Promise<Outcome<readonly ConversationView[]>>;
+  rebuildProjections(): Promise<Outcome<ProjectionRebuildResult>>;
+  readProjections(): Promise<Outcome<ProjectionRebuildResult>>;
   sendConversationMessage(input: ConversationSendInput): Promise<Outcome<ConversationSendAcceptance>>;
   listProviderSessions(): Promise<Outcome<readonly ProviderSession[]>>;
   listTranscriptLines(input?: unknown): Promise<Outcome<readonly TranscriptLine[]>>;
