@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { deriveClientOpId } from '@novakai/foundation/contract';
 import type { AgentIdentityMarker } from '../../contract/records/agent-identity.js';
 import type { AgentDirectory } from '../../contract/ports/agent-directory.js';
 import type { TranscriptStore } from '../../contract/ports/transcript-store.js';
@@ -8,18 +8,22 @@ import type { ProviderSession } from '../../contract/records/provider-session.js
 export interface SessionAssignmentInput {
   readonly session: ProviderSession;
   readonly markers: readonly AgentIdentityMarker[];
+  readonly externalAgentId?: string;
   readonly directory?: AgentDirectory;
   readonly store: TranscriptStore;
 }
 
 const attachmentOpId = (sessionId: string, agentId: string): string =>
-  `op_attach_${createHash('sha256').update(`${sessionId}:${agentId}`).digest('hex')}`;
+  deriveClientOpId(`messaging:attach:${sessionId}:${agentId}`);
 
 /** Sole ProviderSession.agentId transition; Agent attachment precedes line visibility. */
 export async function assignProviderSession(
   input: SessionAssignmentInput,
 ): Promise<ProviderSession> {
-  const agentIds = [...new Set(input.markers.map((marker) => marker.agentId))];
+  const agentIds = [...new Set([
+    ...input.markers.map((marker) => marker.agentId),
+    ...(input.externalAgentId === undefined ? [] : [input.externalAgentId]),
+  ])];
   if (agentIds.length === 0) return input.store.upsertProviderSession(input.session);
   if (agentIds.length !== 1) {
     throw new Error(`ProviderSession ${input.session.id} has conflicting Agent identity markers`);

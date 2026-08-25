@@ -140,6 +140,18 @@ test('transcript.ingest is a dedicated config authority and round-trips independ
   assert.equal(enabled.ok, true);
   assert.equal(store.current().transcript.ingest, true);
 
+  const adoption = await store.set({
+    configKind: 'transcript',
+    ingest: true,
+    adoptRoots: { claude: ['/tmp/provider-project'], codex: [], kimi: [] },
+    adoptionLimitPerTick: 2,
+    adoptionTeamId: 'team_external-session-visibility',
+    adoptionMissionId: 'mission_external-session-visibility',
+  }, mintClientOpId());
+  assert.equal(adoption.ok, true);
+  assert.deepEqual(store.current().transcript.adoptRoots.claude, ['/tmp/provider-project']);
+  assert.equal(store.current().transcript.adoptionLimitPerTick, 2);
+
   await store.set(
     { configKind: 'dev', allowMock: true, watchTranscripts: false },
     mintClientOpId(),

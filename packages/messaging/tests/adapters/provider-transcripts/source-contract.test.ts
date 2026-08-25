@@ -123,6 +123,9 @@ test("hook assignment attaches the discovered ProviderSession before lines becom
         ? { agentId, provider: "claude", currentProviderSessionId: null }
         : null;
     },
+    async ensureForSession() {
+      return { ok: false, code: "NotExpected", message: "hook assignment does not adopt" };
+    },
     async attachProviderSession(agentId, providerSessionId) {
       calls.push(`${agentId}:${providerSessionId}`);
       return { ok: true, state: "attached" };
@@ -259,11 +262,34 @@ test("default cadence exposes an appended provider reply within two seconds", as
   const sessionFile = path.join(sessionDir, "wire.jsonl");
   await mkdir(sessionDir, { recursive: true });
   await writeFile(sessionFile, "");
-  const composed = await createDefaultMessagingRuntime({ root, providerHome });
+  const latencyAgent = "agent_latency";
+  const agentDirectory: AgentDirectory = {
+    async get(agentId) {
+      return agentId === latencyAgent
+        ? { agentId, provider: "kimi", currentProviderSessionId: null }
+        : null;
+    },
+    async ensureForSession() {
+      return { ok: false, code: "NotExpected", message: "hook path does not adopt" };
+    },
+    async attachProviderSession() { return { ok: true, state: "attached" }; },
+  };
+  const composed = await createDefaultMessagingRuntime({ root, providerHome, agentDirectory });
   try {
     assert.equal((await composed.runtime.start()).kind, "ok");
     const appendedAt = Date.now();
+    const marker = JSON.stringify({
+      kind: "novakai-agent-identity",
+      schemaVersion: 1,
+      hookEvent: "UserPromptSubmit",
+      agentId: latencyAgent,
+    });
     await appendFile(sessionFile, `${JSON.stringify({
+      message: {
+        role: "system",
+        content: `<hook_result hook_event="UserPromptSubmit">${marker}</hook_result>`,
+      },
+    })}\n${JSON.stringify({
       type: "context.append_loop_event",
       event: {
         type: "content.part",

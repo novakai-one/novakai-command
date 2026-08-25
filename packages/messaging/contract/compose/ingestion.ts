@@ -6,9 +6,20 @@ import { openFoundationTranscriptStore } from "../../adapters/stores/jsonl.js";
 import { createMessagingRuntime } from "../../core/ingestion/watch.js";
 import type { MessagingRuntimeApi } from "../runtime.js";
 import type { AgentDirectory } from "../ports/agent-directory.js";
+import type { AdoptionAssignment } from "../ports/agent-directory.js";
+import type { ConversationDirectory } from "../ports/conversation-directory.js";
 import type { ProviderSend } from "../ports/provider-send.js";
 import { agentIdentityHookCommand } from "../../adapters/provider-hooks/agent-identity-hook.js";
 import { ensureClaudeIdentityHook } from "../../adapters/provider-hooks/registrations/claude.js";
+import type { ProviderTranscriptRoots } from "../../adapters/provider-transcripts/source.js";
+
+/** Explicit scope, operating assignment and rate limit for external-session adoption. */
+export interface ExternalAdoptionOptions {
+  readonly roots: ProviderTranscriptRoots;
+  readonly limitPerTick?: number;
+  readonly assignment: AdoptionAssignment;
+  readonly conversations: ConversationDirectory;
+}
 
 /** Production roots and cadence accepted by the Messaging composition door. */
 export interface DefaultMessagingRuntimeOptions {
@@ -19,6 +30,7 @@ export interface DefaultMessagingRuntimeOptions {
   readonly agentDirectory?: AgentDirectory;
   readonly providerSend?: ProviderSend;
   readonly installIdentityHooks?: boolean;
+  readonly externalAdoption?: ExternalAdoptionOptions;
 }
 
 /** Running contract plus one idempotent resource teardown operation. */
@@ -51,6 +63,9 @@ export async function createDefaultMessagingRuntime(
         path.join(home, ".codex", "archived_sessions"),
       ],
       kimi: [path.join(home, ".kimi-code", "sessions")],
+    }, {
+      ...(options.externalAdoption === undefined
+        ? {} : { adoptRoots: options.externalAdoption.roots }),
     }),
     normalizers: {
       claude: providerNormalizer("claude"),
@@ -59,6 +74,13 @@ export async function createDefaultMessagingRuntime(
     },
     ...(options.agentDirectory === undefined ? {} : { agentDirectory: options.agentDirectory }),
     ...(options.providerSend === undefined ? {} : { providerSend: options.providerSend }),
+    ...(options.externalAdoption === undefined ? {} : {
+      adoption: {
+        assignment: options.externalAdoption.assignment,
+        conversations: options.externalAdoption.conversations,
+        limitPerTick: options.externalAdoption.limitPerTick ?? 10,
+      },
+    }),
     ...(options.intervalMs === undefined ? {} : { intervalMs: options.intervalMs }),
   });
   return {

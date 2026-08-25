@@ -19,6 +19,7 @@ export { createDefaultMessagingRuntime } from "./compose/ingestion.js";
 export type {
   ComposedMessagingRuntime,
   DefaultMessagingRuntimeOptions,
+  ExternalAdoptionOptions,
 } from "./compose/ingestion.js";
 export type {
   StandaloneMessaging,

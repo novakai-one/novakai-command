@@ -80,6 +80,7 @@ function resumeHint(relative: string): string | undefined {
 async function discoverRoot(
   provider: ProviderName,
   configuredRoot: string,
+  adoptRoots: readonly string[],
 ): Promise<readonly DiscoveredSource[]> {
   let root: string;
   try {
@@ -101,6 +102,8 @@ async function discoverRoot(
       size: metadata.size,
       device: String(metadata.dev),
       inode: String(metadata.ino),
+      adoptionEligible: adoptRoots.some((candidate) =>
+        filePath === candidate || filePath.startsWith(`${candidate}${path.sep}`)),
       filePath,
       ...(hint === undefined ? {} : { resumeIdHint: hint }),
     });
@@ -139,6 +142,7 @@ class FileProviderTranscriptSource implements ProviderTranscriptSource {
 
   constructor(
     private readonly roots: ProviderTranscriptRoots,
+    private readonly adoptRoots: ProviderTranscriptRoots,
     private readonly rangeReader: (
       filePath: string,
       from: number,
@@ -149,8 +153,9 @@ class FileProviderTranscriptSource implements ProviderTranscriptSource {
   async scan(): Promise<readonly ProviderSourceStat[]> {
     const next = new Map<TranscriptSourceId, DiscoveredSource>();
     for (const provider of ["claude", "codex", "kimi"] as const) {
+      const adoptRoots = await existingRoots(this.adoptRoots[provider] ?? []);
       for (const configuredRoot of this.roots[provider] ?? []) {
-        for (const source of await discoverRoot(provider, configuredRoot)) {
+        for (const source of await discoverRoot(provider, configuredRoot, adoptRoots)) {
           next.set(source.sourceId, source);
         }
       }
@@ -224,6 +229,7 @@ class FileProviderTranscriptSource implements ProviderTranscriptSource {
 export const createProviderTranscriptSource = (
   roots: ProviderTranscriptRoots,
   instrumentation: {
+    readonly adoptRoots?: ProviderTranscriptRoots;
     readonly readRange?: (
       filePath: string,
       from: number,
@@ -232,5 +238,18 @@ export const createProviderTranscriptSource = (
   } = {},
 ): ProviderTranscriptSource => new FileProviderTranscriptSource(
   roots,
+  instrumentation.adoptRoots ?? {},
   instrumentation.readRange ?? readRange,
 );
+
+async function existingRoots(configured: readonly string[]): Promise<readonly string[]> {
+  const roots: string[] = [];
+  for (const candidate of configured) {
+    try {
+      roots.push(await realpath(candidate));
+    } catch (cause) {
+      if ((cause as NodeJS.ErrnoException).code !== "ENOENT") throw cause;
+    }
+  }
+  return roots;
+}

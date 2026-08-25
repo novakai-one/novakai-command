@@ -11,6 +11,7 @@ export interface IngestResult {
   readonly added: number;
   readonly duplicates: number;
   readonly sessionsRegistered: number;
+  readonly sessionsAdopted: number;
 }
 
 /** Observable lifecycle and most recent result for the ingest runtime. */

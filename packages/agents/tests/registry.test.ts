@@ -51,6 +51,28 @@ test('define → get → list round-trip; filter by provider', async () => {
   assert.equal(kimiOnly.ok && kimiOnly.value.items[0].displayName, 'B');
 });
 
+test('provider-spawned Agents require and retain one Team and Mission assignment', async () => {
+  const { agents } = freshCtx();
+  const refused = await agents.defineAgent({
+    displayName: 'External', provider: 'claude', model: 'cli-default',
+    origin: 'provider-spawned',
+  }, mintClientOpId());
+  assert.equal(refused.ok, false);
+  if (!refused.ok) assert.equal(refused.error.code, 'InvalidEnvelope');
+
+  const created = await agents.defineAgent({
+    displayName: 'External', provider: 'claude', model: 'cli-default',
+    origin: 'provider-spawned',
+    teamId: 'team_external-session-visibility',
+    missionId: 'mission_external-session-visibility',
+  }, mintClientOpId());
+  assert.equal(created.ok, true);
+  if (!created.ok) return;
+  assert.equal(created.value.origin, 'provider-spawned');
+  assert.equal(created.value.teamId, 'team_external-session-visibility');
+  assert.equal(created.value.missionId, 'mission_external-session-visibility');
+});
+
 test('every mutation writes exactly one trace line carrying clientOpId + createdBy (FND-005, R3-10)', async () => {
   const { root, ctx, agents } = freshCtx();
   const op = mintClientOpId();

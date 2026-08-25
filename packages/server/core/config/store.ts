@@ -88,7 +88,11 @@ function resolve(objects: StoredConfig[], root: string): ServerConfig {
     providers: defaultProviders(),
     supervision: { ...DEFAULT_SUPERVISION },
     dev: { allowMock: false, watchTranscripts: false },
-    transcript: { ingest: false },
+    transcript: {
+      ingest: false,
+      adoptRoots: { claude: [], codex: [], kimi: [] },
+      adoptionLimitPerTick: 10,
+    },
   };
   const tokens = new Map(loadTokens(root).map((t) => [t.id, t]));
   for (const obj of objects) {
@@ -133,7 +137,15 @@ function resolve(objects: StoredConfig[], root: string): ServerConfig {
         config.dev = { allowMock: obj.allowMock, watchTranscripts: obj.watchTranscripts ?? false };
         break;
       case 'transcript':
-        config.transcript = { ingest: obj.ingest };
+        config.transcript = {
+          ingest: obj.ingest,
+          adoptRoots: obj.adoptRoots ?? { claude: [], codex: [], kimi: [] },
+          adoptionLimitPerTick: obj.adoptionLimitPerTick ?? 10,
+          ...(obj.adoptionTeamId === undefined
+            ? {} : { adoptionTeamId: obj.adoptionTeamId }),
+          ...(obj.adoptionMissionId === undefined
+            ? {} : { adoptionMissionId: obj.adoptionMissionId }),
+        };
         break;
     }
   }

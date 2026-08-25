@@ -30,6 +30,8 @@ export type DefineAgentInput = {
   status?: AgentDefinitionT['status'];
   origin?: AgentDefinitionT['origin'];
   parentAgentId?: string;
+  teamId?: string;
+  missionId?: string;
 };
 
 /**
@@ -67,6 +69,20 @@ function stampHooks(input: HookInputT[] | undefined): AgentDefinitionT['hooks'] 
 export async function defineAgent(
   ctx: AgentsContext, def: DefineAgentInput, clientOpId: ClientOpId,
 ): Promise<Result<AgentDefinitionT, StoreError>> {
+  if (def.origin === 'provider-spawned' && (!def.teamId || !def.missionId)) {
+    return {
+      ok: false,
+      error: err('InvalidEnvelope',
+        'provider-spawned Agents require one Team and Mission assignment',
+        {
+          missingFields: [
+            ...(def.teamId ? [] : ['teamId']),
+            ...(def.missionId ? [] : ['missionId']),
+          ],
+          invalidFields: [],
+        }, false),
+    };
+  }
   const id = `agent_${randomUUID()}` as AgentId;
   const record: AgentDefinitionT = {
     kind: 'agent',
@@ -80,6 +96,8 @@ export async function defineAgent(
     model: def.model,
     origin: def.origin ?? 'nvk-spawned',
     ...(def.parentAgentId === undefined ? {} : { parentAgentId: def.parentAgentId }),
+    ...(def.teamId === undefined ? {} : { teamId: def.teamId }),
+    ...(def.missionId === undefined ? {} : { missionId: def.missionId }),
     sessions: [],
     instructions: def.instructions ?? '',
     hooks: stampHooks(def.hooks),

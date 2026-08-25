@@ -3,6 +3,7 @@ import {
   type IngestResult,
   type MessagingHealth,
   type MessagingRuntimeApi,
+  type ExternalAdoptionOptions,
   type Outcome,
   type TranscriptLine,
 } from "../../../messaging/contract/index.js";
@@ -93,6 +94,7 @@ export interface ComposeTranscriptServerHostOptions {
   ingestIntervalMs?: number;
   agentDirectory?: AgentDirectory;
   providerSend?: ProviderSend;
+  externalAdoption?: ExternalAdoptionOptions;
 }
 
 const legacyLine = (line: TranscriptLine): LegacyTranscriptLine => ({
@@ -145,6 +147,8 @@ export function composeTranscriptServerHost(
       intervalMs: options.ingestIntervalMs ?? options.watcherIntervalMs ?? DEFAULT_POLL_MS,
       ...(options.agentDirectory === undefined ? {} : { agentDirectory: options.agentDirectory }),
       ...(options.providerSend === undefined ? {} : { providerSend: options.providerSend }),
+      ...(options.externalAdoption === undefined
+        ? {} : { externalAdoption: options.externalAdoption }),
   });
 
   const ingest = async (): Promise<Outcome<IngestResult>> => {

@@ -67,6 +67,21 @@ async function enableTranscriptIngestion(dir: string): Promise<void> {
   assert.equal(updated.ok, true);
 }
 
+async function enableExternalAdoption(dir: string, claudeRoot: string): Promise<void> {
+  const opened = await openConfigStore({ root: dir, principal: 'sys_spine' });
+  assert.equal(opened.ok, true);
+  if (!opened.ok) return;
+  const updated = await opened.value.set({
+    configKind: 'transcript',
+    ingest: true,
+    adoptRoots: { claude: [claudeRoot], codex: [], kimi: [] },
+    adoptionLimitPerTick: 10,
+    adoptionTeamId: 'team_external-session-visibility',
+    adoptionMissionId: 'mission_external-session-visibility',
+  }, mintClientOpId());
+  assert.equal(updated.ok, true);
+}
+
 async function boot(
   dir: string,
   options: { cliPath?: string; providerHome?: string } = {},
@@ -494,6 +509,45 @@ test('the method surface is the proven set minus the demo affordances', async ()
     assert.ok(methods.includes(lifecycle), `${lifecycle} is part of nvk-ws v1`);
   }
   await server.close();
+});
+
+test('an eligible hookless provider session creates one visible external Agent conversation', async (t) => {
+  const dir = root();
+  const providerHome = mkdtempSync(path.join(tmpdir(), 'nvk-provider-home-'));
+  const eligible = path.join(providerHome, '.claude', 'projects', 'eligible');
+  const outside = path.join(providerHome, '.claude', 'projects', 'outside');
+  mkdirSync(eligible, { recursive: true });
+  mkdirSync(outside, { recursive: true });
+  const providerRow = (sessionId: string, text: string) => `${JSON.stringify({
+    type: 'assistant', uuid: `line-${sessionId}`, sessionId,
+    message: { role: 'assistant', content: [{ type: 'text', text }] },
+  })}\n`;
+  writeFileSync(path.join(eligible, 'external.jsonl'), providerRow('external-visible', 'External reply'));
+  writeFileSync(path.join(outside, 'hidden.jsonl'), providerRow('external-hidden', 'Hidden reply'));
+  await mintChris(dir);
+  await enableExternalAdoption(dir, eligible);
+  const server = await boot(dir, { providerHome });
+  t.after(async () => server.close());
+
+  await waitFor(
+    () => [...server.runtime.conversations.values()].some((item) =>
+      item.title.includes('External Claude')),
+    'external adoption did not create an Agent conversation',
+  );
+  const conversations = [...server.runtime.conversations.values()].filter((item) =>
+    item.title.includes('External Claude'));
+  assert.equal(conversations.length, 1);
+  const adopted = conversations[0]!;
+  const agents = await server.runtime.agents.listAgents();
+  const agent = agents.ok
+    ? agents.value.items.find((item) => item.id === adopted.agentId) : undefined;
+  assert.equal(agent?.origin, 'provider-spawned');
+  assert.equal(agent?.teamId, 'team_external-session-visibility');
+  assert.equal(agent?.missionId, 'mission_external-session-visibility');
+  const methods = (await import('../../core/methods.js')).buildMethods(server.runtime);
+  const messages = await methods.getMessages!({ conversationId: adopted.id } as never) as
+    Array<{ text: string }>;
+  assert.deepEqual(messages.map((message) => message.text), ['External reply']);
 });
 
 test('spawn → send → the provider reply lands in the thread, and the session is registered', async (t) => {

@@ -63,6 +63,8 @@ export const AgentDefinition = z.object({
   model: z.string().min(1),
   origin: AgentOrigin.default('nvk-spawned'),
   parentAgentId: z.string().min(1).optional(),
+  teamId: z.string().min(1).optional(),
+  missionId: z.string().min(1).optional(),
   /** Current Messaging ProviderSession pointer; never a PTY/runtime key. */
   sessionId: z.string().min(1).optional(),
   /** Prior ProviderSession pointers, oldest first and unique. */

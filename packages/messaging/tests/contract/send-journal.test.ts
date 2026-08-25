@@ -32,6 +32,9 @@ function directory() {
         ? { agentId, provider: 'claude', currentProviderSessionId: sessionId }
         : null;
     },
+    async ensureForSession() {
+      return { ok: false, code: 'NotExpected', message: 'send proof does not adopt' };
+    },
     async attachProviderSession(_agentId, providerSessionId) {
       sessionId = providerSessionId;
       return { ok: true, state: 'attached' };

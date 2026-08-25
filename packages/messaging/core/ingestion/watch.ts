@@ -23,7 +23,11 @@ import type {
 import { MessagingError } from "../../contract/types.js";
 import { createDurableTranscriptEventBus, type DurableTranscriptEventBus } from "../event-bus.js";
 import { ingestNow as runIngest } from "./ingest.js";
-import type { AgentDirectory } from "../../contract/ports/agent-directory.js";
+import type {
+  AdoptionAssignment,
+  AgentDirectory,
+} from "../../contract/ports/agent-directory.js";
+import type { ConversationDirectory } from "../../contract/ports/conversation-directory.js";
 import type { ProviderSend } from "../../contract/ports/provider-send.js";
 import type { ConversationSendAcceptance, ConversationSendInput } from "../../contract/commands.js";
 import type { SendJournal } from "../../contract/records/send-journal.js";
@@ -39,6 +43,11 @@ export interface MessagingRuntimeOptions {
   readonly eventBus?: DurableTranscriptEventBus;
   readonly agentDirectory?: AgentDirectory;
   readonly providerSend?: ProviderSend;
+  readonly adoption?: {
+    readonly assignment: AdoptionAssignment;
+    readonly conversations: ConversationDirectory;
+    readonly limitPerTick: number;
+  };
 }
 
 const unavailable = <T>(cause: unknown): Outcome<T> => ({
@@ -128,6 +137,7 @@ class IngestionRuntime implements MessagingRuntimeApi {
         now: this.now,
         ...(this.options.agentDirectory === undefined
           ? {} : { agentDirectory: this.options.agentDirectory }),
+        ...(this.options.adoption === undefined ? {} : { adoption: this.options.adoption }),
       });
       await this.eventBus.pump();
       this.runs += 1;

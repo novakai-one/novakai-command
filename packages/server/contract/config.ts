@@ -60,16 +60,37 @@ export const DevConfigInput = z.object({
   watchTranscripts: z.boolean().optional(),
 });
 
+const TranscriptAdoptRoots = z.object({
+  claude: z.array(z.string().min(1)).default([]),
+  codex: z.array(z.string().min(1)).default([]),
+  kimi: z.array(z.string().min(1)).default([]),
+});
+
 export const TranscriptConfigInput = z.object({
   configKind: z.literal('transcript'),
   /** Starts copy custody plus authoritative ingestion. Off for fresh installs. */
   ingest: z.boolean(),
+  adoptRoots: TranscriptAdoptRoots.optional(),
+  adoptionLimitPerTick: z.number().int().positive().max(100).optional(),
+  adoptionTeamId: z.string().min(1).optional(),
+  adoptionMissionId: z.string().min(1).optional(),
 });
 
 export const ConfigObjectInput = z.discriminatedUnion('configKind', [
   PrincipalConfigInput, AgentPersonBindingInput, ProviderConfigInput,
   SupervisionConfigInput, DevConfigInput, TranscriptConfigInput,
-]);
+]).superRefine((value, context) => {
+  if (value.configKind !== 'transcript') return;
+  const enabled = value.adoptRoots !== undefined
+    && Object.values(value.adoptRoots).some((roots) => roots.length > 0);
+  if (!enabled) return;
+  if (value.adoptionTeamId === undefined) {
+    context.addIssue({ code: 'custom', path: ['adoptionTeamId'], message: 'required with adoptRoots' });
+  }
+  if (value.adoptionMissionId === undefined) {
+    context.addIssue({ code: 'custom', path: ['adoptionMissionId'], message: 'required with adoptRoots' });
+  }
+});
 export type ConfigObjectInput = z.input<typeof ConfigObjectInput>;
 export type ConfigObject = z.output<typeof ConfigObjectInput>;
 export type ConfigKind = ConfigObject['configKind'];
@@ -113,7 +134,13 @@ export interface ServerConfig {
   providers: Record<ProviderName, ProviderSettings>;
   supervision: SupervisionPolicy;
   dev: { allowMock: boolean; watchTranscripts: boolean };
-  transcript: { ingest: boolean };
+  transcript: {
+    ingest: boolean;
+    adoptRoots: { claude: string[]; codex: string[]; kimi: string[] };
+    adoptionLimitPerTick: number;
+    adoptionTeamId?: string;
+    adoptionMissionId?: string;
+  };
 }
 
 /** Defaults materialized on first boot. Principals are deliberately absent. */

@@ -17,6 +17,7 @@ import { createLiveAuthority } from '../session/authority.js';
 import { composeTranscriptServerHost } from '../b2b/composition.js';
 import type { ConfigStore } from '../config/store.js';
 import type { BootNote, BootOptions } from './contract.js';
+import { createAdoptedConversationDirectory } from './adopted-conversation.js';
 
 export async function composeCapabilities(input: {
   options: BootOptions;
@@ -80,6 +81,11 @@ export async function composeCapabilities(input: {
   });
   const agents = createAgentsContract(agentsCtx);
   const agentDirectory = messaging.createAgentDirectory(agents);
+  const adoptedConversations = createAdoptedConversationDirectory({
+    root: options.root,
+    dataRoot,
+    humanPrincipalId: humanPersonId,
+  });
   const availability = (name: string, runtime: ProviderCliRuntime, cliPath: string): string =>
     `${name}=${runtime.isAvailable() ? cliPath : 'CLI NOT FOUND'}`;
   note(4, 'agents', [
@@ -94,6 +100,7 @@ export async function composeCapabilities(input: {
     ...(options.providerHome ? { providerHome: options.providerHome } : {}),
     agentDirectory,
     providerSend: messaging.createAgentsProviderSend(agents),
+    ...(configuredAdoption(config.transcript, adoptedConversations.port)),
   });
   note(
     5,
@@ -109,5 +116,28 @@ export async function composeCapabilities(input: {
     kimiRuntime,
     providerRuntimes,
     transcript,
+    adoptedConversations,
+  };
+}
+
+function configuredAdoption(
+  config: import('../../contract/config.js').ServerConfig['transcript'],
+  conversations: messaging.ConversationDirectory,
+): { externalAdoption?: messaging.ExternalAdoptionOptions } {
+  const enabled = Object.values(config.adoptRoots).some((roots) => roots.length > 0);
+  if (!enabled) return {};
+  if (config.adoptionTeamId === undefined || config.adoptionMissionId === undefined) {
+    throw new Error('transcript adoption roots require Team and Mission IDs');
+  }
+  return {
+    externalAdoption: {
+      roots: config.adoptRoots,
+      limitPerTick: config.adoptionLimitPerTick,
+      assignment: {
+        teamId: config.adoptionTeamId,
+        missionId: config.adoptionMissionId,
+      },
+      conversations,
+    },
   };
 }

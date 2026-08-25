@@ -30,8 +30,15 @@ export type {
 export type {
   AgentDirectory,
   AgentDirectoryEntry,
+  AdoptionAssignment,
+  AgentEnsureOutcome,
   AgentSessionAttachment,
+  EnsureAgentForSessionInput,
 } from "./ports/agent-directory.js";
+export type {
+  ConversationDirectory,
+  EnsureAdoptedConversationInput,
+} from "./ports/conversation-directory.js";
 export { createAgentDirectory } from "./compose/agent-directory.js";
 export type {
   ProviderDispatchResult,

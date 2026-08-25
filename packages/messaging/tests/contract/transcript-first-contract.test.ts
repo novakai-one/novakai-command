@@ -8,6 +8,7 @@ import {
   createMessagingRuntime,
   openFoundationTranscriptStore,
   providerNormalizer,
+  type AgentDirectory,
   type ProviderSourceGrowth,
   type ProviderSourceStat,
   type ProviderTranscriptSource,
@@ -28,6 +29,7 @@ const sourceStat: ProviderSourceStat = {
   size: bytes.length,
   device: "1",
   inode: "2",
+  adoptionEligible: true,
 };
 
 function fixtureSource(): ProviderTranscriptSource & { reads: number } {
@@ -55,6 +57,38 @@ const normalizers = {
   kimi: providerNormalizer("kimi"),
 } as const;
 
+function adoption() {
+  let currentProviderSessionId: string | null = null;
+  const agentDirectory: AgentDirectory = {
+    async get(agentId) {
+      return agentId === 'agent_external'
+        ? { agentId, provider: 'claude', currentProviderSessionId }
+        : null;
+    },
+    async ensureForSession() {
+      return {
+        ok: true,
+        agent: { agentId: 'agent_external', provider: 'claude', currentProviderSessionId },
+      };
+    },
+    async attachProviderSession(_agentId, providerSessionId) {
+      const replay = currentProviderSessionId === providerSessionId;
+      currentProviderSessionId = providerSessionId;
+      return { ok: true, state: replay ? 'already-attached' : 'attached' };
+    },
+  };
+  return {
+    agentDirectory,
+    adoption: {
+      assignment: { teamId: 'team_external', missionId: 'mission_external' },
+      conversations: {
+        async ensureForAdoptedAgent() { return { conversationId: 'conv_external' }; },
+      },
+      limitPerTick: 10,
+    },
+  } as const;
+}
+
 test("registration, line and checkpoint commit once in durable event order", async () => {
   const store = createMemoryTranscriptStore();
   const source = fixtureSource();
@@ -63,6 +97,7 @@ test("registration, line and checkpoint commit once in durable event order", asy
     source,
     normalizers,
     now: () => "2026-08-25T00:00:00.000Z",
+    ...adoption(),
   });
 
   const first = await runtime.ingestNow();
@@ -73,6 +108,7 @@ test("registration, line and checkpoint commit once in durable event order", asy
     added: 1,
     duplicates: 0,
     sessionsRegistered: 1,
+    sessionsAdopted: 1,
   });
   const sessions = await store.listProviderSessions();
   const lines = await store.listTranscriptLines();
@@ -112,6 +148,7 @@ test("a pre-commit crash retries to one TranscriptLine", async () => {
     source: fixtureSource(),
     normalizers,
     now: () => "2026-08-25T00:00:00.000Z",
+    ...adoption(),
   });
   assert.equal((await runtime.ingestNow()).kind, "error");
   assert.equal((await runtime.ingestNow()).kind, "ok");
@@ -142,6 +179,7 @@ test("the same provider event in a moved source remains one TranscriptLine", asy
     source: movedSource,
     normalizers,
     now: () => "2026-08-25T00:00:00.000Z",
+    ...adoption(),
   });
   const result = await runtime.ingestNow();
   assert.equal(result.kind, "ok");
@@ -161,6 +199,7 @@ test("Foundation adapter writes and replays only the canonical Messaging databas
     source: fixtureSource(),
     normalizers,
     now: () => "2026-08-25T00:00:00.000Z",
+    ...adoption(),
   });
   assert.equal((await runtime.ingestNow()).kind, "ok");
   await store.close();

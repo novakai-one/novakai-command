@@ -13,6 +13,8 @@ export interface ProviderSourceStat {
   readonly size: number;
   readonly device: string;
   readonly inode: string;
+  /** Composition-approved external adoption scope; no path crosses the port. */
+  readonly adoptionEligible: boolean;
   /** Adapter-only hint; core never receives a filesystem path. */
   readonly resumeIdHint?: string;
 }
