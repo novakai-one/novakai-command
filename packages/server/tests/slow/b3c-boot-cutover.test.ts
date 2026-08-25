@@ -74,6 +74,7 @@ function legacyFile(root: string, lines: readonly string[]): string {
 const boot = async (root: string): ReturnType<typeof startRuntimeHost> =>
   startRuntimeHost({
     root, port: 0, ptyHost: createFakePtyHost(), providers: createFakeProviderAdapters(),
+    providerHome: root,
   });
 
 test('boot MIGRATES a legacy Messaging journal and records the receipt', async () => {
@@ -173,7 +174,7 @@ test('the doctor looks at the file the product actually writes', async () => {
   const root = mkdtempSync(path.join(tmpdir(), 'nvk-b3c-doctor-'));
   try {
     legacyFile(root, [legacyAcceptance(1)]);
-  const { buildCutoverReport } = await import('../../core/store-route-report.js');
+    const { buildCutoverReport } = await import('../../core/store-route-report.js');
     const report = await buildCutoverReport({
       root,
       dataRoot: path.join(root, 'stores'),
