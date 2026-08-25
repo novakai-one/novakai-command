@@ -30,6 +30,7 @@ const sourceStat: ProviderSourceStat = {
   device: "1",
   inode: "2",
   adoptionEligible: true,
+  modifiedAt: "2026-08-25T00:00:00.000Z",
 };
 
 function fixtureSource(): ProviderTranscriptSource & { reads: number } {

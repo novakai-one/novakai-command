@@ -1,5 +1,6 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { isNovakaiIdentityCommand } from './owned-hook.js';
 
 const assignment = (line: string, name: string): string | undefined => {
   const match = line.match(new RegExp(`^\\s*${name}\\s*=\\s*(.+?)\\s*(?:#.*)?$`));
@@ -19,12 +20,13 @@ const hookValue = (block: string, name: string): string | undefined =>
     .map((line) => assignment(line, name))
     .find((value) => value !== undefined);
 
-const containsHook = (config: string, command: string): boolean =>
+const withoutNovakaiHooks = (config: string): string =>
   config.split(/(?=^\s*\[\[hooks\]\]\s*(?:#.*)?$)/mu)
-    .filter((block) => /^\s*\[\[hooks\]\]/u.test(block))
-    .some((block) =>
-      hookValue(block, 'event') === 'UserPromptSubmit'
-      && hookValue(block, 'command') === command);
+    .filter((block) =>
+      hookValue(block, 'event') !== 'UserPromptSubmit'
+      || !isNovakaiIdentityCommand(hookValue(block, 'command')))
+    .join('')
+    .trimEnd();
 
 async function readConfig(filePath: string): Promise<string> {
   try {
@@ -44,8 +46,6 @@ export async function ensureKimiIdentityHook(options: {
 }): Promise<'installed' | 'unchanged'> {
   const filePath = path.join(options.providerHome, '.kimi-code', 'config.toml');
   const config = await readConfig(filePath);
-  if (containsHook(config, options.command)) return 'unchanged';
-  const separator = config.length === 0 ? '' : config.endsWith('\n') ? '\n' : '\n\n';
   const block = [
     '[[hooks]]',
     'event = "UserPromptSubmit"',
@@ -53,9 +53,12 @@ export async function ensureKimiIdentityHook(options: {
     'timeout = 5',
     '',
   ].join('\n');
+  const retained = withoutNovakaiHooks(config);
+  const next = `${retained}${retained.length === 0 ? '' : '\n\n'}${block}`;
+  if (next === config) return 'unchanged';
   await mkdir(path.dirname(filePath), { recursive: true });
   const temporary = `${filePath}.novakai-${process.pid}.tmp`;
-  await writeFile(temporary, `${config}${separator}${block}`, 'utf8');
+  await writeFile(temporary, next, 'utf8');
   await rename(temporary, filePath);
   return 'installed';
 }

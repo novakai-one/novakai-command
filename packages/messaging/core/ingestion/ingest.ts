@@ -31,12 +31,14 @@ import {
   AmbiguousProviderSessionEvidenceError,
   reconcileProviderSessionEvidence,
 } from "./reconcile.js";
+import { selectSourcesForIngest } from './select-sources.js';
 
 interface IngestionDependencies {
   readonly store: TranscriptStore;
   readonly source: ProviderTranscriptSource;
   readonly normalizers: Readonly<Record<ProviderName, ProviderNormalizer>>;
   readonly now: () => string;
+  readonly discoveryFloor: string;
   readonly agentDirectory?: AgentDirectory;
   readonly adoption?: ExternalAdoptionRuntimePolicy;
 }
@@ -195,8 +197,16 @@ async function ingestSource(
 export async function ingestNow(
   dependencies: IngestionDependencies,
 ): Promise<IngestResult> {
-  const sources = await dependencies.source.scan();
+  const scanned = await dependencies.source.scan();
   const sessions = [...await dependencies.store.listProviderSessions()];
+  const sources = await selectSourcesForIngest({
+    sources: scanned,
+    sessions,
+    journals: await dependencies.store.listSendJournals(),
+    discoveryFloor: dependencies.discoveryFloor,
+    ...(dependencies.agentDirectory === undefined
+      ? {} : { directory: dependencies.agentDirectory }),
+  });
   let added = 0;
   let duplicates = 0;
   let sessionsRegistered = 0;

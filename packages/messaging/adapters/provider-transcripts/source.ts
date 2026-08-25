@@ -102,6 +102,7 @@ async function discoverRoot(
       size: metadata.size,
       device: String(metadata.dev),
       inode: String(metadata.ino),
+      modifiedAt: metadata.mtime.toISOString(),
       adoptionEligible: adoptRoots.some((candidate) =>
         filePath === candidate || filePath.startsWith(`${candidate}${path.sep}`)),
       filePath,

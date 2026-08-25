@@ -24,11 +24,11 @@ export function runAgentIdentityHook(
 ): boolean {
   const marker = markerFromEnvironment(environment);
   if (marker === undefined) return false;
-  write(`${JSON.stringify(marker)}\n`);
+  write(`NOVAKAI_AGENT_IDENTITY ${JSON.stringify(marker)}\n`);
   return true;
 }
 
-const INLINE_HOOK = `const a=process.env.NOVAKAI_AGENT_ID;if(!/^agent_[A-Za-z0-9-]+$/.test(a||''))process.exit(2);process.stdout.write(JSON.stringify({kind:'novakai-agent-identity',schemaVersion:1,hookEvent:'UserPromptSubmit',agentId:a})+'\\n')`;
+const INLINE_HOOK = `const a=process.env.NOVAKAI_AGENT_ID;if(/^agent_[A-Za-z0-9-]+$/.test(a||'')){const m={kind:'novakai-agent-identity',schemaVersion:1,hookEvent:'UserPromptSubmit',agentId:a};process.stdout.write('NOVAKAI_AGENT_IDENTITY '+JSON.stringify(m)+'\\n')}`;
 
 const shellQuote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`;
 
@@ -42,8 +42,5 @@ const invokedDirectly = process.argv[1] !== undefined
 
 if (invokedDirectly) {
   process.stdin.resume();
-  if (!runAgentIdentityHook(process.env, (line) => process.stdout.write(line))) {
-    process.stderr.write(`${novakaiAgentIdEnvironmentKey} is missing or invalid\n`);
-    process.exitCode = 2;
-  }
+  runAgentIdentityHook(process.env, (line) => process.stdout.write(line));
 }

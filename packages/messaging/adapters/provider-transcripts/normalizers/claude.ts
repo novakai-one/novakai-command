@@ -49,18 +49,30 @@ export const claudeNormalizer: ProviderNormalizer = {
     if (row === null) return noise();
     const agentIdentity = findAgentIdentityMarker(row);
     const resumeId = textValue(row.sessionId);
+    if (agentIdentity !== undefined) {
+      const turnId = textValue(row.uuid);
+      const providerOccurredAt = textValue(row.timestamp);
+      return {
+        role: 'hook',
+        text: JSON.stringify(agentIdentity),
+        agentIdentity,
+        ...(resumeId === undefined ? {} : { resumeId }),
+        ...(turnId === undefined ? {} : { providerLineId: turnId, turnId }),
+        ...(providerOccurredAt === undefined ? {} : { providerOccurredAt }),
+      };
+    }
     if (!isObject(row.message)) return noise(resumeId);
     const message = row.message;
     const blocks = Array.isArray(message.content)
       ? message.content.filter(isObject)
       : [];
     const blockTypes = new Set(blocks.map((block) => textValue(block.type)));
-    const role = agentIdentity === undefined ? claudeRole(
+    const role = claudeRole(
       row,
       message.role,
       blockTypes,
       blocks.some((block) => block.type === "hook_result"),
-    ) : "hook";
+    );
     const normalizedText = structuredRole(role)
       ? jsonText(message.content)
       : contentText(message.content) ?? "";
@@ -80,7 +92,6 @@ export const claudeNormalizer: ProviderNormalizer = {
       ...(providerOccurredAt === undefined ? {} : { providerOccurredAt }),
       ...(role === "tool_call" && blocks[0] !== undefined
         ? { toolCall: blocks[0] } : {}),
-      ...(agentIdentity === undefined ? {} : { agentIdentity }),
     };
   },
 };

@@ -13,6 +13,8 @@ export interface ProviderSourceStat {
   readonly size: number;
   readonly device: string;
   readonly inode: string;
+  /** Source modification time used to prioritize post-boot and pending-send evidence. */
+  readonly modifiedAt: string;
   /** Composition-approved external adoption scope; no path crosses the port. */
   readonly adoptionEligible: boolean;
   /** Adapter-only hint; core never receives a filesystem path. */

@@ -11,6 +11,7 @@ import {
   ensureClaudeIdentityHook,
   ensureCodexIdentityHook,
   ensureKimiIdentityHook,
+  findAgentIdentityMarker,
   providerNormalizer,
   runAgentIdentityHook,
   type AgentDirectory,
@@ -97,7 +98,7 @@ test("one identity marker normalizes as hidden hook evidence on all providers", 
   }
   let output = "";
   assert.equal(runAgentIdentityHook({ NOVAKAI_AGENT_ID: marker.agentId }, (line) => { output += line; }), true);
-  assert.deepEqual(JSON.parse(output), marker);
+  assert.deepEqual(findAgentIdentityMarker(output), marker);
   assert.match(agentIdentityHookCommand(), /NOVAKAI_AGENT_ID/);
 });
 

@@ -75,6 +75,7 @@ class IngestionRuntime implements MessagingRuntimeApi {
   readonly eventBus: DurableTranscriptEventBus;
   private readonly clock: () => string;
   private readonly intervalMs: number;
+  private readonly discoveryFloor: string;
   private state: MessagingHealth["state"] = "stopped";
   private timer: ReturnType<typeof setInterval> | undefined;
   private runs = 0;
@@ -90,6 +91,7 @@ class IngestionRuntime implements MessagingRuntimeApi {
   constructor(private readonly options: MessagingRuntimeOptions) {
     this.clock = options.now ?? (() => new Date().toISOString());
     this.intervalMs = options.intervalMs ?? 1_000;
+    this.discoveryFloor = this.clock();
     this.eventBus = options.eventBus ?? createDurableTranscriptEventBus(options.store);
     this.conversations = options.conversations ?? options.adoption?.conversations
       ?? (options.conversationPrincipalId === undefined
@@ -151,6 +153,7 @@ class IngestionRuntime implements MessagingRuntimeApi {
         source: this.options.source,
         normalizers: this.options.normalizers,
         now: this.clock,
+        discoveryFloor: this.discoveryFloor,
         ...(this.options.agentDirectory === undefined
           ? {} : { agentDirectory: this.options.agentDirectory }),
         ...(this.options.adoption === undefined || this.conversations === undefined

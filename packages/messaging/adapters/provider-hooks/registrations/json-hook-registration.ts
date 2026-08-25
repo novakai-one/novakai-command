@@ -1,5 +1,6 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { isNovakaiIdentityCommand } from './owned-hook.js';
 
 type JsonObject = Record<string, unknown>;
 
@@ -20,10 +21,14 @@ async function readConfig(filePath: string, provider: string): Promise<JsonObjec
   }
 }
 
-const containsCommand = (entries: readonly unknown[], command: string): boolean =>
-  entries.some((entry) => {
-    const hooks = object(entry)?.hooks;
-    return Array.isArray(hooks) && hooks.some((hook) => object(hook)?.command === command);
+const withoutNovakaiHooks = (entries: readonly unknown[]): readonly unknown[] =>
+  entries.flatMap((entry) => {
+    const candidate = object(entry);
+    const hooks = candidate?.hooks;
+    if (candidate === undefined || !Array.isArray(hooks)) return [entry];
+    const retained = hooks.filter((hook) =>
+      !isNovakaiIdentityCommand(object(hook)?.command));
+    return retained.length === 0 ? [] : [{ ...candidate, hooks: retained }];
   });
 
 /** Installs one Claude-compatible JSON UserPromptSubmit command hook atomically. */
@@ -36,15 +41,16 @@ export async function ensureJsonIdentityHook(options: {
   const hooks = object(config.hooks) ?? {};
   const promptHooks = Array.isArray(hooks.UserPromptSubmit)
     ? hooks.UserPromptSubmit : [];
-  if (containsCommand(promptHooks, options.command)) return 'unchanged';
+  const nextPromptHooks = [
+    ...withoutNovakaiHooks(promptHooks),
+    { hooks: [{ type: 'command', command: options.command }] },
+  ];
+  if (JSON.stringify(nextPromptHooks) === JSON.stringify(promptHooks)) return 'unchanged';
   const next = {
     ...config,
     hooks: {
       ...hooks,
-      UserPromptSubmit: [
-        ...promptHooks,
-        { hooks: [{ type: 'command', command: options.command }] },
-      ],
+      UserPromptSubmit: nextPromptHooks,
     },
   };
   await mkdir(path.dirname(options.filePath), { recursive: true });
