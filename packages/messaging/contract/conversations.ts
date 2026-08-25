@@ -19,6 +19,17 @@ export interface AgentConversationMessage {
   readonly clientOpId?: string;
 }
 
+/** Canonical committed message event; provider transcript details stay private. */
+export interface AgentConversationMessageAppended {
+  readonly agentId: string;
+  readonly message: AgentConversationMessage;
+}
+
+/** Host callback for the provider-neutral live conversation stream. */
+export type AgentConversationMessageSink = (
+  event: AgentConversationMessageAppended,
+) => void | Promise<void>;
+
 /** Trusted get-or-create input; participants are immutable after creation. */
 export interface EnsureConversationViewInput {
   readonly conversationId: ConversationId | string;

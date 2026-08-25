@@ -7,6 +7,7 @@ import type { TranscriptEvent } from "./ports/transcript-store.js";
 import type { AgentCommunicationPage, AgentCommunicationsQuery } from './communications.js';
 import type {
   AgentConversationMessage,
+  AgentConversationMessageSink,
   AgentConversationMessagesQuery,
   EnsureConversationViewInput,
   UpdateConversationViewInput,
@@ -68,6 +69,9 @@ export interface MessagingRuntimeApi {
   listAgentConversationMessages(
     input: AgentConversationMessagesQuery,
   ): Promise<Outcome<readonly AgentConversationMessage[]>>;
+  subscribeAgentConversationMessages(
+    sink: AgentConversationMessageSink,
+  ): { close(): void };
   listSendJournals(): Promise<Outcome<readonly SendJournal[]>>;
   listAgentCommunications(
     input: AgentCommunicationsQuery,

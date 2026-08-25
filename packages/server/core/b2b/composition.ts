@@ -206,6 +206,19 @@ export function composeTranscriptServerHost(
     listSendJournals: async () => (await ready).runtime.listSendJournals(),
     listAgentCommunications: async (input) =>
       (await ready).runtime.listAgentCommunications(input),
+    subscribeAgentConversationMessages(sink) {
+      let closed = false;
+      let subscription: { close(): void } | undefined;
+      void ready.then((composed) => {
+        if (!closed) subscription = composed.runtime.subscribeAgentConversationMessages(sink);
+      });
+      return {
+        close() {
+          closed = true;
+          subscription?.close();
+        },
+      };
+    },
     subscribeTranscriptEvents(sink) {
       let closed = false;
       let subscription: { close(): void } | undefined;

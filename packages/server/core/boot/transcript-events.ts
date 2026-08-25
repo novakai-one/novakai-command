@@ -31,36 +31,22 @@ async function syncConversationViews(runtime: ServerRuntime): Promise<void> {
   }
 }
 
-/** Broadcasts only committed user/assistant TranscriptLines to Agent windows. */
+/** Maps Messaging's canonical live stream onto Server conversation identities. */
 export function wireTranscriptEvents(runtime: ServerRuntime): { close(): void } {
-  return runtime.transcript.runtime.subscribeTranscriptEvents(async (event) => {
+  return runtime.transcript.runtime.subscribeAgentConversationMessages(async ({ agentId, message }) => {
     await syncConversationViews(runtime);
-    if (event.kind !== 'transcript-line.appended' || event.transcriptLineId === undefined) return;
-    const [lineResult, sessionResult, sendResult] = await Promise.all([
-      runtime.transcript.runtime.listTranscriptLines({ sessionId: event.sessionId }),
-      runtime.transcript.runtime.listProviderSessions(),
-      runtime.transcript.runtime.listSendJournals(),
-    ]);
-    if (lineResult.kind !== 'ok' || sessionResult.kind !== 'ok' || sendResult.kind !== 'ok') return;
-    const line = lineResult.value.find((candidate) => candidate.id === event.transcriptLineId);
-    if (line === undefined || (line.role !== 'user' && line.role !== 'assistant')) return;
-    const session = sessionResult.value.find((candidate) => candidate.id === event.sessionId);
-    if (session?.agentId === undefined) return;
     const conversation = [...runtime.conversations.values()].find((candidate) =>
-      candidate.agentId === session.agentId && !candidate.archived);
+      candidate.agentId === agentId && !candidate.archived);
     if (conversation === undefined) return;
-    const clientOpId = sendResult.value.flatMap((journal) =>
-      journal.attempts.some((attempt) => attempt.confirmedLineId === line.id)
-        ? [journal.clientOpId] : [])[0];
-    conversation.lastActivityAt = line.providerOccurredAt ?? line.createdAt;
+    conversation.lastActivityAt = message.occurredAt;
     runtime.broadcast('message', {
-      id: line.id,
+      id: message.id,
       conversationId: conversation.id,
-      senderId: line.role === 'user' ? 'me' : conversation.personId ?? conversation.agentId,
-      text: line.text ?? '',
-      createdAt: line.providerOccurredAt ?? line.createdAt,
+      senderId: message.role === 'user' ? 'me' : conversation.personId ?? conversation.agentId,
+      text: message.text,
+      createdAt: message.occurredAt,
       pending: false,
-      ...(clientOpId === undefined ? {} : { clientOpId }),
+      ...(message.clientOpId === undefined ? {} : { clientOpId: message.clientOpId }),
     });
   });
 }

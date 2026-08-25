@@ -25,6 +25,7 @@ import { AddressedDeliveryReconciler } from '../delivery/queue-addressed.js';
 import { routePendingDeliveries } from '../delivery/router.js';
 import { createStoredConversationDirectory } from '../conversations/directory.js';
 import { createCommittedRecordsApi } from '../runtime/committed-records.js';
+import { subscribeAgentConversationMessageStream } from '../conversations/message-stream.js';
 
 /** Dependencies and cadence for the provider-transcript ingestion runtime. */
 export interface MessagingRuntimeOptions {
@@ -238,6 +239,13 @@ class IngestionRuntime implements MessagingRuntimeApi {
     () => this.records.listSendJournals();
   listAgentCommunications: MessagingRuntimeApi['listAgentCommunications'] =
     (input) => this.records.listAgentCommunications(input);
+
+  subscribeAgentConversationMessages: MessagingRuntimeApi['subscribeAgentConversationMessages'] =
+    (sink) => subscribeAgentConversationMessageStream({
+      eventBus: this.eventBus,
+      store: this.options.store,
+      normalizers: this.options.normalizers,
+    }, sink);
 
   subscribeTranscriptEvents(sink: Parameters<DurableTranscriptEventBus["subscribe"]>[0]) {
     return this.eventBus.subscribe(sink);

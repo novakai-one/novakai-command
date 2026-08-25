@@ -31,6 +31,11 @@ export function ConversationInstrument({
     return () => window.removeEventListener('keydown', handleShortcut, true);
   }, [state.setOpen]);
 
+  const createConversation = () => {
+    state.setOpen(false);
+    onCreate();
+  };
+
   return (
     <aside className="conversation-instrument" data-open={state.isOpen} aria-label="Conversation navigator">
       <header className="conversation-instrument__header">
@@ -38,7 +43,7 @@ export function ConversationInstrument({
           <strong>Conversations</strong>
           <small>Canvas navigator</small>
         </span>
-        <button type="button" className="conversation-instrument__new" onClick={onCreate}>
+        <button type="button" className="conversation-instrument__new" onClick={createConversation}>
           <Plus size={14} aria-hidden="true" /> New
         </button>
         <button
