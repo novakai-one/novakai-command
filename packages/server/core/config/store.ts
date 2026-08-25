@@ -8,7 +8,7 @@
 // clientOpId (R3-10/R3-18); latest line wins per config key (§13 disposition 6);
 // bearer secrets live only in `.novakai/tokens/` (red gate 1).
 import {
-  composeHandle, createObject, updateObject, listObjects, loadTokens, mintToken,
+  composeHandle, createObject, updateObject, listObjects, mintToken,
 } from '@novakai/foundation/dist/contract/index.js';
 import { unwatchFile, watchFile } from 'node:fs';
 import path from 'node:path';
@@ -16,11 +16,11 @@ import type { ClientOpId, ObjectId } from '@novakai/foundation/dist/contract/bra
 import type { Result, ScopedStoreHandle } from '@novakai/foundation/dist/contract/types.js';
 import { err, type StoreError } from '@novakai/foundation/dist/contract/errors.js';
 import {
-  CLI_DEFAULT_MODEL, ConfigObjectInput, DEFAULT_HISTORY_WINDOW_TURNS,
-  DEFAULT_SUPERVISION, PROVIDER_NAMES, configKeyOf,
-  type ConfigObject, type ProviderName, type ProviderSettings, type ServerConfig,
+  CLI_DEFAULT_MODEL, ConfigObjectInput, DEFAULT_SUPERVISION, PROVIDER_NAMES,
+  configKeyOf, type ConfigObject, type ServerConfig,
 } from '../../contract/config.js';
 import { canonicalDataRoot, gateStoreRoute } from '../store-route.js';
+import { resolveServerConfig } from './resolve.js';
 
 const ok = <T>(value: T): Result<T, never> => ({ ok: true, value });
 const fail = <E>(error: E): Result<never, E> => ({ ok: false, error });
@@ -67,91 +67,6 @@ export interface ConfigStore {
 
 type StoredConfig = ConfigObject & { id: string; version: number };
 
-function defaultProviders(): Record<ProviderName, ProviderSettings> {
-  const out = {} as Record<ProviderName, ProviderSettings>;
-  for (const provider of PROVIDER_NAMES) {
-    out[provider] = {
-      provider,
-      defaultModel: CLI_DEFAULT_MODEL,
-      historyWindowTurns: DEFAULT_HISTORY_WINDOW_TURNS,
-    };
-  }
-  return out;
-}
-
-/** Resolve stored config objects + the token store into the boot snapshot. */
-function resolve(objects: StoredConfig[], root: string): ServerConfig {
-  const config: ServerConfig = {
-    principals: [],
-    unresolvedPrincipals: [],
-    bindings: [],
-    providers: defaultProviders(),
-    supervision: { ...DEFAULT_SUPERVISION },
-    dev: { allowMock: false, watchTranscripts: false },
-    transcript: {
-      ingest: false,
-      adoptRoots: { claude: [], codex: [], kimi: [] },
-      adoptionLimitPerTick: 10,
-    },
-  };
-  const tokens = new Map(loadTokens(root).map((t) => [t.id, t]));
-  for (const obj of objects) {
-    switch (obj.configKind) {
-      case 'principal': {
-        const token = tokens.get(obj.tokenId);
-        if (!token) {
-          config.unresolvedPrincipals.push({
-            personId: obj.personId,
-            tokenId: obj.tokenId,
-            reason: `token record "${obj.tokenId}" not found under tokens/`,
-          });
-          break;
-        }
-        config.principals.push({
-          token: token.bearer, personId: obj.personId, roles: obj.roles, tokenId: obj.tokenId,
-        });
-        break;
-      }
-      case 'agentPersonBinding':
-        config.bindings.push({ agentId: obj.agentId, personId: obj.personId });
-        break;
-      case 'provider': {
-        const current = config.providers[obj.provider];
-        config.providers[obj.provider] = {
-          provider: obj.provider,
-          defaultModel: obj.defaultModel ?? current.defaultModel,
-          historyWindowTurns: obj.historyWindowTurns ?? current.historyWindowTurns,
-          ...(obj.cliPath !== undefined ? { cliPath: obj.cliPath } : {}),
-          ...(obj.cwd !== undefined ? { cwd: obj.cwd } : {}),
-        };
-        break;
-      }
-      case 'supervision':
-        config.supervision = {
-          usageIntervalSec: obj.usageIntervalSec ?? config.supervision.usageIntervalSec,
-          driftIntervalSec: obj.driftIntervalSec ?? config.supervision.driftIntervalSec,
-          idleTimeoutSec: obj.idleTimeoutSec ?? config.supervision.idleTimeoutSec,
-        };
-        break;
-      case 'dev':
-        config.dev = { allowMock: obj.allowMock, watchTranscripts: obj.watchTranscripts ?? false };
-        break;
-      case 'transcript':
-        config.transcript = {
-          ingest: obj.ingest,
-          adoptRoots: obj.adoptRoots ?? { claude: [], codex: [], kimi: [] },
-          adoptionLimitPerTick: obj.adoptionLimitPerTick ?? 10,
-          ...(obj.adoptionTeamId === undefined
-            ? {} : { adoptionTeamId: obj.adoptionTeamId }),
-          ...(obj.adoptionMissionId === undefined
-            ? {} : { adoptionMissionId: obj.adoptionMissionId }),
-        };
-        break;
-    }
-  }
-  return config;
-}
-
 async function readObjects(handle: ScopedStoreHandle): Promise<Result<StoredConfig[], StoreError>> {
   const res = await listObjects<Record<string, unknown>>(handle, 'config', undefined, { limit: 10_000 });
   if (!res.ok) return fail(res.error);
@@ -191,14 +106,14 @@ export async function openConfigStore(
   });
 
   let objects: StoredConfig[] = [];
-  let snapshot: ServerConfig = resolve(objects, options.root);
+  let snapshot: ServerConfig = resolveServerConfig(objects, options.root);
   const configPath = path.join(dataRoot, 'config.jsonl');
 
   const refresh = async (): Promise<Result<ServerConfig, StoreError>> => {
     const read = await readObjects(handle);
     if (!read.ok) return fail(read.error);
     objects = read.value;
-    snapshot = resolve(objects, options.root);
+    snapshot = resolveServerConfig(objects, options.root);
     return ok(snapshot);
   };
 
