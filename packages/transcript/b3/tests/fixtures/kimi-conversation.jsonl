@@ -1,5 +1,0 @@
-{"kind":"event","envelope":{"seq":0,"type":"assistant_output","payload":{"agentId":"b3c_kimi_agent","turnId":7,"prompt":"add the retry budget to the spawn path","sessionId":"b3c_kimi_session","type":"assistant_output"}}}
-{"kind":"event","envelope":{"seq":1,"type":"tool.call.started","payload":{"agentId":"b3c_kimi_agent","turnId":7,"name":"Bash","toolCallId":"b3c_kimi_tool","args":{"command":"cat spawn.ts"},"sessionId":"b3c_kimi_session","type":"tool.call.started"}}}
-{"kind":"event","envelope":{"seq":2,"type":"tool.result","payload":{"agentId":"b3c_kimi_agent","turnId":7,"toolCallId":"b3c_kimi_tool","output":"export function spawn() {}","sessionId":"b3c_kimi_session","type":"tool.result"}}}
-{"kind":"event","envelope":{"seq":3,"type":"assistant_output","payload":{"agentId":"b3c_kimi_agent","turnId":7,"output":"\u001b[32mDone\u001b[0m — the retry budget is 3 attempts.","sessionId":"b3c_kimi_session","type":"assistant_output"}}}
-{"kind":"event","envelope":{"seq":4,"type":"assistant_output","payload":{"agentId":"b3c_kimi_agent","turnId":7,"output":"tokens: 12,345 input · 6,789 output","sessionId":"b3c_kimi_session","type":"assistant_output"}}}

@@ -1,1 +1,0 @@
-{"kind":"event","envelope":{"seq":60,"timestamp":"2026-07-29T07:03:00.000Z","type":"tool.result","payload":{"agentId":"sessionless-agent-redacted","output":"synthetic sessionless result","toolCallId":"sessionless-tool-redacted","turnId":900,"type":"tool.result"}}}

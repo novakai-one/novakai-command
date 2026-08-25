@@ -1,4 +1,0 @@
-{"type":"assistant","uuid":"claude_tool_call_fixture","parentUuid":null,"sessionId":"claude_session_fixture","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_fixture","name":"Bash","input":{"command":"printf fixture"}}]}}
-{"type":"user","uuid":"claude_tool_result_fixture","parentUuid":"claude_tool_call_fixture","sessionId":"claude_session_fixture","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_fixture","content":"fixture output"}]}}
-{"type":"user","uuid":"claude_attachment_fixture","parentUuid":"claude_tool_result_fixture","sessionId":"claude_session_fixture","message":{"role":"user","content":[{"type":"document","source":{"type":"base64","media_type":"text/plain","data":"Zml4dHVyZQ=="},"title":"fixture.txt"}]}}
-{"type":"queue-operation","operation":"enqueue","sessionId":"claude_session_fixture","content":"fixture metadata"}
