@@ -23,11 +23,14 @@ import {
   type NormalizedGrowth,
 } from "./normalize-growth.js";
 import {
-  findProviderSession,
   ingestCheckpointFor,
   providerSessionFor,
   transcriptLineFor,
 } from "./ingest-records.js";
+import {
+  AmbiguousProviderSessionEvidenceError,
+  reconcileProviderSessionEvidence,
+} from "./reconcile.js";
 
 interface IngestionDependencies {
   readonly store: TranscriptStore;
@@ -89,7 +92,15 @@ async function prepareSource(
   if (normalized.items.length === 0) return null;
   const resumeId = normalized.items.find((item) => item.value.resumeId !== undefined)?.value.resumeId
     ?? source.resumeIdHint;
-  const existing = findProviderSession(sessions, source, resumeId);
+  const resolution = reconcileProviderSessionEvidence(sessions, source, resumeId);
+  if (resolution.kind === 'ambiguous') {
+    throw new AmbiguousProviderSessionEvidenceError(
+      source.sourceId,
+      resumeId,
+      resolution.sessionIds,
+    );
+  }
+  const existing = resolution.kind === 'unique' ? resolution.session : undefined;
   const timestamp = dependencies.now() as Timestamp;
   return {
     source,

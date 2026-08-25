@@ -136,14 +136,3 @@ export function ingestCheckpointFor(
     fileSignature: { ...growth.signatureAtRead, tailHash: digest(tail) },
   };
 }
-
-/** Resolves a source or provider resume handle to an already registered session. */
-export function findProviderSession(
-  sessions: readonly ProviderSession[],
-  source: ProviderSourceStat,
-  resumeId: string | undefined,
-): ProviderSession | undefined {
-  return sessions.find((candidate) =>
-    candidate.sourceIds.includes(source.sourceId)
-    || (resumeId !== undefined && candidate.resumeId === resumeId));
-}

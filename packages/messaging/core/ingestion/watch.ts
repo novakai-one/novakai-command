@@ -32,6 +32,7 @@ import type { ProviderSend } from "../../contract/ports/provider-send.js";
 import type { ConversationSendAcceptance, ConversationSendInput } from "../../contract/commands.js";
 import type { SendJournal } from "../../contract/records/send-journal.js";
 import { sendConversationMessage } from "../send/send.js";
+import { AmbiguousProviderSessionEvidenceError } from "./reconcile.js";
 
 /** Dependencies and cadence for the provider-transcript ingestion runtime. */
 export interface MessagingRuntimeOptions {
@@ -59,6 +60,23 @@ const unavailable = <T>(cause: unknown): Outcome<T> => ({
   }),
 });
 
+const ingestFailure = <T>(cause: unknown): Outcome<T> => {
+  if (cause instanceof AmbiguousProviderSessionEvidenceError) {
+    return {
+      kind: 'error',
+      error: new MessagingError('IdempotencyConflict', {
+        message: cause.message,
+        fields: {
+          sourceId: cause.sourceId,
+          resumeId: cause.resumeId,
+          sessionIds: cause.sessionIds,
+        },
+      }),
+    };
+  }
+  return unavailable(cause);
+};
+
 function lineQuery(input: unknown): TranscriptLineQuery {
   if (input === undefined) return {};
   if (typeof input !== "object" || input === null || Array.isArray(input)) {
@@ -79,7 +97,7 @@ function lineQuery(input: unknown): TranscriptLineQuery {
 
 class IngestionRuntime implements MessagingRuntimeApi {
   readonly eventBus: DurableTranscriptEventBus;
-  private readonly now: () => string;
+  private readonly clock: () => string;
   private readonly intervalMs: number;
   private state: MessagingHealth["state"] = "stopped";
   private timer: ReturnType<typeof setInterval> | undefined;
@@ -89,7 +107,7 @@ class IngestionRuntime implements MessagingRuntimeApi {
   private inFlight: Promise<Outcome<IngestResult>> | undefined;
 
   constructor(private readonly options: MessagingRuntimeOptions) {
-    this.now = options.now ?? (() => new Date().toISOString());
+    this.clock = options.now ?? (() => new Date().toISOString());
     this.intervalMs = options.intervalMs ?? 1_000;
     this.eventBus = options.eventBus ?? createDurableTranscriptEventBus(options.store);
   }
@@ -134,7 +152,7 @@ class IngestionRuntime implements MessagingRuntimeApi {
         store: this.options.store,
         source: this.options.source,
         normalizers: this.options.normalizers,
-        now: this.now,
+        now: this.clock,
         ...(this.options.agentDirectory === undefined
           ? {} : { agentDirectory: this.options.agentDirectory }),
         ...(this.options.adoption === undefined ? {} : { adoption: this.options.adoption }),
@@ -148,7 +166,7 @@ class IngestionRuntime implements MessagingRuntimeApi {
     } catch (cause) {
       this.lastError = cause instanceof Error ? cause.message : String(cause);
       if (this.state !== "stopped") this.state = "degraded";
-      return unavailable(cause);
+      return ingestFailure(cause);
     } finally {
       this.inFlight = undefined;
     }
@@ -173,7 +191,7 @@ class IngestionRuntime implements MessagingRuntimeApi {
         store: this.options.store,
         agentDirectory: this.options.agentDirectory,
         providerSend: this.options.providerSend,
-        now: this.now,
+        now: this.clock,
       }, input);
       return { kind: "ok", value };
     } catch (cause) {

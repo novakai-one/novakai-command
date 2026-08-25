@@ -190,6 +190,47 @@ test("the same provider event in a moved source remains one TranscriptLine", asy
   assert.equal((await store.listTranscriptLines()).length, 1);
 });
 
+test("ambiguous historical provider evidence stays typed and unbound", async () => {
+  const store = createMemoryTranscriptStore();
+  const shared = {
+    kind: "provider-session" as const,
+    schemaVersion: 1 as const,
+    createdAt: "2026-08-25T00:00:00.000Z" as never,
+    provider: "claude" as const,
+    status: "adoption-pending" as const,
+    resumeId: "provider-native-session" as never,
+  };
+  await store.upsertProviderSession({
+    ...shared,
+    id: `sess_${"1".repeat(32)}` as never,
+    sourceIds: [sourceStat.sourceId],
+  });
+  await store.upsertProviderSession({
+    ...shared,
+    id: `sess_${"2".repeat(32)}` as never,
+    sourceIds: [`source_${"b".repeat(64)}` as never],
+  });
+  const runtime = createMessagingRuntime({
+    store,
+    source: fixtureSource(),
+    normalizers,
+    now: () => "2026-08-25T00:00:00.000Z",
+    ...adoption(),
+  });
+
+  const result = await runtime.ingestNow();
+  assert.equal(result.kind, "error");
+  if (result.kind !== "error") return;
+  assert.equal(result.error.name, "IdempotencyConflict");
+  assert.deepEqual(result.error.fields.sessionIds, [
+    `sess_${"1".repeat(32)}`,
+    `sess_${"2".repeat(32)}`,
+  ]);
+  assert.equal((await store.listTranscriptLines()).length, 0);
+  assert.equal((await store.listProviderSessions()).every((session) =>
+    session.agentId === undefined), true);
+});
+
 test("Foundation adapter writes and replays only the canonical Messaging database", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "nvk-messaging-ingest-"));
   const dataRoot = path.join(root, "stores");
