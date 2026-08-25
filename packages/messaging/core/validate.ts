@@ -17,8 +17,8 @@ import {
   priorityValues,
   subscribeInputEventsValues,
   transportKindValues,
-} from "../public/contract/index.js";
-import { MessagingError } from "../public/contract/index.js";
+} from "../contract/schemas.js";
+import { MessagingError } from "../contract/schemas.js";
 import type {
   Address,
   ClientMessageId,
@@ -30,7 +30,7 @@ import type {
   ThreadId,
   TransportKind,
   ValidationIssue,
-} from "../public/contract/index.js";
+} from "../contract/schemas.js";
 import type {
   ClosePresenceInput,
   ListThreadsForPersonInput,
@@ -43,8 +43,8 @@ import type {
   SubscribeInputEvents,
   RetireTemplateInput,
   UpsertTemplateInput,
-} from "../public/contract/index.js";
-import type { MessageBody, TemplateBinding } from "../public/contract/index.js";
+} from "../contract/schemas.js";
+import type { MessageBody, TemplateBinding } from "../contract/schemas.js";
 import type {
   GetDeliveryInput,
   GetInboxInput,
@@ -53,7 +53,7 @@ import type {
   GetPresenceInput,
   GetThreadInput,
   ListTemplatesInput,
-} from "../public/contract/index.js";
+} from "../contract/schemas.js";
 
 export type ParseResult<T> = { ok: true; value: T } | { ok: false; error: MessagingError };
 

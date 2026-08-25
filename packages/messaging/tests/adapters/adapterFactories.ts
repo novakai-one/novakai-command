@@ -19,9 +19,9 @@ import assert from "node:assert/strict";
 import type { AddressInfo } from "node:net";
 import { WebSocket, WebSocketServer } from "ws";
 
-import type { PresenceId } from "../../public/contract/index.js";
-import type { MessagingStore } from "../../seams/store.js";
-import type { PresenceTransport } from "../../seams/presenceTransport.js";
+import type { PresenceId } from "../../contract/index.js";
+import type { MessagingStore } from "../../contract/ports/store.js";
+import type { PresenceTransport } from "../../contract/ports/presence-transport.js";
 import { createSeededClock } from "../../adapters/clock-seeded.js";
 import type { SeededClock } from "../../adapters/clock-seeded.js";
 import { createMemoryStore } from "../../adapters/store-memory.js";

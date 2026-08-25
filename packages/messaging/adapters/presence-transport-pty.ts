@@ -42,14 +42,14 @@
 
 import { spawn } from "node:child_process";
 
-import type { PresenceId, SubscriptionMessage } from "../public/contract/index.js";
-import type { DeliveryFrame } from "../protocol/frames.js";
+import type { PresenceId, SubscriptionMessage } from "../contract/schemas.js";
+import type { DeliveryFrame } from "../contract/standalone/frames.js";
 import type {
   DeliverPayload,
   EffectReport,
   PresenceTransport,
   TransportLivenessCallbacks,
-} from "../seams/presenceTransport.js";
+} from "../contract/ports/presence-transport.js";
 
 /**
  * The slice of node:child_process's ChildProcess this adapter needs —

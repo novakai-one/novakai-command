@@ -1,7 +1,7 @@
 /**
  * spawned-server — test tooling for the process-level S1-d proofs (W2/P2/P3).
  * Spawns the standalone server as a REAL child process
- * (dist/protocol/standalone-server.js) with a store-jsonl data path in a
+ * (dist/cli/nvk-messaging.js) with a store-jsonl data path in a
  * fresh temp directory, and parses its stdout protocol (SWEEP / READY /
  * FATAL). Identity provisioning is by authority config (DEC-07 mapping in
  * config, never core): the helper writes an inline authority config into the
@@ -18,7 +18,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { AuthorityConfig } from "../../public/index.js";
+import type { AuthorityConfig } from "../../contract/index.js";
 
 /** The DEC-21 sweep report shape (core/recoverySweep) as JSON on stdout. */
 export interface SweepReport {
@@ -29,7 +29,7 @@ export interface SweepReport {
 
 // dist/tests/standalone/ -> package root is three levels up.
 const packageRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
-const SERVER_ENTRY = join(packageRoot, "dist", "protocol", "standalone-server.js");
+const SERVER_ENTRY = join(packageRoot, "dist", "cli", "nvk-messaging.js");
 
 export interface SpawnedServer {
   readonly port: number;

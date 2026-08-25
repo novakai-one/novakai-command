@@ -20,7 +20,7 @@ import path from "node:path";
 
 import { openFoundationMessagingStore } from "../adapters/store-foundation.js";
 import { createSeededClock } from "../../adapters/clock-seeded.js";
-import type { MessagingStore } from "../../seams/store.js";
+import type { MessagingStore } from "../../contract/ports/store.js";
 import type {
   AgentEndpointClaim,
   AgentEndpointClaimId,

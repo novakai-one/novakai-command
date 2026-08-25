@@ -96,6 +96,7 @@ function persistenceAuthorities(sourcePath: string): string[] {
       !ts.isImportDeclaration(statement)
       || !ts.isStringLiteral(statement.moduleSpecifier)
       || !statement.importClause
+      || statement.importClause.isTypeOnly
     ) {
       continue;
     }
@@ -116,6 +117,7 @@ function persistenceAuthorities(sourcePath: string): string[] {
     }
     if (!imported || !ts.isNamedImports(imported)) continue;
     for (const element of imported.elements) {
+      if (element.isTypeOnly) continue;
       const exportedName = (element.propertyName ?? element.name).text;
       if (writers.has(exportedName)) {
         authorities.push(`${moduleName}:${exportedName}`);
@@ -209,7 +211,7 @@ test('every Server persistence-writer authority is explicitly classified', () =>
     'core/config/store.ts -> @novakai/foundation/dist/contract/index.js:createObject',
     'core/config/store.ts -> @novakai/foundation/dist/contract/index.js:mintToken',
     'core/config/store.ts -> @novakai/foundation/dist/contract/index.js:updateObject',
-    'core/methods.ts -> @novakai/foundation/dist/contract/index.js:recordSystemAction',
+    'core/methods/sessions.ts -> @novakai/foundation/dist/contract/index.js:recordSystemAction',
     'core/supervision/log.ts -> node:fs:appendFileSync',
     'core/supervision/log.ts -> node:fs:mkdirSync',
     'core/supervision/watchdog.ts -> node:fs:mkdirSync',

@@ -33,8 +33,8 @@
  * SendMessage; ListTemplates is any authenticated principal (queries.ts).
  */
 
-import { schemaVersion, templateBindablePaths } from "../public/contract/index.js";
-import { MessagingError } from "../public/contract/index.js";
+import { schemaVersion, templateBindablePaths } from "../contract/schemas.js";
+import { MessagingError } from "../contract/schemas.js";
 import type {
   SendFromTemplateInput,
   SendMessageInput,
@@ -46,10 +46,10 @@ import type {
   UpsertTemplateInput,
   RetireTemplateInput,
   ValidationIssue,
-} from "../public/contract/index.js";
-import type { Principal } from "../seams/authority.js";
-import type { MessagingStore } from "../seams/store.js";
-import type { ClockIds } from "../seams/clock.js";
+} from "../contract/schemas.js";
+import type { Principal } from "../contract/ports/authority.js";
+import type { MessagingStore } from "../contract/ports/store.js";
+import type { ClockIds } from "../contract/ports/clock.js";
 import { parseSendMessageInput, validationFailedError } from "./validate.js";
 import { storeDependencyError } from "./storeErrors.js";
 

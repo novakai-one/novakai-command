@@ -3,6 +3,15 @@
   "version": "0.1.0",
   "description": "Novakai Messaging capability \u2014 v1 surface sealed through S4: direct lane, rooms (membership seam, frozen snapshots), attention mechanics (DND/urgent, contact policy), the Subscribe stream, and templates (DEC-15); embedded + WS standalone modes; memory/jsonl stores; memory/PTY/WS presence transports.",
   "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/contract/index.d.ts",
+      "import": "./dist/contract/index.js"
+    }
+  },
+  "bin": {
+    "nvk-messaging": "./dist/cli/nvk-messaging.js"
+  },
   "engines": {
     "node": ">=20"
   },

@@ -42,7 +42,7 @@
  * state (bounded map).
  */
 
-import { schemaVersion } from "../public/contract/index.js";
+import { schemaVersion } from "../contract/schemas.js";
 import type {
   Cursor,
   Delivery,
@@ -52,19 +52,19 @@ import type {
   PersonId,
   Presence,
   TransportKind,
-} from "../public/contract/index.js";
-import type { ClockIds } from "../seams/clock.js";
-import type { MessagingStore } from "../seams/store.js";
+} from "../contract/schemas.js";
+import type { ClockIds } from "../contract/ports/clock.js";
+import type { MessagingStore } from "../contract/ports/store.js";
 import type {
   EffectReport,
   PresenceTransport,
   RetryPolicy,
   Scheduler,
-} from "../seams/presenceTransport.js";
+} from "../contract/ports/presence-transport.js";
 import type { PresenceRegistry } from "./presenceRegistry.js";
 import { storeDependencyError } from "./storeErrors.js";
 
-export type { RetryPolicy, Scheduler } from "../seams/presenceTransport.js";
+export type { RetryPolicy, Scheduler } from "../contract/ports/presence-transport.js";
 
 export interface DeliveryOrchestratorDeps {
   store: MessagingStore;

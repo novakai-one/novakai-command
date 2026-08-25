@@ -14,7 +14,7 @@
 import { describe, it } from "node:test";
 import * as assert from "node:assert/strict";
 
-import { schemaVersion } from "../../public/contract/index.js";
+import { schemaVersion } from "../../contract/index.js";
 import type {
   ClientMessageId,
   Delivery,
@@ -24,7 +24,7 @@ import type {
   RequestHash,
   Sequence,
   ThreadId,
-} from "../../public/contract/index.js";
+} from "../../contract/index.js";
 import { createEventBus } from "../../core/eventBus.js";
 import type { CommittedFact } from "../../core/eventBus.js";
 import { createMemoryStore } from "../../adapters/store-memory.js";

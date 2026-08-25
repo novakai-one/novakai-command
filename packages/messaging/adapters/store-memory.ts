@@ -5,8 +5,8 @@
  * capability-wide durability guarantees are scoped to durable adapters.
  */
 
-import type { ClockIds } from "../seams/clock.js";
-import type { MessagingStore } from "../seams/store.js";
+import type { ClockIds } from "../contract/ports/clock.js";
+import type { MessagingStore } from "../contract/ports/store.js";
 import { StoreCore } from "./store-shared.js";
 
 export function createMemoryStore(clock: ClockIds): MessagingStore {

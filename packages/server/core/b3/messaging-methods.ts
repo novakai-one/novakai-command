@@ -15,7 +15,7 @@ import {
   type AuthenticatedPrincipal, type B3Result, type ClientOpId, type CommandContext,
   type SystemCommandContext,
 } from '@novakai/foundation/contract';
-import type { AgentMessagingContract } from '../../../messaging/b3/contract/index.js';
+import type { AgentMessagingContract } from '../../../messaging/contract/index.js';
 import type { B3TranscriptContract } from '../../../transcript/b3/contract/index.js';
 import {
   readReconcileTranscriptTurnCompletionInput,

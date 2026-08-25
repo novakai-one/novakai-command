@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
   MessagingError,
-} from '@novakai/messaging/dist/public/index.js';
+} from '@novakai/messaging';
 import { composeSpine } from '../contract/index.js';
 
 interface JournalLine {

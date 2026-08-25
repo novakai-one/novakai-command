@@ -16,7 +16,7 @@
 import { describe, it } from "node:test";
 import * as assert from "node:assert/strict";
 
-import { schemaVersion } from "../../public/contract/index.js";
+import { schemaVersion } from "../../contract/index.js";
 import type {
   ClientMessageId,
   ContactPolicy,
@@ -31,8 +31,8 @@ import type {
   Template,
   ThreadId,
   Timestamp,
-} from "../../public/contract/index.js";
-import type { AcceptanceInput } from "../../seams/store.js";
+} from "../../contract/index.js";
+import type { AcceptanceInput } from "../../contract/ports/store.js";
 import { createSeededClock } from "../../adapters/clock-seeded.js";
 import type { SeededClock } from "../../adapters/clock-seeded.js";
 import { storeAdapterFactories } from "./adapterFactories.js";

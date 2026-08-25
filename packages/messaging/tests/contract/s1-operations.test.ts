@@ -22,13 +22,13 @@ import {
   errorCatalogue,
   MessagingError,
   schemaVersion,
-} from "../../public/index.js";
+} from "../../contract/index.js";
 import type {
   ErrorName,
   Outcome,
   SubscriptionMessage,
   SubscriptionSink,
-} from "../../public/index.js";
+} from "../../contract/index.js";
 import {
   ALICE,
   BOB,

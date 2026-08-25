@@ -24,7 +24,7 @@
  * only the durability ADAPTER knows Foundation exists.
  */
 
-import type { MessageId, ThreadId } from "../../public/contract/index.js";
+import type { MessageId, ThreadId } from "../../contract/schemas.js";
 import type { ScreenContext } from "./screen-context.js";
 
 /** `agent_<uuidv4>` — the stable individual (DEC-B3V4-02). */

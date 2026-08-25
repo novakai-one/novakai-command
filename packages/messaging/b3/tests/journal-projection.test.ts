@@ -17,8 +17,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { projectJournalEntry } from "../../core/journalProjection.js";
-import type { JournalEntry } from "../../seams/store.js";
-import type { Sequence } from "../../public/contract/index.js";
+import type { JournalEntry } from "../../contract/ports/store.js";
+import type { Sequence } from "../../contract/schemas.js";
 import type {
   AgentEndpointClaim,
   AgentEndpointClaimId,
@@ -29,7 +29,7 @@ import type {
   MessagingStoreOpId,
   TerminalSessionId,
 } from "../contract/records.js";
-import type { MessageId } from "../../public/contract/index.js";
+import type { MessageId } from "../../contract/schemas.js";
 
 const CLAIM: AgentEndpointClaim = {
   id: "agentEndpoint_x" as AgentEndpointClaimId,

@@ -13,8 +13,8 @@
 // place that knows both, which is what makes it the right place for this.
 import type {
   ConversationView, ConversationViewPort,
-} from '../../../messaging/b3/contract/index.js';
-import type { ThreadId } from '../../../messaging/public/contract/index.js';
+} from '../../../messaging/contract/index.js';
+import type { ThreadId } from '../../../messaging/contract/index.js';
 import {
   listConversationViews, setConversationView, type ConversationViewRecord,
 } from '../../../shell/contract/conversationView.js';

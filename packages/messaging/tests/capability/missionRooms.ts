@@ -45,8 +45,8 @@ import type {
   SendAccepted,
   Thread,
   ThreadId,
-} from "../../public/index.js";
-import type { Message } from "../../public/index.js";
+} from "../../contract/index.js";
+import type { Message } from "../../contract/index.js";
 
 /** This capability's authority domain — the room key's authority half (DEC-04). */
 export const MISSION_ROOMS_AUTHORITY = "mission-rooms-capability";

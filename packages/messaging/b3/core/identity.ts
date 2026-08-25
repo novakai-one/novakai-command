@@ -16,7 +16,7 @@
  * on the way in, which is the failure mode red gate 3 wants.
  */
 
-import type { PersonId, ThreadId } from "../../public/contract/index.js";
+import type { PersonId, ThreadId } from "../../contract/schemas.js";
 import type { AgentId } from "../contract/records.js";
 
 const AGENT_PERSON_PREFIX = "person_agent-";

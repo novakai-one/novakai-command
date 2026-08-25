@@ -17,9 +17,9 @@
  * re-driven by the next sweep.
  */
 
-import type { Cursor, MessageId } from "../public/contract/index.js";
-import { MessagingError } from "../public/contract/index.js";
-import type { MessagingStore } from "../seams/store.js";
+import type { Cursor, MessageId } from "../contract/schemas.js";
+import { MessagingError } from "../contract/schemas.js";
+import type { MessagingStore } from "../contract/ports/store.js";
 import type { DeliveryOrchestrator } from "./deliveryOrchestrator.js";
 import { storeDependencyError } from "./storeErrors.js";
 

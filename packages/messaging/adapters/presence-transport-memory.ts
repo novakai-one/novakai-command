@@ -13,14 +13,14 @@
  * presence-close path (R9).
  */
 
-import type { PresenceId, TransportKind } from "../public/contract/index.js";
-import type { SubscriptionMessage } from "../public/contract/index.js";
+import type { PresenceId, TransportKind } from "../contract/schemas.js";
+import type { SubscriptionMessage } from "../contract/schemas.js";
 import type {
   DeliverPayload,
   EffectReport,
   PresenceTransport,
   TransportLivenessCallbacks,
-} from "../seams/presenceTransport.js";
+} from "../contract/ports/presence-transport.js";
 
 export interface RecordedDelivery {
   presenceId: PresenceId;

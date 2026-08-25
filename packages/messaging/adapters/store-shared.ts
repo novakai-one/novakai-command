@@ -48,7 +48,7 @@ import {
   cursorFor,
   idPatterns,
   schemaVersion,
-} from "../public/contract/index.js";
+} from "../contract/schemas.js";
 import type {
   AcceptanceRecord,
   AttemptId,
@@ -70,7 +70,7 @@ import type {
   TemplateId,
   Thread,
   ThreadId,
-} from "../public/contract/index.js";
+} from "../contract/schemas.js";
 import type {
   AgentEndpointClaim,
   AgentEndpointClaimId,
@@ -78,7 +78,7 @@ import type {
   AgentInboxItem,
   AgentInboxItemId,
 } from "../b3/contract/records.js";
-import type { ClockIds } from "../seams/clock.js";
+import type { ClockIds } from "../contract/ports/clock.js";
 import type {
   AcceptanceInput,
   AgentEndpointClaimInput,
@@ -94,7 +94,7 @@ import type {
   StoreError,
   StoreResult,
   TemplatePageOut,
-} from "../seams/store.js";
+} from "../contract/ports/store.js";
 
 // --- durable ops: the unit of persistence and of jsonl replay -----------------
 

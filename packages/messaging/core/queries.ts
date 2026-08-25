@@ -46,8 +46,8 @@
  * remaining capacity, so a filtered page can never overshoot the limit.
  */
 
-import { constants, contractVersion, schemaVersion } from "../public/contract/index.js";
-import { MessagingError } from "../public/contract/index.js";
+import { constants, contractVersion, schemaVersion } from "../contract/schemas.js";
+import { MessagingError } from "../contract/schemas.js";
 import type {
   CapabilityViewFeatures,
   ContactPolicy,
@@ -58,7 +58,7 @@ import type {
   Template,
   Thread,
   Timestamp,
-} from "../public/contract/index.js";
+} from "../contract/schemas.js";
 import type {
   DeliveryListResult,
   GetDeliveryInput,
@@ -75,11 +75,11 @@ import type {
   TemplatePage,
   ThreadListResult,
   ThreadView,
-} from "../public/contract/index.js";
-import type { Principal } from "../seams/authority.js";
-import type { MembershipSource } from "../seams/membership.js";
-import type { MessagingStore, StoreError } from "../seams/store.js";
-import type { ClockIds } from "../seams/clock.js";
+} from "../contract/schemas.js";
+import type { Principal } from "../contract/ports/authority.js";
+import type { MembershipSource } from "../contract/ports/membership.js";
+import type { MessagingStore, StoreError } from "../contract/ports/store.js";
+import type { ClockIds } from "../contract/ports/clock.js";
 import type { PresenceRegistry } from "./presenceRegistry.js";
 import { cursorInvalidError, storeDependencyError } from "./storeErrors.js";
 

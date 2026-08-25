@@ -22,17 +22,17 @@
  * they are adapter-private extras, not seam surface.
  */
 
-import { grantValues, idPatterns } from "../public/contract/index.js";
-import type { Grant, PersonId, Timestamp } from "../public/contract/index.js";
-import type { ClockIds } from "../seams/clock.js";
-import { authRejected, authUnavailable } from "../seams/authority.js";
+import { grantValues, idPatterns } from "../contract/schemas.js";
+import type { Grant, PersonId, Timestamp } from "../contract/schemas.js";
+import type { ClockIds } from "../contract/ports/clock.js";
+import { authRejected, authUnavailable } from "../contract/ports/authority.js";
 import type {
   Authority,
   AuthOutcome,
   Principal,
   ProvisioningDirectory,
   RevalidateOutcome,
-} from "../seams/authority.js";
+} from "../contract/ports/authority.js";
 
 // --- configuration (DEC-07 amendment — this is where roles exist) --------------
 

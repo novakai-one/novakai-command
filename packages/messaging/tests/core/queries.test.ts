@@ -10,8 +10,8 @@
 import { describe, it } from "node:test";
 import * as assert from "node:assert/strict";
 
-import { constants, contractVersion } from "../../public/index.js";
-import type { Cursor } from "../../public/index.js";
+import { constants, contractVersion } from "../../contract/index.js";
+import type { Cursor } from "../../contract/index.js";
 import {
   ALICE,
   BOB,

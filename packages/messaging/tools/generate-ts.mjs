@@ -3,13 +3,13 @@
  * generate-ts.mjs — law #3 codegen for the Novakai Messaging capability.
  *
  * Reads ../contract/messaging-contract.json (THE single machine-readable source)
- * and emits public/contract/generated.ts. Every enumeration, constant, branded
+ * and emits contract/types.ts. Every enumeration, constant, branded
  * ID, name union, and the R5 delivery state machine in TypeScript derives from
  * this file only. Hand-written code MUST import from generated.ts and never
  * re-type a contract literal.
  *
  * Usage:
- *   node tools/generate-ts.mjs           regenerate public/contract/generated.ts
+ *   node tools/generate-ts.mjs           regenerate contract/types.ts
  *   node tools/generate-ts.mjs --check   exit 1 if the checked-in file is stale
  */
 
@@ -17,7 +17,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 
 const contractUrl = new URL("../contract/messaging-contract.json", import.meta.url);
-const outUrl = new URL("../public/contract/generated.ts", import.meta.url);
+const outUrl = new URL("../contract/types.ts", import.meta.url);
 
 const sourceText = readFileSync(contractUrl, "utf8");
 const contract = JSON.parse(sourceText);
@@ -322,10 +322,10 @@ if (process.argv.includes("--check")) {
     // missing entirely counts as stale
   }
   if (current !== text) {
-    console.error("generated.ts is STALE — run: npm run generate");
+    console.error("contract/types.ts is STALE — run: npm run generate");
     process.exit(1);
   }
-  console.log("generated.ts is up to date.");
+  console.log("contract/types.ts is up to date.");
 } else {
   writeFileSync(outUrl, text);
   console.log(`wrote ${outUrl.pathname} (${literals.size} literal types, ${idDefs.length} branded ids, sha256:${sourceHash})`);

@@ -18,7 +18,7 @@ import type {
   B3Result, CommandContext, EventCursor, Page, SystemCommandContext,
   AuthenticatedPrincipal,
 } from "@novakai/foundation/contract";
-import type { Thread, ThreadId } from "../../public/contract/index.js";
+import type { Thread, ThreadId } from "../../contract/schemas.js";
 import type { ScreenContext } from "./screen-context.js";
 import type {
   AgentCommunicationItem, AgentEndpointClaim, AgentEndpointClaimId, AgentId,

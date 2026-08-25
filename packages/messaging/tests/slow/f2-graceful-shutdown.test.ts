@@ -17,8 +17,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { createStandaloneMessaging, DEFAULT_ROLE_GRANTS } from "../../public/index.js";
-import type { AuthorityConfig } from "../../public/index.js";
+import { createStandaloneMessaging, DEFAULT_ROLE_GRANTS } from "../../contract/index.js";
+import type { AuthorityConfig } from "../../contract/index.js";
 import { ExternalChief } from "../standalone/external-chief.js";
 import { spawnStandaloneServer } from "../standalone/spawned-server.js";
 

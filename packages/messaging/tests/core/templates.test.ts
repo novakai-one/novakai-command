@@ -18,12 +18,12 @@ import {
   createSeededClock,
   DEFAULT_ROLE_GRANTS,
   templateBindablePaths,
-} from "../../public/index.js";
+} from "../../contract/index.js";
 import type {
   EmbeddedMessaging,
   MessagingSession,
   TemplateBinding,
-} from "../../public/index.js";
+} from "../../contract/index.js";
 import {
   ADMIN,
   ALICE,

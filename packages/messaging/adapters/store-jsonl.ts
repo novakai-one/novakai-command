@@ -30,8 +30,8 @@ import {
   writeSync,
 } from "node:fs";
 import { dirname } from "node:path";
-import type { ClockIds } from "../seams/clock.js";
-import type { MessagingStore } from "../seams/store.js";
+import type { ClockIds } from "../contract/ports/clock.js";
+import type { MessagingStore } from "../contract/ports/store.js";
 import { StoreCore, StoreException, storeOpNames } from "./store-shared.js";
 import type { StoreOp } from "./store-shared.js";
 

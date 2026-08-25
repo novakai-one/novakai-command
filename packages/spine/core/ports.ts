@@ -4,7 +4,7 @@ import type {
 import type {
   DeliveryListResult,
   Outcome,
-} from '@novakai/messaging/dist/public/index.js';
+} from '@novakai/messaging';
 import type { ArtifactsOperations } from '@novakai/artifacts';
 import type { SpineProjectsContract } from '@novakai/projects';
 

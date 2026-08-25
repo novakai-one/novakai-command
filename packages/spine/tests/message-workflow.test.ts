@@ -10,7 +10,7 @@ import type {
   ClientOpId,
   ProjectId,
 } from '@novakai/foundation/dist/contract/index.js';
-import type { MessageId } from '@novakai/messaging/dist/public/index.js';
+import type { MessageId } from '@novakai/messaging';
 import {
   composeSpine,
   type SpineHost,

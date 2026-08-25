@@ -1,5 +1,5 @@
 /**
- * Codegen freshness guard (law #3): public/contract/generated.ts must be
+ * Codegen freshness guard (law #3): contract/types.ts must be
  * byte-identical to a fresh generation from contract/messaging-contract.json.
  *
  * Chosen mechanism: run the generator in --check mode (regenerate to a string,

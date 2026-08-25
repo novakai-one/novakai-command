@@ -18,7 +18,7 @@
  */
 
 import WebSocket from "ws";
-import type { ClientFrame } from "../../public/index.js";
+import type { ClientFrame } from "../../contract/index.js";
 
 /**
  * A received frame, read structurally: the server→client vocabulary is the

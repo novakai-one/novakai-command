@@ -23,7 +23,7 @@ import type {
   AgentEndpointClaimId, AgentMessagingContract,
   AgentId as MessagingAgentId, AgentRunId as MessagingAgentRunId,
   MessagingStore, TerminalSessionId as MessagingTerminalSessionId,
-} from '../../../messaging/b3/contract/index.js';
+} from '../../../messaging/contract/index.js';
 
 /** The exact owner reads the semantic delivery port makes. */
 type MessagingReadPort = Pick<MessagingStore, 'getMessage' | 'getAgentInboxItem'>;

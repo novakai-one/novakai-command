@@ -13,7 +13,7 @@ import path from 'node:path';
 import { b3ok, type B3Result } from '@novakai/foundation/contract';
 import {
   listMigratedOperations, readMessagingCutoverReceipt,
-} from '../../../messaging/b3/contract/index.js';
+} from '../../../messaging/contract/index.js';
 
 /**
  * The legacy Messaging journal, as the product actually writes it

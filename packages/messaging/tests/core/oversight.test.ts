@@ -22,7 +22,7 @@ import {
   createSeededClock,
   cursorFor,
   DEFAULT_ROLE_GRANTS,
-} from "../../public/index.js";
+} from "../../contract/index.js";
 import type {
   MembershipRoomConfig,
   PersonId,
@@ -30,7 +30,7 @@ import type {
   SubscriptionMessage,
   SubscriptionSink,
   ThreadId,
-} from "../../public/index.js";
+} from "../../contract/index.js";
 import {
   ADMIN,
   ALICE,

@@ -14,7 +14,7 @@
 import {
   b3err, b3fail, b3ok, mintAgentEndpointClaimId, nowIsoUtc, type B3Result,
 } from "@novakai/foundation/contract";
-import type { MessagingStore } from "../../seams/store.js";
+import type { MessagingStore } from "../../contract/ports/store.js";
 import type {
   ReserveAgentEndpointInput, TransferAgentEndpointInput,
 } from "../contract/api.js";

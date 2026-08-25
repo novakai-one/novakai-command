@@ -20,7 +20,7 @@
  * there are no subscriptions in S1-b, so the hook is the listener set only.
  */
 
-import { schemaVersion } from "../public/contract/index.js";
+import { schemaVersion } from "../contract/schemas.js";
 import type {
   PersonId,
   Presence,
@@ -28,9 +28,9 @@ import type {
   PresenceChangedEvent,
   PresenceId,
   TransportKind,
-} from "../public/contract/index.js";
-import type { ClockIds } from "../seams/clock.js";
-import type { TransportLivenessCallbacks } from "../seams/presenceTransport.js";
+} from "../contract/schemas.js";
+import type { ClockIds } from "../contract/ports/clock.js";
+import type { TransportLivenessCallbacks } from "../contract/ports/presence-transport.js";
 
 export type PresenceOpenedListener = (presence: Presence) => Promise<void>;
 export type PresenceChangedListener = (event: PresenceChangedEvent) => Promise<void>;

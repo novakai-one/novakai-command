@@ -12,17 +12,17 @@
  * AFTER the policy write is durable.
  */
 
-import { schemaVersion } from "../public/contract/index.js";
-import { MessagingError } from "../public/contract/index.js";
-import type { ContactPolicy, DndPolicy, PersonId } from "../public/contract/index.js";
+import { schemaVersion } from "../contract/schemas.js";
+import { MessagingError } from "../contract/schemas.js";
+import type { ContactPolicy, DndPolicy, PersonId } from "../contract/schemas.js";
 import type {
   PolicyUpdated,
   SetContactPolicyInput,
   SetDndPolicyInput,
-} from "../public/contract/index.js";
-import type { Principal } from "../seams/authority.js";
-import type { MessagingStore } from "../seams/store.js";
-import type { ClockIds } from "../seams/clock.js";
+} from "../contract/schemas.js";
+import type { Principal } from "../contract/ports/authority.js";
+import type { MessagingStore } from "../contract/ports/store.js";
+import type { ClockIds } from "../contract/ports/clock.js";
 import type { DeliveryOrchestrator } from "./deliveryOrchestrator.js";
 import { storeDependencyError } from "./storeErrors.js";
 

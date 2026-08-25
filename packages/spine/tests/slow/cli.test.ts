@@ -22,7 +22,7 @@ import {
   openJsonlStore,
   type MessagingSession,
   type PersonId,
-} from '@novakai/messaging/dist/public/index.js';
+} from '@novakai/messaging';
 import { composeProjects } from '@novakai/projects';
 import { composeArtifacts } from '@novakai/artifacts';
 import type { SpineWorkflow } from '../../contract/index.js';

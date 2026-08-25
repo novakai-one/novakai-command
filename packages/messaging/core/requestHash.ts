@@ -13,8 +13,8 @@
 
 import { createHash } from "node:crypto";
 
-import type { RequestHash } from "../public/contract/index.js";
-import type { SendFromTemplateInput, SendMessageInput } from "../public/contract/index.js";
+import type { RequestHash } from "../contract/schemas.js";
+import type { SendFromTemplateInput, SendMessageInput } from "../contract/schemas.js";
 
 /** Deterministic JSON: object keys sorted recursively; arrays keep order. */
 function stableStringify(value: unknown): string {

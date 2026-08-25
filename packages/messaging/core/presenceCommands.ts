@@ -12,16 +12,16 @@
  * liveness callbacks into the same single close path.
  */
 
-import { MessagingError } from "../public/contract/index.js";
-import type { TransportKind } from "../public/contract/index.js";
+import { MessagingError } from "../contract/schemas.js";
+import type { TransportKind } from "../contract/schemas.js";
 import type {
   ClosePresenceInput,
   OpenPresenceInput,
   PresenceClosed,
   PresenceOpened,
-} from "../public/contract/index.js";
-import type { Principal } from "../seams/authority.js";
-import type { PresenceTransport } from "../seams/presenceTransport.js";
+} from "../contract/schemas.js";
+import type { Principal } from "../contract/ports/authority.js";
+import type { PresenceTransport } from "../contract/ports/presence-transport.js";
 import type { PresenceRegistry } from "./presenceRegistry.js";
 
 export interface PresenceCommandsDeps {

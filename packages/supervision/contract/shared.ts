@@ -5,7 +5,7 @@ import type {
   B3Result,
   TraceCorrelationId,
 } from '@novakai/foundation/contract';
-import type { PersonId } from '../../messaging/public/contract/index.js';
+import type { PersonId } from '../../messaging/contract/index.js';
 
 /** Existing Messaging person identity; Build 3 does not mint a second human brand. */
 export type HumanPrincipalId = PersonId;

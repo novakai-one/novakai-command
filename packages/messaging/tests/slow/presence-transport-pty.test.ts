@@ -12,9 +12,9 @@ import { spawn } from "node:child_process";
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
-import { schemaVersion } from "../../public/contract/index.js";
-import type { Message, PresenceId, SubscriptionMessage } from "../../public/contract/index.js";
-import type { TransportLivenessCallbacks } from "../../seams/presenceTransport.js";
+import { schemaVersion } from "../../contract/index.js";
+import type { Message, PresenceId, SubscriptionMessage } from "../../contract/index.js";
+import type { TransportLivenessCallbacks } from "../../contract/ports/presence-transport.js";
 import { createPtyPresenceTransport } from "../../adapters/presence-transport-pty.js";
 import { createSeededClock } from "../../adapters/clock-seeded.js";
 import { FakePtyChild } from "../adapters/fakePtyChild.js";

@@ -17,8 +17,8 @@ import {
   createStandaloneMessaging,
   cursorFor,
   DEFAULT_ROLE_GRANTS,
-} from "../../public/index.js";
-import type { StandaloneMessaging } from "../../public/index.js";
+} from "../../contract/index.js";
+import type { StandaloneMessaging } from "../../contract/index.js";
 
 const CHIEF = "person_chief";
 const WORKER = "person_worker";

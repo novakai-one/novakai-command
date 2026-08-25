@@ -26,6 +26,6 @@ export {
   type MessagingCutoverInput, type MessagingCutoverOutcome, type MessagingCutoverReceipt,
 } from '../adapters/cutover.js';
 export { readLegacyStoreOp } from '../adapters/cutover-validate.js';
-export type { MessagingStore } from '../../seams/store.js';
+export type { MessagingStore } from '../../contract/ports/store.js';
 export { createSystemClock } from '../../adapters/clock-system.js';
-export type { ClockIds } from '../../seams/clock.js';
+export type { ClockIds } from '../../contract/ports/clock.js';

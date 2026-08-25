@@ -8,8 +8,8 @@
 import { describe, it } from "node:test";
 import * as assert from "node:assert/strict";
 
-import { constants, createEmbeddedMessaging, createMemoryStore, createSeededClock } from "../../public/index.js";
-import { DEFAULT_ROLE_GRANTS } from "../../public/index.js";
+import { constants, createEmbeddedMessaging, createMemoryStore, createSeededClock } from "../../contract/index.js";
+import { DEFAULT_ROLE_GRANTS } from "../../contract/index.js";
 import {
   ALICE,
   BOB,

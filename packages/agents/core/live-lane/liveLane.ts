@@ -4,7 +4,7 @@
 //
 // Messaging entry point used: MessagingSession.sendMessage (packages/messaging/
 // public/capability.ts) with SendMessageInput { address, body, priority,
-// clientMessageId } (packages/messaging/public/contract/commands.ts). Typed
+// clientMessageId } (packages/messaging/contract/commands.ts). Typed
 // structurally here so agents does not reach into messaging internals.
 import { randomUUID } from 'node:crypto';
 import type { PtyEvent, Unsubscribe } from '../../contract/schemas.js';

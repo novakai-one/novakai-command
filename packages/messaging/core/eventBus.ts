@@ -51,10 +51,10 @@
  * checkpoint still advances past the fact, and the bus keeps tailing.
  */
 
-import { constants } from "../public/contract/index.js";
-import { MessagingError } from "../public/contract/index.js";
-import type { Sequence } from "../public/contract/index.js";
-import type { MessagingStore } from "../seams/store.js";
+import { constants } from "../contract/schemas.js";
+import { MessagingError } from "../contract/schemas.js";
+import type { Sequence } from "../contract/schemas.js";
+import type { MessagingStore } from "../contract/ports/store.js";
 import { projectJournalEntry } from "./journalProjection.js";
 import type { CommittedFact } from "./journalProjection.js";
 import { storeDependencyError } from "./storeErrors.js";

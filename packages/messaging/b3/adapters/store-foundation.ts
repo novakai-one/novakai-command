@@ -27,8 +27,8 @@ import { createHash } from "node:crypto";
 
 import { StoreCore, StoreException } from "../../adapters/store-shared.js";
 import type { StoreOp } from "../../adapters/store-shared.js";
-import type { ClockIds } from "../../seams/clock.js";
-import type { MessagingStore } from "../../seams/store.js";
+import type { ClockIds } from "../../contract/ports/clock.js";
+import type { MessagingStore } from "../../contract/ports/store.js";
 import type { MessagingStoreOpId } from "../contract/records.js";
 
 export interface FoundationMessagingStoreOptions {

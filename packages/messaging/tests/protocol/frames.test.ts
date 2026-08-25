@@ -7,12 +7,14 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { MessagingError } from "../../public/index.js";
+import { MessagingError } from "../../contract/index.js";
 import {
   errorFrame,
   parseClientFrame,
+} from "../../contract/standalone/frame-schemas.js";
+import {
   WS_PROTOCOL_VERSION,
-} from "../../protocol/frames.js";
+} from "../../contract/standalone/frames.js";
 
 function expectInvalid(value: unknown, requestId?: string) {
   const result = parseClientFrame(value);

@@ -12,8 +12,8 @@
 // renews — the mechanism that exists is the mechanism that handles it.
 //
 // packages/messaging is used entirely through its public surface here.
-import { createConfigAuthority, DEFAULT_ROLE_GRANTS } from '../../../messaging/public/index.js';
-import type { PersonId } from '../../../messaging/public/index.js';
+import { createConfigAuthority, DEFAULT_ROLE_GRANTS } from '../../../messaging/contract/index.js';
+import type { PersonId } from '../../../messaging/contract/index.js';
 import type { ServerConfig } from '../../contract/config.js';
 
 type ConfigAuthority = ReturnType<typeof createConfigAuthority>;

@@ -31,16 +31,16 @@
  */
 
 import { createHash } from "node:crypto";
-import { idPatterns } from "../public/contract/index.js";
-import type { MembershipEvidence, PersonId } from "../public/contract/index.js";
-import type { ClockIds } from "../seams/clock.js";
-import { membershipUnavailable, unknownRoom } from "../seams/membership.js";
+import { idPatterns } from "../contract/schemas.js";
+import type { MembershipEvidence, PersonId } from "../contract/schemas.js";
+import type { ClockIds } from "../contract/ports/clock.js";
+import { membershipUnavailable, unknownRoom } from "../contract/ports/membership.js";
 import type {
   IsMemberOutcome,
   MembershipSource,
   ResolveMembersOutcome,
   RoomRef,
-} from "../seams/membership.js";
+} from "../contract/ports/membership.js";
 
 // --- configuration (the roster truth lives HERE, never in core) ----------------
 

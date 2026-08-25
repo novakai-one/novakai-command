@@ -25,7 +25,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
-import type { SubscriptionMessage, SubscriptionSink } from "../../public/index.js";
+import type { SubscriptionMessage, SubscriptionSink } from "../../contract/index.js";
 import {
   ALICE,
   BOB,

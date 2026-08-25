@@ -11,13 +11,13 @@ import assert from "node:assert/strict";
 import {
   constants,
   cursorFor,
-} from "../../public/index.js";
+} from "../../contract/index.js";
 import type {
   Sequence,
   SubscriptionEndedFrame,
   SubscriptionMessage,
   SubscriptionSink,
-} from "../../public/index.js";
+} from "../../contract/index.js";
 import {
   ALICE,
   BOB,

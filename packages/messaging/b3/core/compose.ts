@@ -12,9 +12,9 @@ import {
   type AuthenticatedPrincipal, type B3Result, type CommandContext, type Page,
   type SystemCommandContext,
 } from "@novakai/foundation/contract";
-import type { PersonId, Thread, ThreadId } from "../../public/contract/index.js";
-import type { ClockIds } from "../../seams/clock.js";
-import type { MessagingStore } from "../../seams/store.js";
+import type { PersonId, Thread, ThreadId } from "../../contract/schemas.js";
+import type { ClockIds } from "../../contract/ports/clock.js";
+import type { MessagingStore } from "../../contract/ports/store.js";
 import type {
   AgentEndpointView, AgentMessagingContract, CommitTerminalOriginatedMessageInput,
   ConversationView, EnsureDirectThreadInput, EnsureGroupThreadInput,

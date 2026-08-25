@@ -9,8 +9,8 @@
  */
 
 import { b3ok, type B3Result, type Page } from "@novakai/foundation/contract";
-import type { Message, PersonId, ThreadId } from "../../public/contract/index.js";
-import type { MessagingStore } from "../../seams/store.js";
+import type { Message, PersonId, ThreadId } from "../../contract/schemas.js";
+import type { MessagingStore } from "../../contract/ports/store.js";
 import type { ListAgentCommunicationsInput } from "../contract/api.js";
 import type {
   AgentCommunicationDirection, AgentCommunicationItem, AgentEndpointClaimId, AgentId,

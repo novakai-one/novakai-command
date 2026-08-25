@@ -74,8 +74,8 @@
  * `transport.push(presenceId, frame)`; embedded hosts pass a callback.
  */
 
-import { constants } from "../public/contract/index.js";
-import { MessagingError } from "../public/contract/index.js";
+import { constants } from "../contract/schemas.js";
+import { MessagingError } from "../contract/schemas.js";
 import type {
   Cursor,
   Presence,
@@ -89,12 +89,12 @@ import type {
   SubscriptionMessage,
   Thread,
   ThreadId,
-} from "../public/contract/index.js";
-import type { Principal } from "../seams/authority.js";
-import type { MembershipSource } from "../seams/membership.js";
-import type { MessagingStore } from "../seams/store.js";
-import type { ClockIds } from "../seams/clock.js";
-import type { EffectReport, Scheduler } from "../seams/presenceTransport.js";
+} from "../contract/schemas.js";
+import type { Principal } from "../contract/ports/authority.js";
+import type { MembershipSource } from "../contract/ports/membership.js";
+import type { MessagingStore } from "../contract/ports/store.js";
+import type { ClockIds } from "../contract/ports/clock.js";
+import type { EffectReport, Scheduler } from "../contract/ports/presence-transport.js";
 import type { CommittedFact, EventBus } from "./eventBus.js";
 import type { PresenceRegistry } from "./presenceRegistry.js";
 import { projectJournalEntry } from "./journalProjection.js";
@@ -105,22 +105,16 @@ import { storeDependencyError } from "./storeErrors.js";
  * effect = frame sent (leaves the buffer); transient failure = frame parked
  * for retry; permanent failure = the lane is dead, the subscription ends.
  */
-export type SubscriptionSink = (frame: SubscriptionMessage) => Promise<EffectReport>;
-
-export interface SubscriptionHandle {
-  readonly subscriptionId: SubscriptionId;
-  /** Client-initiated end: the stream closes with ended{closed} (best-effort). */
-  close(): Promise<void>;
-}
-
-/**
- * Teardown binding (Seams §4.1): ties a subscription to a Presence so the
- * single presence-close path ends it. The Presence must be live and owned by
- * the subscribing principal, else ValidationFailed.
- */
-export interface SubscriptionBinding {
-  presenceId?: PresenceId;
-}
+export type {
+  SubscriptionBinding,
+  SubscriptionHandle,
+  SubscriptionSink,
+} from "../contract/subscriptions.js";
+import type {
+  SubscriptionBinding,
+  SubscriptionHandle,
+  SubscriptionSink,
+} from "../contract/subscriptions.js";
 
 export interface SubscriptionManagerDeps {
   store: MessagingStore;

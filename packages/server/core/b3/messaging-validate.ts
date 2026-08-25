@@ -16,9 +16,9 @@ import type {
   ConversationParticipant, EnsureDirectThreadInput, EnsureGroupThreadInput,
   ListAgentCommunicationsInput, ListAgentInboxInput, OpenConversationViewInput,
   ScreenContext, SendAgentMessageInput,
-} from '../../../messaging/b3/contract/index.js';
-import { readScreenContext } from '../../../messaging/b3/contract/index.js';
-import type { ThreadId } from '../../../messaging/public/contract/index.js';
+} from '../../../messaging/contract/index.js';
+import { readScreenContext } from '../../../messaging/contract/index.js';
+import type { ThreadId } from '../../../messaging/contract/index.js';
 import type {
   IngestTranscriptSourceInput, ListObservedSubagentsInput, ObservedSubagentId,
   PromoteObservedSubagentInput,

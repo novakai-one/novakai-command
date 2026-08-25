@@ -63,7 +63,7 @@ test("the B3 production route never imports store-jsonl", () => {
   }
 });
 
-test("the Messaging core and seams stay free of @novakai/foundation", () => {
+test("the Messaging core and contract declarations stay free of @novakai/foundation", () => {
   // Requirement 1: "I should be able to use messaging by itself independently
   // and it shouldn't matter if the other apps exist or not."
   //
@@ -72,8 +72,7 @@ test("the Messaging core and seams stay free of @novakai/foundation", () => {
   // standalone mode stops being real and nobody notices until they try it.
   const coreFiles = [
     ...sourceFiles(path.join(messagingRoot, "core")),
-    ...sourceFiles(path.join(messagingRoot, "seams")),
-    ...sourceFiles(path.join(messagingRoot, "public")),
+    ...sourceFiles(path.join(messagingRoot, "contract")),
   ];
   for (const file of coreFiles) {
     for (const specifier of importsOf(file)) {

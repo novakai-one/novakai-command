@@ -12,7 +12,7 @@ import path from 'node:path';
 import { surveyStoreRoute } from '@novakai/foundation/contract';
 import {
   checkMessagingStoreRoute, readMessagingCutoverReceipt, runMessagingCutover,
-} from '../../messaging/b3/contract/index.js';
+} from '../../messaging/contract/index.js';
 import { LEGACY_MESSAGING_STORE } from './b3/cutover-report.js';
 
 /** Roots already gated in this process — the cutover is once per root, not once per handle. */

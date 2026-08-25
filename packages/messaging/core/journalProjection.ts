@@ -16,8 +16,8 @@
 
 import type {
   DeliveryUpdatedEvent, MessageCommittedEvent, PolicyChangedEvent,
-} from "../public/contract/index.js";
-import type { JournalEntry } from "../seams/store.js";
+} from "../contract/schemas.js";
+import type { JournalEntry } from "../contract/ports/store.js";
 
 /**
  * One committed-fact event, journal-sourced, carrying its global sequence.

@@ -23,12 +23,10 @@
     "skipLibCheck": true
   },
   "include": [
-    "public/**/*.ts",
-    "seams/**/*.ts",
+    "contract/**/*.ts",
     "adapters/**/*.ts",
     "core/**/*.ts",
-    "composition/**/*.ts",
-    "protocol/**/*.ts",
+    "cli/**/*.ts",
     "tests/**/*.ts"
   ],
   "exclude": [

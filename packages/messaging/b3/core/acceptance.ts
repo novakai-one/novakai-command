@@ -18,13 +18,13 @@
 import {
   canonicalRequestHash, nowIsoUtc,
 } from "@novakai/foundation/contract";
-import { schemaVersion } from "../../public/contract/index.js";
+import { schemaVersion } from "../../contract/schemas.js";
 import type {
   ClientMessageId, Delivery, Message, PersonId, RecipientSnapshot, RequestHash, Sequence,
   ThreadId,
-} from "../../public/contract/index.js";
-import type { ClockIds } from "../../seams/clock.js";
-import type { AcceptanceInput } from "../../seams/store.js";
+} from "../../contract/schemas.js";
+import type { ClockIds } from "../../contract/ports/clock.js";
+import type { AcceptanceInput } from "../../contract/ports/store.js";
 import type {
   AgentId, AgentInboxItem, AgentInboxItemId, AgentRunId, MessagingStoreOpId,
 } from "../contract/records.js";

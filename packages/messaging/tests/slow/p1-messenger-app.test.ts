@@ -34,8 +34,8 @@ import { spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { DEFAULT_ROLE_GRANTS } from "../../public/index.js";
-import type { AuthorityConfig } from "../../public/index.js";
+import { DEFAULT_ROLE_GRANTS } from "../../contract/index.js";
+import type { AuthorityConfig } from "../../contract/index.js";
 import { spawnStandaloneServer } from "../standalone/spawned-server.js";
 
 // Source lives at tests/slow/, compiled output at dist/tests/slow/ — the

@@ -5,7 +5,7 @@ import type {
   ClientOpId,
   ProjectId,
 } from '@novakai/foundation/dist/contract/brands.js';
-import type { MessageId } from '@novakai/messaging/dist/public/index.js';
+import type { MessageId } from '@novakai/messaging';
 
 export type SpineWorkflowId = string & {
   readonly __brand: 'spineWorkflowId';

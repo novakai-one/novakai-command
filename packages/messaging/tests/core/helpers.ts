@@ -10,7 +10,7 @@ import {
   createMemoryPresenceTransport,
   createSeededClock,
   DEFAULT_ROLE_GRANTS,
-} from "../../public/index.js";
+} from "../../contract/index.js";
 import type {
   ConfigAuthority,
   EmbeddedMessaging,
@@ -23,7 +23,7 @@ import type {
   RetryPolicy,
   Scheduler,
   SeededClock,
-} from "../../public/index.js";
+} from "../../contract/index.js";
 
 export const ALICE = "person_alice" as PersonId;
 export const BOB = "person_bob" as PersonId;

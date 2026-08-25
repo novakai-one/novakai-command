@@ -12,7 +12,7 @@ import {
 } from '@novakai/foundation/dist/contract/index.js';
 import {
   MessagingError,
-} from '@novakai/messaging/dist/public/index.js';
+} from '@novakai/messaging';
 import { composeProjects } from '@novakai/projects';
 import { composeSpine } from '../contract/index.js';
 

@@ -41,7 +41,7 @@ import {
   createMemoryPresenceTransport,
   createSeededClock,
   DEFAULT_ROLE_GRANTS,
-} from "../../public/index.js";
+} from "../../contract/index.js";
 import type {
   AuthorityConfig,
   Cursor,
@@ -53,7 +53,7 @@ import type {
   SubscriptionMessage,
   SubscriptionSink,
   ThreadListResult,
-} from "../../public/index.js";
+} from "../../contract/index.js";
 import {
   ALICE,
   ADMIN,
@@ -423,7 +423,7 @@ describe("P4 — architecture: the second capability crosses the public surface 
     );
   });
 
-  it("the stand-in source imports only the published public/ surface — never core/seams/adapters/protocol internals", () => {
+  it("the stand-in source imports only the contract doorway — never private internals", () => {
     const sourcePath = join(packageRoot, "tests", "capability", "missionRooms.ts");
     const relativeImports = specifiers(readFileSync(sourcePath, "utf8")).filter((specifier) =>
       specifier.startsWith("."),
@@ -433,7 +433,7 @@ describe("P4 — architecture: the second capability crosses the public surface 
       const resolved = resolve(dirname(sourcePath), specifier);
       const rel = relative(packageRoot, resolved).split(sep).join("/");
       assert.ok(
-        rel.startsWith("public/"),
+        rel === "contract/index.js",
         `private import crossed the boundary: ${specifier} (resolves to ${rel})`,
       );
     }

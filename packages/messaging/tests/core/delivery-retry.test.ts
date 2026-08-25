@@ -9,7 +9,7 @@
 import { describe, it } from "node:test";
 import * as assert from "node:assert/strict";
 
-import type { EffectReport } from "../../public/index.js";
+import type { EffectReport } from "../../contract/index.js";
 import {
   ALICE,
   BOB,

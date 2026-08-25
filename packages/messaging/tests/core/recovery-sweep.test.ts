@@ -11,8 +11,8 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { createMemoryStore, createSeededClock } from "../../public/index.js";
-import type { MessageId, MessagingStore } from "../../public/index.js";
+import { createMemoryStore, createSeededClock } from "../../contract/index.js";
+import type { MessageId, MessagingStore } from "../../contract/index.js";
 import {
   ALICE,
   BOB,

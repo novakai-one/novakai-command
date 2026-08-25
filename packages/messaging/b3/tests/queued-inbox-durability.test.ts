@@ -32,7 +32,7 @@ import { createSeededClock } from "../../adapters/clock-seeded.js";
 import { composeAgentMessaging } from "../core/compose.js";
 import type { AgentMessagingContract } from "../contract/api.js";
 import type { AgentId, AgentRunId } from "../contract/records.js";
-import type { MessagingStore } from "../../seams/store.js";
+import type { MessagingStore } from "../../contract/ports/store.js";
 import type { AuthenticatedPrincipal, SystemCommandContext } from "@novakai/foundation/contract";
 
 const AGENT = "agent_072264fb-a4be-4a13-9d62-f597662685a5" as AgentId;

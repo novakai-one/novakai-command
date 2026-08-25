@@ -18,8 +18,8 @@
  */
 
 import { b3err, b3fail, b3ok, type B3Result } from "@novakai/foundation/contract";
-import type { PersonId, Thread } from "../../public/contract/index.js";
-import type { MessagingStore, StoreError } from "../../seams/store.js";
+import type { PersonId, Thread } from "../../contract/schemas.js";
+import type { MessagingStore, StoreError } from "../../contract/ports/store.js";
 import type {
   ConversationParticipant, EnsureDirectThreadInput, EnsureGroupThreadInput,
 } from "../contract/api.js";

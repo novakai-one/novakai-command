@@ -17,7 +17,7 @@ import assert from "node:assert/strict";
 
 import { createMemoryStore } from "../../adapters/store-memory.js";
 import { createSeededClock } from "../../adapters/clock-seeded.js";
-import type { MessagingStore } from "../../seams/store.js";
+import type { MessagingStore } from "../../contract/ports/store.js";
 import type {
   AgentEndpointClaim,
   AgentEndpointClaimId,
@@ -28,7 +28,7 @@ import type {
   MessagingStoreOpId,
   TerminalSessionId,
 } from "../contract/records.js";
-import type { MessageId } from "../../public/contract/index.js";
+import type { MessageId } from "../../contract/schemas.js";
 
 const AGENT = "agent_a" as AgentId;
 const RUN_1 = "agentRun_1" as AgentRunId;

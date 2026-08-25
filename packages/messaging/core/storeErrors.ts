@@ -8,9 +8,9 @@
  * themselves. CursorInvalid maps to ValidationFailed.
  */
 
-import { MessagingError } from "../public/contract/index.js";
-import type { Cursor, ValidationIssue } from "../public/contract/index.js";
-import type { StoreError } from "../seams/store.js";
+import { MessagingError } from "../contract/schemas.js";
+import type { Cursor, ValidationIssue } from "../contract/schemas.js";
+import type { StoreError } from "../contract/ports/store.js";
 
 export function storeDependencyError(error: StoreError): MessagingError {
   switch (error.name) {

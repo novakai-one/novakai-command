@@ -7,8 +7,8 @@
 import { describe, it } from "node:test";
 import * as assert from "node:assert/strict";
 
-import { idPatterns, MessagingError } from "../../public/contract/index.js";
-import type { IdKind } from "../../public/contract/index.js";
+import { idPatterns, MessagingError } from "../../contract/index.js";
+import type { IdKind } from "../../contract/index.js";
 import { createSeededClock } from "../../adapters/clock-seeded.js";
 import { createSystemClock } from "../../adapters/clock-system.js";
 

@@ -70,8 +70,8 @@
  * template-specific policy: a rendered send is decided EXACTLY as SendMessage.
  */
 
-import { constants, schemaVersion } from "../public/contract/index.js";
-import { MessagingError } from "../public/contract/index.js";
+import { constants, schemaVersion } from "../contract/schemas.js";
+import { MessagingError } from "../contract/schemas.js";
 import type {
   ClientMessageId,
   ContactPolicy,
@@ -85,12 +85,12 @@ import type {
   TemplateRef,
   Thread,
   ThreadId,
-} from "../public/contract/index.js";
-import type { SendMessageInput } from "../public/contract/index.js";
-import type { ClockIds } from "../seams/clock.js";
-import type { Principal, ProvisioningDirectory } from "../seams/authority.js";
-import type { MembershipSource } from "../seams/membership.js";
-import type { AcceptanceInput, MessagingStore } from "../seams/store.js";
+} from "../contract/schemas.js";
+import type { SendMessageInput } from "../contract/schemas.js";
+import type { ClockIds } from "../contract/ports/clock.js";
+import type { Principal, ProvisioningDirectory } from "../contract/ports/authority.js";
+import type { MembershipSource } from "../contract/ports/membership.js";
+import type { AcceptanceInput, MessagingStore } from "../contract/ports/store.js";
 import { storeDependencyError } from "./storeErrors.js";
 
 export interface DecideSendDeps {

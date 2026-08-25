@@ -27,7 +27,7 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { createConfigMembership, createSeededClock, unknownRoom } from "../../public/index.js";
+import { createConfigMembership, createSeededClock, unknownRoom } from "../../contract/index.js";
 import type {
   ClientMessageId,
   ConfigMembership,
@@ -45,7 +45,7 @@ import type {
   SubscriptionSink,
   Thread,
   Timestamp,
-} from "../../public/index.js";
+} from "../../contract/index.js";
 import {
   ADMIN,
   ALICE,

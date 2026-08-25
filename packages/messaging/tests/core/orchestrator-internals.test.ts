@@ -14,7 +14,7 @@
 import { describe, it } from "node:test";
 import * as assert from "node:assert/strict";
 
-import { schemaVersion } from "../../public/contract/index.js";
+import { schemaVersion } from "../../contract/index.js";
 import type {
   ClientMessageId,
   Delivery,
@@ -24,13 +24,13 @@ import type {
   RequestHash,
   Sequence,
   ThreadId,
-} from "../../public/contract/index.js";
+} from "../../contract/index.js";
 import { createMemoryStore } from "../../adapters/store-memory.js";
 import { createSeededClock } from "../../adapters/clock-seeded.js";
 import type { SeededClock } from "../../adapters/clock-seeded.js";
 import { createMemoryPresenceTransport } from "../../adapters/presence-transport-memory.js";
 import type { StoreCore } from "../../adapters/store-shared.js";
-import type { MessagingStore } from "../../seams/store.js";
+import type { MessagingStore } from "../../contract/ports/store.js";
 import { createPresenceRegistry } from "../../core/presenceRegistry.js";
 import { createDeliveryOrchestrator } from "../../core/deliveryOrchestrator.js";
 import { runRecoverySweep } from "../../core/recoverySweep.js";

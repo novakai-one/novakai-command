@@ -26,7 +26,7 @@ import {
   createEmbeddedMessaging,
   DEFAULT_ROLE_GRANTS,
   errorCatalogue,
-} from "../../public/index.js";
+} from "../../contract/index.js";
 
 // dist/tests/contract/ -> package root is three levels up; from TS source
 // (tests/contract/) it is two. The contract JSON is source-only (tsc does

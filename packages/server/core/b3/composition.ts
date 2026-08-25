@@ -35,7 +35,7 @@ import {
   messagingEndpointPort, messagingInboxPort, transcriptCustodyPort,
 } from './b3c-ports.js';
 import { canonicalDataRoot, gateStoreRoute } from '../store-route.js';
-import type { AgentMessagingContract } from '../../../messaging/b3/contract/index.js';
+import type { AgentMessagingContract } from '../../../messaging/contract/index.js';
 import {
   createProviderFileLocator, createProviderFileSource, defaultProviderHomes,
   type B3TranscriptContract, type MirrorPump, type TranscriptSourcePort,

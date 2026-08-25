@@ -16,7 +16,7 @@ import type {
 } from '@novakai/foundation/contract';
 import type {
   AgentCommunicationItem, ConversationView, MessageAcceptance,
-} from '../../messaging/b3/contract/index.js';
+} from '../../messaging/contract/index.js';
 import type { RuntimeClient } from '../core/b3/client.js';
 import { pageFlags, type CliCommand, type Flags } from '../core/b3/cli-shared.js';
 

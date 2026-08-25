@@ -29,9 +29,9 @@
  * (and fires onEnded) instead of letting subscriptions flow indefinitely.
  */
 
-import { MessagingError } from "../public/contract/index.js";
-import type { ClockIds } from "../seams/clock.js";
-import type { Authority, Principal } from "../seams/authority.js";
+import { MessagingError } from "../contract/schemas.js";
+import type { ClockIds } from "../contract/ports/clock.js";
+import type { Authority, Principal } from "../contract/ports/authority.js";
 
 export const DEFAULT_REVALIDATE_GRACE_MS = 300_000;
 

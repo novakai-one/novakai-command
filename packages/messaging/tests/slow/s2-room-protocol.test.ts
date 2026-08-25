@@ -13,8 +13,8 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import type { AuthorityConfig, MembershipConfig } from "../../public/index.js";
-import { DEFAULT_ROLE_GRANTS } from "../../public/index.js";
+import type { AuthorityConfig, MembershipConfig } from "../../contract/index.js";
+import { DEFAULT_ROLE_GRANTS } from "../../contract/index.js";
 import { spawnStandaloneServer } from "../standalone/spawned-server.js";
 import { ExternalChief } from "../standalone/external-chief.js";
 

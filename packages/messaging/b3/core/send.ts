@@ -12,9 +12,9 @@ import {
   b3err, b3fail, b3ok, mintAgentInboxItemId, nowIsoUtc,
   type AuthenticatedPrincipal, type B3Result, type CommandContext,
 } from "@novakai/foundation/contract";
-import type { PersonId, ThreadId } from "../../public/contract/index.js";
-import type { ClockIds } from "../../seams/clock.js";
-import type { MessagingStore } from "../../seams/store.js";
+import type { PersonId, ThreadId } from "../../contract/schemas.js";
+import type { ClockIds } from "../../contract/ports/clock.js";
+import type { MessagingStore } from "../../contract/ports/store.js";
 import type {
   CommitTerminalOriginatedMessageInput, MessageAcceptance, SendAgentMessageInput,
 } from "../contract/api.js";

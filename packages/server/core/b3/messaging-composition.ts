@@ -8,7 +8,7 @@ import {
   composeAgentMessaging, createSystemClock, openFoundationMessagingStore,
   type AgentDirectoryPort, type AgentId, type AgentMessagingContract,
   type MessagingStore,
-} from '../../../messaging/b3/contract/index.js';
+} from '../../../messaging/contract/index.js';
 import { createFoundationConversationViews } from './conversation-views.js';
 import {
   composeB3Transcript, createMirrorPump, createTranscriptStore,

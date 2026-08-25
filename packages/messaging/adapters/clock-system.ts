@@ -7,10 +7,10 @@
  */
 
 import { randomBytes } from "node:crypto";
-import { idPrefixes } from "../public/contract/index.js";
-import type { IdKind, IdTypeMap, Timestamp } from "../public/contract/index.js";
-import { clockUnavailable } from "../seams/clock.js";
-import type { ClockIds } from "../seams/clock.js";
+import { idPrefixes } from "../contract/schemas.js";
+import type { IdKind, IdTypeMap, Timestamp } from "../contract/schemas.js";
+import { clockUnavailable } from "../contract/ports/clock.js";
+import type { ClockIds } from "../contract/ports/clock.js";
 
 export function createSystemClock(): ClockIds {
   return {

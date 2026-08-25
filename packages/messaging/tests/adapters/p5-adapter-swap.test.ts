@@ -44,8 +44,8 @@ import {
   createSeededClock,
   DEFAULT_ROLE_GRANTS,
   openJsonlStore,
-} from "../../public/index.js";
-import type { AuthorityConfig, EmbeddedMessaging, MessagingStore } from "../../public/index.js";
+} from "../../contract/index.js";
+import type { AuthorityConfig, EmbeddedMessaging, MessagingStore } from "../../contract/index.js";
 import {
   ADMIN,
   ALICE,

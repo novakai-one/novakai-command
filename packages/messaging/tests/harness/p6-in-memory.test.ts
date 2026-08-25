@@ -21,13 +21,13 @@ import {
   createMemoryStore,
   createSeededClock,
   DEFAULT_ROLE_GRANTS,
-} from "../../public/index.js";
+} from "../../contract/index.js";
 import type {
   EmbeddedMessaging,
   MessagingSession,
   SubscriptionMessage,
   SubscriptionSink,
-} from "../../public/index.js";
+} from "../../contract/index.js";
 import {
   ALICE,
   ADMIN,

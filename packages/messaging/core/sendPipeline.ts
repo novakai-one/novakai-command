@@ -52,20 +52,20 @@
  * production configuration.
  */
 
-import { MessagingError } from "../public/contract/index.js";
-import type { MessageId, ThreadId } from "../public/contract/index.js";
+import { MessagingError } from "../contract/schemas.js";
+import type { MessageId, ThreadId } from "../contract/schemas.js";
 import type {
   ClientMessageId,
   RequestHash,
   SendAccepted,
   SendMessageInput,
   TemplateRef,
-} from "../public/contract/index.js";
-import type { Principal } from "../seams/authority.js";
-import type { MembershipSource } from "../seams/membership.js";
-import type { MessagingStore } from "../seams/store.js";
-import type { ClockIds } from "../seams/clock.js";
-import type { ProvisioningDirectory } from "../seams/authority.js";
+} from "../contract/schemas.js";
+import type { Principal } from "../contract/ports/authority.js";
+import type { MembershipSource } from "../contract/ports/membership.js";
+import type { MessagingStore } from "../contract/ports/store.js";
+import type { ClockIds } from "../contract/ports/clock.js";
+import type { ProvisioningDirectory } from "../contract/ports/authority.js";
 import { decideSend } from "./decideSend.js";
 import type { DeliveryOrchestrator } from "./deliveryOrchestrator.js";
 import { hashSendFromTemplateRequest, hashSendRequest } from "./requestHash.js";

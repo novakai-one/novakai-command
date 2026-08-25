@@ -17,13 +17,13 @@
 import { describe, it } from "node:test";
 import * as assert from "node:assert/strict";
 
-import { DEFAULT_ROLE_GRANTS } from "../../public/index.js";
-import type { AuthorityConfig } from "../../public/index.js";
-import type { SubscriptionMessage } from "../../public/index.js";
-import { createCoreStack } from "../../composition/coreStack.js";
-import type { CoreStack } from "../../composition/coreStack.js";
-import { createProtocolConnection } from "../../protocol/connection.js";
-import type { ProtocolConnection } from "../../protocol/connection.js";
+import { DEFAULT_ROLE_GRANTS } from "../../contract/index.js";
+import type { AuthorityConfig } from "../../contract/index.js";
+import type { SubscriptionMessage } from "../../contract/index.js";
+import { createCoreStack } from "../../contract/compose/stack.js";
+import type { CoreStack } from "../../contract/compose/stack.js";
+import { createProtocolConnection } from "../../adapters/standalone/connection.js";
+import type { ProtocolConnection } from "../../adapters/standalone/connection.js";
 
 const AUTHORITY: AuthorityConfig = {
   principals: [
