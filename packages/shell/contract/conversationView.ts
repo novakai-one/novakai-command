@@ -46,6 +46,8 @@ export const ConversationViewRecord = z.object({
    */
   agentId: z.string().min(1).optional(),
   provider: z.enum(['kimi', 'claude', 'codex', 'mock']).optional(),
+  /** Canonical participant order for non-default Agent-to-Agent Views. */
+  participantIds: z.array(z.string().min(1)).min(2).optional(),
   /**
    * S3 (M3-01): the read cursor — the last message the transcript was actually
    * seen at. The ONLY stored read-state; unread projections derive from it.
@@ -75,6 +77,7 @@ export interface ConversationViewPatch {
   membershipKind?: 'direct' | 'group';
   agentId?: string;
   provider?: 'kimi' | 'claude' | 'codex' | 'mock';
+  participantIds?: string[];
   lastReadMessageId?: string;
 }
 
@@ -109,6 +112,7 @@ export async function setConversationView(
       ...(patch.membershipKind !== undefined ? { membershipKind: patch.membershipKind } : {}),
       ...(patch.agentId !== undefined ? { agentId: patch.agentId } : {}),
       ...(patch.provider !== undefined ? { provider: patch.provider } : {}),
+      ...(patch.participantIds !== undefined ? { participantIds: patch.participantIds } : {}),
       ...(patch.lastReadMessageId !== undefined ? { lastReadMessageId: patch.lastReadMessageId } : {}),
     };
     ConversationViewRecord.parse(record); // never persist a record the schema rejects

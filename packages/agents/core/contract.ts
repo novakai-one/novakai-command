@@ -23,7 +23,7 @@ import * as skillsStore from './skills/skills.js';
 import { runEventHooks } from './hooks/engine.js';
 import { attachLiveLane, pushContextAdvisory } from './live-lane/liveLane.js';
 import { sendToAgent, sendToSession } from './sessions/send.js';
-import { dispatchProviderTurn } from './sessions/provider-turn.js';
+import { dispatchProviderTurn, providerTurnReadiness } from './sessions/provider-turn.js';
 import type {
   ProviderTurnDispatch,
   ProviderTurnDispatchInput,
@@ -74,6 +74,8 @@ export interface AgentsContract {
   /** Lazily open or resume the private CLI runtime and queue one provider turn. */
   dispatchProviderTurn(input: ProviderTurnDispatchInput)
     : Promise<Result<ProviderTurnDispatch, AgentsError>>;
+  /** Process-backed boundary state for durable Agent-to-Agent delivery. */
+  providerTurnReadiness(agentId: AgentId): 'idle' | 'busy' | 'unavailable';
   /**
    * B1 DEC-B1-6: rebind a session that outlived the process, from its
    * persisted registry record. Returns false when the provider has no runtime
@@ -224,6 +226,7 @@ export function createAgentsContract(ctx: AgentsContext): AgentsContract {
       input,
       (agentId, opts, clientOpId) => contract.spawnAgent(agentId, opts, clientOpId),
     ),
+    providerTurnReadiness: (agentId) => providerTurnReadiness(ctx, agentId),
 
     subscribeAgentEvents: (handler) => ctx.bus.subscribe(handler),
 

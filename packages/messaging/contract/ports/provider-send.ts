@@ -8,7 +8,11 @@ export interface ProviderSendInput {
 }
 
 export type ProviderDispatchResult =
-  | { readonly ok: true; readonly dispatchedAt: string }
+  | {
+      readonly ok: true;
+      readonly dispatchedAt: string;
+      readonly certainty: 'confirmed' | 'unconfirmed';
+    }
   | { readonly ok: false; readonly code: string; readonly message: string };
 
 /** Provider variability hidden behind the sole Agents contract. */

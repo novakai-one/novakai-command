@@ -178,6 +178,11 @@ export function createTerminalAdapter(
       const rec = sessions.get(sessionId);
       return rec ? runtime.write(rec.runtimeKey, input) : false;
     },
+    isIdle(sessionId) {
+      const rec = sessions.get(sessionId);
+      return rec !== undefined && rec.state === 'running'
+        && runtime.isIdle?.(rec.runtimeKey) === true;
+    },
     subscribe(sessionId, handler): Unsubscribe {
       const rec = sessions.get(sessionId);
       if (!rec) return () => undefined;

@@ -232,8 +232,7 @@ out();
 out(`// --- enumerations & literal consts (collected from the contract source) -----`);
 for (const [name, { values, path, isConst }] of [...literals.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
   const varName = camel(name) + (isConst ? "Value" : "Values");
-  out(`// source path: ${path}`);
-  out(`export const ${varName} = ${JSON.stringify(values)} as const;`);
+  out(`export const ${varName} = ${JSON.stringify(values)} as const; // source path: ${path}`);
   out(`export type ${name} = (typeof ${varName})[number];`);
 }
 out();

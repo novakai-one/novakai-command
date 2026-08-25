@@ -2,8 +2,10 @@ import type { IngestCheckpoint } from "../records/ingest-checkpoint.js";
 import type { ProviderSession } from "../records/provider-session.js";
 import type { TranscriptLine } from "../records/transcript-line.js";
 import type { SendAttempt, SendJournal } from "../records/send-journal.js";
+import type { PendingDelivery } from '../records/pending-delivery.js';
 import type {
   EventCursor,
+  PendingDeliveryState,
   ProviderName,
   ProviderResumeId,
   ProviderSessionId,
@@ -68,6 +70,26 @@ export interface SendTransitionResult {
   readonly changed: boolean;
 }
 
+/** Idempotent creation of one transcript-addressed delivery. */
+export interface AcceptPendingDeliveryInput {
+  readonly delivery: PendingDelivery;
+}
+
+/** Compare-and-transition one PendingDelivery. */
+export interface PendingDeliveryTransitionInput {
+  readonly id: PendingDelivery['id'];
+  readonly expectedState: PendingDeliveryState;
+  readonly state: PendingDeliveryState;
+  readonly updatedAt: string;
+  readonly failure?: string;
+}
+
+/** Current delivery plus whether this invocation changed it. */
+export interface PendingDeliveryTransitionResult {
+  readonly delivery: PendingDelivery;
+  readonly changed: boolean;
+}
+
 /** Atomic transcript-first persistence inside the canonical Messaging store. */
 export interface TranscriptStore {
   getCheckpoint(sourceId: TranscriptSourceId): Promise<IngestCheckpoint | null>;
@@ -80,6 +102,11 @@ export interface TranscriptStore {
   bindAgentSession(agentId: string, sessionId: ProviderSessionId, updatedAt: string): Promise<number>;
   confirmSendForLines(sessionId: ProviderSessionId, lines: readonly TranscriptLine[], updatedAt: string): Promise<number>;
   listSendJournals(): Promise<readonly SendJournal[]>;
+  acceptPendingDelivery(input: AcceptPendingDeliveryInput): Promise<PendingDelivery>;
+  transitionPendingDelivery(
+    input: PendingDeliveryTransitionInput,
+  ): Promise<PendingDeliveryTransitionResult>;
+  listPendingDeliveries(): Promise<readonly PendingDelivery[]>;
   scanTranscriptEvents(after?: EventCursor, limit?: number): Promise<readonly TranscriptEvent[]>;
   close(): Promise<void>;
 }

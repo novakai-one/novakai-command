@@ -95,6 +95,7 @@ export interface ComposeTranscriptServerHostOptions {
   agentDirectory?: AgentDirectory;
   providerSend?: ProviderSend;
   externalAdoption?: ExternalAdoptionOptions;
+  conversations?: import('../../../messaging/contract/index.js').ConversationDirectory;
 }
 
 const legacyLine = (line: TranscriptLine): LegacyTranscriptLine => ({
@@ -147,6 +148,7 @@ export function composeTranscriptServerHost(
       intervalMs: options.ingestIntervalMs ?? options.watcherIntervalMs ?? DEFAULT_POLL_MS,
       ...(options.agentDirectory === undefined ? {} : { agentDirectory: options.agentDirectory }),
       ...(options.providerSend === undefined ? {} : { providerSend: options.providerSend }),
+      ...(options.conversations === undefined ? {} : { conversations: options.conversations }),
       ...(options.externalAdoption === undefined
         ? {} : { externalAdoption: options.externalAdoption }),
   });
@@ -181,11 +183,14 @@ export function composeTranscriptServerHost(
     },
     health: async (): Promise<MessagingHealth> => (await ready).runtime.health(),
     ingestNow: ingest,
+    routePending: async () => (await ready).runtime.routePending(),
     sendConversationMessage: async (input) =>
       (await ready).runtime.sendConversationMessage(input),
     listProviderSessions: async () => (await ready).runtime.listProviderSessions(),
     listTranscriptLines: async (input?: unknown) => (await ready).runtime.listTranscriptLines(input),
     listSendJournals: async () => (await ready).runtime.listSendJournals(),
+    listAgentCommunications: async (input) =>
+      (await ready).runtime.listAgentCommunications(input),
     subscribeTranscriptEvents(sink) {
       let closed = false;
       let subscription: { close(): void } | undefined;

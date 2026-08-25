@@ -27,7 +27,7 @@ export function createAgentsProviderSend(agents: AgentsSendDoor): ProviderSend {
       } as never));
       const error = object(outcome?.error);
       return outcome?.ok === true
-        ? { ok: true, dispatchedAt }
+        ? { ok: true, dispatchedAt, certainty: 'unconfirmed' }
         : {
             ok: false,
             code: 'ProviderSessionUnavailable',

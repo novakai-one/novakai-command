@@ -31,6 +31,7 @@ export interface DefaultMessagingRuntimeOptions {
   readonly intervalMs?: number;
   readonly agentDirectory?: AgentDirectory;
   readonly providerSend?: ProviderSend;
+  readonly conversations?: ConversationDirectory;
   readonly installIdentityHooks?: boolean;
   readonly externalAdoption?: ExternalAdoptionOptions;
 }
@@ -78,6 +79,7 @@ export async function createDefaultMessagingRuntime(
     },
     ...(options.agentDirectory === undefined ? {} : { agentDirectory: options.agentDirectory }),
     ...(options.providerSend === undefined ? {} : { providerSend: options.providerSend }),
+    ...(options.conversations === undefined ? {} : { conversations: options.conversations }),
     ...(options.externalAdoption === undefined ? {} : {
       adoption: {
         assignment: options.externalAdoption.assignment,

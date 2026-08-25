@@ -18,6 +18,7 @@ import { connectRuntime, type RuntimeClient } from '../../core/b3/client.js';
 import { governedRole } from '../governed-role.js';
 import { buildB3MessagingMethods } from '../../core/b3/messaging-methods.js';
 import type { MethodTable } from '../../contract/protocol.js';
+import { findAgentDeliveryMarker } from '../../../messaging/contract/index.js';
 
 /** The six §16.2 names, verbatim, plus the seven that make them reachable. */
 const PUBLISHED = [
@@ -128,6 +129,42 @@ test('the surfaces that make those six usable are published too', async () => {
   } finally {
     await harness.close();
   }
+});
+
+test('an authenticated Agent send emits transcript evidence without the legacy inbox', async () => {
+  const recipient = 'agent_aaaaaaaa-0000-4000-8000-000000000001';
+  let legacySends = 0;
+  const table = buildB3MessagingMethods({
+    messaging: {
+      async sendAgentMessage() {
+        legacySends += 1;
+        throw new Error('legacy send must not run');
+      },
+    } as never,
+    transcript: {} as never,
+    agentOfRun: async () => 'agent_bbbbbbbb-0000-4000-8000-000000000002',
+    principalFor: () => ({
+      id: 'agentRun_01900000-0000-7000-8000-000000000001',
+      kind: 'agent-run',
+      agentRunId: 'agentRun_01900000-0000-7000-8000-000000000001',
+      verifiedScopes: [],
+    } as never),
+    contextFor: (principal, _session, clientOpId) => ({
+      principal, clientOpId, traceId: 'trace_x' as never, contractVersion: 1,
+    }),
+  });
+  const result = await call(table, 'b3.messaging.sendAgent', {
+    target: { kind: 'agent', agentId: recipient },
+    text: 'status please',
+  });
+  assert.equal(result.ok, true, JSON.stringify(result));
+  const instruction = result.value as { transcriptMarker: string };
+  const marker = findAgentDeliveryMarker(instruction.transcriptMarker);
+  assert.equal(marker?.version, 1);
+  assert.equal(marker?.recipientAgentId, recipient);
+  assert.equal(marker?.text, 'status please');
+  assert.match(marker?.clientOpId ?? '', /^op_/u);
+  assert.equal(legacySends, 0);
 });
 
 test('a caller starting from nothing can mint a Thread and send a Message', async () => {

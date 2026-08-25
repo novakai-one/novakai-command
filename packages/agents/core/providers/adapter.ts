@@ -27,6 +27,8 @@ export interface TerminalAdapter {
   close(sessionId: string): boolean;
   /** OD-C3: switch the session's model for real. False = unknown session. */
   setSessionModel?(sessionId: string, model: string): boolean;
+  /** True only when no provider child process is executing for this session. */
+  isIdle?(sessionId: string): boolean;
   /**
    * B1 DEC-B1-6: rebind a session that outlived this process. The registry has
    * the handle (sessionId + provider conversation id); nothing is live to
@@ -106,6 +108,8 @@ export interface ProviderCliRuntime extends TerminalRuntimeLike {
   drain(key: string): Promise<void>;
   /** Per-turn completion records — the usage/supervision input (DEC-B1-7). */
   onTurn(callback: (record: ProviderTurnRecord) => void): void;
+  /** Process truth used by turn-boundary delivery; queued/running means false. */
+  isIdle(key: string): boolean;
 }
 
 /**
@@ -144,6 +148,8 @@ export interface TerminalRuntimeLike {
   list(): Array<{ agentId: string; status: 'running' | 'exited' }>;
   onData(callback: (agentId: string, data: string) => void): void;
   onExit(callback: (agentId: string, exitCode: number | null) => void): void;
+  /** Optional process truth; absent hosts cannot prove an idle boundary. */
+  isIdle?(agentId: string): boolean;
   /**
    * OD-C3 RULED: OPTIONAL mid-session model-switch channel. Present only on
    * runtimes with a verified mechanism (kimi CLI: `-S <id> -m <alias>`, sticky

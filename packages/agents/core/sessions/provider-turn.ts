@@ -19,6 +19,19 @@ type Spawn = (
 
 const tails = new WeakMap<AgentsContext, Map<string, Promise<unknown>>>();
 
+/** Process-backed readiness; absence is never guessed as idle. */
+export function providerTurnReadiness(
+  ctx: AgentsContext,
+  agentId: string,
+): 'idle' | 'busy' | 'unavailable' {
+  const session = [...ctx.sessions.entries()].reverse().find(([, value]) =>
+    value.agentId === agentId)?.[0];
+  if (session === undefined) return 'unavailable';
+  const adapter = Object.values(ctx.adapters).find((candidate) => candidate.attach(session));
+  if (adapter === undefined || adapter.isIdle === undefined) return 'unavailable';
+  return adapter.isIdle(session) ? 'idle' : 'busy';
+}
+
 function serialise<T>(ctx: AgentsContext, agentId: string, action: () => Promise<T>): Promise<T> {
   const byAgent = tails.get(ctx) ?? new Map<string, Promise<unknown>>();
   tails.set(ctx, byAgent);

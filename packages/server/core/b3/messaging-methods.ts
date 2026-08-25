@@ -31,6 +31,7 @@ import {
   readPromoteObservedSubagentInput, readSendAgentMessageInput, readThreadIdInput,
   readTranscriptBindingLookup,
 } from './messaging-validate.js';
+import { sendAgentCommand } from './agent-addressed-delivery.js';
 
 export interface B3MessagingMethodOptions {
   readonly messaging: AgentMessagingContract;
@@ -190,7 +191,7 @@ export function buildB3MessagingMethods(options: B3MessagingMethodOptions): Meth
   return {
     // --- §16.2, exactly these names -----------------------------------------
     'b3.messaging.sendAgent': method(readSendAgentMessageInput,
-      (payload, context) => messaging.sendAgentMessage(context, payload)),
+      (payload, context, principal) => sendAgentCommand(options, payload, context, principal)),
 
     'b3.messaging.listAgentCommunications': ownAgentOnly(
       readListAgentCommunicationsInput,

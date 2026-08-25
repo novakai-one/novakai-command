@@ -255,6 +255,11 @@ export function createCodexCliRuntime(options: CodexCliRuntimeOptions): CodexCli
     onExit(callback) { exitCallbacks.push(callback); },
     onTurn(callback) { turnCallbacks.push(callback); },
 
+    isIdle(key) {
+      const session = sessions.get(key);
+      return session !== undefined && session.status === 'running' && session.current === null;
+    },
+
     resumeHint(key) {
       return sessions.get(key)?.cliSessionId ?? null;
     },

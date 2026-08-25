@@ -1,6 +1,7 @@
 import type { Outcome } from "../../contract/outcome.js";
 import type {
   IngestResult,
+  DeliveryRunResult,
   MessagingHealth,
   MessagingRuntimeApi,
 } from "../../contract/runtime.js";
@@ -33,6 +34,13 @@ import type { ConversationSendAcceptance, ConversationSendInput } from "../../co
 import type { SendJournal } from "../../contract/records/send-journal.js";
 import { sendConversationMessage } from "../send/send.js";
 import { AmbiguousProviderSessionEvidenceError } from "./reconcile.js";
+import { AddressedDeliveryReconciler } from '../delivery/queue-addressed.js';
+import { routePendingDeliveries } from '../delivery/router.js';
+import type {
+  AgentCommunicationPage,
+  AgentCommunicationsQuery,
+} from '../../contract/communications.js';
+import { listAgentCommunications as communicationQuery } from '../communications/queries.js';
 
 /** Dependencies and cadence for the provider-transcript ingestion runtime. */
 export interface MessagingRuntimeOptions {
@@ -44,6 +52,7 @@ export interface MessagingRuntimeOptions {
   readonly eventBus?: DurableTranscriptEventBus;
   readonly agentDirectory?: AgentDirectory;
   readonly providerSend?: ProviderSend;
+  readonly conversations?: ConversationDirectory;
   readonly adoption?: {
     readonly assignment: AdoptionAssignment;
     readonly conversations: ConversationDirectory;
@@ -105,6 +114,9 @@ class IngestionRuntime implements MessagingRuntimeApi {
   private lastResult: IngestResult | undefined;
   private lastError: string | undefined;
   private inFlight: Promise<Outcome<IngestResult>> | undefined;
+  private deliveryInFlight: Promise<Outcome<DeliveryRunResult>> | undefined;
+  private lastDeliveryRunAt: string | undefined;
+  private readonly addressedDeliveries = new AddressedDeliveryReconciler();
 
   constructor(private readonly options: MessagingRuntimeOptions) {
     this.clock = options.now ?? (() => new Date().toISOString());
@@ -137,6 +149,9 @@ class IngestionRuntime implements MessagingRuntimeApi {
       runs: this.runs,
       ...(this.lastResult === undefined ? {} : { lastResult: this.lastResult }),
       ...(this.lastError === undefined ? {} : { lastError: this.lastError }),
+      ...(this.lastDeliveryRunAt === undefined ? {} : { lastDeliveryRunAt: this.lastDeliveryRunAt }),
+      pendingDeliveryCount: (await this.options.store.listPendingDeliveries())
+        .filter((delivery) => delivery.state === 'queued' || delivery.state === 'claimed').length,
     };
   }
 
@@ -157,6 +172,11 @@ class IngestionRuntime implements MessagingRuntimeApi {
           ? {} : { agentDirectory: this.options.agentDirectory }),
         ...(this.options.adoption === undefined ? {} : { adoption: this.options.adoption }),
       });
+      await this.addressedDeliveries.reconcile(this.options.store);
+      if (this.deliveryComposed()) {
+        const routed = await this.routePending();
+        if (routed.kind === 'error') throw routed.error;
+      }
       await this.eventBus.pump();
       this.runs += 1;
       this.lastResult = value;
@@ -170,6 +190,38 @@ class IngestionRuntime implements MessagingRuntimeApi {
     } finally {
       this.inFlight = undefined;
     }
+  }
+
+  routePending(): Promise<Outcome<DeliveryRunResult>> {
+    if (this.deliveryInFlight !== undefined) return this.deliveryInFlight;
+    this.deliveryInFlight = this.runDelivery();
+    return this.deliveryInFlight;
+  }
+
+  private async runDelivery(): Promise<Outcome<DeliveryRunResult>> {
+    try {
+      if (!this.deliveryComposed()) throw new Error('Messaging delivery dependencies are not composed');
+      await this.addressedDeliveries.reconcile(this.options.store);
+      const value = await routePendingDeliveries({
+        store: this.options.store,
+        agents: this.options.agentDirectory!,
+        conversations: this.options.conversations!,
+        providerSend: this.options.providerSend!,
+        now: this.clock,
+      });
+      this.lastDeliveryRunAt = this.clock();
+      return { kind: 'ok', value };
+    } catch (cause) {
+      return unavailable(cause);
+    } finally {
+      this.deliveryInFlight = undefined;
+    }
+  }
+
+  private deliveryComposed(): boolean {
+    return this.options.agentDirectory !== undefined
+      && this.options.providerSend !== undefined
+      && this.options.conversations !== undefined;
   }
 
   async listProviderSessions(): Promise<Outcome<readonly ProviderSession[]>> {
@@ -212,6 +264,16 @@ class IngestionRuntime implements MessagingRuntimeApi {
   async listSendJournals(): Promise<Outcome<readonly SendJournal[]>> {
     try {
       return { kind: "ok", value: await this.options.store.listSendJournals() };
+    } catch (cause) {
+      return unavailable(cause);
+    }
+  }
+
+  async listAgentCommunications(
+    input: AgentCommunicationsQuery,
+  ): Promise<Outcome<AgentCommunicationPage>> {
+    try {
+      return { kind: 'ok' as const, value: await communicationQuery(this.options.store, input) };
     } catch (cause) {
       return unavailable(cause);
     }

@@ -15,7 +15,7 @@ import type {
   B3ClientOpId, B3ContractError, B3Result,
 } from '@novakai/foundation/contract';
 import type {
-  AgentCommunicationItem, ConversationView, MessageAcceptance,
+  AgentCommunicationItem, AgentDeliveryInstruction, ConversationView, MessageAcceptance,
 } from '../../messaging/contract/index.js';
 import type { RuntimeClient } from '../core/b3/client.js';
 import { pageFlags, type CliCommand, type Flags } from '../core/b3/cli-shared.js';
@@ -42,7 +42,12 @@ const isRun = (target: string): boolean => target.startsWith('agentRun_');
  * Message has NOT reached the agent — saying "sent" would be the kind of small
  * lie that makes someone stop trusting the tool.
  */
-function describeAcceptance(acceptance: MessageAcceptance): string {
+type MessageCommandResult = MessageAcceptance | AgentDeliveryInstruction;
+
+function describeAcceptance(acceptance: MessageCommandResult): string {
+  if ('kind' in acceptance) {
+    return `${acceptance.transcriptMarker}\nAddressed delivery recorded for transcript ingestion.`;
+  }
   const state = {
     'committed': 'committed (no delivery was required)',
     'queued-for-agent': 'accepted and queued — the agent has not read it yet',
@@ -94,9 +99,9 @@ export function messageCommands(
         return usage('agent.message', argFlags,
           '<agentId|agentRunId> --thread <threadId> --text <text>');
       }
-      return emit('agent.message', argFlags, await withClient<MessageAcceptance>(
+      return emit('agent.message', argFlags, await withClient<MessageCommandResult>(
         async (client) => {
-          return client.call<MessageAcceptance>('b3.messaging.sendAgent', {
+          return client.call<MessageCommandResult>('b3.messaging.sendAgent', {
             target: isRun(target)
               ? { kind: 'exact-run', agentRunId: target }
               : { kind: 'agent', agentId: target },

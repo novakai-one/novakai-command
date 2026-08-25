@@ -7,6 +7,7 @@ import type {
   SendState,
   Timestamp,
   TranscriptLineId,
+  ProviderSubmissionCertainty,
 } from '../types.js';
 
 /** Immutable request captured before a provider effect starts. */
@@ -21,6 +22,7 @@ export interface SendAttempt {
   readonly state: SendAttemptState;
   readonly dispatchedAt: Timestamp;
   readonly confirmedLineId?: TranscriptLineId;
+  readonly submission?: ProviderSubmissionCertainty;
   readonly failure?: string;
 }
 

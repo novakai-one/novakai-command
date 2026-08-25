@@ -71,6 +71,7 @@ function adoption() {
         agent: { agentId: 'agent_external', provider: 'claude', currentProviderSessionId },
       };
     },
+    async deliveryReadiness() { return 'idle'; },
     async attachProviderSession(_agentId, providerSessionId) {
       const replay = currentProviderSessionId === providerSessionId;
       currentProviderSessionId = providerSessionId;
@@ -83,6 +84,7 @@ function adoption() {
       assignment: { teamId: 'team_external', missionId: 'mission_external' },
       conversations: {
         async ensureForAdoptedAgent() { return { conversationId: 'conv_external' }; },
+        async ensureForAgentPair() { return { conversationId: 'conv_agents' }; },
       },
       limitPerTick: 10,
     },

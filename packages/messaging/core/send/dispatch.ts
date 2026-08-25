@@ -73,7 +73,7 @@ export async function dispatchAcceptedSend(
       expectedState: 'dispatching',
       state,
       updatedAt: dependencies.now() as Timestamp,
-      attempt: { ...attempt, state },
+      attempt: { ...attempt, state, submission: effect.certainty },
     })).journal;
   } catch (cause) {
     const message = cause instanceof Error ? cause.message : String(cause);

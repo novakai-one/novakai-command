@@ -14,6 +14,9 @@ interface AdoptedConversationDirectory {
 const conversationIdFor = (agentId: string): string =>
   `conv_external_${createHash('sha256').update(agentId).digest('hex').slice(0, 32)}`;
 
+const pairConversationId = (participants: readonly string[]): string =>
+  `conv_agents_${createHash('sha256').update([...participants].sort().join(':')).digest('hex').slice(0, 32)}`;
+
 const titleFor = (provider: string, resumeId: string | undefined): string => {
   const providerName = `${provider[0]?.toUpperCase() ?? ''}${provider.slice(1)}`;
   return `External ${providerName} ${resumeId?.slice(-8) ?? 'session'}`;
@@ -66,6 +69,26 @@ export function createAdoptedConversationDirectory(options: {
           sessionId: input.sessionId,
         };
         for (const listener of listeners) listener(conversation);
+        return { conversationId };
+      },
+      async ensureForAgentPair(input) {
+        const participantIds = [...input.participantAgentIds].sort();
+        const conversationId = pairConversationId(participantIds);
+        const persisted = await setConversationView(conversationViewDriver, conversationId, {
+          threadRef: null,
+          pinned: false,
+          archived: true,
+          titleOverride: 'Agent communication',
+          lastActivityAt: new Date().toISOString(),
+          openedForPrincipalId: options.humanPrincipalId,
+          membershipKind: 'group',
+          participantIds,
+        }, input.clientOpId);
+        if (!persisted.ok) {
+          throw new Error(
+            `Agent pair Conversation View ensure failed: ${persisted.error.code} ${persisted.error.message}`,
+          );
+        }
         return { conversationId };
       },
     },

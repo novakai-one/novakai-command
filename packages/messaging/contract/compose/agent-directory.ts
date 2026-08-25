@@ -6,6 +6,7 @@ interface AgentsContractDoor {
   listAgents(): Promise<unknown>;
   defineAgent(input: never, clientOpId: never): Promise<unknown>;
   attachProviderSession(input: never): Promise<unknown>;
+  providerTurnReadiness(agentId: never): 'idle' | 'busy' | 'unavailable';
 }
 
 const object = (value: unknown): Record<string, unknown> | undefined =>
@@ -87,6 +88,9 @@ export function createAgentDirectory(agents: AgentsContractDoor): AgentDirectory
       if (result?.ok !== true || found === undefined
         || found.absent === true || !supportedProvider(String(found.provider))) return null;
       return asEntry(found);
+    },
+    async deliveryReadiness(agentId) {
+      return agents.providerTurnReadiness(agentId as never);
     },
     ensureForSession: (input) => ensureForSession(agents, input),
     async attachProviderSession(agentId, providerSessionId, clientOpId) {

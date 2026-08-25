@@ -25,6 +25,7 @@ function fakeDirectories() {
   const views: string[] = [];
   const directory: AgentDirectory = {
     async get(agentId) { return agents.get(agentId) ?? null; },
+    async deliveryReadiness() { return 'idle'; },
     async ensureForSession(input) {
       const prior = bySession.get(input.sessionId);
       const agentId = prior ?? `agent_external_${String(bySession.size + 1)}`;
@@ -50,6 +51,9 @@ function fakeDirectories() {
     async ensureForAdoptedAgent(input) {
       views.push(input.agent.agentId);
       return { conversationId: `conv_${input.agent.agentId}` };
+    },
+    async ensureForAgentPair(input) {
+      return { conversationId: `conv_${input.participantAgentIds.join('_')}` };
     },
   };
   return { directory, conversations, ensured, attached, views };

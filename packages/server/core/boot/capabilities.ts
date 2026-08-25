@@ -100,6 +100,7 @@ export async function composeCapabilities(input: {
     ...(options.providerHome ? { providerHome: options.providerHome } : {}),
     agentDirectory,
     providerSend: messaging.createAgentsProviderSend(agents),
+    conversations: adoptedConversations.port,
     ...(configuredAdoption(config.transcript, adoptedConversations.port)),
   });
   note(

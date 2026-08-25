@@ -129,6 +129,7 @@ test("hook assignment attaches the discovered ProviderSession before lines becom
     async ensureForSession() {
       return { ok: false, code: "NotExpected", message: "hook assignment does not adopt" };
     },
+    async deliveryReadiness() { return "idle"; },
     async attachProviderSession(agentId, providerSessionId) {
       calls.push(`${agentId}:${providerSessionId}`);
       return { ok: true, state: "attached" };
@@ -289,6 +290,7 @@ test("default cadence exposes an appended provider reply within two seconds", as
     async ensureForSession() {
       return { ok: false, code: "NotExpected", message: "hook path does not adopt" };
     },
+    async deliveryReadiness() { return "idle"; },
     async attachProviderSession() { return { ok: true, state: "attached" }; },
   };
   const composed = await createDefaultMessagingRuntime({ root, providerHome, agentDirectory });

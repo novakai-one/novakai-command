@@ -35,6 +35,7 @@ function directory() {
     async ensureForSession() {
       return { ok: false, code: 'NotExpected', message: 'send proof does not adopt' };
     },
+    async deliveryReadiness() { return 'idle'; },
     async attachProviderSession(_agentId, providerSessionId) {
       sessionId = providerSessionId;
       return { ok: true, state: 'attached' };
@@ -60,7 +61,11 @@ test('acceptance is durable before one provider effect and confirms only from tr
       effects += 1;
       const journals = await store.listSendJournals();
       assert.equal(journals[0]?.state, 'dispatching');
-      return { ok: true, dispatchedAt: '2026-08-25T00:00:01.000Z' };
+      return {
+        ok: true,
+        dispatchedAt: '2026-08-25T00:00:01.000Z',
+        certainty: 'unconfirmed',
+      };
     },
   };
   let tick = 0;
@@ -131,7 +136,11 @@ test('a reused client operation with different content is rejected before effect
     providerSend: {
       async dispatch() {
         effects += 1;
-        return { ok: true, dispatchedAt: new Date().toISOString() };
+        return {
+          ok: true,
+          dispatchedAt: new Date().toISOString(),
+          certainty: 'unconfirmed',
+        };
       },
     },
   });
@@ -151,7 +160,11 @@ test('Foundation adapter replays SendJournal state from the canonical database',
     normalizers,
     agentDirectory: agents.value,
     providerSend: {
-      dispatch: async () => ({ ok: true, dispatchedAt: '2026-08-25T00:00:00.000Z' }),
+      dispatch: async () => ({
+        ok: true,
+        dispatchedAt: '2026-08-25T00:00:00.000Z',
+        certainty: 'unconfirmed',
+      }),
     },
   });
   assert.equal((await runtime.sendConversationMessage(sendInput)).kind, 'ok');

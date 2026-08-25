@@ -5,6 +5,8 @@ export * from "./api.js";
 export * from "./outcome.js";
 export * from "./runtime.js";
 export * from "./agent-identity.js";
+export * from './agent-delivery-marker.js';
+export * from './communications.js';
 export * from "./commands.js";
 export * from "./compose.js";
 export * from "./records/index.js";
@@ -24,6 +26,9 @@ export type {
   TranscriptStore,
   AcceptSendInput,
   AcceptSendResult,
+  AcceptPendingDeliveryInput,
+  PendingDeliveryTransitionInput,
+  PendingDeliveryTransitionResult,
   SendTransitionInput,
   SendTransitionResult,
 } from "./ports/transcript-store.js";
@@ -38,6 +43,7 @@ export type {
 export type {
   ConversationDirectory,
   EnsureAdoptedConversationInput,
+  EnsureAgentPairConversationInput,
 } from "./ports/conversation-directory.js";
 export { createAgentDirectory } from "./compose/agent-directory.js";
 export type {

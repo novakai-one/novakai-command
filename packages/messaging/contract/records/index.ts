@@ -7,3 +7,4 @@ export type {
   SendAttempt,
   SendJournal,
 } from "./send-journal.js";
+export type { PendingDelivery } from './pending-delivery.js';

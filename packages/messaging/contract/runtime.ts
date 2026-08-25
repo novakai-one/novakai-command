@@ -4,6 +4,16 @@ import type { TranscriptLine } from "./records/transcript-line.js";
 import type { SendJournal } from "./records/send-journal.js";
 import type { ConversationSendAcceptance, ConversationSendInput } from "./commands.js";
 import type { TranscriptEvent } from "./ports/transcript-store.js";
+import type { AgentCommunicationPage, AgentCommunicationsQuery } from './communications.js';
+
+/** Counts from one idle-boundary delivery pass. */
+export interface DeliveryRunResult {
+  readonly claimed: number;
+  readonly deferredBusy: number;
+  readonly submitted: number;
+  readonly failed: number;
+  readonly observed: number;
+}
 
 /** Counts returned by one provider-source scan and commit pass. */
 export interface IngestResult {
@@ -21,6 +31,8 @@ export interface MessagingHealth {
   readonly runs: number;
   readonly lastResult?: IngestResult;
   readonly lastError?: string;
+  readonly lastDeliveryRunAt?: string;
+  readonly pendingDeliveryCount: number;
 }
 
 /** Host-facing control and committed-query surface for transcript ingestion. */
@@ -29,10 +41,14 @@ export interface MessagingRuntimeApi {
   stop(): Promise<Outcome<void>>;
   health(): Promise<MessagingHealth>;
   ingestNow(): Promise<Outcome<IngestResult>>;
+  routePending(): Promise<Outcome<DeliveryRunResult>>;
   sendConversationMessage(input: ConversationSendInput): Promise<Outcome<ConversationSendAcceptance>>;
   listProviderSessions(): Promise<Outcome<readonly ProviderSession[]>>;
   listTranscriptLines(input?: unknown): Promise<Outcome<readonly TranscriptLine[]>>;
   listSendJournals(): Promise<Outcome<readonly SendJournal[]>>;
+  listAgentCommunications(
+    input: AgentCommunicationsQuery,
+  ): Promise<Outcome<AgentCommunicationPage>>;
   subscribeTranscriptEvents(
     sink: (event: TranscriptEvent) => void | Promise<void>,
   ): { close(): void };

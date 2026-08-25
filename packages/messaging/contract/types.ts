@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // GENERATED FILE — DO NOT EDIT.
 // Source: contract/messaging-contract.json (law #3 single source of truth).
-// contractVersion 1.1.0 · schemaVersion 1 · sha256:7cbe148a2bc8060d
+// contractVersion 1.2.0 · schemaVersion 1 · sha256:49158916c6615fb8
 // Regenerate: npm run generate
 // ---------------------------------------------------------------------------
 
@@ -9,7 +9,7 @@ declare const brand: unique symbol;
 type Brand<Name extends string> = { readonly [brand]: Name };
 
 // --- versions & constants ------------------------------------------------
-export const contractVersion = "1.1.0" as const;
+export const contractVersion = "1.2.0" as const;
 export const schemaVersion = 1 as const;
 export const constants = {
   "messageMaxBytes": 32768,
@@ -48,6 +48,7 @@ export type EventCursor = string & Brand<"EventCursor">;
 export type ConversationId = string & Brand<"ConversationId">;
 export type SendId = string & Brand<"SendId">;
 export type SendAttemptId = string & Brand<"SendAttemptId">;
+export type PendingDeliveryId = string & Brand<"PendingDeliveryId">;
 export type RequestHash = string & Brand<"RequestHash">;
 export type ClientMessageId = string & Brand<"ClientMessageId">;
 export type Address = string & Brand<"Address">;
@@ -74,6 +75,7 @@ export const idPatterns = {
   ConversationId: "^conv_[A-Za-z0-9-]+$",
   SendId: "^send_[0-9a-f]{64}$",
   SendAttemptId: "^sendAttempt_[0-9a-f]{64}$",
+  PendingDeliveryId: "^pendingDelivery_[0-9a-f]{64}$",
   RequestHash: "^[0-9a-f]{64}$",
   Address: "^(person:person_|thread:thread_)[A-Za-z0-9-]+$",
 } as const;
@@ -110,110 +112,79 @@ export interface IdTypeMap {
 }
 
 // --- enumerations & literal consts (collected from the contract source) -----
-// source path: AcceptanceRecord.kind
-export const acceptanceRecordKindValue = ["acceptance"] as const;
+export const acceptanceRecordKindValue = ["acceptance"] as const; // source path: AcceptanceRecord.kind
 export type AcceptanceRecordKind = (typeof acceptanceRecordKindValue)[number];
-// source path: RecipientSnapshot.blocked.reason
-export const blockedReasonValue = ["blocked-by-contact-policy"] as const;
+export const blockedReasonValue = ["blocked-by-contact-policy"] as const; // source path: RecipientSnapshot.blocked.reason
 export type BlockedReason = (typeof blockedReasonValue)[number];
-// source path: CapabilityView.features
-export const capabilityViewFeaturesValues = ["direct","rooms","subscribe","attention","templates"] as const;
+export const capabilityViewFeaturesValues = ["direct","rooms","subscribe","attention","templates"] as const; // source path: CapabilityView.features
 export type CapabilityViewFeatures = (typeof capabilityViewFeaturesValues)[number];
-// source path: ContactPolicy.defaultRule
-export const contactPolicyDefaultRuleValues = ["allow","deny"] as const;
+export const contactPolicyDefaultRuleValues = ["allow","deny"] as const; // source path: ContactPolicy.defaultRule
 export type ContactPolicyDefaultRule = (typeof contactPolicyDefaultRuleValues)[number];
-// source path: ContactPolicy.kind
-export const contactPolicyKindValue = ["contact-policy"] as const;
+export const contactPolicyKindValue = ["contact-policy"] as const; // source path: ContactPolicy.kind
 export type ContactPolicyKind = (typeof contactPolicyKindValue)[number];
-// source path: DeliveryAttempt.kind
-export const deliveryAttemptKindValue = ["delivery-attempt"] as const;
+export const deliveryAttemptKindValue = ["delivery-attempt"] as const; // source path: DeliveryAttempt.kind
 export type DeliveryAttemptKind = (typeof deliveryAttemptKindValue)[number];
-// source path: DeliveryAttempt.outcome
-export const deliveryAttemptOutcomeValues = ["effect","failure","superseded"] as const;
+export const deliveryAttemptOutcomeValues = ["effect","failure","superseded"] as const; // source path: DeliveryAttempt.outcome
 export type DeliveryAttemptOutcome = (typeof deliveryAttemptOutcomeValues)[number];
-// source path: Delivery.kind
-export const deliveryKindValue = ["delivery"] as const;
+export const deliveryKindValue = ["delivery"] as const; // source path: Delivery.kind
 export type DeliveryKind = (typeof deliveryKindValue)[number];
-// source path: DeliveryState
-export const deliveryStateValues = ["pending","held","delivered","failed"] as const;
+export const deliveryStateValues = ["pending","held","delivered","failed"] as const; // source path: DeliveryState
 export type DeliveryState = (typeof deliveryStateValues)[number];
-// source path: DeliveryStateReason
-export const deliveryStateReasonValues = ["blocked-by-contact-policy","retry-exhausted","transport-failure","dnd-hold","dnd-released","adapter-effect","fan-out-loser"] as const;
+export const deliveryStateReasonValues = ["blocked-by-contact-policy","retry-exhausted","transport-failure","dnd-hold","dnd-released","adapter-effect","fan-out-loser"] as const; // source path: DeliveryStateReason
 export type DeliveryStateReason = (typeof deliveryStateReasonValues)[number];
-// source path: DndPolicy.kind
-export const dndPolicyKindValue = ["dnd-policy"] as const;
+export const dndPolicyKindValue = ["dnd-policy"] as const; // source path: DndPolicy.kind
 export type DndPolicyKind = (typeof dndPolicyKindValue)[number];
-// source path: Grant
-export const grantValues = ["priority.override","policy.admin","template.write","oversight.read"] as const;
+export const grantValues = ["priority.override","policy.admin","template.write","oversight.read"] as const; // source path: Grant
 export type Grant = (typeof grantValues)[number];
-// source path: MessageBody.format
-export const messageBodyFormatValues = ["text","markdown"] as const;
+export const messageBodyFormatValues = ["text","markdown"] as const; // source path: MessageBody.format
 export type MessageBodyFormat = (typeof messageBodyFormatValues)[number];
-// source path: Message.kind
-export const messageKindValue = ["message"] as const;
+export const messageKindValue = ["message"] as const; // source path: Message.kind
 export type MessageKind = (typeof messageKindValue)[number];
-// source path: PolicyChanged.policy
-export const policyChangedPolicyValues = ["contact","dnd"] as const;
+export const pendingDeliveryStateValues = ["queued","claimed","submitted-confirmed","submitted-unconfirmed","transcript-observed","failed"] as const; // source path: PendingDeliveryState
+export type PendingDeliveryState = (typeof pendingDeliveryStateValues)[number];
+export const policyChangedPolicyValues = ["contact","dnd"] as const; // source path: PolicyChanged.policy
 export type PolicyChangedPolicy = (typeof policyChangedPolicyValues)[number];
-// source path: PresenceChanged.change
-export const presenceChangedChangeValues = ["opened","closed"] as const;
+export const presenceChangedChangeValues = ["opened","closed"] as const; // source path: PresenceChanged.change
 export type PresenceChangedChange = (typeof presenceChangedChangeValues)[number];
-// source path: Presence.kind
-export const presenceKindValue = ["presence"] as const;
+export const presenceKindValue = ["presence"] as const; // source path: Presence.kind
 export type PresenceKind = (typeof presenceKindValue)[number];
-// source path: Priority
-export const priorityValues = ["normal","urgent"] as const;
+export const priorityValues = ["normal","urgent"] as const; // source path: Priority
 export type Priority = (typeof priorityValues)[number];
-// source path: ProviderName
-export const providerNameValues = ["claude","codex","kimi"] as const;
+export const providerNameValues = ["claude","codex","kimi"] as const; // source path: ProviderName
 export type ProviderName = (typeof providerNameValues)[number];
-// source path: ProviderSessionStatus
-export const providerSessionStatusValues = ["discovered-only","assignment-pending","adoption-pending","idle","busy","closed","failed"] as const;
+export const providerSessionStatusValues = ["discovered-only","assignment-pending","adoption-pending","idle","busy","closed","failed"] as const; // source path: ProviderSessionStatus
 export type ProviderSessionStatus = (typeof providerSessionStatusValues)[number];
-// source path: RecipientSnapshot.kind
-export const recipientSnapshotKindValue = ["recipient-snapshot"] as const;
+export const providerSubmissionCertaintyValues = ["confirmed","unconfirmed"] as const; // source path: ProviderSubmissionCertainty
+export type ProviderSubmissionCertainty = (typeof providerSubmissionCertaintyValues)[number];
+export const recipientSnapshotKindValue = ["recipient-snapshot"] as const; // source path: RecipientSnapshot.kind
 export type RecipientSnapshotKind = (typeof recipientSnapshotKindValue)[number];
-// source path: SendAttemptState
-export const sendAttemptStateValues = ["claimed","awaiting-session-assignment","awaiting-transcript","confirmed","failed","indeterminate"] as const;
+export const sendAttemptStateValues = ["claimed","awaiting-session-assignment","awaiting-transcript","confirmed","failed","indeterminate"] as const; // source path: SendAttemptState
 export type SendAttemptState = (typeof sendAttemptStateValues)[number];
-// source path: SendState
-export const sendStateValues = ["accepted","dispatching","awaiting-session-assignment","awaiting-transcript","confirmed","failed","indeterminate"] as const;
+export const sendStateValues = ["accepted","dispatching","awaiting-session-assignment","awaiting-transcript","confirmed","failed","indeterminate"] as const; // source path: SendState
 export type SendState = (typeof sendStateValues)[number];
-// source path: SetContactPolicyInput.defaultRule
-export const setContactPolicyInputDefaultRuleValues = ["allow","deny"] as const;
+export const setContactPolicyInputDefaultRuleValues = ["allow","deny"] as const; // source path: SetContactPolicyInput.defaultRule
 export type SetContactPolicyInputDefaultRule = (typeof setContactPolicyInputDefaultRuleValues)[number];
-// source path: SubscribeInput.events
-export const subscribeInputEventsValues = ["MessageCommitted","DeliveryUpdated","PresenceChanged","PolicyChanged"] as const;
+export const subscribeInputEventsValues = ["MessageCommitted","DeliveryUpdated","PresenceChanged","PolicyChanged"] as const; // source path: SubscribeInput.events
 export type SubscribeInputEvents = (typeof subscribeInputEventsValues)[number];
-// source path: SubscriptionMessage.Ended.kind
-export const subscriptionEndedKindValue = ["ended"] as const;
+export const subscriptionEndedKindValue = ["ended"] as const; // source path: SubscriptionMessage.Ended.kind
 export type SubscriptionEndedKind = (typeof subscriptionEndedKindValue)[number];
-// source path: SubscriptionMessage.Ended.reason
-export const subscriptionEndedReasonValues = ["overflow","closed","auth-lost","dependency-lost"] as const;
+export const subscriptionEndedReasonValues = ["overflow","closed","auth-lost","dependency-lost"] as const; // source path: SubscriptionMessage.Ended.reason
 export type SubscriptionEndedReason = (typeof subscriptionEndedReasonValues)[number];
-// source path: SubscriptionMessage.Event.kind
-export const subscriptionEventFrameKindValue = ["event"] as const;
+export const subscriptionEventFrameKindValue = ["event"] as const; // source path: SubscriptionMessage.Event.kind
 export type SubscriptionEventFrameKind = (typeof subscriptionEventFrameKindValue)[number];
-// source path: SubscriptionMessage.Started.kind
-export const subscriptionStartedKindValue = ["started"] as const;
+export const subscriptionStartedKindValue = ["started"] as const; // source path: SubscriptionMessage.Started.kind
 export type SubscriptionStartedKind = (typeof subscriptionStartedKindValue)[number];
-// source path: Template.kind
-export const templateKindValue = ["template"] as const;
+export const templateKindValue = ["template"] as const; // source path: Template.kind
 export type TemplateKind = (typeof templateKindValue)[number];
-// source path: Thread.threadKind
-export const threadKindValues = ["direct","team","mission"] as const;
+export const threadKindValues = ["direct","team","mission"] as const; // source path: Thread.threadKind
 export type ThreadKind = (typeof threadKindValues)[number];
-// source path: Thread.kind
-export const threadRecordKindValue = ["thread"] as const;
+export const threadRecordKindValue = ["thread"] as const; // source path: Thread.kind
 export type ThreadRecordKind = (typeof threadRecordKindValue)[number];
-// source path: TranscriptEventKind
-export const transcriptEventKindValues = ["provider-session.registered","transcript-line.appended"] as const;
+export const transcriptEventKindValues = ["provider-session.registered","transcript-line.appended"] as const; // source path: TranscriptEventKind
 export type TranscriptEventKind = (typeof transcriptEventKindValues)[number];
-// source path: TranscriptRole
-export const transcriptRoleValues = ["user","assistant","system","hook","tool","tool_call","tool_result","attachment"] as const;
+export const transcriptRoleValues = ["user","assistant","system","hook","tool","tool_call","tool_result","attachment"] as const; // source path: TranscriptRole
 export type TranscriptRole = (typeof transcriptRoleValues)[number];
-// source path: TransportKind
-export const transportKindValues = ["ws","pty"] as const;
+export const transportKindValues = ["ws","pty"] as const; // source path: TransportKind
 export type TransportKind = (typeof transportKindValues)[number];
 
 // --- operation / event / error name catalogues -----------------------------

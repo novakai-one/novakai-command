@@ -31,6 +31,7 @@ export type AgentEnsureOutcome =
 /** Cross-capability port; it exposes no Agents store handle. */
 export interface AgentDirectory {
   get(agentId: string): Promise<AgentDirectoryEntry | null>;
+  deliveryReadiness(agentId: string): Promise<'idle' | 'busy' | 'unavailable'>;
   ensureForSession(input: EnsureAgentForSessionInput): Promise<AgentEnsureOutcome>;
   attachProviderSession(
     agentId: string,
