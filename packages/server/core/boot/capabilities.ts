@@ -79,6 +79,7 @@ export async function composeCapabilities(input: {
     cwd,
   });
   const agents = createAgentsContract(agentsCtx);
+  const agentDirectory = messaging.createAgentDirectory(agents);
   const availability = (name: string, runtime: ProviderCliRuntime, cliPath: string): string =>
     `${name}=${runtime.isAvailable() ? cliPath : 'CLI NOT FOUND'}`;
   note(4, 'agents', [
@@ -91,6 +92,8 @@ export async function composeCapabilities(input: {
   const transcript = composeTranscriptServerHost({
     root: options.root,
     ...(options.providerHome ? { providerHome: options.providerHome } : {}),
+    agentDirectory,
+    providerSend: messaging.createAgentsProviderSend(agents),
   });
   note(
     5,

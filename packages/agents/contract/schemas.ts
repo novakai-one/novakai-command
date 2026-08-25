@@ -20,6 +20,10 @@ export type { StoreError, ContractError } from '@novakai/foundation/dist/contrac
 export const ProviderName = z.enum(['kimi', 'claude', 'codex', 'mock']);
 export type ProviderName = z.infer<typeof ProviderName>;
 
+/** How the durable Agent first entered Novakai. */
+export const AgentOrigin = z.enum(['nvk-spawned', 'provider-spawned', 'agent-spawned']);
+export type AgentOrigin = z.infer<typeof AgentOrigin>;
+
 // ── Agent definition v2 (S2a: AGT-004, DEC-S2-1, §22 ruling 4) ──────────────
 // permissionLevel = the ENVELOPE field only; the def carries no permission
 // field of its own. No provider-specific fields (red gate S2-8).
@@ -57,6 +61,12 @@ export const AgentDefinition = z.object({
   displayName: z.string().min(1),
   provider: ProviderName,
   model: z.string().min(1),
+  origin: AgentOrigin.default('nvk-spawned'),
+  parentAgentId: z.string().min(1).optional(),
+  /** Current Messaging ProviderSession pointer; never a PTY/runtime key. */
+  sessionId: z.string().min(1).optional(),
+  /** Prior ProviderSession pointers, oldest first and unique. */
+  sessions: z.array(z.string().min(1)).default([]),
   instructions: z.string().default(''),   // provider-neutral system-prompt text
   hooks: z.array(HookSubscription).default([]),
   skills: z.array(z.string().min(1)).default([]), // skill id refs (DEC-S2-4)

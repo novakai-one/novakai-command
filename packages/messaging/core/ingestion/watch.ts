@@ -23,6 +23,11 @@ import type {
 import { MessagingError } from "../../contract/types.js";
 import { createDurableTranscriptEventBus, type DurableTranscriptEventBus } from "../event-bus.js";
 import { ingestNow as runIngest } from "./ingest.js";
+import type { AgentDirectory } from "../../contract/ports/agent-directory.js";
+import type { ProviderSend } from "../../contract/ports/provider-send.js";
+import type { ConversationSendAcceptance, ConversationSendInput } from "../../contract/commands.js";
+import type { SendJournal } from "../../contract/records/send-journal.js";
+import { sendConversationMessage } from "../send/send.js";
 
 /** Dependencies and cadence for the provider-transcript ingestion runtime. */
 export interface MessagingRuntimeOptions {
@@ -32,6 +37,8 @@ export interface MessagingRuntimeOptions {
   readonly now?: () => string;
   readonly intervalMs?: number;
   readonly eventBus?: DurableTranscriptEventBus;
+  readonly agentDirectory?: AgentDirectory;
+  readonly providerSend?: ProviderSend;
 }
 
 const unavailable = <T>(cause: unknown): Outcome<T> => ({
@@ -119,6 +126,8 @@ class IngestionRuntime implements MessagingRuntimeApi {
         source: this.options.source,
         normalizers: this.options.normalizers,
         now: this.now,
+        ...(this.options.agentDirectory === undefined
+          ? {} : { agentDirectory: this.options.agentDirectory }),
       });
       await this.eventBus.pump();
       this.runs += 1;
@@ -143,6 +152,25 @@ class IngestionRuntime implements MessagingRuntimeApi {
     }
   }
 
+  async sendConversationMessage(
+    input: ConversationSendInput,
+  ): Promise<Outcome<ConversationSendAcceptance>> {
+    try {
+      if (this.options.agentDirectory === undefined || this.options.providerSend === undefined) {
+        throw new Error("Messaging send dependencies are not composed");
+      }
+      const value = await sendConversationMessage({
+        store: this.options.store,
+        agentDirectory: this.options.agentDirectory,
+        providerSend: this.options.providerSend,
+        now: this.now,
+      }, input);
+      return { kind: "ok", value };
+    } catch (cause) {
+      return unavailable(cause);
+    }
+  }
+
   async listTranscriptLines(input?: unknown): Promise<Outcome<readonly TranscriptLine[]>> {
     try {
       const value = await this.options.store.listTranscriptLines(lineQuery(input));
@@ -150,6 +178,19 @@ class IngestionRuntime implements MessagingRuntimeApi {
     } catch (cause) {
       return unavailable(cause);
     }
+  }
+
+
+  async listSendJournals(): Promise<Outcome<readonly SendJournal[]>> {
+    try {
+      return { kind: "ok", value: await this.options.store.listSendJournals() };
+    } catch (cause) {
+      return unavailable(cause);
+    }
+  }
+
+  subscribeTranscriptEvents(sink: Parameters<DurableTranscriptEventBus["subscribe"]>[0]) {
+    return this.eventBus.subscribe(sink);
   }
 }
 

@@ -14,6 +14,7 @@ import { prepareSessions } from './boot/session-sweep.js';
 import { runCapabilityBoot } from './boot/boot-traces.js';
 import { composeSupervision } from './boot/supervision-wire.js';
 import { wireTurnAccounting } from './boot/turn-accounting.js';
+import { wireTranscriptEvents } from './boot/transcript-events.js';
 import type { BootOptions, BootResult, BootStep } from './boot/contract.js';
 import { refuse } from './boot/contract.js';
 
@@ -160,6 +161,7 @@ export async function bootServer(options: BootOptions): Promise<BootResult> {
     onDisconnect: b3Wire.onDisconnect,
   });
   runtime.broadcast = (name, data) => transport.broadcast(name, data);
+  const transcriptEvents = wireTranscriptEvents(runtime);
   try {
     await b3Wire.serve(transport);
   } catch (cause) {
@@ -198,6 +200,7 @@ export async function bootServer(options: BootOptions): Promise<BootResult> {
         supervision.stop();
         configWatcher.close();
         await transcript.topology.stop();
+        transcriptEvents.close();
         await transport.close();
         await b3Wire.close();
         await embedded.close();

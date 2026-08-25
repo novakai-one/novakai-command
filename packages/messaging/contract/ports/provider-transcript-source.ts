@@ -4,6 +4,7 @@ import type {
   TranscriptSourceId,
 } from "../types.js";
 import type { IngestCheckpoint, ProviderFileSignature } from "../records/ingest-checkpoint.js";
+import type { AgentIdentityMarker } from "../records/agent-identity.js";
 
 /** Metadata-only view of one discovered provider session file. */
 export interface ProviderSourceStat {
@@ -57,7 +58,7 @@ export interface NormalizedProviderLine {
   readonly tokenUsage?: Readonly<Record<string, number>>;
   readonly providerOccurredAt?: string;
   readonly correlationHint?: string;
-  readonly agentIdentity?: string;
+  readonly agentIdentity?: AgentIdentityMarker;
 }
 
 /** Provider format variation; normalization is pure and performs no I/O. */

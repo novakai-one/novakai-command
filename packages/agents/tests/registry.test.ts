@@ -11,6 +11,7 @@ import { queryTraceBound } from '@novakai/foundation/dist/contract/index.js';
 import { composeEngine } from '@novakai/foundation/dist/contract/compose.js';
 import { composeAgents } from '../core/composition.js';
 import { createAgentsContract } from '../core/contract.js';
+import { mockOf } from '../core/composition.js';
 
 function freshCtx() {
   const root = mkdtempSync(path.join(tmpdir(), 'nvk-agents-reg-'));
@@ -29,6 +30,8 @@ test('defineAgent stores a lite definition; foundation stamps createdBy from the
   assert.equal(res.value.createdBy, 'person_chris'); // red gate 4: never caller payload
   assert.equal(res.value.kind, 'agent');
   assert.equal(res.value.schemaVersion, 1);
+  assert.equal(res.value.origin, 'nvk-spawned');
+  assert.deepEqual(res.value.sessions, []);
 });
 
 test('getAgent: absence is typed Absent, never a throw', async () => {
@@ -101,4 +104,102 @@ test('setModel writes agents.jsonl (R3-22 model authority); next read reflects i
   assert.equal(updated.ok && updated.value.model, 'new-model');
   const read = await agents.getAgent(created.value.id as AgentId);
   assert.equal(read.ok && !isAbsent(read.value) && read.value.model, 'new-model');
+});
+
+test('attachProviderSession is idempotent, rotates history, and rejects competing ownership', async () => {
+  const { agents } = freshCtx();
+  const first = await agents.defineAgent(
+    { displayName: 'First', provider: 'claude', model: 'm' }, mintClientOpId());
+  const second = await agents.defineAgent(
+    { displayName: 'Second', provider: 'claude', model: 'm' }, mintClientOpId());
+  assert.equal(first.ok && second.ok, true);
+  if (!first.ok || !second.ok) return;
+
+  const attached = await agents.attachProviderSession({
+    agentId: first.value.id as AgentId,
+    providerSessionId: 'sess_provider_a',
+    expectedSessionId: null,
+    clientOpId: mintClientOpId(),
+  });
+  assert.equal(attached.ok && attached.value.state, 'attached');
+  const replay = await agents.attachProviderSession({
+    agentId: first.value.id as AgentId,
+    providerSessionId: 'sess_provider_a',
+    expectedSessionId: null,
+    clientOpId: mintClientOpId(),
+  });
+  assert.equal(replay.ok && replay.value.state, 'already-attached');
+
+  const rotated = await agents.attachProviderSession({
+    agentId: first.value.id as AgentId,
+    providerSessionId: 'sess_provider_b',
+    expectedSessionId: 'sess_provider_a',
+    clientOpId: mintClientOpId(),
+  });
+  assert.equal(rotated.ok, true);
+  if (rotated.ok) {
+    assert.equal(rotated.value.agent.sessionId, 'sess_provider_b');
+    assert.deepEqual(rotated.value.agent.sessions, ['sess_provider_a']);
+  }
+
+  const claims = await Promise.all([
+    agents.attachProviderSession({
+      agentId: first.value.id as AgentId,
+      providerSessionId: 'sess_contested',
+      expectedSessionId: 'sess_provider_b',
+      clientOpId: mintClientOpId(),
+    }),
+    agents.attachProviderSession({
+      agentId: second.value.id as AgentId,
+      providerSessionId: 'sess_contested',
+      expectedSessionId: null,
+      clientOpId: mintClientOpId(),
+    }),
+  ]);
+  assert.equal(claims.filter((claim) => claim.ok).length, 1);
+  assert.equal(claims.filter((claim) => !claim.ok && claim.error.code === 'CasConflict').length, 1);
+});
+
+test('provider turns lazily create one private runtime and reuse it', async () => {
+  const { ctx, agents } = freshCtx();
+  const created = await agents.defineAgent(
+    { displayName: 'Lazy', provider: 'mock', model: 'm' },
+    mintClientOpId(),
+  );
+  assert.equal(created.ok, true);
+  if (!created.ok) return;
+
+  const [first, second] = await Promise.all([
+    agents.dispatchProviderTurn({ agentId: created.value.id as AgentId, text: 'first' }),
+    agents.dispatchProviderTurn({ agentId: created.value.id as AgentId, text: 'second' }),
+  ]);
+  assert.equal(first.ok && second.ok, true);
+  const sessions = mockOf(ctx)?.__sessions() ?? [];
+  assert.equal(sessions.length, 1, 'concurrent first turns share one logical runtime');
+  assert.deepEqual(sessions[0]?.sent, ['first', 'second']);
+});
+
+test('a first turn after restart applies the provider resume handle before send', async () => {
+  const { ctx, agents } = freshCtx();
+  const created = await agents.defineAgent(
+    { displayName: 'Resumed', provider: 'mock', model: 'm' },
+    mintClientOpId(),
+  );
+  assert.equal(created.ok, true);
+  if (!created.ok) return;
+  const adapter = mockOf(ctx)!;
+  let resumedWith: string | null = null;
+  adapter.adopt = (input) => {
+    resumedWith = input.providerConversationId;
+    return true;
+  };
+
+  const result = await agents.dispatchProviderTurn({
+    agentId: created.value.id as AgentId,
+    text: 'continue',
+    resumeId: 'provider-native-session',
+  });
+  assert.equal(result.ok && result.value.resumed, true);
+  assert.equal(resumedWith, 'provider-native-session');
+  assert.deepEqual(adapter.__sessions()[0]?.sent, ['continue']);
 });

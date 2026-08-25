@@ -1,6 +1,9 @@
 import type { Outcome } from "./outcome.js";
 import type { ProviderSession } from "./records/provider-session.js";
 import type { TranscriptLine } from "./records/transcript-line.js";
+import type { SendJournal } from "./records/send-journal.js";
+import type { ConversationSendAcceptance, ConversationSendInput } from "./commands.js";
+import type { TranscriptEvent } from "./ports/transcript-store.js";
 
 /** Counts returned by one provider-source scan and commit pass. */
 export interface IngestResult {
@@ -25,6 +28,11 @@ export interface MessagingRuntimeApi {
   stop(): Promise<Outcome<void>>;
   health(): Promise<MessagingHealth>;
   ingestNow(): Promise<Outcome<IngestResult>>;
+  sendConversationMessage(input: ConversationSendInput): Promise<Outcome<ConversationSendAcceptance>>;
   listProviderSessions(): Promise<Outcome<readonly ProviderSession[]>>;
   listTranscriptLines(input?: unknown): Promise<Outcome<readonly TranscriptLine[]>>;
+  listSendJournals(): Promise<Outcome<readonly SendJournal[]>>;
+  subscribeTranscriptEvents(
+    sink: (event: TranscriptEvent) => void | Promise<void>,
+  ): { close(): void };
 }

@@ -20,6 +20,12 @@ const jsonText = (value: unknown): string => {
   }
 };
 
+const displayUserText = (value: string): string => {
+  if (!value.startsWith('[novakai context] ')) return value;
+  const newline = value.indexOf('\n');
+  return newline < 0 ? value : value.slice(newline + 1);
+};
+
 function contentText(value: unknown): string | undefined {
   if (typeof value === "string") return value;
   if (!Array.isArray(value)) return undefined;
@@ -68,6 +74,7 @@ function declaredRole(value: unknown): TranscriptRole | undefined {
 export const normalizerSupport = {
   contentText,
   declaredRole,
+  displayUserText,
   isObject,
   jsonText,
   noise,

@@ -5,6 +5,10 @@ import { providerNormalizer } from "../../adapters/provider-transcripts/normaliz
 import { openFoundationTranscriptStore } from "../../adapters/stores/jsonl.js";
 import { createMessagingRuntime } from "../../core/ingestion/watch.js";
 import type { MessagingRuntimeApi } from "../runtime.js";
+import type { AgentDirectory } from "../ports/agent-directory.js";
+import type { ProviderSend } from "../ports/provider-send.js";
+import { agentIdentityHookCommand } from "../../adapters/provider-hooks/agent-identity-hook.js";
+import { ensureClaudeIdentityHook } from "../../adapters/provider-hooks/registrations/claude.js";
 
 /** Production roots and cadence accepted by the Messaging composition door. */
 export interface DefaultMessagingRuntimeOptions {
@@ -12,6 +16,9 @@ export interface DefaultMessagingRuntimeOptions {
   readonly dataRoot?: string;
   readonly providerHome?: string;
   readonly intervalMs?: number;
+  readonly agentDirectory?: AgentDirectory;
+  readonly providerSend?: ProviderSend;
+  readonly installIdentityHooks?: boolean;
 }
 
 /** Running contract plus one idempotent resource teardown operation. */
@@ -25,6 +32,12 @@ export async function createDefaultMessagingRuntime(
   options: DefaultMessagingRuntimeOptions,
 ): Promise<ComposedMessagingRuntime> {
   const home = options.providerHome ?? homedir();
+  if (options.installIdentityHooks ?? true) {
+    await ensureClaudeIdentityHook({
+      providerHome: home,
+      command: agentIdentityHookCommand(),
+    });
+  }
   const store = await openFoundationTranscriptStore({
     root: options.root,
     dataRoot: options.dataRoot ?? path.join(options.root, "stores"),
@@ -44,6 +57,8 @@ export async function createDefaultMessagingRuntime(
       codex: providerNormalizer("codex"),
       kimi: providerNormalizer("kimi"),
     },
+    ...(options.agentDirectory === undefined ? {} : { agentDirectory: options.agentDirectory }),
+    ...(options.providerSend === undefined ? {} : { providerSend: options.providerSend }),
     ...(options.intervalMs === undefined ? {} : { intervalMs: options.intervalMs }),
   });
   return {

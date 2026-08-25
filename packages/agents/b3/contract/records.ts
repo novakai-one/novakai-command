@@ -168,6 +168,9 @@ export interface Agent extends RecordEnvelope<AgentId, 'agent'> {
   readonly roleProfileId: AgentRoleProfileId;
   readonly rootHumanPrincipalId: HumanPrincipalId;
   readonly status: 'active' | 'archived';
+  readonly origin: 'nvk-spawned' | 'provider-spawned' | 'agent-spawned';
+  readonly sessionId?: string;
+  readonly sessions: readonly string[];
 }
 
 export interface ResolvedExecutionPolicy {

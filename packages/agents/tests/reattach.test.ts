@@ -74,7 +74,7 @@ test('reattaching an unknown provider is refused, not silently accepted', async 
   }), false, 'no runtime for claude yet (B1b) — the session cannot be rebound');
 });
 
-test('output from a reattached session still flows to its live lane', async () => {
+test('output from a reattached session remains transcript-only content', async () => {
   const root = mkdtempSync(path.join(tmpdir(), 'nvk-reattach-3-'));
   const cli = fakeKimi();
   const runtime = createKimiCliRuntime({ cwd: root, cliPath: cli.cliPath });
@@ -105,5 +105,5 @@ test('output from a reattached session still flows to its live lane', async () =
   await agents.sendToSession('sess_lane' as never, 'ping');
   await runtime.drain('sess_lane');
   await new Promise((r) => setTimeout(r, 120));
-  assert.deepEqual(posted, ['reattached reply']);
+  assert.deepEqual(posted, []);
 });

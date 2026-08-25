@@ -14,10 +14,22 @@ import type { AgentsError, UnsupportedOperationError } from '../contract/errors.
 import { spawnFailed, unsupportedOperation } from '../contract/errors.js';
 import type { AgentsContext } from './composition.js';
 import * as registry from './registry/registry.js';
+import {
+  attachProviderSession,
+  type AttachProviderSessionInput,
+  type AttachProviderSessionOutcome,
+} from './registry/session-attachment.js';
 import * as skillsStore from './skills/skills.js';
-import { fireInjectionTrace, mergeInput, runEventHooks } from './hooks/engine.js';
+import { runEventHooks } from './hooks/engine.js';
 import { attachLiveLane, pushContextAdvisory, type LiveLaneSender } from './live-lane/liveLane.js';
+import { sendToAgent, sendToSession } from './sessions/send.js';
+import { dispatchProviderTurn } from './sessions/provider-turn.js';
+import type {
+  ProviderTurnDispatch,
+  ProviderTurnDispatchInput,
+} from '../contract/provider-turn.js';
 
+/** Sole consumer-facing Agents capability interface. */
 export interface AgentsContract {
   defineAgent(def: registry.DefineAgentInput, clientOpId: ClientOpId)
     : Promise<Result<AgentDefinitionT, AgentsError>>;
@@ -25,6 +37,9 @@ export interface AgentsContract {
     : Promise<Result<AgentDefinitionT, AgentsError>>;
   getAgent(id: AgentId): Promise<Result<AgentDefinitionT | Absent, never>>;
   listAgents(filter?: ListFilter): Promise<Result<Page<AgentDefinitionT>, AgentsError>>;
+  /** Agents-owned CAS transition for the current ProviderSession pointer. */
+  attachProviderSession(input: AttachProviderSessionInput)
+    : Promise<Result<AttachProviderSessionOutcome, AgentsError>>;
   spawnAgent(agentId: AgentId, opts?: SpawnOpts, clientOpId?: ClientOpId)
     : Promise<Result<SpawnResponse, AgentsError>>;
   setModel(agentId: AgentId, model: string, clientOpId: ClientOpId)
@@ -54,6 +69,11 @@ export interface AgentsContract {
    * fires, then onMessagePost hooks. Hooks never block the send.
    */
   sendToSession(sessionId: SessionId, input: string): Promise<boolean>;
+  /** Resolve the Agent's active logical runtime session and queue one provider turn. */
+  sendToAgent(agentId: AgentId, input: string): Promise<boolean>;
+  /** Lazily open or resume the private CLI runtime and queue one provider turn. */
+  dispatchProviderTurn(input: ProviderTurnDispatchInput)
+    : Promise<Result<ProviderTurnDispatch, AgentsError>>;
   /**
    * B1 DEC-B1-6: rebind a session that outlived the process, from its
    * persisted registry record. Returns false when the provider has no runtime
@@ -69,7 +89,7 @@ export interface AgentsContract {
   }): boolean;
   subscribeAgentEvents(handler: (e: AgentEvent) => void): Unsubscribe;
   /** Bind the live lane (R3-1) for a spawned session. */
-  attachLiveLane(binding: { sessionId: string; address: string; sender: LiveLaneSender }): Unsubscribe;
+  attachLiveLane(binding: { sessionId: string; address: string; sender?: LiveLaneSender }): Unsubscribe;
   /** S2b (§22 ruling 1): push a focus-change advisory to an in-app session —
    * system context line BETWEEN turns. False for pull-only/unknown sessions. */
   pushContextAdvisory(sessionId: SessionId, line: string): boolean;
@@ -77,6 +97,7 @@ export interface AgentsContract {
   closeSession(sessionId: SessionId): boolean;
 }
 
+/** Bind the Agents public interface to one composed capability context. */
 export function createAgentsContract(ctx: AgentsContext): AgentsContract {
   const publish = (e: AgentEvent): void => ctx.bus.publish(e);
   const now = (): string => new Date().toISOString();
@@ -89,12 +110,13 @@ export function createAgentsContract(ctx: AgentsContext): AgentsContract {
     void agentId;
   };
 
-  return {
+  const contract: AgentsContract = {
     defineAgent: (def, clientOpId) => registry.defineAgent(ctx, def, clientOpId),
     updateAgent: (id, patch, expectedVersion, clientOpId) =>
       registry.updateAgent(ctx, id, patch, expectedVersion, clientOpId),
     getAgent: (id) => registry.getAgent(ctx, id),
     listAgents: (filter) => registry.listAgents(ctx, filter),
+    attachProviderSession: (input) => attachProviderSession(ctx, input),
 
     async spawnAgent(agentId, opts, clientOpId) {
       void (clientOpId ?? mintClientOpId()); // spawn mutates no stored object (R3-18); id accepted for trace symmetry
@@ -115,7 +137,13 @@ export function createAgentsContract(ctx: AgentsContext): AgentsContract {
       let spawned;
       try {
         spawned = await adapter.spawn(agentId, def.provider, {
-          ...(opts ?? {}), model, skills: [...resolved.value, ...(opts?.skills ?? [])],
+          ...(opts ?? {}),
+          model,
+          skills: [...resolved.value, ...(opts?.skills ?? [])],
+          env: {
+            ...(opts?.env ?? {}),
+            NOVAKAI_AGENT_ID: String(agentId),
+          },
         });
       } catch (cause) {
         // C §11: provider outage = typed error + presence offline; never silent stall
@@ -187,49 +215,15 @@ export function createAgentsContract(ctx: AgentsContext): AgentsContract {
     getSkill: (id) => skillsStore.getSkill(ctx, id),
     listSkills: (filter) => skillsStore.listSkills(ctx, filter),
 
-    async sendToSession(sessionId, input) {
-      const meta = ctx.sessions.get(sessionId);
-      const adapter = meta
-        ? ctx.adapters[meta.provider]
-        : Object.values(ctx.adapters).find((a) => a.attach(sessionId));
-      if (!adapter) return false;
-      let out = input;
-      if (meta) {
-        const found = await registry.getAgent(ctx, meta.agentId as AgentId);
-        if (found.ok && !isAbsent(found.value)) {
-          // buffered injections (onSpawn/onMessagePost) prepend FIRST, then
-          // this event's onMessagePre injections (creation order within each).
-          const pending = ctx.pendingInjections.get(sessionId) ?? [];
-          ctx.pendingInjections.delete(sessionId);
-          const pre = await runEventHooks(ctx, found.value, 'onMessagePre', { sessionId, messageText: input });
-          const injections = [...pending, ...pre.injections];
-          out = mergeInput(injections, input);
-          const sent = adapter.send(sessionId, out);
-          if (sent) {
-            // L14: provenance traces fire ONLY on send success — an injection
-            // that never went out is neither traced nor consumed.
-            for (const inj of injections) await fireInjectionTrace(ctx, inj);
-          } else if (injections.length > 0) {
-            // send failed: re-buffer the injections for the next attempt.
-            ctx.pendingInjections.set(sessionId, [
-              ...injections, ...(ctx.pendingInjections.get(sessionId) ?? []),
-            ]);
-          }
-          // onMessagePost runs even when the send fails (the event happened);
-          // its injections buffer for the next input.
-          const post = await runEventHooks(ctx, found.value, 'onMessagePost', { sessionId, messageText: input });
-          if (post.injections.length > 0) {
-            ctx.pendingInjections.set(sessionId, [
-              ...(ctx.pendingInjections.get(sessionId) ?? []), ...post.injections,
-            ]);
-          }
-          return sent;
-        }
-      }
-      // Session unknown to this process (DEC-C1: sessions are in-memory) —
-      // no agent context, so no hooks; recorded in NOTES.md.
-      return adapter.send(sessionId, out);
-    },
+    sendToSession: (sessionId, input) => sendToSession(ctx, sessionId, input),
+
+    sendToAgent: (agentId, input) => sendToAgent(ctx, agentId, input),
+
+    dispatchProviderTurn: (input) => dispatchProviderTurn(
+      ctx,
+      input,
+      (agentId, opts, clientOpId) => contract.spawnAgent(agentId, opts, clientOpId),
+    ),
 
     subscribeAgentEvents: (handler) => ctx.bus.subscribe(handler),
 
@@ -274,4 +268,5 @@ export function createAgentsContract(ctx: AgentsContext): AgentsContract {
       return adapter.close(sessionId);
     },
   };
+  return contract;
 }

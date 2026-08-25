@@ -5,10 +5,10 @@ import type { AgentsContract } from '../../../agents/contract/index.js';
 import type { MethodTable } from '../../contract/protocol.js';
 import type { ProviderName } from '../../contract/config.js';
 import { ensureAgent, ensureAgentPerson } from '../door/provision.js';
-import { attachLane } from './lanes.js';
 import type { Conversation, ServerRuntime } from './runtime.js';
 import { now, persistView, summarize } from './runtime.js';
 
+/** Build the existing UI Agent-creation and supervised-task host methods. */
 export function buildSpawnMethods(runtime: ServerRuntime): MethodTable {
   return {
     async spawnAgentConversation(params: never) {
@@ -60,29 +60,6 @@ export function buildSpawnMethods(runtime: ServerRuntime): MethodTable {
         agentId = await ensureAgent(runtime, title, provider);
       }
       const personId = await ensureAgentPerson(runtime, agentId);
-      const spawn = await runtime.agents.spawnAgent(agentId as never) as {
-        ok: boolean;
-        value?: { sessionId: string; model: string };
-        error?: { message: string };
-      };
-      if (!spawn.ok || !spawn.value) {
-        return { ok: false as const, error: spawn.error?.message ?? 'spawn failed' };
-      }
-      const sessionId = spawn.value.sessionId;
-      await runtime.sessions.register({
-        sessionId,
-        agentId,
-        provider,
-        cwd: runtime.cwd,
-        model: spawn.value.model || 'cli-default',
-      });
-      runtime.watchdog.register({
-        sessionId,
-        provider,
-        task: title,
-        transcriptPath: null,
-        cwd: runtime.cwd,
-      });
       const conversation: Conversation = {
         id: input.conversationId ?? `conv_${randomUUID().slice(0, 8)}`,
         address: `person:${personId}`,
@@ -92,16 +69,14 @@ export function buildSpawnMethods(runtime: ServerRuntime): MethodTable {
         archived: false,
         lastActivityAt: now(),
         agentId,
-        sessionId,
         personId,
         provider,
       };
       runtime.conversations.set(conversation.id, conversation);
       await persistView(runtime, conversation, input.clientOpId ?? runtime.mintOpId());
-      attachLane(runtime, conversation, sessionId, personId);
       const summary = summarize(conversation);
       runtime.broadcast('conversation', summary);
-      return { ok: true as const, conversation: summary, sessionId };
+      return { ok: true as const, conversation: summary };
     },
 
     async runSupervisedTask(params: never) {

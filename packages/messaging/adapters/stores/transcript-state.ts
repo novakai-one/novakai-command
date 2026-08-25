@@ -15,6 +15,12 @@ export interface PersistedTranscriptBatch {
   readonly input: TranscriptBatchInput;
 }
 
+/** One replayable ProviderSession upsert in durable sequence order. */
+export interface PersistedProviderSession {
+  readonly sequence: number;
+  readonly session: ProviderSession;
+}
+
 const checkpointEqual = (
   left: IngestCheckpoint | null,
   right: IngestCheckpoint | null,
@@ -37,11 +43,18 @@ const mergeSession = (
     && current.resumeId !== incoming.resumeId) {
     throw new Error(`ProviderSession ${incoming.id} resume handle conflict`);
   }
+  if (current.agentId !== undefined && incoming.agentId !== undefined
+    && current.agentId !== incoming.agentId) {
+    throw new Error(`ProviderSession ${incoming.id} Agent assignment conflict`);
+  }
   return {
     ...current,
     sourceIds: [...new Set([...current.sourceIds, ...incoming.sourceIds])],
+    status: incoming.status,
     ...(current.resumeId === undefined && incoming.resumeId !== undefined
       ? { resumeId: incoming.resumeId } : {}),
+    ...(current.agentId === undefined && incoming.agentId !== undefined
+      ? { agentId: incoming.agentId } : {}),
   };
 };
 
@@ -60,6 +73,12 @@ export class TranscriptState {
     }
   }
 
+  restoreSessions(sessions: readonly PersistedProviderSession[]): void {
+    for (const item of [...sessions].sort((left, right) => left.sequence - right.sequence)) {
+      this.applySession(item.session);
+    }
+  }
+
   getCheckpoint(sourceId: TranscriptSourceId): IngestCheckpoint | null {
     return this.checkpoints.get(sourceId) ?? null;
   }
@@ -71,6 +90,26 @@ export class TranscriptState {
     const run = this.mutationTail.then(
       () => this.commitSerialized(input, persist),
       () => this.commitSerialized(input, persist),
+    );
+    this.mutationTail = run.then(() => undefined, () => undefined);
+    return run;
+  }
+
+  upsertSession(
+    session: ProviderSession,
+    persist?: (session: ProviderSession) => Promise<void>,
+  ): Promise<ProviderSession> {
+    const run = this.mutationTail.then(
+      async () => {
+        const merged = mergeSession(this.sessions.get(session.id), session);
+        if (persist !== undefined) await persist(merged);
+        return this.applySession(merged);
+      },
+      async () => {
+        const merged = mergeSession(this.sessions.get(session.id), session);
+        if (persist !== undefined) await persist(merged);
+        return this.applySession(merged);
+      },
     );
     this.mutationTail = run.then(() => undefined, () => undefined);
     return run;
@@ -102,15 +141,7 @@ export class TranscriptState {
   }
 
   private apply(input: TranscriptBatchInput): TranscriptBatchResult {
-    const existingSession = this.sessions.get(input.session.id);
-    const session = mergeSession(existingSession, input.session);
-    this.sessions.set(session.id, session);
-    if (existingSession === undefined) {
-      this.pushEvent({
-        kind: "provider-session.registered",
-        sessionId: session.id,
-      });
-    }
+    const session = this.applySession(input.session);
     let added = 0;
     let duplicates = 0;
     for (const line of input.lines) {
@@ -128,6 +159,16 @@ export class TranscriptState {
     }
     this.checkpoints.set(input.checkpoint.sourceId, input.checkpoint);
     return { added, duplicates, checkpoint: input.checkpoint };
+  }
+
+  private applySession(incoming: ProviderSession): ProviderSession {
+    const existing = this.sessions.get(incoming.id);
+    const session = mergeSession(existing, incoming);
+    this.sessions.set(session.id, session);
+    if (existing === undefined) {
+      this.pushEvent({ kind: "provider-session.registered", sessionId: session.id });
+    }
+    return session;
   }
 
   private pushEvent(input: Omit<TranscriptEvent, "cursor">): void {

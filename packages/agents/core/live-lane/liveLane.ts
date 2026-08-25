@@ -6,7 +6,6 @@
 // public/capability.ts) with SendMessageInput { address, body, priority,
 // clientMessageId } (packages/messaging/contract/commands.ts). Typed
 // structurally here so agents does not reach into messaging internals.
-import { randomUUID } from 'node:crypto';
 import type { PtyEvent, Unsubscribe } from '../../contract/schemas.js';
 import type { AgentsContext } from '../composition.js';
 
@@ -19,7 +18,8 @@ export interface LiveLaneBinding {
   sessionId: string;
   /** messaging Address, e.g. "thread:thread_…" — who receives the agent's output. */
   address: string;
-  sender: LiveLaneSender;
+  /** @deprecated Provider stdout is activity telemetry, never message content. */
+  sender?: LiveLaneSender;
 }
 
 /**
@@ -44,13 +44,6 @@ export function attachLiveLane(ctx: AgentsContext, binding: LiveLaneBinding): Un
       if (st?.timer) clearTimeout(st.timer);
       ctx.laneState.delete(binding.sessionId);
     }
-    if (e.type !== 'output') return;
-    void binding.sender.sendMessage({
-      address: binding.address,
-      body: { text: e.data },
-      priority: 'normal',
-      clientMessageId: `c_${randomUUID()}`,
-    });
   });
   return () => {
     const st = ctx.laneState.get(binding.sessionId);

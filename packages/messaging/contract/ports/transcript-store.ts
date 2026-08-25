@@ -1,6 +1,7 @@
 import type { IngestCheckpoint } from "../records/ingest-checkpoint.js";
 import type { ProviderSession } from "../records/provider-session.js";
 import type { TranscriptLine } from "../records/transcript-line.js";
+import type { SendAttempt, SendJournal } from "../records/send-journal.js";
 import type {
   EventCursor,
   ProviderName,
@@ -41,12 +42,44 @@ export interface TranscriptLineQuery {
   readonly resumeId?: ProviderResumeId;
 }
 
+/** Idempotent durable acceptance before any provider effect. */
+export interface AcceptSendInput {
+  readonly journal: SendJournal;
+}
+
+/** Existing or newly committed idempotent SendJournal. */
+export interface AcceptSendResult {
+  readonly journal: SendJournal;
+  readonly duplicate: boolean;
+}
+
+/** Compare-and-transition one journal and optional attempt. */
+export interface SendTransitionInput {
+  readonly sendId: SendJournal['id'];
+  readonly expectedState: SendJournal['state'];
+  readonly state: SendJournal['state'];
+  readonly updatedAt: SendJournal['updatedAt'];
+  readonly attempt?: SendAttempt;
+}
+
+/** Result of one compare-and-transition request. */
+export interface SendTransitionResult {
+  readonly journal: SendJournal;
+  readonly changed: boolean;
+}
+
 /** Atomic transcript-first persistence inside the canonical Messaging store. */
 export interface TranscriptStore {
   getCheckpoint(sourceId: TranscriptSourceId): Promise<IngestCheckpoint | null>;
+  upsertProviderSession(session: ProviderSession): Promise<ProviderSession>;
   commitIngestBatch(input: TranscriptBatchInput): Promise<TranscriptBatchResult>;
   listProviderSessions(): Promise<readonly ProviderSession[]>;
   listTranscriptLines(query?: TranscriptLineQuery): Promise<readonly TranscriptLine[]>;
+  acceptSend(input: AcceptSendInput): Promise<AcceptSendResult>;
+  transitionSend(input: SendTransitionInput): Promise<SendTransitionResult>;
+  bindAgentSession(agentId: string, sessionId: ProviderSessionId, updatedAt: string): Promise<number>;
+  confirmSendForLines(sessionId: ProviderSessionId, lines: readonly TranscriptLine[], updatedAt: string): Promise<number>;
+  listSendJournals(): Promise<readonly SendJournal[]>;
   scanTranscriptEvents(after?: EventCursor, limit?: number): Promise<readonly TranscriptEvent[]>;
   close(): Promise<void>;
 }

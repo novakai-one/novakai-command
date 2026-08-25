@@ -61,6 +61,8 @@ export async function createAgentFromRole(
     roleProfileId: role.value.id,
     rootHumanPrincipalId: request.rootHumanPrincipalId,
     status: 'active',
+    origin: request.parentAgentId === undefined ? 'nvk-spawned' : 'agent-spawned',
+    sessions: [],
     ...legacyCompatibility(role.value),
   };
   const created = await core.store.create<Agent>(

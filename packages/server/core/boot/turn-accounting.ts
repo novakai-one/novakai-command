@@ -15,6 +15,10 @@ export async function wireTurnAccounting(input: {
 }): Promise<void> {
   const recordTurn = (record: ProviderTurnRecord): void => {
     void (async () => {
+      // Transcript-first turns use a private runtime key, not the legacy
+      // ProviderSession registry. Their usage/session facts arrive through
+      // provider-file ingestion, so this compatibility observer ignores them.
+      if (await input.sessions.get(record.key) === null) return;
       const failures: string[] = [];
       if (record.cliSessionId) {
         try {

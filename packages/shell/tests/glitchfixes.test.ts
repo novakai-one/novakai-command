@@ -34,6 +34,25 @@ describe('G1 — message dedup (optimistic echo vs server broadcast)', () => {
     expect(list).toHaveLength(1);
   });
 
+  it('keeps acceptance pending until the durable TranscriptLine reconciles by clientOpId', () => {
+    const accepted: ChatMessage = {
+      ...msg('send_accepted', 'hello'),
+      pending: true,
+      clientOpId: 'op_transcript_first',
+    };
+    const transcript: ChatMessage = {
+      ...msg('transcriptLine_durable', 'hello'),
+      pending: false,
+      clientOpId: 'op_transcript_first',
+    };
+    const settled = settleOptimisticMessage([msg('pending_1')], 'pending_1', {
+      ok: true,
+      message: accepted,
+    });
+    expect(settled[0]?.pending).toBe(true);
+    expect(appendDedup(settled, transcript)).toEqual([transcript]);
+  });
+
   it('dedupeById keeps first occurrence order', () => {
     const out = dedupeById([msg('a'), msg('b'), msg('a'), msg('c'), msg('b')]);
     expect(out.map((m) => m.id)).toEqual(['a', 'b', 'c']);

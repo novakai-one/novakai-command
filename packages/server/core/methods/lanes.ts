@@ -1,52 +1,23 @@
 /** Provider-session lane attachment and restart restoration. */
 
 import type { Conversation, ServerRuntime } from './runtime.js';
-import { now, persistView } from './runtime.js';
 
+/** Attach only legacy activity/advisory semantics; never message content. */
 export function attachLane(
   runtime: ServerRuntime,
   conversation: Conversation,
   sessionId: string,
   personId: string,
 ): void {
-  const sender = {
-    async sendMessage(input: unknown) {
-      const holder = await runtime.holderForPerson(personId);
-      if (!holder) {
-        return {
-          kind: 'error',
-          error: { name: 'NotAuthenticated', message: `no holder for ${personId}` },
-        };
-      }
-      const result = await holder.call((session) => (
-        session as { sendMessage(value: unknown): Promise<unknown> }
-      ).sendMessage(input)) as {
-        kind: string;
-        value?: { threadId: string; messageId: string };
-      };
-      if (result.kind === 'ok' && result.value) {
-        const learnedThread = !conversation.threadId;
-        if (learnedThread) conversation.threadId = result.value.threadId;
-        conversation.lastActivityAt = now();
-        if (learnedThread) await persistView(runtime, conversation, runtime.mintOpId());
-        runtime.broadcast('message', {
-          id: result.value.messageId,
-          conversationId: conversation.id,
-          senderId: personId,
-          text: (input as { body: { text: string } }).body.text,
-          createdAt: now(),
-        });
-      }
-      return result;
-    },
-  };
+  void conversation;
+  void personId;
   runtime.agents.attachLiveLane({
     sessionId,
     address: `person:${runtime.human.personId}`,
-    sender,
   } as never);
 }
 
+/** Restore pre-transcript-first runtime sessions during the compatibility window. */
 export async function restoreLiveSessions(runtime: ServerRuntime): Promise<number> {
   const config = runtime.configStore.current();
   const threads = await runtime.human.holder.call((session) => (
@@ -90,6 +61,7 @@ export async function restoreLiveSessions(runtime: ServerRuntime): Promise<numbe
   return restored;
 }
 
+/** Relink one legacy conversation after its runtime session rotates. */
 export function relinkConversation(
   runtime: ServerRuntime,
   oldSessionId: string,

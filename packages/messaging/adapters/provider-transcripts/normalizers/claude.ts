@@ -1,10 +1,12 @@
 import type { ProviderNormalizer } from "../../../contract/ports/provider-transcript-source.js";
 import type { TranscriptRole } from "../../../contract/types.js";
 import { normalizerSupport } from "./support.js";
+import { findAgentIdentityMarker } from "../../../contract/agent-identity.js";
 
 const {
   contentText,
   declaredRole,
+  displayUserText,
   isObject,
   jsonText,
   noise,
@@ -45,6 +47,7 @@ export const claudeNormalizer: ProviderNormalizer = {
   normalize(extent) {
     const row = parseExtent(extent);
     if (row === null) return noise();
+    const agentIdentity = findAgentIdentityMarker(row);
     const resumeId = textValue(row.sessionId);
     if (!isObject(row.message)) return noise(resumeId);
     const message = row.message;
@@ -52,15 +55,16 @@ export const claudeNormalizer: ProviderNormalizer = {
       ? message.content.filter(isObject)
       : [];
     const blockTypes = new Set(blocks.map((block) => textValue(block.type)));
-    const role = claudeRole(
+    const role = agentIdentity === undefined ? claudeRole(
       row,
       message.role,
       blockTypes,
       blocks.some((block) => block.type === "hook_result"),
-    );
-    const text = structuredRole(role)
+    ) : "hook";
+    const normalizedText = structuredRole(role)
       ? jsonText(message.content)
       : contentText(message.content) ?? "";
+    const text = role === 'user' ? displayUserText(normalizedText) : normalizedText;
     const turnId = textValue(row.uuid);
     const parentTurnId = textValue(row.parentUuid);
     const usage = numericUsage(message.usage);
@@ -76,6 +80,7 @@ export const claudeNormalizer: ProviderNormalizer = {
       ...(providerOccurredAt === undefined ? {} : { providerOccurredAt }),
       ...(role === "tool_call" && blocks[0] !== undefined
         ? { toolCall: blocks[0] } : {}),
+      ...(agentIdentity === undefined ? {} : { agentIdentity }),
     };
   },
 };

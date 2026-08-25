@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // GENERATED FILE — DO NOT EDIT.
 // Source: contract/messaging-contract.json (law #3 single source of truth).
-// contractVersion 1.1.0 · schemaVersion 1 · sha256:6df08803e3e2c3eb
+// contractVersion 1.1.0 · schemaVersion 1 · sha256:7cbe148a2bc8060d
 // Regenerate: npm run generate
 // ---------------------------------------------------------------------------
 
@@ -45,6 +45,9 @@ export type TranscriptSourceId = string & Brand<"TranscriptSourceId">;
 export type TranscriptLineId = string & Brand<"TranscriptLineId">;
 export type IngestCheckpointId = string & Brand<"IngestCheckpointId">;
 export type EventCursor = string & Brand<"EventCursor">;
+export type ConversationId = string & Brand<"ConversationId">;
+export type SendId = string & Brand<"SendId">;
+export type SendAttemptId = string & Brand<"SendAttemptId">;
 export type RequestHash = string & Brand<"RequestHash">;
 export type ClientMessageId = string & Brand<"ClientMessageId">;
 export type Address = string & Brand<"Address">;
@@ -68,6 +71,9 @@ export const idPatterns = {
   TranscriptLineId: "^transcriptLine_[0-9a-f]{64}$",
   IngestCheckpointId: "^ingestCheckpoint_[0-9a-f]{64}$",
   EventCursor: "^event_[0-9]+$",
+  ConversationId: "^conv_[A-Za-z0-9-]+$",
+  SendId: "^send_[0-9a-f]{64}$",
+  SendAttemptId: "^sendAttempt_[0-9a-f]{64}$",
   RequestHash: "^[0-9a-f]{64}$",
   Address: "^(person:person_|thread:thread_)[A-Za-z0-9-]+$",
 } as const;
@@ -81,6 +87,7 @@ export const idPrefixes = {
   "dndpolicy": "dndpolicy_",
   "message": "message_",
   "presence": "presence_",
+  "send": "send_",
   "snapshot": "snapshot_",
   "subscription": "subscription_",
   "template": "template_",
@@ -95,6 +102,7 @@ export interface IdTypeMap {
   readonly "dndpolicy": PolicyId;
   readonly "message": MessageId;
   readonly "presence": PresenceId;
+  readonly "send": SendId;
   readonly "snapshot": SnapshotId;
   readonly "subscription": SubscriptionId;
   readonly "template": TemplateId;
@@ -165,6 +173,12 @@ export type ProviderSessionStatus = (typeof providerSessionStatusValues)[number]
 // source path: RecipientSnapshot.kind
 export const recipientSnapshotKindValue = ["recipient-snapshot"] as const;
 export type RecipientSnapshotKind = (typeof recipientSnapshotKindValue)[number];
+// source path: SendAttemptState
+export const sendAttemptStateValues = ["claimed","awaiting-session-assignment","awaiting-transcript","confirmed","failed","indeterminate"] as const;
+export type SendAttemptState = (typeof sendAttemptStateValues)[number];
+// source path: SendState
+export const sendStateValues = ["accepted","dispatching","awaiting-session-assignment","awaiting-transcript","confirmed","failed","indeterminate"] as const;
+export type SendState = (typeof sendStateValues)[number];
 // source path: SetContactPolicyInput.defaultRule
 export const setContactPolicyInputDefaultRuleValues = ["allow","deny"] as const;
 export type SetContactPolicyInputDefaultRule = (typeof setContactPolicyInputDefaultRuleValues)[number];

@@ -19,12 +19,16 @@ import type {
   Timestamp,
   TranscriptLineId,
 } from "../../contract/types.js";
+import type { AgentDirectory } from "../../contract/ports/agent-directory.js";
+import { assignProviderSession } from "./assign-session.js";
+import { confirmPendingSends } from "../send/confirm.js";
 
 interface IngestionDependencies {
   readonly store: TranscriptStore;
   readonly source: ProviderTranscriptSource;
   readonly normalizers: Readonly<Record<ProviderName, ProviderNormalizer>>;
   readonly now: () => string;
+  readonly agentDirectory?: AgentDirectory;
 }
 
 const digest = (value: string | Uint8Array): string =>
@@ -238,7 +242,15 @@ async function ingestSource(
     ?? source.resumeIdHint;
   const existing = existingSession(sessions, source, resumeId);
   const now = dependencies.now() as Timestamp;
-  const session = sessionFor(source, resumeId, now, existing);
+  const discovered = sessionFor(source, resumeId, now, existing);
+  const session = await assignProviderSession({
+    session: discovered,
+    store: dependencies.store,
+    markers: normalized.items.flatMap((item) =>
+      item.value.agentIdentity === undefined ? [] : [item.value.agentIdentity]),
+    ...(dependencies.agentDirectory === undefined
+      ? {} : { directory: dependencies.agentDirectory }),
+  });
   const lines = normalized.items.map((item, index) =>
     transcriptLine(item, index, source, growth, session, now, normalized.baseTurnIndex));
   const nextCheckpoint = checkpointFor(source, growth, checkpoint, normalized, now);
@@ -276,5 +288,6 @@ export async function ingestNow(
       else sessions[current] = result.session;
     }
   }
+  await confirmPendingSends(dependencies.store, dependencies.now());
   return { sources: sources.length, added, duplicates, sessionsRegistered };
 }

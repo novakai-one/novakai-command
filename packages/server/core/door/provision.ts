@@ -5,7 +5,7 @@
 // SAME provisioning path (red gate 23: similar callers, one policy path).
 import { randomUUID } from 'node:crypto';
 import type { ProviderName } from '../../contract/config.js';
-import type { ServerRuntime } from '../methods.js';
+import type { ServerRuntime } from '../methods/runtime.js';
 
 /**
  * G4 lesson, promoted (§9): look the definition up by displayName+provider

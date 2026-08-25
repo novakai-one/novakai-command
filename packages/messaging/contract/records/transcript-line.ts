@@ -6,6 +6,7 @@ import type {
   TranscriptRole,
   TranscriptSourceId,
 } from "../types.js";
+import type { AgentIdentityMarker } from "./agent-identity.js";
 
 /** Exact provider-source extent retained for custody and recalibration. */
 export interface TranscriptSourcePosition {
@@ -34,5 +35,5 @@ export interface TranscriptLine {
   readonly tokenUsage?: Readonly<Record<string, number>>;
   readonly providerOccurredAt?: string;
   readonly correlationHint?: string;
-  readonly agentIdentity?: string;
+  readonly agentIdentity?: AgentIdentityMarker;
 }

@@ -6,9 +6,12 @@ import {
   type Outcome,
   type TranscriptLine,
 } from "../../../messaging/contract/index.js";
+import type { AgentDirectory } from "../../../messaging/contract/index.js";
+import type { ProviderSend } from "../../../messaging/contract/index.js";
 
 const DEFAULT_POLL_MS = 1_000;
 
+/** Compatibility result projected from target Messaging ingestion. */
 export interface LegacyTranscriptResult {
   readonly added: number;
   readonly duplicates: number;
@@ -45,6 +48,7 @@ interface LegacyIngestionStatus {
   readonly latched: boolean;
 }
 
+/** Observable state of the compatibility watcher facade. */
 export interface TranscriptTopologyStatus {
   running: boolean;
   watcherReady: boolean;
@@ -54,6 +58,7 @@ export interface TranscriptTopologyStatus {
   lastError?: string;
 }
 
+/** Legacy read/trigger operations backed only by target Messaging. */
 export interface TranscriptServerOperations {
   ingest(): Promise<LegacyResult<LegacyTranscriptResult>>;
   status(): Promise<LegacyResult<LegacyIngestionStatus>>;
@@ -65,6 +70,7 @@ export interface TranscriptServerOperations {
   subagentTree(turnId: string): Promise<LegacyResult<readonly LegacyTranscriptLine[]>>;
 }
 
+/** Lifecycle facade around the target Messaging watcher. */
 export interface TranscriptTopology {
   start(): void;
   stop(): Promise<void>;
@@ -72,17 +78,21 @@ export interface TranscriptTopology {
   status(): TranscriptTopologyStatus;
 }
 
+/** Server composition result exposing target runtime and temporary facades. */
 export interface TranscriptServerHost {
   readonly operations: TranscriptServerOperations;
   readonly topology: TranscriptTopology;
   readonly runtime: MessagingRuntimeApi;
 }
 
+/** Dependencies and cadence accepted by the Server composition seam. */
 export interface ComposeTranscriptServerHostOptions {
   root: string;
   providerHome?: string;
   watcherIntervalMs?: number;
   ingestIntervalMs?: number;
+  agentDirectory?: AgentDirectory;
+  providerSend?: ProviderSend;
 }
 
 const legacyLine = (line: TranscriptLine): LegacyTranscriptLine => ({
@@ -133,6 +143,8 @@ export function composeTranscriptServerHost(
       root: options.root,
       ...(options.providerHome === undefined ? {} : { providerHome: options.providerHome }),
       intervalMs: options.ingestIntervalMs ?? options.watcherIntervalMs ?? DEFAULT_POLL_MS,
+      ...(options.agentDirectory === undefined ? {} : { agentDirectory: options.agentDirectory }),
+      ...(options.providerSend === undefined ? {} : { providerSend: options.providerSend }),
   });
 
   const ingest = async (): Promise<Outcome<IngestResult>> => {
@@ -165,8 +177,24 @@ export function composeTranscriptServerHost(
     },
     health: async (): Promise<MessagingHealth> => (await ready).runtime.health(),
     ingestNow: ingest,
+    sendConversationMessage: async (input) =>
+      (await ready).runtime.sendConversationMessage(input),
     listProviderSessions: async () => (await ready).runtime.listProviderSessions(),
     listTranscriptLines: async (input?: unknown) => (await ready).runtime.listTranscriptLines(input),
+    listSendJournals: async () => (await ready).runtime.listSendJournals(),
+    subscribeTranscriptEvents(sink) {
+      let closed = false;
+      let subscription: { close(): void } | undefined;
+      void ready.then((composed) => {
+        if (!closed) subscription = composed.runtime.subscribeTranscriptEvents(sink);
+      });
+      return {
+        close() {
+          closed = true;
+          subscription?.close();
+        },
+      };
+    },
   };
 
   const operations: TranscriptServerOperations = {

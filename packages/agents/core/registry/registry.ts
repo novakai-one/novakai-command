@@ -28,6 +28,8 @@ export type DefineAgentInput = {
   skills?: string[];
   permissionLevel?: AgentDefinitionT['permissionLevel'];
   status?: AgentDefinitionT['status'];
+  origin?: AgentDefinitionT['origin'];
+  parentAgentId?: string;
 };
 
 /**
@@ -43,6 +45,8 @@ export function normalizeAgent(flat: unknown): AgentDefinitionT | null {
     : [];
   const parsed = AgentDefinition.safeParse({
     ...obj,
+    origin: typeof obj.origin === 'string' ? obj.origin : 'nvk-spawned',
+    sessions: Array.isArray(obj.sessions) ? obj.sessions : [],
     instructions: typeof obj.instructions === 'string' ? obj.instructions : '',
     skills: Array.isArray(obj.skills) ? obj.skills : [],
     hooks,
@@ -73,6 +77,9 @@ export async function defineAgent(
     displayName: def.displayName,
     provider: def.provider,
     model: def.model,
+    origin: def.origin ?? 'nvk-spawned',
+    ...(def.parentAgentId === undefined ? {} : { parentAgentId: def.parentAgentId }),
+    sessions: [],
     instructions: def.instructions ?? '',
     hooks: stampHooks(def.hooks),
     skills: def.skills ?? [],

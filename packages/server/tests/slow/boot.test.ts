@@ -56,6 +56,17 @@ async function mintChris(dir: string): Promise<void> {
   );
 }
 
+async function enableTranscriptIngestion(dir: string): Promise<void> {
+  const opened = await openConfigStore({ root: dir, principal: 'sys_spine' });
+  assert.equal(opened.ok, true);
+  if (!opened.ok) return;
+  const updated = await opened.value.set(
+    { configKind: 'transcript', ingest: true },
+    mintClientOpId(),
+  );
+  assert.equal(updated.ok, true);
+}
+
 async function boot(
   dir: string,
   options: { cliPath?: string; providerHome?: string } = {},
@@ -67,6 +78,14 @@ async function boot(
   });
   if (!res.ok) throw new Error(`boot failed: ${res.error.code} ${res.error.message}`);
   return res.value;
+}
+
+async function waitFor(check: () => boolean, message: string): Promise<void> {
+  const deadline = Date.now() + 2_000;
+  while (!check()) {
+    if (Date.now() >= deadline) throw new Error(message);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
 }
 
 async function seedLegacyConversationWithoutThread(dir: string): Promise<void> {
@@ -477,15 +496,23 @@ test('the method surface is the proven set minus the demo affordances', async ()
   await server.close();
 });
 
-test('spawn → send → the provider reply lands in the thread, and the session is registered', async () => {
+test('spawn → send → the provider reply lands in the thread, and the session is registered', async (t) => {
   const dir = root();
+  const providerHome = mkdtempSync(path.join(tmpdir(), 'nvk-provider-home-'));
+  const providerResumeId = 'session_11111111-1111-4111-8111-111111111111';
   await mintChris(dir);
-  const cli = fakeKimi({ reply: 'hello Chris', sessionId: 'session_boot_1' });
-  const server = await boot(dir, { cliPath: cli.cliPath });
+  await enableTranscriptIngestion(dir);
+  const cli = fakeKimi({
+    reply: 'hello Chris',
+    sessionId: providerResumeId,
+    providerHome,
+  });
+  const server = await boot(dir, { cliPath: cli.cliPath, providerHome });
+  t.after(async () => server.close());
   const methods = (await import('../../core/methods.js')).buildMethods(server.runtime);
 
   const spawned = await methods.spawnAgentConversation!({ title: 'Kimi' } as never) as
-    { ok: boolean; conversation: { id: string }; sessionId: string };
+    { ok: boolean; conversation: { id: string; agentId: string } };
   assert.equal(spawned.ok, true);
 
   // DEC-B1-8: a person was provisioned for this agent — one binding, no pool.
@@ -493,22 +520,22 @@ test('spawn → send → the provider reply lands in the thread, and the session
   assert.equal(config.bindings.length, 1);
   assert.equal(config.principals.length, 2, 'chris + one agent person');
 
-  // The session is in the registry AND in the watchdog's table.
-  const sessions = await server.sessions.list();
-  assert.equal(sessions.length, 1);
-  assert.equal(sessions[0]!.sessionId, spawned.sessionId);
-  assert.equal(sessions[0]!.provider, 'kimi');
-  const watchdogEntries = JSON.parse(readFileSync(path.join(dir, '.watchdog-sessions.json'), 'utf8')) as
-    { sessions: Array<{ sessionId: string; status: string }> };
-  assert.equal(watchdogEntries.sessions[0]!.sessionId, spawned.sessionId);
-  assert.equal(watchdogEntries.sessions[0]!.status, 'active');
+  assert.equal((await server.sessions.list()).length, 0,
+    'creating the Agent window creates no provider session');
+  assert.equal(cli.invocations().length, 0, 'creating the Agent window starts no provider CLI');
 
   const sent = await methods.sendMessage!({ conversationId: spawned.conversation.id, text: 'hi' } as never) as
     { ok: boolean; error?: string };
   assert.equal(sent.ok, true, sent.error);
 
-  await server.runtime.kimiRuntime.drain(spawned.sessionId);
-  await new Promise((r) => setTimeout(r, 150)); // the live lane posts on the next tick
+  const providerFile = path.join(
+    providerHome, '.kimi-code', 'sessions', `${providerResumeId}.jsonl`,
+  );
+  await waitFor(
+    () => cli.invocations().length === 1 && existsSync(providerFile),
+    'the first provider turn did not produce its transcript',
+  );
+  assert.equal((await server.runtime.transcript.runtime.ingestNow()).kind, 'ok');
 
   const messages = await methods.getMessages!({ conversationId: spawned.conversation.id } as never) as
     Array<{ senderId: string; text: string }>;
@@ -516,10 +543,16 @@ test('spawn → send → the provider reply lands in the thread, and the session
   assert.equal(messages[0]!.senderId, 'me');
   assert.notEqual(messages[1]!.senderId, 'me', 'the reply comes from the agent person, in the real thread');
 
-  // The resume handle was learned and persisted (DEC-B1-6).
-  assert.equal((await server.sessions.get(spawned.sessionId))!.providerConversationId, 'session_boot_1');
-  assert.equal((await server.sessions.get(spawned.sessionId))!.turns, 1);
-  await server.close();
+  const providerSessions = await server.runtime.transcript.runtime.listProviderSessions();
+  assert.equal(providerSessions.kind, 'ok');
+  if (providerSessions.kind === 'ok') {
+    assert.equal(providerSessions.value.length, 1);
+    assert.equal(providerSessions.value[0]?.resumeId, providerResumeId.slice('session_'.length));
+    assert.equal(providerSessions.value[0]?.agentId, spawned.conversation.agentId);
+    const agent = await server.runtime.agents.getAgent(spawned.conversation.agentId as never);
+    assert.equal(agent.ok && 'sessionId' in agent.value
+      ? agent.value.sessionId : null, providerSessions.value[0]?.id);
+  }
 });
 
 test('a kimi round-trip is measured from its Novakai transcript copy and backfilled onto providerSession', async () => {

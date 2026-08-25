@@ -4,6 +4,8 @@ export * from "./brands.js";
 export * from "./api.js";
 export * from "./outcome.js";
 export * from "./runtime.js";
+export * from "./agent-identity.js";
+export * from "./commands.js";
 export * from "./compose.js";
 export * from "./records/index.js";
 export type {
@@ -20,7 +22,23 @@ export type {
   TranscriptEvent,
   TranscriptLineQuery,
   TranscriptStore,
+  AcceptSendInput,
+  AcceptSendResult,
+  SendTransitionInput,
+  SendTransitionResult,
 } from "./ports/transcript-store.js";
+export type {
+  AgentDirectory,
+  AgentDirectoryEntry,
+  AgentSessionAttachment,
+} from "./ports/agent-directory.js";
+export { createAgentDirectory } from "./compose/agent-directory.js";
+export type {
+  ProviderDispatchResult,
+  ProviderSend,
+  ProviderSendInput,
+} from "./ports/provider-send.js";
+export { createAgentsProviderSend } from "../adapters/provider-send/agents-provider-send.js";
 
 export { WS_PROTOCOL_VERSION } from "./standalone/frames.js";
 export type {
@@ -40,6 +58,12 @@ export type { FoundationTranscriptStoreOptions } from "../adapters/stores/jsonl.
 export { createProviderTranscriptSource } from "../adapters/provider-transcripts/source.js";
 export type { ProviderTranscriptRoots } from "../adapters/provider-transcripts/source.js";
 export { providerNormalizer } from "../adapters/provider-transcripts/normalizers/index.js";
+export {
+  agentIdentityHookCommand,
+  markerFromEnvironment,
+  runAgentIdentityHook,
+} from "../adapters/provider-hooks/agent-identity-hook.js";
+export { ensureClaudeIdentityHook } from "../adapters/provider-hooks/registrations/claude.js";
 export { openJsonlStore } from "../adapters/store-jsonl.js";
 export { createConfigAuthority, DEFAULT_ROLE_GRANTS } from "../adapters/authority-config.js";
 export type {

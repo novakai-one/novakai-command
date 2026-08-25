@@ -1,10 +1,12 @@
 import type { ProviderNormalizer } from "../../../contract/ports/provider-transcript-source.js";
 import type { TranscriptRole } from "../../../contract/types.js";
 import { normalizerSupport } from "./support.js";
+import { findAgentIdentityMarker } from "../../../contract/agent-identity.js";
 
 const {
   contentText,
   declaredRole,
+  displayUserText,
   isObject,
   jsonText,
   noise,
@@ -55,6 +57,7 @@ export const codexNormalizer: ProviderNormalizer = {
   normalize(extent, turnIndex) {
     const row = parseExtent(extent);
     if (row === null) return noise();
+    const agentIdentity = findAgentIdentityMarker(row);
     const payload = isObject(row.payload) ? row.payload : undefined;
     if (row.type === "session_meta") {
       return noise(textValue(payload?.id));
@@ -65,8 +68,11 @@ export const codexNormalizer: ProviderNormalizer = {
       ? payload.content.filter(isObject)
       : [];
     const contentTypes = new Set(content.map((part) => textValue(part.type)));
-    const role = codexRole(row.type, eventType, payload.role, contentTypes);
-    const text = codexText(role, eventType, payload);
+    const role = agentIdentity === undefined
+      ? codexRole(row.type, eventType, payload.role, contentTypes)
+      : "hook";
+    const normalizedText = codexText(role, eventType, payload);
+    const text = role === 'user' ? displayUserText(normalizedText) : normalizedText;
     const metadata = isObject(payload.internal_chat_message_metadata_passthrough)
       ? payload.internal_chat_message_metadata_passthrough
       : undefined;
@@ -88,6 +94,7 @@ export const codexNormalizer: ProviderNormalizer = {
       ...(usage === undefined ? {} : { tokenUsage: usage }),
       ...(providerOccurredAt === undefined ? {} : { providerOccurredAt }),
       ...(role === "tool_call" ? { toolCall: payload } : {}),
+      ...(agentIdentity === undefined ? {} : { agentIdentity }),
     };
   },
 };

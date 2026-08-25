@@ -1,13 +1,16 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { appendFile, mkdir, mkdtemp, open, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, open, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import {
+  agentIdentityHookCommand,
   createDefaultMessagingRuntime,
   createProviderTranscriptSource,
   providerNormalizer,
+  runAgentIdentityHook,
+  type AgentDirectory,
   type IngestCheckpoint,
   type ProviderLineExtent,
   type ProviderName,
@@ -63,6 +66,84 @@ test("provider normalizers retain conversation, identity and tool evidence", () 
     [kimi.role, kimi.text, kimi.providerLineId, kimi.turnId],
     ["assistant", "Kimi reply", "kimi-line-1", "7"],
   );
+});
+
+test("one identity marker normalizes as hidden hook evidence on all providers", () => {
+  const marker = {
+    kind: "novakai-agent-identity",
+    schemaVersion: 1,
+    hookEvent: "UserPromptSubmit",
+    agentId: "agent_abc123",
+  };
+  const claude = normalize("claude", {
+    type: "system",
+    subtype: "hook_response",
+    sessionId: "claude-session",
+    message: { role: "system", content: [{ type: "hook_result", content: JSON.stringify(marker) }] },
+  });
+  const codex = normalize("codex", {
+    type: "response_item",
+    payload: { type: "message", role: "developer", content: [{ type: "input_text", text: JSON.stringify(marker) }] },
+  });
+  const kimi = normalize("kimi", {
+    message: { role: "system", content: `<hook_result hook_event="UserPromptSubmit">${JSON.stringify(marker)}</hook_result>` },
+  });
+  for (const candidate of [claude, codex, kimi]) {
+    assert.equal(candidate.role, "hook");
+    assert.equal(candidate.agentIdentity?.agentId, marker.agentId);
+  }
+  let output = "";
+  assert.equal(runAgentIdentityHook({ NOVAKAI_AGENT_ID: marker.agentId }, (line) => { output += line; }), true);
+  assert.deepEqual(JSON.parse(output), marker);
+  assert.match(agentIdentityHookCommand(), /NOVAKAI_AGENT_ID/);
+});
+
+test("hook assignment attaches the discovered ProviderSession before lines become visible", async () => {
+  const base = await mkdtemp(path.join(tmpdir(), "nvk-provider-assignment-"));
+  const root = path.join(base, ".novakai");
+  const providerHome = path.join(base, "provider-home");
+  const transcriptDir = path.join(providerHome, ".claude", "projects", "fixture");
+  await mkdir(transcriptDir, { recursive: true });
+  const marker = {
+    kind: "novakai-agent-identity",
+    schemaVersion: 1,
+    hookEvent: "UserPromptSubmit",
+    agentId: "agent_attached",
+  };
+  await writeFile(path.join(transcriptDir, "session.jsonl"), `${JSON.stringify({
+    type: "system",
+    subtype: "hook_response",
+    sessionId: "claude-provider-session",
+    message: { role: "system", content: [{ type: "hook_result", content: JSON.stringify(marker) }] },
+  })}\n`);
+  const calls: string[] = [];
+  const agentDirectory: AgentDirectory = {
+    async get(agentId) {
+      return agentId === marker.agentId
+        ? { agentId, provider: "claude", currentProviderSessionId: null }
+        : null;
+    },
+    async attachProviderSession(agentId, providerSessionId) {
+      calls.push(`${agentId}:${providerSessionId}`);
+      return { ok: true, state: "attached" };
+    },
+  };
+  const composed = await createDefaultMessagingRuntime({ root, providerHome, agentDirectory });
+  try {
+    const ingested = await composed.runtime.ingestNow();
+    assert.equal(ingested.kind, "ok");
+    const sessions = await composed.runtime.listProviderSessions();
+    const lines = await composed.runtime.listTranscriptLines();
+    assert.equal(sessions.kind === "ok" && sessions.value[0]?.agentId, marker.agentId);
+    assert.equal(lines.kind === "ok" && lines.value[0]?.agentIdentity?.agentId, marker.agentId);
+    assert.equal(calls.length, 1);
+    const settings = JSON.parse(await readFile(
+      path.join(providerHome, ".claude", "settings.json"), "utf8",
+    ));
+    assert.equal(settings.hooks.UserPromptSubmit.length, 1);
+  } finally {
+    await composed.close();
+  }
 });
 
 test("scan is metadata-only; growth reads verification tail plus new bytes", async () => {

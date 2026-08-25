@@ -1,7 +1,5 @@
-// Slice 3 — live lane (R3-1): PTY output becomes messages via messaging's
-// PUBLIC contract (MessagingSession.sendMessage) in real time. A fake sender
-// standing in for MessagingSession verifies the round-trip; the real session
-// satisfies LiveLaneSender structurally.
+// Transcript-first lane: PTY output is activity telemetry only. Provider-owned
+// session files are the sole message-content authority.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync } from 'node:fs';
@@ -35,22 +33,17 @@ async function setup() {
   return { ctx, agents, sessionId: spawn.value.sessionId };
 }
 
-test('live lane: PTY output arrives as a messaging sendMessage in real time', async () => {
+test('live lane: PTY output never becomes message content', async () => {
   const { ctx, agents, sessionId } = await setup();
   const messaging = new FakeMessagingSession();
   agents.attachLiveLane({ sessionId, address: 'thread:thread_abc', sender: messaging });
   const mock = mockOf(ctx);
   assert.ok(mock);
   mock.__emit(sessionId, { type: 'output', sessionId, at: new Date().toISOString(), data: 'Chris, the reply is 42' });
-  assert.equal(messaging.sent.length, 1);
-  const msg = messaging.sent[0] as { address: string; body: { text: string }; priority: string; clientMessageId: string };
-  assert.equal(msg.address, 'thread:thread_abc');
-  assert.equal(msg.body.text, 'Chris, the reply is 42');
-  assert.equal(msg.priority, 'normal');
-  assert.match(msg.clientMessageId, /^c_/);
+  assert.equal(messaging.sent.length, 0);
 });
 
-test('live lane round-trip: input via send reaches the PTY, output reaches messaging', async () => {
+test('live lane: input reaches the PTY while output remains telemetry', async () => {
   const { ctx, agents, sessionId } = await setup();
   const messaging = new FakeMessagingSession();
   agents.attachLiveLane({ sessionId, address: 'thread:thread_abc', sender: messaging });
@@ -59,9 +52,9 @@ test('live lane round-trip: input via send reaches the PTY, output reaches messa
   // human → PTY
   assert.equal(mock.send(sessionId, 'what is the answer?\n'), true);
   assert.deepEqual(mock.__session(sessionId)?.sent, ['what is the answer?\n']);
-  // PTY → human (in-app message)
+  // PTY output is not a message; ingestion owns the return path.
   mock.__emit(sessionId, { type: 'output', sessionId, at: new Date().toISOString(), data: '42' });
-  assert.equal((messaging.sent[0] as { body: { text: string } }).body.text, '42');
+  assert.equal(messaging.sent.length, 0);
 });
 
 test('unsubscribing the live lane stops the flow; non-output events never message', async () => {

@@ -4,10 +4,12 @@ import type {
 } from "../../../contract/ports/provider-transcript-source.js";
 import type { TranscriptRole } from "../../../contract/types.js";
 import { normalizerSupport } from "./support.js";
+import { findAgentIdentityMarker } from "../../../contract/agent-identity.js";
 
 const {
   contentText,
   declaredRole,
+  displayUserText,
   isObject,
   jsonText,
   noise,
@@ -18,9 +20,11 @@ const {
 
 function messageLine(message: Record<string, unknown>): NormalizedProviderLine {
   const providerLineId = textValue(message.id);
+  const role = declaredRole(message.role) ?? "system";
+  const normalizedText = contentText(message.content) ?? jsonText(message.content);
   return {
-    role: declaredRole(message.role) ?? "system",
-    text: contentText(message.content) ?? jsonText(message.content),
+    role,
+    text: role === 'user' ? displayUserText(normalizedText) : normalizedText,
     ...(providerLineId === undefined ? {} : { providerLineId }),
   };
 }
@@ -111,6 +115,14 @@ export const kimiNormalizer: ProviderNormalizer = {
   normalize(extent, turnIndex) {
     const row = parseExtent(extent);
     if (row === null) return noise();
+    const agentIdentity = findAgentIdentityMarker(row);
+    if (agentIdentity !== undefined) {
+      return {
+        role: "hook",
+        text: JSON.stringify(agentIdentity),
+        agentIdentity,
+      };
+    }
     if (isObject(row.message)) return messageLine(row.message);
     if (row.input !== undefined) return { role: "user", text: jsonText(row.input) };
     if (row.type === "context.append_loop_event" && isObject(row.event)) {

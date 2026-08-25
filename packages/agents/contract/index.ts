@@ -2,6 +2,7 @@
 export * from './schemas.js';
 export * from './errors.js';
 export * from './provider-usage-evidence.js';
+export * from './provider-turn.js';
 export {
   composeProviderUsageEvidence,
   providerTurnCompletionEvidenceId,
@@ -10,6 +11,10 @@ export {
 } from '../core/provider-usage-evidence.js';
 export { composeAgents, mockOf, type AgentsContext, type ComposeAgentsOptions } from '../core/composition.js';
 export { createAgentsContract, type AgentsContract } from '../core/contract.js';
+export type {
+  AttachProviderSessionInput,
+  AttachProviderSessionOutcome,
+} from '../core/registry/session-attachment.js';
 export { createMockAdapter, type MockTerminalAdapter } from '../core/providers/mock.js';
 export { createTerminalAdapter } from '../core/providers/terminal.js';
 // B1 DEC-B1-4: the kimi provider adapter now lives inside the capability that

@@ -14,6 +14,12 @@ export function dedupeById(list: ChatMessage[]): ChatMessage[] {
 /** Append an incoming message unless its id is already in the list. */
 export function appendDedup(cur: ChatMessage[], incoming: ChatMessage): ChatMessage[] {
   if (cur.some((m) => m.id === incoming.id)) return cur;
+  if (incoming.clientOpId) {
+    const optimistic = cur.findIndex((message) => message.clientOpId === incoming.clientOpId);
+    if (optimistic >= 0) {
+      return cur.map((message, index) => index === optimistic ? incoming : message);
+    }
+  }
   return [...cur, incoming];
 }
 
@@ -51,7 +57,7 @@ export function settleOptimisticMessage(
 ): ChatMessage[] {
   return dedupeById(current.map((message) => message.id === optimisticId
     ? (outcome.ok
-      ? { ...outcome.message, pending: false }
+      ? outcome.message
       : { ...message, pending: false, failed: sendErrorText(outcome.error) })
     : message));
 }

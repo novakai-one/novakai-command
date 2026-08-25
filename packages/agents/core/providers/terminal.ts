@@ -121,6 +121,10 @@ export function createTerminalAdapter(
         agentId: sessionId, // S3: unique per-session runtime key
         ...(opts.model ? { model: opts.model } : {}), // OD-C3: at-spawn model reaches capable runtimes
         ...skillsSpawnConfig(provider, opts.skills ?? []),
+        env: {
+          ...skillsSpawnConfig(provider, opts.skills ?? []).env,
+          ...(opts.env ?? {}),
+        },
       });
       const rec: SessionRecord = {
         sessionId, agentId, runtimeKey: info.agentId, provider,
