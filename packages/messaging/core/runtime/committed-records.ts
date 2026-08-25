@@ -6,17 +6,20 @@ import type {
 } from '../../contract/conversations.js';
 import type { Outcome } from '../../contract/outcome.js';
 import type { AgentDirectory } from '../../contract/ports/agent-directory.js';
+import type { ProviderNormalizer } from '../../contract/ports/provider-transcript-source.js';
 import type { ProviderSend } from '../../contract/ports/provider-send.js';
 import type { TranscriptLineQuery, TranscriptStore } from '../../contract/ports/transcript-store.js';
 import type { MessagingRuntimeApi } from '../../contract/runtime.js';
 import type {
   ProviderResumeId,
+  ProviderName,
   ProviderSessionId,
   TranscriptSourceId,
 } from '../../contract/types.js';
 import { MessagingError } from '../../contract/types.js';
 import { listAgentCommunications } from '../communications/queries.js';
 import { ensureConversationView, updateConversationView } from '../conversations/views.js';
+import { listAgentConversationMessages } from '../conversations/messages.js';
 import { rebuildProjections } from '../projections/rebuild.js';
 import { sendConversationMessage } from '../send/send.js';
 import { agentDeliveryMarker } from '../delivery/agent-delivery-marker.js';
@@ -26,7 +29,7 @@ type RecordsApi = Pick<MessagingRuntimeApi,
   | 'listConversationViews' | 'rebuildProjections' | 'readProjections'
   | 'createAgentDeliveryInstruction'
   | 'sendConversationMessage' | 'listProviderSessions' | 'listTranscriptLines'
-  | 'listSendJournals' | 'listAgentCommunications'>;
+  | 'listAgentConversationMessages' | 'listSendJournals' | 'listAgentCommunications'>;
 
 const failed = <T>(cause: unknown): Outcome<T> => ({
   kind: 'error',
@@ -59,6 +62,7 @@ function lineQuery(input: unknown): TranscriptLineQuery {
 export function createCommittedRecordsApi(options: {
   readonly store: TranscriptStore;
   readonly now: () => string;
+  readonly normalizers: Readonly<Record<ProviderName, ProviderNormalizer>>;
   readonly agentDirectory?: AgentDirectory;
   readonly providerSend?: ProviderSend;
 }): RecordsApi {
@@ -84,6 +88,8 @@ export function createCommittedRecordsApi(options: {
     })),
     listProviderSessions: () => safe(() => options.store.listProviderSessions()),
     listTranscriptLines: (input) => safe(() => options.store.listTranscriptLines(lineQuery(input))),
+    listAgentConversationMessages: (input) => safe(() =>
+      listAgentConversationMessages(options.store, options.normalizers, input)),
     listSendJournals: () => safe(() => options.store.listSendJournals()),
     listAgentCommunications: (input) => safe(() => listAgentCommunications(options.store, input)),
     sendConversationMessage: (input: ConversationSendInput) => safe(() => {

@@ -6,25 +6,22 @@ import type { TranscriptRole } from "../../../contract/types.js";
 import { normalizerSupport } from "./support.js";
 import { findAgentIdentityMarker } from "../../../contract/agent-identity.js";
 
-const {
-  contentText,
-  declaredRole,
-  displayUserText,
-  isObject,
-  jsonText,
-  noise,
-  numericUsage,
-  parseExtent,
-  textValue,
-} = normalizerSupport;
+const support = normalizerSupport;
 
 function messageLine(message: Record<string, unknown>): NormalizedProviderLine {
-  const providerLineId = textValue(message.id);
-  const role = declaredRole(message.role) ?? "system";
-  const normalizedText = contentText(message.content) ?? jsonText(message.content);
+  const providerLineId = support.textValue(message.id);
+  const role = support.declaredRole(message.role) ?? "system";
+  const normalizedText = support.contentText(message.content) ?? support.jsonText(message.content);
+  const origin = support.isObject(message.origin) ? message.origin : undefined;
+  const conversationRole = role === 'assistant'
+    || (role === 'user' && support.textValue(origin?.kind) === 'user');
+  const audience = conversationRole && normalizedText.trim() !== ''
+    ? 'conversation'
+    : 'internal';
   return {
     role,
-    text: role === 'user' ? displayUserText(normalizedText) : normalizedText,
+    text: role === 'user' ? support.displayUserText(normalizedText) : normalizedText,
+    audience,
     ...(providerLineId === undefined ? {} : { providerLineId }),
   };
 }
@@ -37,20 +34,21 @@ function wireRole(eventType: string | undefined, partType: unknown): TranscriptR
 }
 
 function wireEventLine(event: Record<string, unknown>): NormalizedProviderLine {
-  const eventType = textValue(event.type);
-  const part = isObject(event.part) ? event.part : undefined;
+  const eventType = support.textValue(event.type);
+  const part = support.isObject(event.part) ? event.part : undefined;
   const role = wireRole(eventType, part?.type);
   const text = role === "tool_call"
-    ? jsonText({ name: event.name, args: event.args })
+    ? support.jsonText({ name: event.name, args: event.args })
     : role === "tool_result"
-      ? jsonText(event.result)
-      : textValue(part?.text) ?? textValue(part?.think) ?? "";
-  const usage = numericUsage(event.usage);
-  const providerLineId = textValue(event.uuid);
-  const turnId = textValue(event.turnId);
+      ? support.jsonText(event.result)
+      : support.textValue(part?.text) ?? support.textValue(part?.think) ?? "";
+  const usage = support.numericUsage(event.usage);
+  const providerLineId = support.textValue(event.uuid);
+  const turnId = support.textValue(event.turnId);
   return {
     role,
     text,
+    audience: role === 'assistant' && text.trim() !== '' ? 'conversation' : 'internal',
     ...(providerLineId === undefined ? {} : { providerLineId }),
     ...(turnId === undefined ? {} : { turnId }),
     ...(usage === undefined ? {} : { tokenUsage: usage }),
@@ -65,7 +63,7 @@ function nativeRole(
   if (eventType === "tool.call.started") return "tool_call";
   if (eventType === "tool.result") return "tool_result";
   if (eventType === "attachment") return "attachment";
-  return declaredRole(message?.role) ?? "assistant";
+  return support.declaredRole(message?.role) ?? "assistant";
 }
 
 function nativeText(
@@ -73,13 +71,13 @@ function nativeText(
   payload: Record<string, unknown>,
   message: Record<string, unknown> | undefined,
 ): string {
-  if (role === "tool_call") return jsonText({ name: payload.name, args: payload.args });
-  if (role === "tool_result") return textValue(payload.output) ?? jsonText(payload.message);
-  if (role === "attachment") return jsonText(message?.content ?? payload);
-  return textValue(payload.output)
-    ?? textValue(payload.prompt)
-    ?? contentText(message?.content)
-    ?? textValue(message?.content)
+  if (role === "tool_call") return support.jsonText({ name: payload.name, args: payload.args });
+  if (role === "tool_result") return support.textValue(payload.output) ?? support.jsonText(payload.message);
+  if (role === "attachment") return support.jsonText(message?.content ?? payload);
+  return support.textValue(payload.output)
+    ?? support.textValue(payload.prompt)
+    ?? support.contentText(message?.content)
+    ?? support.textValue(message?.content)
     ?? "";
 }
 
@@ -87,22 +85,25 @@ function nativeEventLine(
   envelope: Record<string, unknown>,
   turnIndex: number,
 ): NormalizedProviderLine {
-  const payload = isObject(envelope.payload) ? envelope.payload : undefined;
-  if (payload === undefined) return noise();
-  const eventType = textValue(envelope.type) ?? textValue(payload.type);
-  const message = isObject(payload.message) ? payload.message : undefined;
+  const payload = support.isObject(envelope.payload) ? envelope.payload : undefined;
+  if (payload === undefined) return support.noise();
+  const eventType = support.textValue(envelope.type) ?? support.textValue(payload.type);
+  const message = support.isObject(payload.message) ? payload.message : undefined;
   const role = nativeRole(eventType, message);
   const seq = Number.isInteger(envelope.seq) ? Number(envelope.seq) : turnIndex;
-  const resumeId = textValue(payload.sessionId) ?? textValue(envelope.session_id);
-  const usage = numericUsage(payload.usage);
-  const providerLineId = textValue(envelope.id);
-  const parentTurnId = textValue(payload.parentTurnId);
+  const resumeId = support.textValue(payload.sessionId) ?? support.textValue(envelope.session_id);
+  const usage = support.numericUsage(payload.usage);
+  const providerLineId = support.textValue(envelope.id);
+  const parentTurnId = support.textValue(payload.parentTurnId);
   return {
     role,
     text: nativeText(role, payload, message),
+    audience: (message?.role === 'user' || message?.role === 'assistant')
+      ? 'conversation'
+      : 'internal',
     ...(providerLineId === undefined ? {} : { providerLineId }),
     ...(resumeId === undefined ? {} : { resumeId }),
-    turnId: textValue(payload.turnId) ?? `kimi-turn-${seq}`,
+    turnId: support.textValue(payload.turnId) ?? `kimi-turn-${seq}`,
     ...(parentTurnId === undefined ? {} : { parentTurnId }),
     ...(usage === undefined ? {} : { tokenUsage: usage }),
     ...(role === "tool_call" ? { toolCall: payload } : {}),
@@ -113,23 +114,26 @@ function nativeEventLine(
 export const kimiNormalizer: ProviderNormalizer = {
   provider: "kimi",
   normalize(extent, turnIndex) {
-    const row = parseExtent(extent);
-    if (row === null) return noise();
+    const row = support.parseExtent(extent);
+    if (row === null) return support.noise();
     const agentIdentity = findAgentIdentityMarker(row);
     if (agentIdentity !== undefined) {
       return {
         role: "hook",
         text: JSON.stringify(agentIdentity),
+        audience: "internal",
         agentIdentity,
       };
     }
-    if (isObject(row.message)) return messageLine(row.message);
-    if (row.input !== undefined) return { role: "user", text: jsonText(row.input) };
-    if (row.type === "context.append_loop_event" && isObject(row.event)) {
+    if (support.isObject(row.message)) return messageLine(row.message);
+    if (row.input !== undefined) {
+      return { role: "user", text: support.jsonText(row.input), audience: 'internal' };
+    }
+    if (row.type === "context.append_loop_event" && support.isObject(row.event)) {
       return wireEventLine(row.event);
     }
-    return row.kind === "event" && isObject(row.envelope)
+    return row.kind === "event" && support.isObject(row.envelope)
       ? nativeEventLine(row.envelope, turnIndex)
-      : noise();
+      : support.noise();
   },
 };

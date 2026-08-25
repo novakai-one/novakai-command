@@ -58,6 +58,7 @@ function parseExtent(extent: ProviderLineExtent): JsonObject | null {
 const noise = (resumeId?: string): NormalizedProviderLine => ({
   role: "system",
   text: "",
+  audience: "internal",
   ...(resumeId === undefined ? {} : { resumeId }),
 });
 

@@ -3,17 +3,7 @@ import type { TranscriptRole } from "../../../contract/types.js";
 import { normalizerSupport } from "./support.js";
 import { findAgentIdentityMarker } from "../../../contract/agent-identity.js";
 
-const {
-  contentText,
-  declaredRole,
-  displayUserText,
-  isObject,
-  jsonText,
-  noise,
-  numericUsage,
-  parseExtent,
-  textValue,
-} = normalizerSupport;
+const support = normalizerSupport;
 
 function codexRole(
   rowType: unknown,
@@ -35,7 +25,7 @@ function codexRole(
     type === "input_image" || type === "input_file" || type === "attachment")) {
     return "attachment";
   }
-  return declared === "developer" ? "system" : declaredRole(declared) ?? "system";
+  return declared === "developer" ? "system" : support.declaredRole(declared) ?? "system";
 }
 
 function codexText(
@@ -44,51 +34,76 @@ function codexText(
   payload: Record<string, unknown>,
 ): string {
   if (role === "tool_call") {
-    return jsonText({ type: eventType, name: payload.name, arguments: payload.arguments });
+    return support.jsonText({ type: eventType, name: payload.name, arguments: payload.arguments });
   }
-  if (role === "tool_result") return jsonText({ type: eventType, output: payload.output });
-  if (role === "attachment") return jsonText(payload.content);
-  return contentText(payload.content) ?? textValue(payload.message) ?? "";
+  if (role === "tool_result") return support.jsonText({ type: eventType, output: payload.output });
+  if (role === "attachment") return support.jsonText(payload.content);
+  return support.contentText(payload.content) ?? support.textValue(payload.message) ?? "";
+}
+
+function isHarnessContent(content: readonly Record<string, unknown>[]): boolean {
+  const internalPrefixes = [
+    '<recommended_plugins>',
+    '# AGENTS.md instructions',
+    '<environment_context>',
+    '<app-context>',
+    '<skills_instructions>',
+    '<permissions instructions>',
+    '<collaboration_mode>',
+  ];
+  return content.some((part) => {
+    const text = support.textValue(part.text);
+    return text !== undefined && internalPrefixes.some((prefix) => text.startsWith(prefix));
+  });
 }
 
 /** Codex rollout JSONL to the provider-neutral TranscriptLine vocabulary. */
 export const codexNormalizer: ProviderNormalizer = {
   provider: "codex",
   normalize(extent, turnIndex) {
-    const row = parseExtent(extent);
-    if (row === null) return noise();
+    const row = support.parseExtent(extent);
+    if (row === null) return support.noise();
     const agentIdentity = findAgentIdentityMarker(row);
-    const payload = isObject(row.payload) ? row.payload : undefined;
+    const payload = support.isObject(row.payload) ? row.payload : undefined;
     if (row.type === "session_meta") {
-      return noise(textValue(payload?.id));
+      return support.noise(support.textValue(payload?.id));
     }
-    if (payload === undefined) return noise();
-    const eventType = textValue(payload.type);
+    if (payload === undefined) return support.noise();
+    const eventType = support.textValue(payload.type);
     const content = Array.isArray(payload.content)
-      ? payload.content.filter(isObject)
+      ? payload.content.filter(support.isObject)
       : [];
-    const contentTypes = new Set(content.map((part) => textValue(part.type)));
+    const contentTypes = new Set(content.map((part) => support.textValue(part.type)));
     const role = agentIdentity === undefined
       ? codexRole(row.type, eventType, payload.role, contentTypes)
       : "hook";
     const normalizedText = codexText(role, eventType, payload);
-    const text = role === 'user' ? displayUserText(normalizedText) : normalizedText;
-    const metadata = isObject(payload.internal_chat_message_metadata_passthrough)
+    const text = role === 'user' ? support.displayUserText(normalizedText) : normalizedText;
+    const metadata = support.isObject(payload.internal_chat_message_metadata_passthrough)
       ? payload.internal_chat_message_metadata_passthrough
       : undefined;
-    const turnId = textValue(payload.turn_id)
-      ?? textValue(metadata?.turn_id)
-      ?? textValue(payload.id)
+    const audience = row.type === 'response_item'
+      && eventType === 'message'
+      && metadata !== undefined
+      && (role === 'user' || role === 'assistant')
+      && text.trim() !== ''
+      && !isHarnessContent(content)
+      ? 'conversation'
+      : 'internal';
+    const turnId = support.textValue(payload.turn_id)
+      ?? support.textValue(metadata?.turn_id)
+      ?? support.textValue(payload.id)
       ?? `codex-turn-${turnIndex}`;
-    const usage = numericUsage(payload.usage);
-    const providerOccurredAt = textValue(row.timestamp);
-    const providerLineId = textValue(payload.id)
-      ?? (textValue(payload.call_id) === undefined
+    const usage = support.numericUsage(payload.usage);
+    const providerOccurredAt = support.textValue(row.timestamp);
+    const providerLineId = support.textValue(payload.id)
+      ?? (support.textValue(payload.call_id) === undefined
         ? undefined
-        : `${textValue(row.type) ?? "row"}:${eventType ?? "event"}:${textValue(payload.call_id)}`);
+        : `${support.textValue(row.type) ?? "row"}:${eventType ?? "event"}:${support.textValue(payload.call_id)}`);
     return {
       role,
       text,
+      audience,
       turnId,
       ...(providerLineId === undefined ? {} : { providerLineId }),
       ...(usage === undefined ? {} : { tokenUsage: usage }),

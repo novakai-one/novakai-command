@@ -72,6 +72,91 @@ test("provider normalizers retain conversation, identity and tool evidence", () 
   );
 });
 
+test("provider adapters expose only canonical conversation messages", () => {
+  const cases: Array<{ provider: ProviderName; rows: unknown[] }> = [
+    {
+      provider: 'claude',
+      rows: [
+        { type: 'user', message: { role: 'user', content: 'Claude prompt' } },
+        {
+          type: 'assistant',
+          message: { role: 'assistant', content: [{ type: 'thinking', thinking: '' }] },
+        },
+        {
+          type: 'assistant',
+          message: { role: 'assistant', content: [{ type: 'text', text: 'Claude reply' }] },
+        },
+      ],
+    },
+    {
+      provider: 'codex',
+      rows: [
+        {
+          type: 'response_item',
+          payload: {
+            type: 'message', role: 'user',
+            content: [{ type: 'input_text', text: '<recommended_plugins>internal</recommended_plugins>' }],
+            internal_chat_message_metadata_passthrough: { turn_id: 'turn-1' },
+          },
+        },
+        {
+          type: 'response_item',
+          payload: {
+            type: 'message', role: 'user',
+            content: [{ type: 'input_text', text: 'Codex prompt' }],
+            internal_chat_message_metadata_passthrough: { turn_id: 'turn-1' },
+          },
+        },
+        { type: 'event_msg', payload: { type: 'user_message', message: 'Codex prompt' } },
+        { type: 'event_msg', payload: { type: 'agent_message', message: 'Codex reply' } },
+        {
+          type: 'response_item',
+          payload: {
+            type: 'message', role: 'assistant',
+            content: [{ type: 'output_text', text: 'Codex reply' }],
+            internal_chat_message_metadata_passthrough: { turn_id: 'turn-1' },
+          },
+        },
+      ],
+    },
+    {
+      provider: 'kimi',
+      rows: [
+        { type: 'turn.prompt', input: [{ type: 'text', text: 'Kimi prompt' }] },
+        {
+          type: 'context.append_message',
+          message: { role: 'user', origin: { kind: 'user' }, content: 'Kimi prompt' },
+        },
+        {
+          type: 'context.append_message',
+          message: {
+            role: 'user', origin: { kind: 'injection' },
+            content: '<system-reminder>internal</system-reminder>',
+          },
+        },
+        {
+          type: 'context.append_loop_event',
+          event: { type: 'content.part', part: { type: 'text', text: 'Kimi reply' } },
+        },
+      ],
+    },
+  ];
+  for (const fixture of cases) {
+    const visible = fixture.rows
+      .map((row, index) => normalize(fixture.provider, row, index))
+      .filter((line) => line.audience === 'conversation')
+      .map((line) => [line.role, line.text]);
+    assert.deepEqual(visible, [
+      ['user', `${fixture.provider[0]?.toUpperCase()}${fixture.provider.slice(1)} prompt`],
+      ['assistant', `${fixture.provider[0]?.toUpperCase()}${fixture.provider.slice(1)} reply`],
+    ], fixture.provider);
+  }
+  assert.equal(normalize('kimi', {
+    type: 'context.append_message',
+    message: { role: 'assistant', content: 'Kimi alternate reply envelope' },
+  }).audience, 'conversation');
+});
+
 test("one identity marker normalizes as hidden hook evidence on all providers", () => {
   const marker = {
     kind: "novakai-agent-identity",

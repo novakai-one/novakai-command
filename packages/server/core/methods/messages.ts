@@ -25,36 +25,19 @@ async function threadFor(runtime: ServerRuntime, conversation: Conversation): Pr
 }
 
 async function agentMessages(runtime: ServerRuntime, conversation: Conversation) {
-  const [sessions, sends] = await Promise.all([
-    runtime.transcript.runtime.listProviderSessions(),
-    runtime.transcript.runtime.listSendJournals(),
-  ]);
-  if (sessions.kind !== 'ok' || sends.kind !== 'ok') return [];
-  const providerSessions = sessions.value.filter((session) =>
-    session.agentId === conversation.agentId);
-  const lines = (await Promise.all(providerSessions.map(async (session) => {
-    const result = await runtime.transcript.runtime.listTranscriptLines({ sessionId: session.id });
-    return result.kind === 'ok'
-      ? result.value.map((line) => ({ line, sessionCreatedAt: session.createdAt }))
-      : [];
-  }))).flat().filter(({ line }) => line.role === 'user' || line.role === 'assistant');
-  const clientOpByLine = new Map(sends.value.flatMap((journal) =>
-    journal.attempts.flatMap((attempt) => attempt.confirmedLineId === undefined
-      ? [] : [[attempt.confirmedLineId, journal.clientOpId] as const])));
-  return lines
-    .sort((left, right) => {
-      return left.sessionCreatedAt.localeCompare(right.sessionCreatedAt)
-        || left.line.sourcePosition.sourceEpoch - right.line.sourcePosition.sourceEpoch
-        || left.line.sourcePosition.offset - right.line.sourcePosition.offset;
-    })
-    .map(({ line }) => ({
-      id: line.id,
-      conversationId: conversation.id,
-      senderId: line.role === 'user' ? 'me' : conversation.personId ?? conversation.agentId,
-      text: line.text ?? '',
-      createdAt: line.providerOccurredAt ?? line.createdAt,
-      ...(clientOpByLine.has(line.id) ? { clientOpId: clientOpByLine.get(line.id) } : {}),
-    }));
+  if (!conversation.agentId) return [];
+  const result = await runtime.transcript.runtime.listAgentConversationMessages({
+    agentId: conversation.agentId,
+  });
+  if (result.kind !== 'ok') return [];
+  return result.value.map((message) => ({
+    id: message.id,
+    conversationId: conversation.id,
+    senderId: message.role === 'user' ? 'me' : conversation.personId ?? conversation.agentId,
+    text: message.text,
+    createdAt: message.occurredAt,
+    ...(message.clientOpId === undefined ? {} : { clientOpId: message.clientOpId }),
+  }));
 }
 
 async function legacyMessages(runtime: ServerRuntime, conversation: Conversation) {

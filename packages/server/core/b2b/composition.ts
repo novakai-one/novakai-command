@@ -201,6 +201,8 @@ export function composeTranscriptServerHost(
       (await ready).runtime.sendConversationMessage(input),
     listProviderSessions: async () => (await ready).runtime.listProviderSessions(),
     listTranscriptLines: async (input?: unknown) => (await ready).runtime.listTranscriptLines(input),
+    listAgentConversationMessages: async (input) =>
+      (await ready).runtime.listAgentConversationMessages(input),
     listSendJournals: async () => (await ready).runtime.listSendJournals(),
     listAgentCommunications: async (input) =>
       (await ready).runtime.listAgentCommunications(input),

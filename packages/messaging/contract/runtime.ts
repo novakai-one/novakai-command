@@ -6,6 +6,8 @@ import type { ConversationSendAcceptance, ConversationSendInput } from "./comman
 import type { TranscriptEvent } from "./ports/transcript-store.js";
 import type { AgentCommunicationPage, AgentCommunicationsQuery } from './communications.js';
 import type {
+  AgentConversationMessage,
+  AgentConversationMessagesQuery,
   EnsureConversationViewInput,
   UpdateConversationViewInput,
 } from './conversations.js';
@@ -63,6 +65,9 @@ export interface MessagingRuntimeApi {
   sendConversationMessage(input: ConversationSendInput): Promise<Outcome<ConversationSendAcceptance>>;
   listProviderSessions(): Promise<Outcome<readonly ProviderSession[]>>;
   listTranscriptLines(input?: unknown): Promise<Outcome<readonly TranscriptLine[]>>;
+  listAgentConversationMessages(
+    input: AgentConversationMessagesQuery,
+  ): Promise<Outcome<readonly AgentConversationMessage[]>>;
   listSendJournals(): Promise<Outcome<readonly SendJournal[]>>;
   listAgentCommunications(
     input: AgentCommunicationsQuery,

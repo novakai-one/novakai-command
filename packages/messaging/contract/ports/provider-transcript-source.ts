@@ -53,6 +53,8 @@ export interface ProviderLineExtent {
 export interface NormalizedProviderLine {
   readonly role: TranscriptRole;
   readonly text: string;
+  /** Explicit semantic audience; hosts never infer displayability from `role`. */
+  readonly audience: "conversation" | "internal";
   /** Provider-native event identity, when the format exposes one. */
   readonly providerLineId?: string;
   readonly resumeId?: string;

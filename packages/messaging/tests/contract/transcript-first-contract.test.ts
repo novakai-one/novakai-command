@@ -119,6 +119,11 @@ test("registration, line and checkpoint commit once in durable event order", asy
   assert.equal(lines.length, 1);
   assert.equal(lines[0]?.sessionId, sessions[0]?.id);
   assert.equal(lines[0]?.raw, row);
+  const messages = await runtime.listAgentConversationMessages({ agentId: 'agent_external' });
+  assert.deepEqual(messages.kind === 'ok'
+    ? messages.value.map((message) => [message.role, message.text]) : [], [
+    ['assistant', 'hello'],
+  ]);
   assert.notEqual(sessions[0]?.id, sessions[0]?.resumeId,
     "Novakai Session ID and provider Resume ID stay distinct");
   assert.deepEqual(

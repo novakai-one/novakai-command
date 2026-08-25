@@ -104,6 +104,7 @@ class IngestionRuntime implements MessagingRuntimeApi {
     this.records = createCommittedRecordsApi({
       store: options.store,
       now: this.clock,
+      normalizers: options.normalizers,
       ...(options.agentDirectory === undefined ? {} : { agentDirectory: options.agentDirectory }),
       ...(options.providerSend === undefined ? {} : { providerSend: options.providerSend }),
     });
@@ -231,6 +232,8 @@ class IngestionRuntime implements MessagingRuntimeApi {
     (input) => this.records.sendConversationMessage(input);
   listTranscriptLines: MessagingRuntimeApi['listTranscriptLines'] =
     (input) => this.records.listTranscriptLines(input);
+  listAgentConversationMessages: MessagingRuntimeApi['listAgentConversationMessages'] =
+    (input) => this.records.listAgentConversationMessages(input);
   listSendJournals: MessagingRuntimeApi['listSendJournals'] =
     () => this.records.listSendJournals();
   listAgentCommunications: MessagingRuntimeApi['listAgentCommunications'] =
