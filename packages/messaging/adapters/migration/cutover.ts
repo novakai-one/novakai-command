@@ -6,9 +6,7 @@ import {
   type B3Result, type ObjectId, type ScopedStoreHandle,
 } from "@novakai/foundation/contract";
 
-import {
-  emptyStoreState, StoreCore,
-} from "../store-shared.js";
+import { emptyStoreState, StoreCore } from "../store-shared.js";
 import type { StoreOp, StoreState } from "../store-shared.js";
 import { readLegacyStoreOp } from "./cutover-validate.js";
 import { digestOf, operationKeyOf } from "../store-operation-identity.js";
@@ -23,7 +21,6 @@ const REPLAY_CLOCK: ClockIds = {
     throw new Error('Cutover replay must not mint new Messaging identities');
   },
 };
-
 /** Physical roots and optional Foundation kinds participating in cutover. */
 export interface MessagingCutoverInput {
   readonly root: string;
@@ -34,7 +31,6 @@ export interface MessagingCutoverInput {
     readonly kinds: readonly string[];
   };
 }
-
 /** Durable proof that the canonical journal reproduces the legacy state. */
 export interface MessagingCutoverReceipt {
   readonly kind: "storeRouteCutover";
@@ -54,14 +50,12 @@ export interface MessagingCutoverReceipt {
   readonly traceComplete: boolean;
   readonly copiedKinds: readonly string[];
 }
-
 /** Idempotent result of attempting the one-time Messaging store migration. */
 export type MessagingCutoverOutcome =
   | { readonly kind: "completed"; readonly receipt: MessagingCutoverReceipt }
   /** Nothing to do: no legacy file, or a receipt already exists. */
   | { readonly kind: "already-done"; readonly receipt: MessagingCutoverReceipt | null }
   | { readonly kind: "not-required" };
-
 /** Messaging can read the cutover receipt; only Foundation bootstrap writes it. */
 const foundationHandle = (input: MessagingCutoverInput): ScopedStoreHandle => composeHandle({
   root: input.root,
@@ -70,13 +64,11 @@ const foundationHandle = (input: MessagingCutoverInput): ScopedStoreHandle => co
   allowedKinds: ["messagingStoreOp"],
   principal: "sys_messaging",
 });
-
 interface Normalised {
   readonly operation: StoreOp;
   readonly addedInboxItems: boolean;
   readonly wrappedJournal: boolean;
 }
-
 function normaliseLegacyOp(legacy: StoreOp): Normalised {
   if (legacy.op !== "acceptance") {
     return { operation: legacy, addedInboxItems: false, wrappedJournal: false };
@@ -98,11 +90,9 @@ function normaliseLegacyOp(legacy: StoreOp): Normalised {
     wrappedJournal,
   };
 }
-
 function replaysEqual(before: readonly StoreOp[], after: readonly StoreOp[]): boolean {
   return snapshot(before) === snapshot(after);
 }
-
 function snapshot(operations: readonly StoreOp[]): string {
   const core = new StoreCore(REPLAY_CLOCK, emptyStoreState());
   for (const operation of operations) core.applyOp(operation);
@@ -123,10 +113,8 @@ function snapshot(operations: readonly StoreOp[]): string {
     lastSequence: state.lastSequence,
   });
 }
-
 const receiptIdFor = (dataRoot: string): string =>
   `${mintStoreRouteCutoverId(`messaging:${dataRoot}`)}`;
-
 /** Read the Foundation-owned cutover receipt, when one exists. */
 export async function readMessagingCutoverReceipt(
   input: MessagingCutoverInput,
@@ -138,7 +126,6 @@ export async function readMessagingCutoverReceipt(
   if (!stored.ok || isAbsent(stored.value)) return null;
   return stored.value.object;
 }
-
 /** Refuse two possible authorities unless a receipt proves the cutover. */
 export async function checkMessagingStoreRoute(
   input: MessagingCutoverInput,
@@ -158,7 +145,6 @@ export async function checkMessagingStoreRoute(
       legacyPath: input.legacyStorePath,
     }, false));
 }
-
 interface LegacyJournal {
   readonly lineCount: number;
   readonly source: readonly StoreOp[];
@@ -166,7 +152,6 @@ interface LegacyJournal {
   readonly normalisedInboxItems: number;
   readonly normalisedSingletonJournals: number;
 }
-
 /** Parse the whole file before appending anything. */
 function readLegacyJournal(legacyStorePath: string): B3Result<LegacyJournal> {
   const contents = readFileSync(legacyStorePath, "utf8");
