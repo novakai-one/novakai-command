@@ -25,7 +25,8 @@ import type {
   StopAgentInput, StopAgentTreeInput,
 } from '../contract/runs-api.js';
 import type {
-  AgentsPort, MessagingEndpointPort, MessagingInboxPort, ProviderPort, RunCredentialPort,
+  AgentsPort, HeadlessChildMessagingPort, MessagingEndpointPort, MessagingInboxPort,
+  ProviderPort, RunCredentialPort,
   NotificationDeliveryPort, RunWatcherPort, TerminalPort, TranscriptCustodyPort,
 } from '../contract/ports.js';
 import type {
@@ -117,6 +118,8 @@ export interface ComposeAgentRunsOptions extends RunsStoreOptions {
   readonly providerTurnCompletionCoordinator?: ProviderTurnCompletionCoordinator;
   /** §13.5 rows 6/10 and §13.6's cutover, through Messaging's contract. */
   readonly messagingEndpoint?: MessagingEndpointPort;
+  /** Agent-created child bootstrap through transcript-first Messaging. */
+  readonly headlessChildMessaging?: HeadlessChildMessagingPort;
   /** §13.5 row 9 and §13.6's watermark, through Transcript's contract. */
   readonly transcriptCustody?: TranscriptCustodyPort;
   /**
@@ -229,6 +232,8 @@ export function composeAgentRuns(options: ComposeAgentRunsOptions): ComposedAgen
       : { providerTurnCompletionCoordinator: options.providerTurnCompletionCoordinator }),
     ...(options.messagingEndpoint === undefined
       ? {} : { messagingEndpoint: options.messagingEndpoint }),
+    ...(options.headlessChildMessaging === undefined
+      ? {} : { headlessChildMessaging: options.headlessChildMessaging }),
     ...(options.messagingInbox === undefined
       ? {} : { messagingInbox: options.messagingInbox }),
     ...(options.transcriptCustody === undefined

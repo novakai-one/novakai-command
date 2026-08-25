@@ -176,6 +176,15 @@ export async function submitProviderTurn(
       reason: 'terminal-session-mismatch', evidenceRefs: [run.id],
     }, false));
   }
+  if (run.providerSessionId === undefined) {
+    return b3fail(b3err('ProviderTurnSubmissionConflict',
+      'headless transcript-first Runs accept turns through Messaging', {
+        providerTurnSubmissionId: 'uncommitted',
+        providerTurnId: 'uncommitted',
+        reason: 'provider-session-not-yet-ingested',
+        evidenceRefs: [run.id],
+      }, false));
+  }
 
   const providerSession = await core.agents.getProviderSession(
     context.principal, run.providerSessionId,

@@ -80,6 +80,31 @@ export interface MessagingEndpointPort {
   ): Promise<B3Result<{ readonly claimId: string; readonly endpointGeneration: number }>>;
 }
 
+/** Transcript-first child bootstrap; no terminal or ProviderSession is exposed. */
+export interface HeadlessChildMessagingPort {
+  prepare(input: {
+    readonly agentId: AgentId;
+    readonly parentAgentId: AgentId;
+    readonly rootHumanPrincipalId: HumanPrincipalId;
+    readonly provider: 'claude' | 'codex' | 'kimi';
+    readonly displayName: string;
+    readonly environment: Readonly<Record<string, string>>;
+    readonly clientOpId: B3ClientOpId;
+  }): Promise<B3Result<{
+    readonly conversationId: string;
+  }>>;
+
+  dispatchBrief(input: {
+    readonly agentId: AgentId;
+    readonly parentAgentId: AgentId;
+    readonly conversationId: string;
+    readonly brief: string;
+    readonly clientOpId: B3ClientOpId;
+  }): Promise<B3Result<{
+    readonly sendId: string;
+  }>>;
+}
+
 /**
  * The delivery half of §8.1, seen through the two operations §12.5 already
  * types to `sys_agent_runtime`.

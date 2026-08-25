@@ -45,15 +45,16 @@ const eventOf = (record: RetainedRunOccurrenceEvent): RunEvent => ({
   payload: record.payload,
 });
 
-const usageFacts = (agentRun: AgentRun): RunUsageFacts => ({
-  agentRunId: agentRun.id,
-  agentId: agentRun.agentId,
-  providerSessionId: agentRun.providerSessionId,
-  lifecycle: agentRun.lifecycle,
-  final: FINAL_LIFECYCLES.has(agentRun.lifecycle),
-  activityGeneration: agentRun.activityGeneration,
-  recordVersion: agentRun.recordVersion,
-});
+const usageFacts = (agentRun: AgentRun): RunUsageFacts | undefined =>
+  agentRun.providerSessionId === undefined ? undefined : {
+    agentRunId: agentRun.id,
+    agentId: agentRun.agentId,
+    providerSessionId: agentRun.providerSessionId,
+    lifecycle: agentRun.lifecycle,
+    final: FINAL_LIFECYCLES.has(agentRun.lifecycle),
+    activityGeneration: agentRun.activityGeneration,
+    recordVersion: agentRun.recordVersion,
+  };
 
 async function resolveEventRunId(
   store: RunsStore,

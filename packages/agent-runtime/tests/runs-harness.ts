@@ -36,8 +36,8 @@ import type {
   ProviderTurnCompletionCoordinator, ProviderTurnCompletionEvidenceLookup,
 } from '../core/runs-context.js';
 import {
-  createFakeMessagingEndpoints, createFakeTranscriptCustody,
-  type FakeMessagingEndpoints, type FakeTranscriptCustody,
+  createFakeHeadlessChildMessaging, createFakeMessagingEndpoints, createFakeTranscriptCustody,
+  type FakeHeadlessChildMessaging, type FakeMessagingEndpoints, type FakeTranscriptCustody,
 } from './runs-b3c-fakes.js';
 import { createRunsStore, type RunsStore } from '../core/runs-store.js';
 import {
@@ -88,6 +88,7 @@ export interface RunsRig {
   readonly fence: FakeFence;
   readonly messagingEndpoint: FakeMessagingEndpoints;
   readonly transcriptCustody: FakeTranscriptCustody;
+  readonly headlessChildMessaging: FakeHeadlessChildMessaging;
   readonly notifications: FakeNotificationDelivery;
   readonly events: { kind: string; payload: Readonly<Record<string, unknown>> }[];
   readonly root: string;
@@ -138,6 +139,7 @@ export interface RunsRigOptions extends FakeAgentsOptions {
    */
   readonly messagingEndpoint?: FakeMessagingEndpoints;
   readonly transcriptCustody?: FakeTranscriptCustody;
+  readonly headlessChildMessaging?: FakeHeadlessChildMessaging;
   readonly notifications?: FakeNotificationDelivery;
   readonly providerTurnCompletionEvidence?: ComposeAgentRunsOptions['providerTurnCompletionEvidence'];
   readonly providerTurnCompletionCoordinator?: ComposeAgentRunsOptions['providerTurnCompletionCoordinator'];
@@ -166,6 +168,8 @@ export function createRunsRig(options: RunsRigOptions = {}): RunsRig {
   const providers = options.providers ?? createFakeProviders();
   const messagingEndpoint = options.messagingEndpoint ?? createFakeMessagingEndpoints();
   const transcriptCustody = options.transcriptCustody ?? createFakeTranscriptCustody();
+  const headlessChildMessaging = options.headlessChildMessaging
+    ?? createFakeHeadlessChildMessaging();
   const notifications = options.notifications ?? createFakeNotificationDelivery();
   const fence = createFakeFence();
   const events: RunsRig['events'] = [];
@@ -272,7 +276,7 @@ export function createRunsRig(options: RunsRigOptions = {}): RunsRig {
     ...(options.gateCompletionBudgetMs === undefined
       ? {} : { gateCompletionBudgetMs: options.gateCompletionBudgetMs }),
     ...(options.withoutB3cCapabilities === true
-      ? {} : { messagingEndpoint, transcriptCustody }),
+      ? {} : { messagingEndpoint, transcriptCustody, headlessChildMessaging }),
     ...(options.withoutB3cCapabilities === true
       ? {}
       : {
@@ -309,7 +313,7 @@ export function createRunsRig(options: RunsRigOptions = {}): RunsRig {
 
   return {
     runtime, agents, terminal, providers, fence, events, root,
-    messagingEndpoint, transcriptCustody, notifications,
+    messagingEndpoint, transcriptCustody, headlessChildMessaging, notifications,
     human: (scopes = EVERY_SCOPE) => envelope({
       id: CHRIS, kind: 'human', verifiedScopes: scopes,
     }),

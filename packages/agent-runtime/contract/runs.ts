@@ -76,8 +76,8 @@ export type ControllerState = typeof CONTROLLER_STATES[number];
 export interface AgentRun extends RecordEnvelope<AgentRunId, 'agentRun'> {
   readonly agentId: AgentId;
   readonly launchPlanId: ResolvedLaunchPlanId;
-  /** Minted once, before this record existed, and never rebound (§5.4). */
-  readonly providerSessionId: ProviderSessionId;
+  /** Provider-file identity; absent until transcript ingestion discovers it. */
+  readonly providerSessionId?: ProviderSessionId;
   readonly terminalSessionId?: TerminalSessionId;
   readonly lifecycle: AgentRunLifecycle;
   readonly activity: AgentRunActivity;

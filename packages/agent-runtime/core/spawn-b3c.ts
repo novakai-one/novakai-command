@@ -160,7 +160,8 @@ export async function bindTranscript(
   // A binding with no Thread cannot mirror a single turn, so a host that could
   // not produce one records the stage as un-owned rather than writing custody
   // that points nowhere.
-  if (transcript === undefined || input.threadId === undefined) {
+  if (transcript === undefined || input.threadId === undefined
+    || input.agentRun.providerSessionId === undefined) {
     return absent(core, input.operation, 'transcript-bound', 'transcript');
   }
   const bound = await transcript.bind({

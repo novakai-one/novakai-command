@@ -25,7 +25,7 @@ import {
   type GovernedAgentsContract, type ProviderAdapterRegistry,
 } from '../../../agents/b3/contract/index.js';
 import {
-  composeProviderUsageEvidence, type ProviderUsageEvidenceContract,
+  composeProviderUsageEvidence, type AgentsContract, type ProviderUsageEvidenceContract,
 } from '../../../agents/contract/index.js';
 import { agentsPort, createRunCredentials, terminalPort } from './run-ports.js';
 import { readAllTerminalSessions } from './terminal-paging.js';
@@ -60,6 +60,7 @@ import { createTranscriptUsagePort } from './usage-transcript-port.js';
 import { createNotificationDeliveryPump } from './notification-delivery-pump.js';
 import { startWatcherScheduler } from './watcher-scheduler.js';
 import { createStoredTranscriptSource } from './stored-transcript-source.js';
+import { createHeadlessChildMessagingPort } from './headless-child-messaging.js';
 
 export interface B3RuntimeOptions {
   /** `.novakai/` root. Domain records live in `<root>/stores`. */
@@ -92,7 +93,12 @@ export interface B3RuntimeOptions {
    */
   readonly transcriptSource?: TranscriptSourcePort;
   /** Production Server supplies Messaging's one-door ingestion runtime. */
-  readonly messagingRuntime?: Pick<MessagingRuntimeApi, 'listTranscriptLines'>;
+  readonly messagingRuntime?: Pick<
+    MessagingRuntimeApi,
+    'listTranscriptLines' | 'sendConversationMessage'
+  >;
+  /** Target Agents door used only to prepare a headless child's CLI runtime. */
+  readonly providerAgents?: Pick<AgentsContract, 'spawnAgent'>;
   /** Where the provider CLIs keep their transcripts. Overridable for tests. */
   readonly providerHome?: string;
   /**
@@ -522,6 +528,17 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
     },
   });
 
+  const headlessChildMessaging = options.messagingRuntime === undefined
+    || options.providerAgents === undefined
+    ? undefined
+    : createHeadlessChildMessagingPort({
+        root: options.root,
+        dataRoot,
+        messaging: options.messagingRuntime,
+        agents: options.providerAgents,
+        ...(options.publish === undefined ? {} : { emit: options.publish }),
+      });
+
   const runtimeTerminal = terminalPort(terminal, () => runtime.fence.activeEpochId());
   const runtimeProviders = createProviderPort(providerAdapters, authorities);
   runs = composeAgentRuns({
@@ -535,6 +552,7 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
     ...(options.publish === undefined ? {} : { publish: options.publish }),
     ...(options.gateTimeoutMs === undefined ? {} : { gateTimeoutMs: options.gateTimeoutMs }),
     messagingEndpoint: messagingEndpointPort(messaging),
+    ...(headlessChildMessaging === undefined ? {} : { headlessChildMessaging }),
     // §8.1's delivery half. Composed here for the same reason the endpoint port
     // is: the Runtime owns the terminal, Messaging owns the inbox, and this is
     // the only place the two are allowed to meet.

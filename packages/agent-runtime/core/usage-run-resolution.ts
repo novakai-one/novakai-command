@@ -11,7 +11,8 @@ import { requireRun, type RunsCore } from './runs-context.js';
 export function usageFacts(
   agentRun: AgentRun,
   submissions: readonly ProviderTurnSubmission[] = [],
-): RunUsageFacts {
+): RunUsageFacts | null {
+  if (agentRun.providerSessionId === undefined) return null;
   return {
     agentRunId: agentRun.id,
     agentId: agentRun.agentId,
@@ -47,7 +48,15 @@ export async function getUsageRun(
   const visible = await core.agents.getAgent(principal, agentRun.value.agentId);
   if (!visible.ok) return visible;
   const submissions = await usageSubmissions(core, agentRun.value.id);
-  return submissions.ok ? b3ok(usageFacts(agentRun.value, submissions.value)) : submissions;
+  if (!submissions.ok) return submissions;
+  const facts = usageFacts(agentRun.value, submissions.value);
+  return facts === null
+    ? b3fail(b3err('RuntimeUnavailable',
+        'usage waits for transcript ingestion to assign a ProviderSession', {
+          agentRunId,
+          reason: 'provider-session-not-yet-ingested',
+        }, true))
+    : b3ok(facts);
 }
 
 /** All Runtime-owned Run facts for one visible stable Agent. */
@@ -64,7 +73,8 @@ export async function listUsageRuns(
   for (const agentRun of storedRuns.value) {
     const submissions = await usageSubmissions(core, agentRun.id);
     if (!submissions.ok) return submissions;
-    facts.push(usageFacts(agentRun, submissions.value));
+    const projected = usageFacts(agentRun, submissions.value);
+    if (projected !== null) facts.push(projected);
   }
   return b3ok(facts);
 }

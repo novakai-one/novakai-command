@@ -105,7 +105,7 @@ export async function interruptAgentTurn(
   if (!announced.ok) return b3fail(announced.error);
 
   const plan = await core.agents.getLaunchPlan(context.principal, agentRun.value.launchPlanId);
-  if (plan.ok) {
+  if (plan.ok && agentRun.value.providerSessionId !== undefined) {
     await core.providers.requestInterrupt({
       provider: plan.value.provider,
       providerSessionId: agentRun.value.providerSessionId,

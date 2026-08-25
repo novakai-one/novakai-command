@@ -463,6 +463,24 @@ test('an Agent spawns a child, and the child is its own generation', async () =>
     assert.equal(builder.value.family.supervisor.kind, 'agent');
     assert.equal(builder.value.run.parentRequestingRunId, manager.value.run.id,
       'the Run that asked for this one is recorded');
+    assert.equal(builder.value.run.providerSessionId, undefined,
+      'a headless child invented a ProviderSession before ingestion');
+    assert.equal(builder.value.run.terminalSessionId, undefined,
+      'a headless child opened the retired PTY path');
+    assert.equal(rig.terminal.opened.length, 1,
+      'the child opened a second terminal instead of using one-shot Messaging');
+    assert.equal(rig.headlessChildMessaging.prepared.length, 1);
+    assert.equal(rig.headlessChildMessaging.dispatched.length, 1);
+    const prepared = rig.headlessChildMessaging.prepared[0]!;
+    const dispatched = rig.headlessChildMessaging.dispatched[0]!;
+    assert.equal(prepared.agentId, builder.value.agent.agentId);
+    assert.equal(prepared.parentAgentId, manager.value.agent.agentId);
+    assert.equal(prepared.environment.NVK_AGENT_RUN_ID, builder.value.run.id);
+    assert.equal(dispatched.agentId, builder.value.agent.agentId);
+    assert.equal(dispatched.parentAgentId, manager.value.agent.agentId);
+    assert.equal(dispatched.brief, 'write the thing');
+    assert.equal(rig.agents.grantsIssued.length >= 2, true,
+      'the child provider was dispatched without its own and parent grants');
 
     // And a role the parent may not spawn is refused.
     const forbidden = await rig.runtime.spawnAgent(

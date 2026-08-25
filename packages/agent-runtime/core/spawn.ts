@@ -25,6 +25,7 @@ import {
   bindProviderSession, finishRun, installWatchers, reserveRun, startTerminal,
 } from './spawn-stages.js';
 import { activateEndpoint, bindTranscript, reserveEndpoint } from './spawn-b3c.js';
+import { provisionHeadlessChild } from './headless-child.js';
 
 export interface SpawnOutcome {
   readonly agentRun: AgentRun;
@@ -51,23 +52,28 @@ export async function spawnAgent(
   const open = await treeAcceptsAChild(core, context, authority.value.parentAgentId);
   if (!open.ok) return open;
 
+  const headlessChild = authority.value.parentAgentId !== undefined
+    && input.task?.brief !== undefined
+    && core.headlessChildMessaging !== undefined;
+
   const opened = await openOperation(core, context, {
     kindOfOperation: 'spawn',
     runtimeEpochId: epoch.value,
-    reserveProviderSession: true,
+    reserveProviderSession: !headlessChild,
   });
   if (!opened.ok) return opened;
   let operation = opened.value.operation;
   const blocked = resumeRefusal(operation);
   if (blocked !== null) return b3fail(blocked);
   const reserved = operation.reservedProviderSessionId;
-  if (reserved === undefined) {
+  if (!headlessChild && reserved === undefined) {
     return b3fail(recoveryRequired(operation.id, operation.currentStage,
       'the operation was journalled without its provider-session reservation'));
   }
 
   const built = await buildRun(core, context, {
-    input, authority: authority.value, operation, epochId: epoch.value, reserved,
+    input, authority: authority.value, operation, epochId: epoch.value,
+    ...(reserved === undefined ? {} : { reserved }),
   });
   if (!built.ok) {
     // Undo what we can, say what we cannot, and never leave an unowned PTY.
@@ -130,7 +136,7 @@ interface BuildInput {
   readonly authority: SpawnAuthorityFacts;
   readonly operation: RunOperation;
   readonly epochId: RuntimeEpochId;
-  readonly reserved: ProviderSessionId;
+  readonly reserved?: ProviderSessionId;
 }
 
 interface Governed {
@@ -255,6 +261,22 @@ function watcherRecipient(authority: SpawnAuthorityFacts): WatcherRecipient {
 async function provisionRun(
   core: RunsCore, context: CommandContext, build: BuildInput, governed: Governed,
 ): Promise<B3Result<{ agentRun: AgentRun; operation: RunOperation }>> {
+  if (build.authority.parentAgentId !== undefined
+    && build.input.task?.brief !== undefined
+    && core.headlessChildMessaging !== undefined) {
+    return provisionHeadlessChild(core, context, {
+      agentId: governed.agentId,
+      plan: governed.plan,
+      authority: build.authority as SpawnAuthorityFacts & { readonly parentAgentId: AgentId },
+      operation: governed.operation,
+      displayName: build.input.displayName,
+      brief: build.input.task.brief,
+    });
+  }
+  if (build.reserved === undefined) {
+    return b3fail(recoveryRequired(build.operation.id, build.operation.currentStage,
+      'a terminal-backed spawn has no provider-session reservation'));
+  }
   const reservedRun = await reserveRun(core, context, {
     agentId: governed.agentId, plan: governed.plan, authority: build.authority,
     reserved: build.reserved, operation: governed.operation,

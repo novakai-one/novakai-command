@@ -71,6 +71,13 @@ export async function applyRunControl(
         actual: agentRun.value.recordVersion,
       }, true));
   }
+  if (agentRun.value.providerSessionId === undefined) {
+    return b3fail(b3err('RuntimeUnavailable',
+      'headless transcript-first Runs do not expose terminal provider controls', {
+        agentRunId: agentRun.value.id,
+        reason: 'provider-session-not-yet-ingested',
+      }, false));
+  }
 
   return core.agents.applyAgentControl(context, {
     agentRunId: agentRun.value.id,
@@ -82,4 +89,3 @@ export async function applyRunControl(
     ...(authorised.value.grantId === undefined ? {} : { delegationGrantId: authorised.value.grantId }),
   });
 }
-

@@ -30,6 +30,7 @@ interface LegacyAgentCompatibility {
   readonly instructions: string;
   readonly hooks: readonly never[];
   readonly skills: readonly string[];
+  readonly parentAgentId?: string;
 }
 
 export async function createAgentFromRole(
@@ -63,6 +64,7 @@ export async function createAgentFromRole(
     status: 'active',
     origin: request.parentAgentId === undefined ? 'nvk-spawned' : 'agent-spawned',
     sessions: [],
+    ...(request.parentAgentId === undefined ? {} : { parentAgentId: request.parentAgentId }),
     ...legacyCompatibility(role.value),
   };
   const created = await core.store.create<Agent>(

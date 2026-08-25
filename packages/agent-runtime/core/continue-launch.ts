@@ -34,6 +34,10 @@ export async function startReplacement(
   context: CommandContext,
   work: ContinuationWork & { readonly plan: LaunchPlanFacts },
 ): Promise<B3Result<{ agentRun: AgentRun; operation: RunOperation; resumeHandleUsed: boolean }>> {
+  if (work.oldRun.providerSessionId === undefined) {
+    return b3fail(recoveryRequired(work.operation.id, work.operation.currentStage,
+      'headless transcript-first Runs continue through Messaging, not the terminal ladder'));
+  }
   const session = await core.agents.getProviderSession(
     context.principal, work.oldRun.providerSessionId,
   );

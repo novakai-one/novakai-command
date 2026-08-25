@@ -13,8 +13,30 @@
 //     recorded — never invented on read.
 import { b3err, b3fail, b3ok, type B3Result } from '@novakai/foundation/contract';
 import type {
-  MessagingEndpointPort, TranscriptCustodyPort,
+  HeadlessChildMessagingPort, MessagingEndpointPort, TranscriptCustodyPort,
 } from '../contract/ports.js';
+
+export interface FakeHeadlessChildMessaging extends HeadlessChildMessagingPort {
+  readonly prepared: Parameters<HeadlessChildMessagingPort['prepare']>[0][];
+  readonly dispatched: Parameters<HeadlessChildMessagingPort['dispatchBrief']>[0][];
+}
+
+export function createFakeHeadlessChildMessaging(): FakeHeadlessChildMessaging {
+  const prepared: FakeHeadlessChildMessaging['prepared'] = [];
+  const dispatched: FakeHeadlessChildMessaging['dispatched'] = [];
+  return {
+    prepared,
+    dispatched,
+    async prepare(input) {
+      prepared.push(input);
+      return b3ok({ conversationId: `conversation_${String(input.agentId)}` });
+    },
+    async dispatchBrief(input) {
+      dispatched.push(input);
+      return b3ok({ sendId: `send_${String(input.agentId)}` });
+    },
+  };
+}
 
 export interface FakeClaim {
   readonly id: string;

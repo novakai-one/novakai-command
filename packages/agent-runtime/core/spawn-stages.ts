@@ -29,7 +29,7 @@ export async function reserveRun(
     readonly agentId: AgentId;
     readonly plan: LaunchPlanFacts;
     readonly authority: SpawnAuthorityFacts;
-    readonly reserved: ProviderSessionId;
+    readonly reserved?: ProviderSessionId;
     readonly operation: RunOperation;
   },
 ): Promise<B3Result<{ agentRun: AgentRun; operation: RunOperation }>> {
@@ -54,7 +54,7 @@ export async function reserveRun(
     createdBy: context.principal.id,
     agentId: input.agentId,
     launchPlanId: input.plan.id,
-    providerSessionId: input.reserved,
+    ...(input.reserved === undefined ? {} : { providerSessionId: input.reserved }),
     lifecycle: 'provisioning',
     activity: 'idle',
     activityGeneration: 1 as ActivityGeneration,
@@ -294,7 +294,7 @@ export async function installWatchers(
  * — the caller simply held less than it asked for — so they are not failures of
  * the spawn. Anything else is.
  */
-async function issueRunGrants(
+export async function ensureRunGrants(
   core: RunsCore,
   context: CommandContext,
   input: {
@@ -360,7 +360,7 @@ export async function finishRun(
   });
   if (!assigned.ok) return assigned;
 
-  const granted = await issueRunGrants(core, context, input);
+  const granted = await ensureRunGrants(core, context, input);
   if (!granted.ok) return granted;
 
   const agentRun = await patchRun(core, input.agentRun, {

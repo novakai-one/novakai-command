@@ -146,6 +146,10 @@ export async function bootServer(options: BootOptions): Promise<BootResult> {
     ...(options.b3 ?? {}),
     root: options.root,
     messagingRuntime: transcript.runtime,
+    providerAgents: agents,
+    publish(kind, payload) {
+      if (kind === 'conversation.created') runtime.broadcast('conversation', payload);
+    },
   });
   note(12, 'runtime', `b3.* composed on ${b3Wire.runtime.dataRoot}`);
   const methods = { ...buildMethods(runtime), ...b3Wire.methods };

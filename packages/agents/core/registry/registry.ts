@@ -45,6 +45,7 @@ export function normalizeAgent(flat: unknown): AgentDefinitionT | null {
     : [];
   const parsed = AgentDefinition.safeParse({
     ...obj,
+    status: obj.status === 'active' ? 'defined' : obj.status,
     origin: typeof obj.origin === 'string' ? obj.origin : 'nvk-spawned',
     sessions: Array.isArray(obj.sessions) ? obj.sessions : [],
     instructions: typeof obj.instructions === 'string' ? obj.instructions : '',
