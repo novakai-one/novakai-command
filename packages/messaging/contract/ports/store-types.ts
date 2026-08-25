@@ -22,7 +22,7 @@ import type {
 import type {
   AgentEndpointClaim,
   AgentInboxItem,
-} from "../../b3/contract/records.js";
+} from "../records/legacy-agent-mail.js";
 
 export interface StoreUnavailableError { name: "StoreUnavailable"; message: string; retryable: boolean }
 export interface StoreCorruptError { name: "StoreCorrupt"; message: string }

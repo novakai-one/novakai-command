@@ -220,6 +220,8 @@ class IngestionRuntime implements MessagingRuntimeApi {
     () => this.records.rebuildProjections();
   readProjections: MessagingRuntimeApi['readProjections'] =
     () => this.records.readProjections();
+  createAgentDeliveryInstruction: MessagingRuntimeApi['createAgentDeliveryInstruction'] =
+    (input) => this.records.createAgentDeliveryInstruction(input);
   listProviderSessions: MessagingRuntimeApi['listProviderSessions'] =
     () => this.records.listProviderSessions();
   sendConversationMessage: MessagingRuntimeApi['sendConversationMessage'] =

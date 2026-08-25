@@ -1,25 +1,4 @@
-// The B3 Runtime as an inbound wire adapter: `b3.*` on nvk-ws v1, plus the
-// host-side bookkeeping the socket itself owns.
-//
-// This used to live inside `startRuntimeHost`, which meant the ONLY process
-// that could serve `b3.*` was the headless runtime host — and the Shell is
-// served by the other composition root (`boot.ts`). A page whose every Agent
-// Run screen goes through FZ-VIEW-001's door was therefore talking to a server
-// that answered `unknown method b3.agent.listRuns` (T-02, entry list A-10).
-//
-// So the adapter is separated from the host that mounts it. Composition stays
-// where it belongs — one `composeB3Runtime` per process — and the two roots
-// share ONE method table, one identity rule and one set of controller
-// bookkeeping, rather than two that can drift.
-//
-// What lives here is what the SOCKET owns (§12.6: server composes and
-// transports, and owns no Runtime or Terminal domain fact):
-//
-//   * which windows each connection opened, so closing a socket is detach
-//     (§13.4) rather than a controller that counts forever;
-//   * the sighting heartbeat, so Terminal can judge what is still watching;
-//   * following live sessions, so output leaves as ordinary v1 event frames;
-//   * who the caller is, decided at the upgrade and never from `params`.
+// `b3.*` wire adapter: identity, controller bookkeeping and live output only.
 import {
   agentRunPrincipalId, mintClientOpId, mintTraceCorrelationId,
   type AgentRunId, type AuthenticatedPrincipal, type ControllerAttachmentId,
@@ -35,7 +14,7 @@ import { composeB3Runtime, type B3Runtime, type B3RuntimeOptions } from './compo
 import { buildB3Methods } from './methods.js';
 import { readAllTerminalSessions } from './terminal-paging.js';
 import { buildB3AgentMethods } from './agent-methods.js';
-import { buildB3MessagingMethods } from './messaging-methods.js';
+import { buildMessagingRuntimeMethods } from './messaging-runtime-methods.js';
 import { buildB3SupervisionMethods } from './supervision-methods.js';
 
 /** Comfortably inside the stale window, so a live window is never called gone. */
@@ -56,6 +35,7 @@ function attachmentIn(result: unknown): OpenedController | null {
   return { attachmentId, terminalSessionId: outcome.value.terminalSessionId };
 }
 
+/** Host inputs for the B3 transport adapter. */
 export interface B3WireOptions extends B3RuntimeOptions {
   readonly principalId?: HumanPrincipalId;
   /**
@@ -66,10 +46,11 @@ export interface B3WireOptions extends B3RuntimeOptions {
 }
 
 /** Just enough of a listening transport for the adapter to push frames into. */
-export interface EventSink {
+interface EventSink {
   broadcast(name: string, data: unknown): void;
 }
 
+/** Authenticated method table and lifecycle exposed to a listening host. */
 export interface B3Wire {
   readonly runtime: B3Runtime;
   /** Every `b3.*` method, ready to merge into a host's table. */
@@ -90,6 +71,7 @@ export interface B3Wire {
   close(): Promise<void>;
 }
 
+/** Compose the B3 host wire without taking ownership of the listening socket. */
 export async function composeB3Wire(options: B3WireOptions): Promise<B3Wire> {
   // Live events leave as ordinary v1 event frames, exactly as terminal output
   // does. Composition is where that is decided: the capability publishes, and
@@ -155,9 +137,8 @@ export async function composeB3Wire(options: B3WireOptions): Promise<B3Wire> {
         contractVersion: 1,
       }),
     }),
-    ...buildB3MessagingMethods({
+    ...buildMessagingRuntimeMethods({
       messaging: runtime.messaging,
-      transcript: runtime.transcript,
       // The Run→Agent join, read from the Runtime's own records. An Agent Run
       // may read ITS Agent and no other, and this is how the wire finds out
       // which one that is without believing anything the caller said.
@@ -169,12 +150,6 @@ export async function composeB3Wire(options: B3WireOptions): Promise<B3Wire> {
         return view.ok ? view.value.agent.agentId : null;
       },
       principalFor,
-      contextFor: (principal, _session, clientOpId) => ({
-        principal,
-        clientOpId,
-        traceId: mintTraceCorrelationId(),
-        contractVersion: 1,
-      }),
     }),
     ...buildB3SupervisionMethods({
       supervision: runtime.supervision,

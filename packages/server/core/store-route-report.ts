@@ -13,7 +13,7 @@ import path from 'node:path';
 import { b3ok, type B3Result } from '@novakai/foundation/contract';
 import {
   listMigratedOperations, readMessagingCutoverReceipt,
-} from '../../../messaging/contract/index.js';
+} from '../../messaging/contract/index.js';
 
 /**
  * The legacy Messaging journal, as the product actually writes it
@@ -26,7 +26,7 @@ import {
  */
 export const LEGACY_MESSAGING_STORE = 'messaging.jsonl';
 
-export interface CutoverKindReport {
+interface CutoverKindReport {
   readonly kind: string;
   readonly canonicalPath: string;
   readonly canonicalExists: boolean;
@@ -37,7 +37,7 @@ export interface CutoverKindReport {
   readonly legacyBytes: number;
 }
 
-export interface CutoverReport {
+interface CutoverReport {
   readonly schemaVersion: 1;
   readonly dataRoot: string;
   readonly perKind: readonly CutoverKindReport[];
@@ -70,13 +70,14 @@ export interface CutoverReport {
   readonly verdict: 'clear' | 'cutover-required' | 'blocked';
 }
 
-export interface CutoverReportInput {
+interface CutoverReportInput {
   readonly root: string;
   readonly dataRoot: string;
   /** kind → the legacy file that kind used to live in. */
   readonly legacySources: Readonly<Record<string, string>>;
 }
 
+/** Inspect canonical and legacy stores without performing migration writes. */
 export async function buildCutoverReport(
   input: CutoverReportInput,
 ): Promise<B3Result<CutoverReport>> {
@@ -150,6 +151,7 @@ function decide(
 const sizeOf = (filePath: string): number =>
   (existsSync(filePath) ? statSync(filePath).size : 0);
 
+/** Render the cutover report for the operator CLI. */
 export function describeCutover(report: CutoverReport): string {
   const rows = report.perKind.map((entry) =>
     `  ${entry.kind}: canonical `

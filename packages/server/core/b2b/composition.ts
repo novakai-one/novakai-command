@@ -195,6 +195,8 @@ export function composeTranscriptServerHost(
     listConversationViews: async () => (await ready).runtime.listConversationViews(),
     rebuildProjections: async () => (await ready).runtime.rebuildProjections(),
     readProjections: async () => (await ready).runtime.readProjections(),
+    createAgentDeliveryInstruction: async (input) =>
+      (await ready).runtime.createAgentDeliveryInstruction(input),
     sendConversationMessage: async (input) =>
       (await ready).runtime.sendConversationMessage(input),
     listProviderSessions: async () => (await ready).runtime.listProviderSessions(),

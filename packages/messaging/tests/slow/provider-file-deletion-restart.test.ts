@@ -50,7 +50,10 @@ async function seedProviderFile(providerHome: string): Promise<void> {
       },
     },
   ];
-  await writeFile(path.join(folder, 'session.jsonl'), `${rows.map(JSON.stringify).join('\n')}\n`);
+  await writeFile(
+    path.join(folder, 'session.jsonl'),
+    `${rows.map((row) => JSON.stringify(row)).join('\n')}\n`,
+  );
 }
 
 test('provider-file deletion and restart preserve history, Views and rebuilds', async () => {

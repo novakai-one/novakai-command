@@ -24,7 +24,6 @@ Dispatch table (from `scripts/nvk.mjs`):
 | `project` | `packages/projects/cli/nvk-project.ts` |
 | `artifact` | `packages/artifacts/cli/nvk-artifact.ts` |
 | `spine` | `packages/spine/cli/nvk-spine.ts` |
-| `transcript` | `packages/transcript/cli/nvk-transcript.ts` |
 | `agent` | `packages/server/cli/nvk-agent.ts` |
 | `runtime` | `packages/server/cli/nvk-runtime.ts` |
 | `terminal` | `packages/server/cli/nvk-terminal.ts` |
@@ -32,7 +31,7 @@ Dispatch table (from `scripts/nvk.mjs`):
 
 ## Common conventions
 
-- Offline store CLIs (`project`, `artifact`, `spine`, `transcript`, plus
+- Offline store CLIs (`project`, `artifact`, `spine`, plus
   `nvk-store` and `packages/agents`' `nvk-agent`) authenticate with a bearer
   token: `--token <bearer>` or `NOVAKAI_TOKEN`, against
   `<root>/tokens/<id>.json`. Root is `--root <dir>` or `NOVAKAI_ROOT`,
@@ -48,7 +47,7 @@ Dispatch table (from `scripts/nvk.mjs`):
   most emit one JSON line on stderr (`{code, message, details, retryable}`,
   built with `b3err`, `packages/foundation/contract/b3.ts`), but some print a
   plain-text `Code: message` line instead (observed: `agent` and `project`
-  print plain text for usage/auth errors, `transcript`/`artifact`/`spine`
+  print plain text for usage/auth errors, `artifact`/`spine`
   print JSON). Usage failures exit 2.
 
 ## Command reference
@@ -85,17 +84,6 @@ Offline adapter over the Spine host (composes messaging, projects, artifacts).
 - `continue --workflow <workflowId> --client-op-id <op>`
 - `abandon --workflow <workflowId> --client-op-id <op>`
 
-### `nvk transcript` — `packages/transcript/cli/nvk-transcript.ts`
-
-Offline adapter over the Transcript contract. Requires the `transcriptLine`
-grant.
-
-- `ingest`
-- `status`
-- `lines-by-session --session <providerSession>`
-- `lines-by-provider --provider kimi|claude|codex [--since <iso>]`
-- `subagent-tree --turn <turnId>`
-
 ### `nvk agent` — `packages/server/cli/nvk-agent.ts`
 
 Runtime client: spawn and run governed agents. Verbs (COMMANDS map plus the
@@ -120,7 +108,7 @@ Runtime client: spawn and run governed agents. Verbs (COMMANDS map plus the
 - `fence <agentId>`
 - `repair <operationId>`
 - `grants [--holder <agentRunId>]`
-- `message <agentId|agentRunId> --thread <threadId> --text <text> [--client-op-id <op>]`
+- `message <agentId> --thread <threadId> --text <text> [--client-op-id <op>]`
 - `communications <agentId> [--with <agentId>] [--limit <n>] [--cursor <c>]`
 - `open-conversation <threadId> --with <agentId[,agentId...]>`
 - `operations`

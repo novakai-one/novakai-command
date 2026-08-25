@@ -11,7 +11,6 @@ const adapters = new Map([
   ['project', path.join(repoRoot, 'packages/projects/cli/nvk-project.ts')],
   ['artifact', path.join(repoRoot, 'packages/artifacts/cli/nvk-artifact.ts')],
   ['spine', path.join(repoRoot, 'packages/spine/cli/nvk-spine.ts')],
-  ['transcript', path.join(repoRoot, 'packages/transcript/cli/nvk-transcript.ts')],
   // B3: the canonical families of §17.1 / DEC-B3V4-04. `nvk agent spawn` is the
   // command the onboarding promises and the one an operator actually types;
   // until now it was a usage error, and every verb had to be driven as

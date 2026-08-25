@@ -4,7 +4,6 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import {
-  agentDeliveryMarker,
   createMemoryTranscriptStore,
   createMessagingRuntime,
   openFoundationTranscriptStore,
@@ -84,7 +83,10 @@ async function appendLine(
 }
 
 function deliveryMarker(recipientAgentId: string, text: string, key: string): string {
-  return agentDeliveryMarker({ version: 1, recipientAgentId, text, clientOpId: key });
+  const payload = Buffer.from(JSON.stringify({
+    version: 1, recipientAgentId, text, clientOpId: key,
+  }), 'utf8').toString('base64url');
+  return `NOVAKAI_DELIVERY_V1:${payload}`;
 }
 
 function dependencies(store: TranscriptStore) {

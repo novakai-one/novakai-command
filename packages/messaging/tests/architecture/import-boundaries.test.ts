@@ -90,6 +90,7 @@ describe("architecture — one Messaging doorway", () => {
     const allowed = new Set([
       "types", "schemas", "brands", "errors", "records", "events", "subscriptions",
       "commands", "queries", "outcome", "runtime",
+      "communications", "conversations", "agent-delivery-marker",
     ]);
     const offenders: string[] = [];
     for (const file of listFiles(join(sourceRoot, "core"), ".ts")) {
@@ -183,7 +184,6 @@ describe("architecture — graph health", () => {
       ...listFiles(join(sourceRoot, "adapters", "provider-transcripts"), ".ts"),
       ...listFiles(join(sourceRoot, "adapters", "stores"), ".ts"),
       join(repoRoot, "packages", "server", "core", "b2b", "composition.ts"),
-      join(repoRoot, "packages", "server", "core", "b3", "stored-transcript-source.ts"),
     ];
     const oversized = files.flatMap((file) => {
       const lines = readFileSync(file, "utf8").split(/\r?\n/u).length;
@@ -205,25 +205,20 @@ describe("architecture — graph health", () => {
     assert.deepEqual(offenders, []);
   });
 
-  it("legacy provider readers are unwired from production contract doors", () => {
-    const transcriptRoot = join(repoRoot, "packages", "transcript");
-    const legacyDoor = readFileSync(join(transcriptRoot, "contract", "index.ts"), "utf8");
-    const legacyB3Door = readFileSync(join(transcriptRoot, "b3", "contract", "index.ts"), "utf8");
-    assert.equal(existsSync(join(
-      repoRoot,
-      "packages",
-      "server",
-      "core",
-      "b2b",
-      "watcher-worker.ts",
-    )), false);
-    assert.doesNotMatch(legacyDoor, /createTranscriptWatcher|defaultSources/u);
-    assert.doesNotMatch(legacyB3Door, /createProviderFileSource|createProviderFileLocator/u);
+  it("retired transcript authorities are absent", () => {
+    const retired = [
+      join(repoRoot, "packages", "transcript", "package.json"),
+      join(packageRoot, "b3", "contract", "index.ts"),
+      join(repoRoot, "packages", "server", "core", "b3", "messaging-composition.ts"),
+      join(repoRoot, "packages", "server", "core", "b3", "stored-transcript-source.ts"),
+      join(repoRoot, "packages", "server", "core", "b3", "b3c-ports.ts"),
+    ];
+    assert.deepEqual(retired.filter(existsSync), []);
   });
 
   it("adapter families do not import other adapter families", () => {
     const adapterRoot = join(distRoot, "adapters");
-    const allowedShared = new Set(["store-shared.js"]);
+    const allowedShared = new Set(["store-shared.js", "store-operation-identity.js"]);
     const offenders: string[] = [];
     for (const file of listFiles(adapterRoot, ".js")) {
       const from = relative(adapterRoot, file).split(sep).join("/");

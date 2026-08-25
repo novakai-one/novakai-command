@@ -9,8 +9,8 @@
 import {
   b3err, b3fail, b3ok, type B3Result,
 } from "@novakai/foundation/contract";
-import { legacyStoreOpNames } from "../../adapters/store-shared.js";
-import type { StoreOp } from "../../adapters/store-shared.js";
+import { legacyStoreOpNames } from "../store-shared.js";
+import type { StoreOp } from "../store-shared.js";
 
 /**
  * §18.1's `LegacyMessagingStoreOpPayload`, promoted to a runtime validator.

@@ -11,6 +11,9 @@ import type {
 } from './conversations.js';
 import type { ConversationView } from './records/conversation-view.js';
 import type { ProjectionRebuildResult } from './records/projections.js';
+import type {
+  AgentDeliveryInstruction, AgentDeliveryMarker,
+} from './agent-delivery-marker.js';
 
 /** Counts from one idle-boundary delivery pass. */
 export interface DeliveryRunResult {
@@ -54,6 +57,9 @@ export interface MessagingRuntimeApi {
   listConversationViews(): Promise<Outcome<readonly ConversationView[]>>;
   rebuildProjections(): Promise<Outcome<ProjectionRebuildResult>>;
   readProjections(): Promise<Outcome<ProjectionRebuildResult>>;
+  createAgentDeliveryInstruction(
+    input: AgentDeliveryMarker,
+  ): Promise<Outcome<AgentDeliveryInstruction>>;
   sendConversationMessage(input: ConversationSendInput): Promise<Outcome<ConversationSendAcceptance>>;
   listProviderSessions(): Promise<Outcome<readonly ProviderSession[]>>;
   listTranscriptLines(input?: unknown): Promise<Outcome<readonly TranscriptLine[]>>;

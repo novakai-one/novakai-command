@@ -81,6 +81,20 @@ export { ensureClaudeIdentityHook } from "../adapters/provider-hooks/registratio
 export { ensureCodexIdentityHook } from "../adapters/provider-hooks/registrations/codex.js";
 export { ensureKimiIdentityHook } from "../adapters/provider-hooks/registrations/kimi.js";
 export { openJsonlStore } from "../adapters/store-jsonl.js";
+export {
+  openFoundationMessagingStore,
+  type FoundationMessagingStoreOptions,
+  type MessagingStoreOpPayload,
+} from "../adapters/stores/foundation-v1.js";
+export {
+  checkMessagingStoreRoute,
+  listMigratedOperations,
+  readMessagingCutoverReceipt,
+  runMessagingCutover,
+  type MessagingCutoverInput,
+  type MessagingCutoverOutcome,
+  type MessagingCutoverReceipt,
+} from "../adapters/migration/cutover.js";
 export { createConfigAuthority, DEFAULT_ROLE_GRANTS } from "../adapters/authority-config.js";
 export type {
   AuthorityConfig,
@@ -108,7 +122,3 @@ export type {
 } from "../adapters/presence-transport-pty.js";
 export { DEFAULT_RETRY_POLICY } from "./ports/presence-transport.js";
 export { membershipUnavailable, unknownRoom } from "./ports/membership.js";
-
-// Existing B3 contract remains available through this sole doorway until TF-06
-// folds its records into the transcript-first model.
-export * from "../b3/contract/index.js";

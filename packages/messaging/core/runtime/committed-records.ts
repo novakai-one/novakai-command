@@ -1,4 +1,5 @@
 import type { ConversationSendInput } from '../../contract/commands.js';
+import type { AgentDeliveryMarker } from '../../contract/agent-delivery-marker.js';
 import type {
   EnsureConversationViewInput,
   UpdateConversationViewInput,
@@ -18,10 +19,12 @@ import { listAgentCommunications } from '../communications/queries.js';
 import { ensureConversationView, updateConversationView } from '../conversations/views.js';
 import { rebuildProjections } from '../projections/rebuild.js';
 import { sendConversationMessage } from '../send/send.js';
+import { agentDeliveryMarker } from '../delivery/agent-delivery-marker.js';
 
 type RecordsApi = Pick<MessagingRuntimeApi,
   | 'ensureConversationView' | 'updateConversationView' | 'getConversationView'
   | 'listConversationViews' | 'rebuildProjections' | 'readProjections'
+  | 'createAgentDeliveryInstruction'
   | 'sendConversationMessage' | 'listProviderSessions' | 'listTranscriptLines'
   | 'listSendJournals' | 'listAgentCommunications'>;
 
@@ -73,6 +76,12 @@ export function createCommittedRecordsApi(options: {
       rebuildProjections(await options.store.listTranscriptLines()),
     )),
     readProjections: () => safe(() => options.store.readProjections()),
+    createAgentDeliveryInstruction: (input: AgentDeliveryMarker) => safe(async () => ({
+      kind: 'transcript-addressed-delivery',
+      recipientAgentId: input.recipientAgentId,
+      clientOpId: input.clientOpId,
+      transcriptMarker: agentDeliveryMarker(input),
+    })),
     listProviderSessions: () => safe(() => options.store.listProviderSessions()),
     listTranscriptLines: (input) => safe(() => options.store.listTranscriptLines(lineQuery(input))),
     listSendJournals: () => safe(() => options.store.listSendJournals()),

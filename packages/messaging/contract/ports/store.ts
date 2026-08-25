@@ -45,7 +45,7 @@ import type {
   AgentId,
   AgentInboxItem,
   AgentInboxItemId,
-} from "../../b3/contract/records.js";
+} from "../records/legacy-agent-mail.js";
 import type {
   AcceptanceInput,
   AcceptanceOutcome,

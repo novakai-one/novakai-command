@@ -21,7 +21,9 @@ import {
   clientOpIdFrom, confirmedRuns, emit, expectedEpoch, fail, parseFlags,
   type CliCommand, type Flags,
 } from '../core/b3/cli-shared.js';
-import { buildCutoverReport, describeCutover, LEGACY_MESSAGING_STORE } from '../core/b3/cutover-report.js';
+import {
+  buildCutoverReport, describeCutover, LEGACY_MESSAGING_STORE,
+} from '../core/store-route-report.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '..', '..', '..');

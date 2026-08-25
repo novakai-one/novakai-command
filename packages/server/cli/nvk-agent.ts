@@ -468,7 +468,7 @@ const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
   // §17.1's message/communications verbs. They no longer need to know how
   // Messaging names the human at this keyboard: A5-07 makes `--thread` the
   // operator's to supply, so nothing here composes a Thread membership.
-  ...messageCommands({ withClient, emit, usage, fail, operationId }),
+  ...messageCommands({ withClient, emit, usage, fail }),
 
   async operations(argFlags) {
     emit('agent operations', argFlags, await withClient<readonly RunOperationView[]>(

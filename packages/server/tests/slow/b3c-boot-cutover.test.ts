@@ -18,7 +18,7 @@ import path from 'node:path';
 import { createFakePtyHost } from '../../../terminal/adapters/pty-host/fake.js';
 import { createFakeProviderAdapters } from '../../../agents/b3/contract/index.js';
 import { startRuntimeHost } from '../../core/b3/host.js';
-import { LEGACY_MESSAGING_STORE } from '../../core/b3/cutover-report.js';
+import { LEGACY_MESSAGING_STORE } from '../../core/store-route-report.js';
 
 /** One legacy `store-jsonl` line: a bare StoreOp, the historic acceptance shape. */
 function legacyAcceptance(ordinal: number): string {
@@ -173,7 +173,7 @@ test('the doctor looks at the file the product actually writes', async () => {
   const root = mkdtempSync(path.join(tmpdir(), 'nvk-b3c-doctor-'));
   try {
     legacyFile(root, [legacyAcceptance(1)]);
-    const { buildCutoverReport } = await import('../../core/b3/cutover-report.js');
+  const { buildCutoverReport } = await import('../../core/store-route-report.js');
     const report = await buildCutoverReport({
       root,
       dataRoot: path.join(root, 'stores'),

@@ -77,7 +77,7 @@ import type {
   AgentId,
   AgentInboxItem,
   AgentInboxItemId,
-} from "../b3/contract/records.js";
+} from "../contract/records/legacy-agent-mail.js";
 import type { ClockIds } from "../contract/ports/clock.js";
 import type {
   AcceptanceInput,

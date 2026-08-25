@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { findAgentDeliveryMarker } from '../../contract/agent-delivery-marker.js';
+import { findAgentDeliveryMarker } from './agent-delivery-marker.js';
 import type { TranscriptStore } from '../../contract/ports/transcript-store.js';
 import type { PendingDelivery } from '../../contract/records/pending-delivery.js';
 import type { EventCursor, PendingDeliveryId } from '../../contract/types.js';

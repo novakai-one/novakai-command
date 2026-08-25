@@ -1,4 +1,4 @@
-import { findAgentDeliveryMarker } from '../../contract/agent-delivery-marker.js';
+import { findAgentDeliveryMarker } from './agent-delivery-marker.js';
 import type { ConversationSendInput } from '../../contract/commands.js';
 import type { AgentDirectory } from '../../contract/ports/agent-directory.js';
 import type { ConversationDirectory } from '../../contract/ports/conversation-directory.js';

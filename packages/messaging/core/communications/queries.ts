@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { findAgentDeliveryMarker } from '../../contract/agent-delivery-marker.js';
+import { findAgentDeliveryMarker } from '../delivery/agent-delivery-marker.js';
 import type {
   AgentCommunicationPage,
   AgentCommunicationsQuery,
