@@ -8,6 +8,9 @@ import {
   agentIdentityHookCommand,
   createDefaultMessagingRuntime,
   createProviderTranscriptSource,
+  ensureClaudeIdentityHook,
+  ensureCodexIdentityHook,
+  ensureKimiIdentityHook,
   providerNormalizer,
   runAgentIdentityHook,
   type AgentDirectory,
@@ -144,6 +147,20 @@ test("hook assignment attaches the discovered ProviderSession before lines becom
       path.join(providerHome, ".claude", "settings.json"), "utf8",
     ));
     assert.equal(settings.hooks.UserPromptSubmit.length, 1);
+    const codexHooks = JSON.parse(await readFile(
+      path.join(providerHome, ".codex", "hooks.json"), "utf8",
+    ));
+    assert.equal(codexHooks.hooks.UserPromptSubmit.length, 1);
+    const kimiConfig = await readFile(
+      path.join(providerHome, ".kimi-code", "config.toml"), "utf8",
+    );
+    assert.equal((kimiConfig.match(/\[\[hooks\]\]/gu) ?? []).length, 1);
+    assert.match(kimiConfig, /event = "UserPromptSubmit"/u);
+
+    const command = agentIdentityHookCommand();
+    assert.equal(await ensureClaudeIdentityHook({ providerHome, command }), "unchanged");
+    assert.equal(await ensureCodexIdentityHook({ providerHome, command }), "unchanged");
+    assert.equal(await ensureKimiIdentityHook({ providerHome, command }), "unchanged");
   } finally {
     await composed.close();
   }

@@ -28,11 +28,9 @@ async function setup(quietMs = 120) {
   return { ctx, agents, mock, sessionId };
 }
 
-const laneSender = () => ({ async sendMessage() { return { kind: 'ok' as const, value: {} }; } });
-
 test('advisory to an idle live-lane session is delivered immediately as a system context line', async () => {
   const { agents, mock, sessionId } = await setup();
-  agents.attachLiveLane({ sessionId, address: 'person:person_chris', sender: laneSender() });
+  agents.attachLiveLane({ sessionId, address: 'person:person_chris' });
   const okPush = agents.pushContextAdvisory(sessionId, '[novakai context] {"app":"messaging","ref":"none"}');
   assert.equal(okPush, true);
   assert.deepEqual(mock.__session(sessionId)!.sent, ['[novakai context] {"app":"messaging","ref":"none"}']);
@@ -40,7 +38,7 @@ test('advisory to an idle live-lane session is delivered immediately as a system
 
 test('advisory during a turn is HELD, then delivered between turns after the quiet window', async () => {
   const { agents, mock, sessionId } = await setup(120);
-  agents.attachLiveLane({ sessionId, address: 'person:person_chris', sender: laneSender() });
+  agents.attachLiveLane({ sessionId, address: 'person:person_chris' });
   // mid-turn: output is streaming
   mock.__emit(sessionId, { type: 'output', sessionId, at: new Date().toISOString(), data: 'chunk' });
   agents.pushContextAdvisory(sessionId, 'advisory-1');
@@ -51,7 +49,7 @@ test('advisory during a turn is HELD, then delivered between turns after the qui
 
 test('repeated output keeps the turn alive — advisory waits for real quiet', async () => {
   const { agents, mock, sessionId } = await setup(150);
-  agents.attachLiveLane({ sessionId, address: 'person:person_chris', sender: laneSender() });
+  agents.attachLiveLane({ sessionId, address: 'person:person_chris' });
   mock.__emit(sessionId, { type: 'output', sessionId, at: new Date().toISOString(), data: 'a' });
   agents.pushContextAdvisory(sessionId, 'advisory-x');
   await sleep(100);
@@ -64,7 +62,7 @@ test('repeated output keeps the turn alive — advisory waits for real quiet', a
 
 test('advisory queue coalesces latest-wins (ruled): only the LATEST pending advisory is delivered, queue capped at 1', async () => {
   const { agents, mock, sessionId } = await setup(100);
-  agents.attachLiveLane({ sessionId, address: 'person:person_chris', sender: laneSender() });
+  agents.attachLiveLane({ sessionId, address: 'person:person_chris' });
   mock.__emit(sessionId, { type: 'output', sessionId, at: new Date().toISOString(), data: 'chunk' });
   agents.pushContextAdvisory(sessionId, 'stale-first');
   agents.pushContextAdvisory(sessionId, 'latest-second'); // replaces, never queues behind
@@ -74,7 +72,7 @@ test('advisory queue coalesces latest-wins (ruled): only the LATEST pending advi
 
 test('a queued advisory carries a timestamp', async () => {
   const { ctx, agents, mock, sessionId } = await setup(100);
-  agents.attachLiveLane({ sessionId, address: 'person:person_chris', sender: laneSender() });
+  agents.attachLiveLane({ sessionId, address: 'person:person_chris' });
   mock.__emit(sessionId, { type: 'output', sessionId, at: new Date().toISOString(), data: 'chunk' });
   agents.pushContextAdvisory(sessionId, 'stamped');
   const pending = ctx.laneState.get(sessionId)?.pending;
@@ -83,7 +81,7 @@ test('a queued advisory carries a timestamp', async () => {
 
 test("M5: activity 'idle' ENDS the turn — it never extends it (queued advisory flushes immediately)", async () => {
   const { agents, mock, sessionId } = await setup(5000); // long quiet window: only an idle event can end the turn
-  agents.attachLiveLane({ sessionId, address: 'person:person_chris', sender: laneSender() });
+  agents.attachLiveLane({ sessionId, address: 'person:person_chris' });
   // real-adapter-style sequence: output chunks (turn starts), working activity, then idle
   mock.__emit(sessionId, { type: 'output', sessionId, at: new Date().toISOString(), data: 'chunk-1' });
   mock.__emit(sessionId, { type: 'activity', sessionId, at: new Date().toISOString(), activity: 'working' });
@@ -95,7 +93,7 @@ test("M5: activity 'idle' ENDS the turn — it never extends it (queued advisory
 
 test("activity events other than 'idle' still extend the turn", async () => {
   const { agents, mock, sessionId } = await setup(150);
-  agents.attachLiveLane({ sessionId, address: 'person:person_chris', sender: laneSender() });
+  agents.attachLiveLane({ sessionId, address: 'person:person_chris' });
   mock.__emit(sessionId, { type: 'activity', sessionId, at: new Date().toISOString(), activity: 'working' });
   agents.pushContextAdvisory(sessionId, 'held');
   await sleep(100);

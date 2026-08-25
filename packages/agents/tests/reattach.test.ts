@@ -90,20 +90,13 @@ test('output from a reattached session remains transcript-only content', async (
     providerConversationId: 'session_lane', model: 'cli-default', cwd: root,
   });
 
-  const posted: string[] = [];
   agents.attachLiveLane({
     sessionId: 'sess_lane' as never,
     address: 'person:person_chris',
-    sender: {
-      async sendMessage(input: unknown) {
-        posted.push((input as { body: { text: string } }).body.text);
-        return { kind: 'ok', value: { threadId: 't', messageId: 'm' } } as never;
-      },
-    },
   });
 
   await agents.sendToSession('sess_lane' as never, 'ping');
   await runtime.drain('sess_lane');
   await new Promise((r) => setTimeout(r, 120));
-  assert.deepEqual(posted, []);
+  assert.equal(cli.invocations().length, 1);
 });

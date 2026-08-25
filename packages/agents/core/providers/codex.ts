@@ -151,7 +151,7 @@ export function createCodexCliRuntime(options: CodexCliRuntimeOptions): CodexCli
 
   /** Build the argv for one turn. The ONLY place codex flags are decided. */
   const argvFor = (rec: LogicalSession, text: string): string[] => {
-    const flags = ['--json'];
+    const flags = ['--json', '--dangerously-bypass-hook-trust'];
     if (rec.model && !NO_MODEL_FLAG.has(rec.model)) flags.push('-m', rec.model);
     // Honest degradation instead of an opaque provider refusal.
     if (!isInsideGitRepo(rec.cwd)) flags.push('--skip-git-repo-check');

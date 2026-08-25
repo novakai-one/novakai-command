@@ -8,15 +8,6 @@ import path from 'node:path';
 import { mintClientOpId, type AgentId } from '@novakai/foundation/dist/contract/brands.js';
 import { composeAgents, mockOf } from '../core/composition.js';
 import { createAgentsContract } from '../core/contract.js';
-import type { LiveLaneSender } from '../core/live-lane/liveLane.js';
-
-class FakeMessagingSession implements LiveLaneSender {
-  readonly sent: unknown[] = [];
-  async sendMessage(input: unknown) {
-    this.sent.push(input);
-    return { kind: 'ok' as const, value: { messageId: 'message_x' } };
-  }
-}
 
 async function setup() {
   const root = mkdtempSync(path.join(tmpdir(), 'nvk-agents-live-'));
@@ -35,18 +26,16 @@ async function setup() {
 
 test('live lane: PTY output never becomes message content', async () => {
   const { ctx, agents, sessionId } = await setup();
-  const messaging = new FakeMessagingSession();
-  agents.attachLiveLane({ sessionId, address: 'thread:thread_abc', sender: messaging });
+  agents.attachLiveLane({ sessionId, address: 'thread:thread_abc' });
   const mock = mockOf(ctx);
   assert.ok(mock);
   mock.__emit(sessionId, { type: 'output', sessionId, at: new Date().toISOString(), data: 'Chris, the reply is 42' });
-  assert.equal(messaging.sent.length, 0);
+  assert.deepEqual(mock.__session(sessionId)?.sent, []);
 });
 
 test('live lane: input reaches the PTY while output remains telemetry', async () => {
   const { ctx, agents, sessionId } = await setup();
-  const messaging = new FakeMessagingSession();
-  agents.attachLiveLane({ sessionId, address: 'thread:thread_abc', sender: messaging });
+  agents.attachLiveLane({ sessionId, address: 'thread:thread_abc' });
   const mock = mockOf(ctx);
   assert.ok(mock);
   // human → PTY
@@ -54,18 +43,17 @@ test('live lane: input reaches the PTY while output remains telemetry', async ()
   assert.deepEqual(mock.__session(sessionId)?.sent, ['what is the answer?\n']);
   // PTY output is not a message; ingestion owns the return path.
   mock.__emit(sessionId, { type: 'output', sessionId, at: new Date().toISOString(), data: '42' });
-  assert.equal(messaging.sent.length, 0);
+  assert.deepEqual(mock.__session(sessionId)?.sent, ['what is the answer?\n']);
 });
 
 test('unsubscribing the live lane stops the flow; non-output events never message', async () => {
   const { ctx, agents, sessionId } = await setup();
-  const messaging = new FakeMessagingSession();
-  const unsub = agents.attachLiveLane({ sessionId, address: 'thread:thread_abc', sender: messaging });
+  const unsub = agents.attachLiveLane({ sessionId, address: 'thread:thread_abc' });
   const mock = mockOf(ctx);
   assert.ok(mock);
   mock.__emit(sessionId, { type: 'activity', sessionId, at: new Date().toISOString(), activity: 'thinking' });
-  assert.equal(messaging.sent.length, 0);
+  assert.equal(ctx.laneState.has(sessionId), true);
   unsub();
   mock.__emit(sessionId, { type: 'output', sessionId, at: new Date().toISOString(), data: 'late' });
-  assert.equal(messaging.sent.length, 0);
+  assert.equal(ctx.laneState.has(sessionId), false);
 });

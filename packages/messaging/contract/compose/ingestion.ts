@@ -11,6 +11,8 @@ import type { ConversationDirectory } from "../ports/conversation-directory.js";
 import type { ProviderSend } from "../ports/provider-send.js";
 import { agentIdentityHookCommand } from "../../adapters/provider-hooks/agent-identity-hook.js";
 import { ensureClaudeIdentityHook } from "../../adapters/provider-hooks/registrations/claude.js";
+import { ensureCodexIdentityHook } from "../../adapters/provider-hooks/registrations/codex.js";
+import { ensureKimiIdentityHook } from "../../adapters/provider-hooks/registrations/kimi.js";
 import type { ProviderTranscriptRoots } from "../../adapters/provider-transcripts/source.js";
 
 /** Explicit scope, operating assignment and rate limit for external-session adoption. */
@@ -45,10 +47,12 @@ export async function createDefaultMessagingRuntime(
 ): Promise<ComposedMessagingRuntime> {
   const home = options.providerHome ?? homedir();
   if (options.installIdentityHooks ?? true) {
-    await ensureClaudeIdentityHook({
-      providerHome: home,
-      command: agentIdentityHookCommand(),
-    });
+    const command = agentIdentityHookCommand();
+    await Promise.all([
+      ensureClaudeIdentityHook({ providerHome: home, command }),
+      ensureCodexIdentityHook({ providerHome: home, command }),
+      ensureKimiIdentityHook({ providerHome: home, command }),
+    ]);
   }
   const store = await openFoundationTranscriptStore({
     root: options.root,

@@ -21,7 +21,7 @@ import {
 } from './registry/session-attachment.js';
 import * as skillsStore from './skills/skills.js';
 import { runEventHooks } from './hooks/engine.js';
-import { attachLiveLane, pushContextAdvisory, type LiveLaneSender } from './live-lane/liveLane.js';
+import { attachLiveLane, pushContextAdvisory } from './live-lane/liveLane.js';
 import { sendToAgent, sendToSession } from './sessions/send.js';
 import { dispatchProviderTurn } from './sessions/provider-turn.js';
 import type {
@@ -89,7 +89,7 @@ export interface AgentsContract {
   }): boolean;
   subscribeAgentEvents(handler: (e: AgentEvent) => void): Unsubscribe;
   /** Bind the live lane (R3-1) for a spawned session. */
-  attachLiveLane(binding: { sessionId: string; address: string; sender?: LiveLaneSender }): Unsubscribe;
+  attachLiveLane(binding: { sessionId: string; address: string }): Unsubscribe;
   /** S2b (§22 ruling 1): push a focus-change advisory to an in-app session —
    * system context line BETWEEN turns. False for pull-only/unknown sessions. */
   pushContextAdvisory(sessionId: SessionId, line: string): boolean;

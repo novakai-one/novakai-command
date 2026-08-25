@@ -75,7 +75,7 @@ test('one user message = one `codex exec` process; only agent_message text reach
   assert.deepEqual(seen, ['probe-ok'], 'reasoning items are not user-facing; agent_message is');
   const argv = fake.invocations();
   assert.equal(argv.length, 1, 'exactly one process per message');
-  assert.deepEqual(argv[0], ['exec', '--json', 'hi']);
+  assert.deepEqual(argv[0], ['exec', '--json', '--dangerously-bypass-hook-trust', 'hi']);
   assert.deepEqual(runtime.list(), [{ agentId: 'sess_a', status: 'running' }],
     'the LOGICAL session outlives the physical process');
 });
@@ -92,8 +92,11 @@ test('turn 2 resumes the codex thread via `exec resume <thread_id>` (OD-B1-1 clo
 
   const argv = fake.invocations();
   assert.equal(argv.length, 2);
-  assert.deepEqual(argv[0], ['exec', '--json', 'first'], 'turn 1 has no thread to resume');
-  assert.deepEqual(argv[1], ['exec', 'resume', '--json', 'thread_abc', 'second']);
+  assert.deepEqual(argv[0],
+    ['exec', '--json', '--dangerously-bypass-hook-trust', 'first'],
+    'turn 1 has no thread to resume');
+  assert.deepEqual(argv[1],
+    ['exec', 'resume', '--json', '--dangerously-bypass-hook-trust', 'thread_abc', 'second']);
   assert.equal(runtime.resumeHint('sess_b'), 'thread_abc',
     'the resumable handle is readable — the session registry persists it (DEC-B1-6)');
 });
@@ -274,7 +277,8 @@ process.stdout.write(JSON.stringify({ type: 'item.completed', item: { type: 'age
   await runtime.drain('sess_f');
 
   const [argv, skills] = JSON.parse(readFileSync(logPath, 'utf8').trim()) as [string[], string];
-  assert.deepEqual(argv, ['--profile', 'novakai', 'exec', '--json', 'hi']);
+  assert.deepEqual(argv,
+    ['--profile', 'novakai', 'exec', '--json', '--dangerously-bypass-hook-trust', 'hi']);
   assert.equal(skills, '/tmp/skills', 'the declared skills env mechanism reaches the process');
 });
 
@@ -287,7 +291,10 @@ test('adopt rebinds a session to a known thread after a restart; the next turn r
   runtime.write('sess_restored', 'after the restart');
   await runtime.drain('sess_restored');
   assert.deepEqual(fake.invocations()[0],
-    ['exec', 'resume', '--json', 'thread_survived', 'after the restart'],
+    [
+      'exec', 'resume', '--json', '--dangerously-bypass-hook-trust',
+      'thread_survived', 'after the restart',
+    ],
     'nothing was attached TO — the next send spawns a fresh process carrying the resume id');
 });
 

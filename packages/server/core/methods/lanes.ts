@@ -14,7 +14,7 @@ export function attachLane(
   runtime.agents.attachLiveLane({
     sessionId,
     address: `person:${runtime.human.personId}`,
-  } as never);
+  });
 }
 
 /** Restore pre-transcript-first runtime sessions during the compatibility window. */

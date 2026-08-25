@@ -2,32 +2,19 @@
 // subscribes terminal output and issues messages.send via messaging's PUBLIC
 // contract in real time. Messaging's store is never touched (sealed capability).
 //
-// Messaging entry point used: MessagingSession.sendMessage (packages/messaging/
-// public/capability.ts) with SendMessageInput { address, body, priority,
-// clientMessageId } (packages/messaging/contract/commands.ts). Typed
-// structurally here so agents does not reach into messaging internals.
 import type { PtyEvent, Unsubscribe } from '../../contract/schemas.js';
 import type { AgentsContext } from '../composition.js';
 
-/** Structural match for messaging's public MessagingSession.sendMessage. */
-export interface LiveLaneSender {
-  sendMessage(input: unknown): Promise<{ kind: 'ok'; value: unknown } | { kind: 'error'; error: unknown }>;
-}
-
 export interface LiveLaneBinding {
   sessionId: string;
-  /** messaging Address, e.g. "thread:thread_…" — who receives the agent's output. */
+  /** Advisory destination retained during the compatibility window. */
   address: string;
-  /** @deprecated Provider stdout is activity telemetry, never message content. */
-  sender?: LiveLaneSender;
 }
 
 /**
- * Attach the live lane: PTY output chunks become messages in real time.
- * Conversion policy (NOTED, S1): one output chunk → one message, text = raw
- * chunk. Line-buffering/TUI control-sequence filtering is a renderer concern.
- *
- * S2b: attaching also registers the session for context advisories (ruling 1)
+ * Attach the telemetry lane for context advisories and turn boundaries.
+ * Provider output never crosses a message-content interface.
+ * S2b: attaching registers the session for context advisories (ruling 1)
  * and tracks turn boundaries — output/activity extends the turn; an 'idle'
  * activity ENDS it (M5: idle never extends); a quiet window
  * (ctx.advisoryQuietMs) ends it too. Advisory queue semantics (ruled, DEC-S2-6):

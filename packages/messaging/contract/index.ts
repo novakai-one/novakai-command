@@ -71,6 +71,8 @@ export {
   runAgentIdentityHook,
 } from "../adapters/provider-hooks/agent-identity-hook.js";
 export { ensureClaudeIdentityHook } from "../adapters/provider-hooks/registrations/claude.js";
+export { ensureCodexIdentityHook } from "../adapters/provider-hooks/registrations/codex.js";
+export { ensureKimiIdentityHook } from "../adapters/provider-hooks/registrations/kimi.js";
 export { openJsonlStore } from "../adapters/store-jsonl.js";
 export { createConfigAuthority, DEFAULT_ROLE_GRANTS } from "../adapters/authority-config.js";
 export type {
