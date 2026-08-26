@@ -10,6 +10,11 @@ import type { IngestCheckpoint } from "../../contract/records/ingest-checkpoint.
 import type { ProviderName, TranscriptSourceId } from "../../contract/types.js";
 
 const VERIFY_BYTES = 64;
+// Unscoped files exist machine-wide and may be hundreds of megabytes. They
+// still need a bounded chance to reveal an app-owned marker, but one file must
+// never monopolise the server loop. Explicit adoption roots are operator-
+// approved migrations and retain full-file reads so adoption stays atomic.
+const MAX_UNSCOPED_GROWTH_BYTES = 2 * 1024 * 1024;
 
 /** Explicit provider session roots scanned by the read-only source adapter. */
 export interface ProviderTranscriptRoots {
@@ -191,22 +196,30 @@ class FileProviderTranscriptSource implements ProviderTranscriptSource {
     );
     let sourceEpoch = checkpoint?.sourceEpoch ?? 0;
     let fromOffset = replaced ? 0 : checkpoint?.offset ?? 0;
+    const growthLimit = source.adoptionEligible
+      ? metadata.size
+      : MAX_UNSCOPED_GROWTH_BYTES;
     if (replaced) sourceEpoch += 1;
     if (checkpoint !== null && !replaced && metadata.size === checkpoint.offset) {
       return growthResult(context, sourceEpoch, fromOffset, Buffer.alloc(0), Buffer.alloc(0));
     }
     if (checkpoint !== null && !replaced && checkpoint.offset > 0) {
       const verifyFrom = Math.max(0, checkpoint.offset - VERIFY_BYTES);
+      const verifiedPrefixLength = checkpoint.offset - verifyFrom;
       const window = Buffer.from(await this.rangeReader(
         discovered.filePath,
         verifyFrom,
-        metadata.size - verifyFrom,
+        Math.min(metadata.size - verifyFrom, verifiedPrefixLength + growthLimit),
       ));
-      const committedBytes = checkpoint.offset - verifyFrom;
+      const committedBytes = verifiedPrefixLength;
       if (tailHash(window.subarray(0, committedBytes)) !== checkpoint.fileSignature.tailHash) {
         sourceEpoch += 1;
         fromOffset = 0;
-        const bytes = await this.rangeReader(discovered.filePath, 0, metadata.size);
+        const bytes = await this.rangeReader(
+          discovered.filePath,
+          0,
+          Math.min(metadata.size, growthLimit),
+        );
         return growthResult(context, sourceEpoch, fromOffset, Buffer.alloc(0), bytes);
       }
       return growthResult(
@@ -220,7 +233,7 @@ class FileProviderTranscriptSource implements ProviderTranscriptSource {
     const bytes = await this.rangeReader(
       discovered.filePath,
       fromOffset,
-      metadata.size - fromOffset,
+      Math.min(metadata.size - fromOffset, growthLimit),
     );
     return growthResult(context, sourceEpoch, fromOffset, Buffer.alloc(0), bytes);
   }

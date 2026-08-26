@@ -427,6 +427,29 @@ test("scan is metadata-only; growth reads verification tail plus new bytes", asy
   });
 });
 
+test("unscoped growth is byte-bounded while an adoption root may migrate atomically", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "nvk-provider-byte-budget-"));
+  const file = path.join(root, "large.jsonl");
+  const row = `${JSON.stringify({ type: "assistant", message: { content: "x".repeat(1_000) } })}\n`;
+  const contents = Buffer.from(row.repeat(3_000));
+  await writeFile(file, contents);
+
+  const unscoped = createProviderTranscriptSource({ claude: [root] });
+  const [unscopedStat] = await unscoped.scan();
+  assert.ok(unscopedStat);
+  const bounded = await unscoped.readGrowth(unscopedStat, null);
+  assert.ok(bounded.bytes.byteLength < contents.byteLength);
+  assert.ok(bounded.bytes.byteLength <= 2 * 1024 * 1024);
+
+  const adopted = createProviderTranscriptSource({ claude: [root] }, {
+    adoptRoots: { claude: [root] },
+  });
+  const [adoptedStat] = await adopted.scan();
+  assert.ok(adoptedStat?.adoptionEligible);
+  const complete = await adopted.readGrowth(adoptedStat, null);
+  assert.equal(complete.bytes.byteLength, contents.byteLength);
+});
+
 test("truncate then regrow recalibrates only that source", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "nvk-provider-recalibrate-"));
   const file = path.join(root, "session.jsonl");
