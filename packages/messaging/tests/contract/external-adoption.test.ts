@@ -128,3 +128,46 @@ test('external adoption is root-scoped, capped and idempotent across ticks', asy
     await composed.close();
   }
 });
+
+test('allowlisting a discovered source replays its transcript before adoption', async () => {
+  const base = await mkdtemp(path.join(tmpdir(), 'nvk-late-adoption-'));
+  const root = path.join(base, '.novakai');
+  const providerHome = path.join(base, 'provider-home');
+  const eligible = path.join(providerHome, '.claude', 'projects', 'eligible');
+  await mkdir(eligible, { recursive: true });
+  await writeFile(path.join(eligible, 'late.jsonl'), row('external-late', 'late history'));
+
+  const discovery = await createDefaultMessagingRuntime({
+    root, providerHome, installIdentityHooks: false,
+  });
+  try {
+    const first = await discovery.runtime.ingestNow();
+    assert.equal(first.kind, 'ok');
+    const lines = await discovery.runtime.listTranscriptLines();
+    assert.equal(lines.kind, 'ok');
+    if (lines.kind === 'ok') assert.equal(lines.value.length, 0);
+  } finally {
+    await discovery.close();
+  }
+
+  const fakes = fakeDirectories();
+  const adoption = await createDefaultMessagingRuntime({
+    root, providerHome, installIdentityHooks: false,
+    agentDirectory: fakes.directory,
+    conversationPrincipalId: 'person_chris',
+    externalAdoption: {
+      roots: { claude: [eligible] }, limitPerTick: 1,
+      assignment: { teamId: 'team_adopted', missionId: 'mission_adopted' },
+    },
+  });
+  try {
+    const replayed = await adoption.runtime.ingestNow();
+    assert.equal(replayed.kind, 'ok');
+    if (replayed.kind === 'ok') assert.equal(replayed.value.sessionsAdopted, 1);
+    const lines = await adoption.runtime.listTranscriptLines();
+    assert.equal(lines.kind, 'ok');
+    if (lines.kind === 'ok') assert.deepEqual(lines.value.map((line) => line.text), ['late history']);
+  } finally {
+    await adoption.close();
+  }
+});

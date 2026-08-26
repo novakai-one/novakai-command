@@ -88,7 +88,14 @@ async function prepareSource(
     && readCheckpoint.fileSignature.device === source.device
     && readCheckpoint.fileSignature.inode === source.inode) return null;
 
-  const growth = await dependencies.source.readGrowth(source, readCheckpoint);
+  const observedGrowth = await dependencies.source.readGrowth(source, readCheckpoint);
+  // A source first seen outside the adoption roots has a metadata-only
+  // checkpoint. Re-reading it from byte zero must begin a new source epoch;
+  // otherwise TranscriptState quite correctly treats the lower/equal offset
+  // as an already-committed batch and drops the newly authorised history.
+  const growth = shouldReclassify && storedCheckpoint !== null
+    ? { ...observedGrowth, sourceEpoch: storedCheckpoint.sourceEpoch + 1 }
+    : observedGrowth;
   const normalized = normalizeGrowth(
     dependencies.normalizers[source.provider],
     growth,
