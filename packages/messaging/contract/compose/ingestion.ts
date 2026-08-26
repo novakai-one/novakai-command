@@ -14,6 +14,7 @@ import { ensureClaudeIdentityHook } from "../../adapters/provider-hooks/registra
 import { ensureCodexIdentityHook } from "../../adapters/provider-hooks/registrations/codex.js";
 import { ensureKimiIdentityHook } from "../../adapters/provider-hooks/registrations/kimi.js";
 import type { ProviderTranscriptRoots } from "../../adapters/provider-transcripts/source.js";
+import { ensureStoreIdentity, type StoreId } from '@novakai/foundation/contract';
 
 /** Explicit scope, operating assignment and rate limit for external-session adoption. */
 export interface ExternalAdoptionOptions {
@@ -35,6 +36,7 @@ export interface DefaultMessagingRuntimeOptions {
   readonly conversationPrincipalId?: string;
   readonly installIdentityHooks?: boolean;
   readonly externalAdoption?: ExternalAdoptionOptions;
+  readonly storeId?: StoreId;
 }
 
 /** Running contract plus one idempotent resource teardown operation. */
@@ -48,6 +50,7 @@ export async function createDefaultMessagingRuntime(
   options: DefaultMessagingRuntimeOptions,
 ): Promise<ComposedMessagingRuntime> {
   const home = options.providerHome ?? homedir();
+  const storeId = options.storeId ?? (await ensureStoreIdentity(options.root)).id;
   if (options.installIdentityHooks ?? true) {
     const command = agentIdentityHookCommand();
     await Promise.all([
@@ -78,6 +81,7 @@ export async function createDefaultMessagingRuntime(
       codex: providerNormalizer("codex"),
       kimi: providerNormalizer("kimi"),
     },
+    storeId,
     ...(options.agentDirectory === undefined ? {} : { agentDirectory: options.agentDirectory }),
     ...(options.providerSend === undefined ? {} : { providerSend: options.providerSend }),
     ...(options.conversations === undefined ? {} : { conversations: options.conversations }),

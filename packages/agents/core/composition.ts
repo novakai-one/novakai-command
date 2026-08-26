@@ -10,6 +10,7 @@ import { createMockAdapter, type MockTerminalAdapter } from './providers/mock.js
 import { AgentEventBus } from './events/bus.js';
 import type { HookRefs, PendingInjection } from './hooks/engine.js';
 import type { HookEvent } from '../contract/schemas.js';
+import type { StoreId } from '@novakai/foundation/dist/contract/index.js';
 
 export interface AgentsContext {
   handle: ScopedStoreHandle;
@@ -42,6 +43,8 @@ export interface AgentsContext {
   laneState: Map<string, { pending: { line: string; at: string } | null; busyUntil: number; timer: ReturnType<typeof setTimeout> | null }>;
   /** Quiet window that ends a turn for advisory delivery (ruling 12's 5s; tests shrink it). */
   advisoryQuietMs: number;
+  /** Foundation-owned identity of the `.novakai` authority that spawned this Agent. */
+  storeId?: StoreId;
   /** @internal test seam: override the hook action executor (timeout/failure tests). */
   __hookExecutor?: (
     action: HookAction, refs: HookRefs & { event: HookEvent; agentId: string },
@@ -79,6 +82,8 @@ export interface ComposeAgentsOptions {
   /** S2b: quiet window (ms) after which a live-lane session's turn is over and
    * queued context advisories flush. Default 5000 (§22 ruling 12's quiet window). */
   advisoryQuietMs?: number;
+  /** Resolved once by the composition root; never accepted from a send caller. */
+  storeId?: StoreId;
 }
 
 export function composeAgents(options: ComposeAgentsOptions): AgentsContext {
@@ -126,6 +131,7 @@ export function composeAgents(options: ComposeAgentsOptions): AgentsContext {
     hookTraceFailures: [],
     laneState: new Map(),
     advisoryQuietMs: options.advisoryQuietMs ?? 5000,
+    ...(options.storeId === undefined ? {} : { storeId: options.storeId }),
   };
 }
 

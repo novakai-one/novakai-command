@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // GENERATED FILE — DO NOT EDIT.
 // Source: contract/messaging-contract.json (law #3 single source of truth).
-// contractVersion 1.2.0 · schemaVersion 1 · sha256:49158916c6615fb8
+// contractVersion 1.2.0 · schemaVersion 1 · sha256:0a97cfbe52fd2ab9
 // Regenerate: npm run generate
 // ---------------------------------------------------------------------------
 
@@ -72,7 +72,7 @@ export const idPatterns = {
   TranscriptLineId: "^transcriptLine_[0-9a-f]{64}$",
   IngestCheckpointId: "^ingestCheckpoint_[0-9a-f]{64}$",
   EventCursor: "^event_[0-9]+$",
-  ConversationId: "^conv_[A-Za-z0-9-]+$",
+  ConversationId: "^conv_[A-Za-z0-9_-]+$",
   SendId: "^send_[0-9a-f]{64}$",
   SendAttemptId: "^sendAttempt_[0-9a-f]{64}$",
   PendingDeliveryId: "^pendingDelivery_[0-9a-f]{64}$",

@@ -14,6 +14,7 @@ interface AdoptProviderSessionInput {
   readonly conversations: ConversationDirectory;
   readonly assignment: AdoptionAssignment;
   readonly store: TranscriptStore;
+  readonly now: () => string;
 }
 
 /** Creates one external Agent/View, then reuses the sole assignment writer. */
@@ -35,6 +36,7 @@ export async function adoptProviderSession(
     externalAgentId: ensured.agent.agentId,
     directory: input.directory,
     store: input.store,
+    now: input.now,
   });
   await input.conversations.ensureForAdoptedAgent({
     agent: ensured.agent,

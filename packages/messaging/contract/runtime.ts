@@ -28,12 +28,21 @@ export interface DeliveryRunResult {
 }
 
 /** Counts returned by one provider-source scan and commit pass. */
+export interface IngestSourceFailure {
+  readonly sourceId: string;
+  readonly provider: string;
+  readonly message: string;
+}
+
 export interface IngestResult {
   readonly sources: number;
   readonly added: number;
   readonly duplicates: number;
   readonly sessionsRegistered: number;
   readonly sessionsAdopted: number;
+  readonly foreignSources: number;
+  readonly failedSources: number;
+  readonly failures: readonly IngestSourceFailure[];
 }
 
 /** Observable lifecycle and most recent result for the ingest runtime. */

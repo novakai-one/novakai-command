@@ -52,9 +52,9 @@ export async function selectSourcesForIngest(input: {
         || (pendingFloor !== undefined && source.modifiedAt >= pendingFloor);
     })
     .sort((left, right) => right.modifiedAt.localeCompare(left.modifiedAt));
-  if (prioritized.length > 0) return prioritized;
-  return input.sources
+  const historical = input.sources
     .filter((source) => !known.has(source.sourceId))
+    .filter((source) => !prioritized.some((candidate) => candidate.sourceId === source.sourceId))
     .sort((left, right) => {
       if (left.adoptionEligible !== right.adoptionEligible) {
         return left.adoptionEligible ? -1 : 1;
@@ -62,4 +62,5 @@ export async function selectSourcesForIngest(input: {
       return right.modifiedAt.localeCompare(left.modifiedAt);
     })
     .slice(0, historicalDiscoveryLimit);
+  return [...prioritized, ...historical];
 }

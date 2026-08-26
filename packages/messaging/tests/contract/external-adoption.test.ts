@@ -81,6 +81,7 @@ test('external adoption is root-scoped, capped and idempotent across ticks', asy
     providerHome,
     installIdentityHooks: false,
     agentDirectory: fakes.directory,
+    conversationPrincipalId: 'person_chris',
     externalAdoption: {
       roots: { claude: [eligible] },
       limitPerTick: 2,
@@ -88,7 +89,6 @@ test('external adoption is root-scoped, capped and idempotent across ticks', asy
         teamId: 'team_external-session-visibility',
         missionId: 'mission_external-session-visibility',
       },
-      conversations: fakes.conversations,
     },
   });
   try {
@@ -104,10 +104,17 @@ test('external adoption is root-scoped, capped and idempotent across ticks', asy
 
     const sessions = await composed.runtime.listProviderSessions();
     const lines = await composed.runtime.listTranscriptLines();
+    const views = await composed.runtime.listConversationViews();
     assert.equal(sessions.kind, 'ok');
     assert.equal(lines.kind, 'ok');
-    if (sessions.kind !== 'ok' || lines.kind !== 'ok') return;
+    assert.equal(views.kind, 'ok');
+    if (sessions.kind !== 'ok' || lines.kind !== 'ok' || views.kind !== 'ok') return;
     assert.equal(sessions.value.filter((session) => session.agentId !== undefined).length, 3);
+    assert.equal(
+      sessions.value.filter((session) => session.agentId !== undefined)
+        .every((session) => session.status === 'idle'),
+      true,
+    );
     assert.equal(
       sessions.value.find((session) => session.resumeId === 'outside-hidden')?.status,
       'discovered-only',
@@ -115,7 +122,8 @@ test('external adoption is root-scoped, capped and idempotent across ticks', asy
     assert.deepEqual(lines.value.map((line) => line.text).sort(), ['A', 'B', 'C']);
     assert.equal(fakes.ensured.length, 3);
     assert.equal(fakes.attached.length, 3);
-    assert.equal(fakes.views.length, 3);
+    assert.equal(views.value.length, 3);
+    assert.equal(views.value.every((view) => view.id.startsWith('conv_external_')), true);
   } finally {
     await composed.close();
   }

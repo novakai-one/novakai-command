@@ -45,7 +45,7 @@
     "TranscriptLineId": { "type": "string", "pattern": "^transcriptLine_[0-9a-f]{64}$" },
     "IngestCheckpointId": { "type": "string", "pattern": "^ingestCheckpoint_[0-9a-f]{64}$" },
     "EventCursor": { "type": "string", "pattern": "^event_[0-9]+$", "description": "Durable Messaging event cursor; deliberately distinct from page Cursor." },
-    "ConversationId": { "type": "string", "pattern": "^conv_[A-Za-z0-9-]+$" },
+    "ConversationId": { "type": "string", "pattern": "^conv_[A-Za-z0-9_-]+$" },
     "SendId": { "type": "string", "pattern": "^send_[0-9a-f]{64}$" },
     "SendAttemptId": { "type": "string", "pattern": "^sendAttempt_[0-9a-f]{64}$" },
     "PendingDeliveryId": { "type": "string", "pattern": "^pendingDelivery_[0-9a-f]{64}$" },

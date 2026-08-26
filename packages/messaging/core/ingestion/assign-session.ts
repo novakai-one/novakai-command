@@ -11,6 +11,7 @@ export interface SessionAssignmentInput {
   readonly externalAgentId?: string;
   readonly directory?: AgentDirectory;
   readonly store: TranscriptStore;
+  readonly now: () => string;
 }
 
 const attachmentOpId = (sessionId: string, agentId: string): string =>
@@ -53,6 +54,6 @@ export async function assignProviderSession(
   if (!attached.ok) {
     throw new Error(`Agent session attachment failed: ${attached.code} ${attached.message}`);
   }
-  await input.store.bindAgentSession(agentId, pending.id, new Date().toISOString());
-  return { ...pending, status: 'idle' };
+  await input.store.bindAgentSession(agentId, pending.id, input.now());
+  return input.store.upsertProviderSession({ ...pending, status: 'idle' });
 }

@@ -7,6 +7,8 @@ import test from "node:test";
 import {
   agentIdentityHookCommand,
   createDefaultMessagingRuntime,
+  createMemoryTranscriptStore,
+  createMessagingRuntime,
   createProviderTranscriptSource,
   ensureClaudeIdentityHook,
   ensureCodexIdentityHook,
@@ -19,6 +21,40 @@ import {
   type ProviderLineExtent,
   type ProviderName,
 } from "../../../contract/index.js";
+
+test('runtime keeps its retry timer when the first provider scan fails', async () => {
+  let scans = 0;
+  const runtime = createMessagingRuntime({
+    store: createMemoryTranscriptStore(),
+    source: {
+      async scan() {
+        scans += 1;
+        if (scans === 1) throw new Error('injected first-scan failure');
+        return [];
+      },
+      async readGrowth() { throw new Error('no source should be read'); },
+    },
+    normalizers: {
+      claude: providerNormalizer('claude'),
+      codex: providerNormalizer('codex'),
+      kimi: providerNormalizer('kimi'),
+    },
+    intervalMs: 5,
+  });
+  try {
+    assert.equal((await runtime.start()).kind, 'ok');
+    const deadline = Date.now() + 250;
+    while (scans < 2 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    assert.ok(scans >= 2);
+    const health = await runtime.health();
+    assert.equal(health.state, 'running');
+    assert.ok(health.runs >= 1);
+  } finally {
+    await runtime.stop();
+  }
+});
 
 const hash = (value: Uint8Array): string =>
   createHash("sha256").update(value).digest("hex");
@@ -248,6 +284,82 @@ test("hook assignment attaches the discovered ProviderSession before lines becom
     assert.equal(await ensureClaudeIdentityHook({ providerHome, command }), "unchanged");
     assert.equal(await ensureCodexIdentityHook({ providerHome, command }), "unchanged");
     assert.equal(await ensureKimiIdentityHook({ providerHome, command }), "unchanged");
+  } finally {
+    await composed.close();
+  }
+});
+
+test('a foreign marker is skipped without blocking an owned source in the same tick', async () => {
+  const base = await mkdtemp(path.join(tmpdir(), 'nvk-provider-ownership-'));
+  const root = path.join(base, '.novakai');
+  const providerHome = path.join(base, 'provider-home');
+  const transcriptDir = path.join(providerHome, '.claude', 'projects', 'fixture');
+  await mkdir(transcriptDir, { recursive: true });
+  const localStoreId = 'store_11111111-1111-4111-8111-111111111111';
+  const markerRow = (sessionId: string, storeId: string, agentId: string) => JSON.stringify({
+    type: 'system', subtype: 'hook_response', sessionId,
+    message: {
+      role: 'system',
+      content: [{
+        type: 'hook_result',
+        content: JSON.stringify({
+          kind: 'novakai-agent-identity', schemaVersion: 2,
+          hookEvent: 'UserPromptSubmit', storeId, agentId,
+        }),
+      }],
+    },
+  });
+  const replyRow = (sessionId: string, uuid: string, text: string) => JSON.stringify({
+    type: 'assistant', uuid, sessionId,
+    message: { role: 'assistant', content: [{ type: 'text', text }] },
+  });
+  await Promise.all([
+    writeFile(path.join(transcriptDir, 'foreign.jsonl'), [
+      markerRow('foreign-session', 'store_22222222-2222-4222-8222-222222222222', 'agent_foreign'),
+      replyRow('foreign-session', 'foreign-reply', 'must stay hidden'),
+      '',
+    ].join('\n')),
+    writeFile(path.join(transcriptDir, 'owned.jsonl'), [
+      markerRow('owned-session', localStoreId, 'agent_owned'),
+      replyRow('owned-session', 'owned-reply', 'owned reply'),
+      '',
+    ].join('\n')),
+    writeFile(path.join(transcriptDir, 'invalid-owned.jsonl'), [
+      markerRow('invalid-owned-session', localStoreId, 'agent_missing'),
+      replyRow('invalid-owned-session', 'invalid-owned-reply', 'must also stay hidden'),
+      '',
+    ].join('\n')),
+  ]);
+  const agentDirectory: AgentDirectory = {
+    async get(agentId) {
+      return agentId === 'agent_owned'
+        ? { agentId, provider: 'claude', currentProviderSessionId: null }
+        : null;
+    },
+    async ensureForSession() {
+      return { ok: false, code: 'NotExpected', message: 'markers do not adopt' };
+    },
+    async deliveryReadiness() { return 'idle'; },
+    async attachProviderSession() { return { ok: true, state: 'attached' }; },
+  };
+  const composed = await createDefaultMessagingRuntime({
+    root, providerHome, agentDirectory, storeId: localStoreId as never,
+  });
+  try {
+    const result = await composed.runtime.ingestNow();
+    assert.equal(result.kind, 'ok');
+    if (result.kind === 'ok') {
+      assert.equal(result.value.foreignSources, 1);
+      assert.equal(result.value.failedSources, 1);
+      assert.match(result.value.failures[0]?.message ?? '', /missing Agent agent_missing/u);
+    }
+    const lines = await composed.runtime.listTranscriptLines();
+    assert.equal(lines.kind, 'ok');
+    if (lines.kind === 'ok') {
+      assert.ok(lines.value.some((line) => line.text === 'owned reply'));
+      assert.ok(lines.value.every((line) => line.text !== 'must stay hidden'));
+      assert.ok(lines.value.every((line) => line.text !== 'must also stay hidden'));
+    }
   } finally {
     await composed.close();
   }

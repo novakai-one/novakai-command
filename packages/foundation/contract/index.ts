@@ -4,6 +4,8 @@ export * from './brands.js';
 export * from './errors.js';
 export * from './schemas.js';
 export * from './types.js';
+export type { StoreId, StoreIdentity } from './store-identity.js';
+export { ensureStoreIdentity } from '../core/store-identity.js';
 // B3 (B3V4-P2 §§4, 11): the shared identifier/context/error kernel every Build
 // 3 capability speaks, and the one durable command-receipt writer (§3.3).
 export * from './b3.js';

@@ -145,6 +145,7 @@ export function createAgentsContract(ctx: AgentsContext): AgentsContract {
           env: {
             ...(opts?.env ?? {}),
             NOVAKAI_AGENT_ID: String(agentId),
+            ...(ctx.storeId === undefined ? {} : { NOVAKAI_STORE_ID: String(ctx.storeId) }),
           },
         });
       } catch (cause) {

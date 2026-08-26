@@ -23,6 +23,7 @@ import { fileURLToPath } from "node:url";
 import {
   capabilityViewFeaturesValues,
   constants,
+  contractVersion,
   createEmbeddedMessaging,
   DEFAULT_ROLE_GRANTS,
   errorCatalogue,
@@ -245,7 +246,7 @@ describe("surface manifest — the door matches the frozen contract (S4: full v1
       // GetCapabilities is the pre-auth discovery op (the 9th query).
       const capabilities = cap.getCapabilities();
       assert.ok(contractQueryNames.includes("GetCapabilities"));
-      assert.equal(capabilities.contractVersion, "1.1.0"); // A-R-N4-1 (oversight.read)
+      assert.equal(capabilities.contractVersion, contractVersion);
       assert.equal(capabilities.protocolVersion, "1.0.0");
     } finally {
       await cap.close();

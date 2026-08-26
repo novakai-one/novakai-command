@@ -48,6 +48,21 @@ test('identity hook is a silent success outside Novakai and emits plain marker e
   assert.equal(inside.status, 0);
   assert.match(inside.stdout, /^NOVAKAI_AGENT_IDENTITY /u);
   assert.deepEqual(findAgentIdentityMarker(inside.stdout), marker);
+
+  const owned = spawnSync('/bin/sh', ['-c', command], {
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      NOVAKAI_AGENT_ID: marker.agentId,
+      NOVAKAI_STORE_ID: 'store_11111111-1111-4111-8111-111111111111',
+    },
+  });
+  assert.equal(owned.status, 0);
+  assert.deepEqual(findAgentIdentityMarker(owned.stdout), {
+    ...marker,
+    schemaVersion: 2,
+    storeId: 'store_11111111-1111-4111-8111-111111111111',
+  });
 });
 
 test('provider hook registration replaces stale Novakai copies and preserves unrelated hooks', async () => {

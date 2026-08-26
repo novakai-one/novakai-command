@@ -17,6 +17,7 @@ import { createLiveAuthority } from '../session/authority.js';
 import { composeTranscriptServerHost } from '../b2b/composition.js';
 import type { ConfigStore } from '../config/store.js';
 import type { BootNote, BootOptions } from './contract.js';
+import { ensureStoreIdentity } from '@novakai/foundation/contract';
 
 export async function composeCapabilities(input: {
   options: BootOptions;
@@ -29,6 +30,7 @@ export async function composeCapabilities(input: {
   const config = configStore.current();
   const clock = messaging.createSystemClock();
   const dataRoot = canonicalDataRoot(options.root);
+  const storeId = (await ensureStoreIdentity(options.root)).id;
   const store = await messaging.openFoundationMessagingStore(clock, {
     root: options.root,
     dataRoot,
@@ -77,6 +79,7 @@ export async function composeCapabilities(input: {
     providerRuntimes,
     allowMock: config.dev.allowMock,
     cwd,
+    storeId,
   });
   const agents = createAgentsContract(agentsCtx);
   const agentDirectory = messaging.createAgentDirectory(agents);
@@ -95,6 +98,7 @@ export async function composeCapabilities(input: {
     agentDirectory,
     providerSend: messaging.createAgentsProviderSend(agents),
     conversationPrincipalId: humanPersonId,
+    storeId,
     ...(configuredAdoption(config.transcript)),
   });
   note(

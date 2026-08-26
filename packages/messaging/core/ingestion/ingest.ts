@@ -41,6 +41,7 @@ interface IngestionDependencies {
   readonly discoveryFloor: string;
   readonly agentDirectory?: AgentDirectory;
   readonly adoption?: ExternalAdoptionRuntimePolicy;
+  readonly storeId?: string;
 }
 
 interface SourceIngestResult {
@@ -49,6 +50,7 @@ interface SourceIngestResult {
   readonly registered: number;
   readonly session?: ProviderSession;
   readonly adopted: boolean;
+  readonly foreign: boolean;
 }
 
 interface PreparedSource {
@@ -66,6 +68,7 @@ const emptySourceResult = (): SourceIngestResult => ({
   duplicates: 0,
   registered: 0,
   adopted: false,
+  foreign: false,
 });
 
 async function prepareSource(
@@ -119,6 +122,7 @@ async function deferSource(
   dependencies: IngestionDependencies,
   prepared: PreparedSource,
   status: "adoption-pending" | "discovered-only",
+  foreign = false,
 ): Promise<SourceIngestResult> {
   const { discovered, existing, growth, normalized, now, source, storedCheckpoint } = prepared;
   const session = await dependencies.store.upsertProviderSession({ ...discovered, status });
@@ -134,6 +138,7 @@ async function deferSource(
     ...emptySourceResult(),
     registered: existing === undefined ? 1 : 0,
     session,
+    foreign,
   };
 }
 
@@ -158,6 +163,7 @@ async function commitSource(
     registered: existing === undefined ? 1 : 0,
     session,
     adopted,
+    foreign: false,
   };
 }
 
@@ -176,12 +182,14 @@ async function ingestSource(
     adoptionEligible: source.adoptionEligible,
     adoptionRemaining: adoptionBudget.remaining,
     store: dependencies.store,
+    now: dependencies.now,
+    ...(dependencies.storeId === undefined ? {} : { storeId: dependencies.storeId }),
     ...(dependencies.agentDirectory === undefined
       ? {} : { directory: dependencies.agentDirectory }),
     ...(dependencies.adoption === undefined ? {} : { adoption: dependencies.adoption }),
   });
   if (classification.kind === "defer") {
-    return deferSource(dependencies, prepared, classification.status);
+    return deferSource(dependencies, prepared, classification.status, classification.foreign ?? false);
   }
   const result = await commitSource(
     dependencies,
@@ -211,13 +219,26 @@ export async function ingestNow(
   let duplicates = 0;
   let sessionsRegistered = 0;
   let sessionsAdopted = 0;
+  let foreignSources = 0;
+  const failures = [] as Array<{ sourceId: string; provider: string; message: string }>;
   const adoptionBudget = { remaining: dependencies.adoption?.limitPerTick ?? 0 };
   for (const source of sources) {
-    const result = await ingestSource(dependencies, source, sessions, adoptionBudget);
+    let result: SourceIngestResult;
+    try {
+      result = await ingestSource(dependencies, source, sessions, adoptionBudget);
+    } catch (cause) {
+      failures.push({
+        sourceId: source.sourceId,
+        provider: source.provider,
+        message: cause instanceof Error ? cause.message : String(cause),
+      });
+      continue;
+    }
     added += result.added;
     duplicates += result.duplicates;
     sessionsRegistered += result.registered;
     if (result.adopted) sessionsAdopted += 1;
+    if (result.foreign) foreignSources += 1;
     if (result.session !== undefined) {
       const current = sessions.findIndex((candidate) => candidate.id === result.session?.id);
       if (current < 0) sessions.push(result.session);
@@ -225,5 +246,14 @@ export async function ingestNow(
     }
   }
   await confirmPendingSends(dependencies.store, dependencies.now());
-  return { sources: sources.length, added, duplicates, sessionsRegistered, sessionsAdopted };
+  return {
+    sources: sources.length,
+    added,
+    duplicates,
+    sessionsRegistered,
+    sessionsAdopted,
+    foreignSources,
+    failedSources: failures.length,
+    failures: failures.slice(0, 20),
+  };
 }

@@ -112,6 +112,9 @@ test("registration, line and checkpoint commit once in durable event order", asy
     duplicates: 0,
     sessionsRegistered: 1,
     sessionsAdopted: 1,
+    foreignSources: 0,
+    failedSources: 0,
+    failures: [],
   });
   const sessions = await store.listProviderSessions();
   const lines = await store.listTranscriptLines();
@@ -158,8 +161,15 @@ test("a pre-commit crash retries to one TranscriptLine", async () => {
     now: () => "2026-08-25T00:00:00.000Z",
     ...adoption(),
   });
-  assert.equal((await runtime.ingestNow()).kind, "error");
-  assert.equal((await runtime.ingestNow()).kind, "ok");
+  const failedPass = await runtime.ingestNow();
+  assert.equal(failedPass.kind, 'ok');
+  if (failedPass.kind === 'ok') {
+    assert.equal(failedPass.value.failedSources, 1);
+    assert.match(failedPass.value.failures[0]?.message ?? '', /before checkpoint commit/u);
+  }
+  const retry = await runtime.ingestNow();
+  assert.equal(retry.kind, 'ok');
+  if (retry.kind === 'ok') assert.equal(retry.value.failedSources, 0);
   assert.equal((await durable.listTranscriptLines()).length, 1);
 });
 
@@ -198,7 +208,7 @@ test("the same provider event in a moved source remains one TranscriptLine", asy
   assert.equal((await store.listTranscriptLines()).length, 1);
 });
 
-test("ambiguous historical provider evidence stays typed and unbound", async () => {
+test("ambiguous historical provider evidence is isolated and stays unbound", async () => {
   const store = createMemoryTranscriptStore();
   const shared = {
     kind: "provider-session" as const,
@@ -227,13 +237,10 @@ test("ambiguous historical provider evidence stays typed and unbound", async () 
   });
 
   const result = await runtime.ingestNow();
-  assert.equal(result.kind, "error");
-  if (result.kind !== "error") return;
-  assert.equal(result.error.name, "IdempotencyConflict");
-  assert.deepEqual(result.error.fields.sessionIds, [
-    `sess_${"1".repeat(32)}`,
-    `sess_${"2".repeat(32)}`,
-  ]);
+  assert.equal(result.kind, "ok");
+  if (result.kind !== "ok") return;
+  assert.equal(result.value.failedSources, 1);
+  assert.match(result.value.failures[0]?.message ?? '', /matches multiple sessions/u);
   assert.equal((await store.listTranscriptLines()).length, 0);
   assert.equal((await store.listProviderSessions()).every((session) =>
     session.agentId === undefined), true);

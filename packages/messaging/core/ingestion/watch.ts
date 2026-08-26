@@ -44,6 +44,7 @@ export interface MessagingRuntimeOptions {
     readonly conversations?: ConversationDirectory;
     readonly limitPerTick: number;
   };
+  readonly storeId?: string;
 }
 
 const unavailable = <T>(cause: unknown): Outcome<T> => ({
@@ -114,10 +115,9 @@ class IngestionRuntime implements MessagingRuntimeApi {
   async start(): Promise<Outcome<void>> {
     if (this.state !== "stopped") return { kind: "ok", value: undefined };
     this.state = "running";
-    const first = await this.ingestNow();
-    if (first.kind === "error") return first;
     this.timer = setInterval(() => { void this.ingestNow(); }, this.intervalMs);
     this.timer.unref();
+    await this.ingestNow();
     return { kind: "ok", value: undefined };
   }
 
@@ -156,6 +156,7 @@ class IngestionRuntime implements MessagingRuntimeApi {
         normalizers: this.options.normalizers,
         now: this.clock,
         discoveryFloor: this.discoveryFloor,
+        ...(this.options.storeId === undefined ? {} : { storeId: this.options.storeId }),
         ...(this.options.agentDirectory === undefined
           ? {} : { agentDirectory: this.options.agentDirectory }),
         ...(this.options.adoption === undefined || this.conversations === undefined

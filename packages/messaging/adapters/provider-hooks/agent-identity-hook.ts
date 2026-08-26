@@ -1,6 +1,7 @@
 import { pathToFileURL } from 'node:url';
 import {
   novakaiAgentIdEnvironmentKey,
+  novakaiStoreIdEnvironmentKey,
   parseAgentIdentityMarker,
   type AgentIdentityMarker,
 } from '../../contract/agent-identity.js';
@@ -9,11 +10,13 @@ import {
 export function markerFromEnvironment(
   environment: NodeJS.ProcessEnv,
 ): AgentIdentityMarker | undefined {
+  const storeId = environment[novakaiStoreIdEnvironmentKey];
   return parseAgentIdentityMarker({
     kind: 'novakai-agent-identity',
-    schemaVersion: 1,
+    schemaVersion: storeId === undefined ? 1 : 2,
     hookEvent: 'UserPromptSubmit',
     agentId: environment[novakaiAgentIdEnvironmentKey],
+    ...(storeId === undefined ? {} : { storeId }),
   });
 }
 
@@ -28,7 +31,7 @@ export function runAgentIdentityHook(
   return true;
 }
 
-const INLINE_HOOK = `const a=process.env.NOVAKAI_AGENT_ID;if(/^agent_[A-Za-z0-9-]+$/.test(a||'')){const m={kind:'novakai-agent-identity',schemaVersion:1,hookEvent:'UserPromptSubmit',agentId:a};process.stdout.write('NOVAKAI_AGENT_IDENTITY '+JSON.stringify(m)+'\\n')}`;
+const INLINE_HOOK = `const a=process.env.NOVAKAI_AGENT_ID,s=process.env.NOVAKAI_STORE_ID;if(/^agent_[A-Za-z0-9-]+$/.test(a||'')){const v=/^store_[0-9a-f-]{36}$/.test(s||'')?2:1,m={kind:'novakai-agent-identity',schemaVersion:v,hookEvent:'UserPromptSubmit',agentId:a,...v===2?{storeId:s}:{}};process.stdout.write('NOVAKAI_AGENT_IDENTITY '+JSON.stringify(m)+'\\n')}`;
 
 const shellQuote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`;
 

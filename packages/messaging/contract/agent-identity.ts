@@ -1,22 +1,27 @@
 /** Environment channel set by Novakai before a provider CLI turn. */
 export const novakaiAgentIdEnvironmentKey = 'NOVAKAI_AGENT_ID' as const;
+export const novakaiStoreIdEnvironmentKey = 'NOVAKAI_STORE_ID' as const;
 
 import type { AgentIdentityMarker } from './records/agent-identity.js';
 export type { AgentIdentityMarker } from './records/agent-identity.js';
 
 const AGENT_ID = /^agent_[A-Za-z0-9-]+$/;
+const STORE_ID = /^store_[0-9a-f-]{36}$/u;
 
 /** Validates an untrusted provider value as Novakai assignment evidence. */
 export function parseAgentIdentityMarker(value: unknown): AgentIdentityMarker | undefined {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
   const marker = value as Partial<AgentIdentityMarker>;
-  return marker.kind === 'novakai-agent-identity'
-    && marker.schemaVersion === 1
+  const common = marker.kind === 'novakai-agent-identity'
     && marker.hookEvent === 'UserPromptSubmit'
     && typeof marker.agentId === 'string'
-    && AGENT_ID.test(marker.agentId)
-    ? marker as AgentIdentityMarker
-    : undefined;
+    && AGENT_ID.test(marker.agentId);
+  if (!common) return undefined;
+  if (marker.schemaVersion === 1) return marker as AgentIdentityMarker;
+  return marker.schemaVersion === 2
+    && typeof marker.storeId === 'string'
+    && STORE_ID.test(marker.storeId)
+    ? marker as AgentIdentityMarker : undefined;
 }
 
 function markerInsideText(text: string): AgentIdentityMarker | undefined {

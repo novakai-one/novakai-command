@@ -4,9 +4,8 @@ import type {
 } from '../../contract/conversations.js';
 import type { TranscriptStore } from '../../contract/ports/transcript-store.js';
 import type { ConversationView } from '../../contract/records/conversation-view.js';
-import type { ConversationId, Timestamp, TranscriptLineId } from '../../contract/types.js';
-
-const validId = (id: string): boolean => /^conv_[A-Za-z0-9-]+$/u.test(id);
+import type { Timestamp, TranscriptLineId } from '../../contract/types.js';
+import { parseConversationId } from '../../contract/conversation-id.js';
 
 function alreadyApplied(current: ConversationView, input: EnsureConversationViewInput): boolean {
   return (input.titleOverride === undefined || input.titleOverride === current.titleOverride)
@@ -33,7 +32,8 @@ export async function ensureConversationView(
   input: EnsureConversationViewInput,
   now: () => string,
 ): Promise<ConversationView> {
-  if (!validId(input.conversationId)) throw new Error('Conversation View requires a valid ID');
+  const conversationId = parseConversationId(input.conversationId);
+  if (conversationId === undefined) throw new Error('Conversation View requires a valid ID');
   const participants = validateParticipants(input.participantIds);
   const current = await store.getConversationView(input.conversationId);
   if (current !== null
@@ -43,7 +43,7 @@ export async function ensureConversationView(
   if (current !== null && alreadyApplied(current, input)) return current;
   const timestamp = now() as Timestamp;
   const view: ConversationView = {
-    id: input.conversationId as ConversationId,
+    id: conversationId,
     kind: 'conversation-view',
     schemaVersion: 1,
     createdAt: current?.createdAt ?? timestamp,

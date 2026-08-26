@@ -5,6 +5,7 @@ export * from "./api.js";
 export * from "./outcome.js";
 export * from "./runtime.js";
 export * from "./agent-identity.js";
+export { parseConversationId } from "./conversation-id.js";
 export * from './agent-delivery-marker.js';
 export * from './communications.js';
 export * from './conversations.js';

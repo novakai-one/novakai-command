@@ -9,6 +9,7 @@ import {
 } from "../../../messaging/contract/index.js";
 import type { AgentDirectory } from "../../../messaging/contract/index.js";
 import type { ProviderSend } from "../../../messaging/contract/index.js";
+import type { StoreId } from '@novakai/foundation/contract';
 
 const DEFAULT_POLL_MS = 1_000;
 
@@ -97,6 +98,7 @@ export interface ComposeTranscriptServerHostOptions {
   externalAdoption?: ExternalAdoptionOptions;
   conversations?: import('../../../messaging/contract/index.js').ConversationDirectory;
   conversationPrincipalId?: string;
+  storeId?: StoreId;
 }
 
 const legacyLine = (line: TranscriptLine): LegacyTranscriptLine => ({
@@ -117,8 +119,8 @@ const legacyLine = (line: TranscriptLine): LegacyTranscriptLine => ({
 const oldResult = (value: IngestResult): LegacyTranscriptResult => ({
   added: value.added,
   duplicates: value.duplicates,
-  skipped: [],
-  diagnostics: [],
+  skipped: value.foreignSources === 0 ? [] : [{ foreignSources: value.foreignSources }],
+  diagnostics: value.failures,
 });
 
 const oldOutcome = <T>(outcome: Outcome<T>): LegacyResult<T> => outcome.kind === "ok"
@@ -152,6 +154,7 @@ export function composeTranscriptServerHost(
       ...(options.conversations === undefined ? {} : { conversations: options.conversations }),
       ...(options.conversationPrincipalId === undefined
         ? {} : { conversationPrincipalId: options.conversationPrincipalId }),
+      ...(options.storeId === undefined ? {} : { storeId: options.storeId }),
       ...(options.externalAdoption === undefined
         ? {} : { externalAdoption: options.externalAdoption }),
   });
