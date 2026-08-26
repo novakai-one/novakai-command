@@ -6,7 +6,7 @@
  *
  * Mode differences (and the ONLY mode differences):
  *  - Defaults: clock-system, store-memory. store-memory is test/harness only
- *    (A4) — a production embedded host passes openJsonlStore explicitly.
+ *    (A4) — a production embedded host passes the Foundation adapter explicitly.
  *  - transports default to one presence-transport-memory registered as "ws".
  *    OpenPresence naming an unregistered transport fails ValidationFailed
  *    (Seams §4 composition rule).

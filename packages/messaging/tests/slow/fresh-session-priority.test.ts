@@ -82,13 +82,18 @@ test('fresh hooked session bypasses machine-wide historical discovery backlog', 
 
     const ingested = await composed.runtime.ingestNow();
     assert.equal(ingested.kind, 'ok');
-    assert.equal(ingested.kind === 'ok' && ingested.value.sessionsRegistered, 1);
+    assert.equal(ingested.kind === 'ok' && ingested.value.sessionsRegistered, 9,
+      'fresh evidence plus the bounded eight-source history lane are processed');
     const sessions = await composed.runtime.listProviderSessions();
     assert.equal(sessions.kind, 'ok');
     assert.deepEqual(
-      sessions.kind === 'ok' && sessions.value.map((session) => session.agentId),
+      sessions.kind === 'ok' && sessions.value
+        .filter((session) => session.agentId !== undefined)
+        .map((session) => session.agentId),
       [agentId],
     );
+    assert.equal(sessions.kind === 'ok' && sessions.value
+      .filter((session) => session.status === 'discovered-only').length, 8);
     const lines = await composed.runtime.listTranscriptLines();
     assert.equal(
       lines.kind === 'ok' && lines.value.some((line) => line.text === 'fresh reply'),

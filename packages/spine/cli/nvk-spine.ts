@@ -13,7 +13,7 @@ import {
   createEmbeddedMessaging,
   createSystemClock,
   DEFAULT_ROLE_GRANTS,
-  openJsonlStore,
+  openFoundationMessagingStore,
   type EmbeddedMessaging,
   type MessagingSession,
   type PersonId,
@@ -109,8 +109,9 @@ async function composeAuthenticatedSpine(
   }
 
   const clock = createSystemClock();
-  const store = await openJsonlStore(clock, {
-    path: path.join(root, 'messaging.jsonl'),
+  const store = await openFoundationMessagingStore(clock, {
+    root,
+    dataRoot: path.join(root, 'stores'),
   });
   const messaging = createEmbeddedMessaging({
     clock,

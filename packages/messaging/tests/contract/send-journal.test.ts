@@ -280,6 +280,10 @@ test('Foundation adapter replays SendJournal state from the canonical database',
     },
   });
   assert.equal((await runtime.sendConversationMessage(sendInput)).kind, 'ok');
+  await assert.rejects(
+    openFoundationTranscriptStore({ root, dataRoot }),
+    /messaging-transcript is held by PID/u,
+  );
   await store.close();
   const reopened = await openFoundationTranscriptStore({ root, dataRoot });
   const [journal] = await reopened.listSendJournals();

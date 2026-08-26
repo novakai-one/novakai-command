@@ -43,8 +43,8 @@ import {
   createPtyPresenceTransport,
   createSeededClock,
   DEFAULT_ROLE_GRANTS,
-  openJsonlStore,
 } from "../../contract/index.js";
+import { openJsonlStore } from '../../adapters/store-jsonl.js';
 import type { AuthorityConfig, EmbeddedMessaging, MessagingStore } from "../../contract/index.js";
 import {
   ADMIN,

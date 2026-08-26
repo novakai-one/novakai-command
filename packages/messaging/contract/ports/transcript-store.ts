@@ -102,6 +102,7 @@ export interface TranscriptStore {
   commitIngestBatch(input: TranscriptBatchInput): Promise<TranscriptBatchResult>;
   listProviderSessions(): Promise<readonly ProviderSession[]>;
   listTranscriptLines(query?: TranscriptLineQuery): Promise<readonly TranscriptLine[]>;
+  getTranscriptLine(id: TranscriptLine['id']): Promise<TranscriptLine | null>;
   acceptSend(input: AcceptSendInput): Promise<AcceptSendResult>;
   transitionSend(input: SendTransitionInput): Promise<SendTransitionResult>;
   bindAgentSession(agentId: string, sessionId: ProviderSessionId, updatedAt: string): Promise<number>;

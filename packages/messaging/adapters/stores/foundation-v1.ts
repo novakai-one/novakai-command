@@ -23,12 +23,13 @@ import {
   listObjects, mintMessagingStoreOpId,
   type ObjectId, type ScopedStoreHandle, type StoredObject,
 } from "@novakai/foundation/contract";
-import { StoreCore, StoreException } from "../store-shared.js";
+import { StoreCore, StoreException, storeOpNames } from "../store-shared.js";
 import type { StoreOp } from "../store-shared.js";
 import { digestOf, operationKeyOf } from "../store-operation-identity.js";
 import type { ClockIds } from "../../contract/ports/clock.js";
 import type { MessagingStore } from "../../contract/ports/store.js";
 import type { MessagingStoreOpId } from "../../contract/records/legacy-agent-mail.js";
+import { acquireMessagingWriterLease } from './writer-lease.js';
 
 /** Foundation roots and lock policy used by the v1 replay adapter. */
 export interface FoundationMessagingStoreOptions {
@@ -86,6 +87,19 @@ function replay(
     state.storeSequence = Math.max(state.storeSequence, record.storeSequence);
   }
   return state;
+}
+
+function legacyPayload(value: unknown): MessagingStoreOpPayload | undefined {
+  if (typeof value !== 'object' || value === null) return undefined;
+  const record = value as Partial<MessagingStoreOpPayload>;
+  const operation = record.storeOp as { op?: unknown } | undefined;
+  return record.kind === 'messagingStoreOp'
+    && typeof record.storeSequence === 'number'
+    && typeof record.operationKey === 'string'
+    && typeof record.payloadDigest === 'string'
+    && typeof operation?.op === 'string'
+    && (storeOpNames as readonly string[]).includes(operation.op)
+    ? record as MessagingStoreOpPayload : undefined;
 }
 
 function payloadFor(
@@ -162,9 +176,11 @@ export async function openFoundationMessagingStore(
   clock: ClockIds,
   options: FoundationMessagingStoreOptions,
 ): Promise<MessagingStore> {
+  const lease = await acquireMessagingWriterLease(options.root, 'messaging-v1');
+  try {
   const handle = messagingHandle(options);
   const core = new StoreCore(clock);
-  const persisted = await listObjects<MessagingStoreOpPayload>(
+  const persisted = await listObjects<unknown>(
     handle, "messagingStoreOp", undefined, { limit: 1_000_000 },
   );
   if (!persisted.ok) {
@@ -174,12 +190,20 @@ export async function openFoundationMessagingStore(
       retryable: true,
     });
   }
-  const state = replay(core, persisted.value.items);
+  const compatible = persisted.value.items.flatMap((item) => {
+    const object = legacyPayload(item.object);
+    return object === undefined ? [] : [{ ...item, object }];
+  });
+  const state = replay(core, compatible);
   core.attachPersistence(
     (operation) => persistOperation(handle, clock, state, operation),
-    async () => undefined,
+    () => lease.release(),
   );
   return core;
+  } catch (cause) {
+    await lease.release();
+    throw cause;
+  }
 }
 
 async function getExisting(

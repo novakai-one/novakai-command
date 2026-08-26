@@ -195,6 +195,10 @@ export class TranscriptState {
         || left.sourcePosition.offset - right.sourcePosition.offset);
   }
 
+  getTranscriptLine(id: TranscriptLine['id']): TranscriptLine | null {
+    return this.lines.get(id) ?? null;
+  }
+
   scanEvents(after?: EventCursor, limit = 256): readonly TranscriptEvent[] {
     const sequence = after === undefined ? 0 : Number(after.slice("event_".length));
     if (!Number.isSafeInteger(sequence) || sequence < 0) throw new Error("Invalid EventCursor");

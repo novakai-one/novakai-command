@@ -70,9 +70,8 @@ async function inputFor(
   dependencies: DeliveryRouterDependencies,
   delivery: PendingDelivery,
 ): Promise<ConversationSendInput | 'deferred' | Error> {
-  const line = (await dependencies.store.listTranscriptLines())
-    .find((candidate) => candidate.id === delivery.transcriptLineId);
-  if (line === undefined) return new Error(`source TranscriptLine ${delivery.transcriptLineId} is missing`);
+  const line = await dependencies.store.getTranscriptLine(delivery.transcriptLineId);
+  if (line === null) return new Error(`source TranscriptLine ${delivery.transcriptLineId} is missing`);
   const marker = findAgentDeliveryMarker(`${line.text}\n${line.raw}`);
   if (marker?.recipientAgentId !== delivery.recipientAgentId) {
     return new Error(`source TranscriptLine ${line.id} has no matching delivery marker`);

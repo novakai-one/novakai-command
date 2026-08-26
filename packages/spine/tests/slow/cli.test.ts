@@ -19,7 +19,7 @@ import {
   createEmbeddedMessaging,
   createSystemClock,
   DEFAULT_ROLE_GRANTS,
-  openJsonlStore,
+  openFoundationMessagingStore,
   type MessagingSession,
   type PersonId,
 } from '@novakai/messaging';
@@ -60,8 +60,9 @@ async function seedMessage(
   senderBearer: string,
 ): Promise<string> {
   const clock = createSystemClock();
-  const store = await openJsonlStore(clock, {
-    path: path.join(root, 'messaging.jsonl'),
+  const store = await openFoundationMessagingStore(clock, {
+    root,
+    dataRoot: path.join(root, 'stores'),
   });
   const messaging = createEmbeddedMessaging({
     clock,

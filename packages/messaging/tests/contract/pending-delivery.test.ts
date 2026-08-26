@@ -6,6 +6,7 @@ import test from 'node:test';
 import {
   createMemoryTranscriptStore,
   createMessagingRuntime,
+  messageCorrelationHint,
   openFoundationTranscriptStore,
   type AgentDirectory,
   type ConversationDirectory,
@@ -46,8 +47,11 @@ async function appendLine(
   key: string,
   role: TranscriptLine['role'],
   text: string,
+  sourceKey = key,
 ): Promise<TranscriptLine> {
-  const sourceId = `source_${key.repeat(64).slice(0, 64)}` as never;
+  const sourceId = `source_${sourceKey.repeat(64).slice(0, 64)}` as never;
+  const prior = await store.getCheckpoint(sourceId);
+  const offset = prior?.offset ?? 0;
   const line: TranscriptLine = {
     id: `transcriptLine_${key.repeat(64).slice(0, 64)}` as never,
     kind: 'transcript-line',
@@ -55,28 +59,29 @@ async function appendLine(
     createdAt: timestamp as never,
     sessionId: owner.id,
     provider: owner.provider,
-    sourcePosition: { sourceId, sourceEpoch: 0, offset: 0, nextOffset: 1 },
+    sourcePosition: { sourceId, sourceEpoch: prior?.sourceEpoch ?? 0, offset, nextOffset: offset + 1 },
     turnIndex: 0,
     role,
     text,
+    ...(role === 'user' ? { correlationHint: messageCorrelationHint(text) } : {}),
     raw: JSON.stringify({ role, text }),
   };
   await store.commitIngestBatch({
-    expectedCheckpoint: null,
+    expectedCheckpoint: prior,
     session: { ...owner, sourceIds: [...owner.sourceIds, sourceId] },
     lines: [line],
     checkpoint: {
-      id: `checkpoint_${key.repeat(64).slice(0, 64)}` as never,
+      id: prior?.id ?? `checkpoint_${sourceKey.repeat(64).slice(0, 64)}` as never,
       kind: 'ingest-checkpoint',
       schemaVersion: 1,
       createdAt: timestamp as never,
       updatedAt: timestamp as never,
       provider: owner.provider,
       sourceId,
-      sourceEpoch: 0,
-      offset: 1,
-      nextTurnIndex: 1,
-      fileSignature: { device: '1', inode: key, tailHash: key.repeat(64).slice(0, 64) },
+      sourceEpoch: prior?.sourceEpoch ?? 0,
+      offset: offset + 1,
+      nextTurnIndex: (prior?.nextTurnIndex ?? 0) + 1,
+      fileSignature: { device: '1', inode: sourceKey, tailHash: key.repeat(64).slice(0, 64) },
     },
   });
   return line;
@@ -174,8 +179,9 @@ test('addressed transcript work waits for idle, reuses the pair View and never r
 
   assert.equal((await fixture.runtime().routePending()).kind, 'ok');
   assert.equal(fixture.effects(), 2, 'unconfirmed work is never retried after runtime recovery');
-  const [journal] = await store.listSendJournals();
-  const confirmation = await appendLine(store, bravo, 'e', 'user', journal!.request.text);
+  const journal = (await store.listSendJournals())
+    .find((candidate) => candidate.targetSessionId === bravo.id);
+  const confirmation = await appendLine(store, bravo, 'e', 'user', journal!.request.text, 'd');
   assert.equal(await store.confirmSendForLines(bravo.id, [confirmation], timestamp), 1);
   await fixture.runtime().routePending();
   assert.equal((await store.listPendingDeliveries())

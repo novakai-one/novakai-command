@@ -122,7 +122,7 @@ export function TreeScreen(props: { services: ShellServices }) {
         });
         return;
       }
-      const result = await door.runs.getAgentRunTree({ rootAgentId: root });
+      const result = await door.runs.getAgentRunTree({ rootAgentId: root, maxDepth: 64 });
       if (!live) return;
       if (result.ok) {
         setTree(result.value);

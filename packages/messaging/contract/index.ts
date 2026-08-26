@@ -7,6 +7,7 @@ export * from "./runtime.js";
 export * from "./agent-identity.js";
 export { parseConversationId } from "./conversation-id.js";
 export { messageCorrelationHint } from "./correlation.js";
+export { parseProviderName } from './provider-name.js';
 export * from './agent-delivery-marker.js';
 export * from './communications.js';
 export * from './conversations.js';
@@ -82,7 +83,6 @@ export {
 export { ensureClaudeIdentityHook } from "../adapters/provider-hooks/registrations/claude.js";
 export { ensureCodexIdentityHook } from "../adapters/provider-hooks/registrations/codex.js";
 export { ensureKimiIdentityHook } from "../adapters/provider-hooks/registrations/kimi.js";
-export { openJsonlStore } from "../adapters/store-jsonl.js";
 export {
   openFoundationMessagingStore,
   type FoundationMessagingStoreOptions,

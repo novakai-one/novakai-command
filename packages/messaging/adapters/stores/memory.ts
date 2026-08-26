@@ -39,6 +39,7 @@ export function createMemoryTranscriptStore(): TranscriptStore {
       state.listProviderSessions(),
     listTranscriptLines: async (query?: TranscriptLineQuery): Promise<readonly TranscriptLine[]> =>
       state.listTranscriptLines(query),
+    getTranscriptLine: async (id) => state.getTranscriptLine(id),
     acceptSend: (input: AcceptSendInput): Promise<AcceptSendResult> => sends.accept(input.journal),
     transitionSend: (input: SendTransitionInput): Promise<SendTransitionResult> =>
       sends.transition(input),

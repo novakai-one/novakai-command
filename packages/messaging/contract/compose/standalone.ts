@@ -31,6 +31,7 @@
  */
 
 import { readFileSync } from "node:fs";
+import { dirname } from 'node:path';
 import type { AddressInfo } from "node:net";
 import { WebSocketServer } from "ws";
 import type { ClockIds } from "../ports/clock.js";
@@ -40,7 +41,7 @@ import type { RetryPolicy } from "../ports/presence-transport.js";
 import type { AuthorityConfig } from "../../adapters/authority-config.js";
 import type { MembershipConfig } from "../../adapters/membership-config.js";
 import { createSystemClock } from "../../adapters/clock-system.js";
-import { openJsonlStore } from "../../adapters/store-jsonl.js";
+import { openFoundationMessagingStore } from '../../adapters/stores/foundation-v1.js';
 import { createWsPresenceTransport } from "../../adapters/presence-transport-ws.js";
 import type { WsPresenceTransport } from "../../adapters/presence-transport-ws.js";
 import type { RecoverySweepReport } from "../../core/recoverySweep.js";
@@ -69,7 +70,7 @@ export interface StandaloneMessagingOptions {
    * (Store-Seam §11.4).
    */
   membership?: MembershipConfig | MembershipSource;
-  /** The store-jsonl journal file path (parent directories are created). */
+  /** Legacy location hint; Foundation stores canonical records in its parent directory. */
   dataPath: string;
   /** WS listen port (default 8787; 0 = ephemeral, see handle.port). */
   port?: number;
@@ -136,7 +137,8 @@ export async function createStandaloneMessaging(
   options: StandaloneMessagingOptions,
 ): Promise<StandaloneMessaging> {
   const clock = options.clock ?? createSystemClock();
-  const store = await openJsonlStore(clock, { path: options.dataPath });
+  const dataRoot = dirname(options.dataPath);
+  const store = await openFoundationMessagingStore(clock, { root: dataRoot, dataRoot });
   const transport = createWsPresenceTransport({
     ...(options.livenessIntervalMs !== undefined
       ? { livenessIntervalMs: options.livenessIntervalMs }

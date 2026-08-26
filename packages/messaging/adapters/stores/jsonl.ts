@@ -25,6 +25,7 @@ import type {
 import { restoreFoundationMessagingStore } from './foundation-replay.js';
 import type { RestoredFoundationMessagingStore } from './foundation-replay.js';
 import { FoundationMessagingWriter } from './foundation-writer.js';
+import { acquireMessagingWriterLease, type MessagingWriterLease } from './writer-lease.js';
 
 /** Canonical Foundation-store location and lock policy for transcript-first Messaging. */
 export interface FoundationTranscriptStoreOptions {
@@ -36,6 +37,7 @@ export interface FoundationTranscriptStoreOptions {
 function storeFacade(
   restored: RestoredFoundationMessagingStore,
   writer: FoundationMessagingWriter,
+  lease: MessagingWriterLease,
 ): TranscriptStore {
   const { transcripts, sends, deliveries, conversations, projections } = restored;
   return {
@@ -49,6 +51,7 @@ function storeFacade(
       transcripts.listProviderSessions(),
     listTranscriptLines: async (query?: TranscriptLineQuery): Promise<readonly TranscriptLine[]> =>
       transcripts.listTranscriptLines(query),
+    getTranscriptLine: async (id) => transcripts.getTranscriptLine(id),
     acceptSend: (input: AcceptSendInput): Promise<AcceptSendResult> =>
       sends.accept(input.journal, (journals) => writer.persistSends(journals)),
     transitionSend: (input: SendTransitionInput): Promise<SendTransitionResult> =>
@@ -74,7 +77,7 @@ function storeFacade(
       after?: EventCursor,
       limit?: number,
     ): Promise<readonly TranscriptEvent[]> => transcripts.scanEvents(after, limit),
-    close: async () => undefined,
+    close: () => lease.release(),
   };
 }
 
@@ -82,6 +85,8 @@ function storeFacade(
 export async function openFoundationTranscriptStore(
   options: FoundationTranscriptStoreOptions,
 ): Promise<TranscriptStore> {
+  const lease = await acquireMessagingWriterLease(options.root, 'messaging-transcript');
+  try {
   const handle: ScopedStoreHandle = composeHandle({
     root: options.root,
     dataRoot: options.dataRoot,
@@ -99,5 +104,9 @@ export async function openFoundationTranscriptStore(
     restored.conversationSequence,
     restored.projectionSequence,
   );
-  return storeFacade(restored, writer);
+  return storeFacade(restored, writer, lease);
+  } catch (cause) {
+    await lease.release();
+    throw cause;
+  }
 }

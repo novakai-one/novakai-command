@@ -23,6 +23,7 @@ import { listAgentConversationMessages } from '../conversations/messages.js';
 import { rebuildProjections } from '../projections/rebuild.js';
 import { sendConversationMessage } from '../send/send.js';
 import { agentDeliveryMarker } from '../delivery/agent-delivery-marker.js';
+import { parseProviderName } from '../../contract/provider-name.js';
 
 type RecordsApi = Pick<MessagingRuntimeApi,
   | 'ensureConversationView' | 'updateConversationView' | 'getConversationView'
@@ -46,11 +47,11 @@ function lineQuery(input: unknown): TranscriptLineQuery {
     throw new Error('Transcript line query must be an object');
   }
   const value = input as Record<string, unknown>;
+  const provider = parseProviderName(value.provider);
   return {
     ...(typeof value.sessionId === 'string'
       ? { sessionId: value.sessionId as ProviderSessionId } : {}),
-    ...(value.provider === 'claude' || value.provider === 'codex' || value.provider === 'kimi'
-      ? { provider: value.provider } : {}),
+    ...(provider === undefined ? {} : { provider }),
     ...(typeof value.sourceId === 'string'
       ? { sourceId: value.sourceId as TranscriptSourceId } : {}),
     ...(typeof value.resumeId === 'string'

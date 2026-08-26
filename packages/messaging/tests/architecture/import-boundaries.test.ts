@@ -91,6 +91,7 @@ describe("architecture — one Messaging doorway", () => {
       "types", "schemas", "brands", "errors", "records", "events", "subscriptions",
       "commands", "queries", "outcome", "runtime",
       "communications", "conversations", "agent-delivery-marker",
+      "conversation-id", "correlation", "provider-name",
     ]);
     const offenders: string[] = [];
     for (const file of listFiles(join(sourceRoot, "core"), ".ts")) {
@@ -233,6 +234,21 @@ describe("architecture — graph health", () => {
         if (!allowedShared.has(to)) offenders.push(`${from} → ${to}`);
       }
     }
+    assert.deepEqual(offenders, []);
+  });
+
+  it('production composition never imports the retired JSONL writer', () => {
+    const production = [
+      ...listFiles(join(sourceRoot, 'contract'), '.ts'),
+      ...listFiles(join(sourceRoot, 'cli'), '.ts'),
+      ...listFiles(join(repoRoot, 'packages', 'spine'), '.ts')
+        .filter((file) => !file.includes(`${sep}tests${sep}`)
+          && !file.includes(`${sep}node_modules${sep}`)
+          && !file.includes(`${sep}dist${sep}`)),
+    ];
+    const offenders = production.filter((file) =>
+      readFileSync(file, 'utf8').includes('openJsonlStore'))
+      .map((file) => relative(repoRoot, file));
     assert.deepEqual(offenders, []);
   });
 });
