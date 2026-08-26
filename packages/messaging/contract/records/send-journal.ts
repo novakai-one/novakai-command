@@ -21,6 +21,12 @@ export interface SendAttempt {
   readonly attemptId: SendAttemptId;
   readonly state: SendAttemptState;
   readonly dispatchedAt: Timestamp;
+  readonly sourceFence?: {
+    readonly sourceId: string;
+    readonly sourceEpoch: number;
+    readonly offset: number;
+  };
+  readonly correlationHint?: string;
   readonly confirmedLineId?: TranscriptLineId;
   readonly submission?: ProviderSubmissionCertainty;
   readonly failure?: string;

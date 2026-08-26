@@ -5,6 +5,7 @@ import type {
 import type { TranscriptRole } from "../../../contract/types.js";
 import { normalizerSupport } from "./support.js";
 import { findAgentIdentityMarker } from "../../../contract/agent-identity.js";
+import { messageCorrelationHint } from '../../../contract/correlation.js';
 
 const support = normalizerSupport;
 
@@ -18,10 +19,13 @@ function messageLine(message: Record<string, unknown>): NormalizedProviderLine {
   const audience = conversationRole && normalizedText.trim() !== ''
     ? 'conversation'
     : 'internal';
+  const text = role === 'user' ? support.displayUserText(normalizedText) : normalizedText;
   return {
     role,
-    text: role === 'user' ? support.displayUserText(normalizedText) : normalizedText,
+    text,
     audience,
+    ...(role === 'user' && audience === 'conversation'
+      ? { correlationHint: messageCorrelationHint(text) } : {}),
     ...(providerLineId === undefined ? {} : { providerLineId }),
   };
 }
@@ -95,12 +99,15 @@ function nativeEventLine(
   const usage = support.numericUsage(payload.usage);
   const providerLineId = support.textValue(envelope.id);
   const parentTurnId = support.textValue(payload.parentTurnId);
+  const text = nativeText(role, payload, message);
+  const audience = message?.role === 'user' || message?.role === 'assistant'
+    ? 'conversation' : 'internal';
   return {
     role,
-    text: nativeText(role, payload, message),
-    audience: (message?.role === 'user' || message?.role === 'assistant')
-      ? 'conversation'
-      : 'internal',
+    text,
+    audience,
+    ...(role === 'user' && audience === 'conversation'
+      ? { correlationHint: messageCorrelationHint(text) } : {}),
     ...(providerLineId === undefined ? {} : { providerLineId }),
     ...(resumeId === undefined ? {} : { resumeId }),
     turnId: support.textValue(payload.turnId) ?? `kimi-turn-${seq}`,

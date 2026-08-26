@@ -2,6 +2,7 @@ import type { ProviderNormalizer } from "../../../contract/ports/provider-transc
 import type { TranscriptRole } from "../../../contract/types.js";
 import { normalizerSupport } from "./support.js";
 import { findAgentIdentityMarker } from "../../../contract/agent-identity.js";
+import { messageCorrelationHint } from '../../../contract/correlation.js';
 
 const support = normalizerSupport;
 
@@ -108,6 +109,8 @@ export const codexNormalizer: ProviderNormalizer = {
       ...(providerLineId === undefined ? {} : { providerLineId }),
       ...(usage === undefined ? {} : { tokenUsage: usage }),
       ...(providerOccurredAt === undefined ? {} : { providerOccurredAt }),
+      ...(role === 'user' && audience === 'conversation'
+        ? { correlationHint: messageCorrelationHint(text) } : {}),
       ...(role === "tool_call" ? { toolCall: payload } : {}),
       ...(agentIdentity === undefined ? {} : { agentIdentity }),
     };

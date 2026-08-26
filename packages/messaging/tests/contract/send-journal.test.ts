@@ -6,6 +6,7 @@ import test from 'node:test';
 import {
   createMemoryTranscriptStore,
   createMessagingRuntime,
+  messageCorrelationHint,
   openFoundationTranscriptStore,
   type AgentDirectory,
   type ProviderSend,
@@ -112,8 +113,21 @@ test('acceptance is durable before one provider effect and confirms only from tr
     turnIndex: 1,
     role: 'user',
     text: 'hello',
+    correlationHint: messageCorrelationHint('hello'),
     raw: '{}',
   };
+  const unrelated: TranscriptLine = {
+    ...line,
+    id: `transcriptLine_${'c'.repeat(64)}` as never,
+    text: 'direct provider input',
+    correlationHint: messageCorrelationHint('direct provider input'),
+  };
+  assert.equal(await store.confirmSendForLines(
+    sessionId,
+    [unrelated],
+    '2026-08-25T00:00:05.500Z',
+  ), 0);
+  assert.equal((await store.listSendJournals())[0]?.state, 'awaiting-transcript');
   assert.equal(await store.confirmSendForLines(
     sessionId,
     [line],
@@ -122,6 +136,104 @@ test('acceptance is durable before one provider effect and confirms only from tr
   const confirmed = (await store.listSendJournals())[0];
   assert.equal(confirmed?.state, 'confirmed');
   assert.equal(confirmed?.attempts[0]?.confirmedLineId, line.id);
+});
+
+test('ambiguous close sends become indeterminate instead of taking the wrong user line', async () => {
+  const store = createMemoryTranscriptStore();
+  const agents = directory();
+  const sessionId = `sess_${'2'.repeat(8)}-${'2'.repeat(4)}-4222-8222-${'2'.repeat(12)}` as never;
+  agents.attach(sessionId);
+  let tick = 0;
+  const runtime = createMessagingRuntime({
+    store,
+    source: emptySource,
+    normalizers,
+    agentDirectory: agents.value,
+    providerSend: {
+      dispatch: async () => ({
+        ok: true,
+        dispatchedAt: `2026-08-25T00:00:0${tick++}.000Z`,
+        certainty: 'unconfirmed',
+      }),
+    },
+  });
+  await runtime.sendConversationMessage({ ...sendInput, clientOpId: 'close-1' });
+  await runtime.sendConversationMessage({ ...sendInput, clientOpId: 'close-2' });
+  const lines = [0, 1].map((offset): TranscriptLine => ({
+    id: `transcriptLine_${String(offset + 3).repeat(64)}` as never,
+    kind: 'transcript-line',
+    schemaVersion: 1,
+    createdAt: `2026-08-25T00:00:1${offset}.000Z` as never,
+    sessionId,
+    provider: 'claude',
+    sourcePosition: {
+      sourceId: `source_${'d'.repeat(64)}` as never,
+      sourceEpoch: 0,
+      offset,
+      nextOffset: offset + 1,
+    },
+    turnIndex: offset,
+    role: 'user',
+    text: 'hello',
+    correlationHint: messageCorrelationHint('hello'),
+    raw: '{}',
+  }));
+  assert.equal(await store.confirmSendForLines(
+    sessionId, lines, '2026-08-25T00:00:20.000Z',
+  ), 0);
+  const journals = await store.listSendJournals();
+  assert.equal(journals.every((journal) => journal.state === 'indeterminate'), true);
+  assert.equal(journals.every((journal) =>
+    journal.attempts.at(-1)?.failure === 'TranscriptCorrelationAmbiguous'), true);
+});
+
+test('a resumed send confirms only beyond its persisted source fence', async () => {
+  const store = createMemoryTranscriptStore();
+  const agents = directory();
+  const sessionId = `sess_${'4'.repeat(8)}-${'4'.repeat(4)}-4444-8444-${'4'.repeat(12)}` as never;
+  const sourceId = `source_${'e'.repeat(64)}` as never;
+  agents.attach(sessionId);
+  await store.commitIngestBatch({
+    expectedCheckpoint: null,
+    session: {
+      id: sessionId, kind: 'provider-session', schemaVersion: 1,
+      createdAt: '2026-08-25T00:00:00.000Z' as never,
+      provider: 'claude', sourceIds: [sourceId], status: 'idle', agentId: 'agent_alpha',
+    },
+    lines: [],
+    checkpoint: {
+      id: `ingestCheckpoint_${'f'.repeat(64)}` as never,
+      kind: 'ingest-checkpoint', schemaVersion: 1,
+      createdAt: '2026-08-25T00:00:00.000Z' as never,
+      updatedAt: '2026-08-25T00:00:00.000Z' as never,
+      provider: 'claude', sourceId, sourceEpoch: 0, offset: 100, nextTurnIndex: 1,
+      fileSignature: { device: '1', inode: '1', tailHash: 'a'.repeat(64) },
+    },
+  });
+  const runtime = createMessagingRuntime({
+    store, source: emptySource, normalizers, agentDirectory: agents.value,
+    providerSend: { dispatch: async () => ({
+      ok: true, dispatchedAt: '2026-08-25T00:00:01.000Z', certainty: 'unconfirmed',
+    }) },
+  });
+  await runtime.sendConversationMessage({ ...sendInput, clientOpId: 'fenced-send' });
+  const attempt = (await store.listSendJournals())[0]?.attempts[0];
+  assert.deepEqual(attempt?.sourceFence, { sourceId, sourceEpoch: 0, offset: 100 });
+  const lineAt = (offset: number): TranscriptLine => ({
+    id: `transcriptLine_${String(offset).padStart(64, '0')}` as never,
+    kind: 'transcript-line', schemaVersion: 1,
+    createdAt: '2026-08-24T00:00:00.000Z' as never,
+    sessionId, provider: 'claude',
+    sourcePosition: { sourceId, sourceEpoch: 0, offset, nextOffset: offset + 1 },
+    turnIndex: 1, role: 'user', text: 'hello',
+    correlationHint: messageCorrelationHint('hello'), raw: '{}',
+  });
+  assert.equal(await store.confirmSendForLines(
+    sessionId, [lineAt(99)], '2026-08-25T00:00:02.000Z',
+  ), 0);
+  assert.equal(await store.confirmSendForLines(
+    sessionId, [lineAt(100)], '2026-08-25T00:00:03.000Z',
+  ), 1);
 });
 
 test('a reused client operation with different content is rejected before effect', async () => {

@@ -125,7 +125,8 @@ export class SendJournalState {
           ? [] : [attempt.confirmedLineId])));
       const candidates = lines
         .filter((line) => line.sessionId === sessionId && line.role === 'user' && !used.has(line.id))
-        .sort((left, right) => left.sourcePosition.offset - right.sourcePosition.offset);
+        .sort((left, right) => left.sourcePosition.sourceEpoch - right.sourcePosition.sourceEpoch
+          || left.sourcePosition.offset - right.sourcePosition.offset);
       const pending = [...this.journals.values()]
         .filter((journal) => journal.targetSessionId === sessionId && journal.state === 'awaiting-transcript')
         .sort((left, right) => {
@@ -134,14 +135,40 @@ export class SendJournalState {
           return leftAt.localeCompare(rightAt) || left.id.localeCompare(right.id);
         });
       const changed: SendJournal[] = [];
+      let confirmed = 0;
       for (const journal of pending) {
         const attempt = journal.attempts.at(-1);
-        if (attempt === undefined) continue;
-        const lineIndex = candidates.findIndex((line) =>
-          (line.providerOccurredAt ?? line.createdAt).localeCompare(attempt.dispatchedAt) >= 0);
-        if (lineIndex < 0) continue;
-        const [line] = candidates.splice(lineIndex, 1);
-        if (line === undefined) continue;
+        if (attempt?.correlationHint === undefined) continue;
+        const eligible = candidates.filter((line) => {
+          if (line.correlationHint !== attempt.correlationHint) return false;
+          if (attempt.sourceFence === undefined) {
+            return (line.providerOccurredAt ?? line.createdAt)
+              .localeCompare(attempt.dispatchedAt) >= 0;
+          }
+          return line.sourcePosition.sourceId === attempt.sourceFence.sourceId
+            && (line.sourcePosition.sourceEpoch > attempt.sourceFence.sourceEpoch
+              || line.sourcePosition.sourceEpoch === attempt.sourceFence.sourceEpoch
+                && line.sourcePosition.offset >= attempt.sourceFence.offset);
+        });
+        if (eligible.length === 0) continue;
+        if (eligible.length > 1) {
+          changed.push({
+            ...journal,
+            state: 'indeterminate',
+            updatedAt: updatedAt as SendJournal['updatedAt'],
+            attempts: updatedAttempt(journal.attempts, {
+              ...attempt,
+              state: 'indeterminate',
+              failure: 'TranscriptCorrelationAmbiguous',
+            }),
+          });
+          continue;
+        }
+        const line = eligible[0]!;
+        const lineIndex = candidates.findIndex((candidate) => candidate.id === line.id);
+        if (lineIndex >= 0) candidates.splice(lineIndex, 1);
+        used.add(line.id);
+        confirmed += 1;
         changed.push({
           ...journal,
           state: 'confirmed',
@@ -156,7 +183,7 @@ export class SendJournalState {
       if (changed.length === 0) return 0;
       if (persist !== undefined) await persist(changed);
       this.apply(changed);
-      return changed.length;
+      return confirmed;
     });
   }
 

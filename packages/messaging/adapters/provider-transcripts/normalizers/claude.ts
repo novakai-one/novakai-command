@@ -2,6 +2,7 @@ import type { ProviderNormalizer } from "../../../contract/ports/provider-transc
 import type { TranscriptRole } from "../../../contract/types.js";
 import { normalizerSupport } from "./support.js";
 import { findAgentIdentityMarker } from "../../../contract/agent-identity.js";
+import { messageCorrelationHint } from '../../../contract/correlation.js';
 
 const support = normalizerSupport;
 
@@ -84,6 +85,8 @@ export const claudeNormalizer: ProviderNormalizer = {
       ...(parentTurnId === undefined ? {} : { parentTurnId }),
       ...(usage === undefined ? {} : { tokenUsage: usage }),
       ...(providerOccurredAt === undefined ? {} : { providerOccurredAt }),
+      ...(role === 'user' && text.trim() !== ''
+        ? { correlationHint: messageCorrelationHint(text) } : {}),
       ...(role === "tool_call" && blocks[0] !== undefined
         ? { toolCall: blocks[0] } : {}),
     };

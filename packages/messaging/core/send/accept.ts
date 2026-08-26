@@ -10,6 +10,7 @@ import type {
   SendId,
   Timestamp,
 } from '../../contract/types.js';
+import { parseConversationId } from '../../contract/conversation-id.js';
 
 interface AcceptDependencies {
   readonly store: TranscriptStore;
@@ -27,8 +28,9 @@ const canonical = (value: unknown): string => {
 
 const hash = (value: string): string => createHash('sha256').update(value).digest('hex');
 
-const validate = (input: ConversationSendInput): void => {
-  if (!/^conv_[A-Za-z0-9-]{4,64}$/.test(input.conversationId)) {
+const validate = (input: ConversationSendInput): ConversationId => {
+  const conversationId = parseConversationId(input.conversationId);
+  if (conversationId === undefined) {
     throw new Error('Conversation send requires a valid conversationId');
   }
   if (input.issuedBy.length === 0 || input.targetAgentId.length === 0) {
@@ -40,6 +42,7 @@ const validate = (input: ConversationSendInput): void => {
   if (input.text.trim().length === 0 || Buffer.byteLength(input.text, 'utf8') > 32_768) {
     throw new Error('Conversation message text must contain 1..32768 UTF-8 bytes');
   }
+  return conversationId;
 };
 
 /** Persist one idempotent accepted request before provider execution. */
@@ -47,7 +50,7 @@ export async function acceptSend(
   dependencies: AcceptDependencies,
   input: ConversationSendInput,
 ): Promise<{ readonly journal: SendJournal; readonly duplicate: boolean }> {
-  validate(input);
+  const conversationId = validate(input);
   const agent = await dependencies.agentDirectory.get(input.targetAgentId);
   if (agent === null) throw new Error(`Unknown target Agent ${input.targetAgentId}`);
   const request = {
@@ -68,7 +71,7 @@ export async function acceptSend(
     schemaVersion: 1,
     createdAt: timestamp,
     updatedAt: timestamp,
-    conversationId: input.conversationId as ConversationId,
+    conversationId,
     issuedBy: input.issuedBy,
     targetAgentId: input.targetAgentId,
     clientOpId: input.clientOpId,
