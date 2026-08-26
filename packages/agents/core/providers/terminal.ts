@@ -183,6 +183,12 @@ export function createTerminalAdapter(
       return rec !== undefined && rec.state === 'running'
         && runtime.isIdle?.(rec.runtimeKey) === true;
     },
+    ...(runtime.drain === undefined ? {} : {
+      async drain(sessionId: string) {
+        const rec = sessions.get(sessionId);
+        if (rec !== undefined) await runtime.drain!(rec.runtimeKey);
+      },
+    }),
     subscribe(sessionId, handler): Unsubscribe {
       const rec = sessions.get(sessionId);
       if (!rec) return () => undefined;

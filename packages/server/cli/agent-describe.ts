@@ -63,13 +63,16 @@ export function describeRun(view: AgentRunView): string {
     ? 'a root agent' : `child of ${view.family.parentAgentId}`;
   const doubts = view.run.uncertainty.length === 0
     ? '' : `\n  Not known: ${view.run.uncertainty.map((item) => item.summary).join('; ')}`;
+  const response = view.initialResponse === undefined
+    ? '' : `\n\n${view.initialResponse}`;
   return `${view.agent.displayName}  ${view.run.id}\n`
     + `  ${view.provider.provider}/${view.provider.modelId} (${view.provider.effort}); `
     + `${view.run.lifecycle}, ${view.run.activity}\n`
     + `  Started from ${view.launch.surface} by ${view.launch.requestedBy}; `
     + `${controllerLine(view.controllers)}; ${family}; ${supervisor}\n`
     + `  ${view.family.childCount} child agent(s); usage ${usageLine(view.usage)}`
-    + doubts;
+    + doubts
+    + response;
 }
 
 export const describeList = (views: readonly AgentRunView[]): string =>

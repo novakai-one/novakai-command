@@ -289,7 +289,13 @@ export function composeAgentRuns(options: ComposeAgentRunsOptions): ComposedAgen
     spawnAgent: guarded(OPERATION.spawn, async (context, input: SpawnAgentInput) => {
       const spawned = await spawnAgent(core, context, input);
       if (!spawned.ok) return spawned;
-      return asView(context, spawned.value.agentRun);
+      const view = await asView(context, spawned.value.agentRun);
+      if (!view.ok) return view;
+      return b3ok({
+        ...view.value,
+        ...(spawned.value.initialResponse === undefined
+          ? {} : { initialResponse: spawned.value.initialResponse }),
+      });
     }),
 
     interruptAgentTurn: guarded(OPERATION.interrupt,

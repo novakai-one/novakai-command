@@ -33,7 +33,12 @@ export function createFakeHeadlessChildMessaging(): FakeHeadlessChildMessaging {
     },
     async dispatchBrief(input) {
       dispatched.push(input);
-      return b3ok({ sendId: `send_${String(input.agentId)}` });
+      return b3ok({
+        sendId: `send_${String(input.agentId)}`,
+        providerSessionId: String(input.agentId).replace(/^agent_/, 'sess_') as never,
+        providerResumeId: `resume_${String(input.agentId)}`,
+        response: 'child response',
+      });
     },
   };
 }

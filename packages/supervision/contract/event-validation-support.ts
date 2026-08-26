@@ -1,4 +1,4 @@
-import { isValidId } from '@novakai/foundation/contract';
+import { isValidId, type IdFormat } from '@novakai/foundation/contract';
 
 export interface EventValidationIssue {
   readonly path: string;
@@ -70,7 +70,7 @@ export function isUrlSafeEventCursor(value: unknown): value is string {
 export function eventId(
   value: unknown,
   prefix: string,
-  format: 'uuidv4' | 'uuidv7' | 'base32sha256',
+  format: IdFormat,
   path: string,
   issues: EventValidationIssue[],
 ): void {

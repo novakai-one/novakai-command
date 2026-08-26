@@ -153,7 +153,7 @@ export function readRegisterProviderSessionInput(
     }
     return {
       expectedProviderSessionId: field.id<ProviderSessionId>(
-        'expectedProviderSessionId', 'sess', 'uuidv4',
+        'expectedProviderSessionId', 'sess', 'uuidv4or5',
       ),
       agentId: field.id<AgentId>('agentId', 'agent', 'uuidv4'),
       provider: field.choice<ProviderKind>('provider', PROVIDER_KINDS),

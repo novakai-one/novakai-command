@@ -31,7 +31,7 @@ export type RunContinuationId = B3Brand<string, 'RunContinuationId'>;
 export type SupervisionAssignmentId = B3Brand<string, 'SupervisionAssignmentId'>;
 export type TreeMutationFenceId = B3Brand<string, 'TreeMutationFenceId'>;
 export type RunOperationId = B3Brand<string, 'RunOperationId'>;
-/** Inherited from Agents unchanged (§4.1, AMD-001 §4): existing `sess_<uuidv4>`. */
+/** Provider session: runtime-minted UUIDv4 or transcript-derived stable UUIDv5. */
 export type ProviderSessionId = B3Brand<string, 'ProviderSessionId'>;
 export type PolicyVersion = B3Brand<number, 'PolicyVersion'>;
 // The stable individual (DEC-B3V4-02) keeps Foundation's existing `AgentId`
@@ -149,9 +149,10 @@ export function deterministicId(prefix: string, fields: readonly string[]): stri
 
 const UUIDV7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const UUIDV4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const UUIDV5 = /^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const BASE32SHA256 = /^[a-z2-7]{52}$/;
 
-export type IdFormat = 'uuidv7' | 'uuidv4' | 'base32sha256';
+export type IdFormat = 'uuidv7' | 'uuidv4' | 'uuidv4or5' | 'base32sha256';
 
 /**
  * Prefix-strict validation. A well-formed body under the WRONG prefix is
@@ -164,6 +165,7 @@ export function isValidId(value: unknown, prefix: string, format: IdFormat): boo
   const body = value.slice(prefix.length + 1);
   if (format === 'uuidv7') return UUIDV7.test(body);
   if (format === 'uuidv4') return UUIDV4.test(body);
+  if (format === 'uuidv4or5') return UUIDV4.test(body) || UUIDV5.test(body);
   return BASE32SHA256.test(body);
 }
 

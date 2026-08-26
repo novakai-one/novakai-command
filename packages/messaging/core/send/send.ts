@@ -21,7 +21,8 @@ export async function sendConversationMessage(
   input: ConversationSendInput,
 ): Promise<ConversationSendAcceptance> {
   const accepted = await acceptSend(dependencies, input);
-  const journal = await dispatchAcceptedSend(dependencies, accepted.journal);
+  const dispatched = await dispatchAcceptedSend(dependencies, accepted.journal);
+  const journal = dispatched.journal;
   return {
     sendId: journal.id,
     clientOpId: journal.clientOpId,
@@ -30,5 +31,6 @@ export async function sendConversationMessage(
     targetAgentId: journal.targetAgentId,
     ...(journal.targetSessionId === undefined
       ? {} : { targetSessionId: journal.targetSessionId }),
+    ...(dispatched.response === undefined ? {} : { response: dispatched.response }),
   };
 }

@@ -23,10 +23,15 @@ import * as skillsStore from './skills/skills.js';
 import { runEventHooks } from './hooks/engine.js';
 import { attachLiveLane, pushContextAdvisory } from './live-lane/liveLane.js';
 import { sendToAgent, sendToSession } from './sessions/send.js';
-import { dispatchProviderTurn, providerTurnReadiness } from './sessions/provider-turn.js';
+import {
+  dispatchProviderTurn,
+  executeProviderTurn,
+  providerTurnReadiness,
+} from './sessions/provider-turn.js';
 import type {
   ProviderTurnDispatch,
   ProviderTurnDispatchInput,
+  ProviderTurnExecution,
 } from '../contract/provider-turn.js';
 
 /** Sole consumer-facing Agents capability interface. */
@@ -74,6 +79,9 @@ export interface AgentsContract {
   /** Lazily open or resume the private CLI runtime and queue one provider turn. */
   dispatchProviderTurn(input: ProviderTurnDispatchInput)
     : Promise<Result<ProviderTurnDispatch, AgentsError>>;
+  /** Execute one provider turn and return its normalized CLI stdout. */
+  executeProviderTurn(input: ProviderTurnDispatchInput)
+    : Promise<Result<ProviderTurnExecution, AgentsError>>;
   /** Process-backed boundary state for durable Agent-to-Agent delivery. */
   providerTurnReadiness(agentId: AgentId): 'idle' | 'busy' | 'unavailable';
   /**
@@ -223,6 +231,11 @@ export function createAgentsContract(ctx: AgentsContext): AgentsContract {
     sendToAgent: (agentId, input) => sendToAgent(ctx, agentId, input),
 
     dispatchProviderTurn: (input) => dispatchProviderTurn(
+      ctx,
+      input,
+      (agentId, opts, clientOpId) => contract.spawnAgent(agentId, opts, clientOpId),
+    ),
+    executeProviderTurn: (input) => executeProviderTurn(
       ctx,
       input,
       (agentId, opts, clientOpId) => contract.spawnAgent(agentId, opts, clientOpId),

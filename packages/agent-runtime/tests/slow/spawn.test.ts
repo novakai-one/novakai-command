@@ -463,8 +463,11 @@ test('an Agent spawns a child, and the child is its own generation', async () =>
     assert.equal(builder.value.family.supervisor.kind, 'agent');
     assert.equal(builder.value.run.parentRequestingRunId, manager.value.run.id,
       'the Run that asked for this one is recorded');
-    assert.equal(builder.value.run.providerSessionId, undefined,
-      'a headless child invented a ProviderSession before ingestion');
+    const childSessionId = String(builder.value.agent.agentId).replace(/^agent_/, 'sess_');
+    assert.equal(builder.value.run.providerSessionId, childSessionId,
+      'the ProviderSession assigned by Messaging was not recorded on the child Run');
+    assert.equal(builder.value.provider.providerSessionId, childSessionId);
+    assert.equal(builder.value.initialResponse, 'child response');
     assert.equal(builder.value.run.terminalSessionId, undefined,
       'a headless child opened the retired PTY path');
     assert.equal(rig.terminal.opened.length, 1,

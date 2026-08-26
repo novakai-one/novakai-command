@@ -4,7 +4,7 @@ import {
 } from '@novakai/foundation/contract';
 import type { LaunchPlanFacts, SpawnAuthorityFacts } from '../contract/ports.js';
 import type { AgentRun, RunOperation } from '../contract/runs.js';
-import type { RunsCore } from './runs-context.js';
+import { patchRun, type RunsCore } from './runs-context.js';
 import { advance } from './journal.js';
 import {
   ensureRunGrants, installWatchers, reserveRun,
@@ -30,7 +30,7 @@ export async function provisionHeadlessChild(
   core: RunsCore,
   context: CommandContext,
   input: HeadlessChildInput,
-): Promise<B3Result<{ agentRun: AgentRun; operation: RunOperation }>> {
+): Promise<B3Result<{ agentRun: AgentRun; operation: RunOperation; response: string }>> {
   const reserved = await reserveRun(core, context, {
     agentId: input.agentId,
     plan: input.plan,
@@ -46,12 +46,29 @@ export async function provisionHeadlessChild(
   );
   if (!dispatched.ok) return dispatched;
 
+  const registered = await core.agents.registerProviderSession({
+    expectedProviderSessionId: dispatched.value.providerSessionId,
+    agentId: input.agentId,
+    provider: input.plan.provider,
+    providerConversationId: dispatched.value.providerResumeId,
+    providerResumeHandle: dispatched.value.providerResumeId,
+    providerVersion: 'unknown',
+    discovery: { state: 'discovered' },
+  });
+  if (!registered.ok) return registered;
+
+  const boundRun = await patchRun(core, reserved.value.agentRun, {
+    providerSessionId: dispatched.value.providerSessionId,
+  });
+  if (!boundRun.ok) return boundRun;
+
   const operation = await recordHeadlessStages(
     core, reserved.value.operation, dispatched.value.sendId,
+    dispatched.value.providerSessionId,
   );
   if (!operation.ok) return operation;
   const watched = await installWatchers(core, {
-    agentRun: reserved.value.agentRun,
+    agentRun: boundRun.value,
     plan: input.plan,
     operation: operation.value,
     recipient: { kind: 'agent', agentId: input.authority.parentAgentId },
@@ -62,7 +79,11 @@ export async function provisionHeadlessChild(
     },
   });
   return watched.ok
-    ? b3ok({ agentRun: reserved.value.agentRun, operation: watched.value })
+    ? b3ok({
+        agentRun: boundRun.value,
+        operation: watched.value,
+        response: dispatched.value.response,
+      })
     : watched;
 }
 
@@ -111,12 +132,16 @@ async function recordHeadlessStages(
   core: RunsCore,
   initial: RunOperation,
   sendId: string,
+  providerSessionId: string,
 ): Promise<B3Result<RunOperation>> {
   let operation = initial;
   for (const stage of HEADLESS_STAGES) {
     const sent = stage === 'skills-gate-prompt-sent';
+    const sessionRecorded = stage === 'provider-session-recorded';
     const recorded = await advance(core, operation, sent
       ? { stage, owner: 'messaging', ownerObjectId: sendId }
+      : sessionRecorded
+        ? { stage, owner: 'agents', ownerObjectId: providerSessionId }
       : {
           stage,
           owner: stage.startsWith('terminal') ? 'terminal' : 'agent-runtime',

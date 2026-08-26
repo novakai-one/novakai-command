@@ -66,6 +66,7 @@ test('acceptance is durable before one provider effect and confirms only from tr
         ok: true,
         dispatchedAt: '2026-08-25T00:00:01.000Z',
         certainty: 'unconfirmed',
+        response: '',
       };
     },
   };
@@ -154,6 +155,7 @@ test('ambiguous close sends become indeterminate instead of taking the wrong use
         ok: true,
         dispatchedAt: `2026-08-25T00:00:0${tick++}.000Z`,
         certainty: 'unconfirmed',
+        response: '',
       }),
     },
   });
@@ -213,7 +215,7 @@ test('a resumed send confirms only beyond its persisted source fence', async () 
   const runtime = createMessagingRuntime({
     store, source: emptySource, normalizers, agentDirectory: agents.value,
     providerSend: { dispatch: async () => ({
-      ok: true, dispatchedAt: '2026-08-25T00:00:01.000Z', certainty: 'unconfirmed',
+      ok: true, dispatchedAt: '2026-08-25T00:00:01.000Z', certainty: 'unconfirmed', response: '',
     }) },
   });
   await runtime.sendConversationMessage({ ...sendInput, clientOpId: 'fenced-send' });
@@ -252,6 +254,7 @@ test('a reused client operation with different content is rejected before effect
           ok: true,
           dispatchedAt: new Date().toISOString(),
           certainty: 'unconfirmed',
+          response: '',
         };
       },
     },
@@ -276,6 +279,7 @@ test('Foundation adapter replays SendJournal state from the canonical database',
         ok: true,
         dispatchedAt: '2026-08-25T00:00:00.000Z',
         certainty: 'unconfirmed',
+        response: '',
       }),
     },
   });

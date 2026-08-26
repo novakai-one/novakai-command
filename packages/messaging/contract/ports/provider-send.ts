@@ -1,4 +1,4 @@
-/** One accepted effect; provider output is deliberately absent. */
+/** One accepted provider turn. */
 export interface ProviderSendInput {
   readonly sendId: string;
   readonly targetAgentId: string;
@@ -12,6 +12,7 @@ export type ProviderDispatchResult =
       readonly ok: true;
       readonly dispatchedAt: string;
       readonly certainty: 'confirmed' | 'unconfirmed';
+      readonly response: string;
     }
   | { readonly ok: false; readonly code: string; readonly message: string };
 

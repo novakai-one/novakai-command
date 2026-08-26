@@ -283,7 +283,7 @@ export function readProviderTurnSubmissionFilter(
   return readBoundary(candidate, (field) => {
     const agentRunId = field.optionalId<AgentRunId>('agentRunId', 'agentRun');
     const providerSessionId = field.optionalId<ProviderSessionId>(
-      'providerSessionId', 'sess', 'uuidv4',
+      'providerSessionId', 'sess', 'uuidv4or5',
     );
     const states = field.given('states');
     const validStates = states === undefined

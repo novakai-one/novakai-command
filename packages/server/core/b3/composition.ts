@@ -60,7 +60,8 @@ export interface B3RuntimeOptions {
     | 'ensureConversationView' | 'updateConversationView' | 'getConversationView'
     | 'listConversationViews'
     | 'listAgentCommunications' | 'listProviderSessions' | 'listTranscriptLines'
-    | 'createAgentDeliveryInstruction' | 'sendConversationMessage' | 'subscribeTranscriptEvents'
+    | 'createAgentDeliveryInstruction' | 'sendConversationMessage' | 'listSendJournals'
+    | 'ingestNow' | 'subscribeTranscriptEvents'
   >;
   /** Target Agents door used only to prepare a headless child's CLI runtime. */
   readonly providerAgents?: Pick<AgentsContract, 'spawnAgent'>;

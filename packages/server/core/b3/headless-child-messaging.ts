@@ -7,7 +7,8 @@ import type { MessagingRuntimeApi } from '../../../messaging/contract/index.js';
 interface HeadlessChildOptions {
   readonly messaging: Pick<
     MessagingRuntimeApi,
-    'ensureConversationView' | 'sendConversationMessage'
+    'ensureConversationView' | 'sendConversationMessage' | 'ingestNow' | 'listSendJournals'
+    | 'listProviderSessions'
   >;
   readonly agents: Pick<AgentsContract, 'spawnAgent'>;
   readonly emit?: (kind: string, payload: Readonly<Record<string, unknown>>) => void;
@@ -92,9 +93,55 @@ async function dispatchBrief(options: HeadlessChildOptions, input: DispatchInput
     text: input.brief,
     clientOpId: `${String(input.clientOpId)}:child-brief`,
   });
-  return accepted.kind === 'error'
-    ? b3fail(b3err('RuntimeUnavailable', accepted.error.message, {
+  if (accepted.kind === 'error') {
+    return b3fail(b3err('RuntimeUnavailable', accepted.error.message, {
         agentId: input.agentId, dependency: 'messaging',
-      }, accepted.error.retryable))
-    : b3ok({ sendId: accepted.value.sendId });
+      }, accepted.error.retryable));
+  }
+  let providerSessionId = accepted.value.targetSessionId;
+  if (providerSessionId === undefined) {
+    const ingested = await options.messaging.ingestNow();
+    if (ingested.kind === 'error') {
+      return b3fail(b3err('RuntimeUnavailable', ingested.error.message, {
+        agentId: input.agentId, dependency: 'messaging-ingestion',
+      }, ingested.error.retryable));
+    }
+    const journals = await options.messaging.listSendJournals();
+    if (journals.kind === 'error') {
+      return b3fail(b3err('RuntimeUnavailable', journals.error.message, {
+        agentId: input.agentId, dependency: 'messaging-journal',
+      }, journals.error.retryable));
+    }
+    providerSessionId = journals.value.find((journal) =>
+      journal.id === accepted.value.sendId)?.targetSessionId;
+  }
+  if (providerSessionId === undefined) {
+    return b3fail(b3err('RuntimeUnavailable',
+      'provider reply completed before Messaging assigned its ProviderSession', {
+        agentId: input.agentId,
+        sendId: accepted.value.sendId,
+        dependency: 'messaging-ingestion',
+      }, true));
+  }
+  const sessions = await options.messaging.listProviderSessions();
+  if (sessions.kind === 'error') {
+    return b3fail(b3err('RuntimeUnavailable', sessions.error.message, {
+      agentId: input.agentId, dependency: 'messaging-provider-session',
+    }, sessions.error.retryable));
+  }
+  const providerSession = sessions.value.find((session) => session.id === providerSessionId);
+  if (providerSession === undefined) {
+    return b3fail(b3err('RuntimeUnavailable',
+      `Messaging assigned unknown ProviderSession ${providerSessionId}`, {
+        agentId: input.agentId,
+        sendId: accepted.value.sendId,
+        providerSessionId,
+      }, true));
+  }
+  return b3ok({
+    sendId: accepted.value.sendId,
+    providerSessionId: providerSessionId as never,
+    providerResumeId: providerSession.resumeId ?? null,
+    response: accepted.value.response ?? '',
+  });
 }

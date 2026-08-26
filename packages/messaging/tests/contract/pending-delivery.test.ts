@@ -130,7 +130,7 @@ function dependencies(store: TranscriptStore) {
   const providerSend: ProviderSend = {
     async dispatch() {
       effects += 1;
-      return { ok: true, dispatchedAt: timestamp, certainty: 'unconfirmed' };
+      return { ok: true, dispatchedAt: timestamp, certainty: 'unconfirmed', response: '' };
     },
   };
   const runtime = () => createMessagingRuntime({

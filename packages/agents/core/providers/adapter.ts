@@ -29,6 +29,8 @@ export interface TerminalAdapter {
   setSessionModel?(sessionId: string, model: string): boolean;
   /** True only when no provider child process is executing for this session. */
   isIdle?(sessionId: string): boolean;
+  /** Resolves after every provider child process queued for this session exits. */
+  drain?(sessionId: string): Promise<void>;
   /**
    * B1 DEC-B1-6: rebind a session that outlived this process. The registry has
    * the handle (sessionId + provider conversation id); nothing is live to
@@ -148,6 +150,8 @@ export interface TerminalRuntimeLike {
   list(): Array<{ agentId: string; status: 'running' | 'exited' }>;
   onData(callback: (agentId: string, data: string) => void): void;
   onExit(callback: (agentId: string, exitCode: number | null) => void): void;
+  /** Print-mode providers resolve this after the queued turn has fully emitted stdout. */
+  drain?(agentId: string): Promise<void>;
   /** Optional process truth; absent hosts cannot prove an idle boundary. */
   isIdle?(agentId: string): boolean;
   /**

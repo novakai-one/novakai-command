@@ -13,3 +13,10 @@ export interface ProviderTurnDispatch {
   readonly state: 'queued';
   readonly resumed: boolean;
 }
+
+/** One completed provider turn, including the assistant text emitted by its CLI. */
+export interface ProviderTurnExecution {
+  readonly state: 'completed';
+  readonly resumed: boolean;
+  readonly response: string;
+}

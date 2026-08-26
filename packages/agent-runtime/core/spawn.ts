@@ -31,6 +31,7 @@ export interface SpawnOutcome {
   readonly agentRun: AgentRun;
   readonly plan: LaunchPlanFacts;
   readonly operation: RunOperation;
+  readonly initialResponse?: string;
 }
 
 export async function spawnAgent(
@@ -245,6 +246,8 @@ async function buildRun(
     agentRun: ready.value.agentRun,
     plan: governed.value.plan,
     operation: ready.value.operation,
+    ...(provisioned.value.response === undefined
+      ? {} : { initialResponse: provisioned.value.response }),
   });
 }
 
@@ -260,7 +263,7 @@ function watcherRecipient(authority: SpawnAuthorityFacts): WatcherRecipient {
 /** The Run record, its PTY, its provider session, and its skills gate. */
 async function provisionRun(
   core: RunsCore, context: CommandContext, build: BuildInput, governed: Governed,
-): Promise<B3Result<{ agentRun: AgentRun; operation: RunOperation }>> {
+): Promise<B3Result<{ agentRun: AgentRun; operation: RunOperation; response?: string }>> {
   if (build.authority.parentAgentId !== undefined
     && build.input.task?.brief !== undefined
     && core.headlessChildMessaging !== undefined) {

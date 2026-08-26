@@ -110,7 +110,7 @@ export interface ConversationSendInput {
   readonly screenContext?: Readonly<Record<string, unknown>>;
 }
 
-/** Transcript-first acceptance; provider completion is deliberately absent. */
+/** Transcript-first acceptance, with synchronous provider text when this call executed the turn. */
 export interface ConversationSendAcceptance {
   readonly sendId: SendJournal['id'];
   readonly clientOpId: string;
@@ -118,4 +118,5 @@ export interface ConversationSendAcceptance {
   readonly duplicate: boolean;
   readonly targetAgentId: string;
   readonly targetSessionId?: SendJournal['targetSessionId'];
+  readonly response?: string;
 }

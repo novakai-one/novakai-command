@@ -69,7 +69,7 @@ export function parseProviderUsageEvidenceCommittedEvent(
     'base32sha256',
     issues,
   );
-  id(payload.providerSessionId, 'sess', 'uuidv4', 'payload.providerSessionId', issues);
+  id(payload.providerSessionId, 'sess', 'uuidv4or5', 'payload.providerSessionId', issues);
   if (payload.providerConversationId !== null && typeof payload.providerConversationId !== 'string') {
     issues.push({ path: 'payload.providerConversationId', message: 'must be string or null' });
   }

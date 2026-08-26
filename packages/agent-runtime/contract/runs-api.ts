@@ -230,6 +230,8 @@ export interface AgentRunView {
     readonly displayName: string;
     readonly roleProfileId: AgentRoleProfileId;
   };
+  /** Present only when a supervised headless spawn completed its first provider turn. */
+  readonly initialResponse?: string;
   readonly run: AgentRun;
   readonly provider: {
     readonly provider: 'claude' | 'codex' | 'kimi';

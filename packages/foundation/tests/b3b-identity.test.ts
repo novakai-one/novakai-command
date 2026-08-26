@@ -30,8 +30,8 @@ const IDENTITIES: ReadonlyArray<{
   { name: 'SupervisionAssignmentId', mint: mintSupervisionAssignmentId, prefix: 'supervisionAssignment', format: 'uuidv7' },
   { name: 'TreeMutationFenceId', mint: mintTreeMutationFenceId, prefix: 'treeFence', format: 'uuidv7' },
   { name: 'AgentRunId', mint: mintAgentRunId, prefix: 'agentRun', format: 'uuidv7' },
-  // §4.1 + AMD-001 §4: inherited Agents identities keep their existing UUIDv4.
-  { name: 'ProviderSessionId', mint: mintProviderSessionId, prefix: 'sess', format: 'uuidv4' },
+  // Runtime sessions are UUIDv4; transcript-derived stable sessions are UUIDv5.
+  { name: 'ProviderSessionId', mint: mintProviderSessionId, prefix: 'sess', format: 'uuidv4or5' },
 ];
 
 test('every minted B3b identity validates under its own prefix and format', () => {
@@ -63,6 +63,12 @@ test('a body that is well-formed for the WRONG format is still refused', () => {
   const v7Body = mintAgentRunId().slice('agentRun_'.length);
   assert.equal(isValidId(`sess_${v7Body}`, 'sess', 'uuidv4'), false,
     'a UUIDv7 body was accepted as an inherited UUIDv4 identity');
+});
+
+test('ProviderSession accepts runtime UUIDv4 and transcript-derived UUIDv5 only', () => {
+  assert.equal(isValidId(mintProviderSessionId(), 'sess', 'uuidv4or5'), true);
+  assert.equal(isValidId('sess_91f8b599-62ca-5508-a874-11c7fa4ad394', 'sess', 'uuidv4or5'), true);
+  assert.equal(isValidId('sess_91f8b599-62ca-6508-a874-11c7fa4ad394', 'sess', 'uuidv4or5'), false);
 });
 
 test('a B3b id is refused under the B3a identities it must never substitute for', () => {

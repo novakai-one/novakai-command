@@ -99,7 +99,7 @@ export function parseProviderTurnCompletionEvidenceFilter(
   return readBoundary(value, (field) => {
     const agentRunId = field.optionalId<AgentRunId>('agentRunId', 'agentRun');
     const providerSessionId = field.optionalId<ProviderSessionId>(
-      'providerSessionId', 'sess', 'uuidv4',
+      'providerSessionId', 'sess', 'uuidv4or5',
     );
     const providerTurnId = field.optionalId<ProviderTurnId>('providerTurnId', 'providerTurn');
     const transcriptTurnCompletionId = field.optionalId<TranscriptTurnCompletionId>(
@@ -126,7 +126,7 @@ export function parseRecordProviderUsageEvidenceInput(
     return b3fail(validationFailed([{ path: 'payload', message: 'must be an object' }]));
   }
   const input = candidate as Readonly<Record<string, unknown>>;
-  if (!isValidId(input.providerSessionId, 'sess', 'uuidv4')) {
+  if (!isValidId(input.providerSessionId, 'sess', 'uuidv4or5')) {
     issues.push({ path: 'providerSessionId', message: 'must be a ProviderSessionId' });
   }
   if (input.providerConversationId !== null

@@ -13,6 +13,11 @@ interface DispatchDependencies {
   readonly now: () => string;
 }
 
+interface DispatchOutcome {
+  readonly journal: SendJournal;
+  readonly response?: string;
+}
+
 const attemptIdFor = (journal: SendJournal): SendAttemptId =>
   `sendAttempt_${createHash('sha256')
     .update(`${journal.id}:${journal.attempts.length}`)
@@ -42,8 +47,8 @@ async function sourceFenceFor(
 export async function dispatchAcceptedSend(
   dependencies: DispatchDependencies,
   journal: SendJournal,
-): Promise<SendJournal> {
-  if (journal.state !== 'accepted') return journal;
+): Promise<DispatchOutcome> {
+  if (journal.state !== 'accepted') return { journal };
   const agent = await dependencies.agentDirectory.get(journal.targetAgentId);
   if (agent === null) throw new Error(`Unknown target Agent ${journal.targetAgentId}`);
   const targetSessionId = journal.targetSessionId
@@ -65,7 +70,7 @@ export async function dispatchAcceptedSend(
     updatedAt: dispatchedAt,
     attempt,
   });
-  if (!claimed.changed) return claimed.journal;
+  if (!claimed.changed) return { journal: claimed.journal };
   try {
     const providerSession = targetSessionId === undefined
       ? undefined
@@ -81,17 +86,18 @@ export async function dispatchAcceptedSend(
         ? {} : { screenContext: journal.request.screenContext }),
     });
     if (!effect.ok) {
-      return (await dependencies.store.transitionSend({
+      return { journal: (await dependencies.store.transitionSend({
         sendId: journal.id,
         expectedState: 'dispatching',
         state: 'failed',
         updatedAt: dependencies.now() as Timestamp,
         attempt: { ...attempt, state: 'failed', failure: `${effect.code}: ${effect.message}` },
-      })).journal;
+      })).journal };
     }
     const sessionKnown = targetSessionId !== undefined;
     const state = sessionKnown ? 'awaiting-transcript' : 'awaiting-session-assignment';
-    return (await dependencies.store.transitionSend({
+    return {
+      journal: (await dependencies.store.transitionSend({
       sendId: journal.id,
       expectedState: 'dispatching',
       state,
@@ -102,15 +108,17 @@ export async function dispatchAcceptedSend(
         dispatchedAt: effect.dispatchedAt as Timestamp,
         submission: effect.certainty,
       },
-    })).journal;
+      })).journal,
+      response: effect.response,
+    };
   } catch (cause) {
     const message = cause instanceof Error ? cause.message : String(cause);
-    return (await dependencies.store.transitionSend({
+    return { journal: (await dependencies.store.transitionSend({
       sendId: journal.id,
       expectedState: 'dispatching',
       state: 'indeterminate',
       updatedAt: dependencies.now() as Timestamp,
       attempt: { ...attempt, state: 'indeterminate', failure: message },
-    })).journal;
+    })).journal };
   }
 }

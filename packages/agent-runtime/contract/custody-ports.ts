@@ -102,6 +102,9 @@ export interface HeadlessChildMessagingPort {
     readonly clientOpId: B3ClientOpId;
   }): Promise<B3Result<{
     readonly sendId: string;
+    readonly providerSessionId: ProviderSessionId;
+    readonly providerResumeId: string | null;
+    readonly response: string;
   }>>;
 }
 
