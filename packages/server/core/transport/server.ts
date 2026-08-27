@@ -108,9 +108,15 @@ function writeToken(root: string): string {
   return token;
 }
 
+/**
+ * Bind the server's single loopback port: shell bundle static files,
+ * /bootstrap.json (token + wsUrl), token-free /version (release provenance),
+ * and the nvk-ws v1 WebSocket upgrade.
+ */
 export async function startTransport(options: StartTransportOptions): Promise<RunningTransport> {
   const token = writeToken(options.root);
-  const release = readReleaseStamp();
+  const stampReading = readReleaseStamp();
+  const release = stampReading.state === 'stamped' ? stampReading.release : null;
   const startedAt = new Date().toISOString();
   const staticRoot = options.staticDir ? path.resolve(options.staticDir) : null;
   const sockets = new Set<WebSocket>();
@@ -158,7 +164,15 @@ export async function startTransport(options: StartTransportOptions): Promise<Ru
     // design: it names code, never data.
     if (url.pathname === '/version') {
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
-      res.end(JSON.stringify({ release, pid: process.pid, startedAt }));
+      res.end(JSON.stringify({
+        release,
+        // 'stamped' | 'unstamped' (intentional dev boot) | 'corrupt' (broken
+        // deployment) — distinguished so operators can tell which they have.
+        stamp: stampReading.state,
+        ...(stampReading.state === 'corrupt' ? { reason: stampReading.reason } : {}),
+        pid: process.pid,
+        startedAt,
+      }));
       return;
     }
     if (!staticRoot) { res.writeHead(404).end('not found'); return; }

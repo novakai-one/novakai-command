@@ -1,6 +1,6 @@
 // Electron thin shell for Novakai Command: a WINDOW onto the live nvk-server
-// on :5180, nothing more. It attaches only to a verified nvk-server
-// (identity-checked via /bootstrap.json) and NEVER starts a server itself —
+// on :5180, nothing more. It attaches only to a STAMPED deployed release
+// (provenance-checked via /version) and NEVER starts a server itself —
 // only `nvk deploy` (launchd job com.novakai.prod) may do that. One starter,
 // so there is exactly one server process running exactly one release.
 const { app, BrowserWindow, shell } = require('electron');
@@ -19,21 +19,25 @@ let win = null;
 let quitting = false;
 let recovery = null;
 
-// Identity probe — only a real nvk-server counts:
-//   'live'    /bootstrap.json answered with our protocol version
-//   'foreign' something answered but it is NOT an nvk-server (old Live lane,
-//             dev rig, unrelated listener) — never load it
-//   'free'    nothing usable on the port
+// Identity probe against /version — only a STAMPED deployed release counts:
+//   'live'      /version answered with a release stamp: a real `nvk deploy`
+//   'unstamped' an nvk-server answered but it runs a bare checkout (dev boot,
+//               pre-deploy serve, corrupt stamp) — shown, waited out, never loaded
+//   'foreign'   something answered that is not an nvk-server — never load it
+//   'free'      nothing on the port
 function probe() {
   return new Promise((resolve) => {
-    const req = http.get(`${PROBE_URL}/bootstrap.json`, { timeout: 1000 }, (res) => {
+    const req = http.get(`${PROBE_URL}/version`, { timeout: 1000 }, (res) => {
       let body = '';
       res.on('data', (chunk) => { body += chunk; });
       res.on('end', () => {
         try {
-          const bootstrap = JSON.parse(body);
-          resolve(typeof bootstrap.wsUrl === 'string' && bootstrap.protocolVersion === 1 ? 'live' : 'foreign');
+          const version = JSON.parse(body);
+          if (typeof version.release?.commit === 'string') { resolve('live'); return; }
+          resolve(typeof version.pid === 'number' ? 'unstamped' : 'foreign');
         } catch {
+          // HTML or garbage on an nvk path: an old pre-/version server or a
+          // stranger — either way not a deployed release.
           resolve('foreign');
         }
       });
@@ -67,7 +71,9 @@ async function waitForServer() {
   const deadline = Date.now() + STARTUP_TIMEOUT_MS;
   while (Date.now() < deadline) {
     const status = await probe();
-    if (status !== 'free') return status; // 'live' or a foreign responder appeared
+    // 'unstamped' keeps waiting like 'free': `nvk deploy` will kill that
+    // server and put a stamped release on the port — this window just watches.
+    if (status === 'live' || status === 'foreign') return status;
     if (win?.isDestroyed() !== false) return 'timeout'; // window closed while waiting
     await new Promise((r) => setTimeout(r, 500));
   }
@@ -79,14 +85,15 @@ async function recover() {
   recovery = (async () => {
     if (win && !win.isDestroyed()) await win.loadURL(splashHtml('Reconnecting&hellip;'));
     let status = await probe();
-    if (status === 'free') {
+    if (status === 'free' || status === 'unstamped') {
       // This window never starts a server. Say what will, and keep watching —
-      // the moment the launchd job serves 5180, the app loads it.
+      // the moment a stamped release serves 5180, the app loads it.
       if (win && !win.isDestroyed()) {
-        await win.loadURL(splashHtml(
-          'Server is not running. Start it with <code>nvk deploy</code> '
-          + '(or <code>launchctl kickstart -k gui/$UID/com.novakai.prod</code>). Waiting&hellip;',
-        ));
+        await win.loadURL(splashHtml(status === 'unstamped'
+          ? 'The server on :5180 is not a deployed release (dev boot or pre-deploy serve). '
+            + 'Run <code>nvk deploy</code> to replace it. Waiting&hellip;'
+          : 'Server is not running. Start it with <code>nvk deploy</code> '
+            + '(or <code>launchctl kickstart -k gui/$UID/com.novakai.prod</code>). Waiting&hellip;'));
       }
       status = await waitForServer();
     }

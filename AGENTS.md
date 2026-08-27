@@ -124,13 +124,15 @@ agents and for Chris.
 
 ## Operating context
 
-- Two lanes share the machine. **Live**: app 3030 + backend 3031, run by the
-  deploy-snapshot supervisor (`npm run prod` / the desktop app); this backend
-  owns the production agent PTYs. **Dev**: vite 3130 + backend 3131, run by
-  `npm run dev` (tsx watch). Neither lane's start/stop touches the other.
-  Agents are spawned via `POST /api/agents`, messaged via
-  `scripts/nvk-msg.mjs` / `scripts/nvk-live.mjs`, killed via
-  `POST /api/agents/:id/kill`. See `docs/plans/2026-07-19-kimi-orchestrator-plan.md`.
+- ONE live server. The launchd job `com.novakai.prod` serves :5180 and always
+  runs a frozen, stamped release from `~/.novakai-releases` — never the
+  working checkout. `nvk deploy` is the only way code reaches it (build →
+  snapshot → stamp → swap; automatic rollback to the last good release on a
+  failed health check). `nvk deploy status` shows running-vs-checkout drift
+  and ghost processes; `nvk deploy --scratch [--hold]` proves a snapshot on a
+  throwaway port + data root without touching the live server. :5180 REFUSES
+  unstamped code — dev boots use `--port 0`. The desktop app is a window onto
+  :5180 and never starts a server. See `docs/desktop-app.md`.
 - `scripts/nvk-agent.mjs` (M1) is the dependable operator path: spawn+brief
   with automatic delivery-confirmed post-spawn check, process/activity truth,
   latest message, verified kill. PTY "delivered" only means bytes written —
@@ -138,8 +140,8 @@ agents and for Chris.
 - The newer packages/ runtime has its own CLI path: the umbrella `nvk`
   (`scripts/nvk.mjs`) dispatches to `packages/*/cli/*.ts` —
   `nvk agent list`, `nvk runtime`, `nvk terminal`, `nvk watch`, etc. See
-  `packages/scripts.md`. These talk to the packages/
-  Runtime (port 5190), not the old src/backend lanes above.
+  `packages/scripts.md`. These talk to the packages/ runtime — the live
+  serve on :5180 described above.
 - **Spawning a child agent (any agent may do this):**
   `node scripts/nvk.mjs child spawn --name <name> --brief "<text>"`.
   Headless, no server involved. Creates the child Agent record with you as

@@ -74,12 +74,31 @@ export async function fetchBootstrap(origin = ''): Promise<BootstrapDocument> {
   return doc;
 }
 
+/**
+ * Reload the page as soon as a server answers /bootstrap.json again. Deploys
+ * restart the server with a FRESH connection token, so re-dialing the old
+ * socket can never succeed — a full reload, which refetches the bootstrap, is
+ * the one correct recovery. Polls forever: the tab is dead weight until a
+ * server exists anyway.
+ */
+async function reloadWhenServerReturns(): Promise<void> {
+  for (;;) {
+    await new Promise((resolve) => { setTimeout(resolve, 2000); });
+    try {
+      const res = await fetch('/bootstrap.json', { cache: 'no-store' });
+      const doc = await res.json() as { wsUrl?: unknown };
+      if (typeof doc.wsUrl === 'string') { location.reload(); return; }
+    } catch { /* still down — keep waiting */ }
+  }
+}
+
 export function createServerServices(
   bootstrap: BootstrapDocument,
   onPresence: (e: AgentEvent) => void,
 ): Promise<ShellServices> {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(`${bootstrap.wsUrl}?token=${encodeURIComponent(bootstrap.token)}`);
+    let opened = false;
     let seq = 0;
     const pending = new Map<number, Pending>();
     const msgListeners = new Set<(m: unknown) => void>();
@@ -88,6 +107,7 @@ export function createServerServices(
 
     ws.onopen = () => {
       clearTimeout(timeout);
+      opened = true;
       // D32: availability is MEASURED once at connect; the UI offers a "new
       // agent" entry only for providers the server says it can actually spawn.
       void call<{ providers?: Partial<Record<'kimi' | 'claude' | 'codex' | 'mock', boolean>> }>('getCapabilities')
@@ -126,6 +146,10 @@ export function createServerServices(
     ws.onclose = () => {
       for (const p of pending.values()) p.reject(new Error('connection lost — the server closed or is unreachable'));
       pending.clear();
+      // Only a connection that WAS live recovers by reload; a socket that
+      // never opened already fell back to offline services, and reloading
+      // there would just loop the failure.
+      if (opened) void reloadWhenServerReturns();
     };
     const call = <T>(method: string, params: unknown = {}): Promise<T> => {
       if (ws.readyState !== WebSocket.OPEN) {
