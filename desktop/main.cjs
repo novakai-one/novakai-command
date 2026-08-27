@@ -1,12 +1,10 @@
-// Electron thin shell for Novakai Command — loads the NEW packages/ stack:
-// the shell UI (packages/shell) served by nvk-server (packages/server) on :5180.
-// Attaches only to a verified nvk-server (identity-checked via /bootstrap.json),
-// or spawns `npx tsx packages/server/cli/nvk-server.ts --port 5180` itself.
-// The old Live lane (`npm run prod`, 3030/3031) is untouched and remains
-// available as a fallback; it is just no longer what this window opens.
-// The backend (tsx) always runs in system Node, never inside Electron.
+// Electron thin shell for Novakai Command: a WINDOW onto the live nvk-server
+// on :5180, nothing more. It attaches only to a verified nvk-server
+// (identity-checked via /bootstrap.json) and NEVER starts a server itself —
+// only `nvk deploy` (launchd job com.novakai.prod) may do that. One starter,
+// so there is exactly one server process running exactly one release.
 const { app, BrowserWindow, shell } = require('electron');
-const { spawn, execSync } = require('child_process');
+const { execSync } = require('child_process');
 const fs = require('fs');
 const http = require('http');
 const os = require('os');
@@ -16,11 +14,7 @@ const APP_URL = 'http://localhost:5180';
 const PROBE_URL = 'http://127.0.0.1:5180';
 const STARTUP_TIMEOUT_MS = 90_000;
 const LOG_FILE = path.join(os.homedir(), 'Library', 'Logs', 'NovakaiCommand.log');
-const REPO_DIR = app.isPackaged
-  ? (process.env.NOVAKAI_REPO || '/Users/christopherdasca/Programming/Novakai-Command')
-  : path.resolve(__dirname, '..');
 
-let devServer = null;
 let win = null;
 let quitting = false;
 let recovery = null;
@@ -57,28 +51,6 @@ function logConflict() {
   } catch { /* lsof empty or unavailable — nothing to record */ }
 }
 
-function startDevServer() {
-  const log = fs.openSync(LOG_FILE, 'a');
-  fs.writeSync(log, `\n--- Novakai Command shell: starting nvk-server ${new Date().toISOString()} ---\n`);
-  // Login shell so a Finder/Dock launch (bare PATH) still finds node/npm.
-  devServer = spawn('/bin/zsh', ['-lc', 'exec npx tsx packages/server/cli/nvk-server.ts --port 5180'], {
-    cwd: REPO_DIR,
-    detached: true, // own process group, so quit can tree-kill it
-    env: { ...process.env, NOVAKAI_DESKTOP_PID: String(process.pid) },
-    stdio: ['ignore', log, log],
-  });
-  devServer.on('exit', () => {
-    devServer = null;
-    if (!quitting) void recover();
-  });
-}
-
-function stopDevServer() {
-  if (!devServer) return;
-  try { process.kill(-devServer.pid, 'SIGTERM'); } catch { /* already gone */ }
-  devServer = null;
-}
-
 function splashHtml(message) {
   const body = `
     <body style="margin:0;display:grid;place-items:center;height:100vh;background:#0b0e14;
@@ -108,7 +80,14 @@ async function recover() {
     if (win && !win.isDestroyed()) await win.loadURL(splashHtml('Reconnecting&hellip;'));
     let status = await probe();
     if (status === 'free') {
-      if (!devServer) startDevServer();
+      // This window never starts a server. Say what will, and keep watching —
+      // the moment the launchd job serves 5180, the app loads it.
+      if (win && !win.isDestroyed()) {
+        await win.loadURL(splashHtml(
+          'Server is not running. Start it with <code>nvk deploy</code> '
+          + '(or <code>launchctl kickstart -k gui/$UID/com.novakai.prod</code>). Waiting&hellip;',
+        ));
+      }
       status = await waitForServer();
     }
     if (win?.isDestroyed() !== false) return;
@@ -120,7 +99,9 @@ async function recover() {
         `Port 5180 is held by a server that is not nvk-server — not loading it. Details in ${LOG_FILE}`,
       ));
     } else {
-      await win.loadURL(splashHtml(`Servers did not recover. See ${LOG_FILE}`));
+      await win.loadURL(splashHtml(
+        `Server did not appear. Deploy it with <code>nvk deploy</code>; log at ${LOG_FILE}`,
+      ));
     }
   })().finally(() => { recovery = null; });
   return recovery;
@@ -145,14 +126,14 @@ async function launch() {
 
   if (await probe() === 'live') {
     try {
-      await win.loadURL(APP_URL); // attach to the already-running Live serve
+      await win.loadURL(APP_URL); // attach to the running deployed serve
     } catch {
       await recover();
     }
     return;
   }
 
-  await recover(); // 'free' → spawn nvk-server; 'foreign' → fail-loud splash
+  await recover(); // 'free' → wait for the deployed serve; 'foreign' → fail-loud splash
 }
 
 app.whenReady().then(launch);
@@ -163,6 +144,5 @@ app.on('activate', () => {
 
 app.on('window-all-closed', () => app.quit());
 app.on('will-quit', () => {
-  quitting = true;
-  stopDevServer();
+  quitting = true; // nothing to tear down: this app owns no server process
 });

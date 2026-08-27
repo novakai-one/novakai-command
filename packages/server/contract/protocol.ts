@@ -57,11 +57,28 @@ export interface EventFrame {
   v: typeof PROTOCOL_VERSION;
 }
 
+/**
+ * What code this server process is running. Written by `nvk deploy` as
+ * release.json at the snapshot root; absent (null) when the server runs a
+ * working checkout directly — i.e. a dev/scratch boot, never the live serve.
+ */
+export interface ReleaseStamp {
+  commit: string;
+  branch: string;
+  builtAt: string;
+  /** The checkout had uncommitted changes when the snapshot was taken. */
+  dirty: boolean;
+  /** The checkout the snapshot was cloned from. */
+  source: string;
+}
+
 /** GET /bootstrap.json — everything a client needs to open the socket. */
 export interface BootstrapDocument {
   wsUrl: string;
   token: string;
   protocolVersion: number;
+  /** Additive: absent on pre-deploy servers, null on unstamped (dev) boots. */
+  release?: ReleaseStamp | null;
 }
 
 /**
