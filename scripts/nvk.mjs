@@ -16,6 +16,8 @@ const adapters = new Map([
   // until now it was a usage error, and every verb had to be driven as
   // `npx tsx <absolute path to>/nvk-agent.ts`.
   ['agent', path.join(repoRoot, 'packages/server/cli/nvk-agent.ts')],
+  // Flow 2: an agent spawns a child agent headlessly — no server involved.
+  ['child', path.join(repoRoot, 'packages/agents/cli/nvk-child.ts')],
   ['runtime', path.join(repoRoot, 'packages/server/cli/nvk-runtime.ts')],
   ['terminal', path.join(repoRoot, 'packages/server/cli/nvk-terminal.ts')],
   // B3d §17.1: what is watching, and what it has queued.
