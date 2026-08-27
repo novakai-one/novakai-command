@@ -8,7 +8,7 @@
 // hold that gate is to have exactly one path.
 import type {
   AgentId, AgentRunId, AuthenticatedPrincipal, B3Page, B3Result, CapabilityOwner, CommandContext,
-  ControlReplacementPlanId, ControllerAttachmentId, EventCursor, HumanPrincipalId, IsoUtc,
+  ControlReplacementPlanId, EventCursor, HumanPrincipalId, IsoUtc,
   ProviderSessionId, ProviderTurnId, ActivityGeneration, RecordVersion,
   AgentRoleProfileId, ResolvedLaunchPlanId, RunOperationId, TraceCorrelationId,
   SystemCommandContext,
@@ -18,7 +18,7 @@ import type {
   ControllerState, LaunchSurface, RunOperation, SupervisionAssignment, TreeMutationFence,
 } from './runs.js';
 import type {
-  AgentControlFacts, AgentControlOutcomeFacts, AgentRelationshipFacts,
+  AgentControlFacts, AgentControlOutcomeFacts, AgentRelationshipFacts, AgentRunControllerFacts,
   ControlCapabilityFacts,
 } from './ports.js';
 import type {
@@ -250,17 +250,10 @@ export interface AgentRunView {
    * watching" and "started somewhere else" are different facts, and neither is
    * "stopped" (FZ-VIEW-004, §24.5 red gate 4).
    *
-   * The `ControllerKind` union is inlined rather than imported: Agent Runtime
-   * never imports Terminal (§3.1), and it is the same idiom this file already
-   * uses for `provider`.
+   * The shape is declared once at the Runtime's narrow Terminal port boundary,
+   * so the projection and the port cannot drift without importing Terminal.
    */
-  readonly controllers: {
-    readonly attachedCount: number;
-    readonly kinds: readonly (
-      'novakai-shell' | 'external-terminal' | 'script' | 'operations'
-    )[];
-    readonly inputLeaseHolder?: ControllerAttachmentId;
-  };
+  readonly controllers: AgentRunControllerFacts;
   readonly family: {
     readonly parentAgentId?: AgentId;
     readonly childCount: number;

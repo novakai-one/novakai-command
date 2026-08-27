@@ -145,7 +145,7 @@ test('B2a Server integration consumes capability contracts', () => {
   assert.deepEqual(offenders, []);
 });
 
-test('B2b Server integration consumes only Transcript contract and never Shell', () => {
+test('B2b Server integration consumes only Messaging contract and never Shell', () => {
   const b2bRoot = path.join(serverRoot, 'core', 'b2b');
   const offenders: string[] = [];
   for (const sourcePath of typescriptSources(b2bRoot)) {
@@ -153,7 +153,7 @@ test('B2b Server integration consumes only Transcript contract and never Shell',
     for (const match of source.matchAll(/\bfrom\s+['"]([^'"]+)['"]/g)) {
       const specifier = match[1]!;
       if (
-        specifier.includes('/transcript/')
+        specifier.includes('/messaging/')
         && !/(?:^|\/)contract(?:\/|$)/.test(specifier)
       ) {
         offenders.push(
@@ -170,24 +170,24 @@ test('B2b Server integration consumes only Transcript contract and never Shell',
   assert.deepEqual(offenders, []);
 });
 
-test('B2b scheduled ingestion runs only in the background worker, never on the HTTP host', () => {
+test('B2b scheduled ingestion is owned by Messaging, never the Server host', () => {
   const composition = readFileSync(
     path.join(serverRoot, 'core', 'b2b', 'composition.ts'),
     'utf8',
   );
-  const worker = readFileSync(
-    path.join(serverRoot, 'core', 'b2b', 'watcher-worker.ts'),
+  const messagingRuntime = readFileSync(
+    path.join(repositoryRoot, 'packages', 'messaging', 'core', 'ingestion', 'watch.ts'),
     'utf8',
   );
   assert.doesNotMatch(
     composition,
-    /\.ingest\s*\(/u,
-    'the HTTP host may expose queries but must not execute scheduled ingest',
+    /\bsetInterval\s*\(/u,
+    'the Server host may start the runtime but must not own its schedule',
   );
   assert.match(
-    worker,
-    /\.ingest\s*\(/u,
-    'the worker owns scheduled ingestion as well as copy custody',
+    messagingRuntime,
+    /\bsetInterval\s*\(/u,
+    'the Messaging runtime owns scheduled ingestion',
   );
 });
 
@@ -237,7 +237,7 @@ test('B2a Server WS adapter cannot reach byte or Spine-only attachment doors', (
 test('approved capabilities do not depend back on Server', () => {
   const offenders: string[] = [];
   for (
-    const packageName of ['projects', 'artifacts', 'spine', 'transcript']
+    const packageName of ['projects', 'artifacts', 'spine', 'messaging']
   ) {
     const packageRoot = path.join(repositoryRoot, 'packages', packageName);
     for (const sourcePath of typescriptSources(packageRoot)) {

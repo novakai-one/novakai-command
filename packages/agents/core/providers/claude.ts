@@ -36,7 +36,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import type { ProviderCliRuntime, ProviderTurnRecord, ProviderTurnUsage } from './adapter.js';
 import { cliExists, parseJsonLine, readLines, resolveCliPath } from './cli.js';
 
-/** Where the claude CLI lives — an npm-global bin, so PATH is the source. */
+/** Resolve Claude from PATH, then installed NVM Node versions for launchd. */
 export function defaultClaudeCliPath(): string {
   return resolveCliPath('claude');
 }
