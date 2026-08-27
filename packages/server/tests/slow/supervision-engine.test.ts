@@ -489,6 +489,20 @@ test('the periodic void emitUsage path reports a typed failure without an unhand
     failure.code === 'UsageTickFailed' && failure.operation === 'emitUsage'));
 });
 
+test('starting legacy supervision never schedules drift status turns', async () => {
+  const h = harness({
+    policy: { usageIntervalSec: 3600, driftIntervalSec: 0.01 },
+    records: [record({ lastActivityAt: '2026-07-28T09:00:00.000Z' })],
+  });
+
+  h.engine.start();
+  await new Promise((resolve) => setTimeout(resolve, 35));
+  h.engine.stop();
+
+  assert.equal(h.asked.length, 0, 'periodic supervision must never spend a provider turn');
+  assert.equal(actions(h.traces).includes('supervision.ping'), false);
+});
+
 test('a session with no readable transcript reports null counts and states the gap', async () => {
   const h = harness();
   const table = await h.engine.usageTable();

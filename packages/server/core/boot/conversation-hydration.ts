@@ -1,10 +1,15 @@
 /** Load durable Conversation Views into the Server's in-memory index. */
 
+import { createHash } from 'node:crypto';
 import { listConversationViews } from '../../../shell/contract/conversationView.js';
 import type { MessagingRuntimeApi } from '../../../messaging/contract/index.js';
 import type { Conversation } from '../methods.js';
 
 type ConversationViewDriver = Parameters<typeof listConversationViews>[0];
+
+const migrationOpId = (view: object): string =>
+  `migration:conversation-view:${'id' in view ? String(view.id) : 'unknown'}:${createHash('sha256')
+    .update(JSON.stringify(view), 'utf8').digest('hex').slice(0, 16)}`;
 
 export async function hydrateConversations(
   driver: ConversationViewDriver,
@@ -20,7 +25,7 @@ export async function hydrateConversations(
     const imported = await messaging.ensureConversationView({
       conversationId: view.id,
       participantIds: [humanPrincipalId, participant],
-      clientOpId: `migration:conversation-view:${view.id}`,
+      clientOpId: migrationOpId(view),
       pinned: view.pinned,
       archived: view.archived,
       lastActivityAt: view.lastActivityAt,

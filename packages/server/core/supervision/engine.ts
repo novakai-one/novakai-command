@@ -4,7 +4,7 @@
 // engine can actually enforce rather than a habit it hopes to keep:
 //
 //   DEC-B1-10  skills confirmed BEFORE any work            (two-turn gate)
-//   DEC-B1-12  drift check-ins every 5–10 min, CHEAP FIRST (SR-1)
+//   DEC-B1-12  legacy drift checks, explicit only (never scheduled)
 //   DEC-B1-13  terminate after meaningful work + restart   (+ compact option)
 //   DEC-B1-11  a real per-session usage table every 5–10 min
 //
@@ -34,7 +34,6 @@ export function createSupervisionEngine(deps: SupervisionDeps): SupervisionEngin
   /** sessionId → drifting, so the usage table Chris reads carries the flag. */
   const driftFlags = new Set<string>();
   let usageTimer: ReturnType<typeof setInterval> | null = null;
-  let driftTimer: ReturnType<typeof setInterval> | null = null;
   const seenFailureStacks = new Set<string>();
   const reportFailure = (
     code: SupervisionFailure['code'],
@@ -165,18 +164,9 @@ export function createSupervisionEngine(deps: SupervisionDeps): SupervisionEngin
         }, deps.policy.usageIntervalSec * 1000);
         usageTimer.unref?.();
       }
-      if (!driftTimer) {
-        driftTimer = setInterval(() => {
-          void checkDrift().catch((cause) => {
-            reportFailure('DriftTickFailed', 'checkDrift', cause);
-          });
-        }, deps.policy.driftIntervalSec * 1000);
-        driftTimer.unref?.();
-      }
     },
     stop() {
       if (usageTimer) { clearInterval(usageTimer); usageTimer = null; }
-      if (driftTimer) { clearInterval(driftTimer); driftTimer = null; }
     },
   };
 }

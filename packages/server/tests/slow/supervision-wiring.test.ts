@@ -159,7 +159,7 @@ test('boot binds all three provider CLIs and reports each one measured, not decl
   }
 });
 
-test('step 11 reports the supervision engine, its cadence and its log path', async () => {
+test('step 11 reports usage cadence and confirms drift checks are not scheduled', async () => {
   const dir = root();
   await mintChris(dir);
   const codex = scriptedCodex(dir);
@@ -169,7 +169,8 @@ test('step 11 reports the supervision engine, its cadence and its log path', asy
       step.name === 'supervision')!;
     assert.equal(supervision.step, 11);
     assert.match(supervision.detail, /usage every 300s/);
-    assert.match(supervision.detail, /drift every 300s/);
+    assert.match(supervision.detail, /drift checks are explicit only/);
+    assert.doesNotMatch(supervision.detail, /drift every/);
     assert.match(supervision.detail, /usage\.jsonl/);
   } finally {
     await server.close();
