@@ -48,7 +48,7 @@ import path from 'node:path';
 import type { ProviderCliRuntime, ProviderTurnRecord, ProviderTurnUsage } from './adapter.js';
 import { cliExists, parseJsonLine, readLines, resolveCliPath } from './cli.js';
 
-/** Where the codex CLI lives — an npm-global bin, so PATH is the source. */
+/** Resolve Codex from PATH, then installed NVM Node versions for launchd. */
 export function defaultCodexCliPath(): string {
   return resolveCliPath('codex');
 }

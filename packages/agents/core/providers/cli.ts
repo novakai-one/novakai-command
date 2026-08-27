@@ -5,9 +5,38 @@
 // disk" and "a stream of JSON lines". Every provider-specific fact (argv,
 // event shapes, resume flags) stays in that provider's own adapter, which is
 // what red gate 2 actually protects.
-import { existsSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, statSync } from 'node:fs';
+import { homedir } from 'node:os';
 import path from 'node:path';
 import type { Readable } from 'node:stream';
+
+const NODE_VERSION = /^v(\d+)\.(\d+)\.(\d+)$/;
+
+const newestNodeVersionFirst = (left: string, right: string): number => {
+  const leftParts = NODE_VERSION.exec(left);
+  const rightParts = NODE_VERSION.exec(right);
+  if (leftParts === null || rightParts === null) return 0;
+  for (let index = 1; index <= 3; index += 1) {
+    const difference = Number(rightParts[index]) - Number(leftParts[index]);
+    if (difference !== 0) return difference;
+  }
+  return 0;
+};
+
+const resolveNvmCliPath = (binaryName: string): string | undefined => {
+  const nvmRoot = process.env.NVM_DIR?.trim() || path.join(homedir(), '.nvm');
+  const versionsRoot = path.join(nvmRoot, 'versions', 'node');
+  if (!existsSync(versionsRoot)) return undefined;
+  const versions = readdirSync(versionsRoot, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && NODE_VERSION.test(entry.name))
+    .map((entry) => entry.name)
+    .sort(newestNodeVersionFirst);
+  for (const version of versions) {
+    const candidate = path.join(versionsRoot, version, 'bin', binaryName);
+    if (cliExists(candidate)) return candidate;
+  }
+  return undefined;
+};
 
 /**
  * Resolve a CLI to an absolute path. `explicit` (config `providers.<p>.cliPath`)
@@ -15,6 +44,8 @@ import type { Readable } from 'node:stream';
  * shell would — codex and claude install as npm-global bins, so they have no
  * fixed home-relative location the way the kimi CLI does.
  *
+ * A launchd process has a minimal PATH, so npm-global CLIs installed by NVM
+ * receive one provider-neutral fallback through NVM's installed Node versions.
  * Returns the bare name when nothing is found: `isAvailable()` then reports
  * false and `create()` refuses typed, rather than the adapter inventing a path.
  */
@@ -27,7 +58,7 @@ export function resolveCliPath(binaryName: string, explicit?: string): string {
       if (existsSync(candidate) && statSync(candidate).isFile()) return candidate;
     } catch { /* unreadable PATH entry — keep looking */ }
   }
-  return binaryName;
+  return resolveNvmCliPath(binaryName) ?? binaryName;
 }
 
 /** True when the resolved path is a real file we could execute. */
