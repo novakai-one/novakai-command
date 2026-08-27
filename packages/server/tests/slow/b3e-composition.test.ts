@@ -35,6 +35,7 @@ import { listFilterForState } from '../../../shell/app/agentRuns.js';
 import { bootServer, type NovakaiServer } from '../../core/boot.js';
 import { openConfigStore } from '../../core/config/store.js';
 import { chatRole } from '../governed-role.js';
+import { spawnAgentFixture } from '../support/spawn-agent-fixture.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '..', '..', '..');
@@ -181,11 +182,11 @@ test('a Run spawned against this server is a real row on the Shell socket', asyn
   try {
     const defined = await runNvk(['agent', 'define-role', '--file', roleFile, ...where]);
     assert.equal(defined.code, 0, `define-role failed: ${defined.out}`);
-    const spawned = await runNvk(['agent', 'spawn', '--role', 'composition-builder',
-      '--name', 'Composer', '--cwd', booted.root, ...where]);
-    assert.equal(spawned.code, 0, `spawn failed: ${spawned.out}`);
-    const runId = /agentRun_[0-9a-f-]{36}/u.exec(spawned.out)?.[0] ?? '';
-    assert.notEqual(runId, '', `no AgentRunId in ${spawned.out}`);
+    const spawned = await spawnAgentFixture({
+      root: booted.root, port: booted.server.port, roleName: 'composition-builder',
+      displayName: 'Composer', workingDirectory: booted.root,
+    });
+    const runId = String(spawned.run.id);
 
     const runs = await socket.call('b3.agent.listRuns', {
       contractVersion: 1, payload: listFilterForState({ state: 'all' }),

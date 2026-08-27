@@ -2,9 +2,9 @@
 //
 // Same rules as the B3a methods: no second dialect, no field added to the socket
 // frame, and every payload VALIDATED at runtime rather than cast. The one thing
-// these add is a principal that is not always Chris — a spawned Agent calling
-// `nvk agent spawn` from inside its own PTY authenticates as ITSELF, and its
-// identity comes from the connection rather than from anything in `params`
+// these add is a principal that is not always Chris — a spawned Agent using a
+// B3 client from inside its own PTY authenticates as itself, and its identity
+// comes from the connection rather than from anything in `params`
 // (red gate 5).
 import {
   b3err, b3fail, b3ok, mintClientOpId,
@@ -339,7 +339,7 @@ export function buildB3AgentMethods(options: B3AgentMethodOptions): MethodTable 
       return listed;
     }),
 
-    // A5-04. `nvk agent spawn --role builder` used to fetch the list above and
+    // A5-04. The former CLI role resolver used to fetch the list above and
     // pick a profile out of it in the client, which is the one thing the
     // amendment forbids ("the query never chooses"). The match is the owner's
     // now: exact, case-sensitive, whole-string, over non-archived profiles, and

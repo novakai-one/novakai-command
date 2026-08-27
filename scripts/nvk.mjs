@@ -11,10 +11,8 @@ const adapters = new Map([
   ['project', path.join(repoRoot, 'packages/projects/cli/nvk-project.ts')],
   ['artifact', path.join(repoRoot, 'packages/artifacts/cli/nvk-artifact.ts')],
   ['spine', path.join(repoRoot, 'packages/spine/cli/nvk-spine.ts')],
-  // B3: the canonical families of §17.1 / DEC-B3V4-04. `nvk agent spawn` is the
-  // command the onboarding promises and the one an operator actually types;
-  // until now it was a usage error, and every verb had to be driven as
-  // `npx tsx <absolute path to>/nvk-agent.ts`.
+  // B3 Agent inspection and control. Agent creation deliberately travels
+  // through the dedicated headless child flow, not this Server client.
   ['agent', path.join(repoRoot, 'packages/server/cli/nvk-agent.ts')],
   // Flow 2: an agent spawns a child agent headlessly — no server involved.
   ['child', path.join(repoRoot, 'packages/agents/cli/nvk-child.ts')],

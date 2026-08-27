@@ -33,7 +33,7 @@ export type CliOutput<Value> =
  */
 export const RULED_COMMANDS = [
   'runtime.ensure', 'runtime.status', 'runtime.doctor', 'runtime.stop',
-  'agent.spawn', 'agent.list', 'agent.tree',
+  'agent.list', 'agent.tree',
   'agent.inspect.run', 'agent.inspect.agent',
   'agent.attach', 'agent.attach.stream',
   'agent.interrupt', 'agent.stop', 'agent.stop-tree.prepare', 'agent.stop-tree.confirm',
@@ -174,52 +174,6 @@ export function pageFlags(flags: Flags): B3Result<{ limit: number; cursor?: stri
     }]));
   }
   return b3ok({ limit, ...tail });
-}
-
-/**
- * AMD-005 A5-03: `[--task supervised --brief <text>]` on `nvk agent spawn`.
- *
- * `--task` is a CHOICE of exactly one word, not a free text field. It shipped
- * as the latter — the brief was the flag's value — which meant every use of the
- * flag opened the two-turn gate whether or not the operator meant to, and the
- * ratified form (`--task supervised --brief …`) spawned UNsupervised work with
- * `"supervised"` as its brief and the operator's text dropped.
- *
- * The pair is all-or-nothing, and the CLI refuses the half-form rather than
- * completing it: a brief with no task is work nobody is supervising, and a task
- * with no brief is an Agent told to start and not told what for.
- *
- * Emptiness is NOT judged here. `brief: ""` travels, and the owner's boundary
- * reader refuses it — a second opinion at the CLI is a second policy path
- * (§3.2), and this one would be answering a question the owner already answers.
- */
-export const SUPERVISED_TASK_KIND = 'supervised';
-
-export function supervisedTask(flags: Flags): B3Result<{
-  task?: { readonly kind: 'supervised'; readonly brief: string };
-}> {
-  const task = flags.value('task');
-  const brief = flags.value('brief');
-  if (task === undefined) {
-    if (brief === undefined) return b3ok({});
-    return b3fail(validationFailed([{
-      path: 'task',
-      message: `--brief requires --task ${SUPERVISED_TASK_KIND}; a brief with no task is `
-        + 'work nobody is supervising',
-    }]));
-  }
-  if (task !== SUPERVISED_TASK_KIND) {
-    return b3fail(validationFailed([{
-      path: 'task',
-      message: `must be "${SUPERVISED_TASK_KIND}"; the brief goes in --brief <text>`,
-    }]));
-  }
-  if (brief === undefined) {
-    return b3fail(validationFailed([{
-      path: 'brief', message: '--task supervised requires --brief <text>',
-    }]));
-  }
-  return b3ok({ task: { kind: SUPERVISED_TASK_KIND, brief } });
 }
 
 /**

@@ -67,8 +67,8 @@ export interface BootstrapDocument {
 /**
  * Who is on the other end of a connection.
  *
- * B3b's Agents call `nvk agent spawn` from inside their own PTYs, so "the
- * caller" stopped being one local human. Identity is resolved at the UPGRADE
+ * B3 clients may connect from inside an Agent's managed PTY, so "the caller"
+ * is not always one local human. Identity is resolved at the UPGRADE
  * from what the connection presented and travels with the dispatch — it is
  * never read out of `params`, because a caller that can name its own identity
  * can name its own parent (red gate 5).

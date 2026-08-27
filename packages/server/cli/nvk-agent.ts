@@ -1,10 +1,7 @@
 #!/usr/bin/env -S npx tsx
-// nvk-agent — spawn and run a governed team, from anywhere (§17.1).
+// nvk-agent — inspect and operate governed Agents (§17.1).
 //
 //   nvk-agent roles
-//   nvk-agent spawn --role <name|id> --name <name> [--task supervised --brief <text>]
-//                   [--provider claude|codex|kimi] [--model <id>] [--effort <v>]
-//                   [--cwd <path>]
 //   nvk-agent list [--state live|final|all]
 //   nvk-agent tree <agentId> [--depth <n>]
 //   nvk-agent inspect <agentRunId>
@@ -48,13 +45,13 @@ import type { AgentRunUsage, AgentUsageSummary } from '../../supervision/contrac
 import { connectRuntime, type RuntimeClient } from '../core/b3/client.js';
 import {
   clientOpIdFrom, emit, expectedVersion, fail, isRunForm, pageFlags, parseFlags,
-  supervisedTask, verbOf, EXPECT_VERSION_FLAG,
+  verbOf, EXPECT_VERSION_FLAG,
   type CliCommand, type Flags,
 } from '../core/b3/cli-shared.js';
 import {
   describeAgent, describeControls, describeList, describeRun, describeTree, describeUsage,
 } from './agent-describe.js';
-import { roleFromFile, roleIdFor } from './agent-roles.js';
+import { roleFromFile } from './agent-roles.js';
 import { messageCommands } from './agent-messages.js';
 import { observeCommands } from './agent-observe.js';
 
@@ -164,33 +161,6 @@ const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
     emit('agent define-role', argFlags, await withClient<AgentRoleProfile>(
       (client) => client.call('b3.agent.createRole', payload.value, operationId()),
     ), (role) => `Defined role ${role.name} (${role.id}), gate ${role.skillsConfirmationGate.mode}.`);
-  },
-
-  async spawn(argFlags) {
-    const role = argFlags.value('role');
-    const displayName = argFlags.value('name');
-    if (!role || !displayName) {
-      return usage('agent.spawn', argFlags,
-        '--role <name|id> --name <name> [--task supervised --brief <text>]');
-    }
-    const task = supervisedTask(argFlags);
-    if (!task.ok) return fail('agent.spawn', argFlags, task.error);
-    emit('agent.spawn', argFlags, await withClient<AgentRunView>(async (client) => {
-      const roleId = await roleIdFor(client, role);
-      if (!roleId.ok) return roleId;
-      return client.call('b3.agent.spawn', {
-        roleProfileId: roleId.value,
-        displayName,
-        workingDirectory: argFlags.value('cwd') ?? process.cwd(),
-        ...(argFlags.value('provider') === undefined
-          ? {} : { requestedProvider: argFlags.value('provider') }),
-        ...(argFlags.value('model') === undefined
-          ? {} : { requestedModelId: argFlags.value('model') }),
-        ...(argFlags.value('effort') === undefined
-          ? {} : { requestedEffort: argFlags.value('effort') }),
-        ...task.value,
-      }, operationId());
-    }), describeRun);
   },
 
   /**
@@ -500,7 +470,7 @@ function commandOf(name: string, argFlags: Flags): CliCommand | undefined {
 
 /** Every single-form verb, ruled and unruled alike. */
 const AGENT_COMMANDS: Readonly<Record<string, CliCommand>> = {
-  spawn: 'agent.spawn', list: 'agent.list', tree: 'agent.tree', attach: 'agent.attach',
+  list: 'agent.list', tree: 'agent.tree', attach: 'agent.attach',
   interrupt: 'agent.interrupt', stop: 'agent.stop', continue: 'agent.continue',
   adopt: 'agent.adopt', controls: 'agent.controls', control: 'agent.control',
   message: 'agent.message', communications: 'agent.communications', events: 'agent.events',

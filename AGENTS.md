@@ -137,8 +137,8 @@ agents and for Chris.
   nvk-agent confirms receipt via the agent's own session transcript.
 - The newer packages/ runtime has its own CLI path: the umbrella `nvk`
   (`scripts/nvk.mjs`) dispatches to `packages/*/cli/*.ts` —
-  `nvk agent spawn --role <role> --name <name>`, `nvk runtime`, `nvk terminal`,
-  `nvk watch`, etc. See `packages/scripts.md`. These talk to the packages/
+  `nvk agent list`, `nvk runtime`, `nvk terminal`, `nvk watch`, etc. See
+  `packages/scripts.md`. These talk to the packages/
   Runtime (port 5190), not the old src/backend lanes above.
 - **Spawning a child agent (any agent may do this):**
   `node scripts/nvk.mjs child spawn --name <name> --brief "<text>"`.

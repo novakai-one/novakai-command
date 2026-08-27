@@ -30,6 +30,7 @@ import { startRuntimeHost, type RunningRuntimeHost } from '../../core/b3/host.js
 import { controllersOf } from '../../core/b3/run-ports.js';
 import { chatRole } from '../governed-role.js';
 import type { ControllerAttachment, TerminalSessionView } from '../../../terminal/contract/index.js';
+import { spawnAgentFixture } from '../support/spawn-agent-fixture.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '..', '..', '..');
@@ -187,11 +188,11 @@ async function withSpawnedAgent(
     writeFileSync(roleFile, JSON.stringify(chatRole('controller-builder')), 'utf8');
     const defined = await runNvk(['agent', 'define-role', '--file', roleFile, ...where]);
     assert.equal(defined.code, 0, `define-role failed: ${defined.out}`);
-    const spawned = await runNvk(['agent', 'spawn', '--role', 'controller-builder',
-      '--name', 'Watched', '--cwd', root, ...where]);
-    assert.equal(spawned.code, 0, `spawn failed: ${spawned.out}`);
-    const runId = /agentRun_[0-9a-f-]{36}/u.exec(spawned.out)?.[0] ?? '';
-    assert.notEqual(runId, '', `no AgentRunId in ${spawned.out}`);
+    const spawned = await spawnAgentFixture({
+      root, port: host.port, roleName: 'controller-builder', displayName: 'Watched',
+      workingDirectory: root,
+    });
+    const runId = String(spawned.run.id);
     await work(where, runId);
   } finally {
     await host?.close();

@@ -1,7 +1,7 @@
 // Who the caller IS, over a real socket (§12.1, DEC-B3V4-05, red gates 5 and 13).
 //
 // B3b is the first slice where "the caller" stopped being one local human: an
-// Agent running inside its own managed PTY calls `nvk agent spawn` too. Two
+// An Agent running inside its own managed PTY may call B3 as itself. Two
 // things therefore have to be true at the door, and neither is checkable by
 // reading the happy path:
 //

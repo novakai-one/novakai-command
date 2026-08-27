@@ -1,10 +1,5 @@
-// `nvk agent spawn` is the command the onboarding promises and DEC-B3V4-04
-// names as canonical (§17.1, probe M-1).
-//
-// The verbs all worked — as `npx tsx <absolute path>/nvk-agent.ts`. An operator
-// typing what the docs say got a usage error, because `nvk` routed only
-// project|artifact|spine|transcript. The runtime and terminal families were
-// missing the same way.
+// The umbrella `nvk` command routes the remaining Agent, Runtime and Terminal
+// operator commands to their implementations.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
@@ -16,6 +11,7 @@ import { createFakePtyHost } from '../../../terminal/adapters/pty-host/fake.js';
 import { createFakeProviderAdapters } from '../../../agents/b3/contract/index.js';
 import { startRuntimeHost } from '../../core/b3/host.js';
 import { chatRole } from '../governed-role.js';
+import { spawnAgentFixture } from '../support/spawn-agent-fixture.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '..', '..', '..');
@@ -42,46 +38,6 @@ for (const group of ['agent', 'runtime', 'terminal'] as const) {
   });
 }
 
-test('nvk agent spawn is a real command, and says what it needs', async () => {
-  // No --role, so it must be REFUSED by nvk-agent itself — a validation error
-  // from the agent CLI, not "I have never heard of `agent`".
-  const seen = await runNvk(['agent', 'spawn', '--json']);
-  assert.equal(seen.out.includes('usage: nvk project|artifact'), false,
-    `nvk agent spawn is still unrouted: ${seen.out}`);
-  assert.equal(/role/i.test(seen.out), true,
-    `nvk agent spawn did not ask for a role: ${seen.out}`);
-});
-
-test('an operator can define a role and spawn from a clean data root, by CLI alone', async () => {
-  // Probe M-2: `b3.agent.createRole` was on the wire and used by tests and the
-  // bundled proof, and no operator surface called it — so from a fresh
-  // `.novakai` the promise "spawn a governed agent from anywhere" could not be
-  // kept by anyone typing commands.
-  const root = mkdtempSync(path.join(tmpdir(), 'nvk-b3b-cli-'));
-  const host = await startRuntimeHost({
-    root, port: 0, ptyHost: createFakePtyHost(), providers: createFakeProviderAdapters(),
-  });
-  try {
-    const file = path.join(root, 'role.json');
-    writeFileSync(file, JSON.stringify(chatRole('cli-builder')), 'utf8');
-    const where = ['--root', root, '--port', String(host.port), '--json'];
-
-    const defined = await runNvk(['agent', 'define-role', '--file', file, ...where]);
-    assert.equal(defined.code, 0, `define-role failed: ${defined.out}`);
-
-    const spawned = await runNvk([
-      'agent', 'spawn', '--role', 'cli-builder', '--name', 'CLI Builder',
-      '--cwd', root, ...where,
-    ]);
-    assert.equal(spawned.code, 0, `spawn failed: ${spawned.out}`);
-    assert.equal(spawned.out.includes('agentRun_'), true,
-      `spawn produced no Run: ${spawned.out}`);
-  } finally {
-    await host.close();
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
 test('an operator can read the stream, the fence and the grants by CLI', async () => {
   // §17.1 lists `nvk agent events [--after <cursor>]` among the canonical
   // commands and it did not exist; the fence, the grants and the repair door
@@ -96,12 +52,11 @@ test('an operator can read the stream, the fence and the grants by CLI', async (
     writeFileSync(file, JSON.stringify(chatRole('cli-watched')), 'utf8');
     const where = ['--root', root, '--port', String(host.port), '--json'];
     await runNvk(['agent', 'define-role', '--file', file, ...where]);
-    const spawned = await runNvk([
-      'agent', 'spawn', '--role', 'cli-watched', '--name', 'Watched', '--cwd', root, ...where,
-    ]);
-    assert.equal(spawned.code, 0, `spawn failed: ${spawned.out}`);
-    const agentId = /agent_[0-9a-f-]{36}/.exec(spawned.out)?.[0] ?? '';
-    assert.notEqual(agentId, '', `no agentId in ${spawned.out}`);
+    const spawned = await spawnAgentFixture({
+      root, port: host.port, roleName: 'cli-watched', displayName: 'Watched',
+      workingDirectory: root,
+    });
+    const agentId = String(spawned.agent.agentId);
 
     const events = await runNvk(['agent', 'events', ...where]);
     assert.equal(events.code, 0, `events failed: ${events.out}`);
