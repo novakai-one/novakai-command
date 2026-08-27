@@ -133,6 +133,8 @@ agents and for Chris.
   throwaway port + data root without touching the live server. :5180 REFUSES
   unstamped code — dev boots use `--port 0`. The desktop app is a window onto
   :5180 and never starts a server. See `docs/desktop-app.md`.
+  **Deploying is an AGENT duty, never Chris's: whoever merges to main runs
+  `nvk deploy` from the canonical checkout as the last step of the merge.**
 - `scripts/nvk-agent.mjs` (M1) is the dependable operator path: spawn+brief
   with automatic delivery-confirmed post-spawn check, process/activity truth,
   latest message, verified kill. PTY "delivered" only means bytes written —
