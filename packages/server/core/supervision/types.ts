@@ -106,15 +106,13 @@ export interface SupervisionFailure {
     | 'UsageAppendFailed'
     | 'UsageBackfillFailed'
     | 'UsageBroadcastFailed'
-    | 'UsageTickFailed'
-    | 'DriftTickFailed';
+    | 'UsageTickFailed';
   operation:
     | 'escalate'
     | 'backfillUsage'
     | 'appendUsage'
     | 'broadcastUsage'
-    | 'emitUsage'
-    | 'checkDrift';
+    | 'emitUsage';
   message: string;
 }
 
@@ -198,7 +196,7 @@ export interface SupervisionEngine {
   terminate(sessionId: string, reason: string, clientOpId?: string): Promise<LifecycleResult>;
   restart(sessionId: string): Promise<LifecycleResult>;
   compact(sessionId: string): Promise<LifecycleResult>;
-  /** Start the two timers (usage + drift). */
+  /** Start periodic usage emission. Drift checks are never scheduled. */
   start(): void;
   stop(): void;
 }

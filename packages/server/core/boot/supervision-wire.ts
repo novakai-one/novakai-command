@@ -142,7 +142,7 @@ export async function composeSupervision(input: {
   input.note(
     11,
     'supervision',
-    `engine up — usage every ${config.supervision.usageIntervalSec}s, drift every ${config.supervision.driftIntervalSec}s; log at ${usageLog.filePath}; watchdog registry at ${watchdog.registryPath}`,
+    `engine up — usage every ${config.supervision.usageIntervalSec}s; drift checks are explicit only; log at ${usageLog.filePath}; watchdog registry at ${watchdog.registryPath}`,
   );
   return { supervision, watchdog, usageReader };
 }
