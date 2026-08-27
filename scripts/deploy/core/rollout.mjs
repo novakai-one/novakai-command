@@ -5,8 +5,17 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { DeployError } from '../contract/types.mjs';
 import { PATHS, PORT, describeCheckout, resolveProdDataRoot, say } from './context.mjs';
-import { HEALTH_TIMEOUT_MS, waitHealthy } from './health.mjs';
-import { killPreviousServers, launchdLogFor, startJob, stopJob } from './launchd.mjs';
+import { HEALTH_TIMEOUT_MS, waitBootstrapHealthy, waitHealthy } from './health.mjs';
+import {
+  assertCutoverSafe,
+  captureLoadedJobPlist,
+  jobLoaded,
+  killPreviousServers,
+  launchdLogFor,
+  restoreCapturedJob,
+  startJob,
+  stopJob,
+} from './launchd.mjs';
 import { build, prune, releaseNameFor, snapshotChecked, stamp } from './snapshot.mjs';
 
 /**
@@ -26,18 +35,46 @@ function recordLastGood(releaseDir, commit) {
   fs.writeFileSync(PATHS.lastGoodFile, `${JSON.stringify({ releaseDir, commit }, null, 2)}\n`);
 }
 
-async function rollback(dataRoot) {
+function rollbackTarget(currentProd) {
   const previous = readLastGood();
-  stopJob(); // the broken candidate must not KeepAlive-respawn forever
-  if (previous === null) {
-    say('ROLLBACK: no last-known-good release exists — production is DOWN until a deploy succeeds');
-    return;
+  if (previous !== null) return { kind: 'release', previous };
+  const legacyPlist = captureLoadedJobPlist();
+  if (legacyPlist !== null) return { kind: 'legacy-job', legacyPlist };
+  if (jobLoaded() || currentProd.pids.length > 0) {
+    throw new DeployError(
+      'cannot preserve the running production server for first-deploy rollback — its launchd plist is unavailable',
+    );
   }
-  say(`ROLLBACK: restoring ${previous.commit} (${path.basename(previous.releaseDir)})…`);
-  startJob(previous.releaseDir, dataRoot);
-  const healthy = await waitHealthy(PORT, previous.commit);
-  if (healthy) say(`ROLLBACK OK — ${previous.commit} live again on :${PORT}, pid ${healthy.pid}`);
-  else say(`ROLLBACK FAILED — ${previous.commit} did not become healthy; see ${launchdLogFor(dataRoot)}`);
+  return { kind: 'none' };
+}
+
+async function rollback(dataRoot, target) {
+  stopJob(); // the broken candidate must not KeepAlive-respawn forever
+  if (target.kind === 'none') {
+    say('ROLLBACK: no server was running before cutover — previous (down) state preserved');
+    return true;
+  }
+  try {
+    if (target.kind === 'legacy-job') {
+      say('ROLLBACK: restoring the pre-deploy launchd job…');
+      restoreCapturedJob(target.legacyPlist);
+      const healthy = await waitBootstrapHealthy(PORT);
+      if (healthy) say('ROLLBACK OK — pre-deploy server live again');
+      else say(`ROLLBACK FAILED — pre-deploy server did not become healthy; see ${launchdLogFor(dataRoot)}`);
+      return healthy !== null;
+    }
+    const { previous } = target;
+    say(`ROLLBACK: restoring ${previous.commit} (${path.basename(previous.releaseDir)})…`);
+    startJob(previous.releaseDir, dataRoot);
+    const healthy = await waitHealthy(PORT, previous.commit);
+    if (healthy) say(`ROLLBACK OK — ${previous.commit} live again on :${PORT}, pid ${healthy.pid}`);
+    else say(`ROLLBACK FAILED — ${previous.commit} did not become healthy; see ${launchdLogFor(dataRoot)}`);
+    return healthy !== null;
+  } catch (cause) {
+    const reason = cause instanceof Error ? cause.message : String(cause);
+    say(`ROLLBACK FAILED — ${reason}; see ${launchdLogFor(dataRoot)}`);
+    return false;
+  }
 }
 
 /**
@@ -62,16 +99,28 @@ export async function deployRelease(options) {
   snapshotChecked(releaseDir, checkout);
   const release = stamp(releaseDir, checkout);
 
-  await killPreviousServers();
-  startJob(releaseDir, dataRoot);
-  say(`launchd job started — waiting for /version to report ${release.commit}…`);
-  const healthy = await waitHealthy(PORT, release.commit);
-  if (!healthy) {
-    say(`candidate did not become healthy in ${HEALTH_TIMEOUT_MS / 1000}s — see ${launchdLogFor(dataRoot)}`);
-    await rollback(dataRoot);
-    throw new DeployError(`deploy of ${release.commit} failed health check (previous release restored if possible)`);
+  const currentProd = assertCutoverSafe();
+  const target = rollbackTarget(currentProd);
+  let healthy;
+  try {
+    await killPreviousServers();
+    startJob(releaseDir, dataRoot);
+    say(`launchd job started — waiting for /version to report ${release.commit}…`);
+    healthy = await waitHealthy(PORT, release.commit);
+    if (!healthy) {
+      throw new DeployError(
+        `candidate did not become healthy in ${HEALTH_TIMEOUT_MS / 1000}s; see ${launchdLogFor(dataRoot)}`,
+      );
+    }
+    recordLastGood(releaseDir, release.commit);
+  } catch (cause) {
+    const reason = cause instanceof Error ? cause.message : String(cause);
+    const restored = await rollback(dataRoot, target);
+    throw new DeployError(
+      `deploy of ${release.commit} failed during cutover: ${reason}; `
+      + (restored ? 'previous production restored' : 'ROLLBACK FAILED'),
+    );
   }
-  recordLastGood(releaseDir, release.commit);
   prune(options.keep, releaseDir, releaseDir);
   say(`DEPLOYED ${release.commit} (${release.branch}) — live on :${PORT}, pid ${healthy.pid}`);
 }

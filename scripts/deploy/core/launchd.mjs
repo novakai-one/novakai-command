@@ -64,6 +64,10 @@ export function launchctl(verb, ...rest) {
 export function startJob(releaseDir, dataRoot) {
   fs.mkdirSync(path.dirname(launchdLogFor(dataRoot)), { recursive: true });
   fs.writeFileSync(PATHS.plist, plistFor(releaseDir, dataRoot));
+  bootstrapPlist();
+}
+
+function bootstrapPlist() {
   const bootstrap = launchctl('bootstrap', domain(), PATHS.plist);
   if (bootstrap.status !== 0) {
     throw new DeployError(`launchctl bootstrap: ${bootstrap.stderr || bootstrap.stdout}`);
@@ -78,6 +82,36 @@ export function stopJob() {
 /** True when launchd currently has the job loaded. */
 export function jobLoaded() {
   return launchctl('print', `${domain()}/${LABEL}`).status === 0;
+}
+
+/**
+ * Capture the exact plist of the currently loaded production job. The first
+ * `nvk deploy` uses this as its rollback target because no frozen last-good
+ * release exists yet. Returns null when no job is loaded or its definition
+ * cannot be read; callers must refuse to stop a live server in that state.
+ * @returns {string|null} the complete launchd plist text
+ */
+export function captureLoadedJobPlist() {
+  if (!jobLoaded()) return null;
+  try {
+    const plist = fs.readFileSync(PATHS.plist, 'utf8');
+    return plist.trim().length > 0 ? plist : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Restore and bootstrap a launchd definition captured before the cutover.
+ * This compatibility path is used only to recover a failed first deployment;
+ * successful deployments always run a frozen release through `startJob`.
+ * @param {string} plist complete plist text returned by captureLoadedJobPlist
+ * @returns {void}
+ */
+export function restoreCapturedJob(plist) {
+  fs.mkdirSync(path.dirname(PATHS.plist), { recursive: true });
+  fs.writeFileSync(PATHS.plist, plist);
+  bootstrapPlist();
 }
 
 const commandOf = (pid) =>
@@ -126,17 +160,30 @@ export function prodServerPids() {
 }
 
 /**
+ * Refuse a cutover while :5180 belongs to a non-nvk-server process. This runs
+ * before rollout enters its failure/rollback region, so a refusal cannot
+ * unload the healthy job it was meant to protect.
+ * @returns {import('../contract/types.mjs').ProdServerScan} observed prod lane
+ * @throws {DeployError} when a foreign process owns :5180
+ */
+export function assertCutoverSafe() {
+  const found = prodServerPids();
+  if (found.strangers.length > 0) {
+    throw new DeployError(`:${PORT} is held by non-nvk-server pid(s) ${found.strangers.join(', ')} — resolve manually`);
+  }
+  return found;
+}
+
+/**
  * Rule 3: before a new release starts, every previous prod server process is
  * gone — launchd job first, then SIGTERM→SIGKILL for the rest. Fails closed
  * when :5180 is held by something that is not an nvk-server: an unknown
  * process is never killed and never deployed over.
  */
 export async function killPreviousServers() {
+  assertCutoverSafe();
   stopJob();
   let found = prodServerPids();
-  if (found.strangers.length > 0) {
-    throw new DeployError(`:${PORT} is held by non-nvk-server pid(s) ${found.strangers.join(', ')} — resolve manually`);
-  }
   if (found.pids.length === 0) { say('no previous prod server processes'); return; }
   say(`stopping previous prod server processes: ${found.pids.join(', ')}`);
   for (const pid of found.pids) { try { process.kill(pid, 'SIGTERM'); } catch { /* gone */ } }

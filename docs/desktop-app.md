@@ -9,7 +9,9 @@ starts, restarts, or stops a server.
 - Only `nvk deploy` puts a server on :5180: it builds, snapshots the checkout into
   `~/.novakai-releases/<ts>-<commit>-<rand>/`, stamps it (`release.json`, served at
   `/version`), and swaps the launchd job `com.novakai.prod` onto the new release.
-  A candidate that fails its health check is rolled back to the last good release.
+  A candidate that fails during stop, launch, or health is rolled back to the
+  last good release. On the first migration, the pre-deploy launchd job is
+  preserved and restored instead.
 - The server on :5180 is always a frozen release — `nvk-server` refuses :5180 from
   an unstamped checkout. Dev/scratch boots use `--port 0`.
 - `nvk deploy status` — what is running vs what the checkout has, launchd state,

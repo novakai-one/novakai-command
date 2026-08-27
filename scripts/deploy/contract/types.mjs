@@ -54,3 +54,10 @@ export class DeployError extends Error {
  * @property {string} releaseDir
  * @property {string} commit
  */
+
+/**
+ * @typedef {object} ProdServerScan
+ * The processes observed in the production lane before a cutover begins.
+ * @property {number[]} pids       nvk-server processes owned by the prod lane
+ * @property {number[]} strangers :5180 holders that are not nvk-server
+ */

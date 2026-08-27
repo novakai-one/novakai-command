@@ -25,26 +25,39 @@ let recovery = null;
 //               pre-deploy serve, corrupt stamp) — shown, waited out, never loaded
 //   'foreign'   something answered that is not an nvk-server — never load it
 //   'free'      nothing on the port
-function probe() {
+function readJson(pathname) {
   return new Promise((resolve) => {
-    const req = http.get(`${PROBE_URL}/version`, { timeout: 1000 }, (res) => {
+    const req = http.get(`${PROBE_URL}${pathname}`, { timeout: 1000 }, (res) => {
       let body = '';
       res.on('data', (chunk) => { body += chunk; });
       res.on('end', () => {
         try {
-          const version = JSON.parse(body);
-          if (typeof version.release?.commit === 'string') { resolve('live'); return; }
-          resolve(typeof version.pid === 'number' ? 'unstamped' : 'foreign');
+          resolve({ reachable: true, value: JSON.parse(body) });
         } catch {
-          // HTML or garbage on an nvk path: an old pre-/version server or a
-          // stranger — either way not a deployed release.
-          resolve('foreign');
+          resolve({ reachable: true, value: null });
         }
       });
     });
-    req.on('error', () => resolve('free'));
-    req.on('timeout', () => { req.destroy(); resolve('free'); });
+    req.on('error', () => resolve({ reachable: false, value: null }));
+    req.on('timeout', () => { req.destroy(); resolve({ reachable: false, value: null }); });
   });
+}
+
+async function probe() {
+  const versionResponse = await readJson('/version');
+  if (!versionResponse.reachable) return 'free';
+  const version = versionResponse.value;
+  if (typeof version?.release?.commit === 'string') return 'live';
+  if (typeof version?.pid === 'number') return 'unstamped';
+
+  // Servers from before /version return the shell HTML above. Their bootstrap
+  // contract still proves they are nvk-server, so treat them as replaceable
+  // pre-deploy servers instead of an unrelated port conflict.
+  const bootstrap = (await readJson('/bootstrap.json')).value;
+  if (typeof bootstrap?.wsUrl === 'string' && typeof bootstrap?.protocolVersion === 'number') {
+    return 'unstamped';
+  }
+  return 'foreign';
 }
 
 /** Record who holds 5180 so the fail-loud splash has evidence in the log. */
