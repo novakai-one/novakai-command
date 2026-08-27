@@ -23,11 +23,22 @@ const adapters = new Map([
 ]);
 
 const [group, ...args] = process.argv.slice(2);
+
+// Deploy is plain Node (no tsx): it is the one way code reaches the live server.
+if (group === 'deploy') {
+  const deployed = spawnSync(
+    process.execPath,
+    [path.join(repoRoot, 'scripts/nvk-deploy.mjs'), ...args],
+    { stdio: 'inherit', env: process.env },
+  );
+  process.exit(deployed.status ?? 1);
+}
+
 const adapter = adapters.get(group);
 if (!adapter) {
   process.stderr.write(`${JSON.stringify({
     code: 'Usage',
-    message: `usage: nvk ${[...adapters.keys()].join('|')} <verb> [options]`,
+    message: `usage: nvk ${['deploy', ...adapters.keys()].join('|')} <verb> [options]`,
   })}\n`);
   process.exitCode = 2;
 } else {

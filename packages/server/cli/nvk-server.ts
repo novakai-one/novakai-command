@@ -5,21 +5,18 @@
 //              [--watchdog-dir <dir>]
 //
 // The port is always stated (--port or NOVAKAI_PORT): 5180 belongs to the live
-// instance, so no invocation may land there by omission. `--port 0` asks the OS
-// for a free one and the ready line prints it.
+// instance and is REFUSED unless this code is a stamped release — only
+// `nvk deploy` (scripts/deploy/) puts a server on 5180. Dev and scratch boots
+// use `--port 0` (the OS picks; the ready line prints it) or any other port.
 //
-// Cold start (§13 disposition 4):
-//   1) npx tsx packages/server/cli/nvk-token.ts mint person_chris \
-//        --grants layout,settings,conversationView --roles Human
-//   2) npx tsx packages/server/cli/nvk-server.ts --port 5180
-//
-// One port serves the shell bundle, /bootstrap.json and the WS upgrade.
+// One port serves the shell bundle, /bootstrap.json, /version and the WS upgrade.
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { mintClientOpId } from '@novakai/foundation/dist/contract/index.js';
 import { bootServer } from '../core/boot.js';
 import { openConfigStore } from '../core/config/store.js';
-import { resolveDataRoot, resolveServerLaunch } from '../core/launch-options.js';
+import { LIVE_SERVER_PORT, resolveDataRoot, resolveServerLaunch } from '../core/launch-options.js';
+import { readReleaseStamp } from '../core/release-stamp.js';
 import {
   ConfigObjectInput as ConfigObjectInputSchema, configKeyOf, type ConfigObjectInput,
 } from '../contract/config.js';
@@ -93,6 +90,15 @@ if (process.argv[2] === 'config-set') {
 const launch = resolveServerLaunch(invocation);
 if (!launch.ok) {
   console.error(`\n[nvk-server] ${launch.error.code}\n  ${launch.error.message}\n`);
+  process.exit(2);
+}
+
+// The live port is deploy-only: a mutable-checkout server on 5180 is exactly
+// the runtime/data skew the deploy pipeline exists to kill, so it is refused
+// here — at the last unsupervised door — not just discouraged in docs.
+if (launch.value.port === LIVE_SERVER_PORT && readReleaseStamp().state !== 'stamped') {
+  console.error(`\n[nvk-server] LivePortRequiresRelease\n  :${LIVE_SERVER_PORT} is the live instance's port and`
+    + ' only runs stamped releases — use `nvk deploy`, or --port 0 for a dev/scratch boot\n');
   process.exit(2);
 }
 

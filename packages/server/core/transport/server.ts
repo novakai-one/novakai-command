@@ -21,6 +21,7 @@ import {
 } from '../../contract/protocol.js';
 import type { ArtifactsHost } from '../../../artifacts/contract/index.js';
 import { handleArtifactHttpRequest } from '../b2a/artifact-http.js';
+import { readReleaseStamp } from '../release-stamp.js';
 
 /** Red gate 4: not configurable. The server never listens off loopback. */
 const HOST = '127.0.0.1';
@@ -107,8 +108,16 @@ function writeToken(root: string): string {
   return token;
 }
 
+/**
+ * Bind the server's single loopback port: shell bundle static files,
+ * /bootstrap.json (token + wsUrl), token-free /version (release provenance),
+ * and the nvk-ws v1 WebSocket upgrade.
+ */
 export async function startTransport(options: StartTransportOptions): Promise<RunningTransport> {
   const token = writeToken(options.root);
+  const stampReading = readReleaseStamp();
+  const release = stampReading.state === 'stamped' ? stampReading.release : null;
+  const startedAt = new Date().toISOString();
   const staticRoot = options.staticDir ? path.resolve(options.staticDir) : null;
   const sockets = new Set<WebSocket>();
   const wss = new WebSocketServer({ noServer: true });
@@ -144,9 +153,26 @@ export async function startTransport(options: StartTransportOptions): Promise<Ru
         wsUrl: `ws://${HOST}:${(http.address() as { port: number }).port}${WS_PATH}`,
         token,
         protocolVersion: PROTOCOL_VERSION,
+        release,
       };
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
       res.end(JSON.stringify(body));
+      return;
+    }
+    // Which code snapshot this process runs — `nvk deploy` health-checks it,
+    // `nvk deploy status` diagnoses skew and ghosts with it. Token-free by
+    // design: it names code, never data.
+    if (url.pathname === '/version') {
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
+      res.end(JSON.stringify({
+        release,
+        // 'stamped' | 'unstamped' (intentional dev boot) | 'corrupt' (broken
+        // deployment) — distinguished so operators can tell which they have.
+        stamp: stampReading.state,
+        ...(stampReading.state === 'corrupt' ? { reason: stampReading.reason } : {}),
+        pid: process.pid,
+        startedAt,
+      }));
       return;
     }
     if (!staticRoot) { res.writeHead(404).end('not found'); return; }
