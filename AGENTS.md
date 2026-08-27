@@ -140,6 +140,14 @@ agents and for Chris.
   `nvk agent spawn --role <role> --name <name>`, `nvk runtime`, `nvk terminal`,
   `nvk watch`, etc. See `packages/scripts.md`. These talk to the packages/
   Runtime (port 5190), not the old src/backend lanes above.
+- **Spawning a child agent (any agent may do this):**
+  `node scripts/nvk.mjs child spawn --name <name> --brief "<text>"`.
+  Headless, no server involved. Creates the child Agent record with you as
+  `parentAgentId` (your identity comes from `NOVAKAI_AGENT_ID`, already in
+  your environment), runs one headless provider turn, and prints one JSON
+  line to stdout: `{childAgentId, parentAgentId, sessionId, reply}`.
+  Follow-ups: `node scripts/nvk.mjs child send --session <sessionId>
+  --agent <childAgentId> --text "<text>"`. Read the reply from stdout.
 - `CONTEXT.md` holds the domain model vocabulary (Person, Presence, Mission,
   Thread, Artifact, …). Use those terms in code and docs.
 - Teardown law (learned twice, 2026-07-22/23): never kill processes by
