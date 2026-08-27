@@ -13,7 +13,7 @@
 // session id — rather than a mocked internal.
 import type {
   AgentId, AgentRoleProfileId, AgentRunId, AuthenticatedPrincipal, AuthorityScope,
-  B3Result, CommandContext, ControlReplacementPlanId, DelegationGrantId,
+  B3Result, CommandContext, ControlReplacementPlanId, ControllerAttachmentId, DelegationGrantId,
   HumanPrincipalId, ProviderSessionId, ProviderTurnId, ActivityGeneration, IsoUtc,
   NotificationId, NotificationInputReservationId, RecordVersion,
   ResolvedLaunchPlanId, RuntimeEpochId, TerminalInputAttemptId, TerminalInputLeaseId,
@@ -26,9 +26,6 @@ import type {
   AgentControlFacts, AgentControlOutcomeFacts, ControlCapabilityFacts,
 } from './controls.js';
 import type { AgentRelationshipFacts } from './family.js';
-// Type-only, and erased at build: the controllers section is spelled ONCE, in
-// the view that publishes it, so the port and the projection cannot drift.
-import type { AgentRunView } from './runs-api.js';
 import type { LaunchPlanFacts } from './launch-facts.js';
 
 export type {
@@ -233,6 +230,15 @@ export interface TerminalFacts {
   readonly status: 'reserved' | 'starting' | 'live' | 'exited' | 'failed' | 'recovery-required';
 }
 
+/** Current controller attachment truth published by Terminal through the Runtime. */
+export interface AgentRunControllerFacts {
+  readonly attachedCount: number;
+  readonly kinds: readonly (
+    'novakai-shell' | 'external-terminal' | 'script' | 'operations'
+  )[];
+  readonly inputLeaseHolder?: ControllerAttachmentId;
+}
+
 export interface NotificationInputReservationFacts {
   readonly id: NotificationInputReservationId;
   readonly terminalSessionId: TerminalSessionId;
@@ -317,7 +323,7 @@ export interface TerminalPort {
   controllerFacts(
     principal: AuthenticatedPrincipal,
     terminalSessionId: TerminalSessionId,
-  ): Promise<B3Result<AgentRunView['controllers']>>;
+  ): Promise<B3Result<AgentRunControllerFacts>>;
 
   /**
    * Submit one turn as the Runtime, not as a controller. Returns `false` when
