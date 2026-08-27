@@ -117,9 +117,9 @@ export function kimiSessionIdFrom(name: string): string | null {
 }
 
 /**
- * The environment a spawned Agent needs to authenticate as ITSELF when it runs
- * `nvk agent spawn` from inside its own PTY (DEC-B3V4-05). Assembled by the
- * Runtime and merged verbatim; an adapter never invents or reads it.
+ * The environment a spawned Agent needs to authenticate as itself when it uses
+ * a B3 client from its managed PTY. Assembled by the Runtime and merged
+ * verbatim; an adapter never invents or reads it.
  */
 export function mergedEnvironment(
   base: NodeJS.ProcessEnv, runtime: Readonly<Record<string, string>>,

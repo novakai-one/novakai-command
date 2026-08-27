@@ -26,6 +26,7 @@ import { createFakePtyHost } from '../../../terminal/adapters/pty-host/fake.js';
 import { createFakeProviderAdapters } from '../../../agents/b3/contract/index.js';
 import { startRuntimeHost, type RunningRuntimeHost } from '../../core/b3/host.js';
 import { chatRole } from '../governed-role.js';
+import { spawnAgentFixture } from '../support/spawn-agent-fixture.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '..', '..', '..');
@@ -92,7 +93,7 @@ for (const [command, argv] of PAGE_COMMANDS) {
   });
 }
 
-/** A live Runtime with `count` governed Agents spawned through the CLI. */
+/** A live Runtime with `count` governed Agents prepared through its internal test door. */
 async function withAgents(
   count: number, work: (where: readonly string[], agentIds: readonly string[]) => Promise<void>,
 ): Promise<void> {
@@ -110,10 +111,11 @@ async function withAgents(
     for (let index = 0; index < count; index += 1) {
       // Sequential on purpose: a keyset page over `(createdAt,id)` is only
       // meaningfully ordered if the records were not all minted at once.
-      const spawned = await runNvk(['agent', 'spawn', '--role', 'page-builder',
-        '--name', `Pager ${index}`, '--cwd', root, ...where]);
-      assert.equal(spawned.code, 0, `spawn ${index} failed: ${spawned.out}`);
-      agentIds.push(/agent_[0-9a-f-]{36}/u.exec(spawned.out)?.[0] ?? '');
+      const spawned = await spawnAgentFixture({
+        root, port: host.port, roleName: 'page-builder', displayName: `Pager ${index}`,
+        workingDirectory: root,
+      });
+      agentIds.push(String(spawned.agent.agentId));
     }
     await work(where, agentIds);
   } finally {

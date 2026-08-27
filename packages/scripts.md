@@ -86,12 +86,11 @@ Offline adapter over the Spine host (composes messaging, projects, artifacts).
 
 ### `nvk agent` — `packages/server/cli/nvk-agent.ts`
 
-Runtime client: spawn and run governed agents. Verbs (COMMANDS map plus the
+Runtime client for inspecting and operating governed agents. Verbs (COMMANDS map plus the
 `observeCommands`/`messageCommands` tables):
 
 - `roles` — list role profiles
 - `define-role --file <role.json>`
-- `spawn --role <name|id> --name <name> [--task supervised --brief <text>] [--provider claude|codex|kimi] [--model <id>] [--effort <v>] [--cwd <path>]`
 - `list [--state live|final|all] [--limit <n>] [--cursor <c>]`
 - `tree <agentId> [--depth <n>]` (default depth 10)
 - `inspect <agentId|agentRunId>` (id prefix picks the view)
@@ -166,9 +165,6 @@ Durable watcher rules and the notification queue.
   `config-set <key> <jsonValue> [--root <dir>]` (keys: `dev`, `transcript`,
   `supervision`, `provider.<name>`, `principal.<personId>`,
   `binding.<agentId>`).
-- `nvk-agent-spawn` — `packages/server/cli/nvk-agent-spawn.ts`. Compatibility
-  shim: prepends `spawn` to its arguments and forwards to `nvk-agent` in the
-  same process; owns no policy.
 - `nvk-store` — `packages/foundation` bin, `packages/foundation/cli/nvk-store.ts`.
   Foundation contract CLI: `token mint --principal <id> --grants <k,...>`,
   `create --data <json>`, `update --id <id> --patch <json> --expected-version <n>`,
@@ -188,26 +184,6 @@ Durable watcher rules and the notification queue.
   Agent-facing focus query: asks the shell host's JSON-RPC socket
   (`NVK_SHELL_WS`, default `ws://127.0.0.1:4173`) for the current focus and
   prints it as JSON. Pull-only.
-
-## Agent spawning
-
-The new-path spawn is:
-
-```
-nvk agent spawn --role <name|id> --name <name> [--task supervised --brief <text>]
-                [--provider claude|codex|kimi] [--model <id>] [--effort <v>] [--cwd <path>]
-```
-
-`--role` accepts a role name (resolved by the Runtime via
-`b3.agent.resolveRoleByName`) or an `agentRole_` id. Roles come from
-`nvk agent define-role --file <role.json>`; a fresh data root has none.
-`--task supervised` requires `--brief`, and `--brief` without `--task` is
-refused. The alias `nvk-agent-spawn <same args>` forwards byte-for-byte to
-`nvk agent spawn`.
-
-Do not confuse this with `packages/agents`' `nvk-agent` bin: that one
-`spawn`s by `--agent <agentId>` against a `define`d record and runs on the
-mock adapter by default — it is a contract-parity tool, not a real spawn.
 
 ## Usage/help behavior
 

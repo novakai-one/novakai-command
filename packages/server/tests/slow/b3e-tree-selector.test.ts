@@ -26,6 +26,7 @@ import { createFakePtyHost } from '../../../terminal/adapters/pty-host/fake.js';
 import { createFakeProviderAdapters } from '../../../agents/b3/contract/index.js';
 import { startRuntimeHost, type RunningRuntimeHost } from '../../core/b3/host.js';
 import { chatRole } from '../governed-role.js';
+import { spawnAgentFixture } from '../support/spawn-agent-fixture.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '..', '..', '..');
@@ -92,7 +93,7 @@ test('--root still names the data root on agent tree, like everywhere else', asy
   assert.equal(envelopeOf(run).error?.code, 'RuntimeUnavailable', run.out);
 });
 
-/** A live Runtime with one governed Agent, spawned through the CLI. */
+/** A live Runtime with one governed Agent prepared through its internal test door. */
 async function withSpawnedAgent(
   work: (where: readonly string[], agentId: string) => Promise<void>,
 ): Promise<void> {
@@ -106,11 +107,11 @@ async function withSpawnedAgent(
     const roleFile = path.join(root, 'role.json');
     writeFileSync(roleFile, JSON.stringify(chatRole('tree-builder')), 'utf8');
     await runNvk(['agent', 'define-role', '--file', roleFile, ...where]);
-    const spawned = await runNvk(['agent', 'spawn', '--role', 'tree-builder',
-      '--name', 'Rooted', '--cwd', root, ...where]);
-    assert.equal(spawned.code, 0, `spawn failed: ${spawned.out}`);
-    const agentId = /agent_[0-9a-f-]{36}/u.exec(spawned.out)?.[0] ?? '';
-    assert.notEqual(agentId, '', `no AgentId in ${spawned.out}`);
+    const spawned = await spawnAgentFixture({
+      root, port: host.port, roleName: 'tree-builder', displayName: 'Rooted',
+      workingDirectory: root,
+    });
+    const agentId = String(spawned.agent.agentId);
     await work(where, agentId);
   } finally {
     await host?.close();

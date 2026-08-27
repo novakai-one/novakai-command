@@ -61,7 +61,6 @@ const INVOCATIONS: ReadonlyArray<readonly [string, readonly string[]]> = [
   ['runtime.status', ['runtime', 'status']],
   ['runtime.doctor', ['runtime', 'doctor']],
   ['runtime.stop', ['runtime', 'stop', '--live-runs', 'refuse', '--expect-epoch', EPOCH]],
-  ['agent.spawn', ['agent', 'spawn', '--role', 'builder', '--name', 'Nova']],
   ['agent.list', ['agent', 'list']],
   ['agent.tree', ['agent', 'tree', AGENT]],
   ['agent.inspect.run', ['agent', 'inspect', RUN]],
@@ -157,7 +156,7 @@ test('the two dual-form commands name the operation that actually ran', async ()
  */
 const PUBLISHED: readonly string[] = [
   'runtime.ensure', 'runtime.status', 'runtime.doctor', 'runtime.stop',
-  'agent.spawn', 'agent.list', 'agent.tree',
+  'agent.list', 'agent.tree',
   'agent.inspect.run', 'agent.inspect.agent',
   'agent.attach', 'agent.attach.stream',
   'agent.interrupt', 'agent.stop', 'agent.stop-tree.prepare', 'agent.stop-tree.confirm',

@@ -125,7 +125,7 @@ export interface ProviderLaunchInput {
   readonly reservedProviderSessionId: ProviderSessionId;
   /**
    * Environment the Runtime needs the child to inherit — how a spawned Agent
-   * authenticates as ITSELF when it runs `nvk agent spawn` (DEC-B3V4-05).
+   * authenticates as itself when it uses a B3 client.
    * The adapter merges it; it never invents or inspects it.
    */
   readonly runtimeEnvironment: Readonly<Record<string, string>>;

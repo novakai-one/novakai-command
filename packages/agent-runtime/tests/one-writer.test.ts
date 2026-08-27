@@ -97,23 +97,7 @@ test('the legacy Agents tree does not know the B3b Run kinds exist', () => {
   assert.deepEqual(offenders, []);
 });
 
-test('the governed spawn has exactly one production door', () => {
-  // §17.1's compatibility executable "owns no policy and has no separate
-  // implementation". The cheapest way to hold red gate 23 is for there to be
-  // nothing in it that COULD drift, so this checks that it still forwards
-  // rather than having quietly grown a body.
-  const compatibility = readFileSync(
-    path.join(repoRoot, 'packages', 'server', 'cli', 'nvk-agent-spawn.ts'), 'utf8',
-  );
-  assert.match(compatibility, /import\(['"]\.\/nvk-agent\.js['"]\)/,
-    'the compatibility executable must hand over to the real command');
-  const body = compatibility
-    .split('\n')
-    .filter((line) => line.trim() !== '' && !line.trim().startsWith('//'));
-  assert.ok(body.length <= 5,
-    `nvk-agent-spawn has grown a body (${String(body.length)} lines) — that is a second policy path`);
-
-  // And exactly one production module builds the b3.agent.* method table.
+test('the governed spawn has exactly one internal production door', () => {
   const builders: string[] = [];
   for (const file of productionSources(path.join(repoRoot, 'packages'))) {
     const source = readFileSync(file, 'utf8');

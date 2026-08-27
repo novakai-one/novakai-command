@@ -123,7 +123,7 @@ test('an ambiguous name is refused, and EVERY candidate id is named', async () =
 
 test('a retired profile still resolves — a lookup is not a launch policy', async () => {
   // The behaviour the client-side filter got wrong. `status === 'active'` made
-  // a retired role INVISIBLE, so `nvk agent spawn --role builder` answered "no
+  // a retired role INVISIBLE, so the former CLI resolver answered "no
   // active role is named builder" — which is false; there is one, and it is
   // retired. The launch plan already refuses it BY NAME (`retiredRole`), which
   // is the answer that tells the operator what actually happened.

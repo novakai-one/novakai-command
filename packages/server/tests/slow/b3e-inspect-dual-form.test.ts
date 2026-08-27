@@ -22,6 +22,7 @@ import { createFakePtyHost } from '../../../terminal/adapters/pty-host/fake.js';
 import { createFakeProviderAdapters } from '../../../agents/b3/contract/index.js';
 import { startRuntimeHost, type RunningRuntimeHost } from '../../core/b3/host.js';
 import { chatRole } from '../governed-role.js';
+import { spawnAgentFixture } from '../support/spawn-agent-fixture.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '..', '..', '..');
@@ -52,7 +53,7 @@ interface LiveAgent {
   readonly runId: string;
 }
 
-/** A live Runtime with one governed Agent spawned through the CLI itself. */
+/** A live Runtime with one governed Agent prepared through its internal test door. */
 async function withSpawnedAgent(work: (live: LiveAgent) => Promise<void>): Promise<void> {
   const root = mkdtempSync(path.join(tmpdir(), 'nvk-b3e-inspect-'));
   let host: RunningRuntimeHost | null = null;
@@ -66,13 +67,12 @@ async function withSpawnedAgent(work: (live: LiveAgent) => Promise<void>): Promi
     const defined = await runNvk(['agent', 'define-role', '--file', roleFile, ...where]);
     assert.equal(defined.code, 0, `define-role failed: ${defined.out}`);
 
-    const spawned = await runNvk(['agent', 'spawn', '--role', 'inspect-builder',
-      '--name', 'Inspector', '--cwd', root, ...where]);
-    assert.equal(spawned.code, 0, `spawn failed: ${spawned.out}`);
-    const agentId = /agent_[0-9a-f-]{36}/u.exec(spawned.out)?.[0] ?? '';
-    const runId = /agentRun_[0-9a-f-]{36}/u.exec(spawned.out)?.[0] ?? '';
-    assert.notEqual(agentId, '', `no AgentId in ${spawned.out}`);
-    assert.notEqual(runId, '', `no AgentRunId in ${spawned.out}`);
+    const spawned = await spawnAgentFixture({
+      root, port: host.port, roleName: 'inspect-builder', displayName: 'Inspector',
+      workingDirectory: root,
+    });
+    const agentId = String(spawned.agent.agentId);
+    const runId = String(spawned.run.id);
 
     await work({ where, agentId, runId });
   } finally {
