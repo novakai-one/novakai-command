@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { b3ok } from '@novakai/foundation/contract';
-import { createFakeProviderAdapters } from '../../../agents/b3/contract/index.js';
+import { createFakeProviderAdapters } from '../../../agents/governed/contract/index.js';
 import { createFakePtyHost, type FakePty } from '../../../terminal/adapters/pty-host/fake.js';
 import { composeSupervision } from '../../../supervision/public/index.js';
 import { buildRuntimeHostSupervisionMethods } from '../../core/runtime-host/supervision-methods.js';

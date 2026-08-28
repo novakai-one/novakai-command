@@ -24,7 +24,7 @@ import type {
   AgentsPort, ProviderPort, ProviderTurnInputAttemptFacts, RunCredentialPort,
   TerminalPort, TurnDeliveryStep,
 } from '../../../agent-runtime/contract/index.js';
-import type { GovernedAgentsContract } from '../../../agents/b3/contract/index.js';
+import type { GovernedAgentsContract } from '../../../agents/governed/contract/index.js';
 import type { TerminalContract, TerminalSessionView } from '../../../terminal/contract/index.js';
 import type {
   LaunchAuthorityRegistrar,

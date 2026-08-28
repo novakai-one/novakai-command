@@ -1,4 +1,4 @@
-// Continuations (DEC-B3V4-19, §13.6, red gate 8).
+// Continuations: restarting an Agent as a new Run that replaces the old one.
 //
 // Chris's actual pain, from question 23: `--resume` is often NOT what you want,
 // because it reloads the whole context and every turn costs more. So the four
@@ -26,7 +26,7 @@ import { runSkillsGate } from './gate.js';
 import { startReplacement, type ContinuationWork } from './continue-launch.js';
 import {
   bindContinuedTranscript, drainOldEndpoint, transferEndpoint, type DrainedEndpoint,
-} from './spawn-b3c.js';
+} from './custody-stages.js';
 import { closeRun } from './lifecycle.js';
 import { insideClosingTree, treeClosing } from './stop-tree.js';
 
@@ -112,15 +112,16 @@ async function unwind(
 /**
  * The Run a failed continuation was replacing.
  *
- * §13.6 fences it FIRST, so it stops accepting new work while the replacement is
- * provisioned. When the replacement dies, that fence is a promise about a
- * successor that does not exist: the Run is neither live nor final, its provider
- * is still running, and until now it appeared in no recovery list at all — it
- * read as in-flight for ever (NVK-KIMI-030 N-2).
+ * A continuation fences the old Run FIRST, so it stops accepting new work
+ * while the replacement is provisioned. When the replacement dies, that fence
+ * is a promise about a successor that does not exist: the Run is neither live
+ * nor final, its provider is still running, and without this it appears in no
+ * recovery list at all — it reads as in-flight for ever.
  *
  * It is not stopped here. Stopping it would kill a working provider on the
- * strength of a failure that happened somewhere else, and §20's rule for an
- * unconfirmed old endpoint is "human/script decides". So it is recorded as
+ * strength of a failure that happened somewhere else, and the rule for an
+ * unconfirmed old endpoint is "a human or a script decides". So it is recorded
+ * as
  * needing recovery, with the reason, and stays continuable and stoppable.
  */
 async function releaseFencedRun(
@@ -142,7 +143,7 @@ async function releaseFencedRun(
   return patched.ok ? b3ok(null) : b3fail(patched.error);
 }
 
-/** The journal, plus the reservation minted before any effect (§5.4, §20). */
+/** The journal, plus the reservation minted before any effect. */
 async function openContinuationJournal(
   core: RunsCore,
   context: CommandContext,
@@ -167,7 +168,7 @@ async function openContinuationJournal(
 }
 
 /**
- * §13.6's order. The old Run is fenced FIRST, so nothing new can start on it
+ * The continuation order. The old Run is fenced FIRST, so nothing new can start on it
  * while the new one is being provisioned, and it goes final LAST, so there is
  * never a moment with no Run at all.
  */
@@ -191,7 +192,7 @@ async function performContinuation(
   });
   if (!linked.ok) return linked;
 
-  // §13.6: the claim moves in ONE store operation, carrying every queued inbox
+  // The claim moves in ONE store operation, carrying every queued inbox
   // item with it. This is where a Message accepted mid-continuation stops being
   // the old Run's and becomes the new one's, with no instant belonging to both.
   const transferred = await transferEndpoint(core, {
@@ -203,7 +204,7 @@ async function performContinuation(
   if (!transferred.ok) return transferred;
   operation = transferred.value;
 
-  // §13.6's transcript half. The replacement is a NEW provider context with a
+  // The transcript half. The replacement is a NEW provider context with a
   // new ProviderSession, so its custody cannot be the retired Run's — that
   // binding names the retired Run's file. The ladder drained, finalised and
   // transferred and never bound, so a continued Agent's LIVE Run had no
@@ -220,8 +221,8 @@ async function performContinuation(
   // A replacement Run is a NEW provider context, so it confirms its skills the
   // same way a fresh spawn does. Its semantic turns require the replacement's
   // own Transcript binding, so the custody rung must be committed first.
-  // Restarting is not a way around the gate: §6.3 gives every managed launch
-  // its own, and a parent's earlier confirmation is never accepted on a
+  // Restarting is not a way around the gate: every managed launch gets its
+  // own, and a parent's earlier confirmation is never accepted on a
   // successor's behalf.
   const gated = await runSkillsGate(core, context, {
     agentRun: started.value.agentRun,
@@ -252,9 +253,10 @@ async function performContinuation(
 }
 
 /**
- * §13.6's first half: the old Run stops accepting new work, and every downstream
- * finalisation is recorded — including the ones whose owning capability arrives
- * in a later slice, which are `not-needed` rather than silently absent.
+ * The continuation's first half: the old Run stops accepting new work, and
+ * every downstream finalisation is recorded — including the ones whose owning
+ * capability is not composed in this host, which are `not-needed` rather than
+ * silently absent.
  */
 async function fenceAndDrainOldRun(
   core: RunsCore, work: ContinuationWork,
@@ -268,7 +270,7 @@ async function fenceAndDrainOldRun(
   }, { state: 'continuation-pending' });
   if (!fenced.ok) return fenced;
 
-  // The real drain and the real final watermark (§13.6). What is handed to the
+  // The real drain and the real final watermark. What is handed to the
   // transfer below is the position the mirror actually reached, never a value
   // this function made up.
   const drained = await drainOldEndpoint(core, {
@@ -276,7 +278,10 @@ async function fenceAndDrainOldRun(
   });
   if (!drained.ok) return drained;
 
-  // Usage genuinely belongs to B3d; it is the only rung here still deferred.
+  // Usage finalisation is the one rung still without an owning capability in
+  // this host.
+  // LOAD-BEARING DATA: 'B3d' is written into durable journals as
+  // `notNeededBecause`; renaming it would mislabel already-persisted truth.
   const settled = await advance(core, drained.value.operation, {
     stage: 'old-usage-finalised', owner: 'supervision',
     outcome: 'not-needed', notNeededBecause: 'B3d',
@@ -290,7 +295,7 @@ async function fenceAndDrainOldRun(
 /**
  * `inherit-plan` keeps the exact plan; `refresh-role` rebuilds it from the
  * role as it is TODAY; a signed replacement uses the plan a control proposed.
- * The caller says which — none of the three happens by default (DEC-B3V4-31).
+ * The caller says which — none of the three happens by default.
  */
 async function resolvePlanFor(
   core: RunsCore, context: CommandContext, work: ContinuationWork,
@@ -323,7 +328,7 @@ async function resolvePlanFor(
       ? { inheritedPlanId: work.oldRun.launchPlanId } : {}),
     workingDirectory: previous.value.workingDirectory,
     // A continuation inherits whether its predecessor was supervised: a gate
-    // cannot be dropped by restarting (§6.3).
+    // cannot be dropped by restarting.
     supervised: previous.value.skillsConfirmationGate.mode === 'required-two-turn',
   });
 }

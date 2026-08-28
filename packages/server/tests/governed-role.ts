@@ -104,4 +104,4 @@ import { b3ok } from '@novakai/foundation/contract';
 import {
   createFakeProviderAdapters,
   type InteractiveProviderAdapter, type ProviderAdapterRegistry, type ProviderKind,
-} from '../../agents/b3/contract/index.js';
+} from '../../agents/governed/contract/index.js';

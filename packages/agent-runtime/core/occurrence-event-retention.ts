@@ -1,3 +1,8 @@
+// Durable custody of occurrence events. The live event stream is an in-process
+// log (see `events.ts`), so the Runtime retains the exact envelope of each
+// occurrence-worthy event before it becomes observable — that is what lets an
+// occurrence query answer completely after a restart. Custody, not ownership:
+// the source capability remains the writer of the fact.
 import {
   b3err, b3fail, b3ok, canonicalRequestHash, deriveClientOpId, deterministicId,
   type B3Result, type RecordEnvelope,

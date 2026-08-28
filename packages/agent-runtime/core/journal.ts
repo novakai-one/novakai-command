@@ -1,4 +1,4 @@
-// The recoverable operation journal (DEC-B3V4-26, §6.3, §13.5).
+// The recoverable operation journal.
 //
 // The rule this file exists for: NO Agent, Run, PTY, provider, Messaging or
 // Transcript effect happens before the first RunOperation record is durable. A
@@ -27,8 +27,7 @@ import type { Persisted } from './runs-store.js';
 /**
  * A stage's effect key. Stable across every retry of the same command, so
  * recovery can ask an owner "did YOU already do this?" instead of guessing from
- * timestamps (§3.2's "every external saga effect derives its idempotency key
- * from the receipt plus stage name").
+ * timestamps. Derived from the command receipt plus the stage name.
  */
 export function effectKeyFor(operationId: string, stage: RunOperationStage): string {
   return `${operationId}:${stage}`;
@@ -45,8 +44,9 @@ export interface OpenedOperation {
  *
  * The id is derived from the command receipt, so the same `clientOpId` finds
  * the same journal after a crash. `reservedProviderSessionId` is minted HERE,
- * before the first append, and never changes: §20's "resume same operation and
- * same reservation" is only possible if the reservation predates every effect.
+ * before the first append, and never changes: "resume the same operation and
+ * the same reservation" is only possible if the reservation predates every
+ * effect.
  */
 export async function openOperation(
   core: RunsCore,
@@ -109,7 +109,7 @@ export interface StageAdvance {
   readonly stage: RunOperationStage;
   readonly owner: string;
   readonly ownerObjectId?: string;
-  /** `not-needed` records a stage whose owning capability arrives in a later slice. */
+  /** `not-needed` records a stage whose owning capability is not composed in this host. */
   readonly outcome?: 'completed' | 'not-needed';
   readonly notNeededBecause?: string;
 }
@@ -165,8 +165,7 @@ export async function advance(
  * answer. Reading the whole array instead meant one unresolvable line — and boot
  * appended one to every abandoned operation — made the record permanently
  * unclosable: repair verified the effect, appended the proof, and then refused
- * to close because the superseded doubt was still in the list
- * (NVK-KIMI-031 finding 1).
+ * to close because the superseded doubt was still in the list.
  */
 export function unresolvedUncertainty(
   operation: RunOperation,
@@ -205,9 +204,9 @@ function stageForState(state: RunOperation['state']): RunOperationStage {
 /**
  * Undo what CAN be undone, and say plainly what could not.
  *
- * §13.5: "an uncertain provider/PTY effect is reconciled, not blindly repeated
- * or killed". A terminal this operation itself started is ours to stop; a
- * provider session we merely reserved never became anything to compensate.
+ * An uncertain provider/PTY effect is reconciled, never blindly repeated or
+ * killed. A terminal this operation itself started is ours to stop; a provider
+ * session we merely reserved never became anything to compensate.
  */
 export async function compensate(
   core: RunsCore,
@@ -218,7 +217,7 @@ export async function compensate(
   // RE-READ. The caller holds the journal as it was when the command opened it,
   // which is before any stage ran — so compensation used to see no terminal
   // stage and no `newRunId`, compensate nothing, and then lose its CAS against
-  // a record that had moved on several times (NVK-KIMI-028 finding 5).
+  // a record that had moved on several times.
   const current = await core.store.read<RunOperation>('runOperation', stale.id);
   if (!current.ok) return current;
   const operation = current.value ?? stale;
@@ -241,7 +240,7 @@ export async function compensate(
   }
   // The Run this attempt reserved is settled too. Compensation used to stop the
   // PTY and walk away, leaving a Run that says `provisioning` forever under a
-  // Runtime that will never finish provisioning it (§20, hold-out G7).
+  // Runtime that will never finish provisioning it.
   const closed = await closeReservedRun(core, operation, outcomes);
   if (!closed.ok) return closed;
 

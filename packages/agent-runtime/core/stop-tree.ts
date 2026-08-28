@@ -1,4 +1,4 @@
-// Stopping a whole subtree (§13.7, DEC-B3V4-11).
+// Stopping a whole subtree.
 //
 // Kept apart from `lifecycle.ts` because it is a different KIND of operation: a
 // separate scope, a separate confirmation, a fence, and a per-Agent result set
@@ -54,7 +54,7 @@ export function stopTreeToken(rootAgentId: AgentId, descendants: readonly AgentI
  * Fence, snapshot until stable, stop bottom-up, record every Agent's result.
  * The fence is released only on complete success — a partial failure stays
  * `tree-stop-pending` so the same operation can be resumed rather than a
- * half-stopped subtree quietly unfreezing (§13.7 step 7).
+ * half-stopped subtree quietly unfreezing.
  */
 export async function stopAgentTree(
   core: RunsCore, context: CommandContext, input: StopAgentTreeInput,
@@ -90,12 +90,12 @@ export async function stopAgentTree(
  * Release the fence and settle — or REFUSE, naming the operation to resume.
  *
  * A partial stop used to come back `ok` carrying a `tree-stop-pending`
- * operation. The command receipt above then settled `succeeded` over it, so the
- * retry §20 promises ("resume same operation") replayed that pending answer
+ * operation. The command receipt above then settled `succeeded` over it, so
+ * the promised retry ("resume same operation") replayed that pending answer
  * instead of running, and the half-stopped subtree stayed half-stopped. The
  * outcome of a command that did not do what it was asked is a typed failure —
  * retryable, because the same request with the same key is exactly what should
- * be sent again (§11).
+ * be sent again.
  */
 export async function settleTreeStop(
   core: RunsCore,
@@ -136,7 +136,7 @@ export async function fenceOfOperation(
  * The exact set the caller was SHOWN, bottom-up. A token that no longer matches
  * means the subtree changed between preparing and confirming, so the fence is
  * released and the caller is asked to look again — stopping something they have
- * not seen is precisely the surprise §13.7 exists to prevent.
+ * not seen is precisely the surprise the fence exists to prevent.
  */
 async function confirmedOrder(
   core: RunsCore,
@@ -219,8 +219,8 @@ async function releaseFence(
 }
 
 /**
- * §13.7 step 4: "repeatedly snapshot until all pre-fence descendants are
- * included". Two identical reads in a row mean the fence is holding.
+ * Snapshot repeatedly until all pre-fence descendants are included. Two
+ * identical reads in a row mean the fence is holding.
  */
 async function stableSnapshot(
   core: RunsCore, context: CommandContext, rootAgentId: AgentId,
@@ -274,7 +274,7 @@ async function unseenChildren(
   return b3ok(next);
 }
 
-/** Whether a closing tree currently forbids mutating this Agent (§13.7 step 3). */
+/** Whether a closing tree currently forbids mutating this Agent. */
 export async function insideClosingTree(
   core: RunsCore, context: CommandContext, agentId: AgentId,
 ): Promise<B3Result<TreeMutationFence | null>> {

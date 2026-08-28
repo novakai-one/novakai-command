@@ -1,6 +1,6 @@
 import { b3err, b3fail, b3ok, type B3Result } from '@novakai/foundation/contract';
 import type { ComposedAgentRuns } from '../../../agent-runtime/contract/index.js';
-import type { GovernedAgentsContract } from '../../../agents/b3/contract/index.js';
+import type { GovernedAgentsContract } from '../../../agents/governed/contract/index.js';
 import type { ProviderUsageEvidenceContract } from '../../../agents/contract/index.js';
 import type { MessagingRuntimeApi } from '../../../messaging/contract/index.js';
 import {

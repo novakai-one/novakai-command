@@ -1,11 +1,11 @@
 /* eslint-disable max-lines -- Gate orchestration is one atomic safe-boundary policy. */
 
-// The carried-forward two-turn skills gate (B1-CF-001, §6.3, AMD-001 A-03).
+// The two-turn skills gate.
 //
-// Chris's rule, from Build 1: an agent must confirm it has its skills BEFORE it
-// does any work. B3b makes that structural rather than hopeful — the work
-// instruction is held behind the operation fence and is only released by an
-// exact, canonical confirmation.
+// The rule: an agent must confirm it has its skills BEFORE it does any work.
+// The gate makes that structural rather than hopeful — the work instruction is
+// held behind the operation fence and is only released by an exact, canonical
+// confirmation.
 //
 // Three properties do the work:
 //   - turn 1 contains task CONTEXT and the pinned skill references, and an
@@ -283,8 +283,8 @@ interface SentTurn {
 
 /**
  * Turn 1. Replay-safe by construction: the stage is recorded with its effect
- * key, so a retry that already sent it does not send it again (§13.5's "retry
- * observes transcript before sending again").
+ * key, so a retry that already sent it does not send it again: a retry
+ * observes the transcript before sending again.
  */
 // eslint-disable-next-line sonarjs/cognitive-complexity -- Preserves ordered prepare/execute/settle cuts.
 async function sendConfirmationTurn(
@@ -305,7 +305,7 @@ async function sendConfirmationTurn(
       true));
   }
 
-  // §13.5: "retry observes transcript before sending again". A crash between
+  // A retry observes the transcript before sending again. A crash between
   // submitting turn 1 and journalling it leaves a prompt the journal has no
   // record of; re-prompting would ask the same agent the same question twice.
   // Whatever it has already said is the evidence that it was asked.
@@ -463,8 +463,8 @@ async function awaitConfirmation(
  * How long a turn may show NO sign of having been received before the gate
  * stops waiting for an answer and says what it actually knows.
  *
- * Twenty seconds against measured receive latencies of 0.6–0.8 s from the write
- * (NVK-KIMI-078 §4) — roughly 25× the slowest observed — and a sixth of the
+ * Twenty seconds against measured receive latencies of 0.6–0.8 s from the
+ * write — roughly 25× the slowest observed — and a sixth of the
  * gate's own 120 s. Also capped at a quarter of whatever `gateTimeoutMs` is, so
  * a host that shortens the gate does not end up with a fast-fail that can never
  * fire before the deadline it was supposed to save.
@@ -518,9 +518,9 @@ async function neverStarted(
 }
 
 /**
- * The comparison §6.3 specifies: exact set, canonical order, no missing, extra
- * or duplicate token. Display names and path labels are explanatory only and
- * are never comparison keys.
+ * The comparison the gate specifies: exact set, canonical order, no missing,
+ * extra or duplicate token. Display names and path labels are explanatory only
+ * and are never comparison keys.
  */
 export function judge(
   line: string, marker: string, expected: readonly string[], agentRunId: string,

@@ -1,6 +1,7 @@
-// packages/agents/contract — Pass 2 §5 (agents-lite) + §2.1 terminal mini-contract
-// payloads (R3-15) + §6 agents error shapes. Foundation owns envelope/brands;
-// this package re-uses them (never redefines) via the foundation contract path.
+// The Agents wire schemas: agent and skill definitions, spawn payloads, and
+// the presence events a host subscribes to. Foundation owns envelopes and
+// branded ids; this package re-uses them (never redefines) via the foundation
+// contract path.
 import { z } from 'zod';
 import { PermissionLevel } from '@novakai/foundation/dist/contract/schemas.js';
 
@@ -24,21 +25,21 @@ export type ProviderName = z.infer<typeof ProviderName>;
 export const AgentOrigin = z.enum(['nvk-spawned', 'provider-spawned', 'agent-spawned']);
 export type AgentOrigin = z.infer<typeof AgentOrigin>;
 
-// ── Agent definition v2 (S2a: AGT-004, DEC-S2-1, §22 ruling 4) ──────────────
+// ── Agent definition v2 ─────────────────────────────────────────────────────
 // permissionLevel = the ENVELOPE field only; the def carries no permission
-// field of its own. No provider-specific fields (red gate S2-8).
+// field of its own, and no provider-specific fields.
 export const HookEvent = z.enum(['onSpawn', 'onMessagePre', 'onMessagePost', 'onExit']);
 export type HookEvent = z.infer<typeof HookEvent>;
 
-// v1 actions = exactly two (DEC-S2-2; everything else is S3+).
+// v1 actions = exactly two; nothing else exists yet.
 export const HookAction = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('log-to-trace'), message: z.string().default('') }),
   z.object({ kind: z.literal('inject-context-text'), text: z.string().min(1) }),
 ]);
 export type HookAction = z.infer<typeof HookAction>;
 
-// Subscriptions live ON the agent object (R3-18 single-object mutation);
-// execution order = array order = creation order (§22 ruling 2).
+// Subscriptions live ON the agent object (single-object mutation);
+// execution order = array order = creation order.
 export const HookSubscription = z.object({
   id: z.string().min(1), // hook_<uuid>, stamped by the registry
   event: HookEvent,
@@ -71,12 +72,12 @@ export const AgentDefinition = z.object({
   sessions: z.array(z.string().min(1)).default([]),
   instructions: z.string().default(''),   // provider-neutral system-prompt text
   hooks: z.array(HookSubscription).default([]),
-  skills: z.array(z.string().min(1)).default([]), // skill id refs (DEC-S2-4)
+  skills: z.array(z.string().min(1)).default([]), // skill id refs
   status: z.enum(['defined', 'archived']).default('defined'),
 });
 export type AgentDefinitionT = z.infer<typeof AgentDefinition>;
 
-// ── Skills registry (S2a: DEC-S2-4, §22 ruling 5) ───────────────────────────
+// ── Skills registry ─────────────────────────────────────────────────────────
 // Registry records hold path refs to skill dirs; v1 never parses/executes.
 export const SkillDefinition = z.object({
   kind: z.literal('skill'),
@@ -91,13 +92,13 @@ export const SkillDefinition = z.object({
 });
 export type SkillDefinitionT = z.infer<typeof SkillDefinition>;
 
-// ── Terminal mini-contract payloads (R3-15: exactly five ops; model-switch excluded) ──
+// ── Spawn payloads (exactly five ops; model-switch excluded) ──
 export const SpawnOpts = z.object({
   model: z.string().min(1).optional(),
   cwd: z.string().optional(),
   argv: z.array(z.string()).optional(),
   env: z.record(z.string()).optional(),
-  /** S2a (§22 ruling 5): resolved skill DIR paths the adapter must make
+  /** Resolved skill DIR paths the adapter must make
    * available to the spawned session via the provider's declared mechanism. */
   skills: z.array(z.string()).optional(),
 }).default({});
@@ -119,7 +120,7 @@ export const SpawnResponse = z.object({
 });
 export type SpawnResponse = z.infer<typeof SpawnResponse>;
 
-// PtyEvent — raw terminal truth (terminal owns it; agents re-publishes, R3-17)
+// PtyEvent — raw terminal truth (terminal owns it; agents re-publishes)
 export const PtyEvent = z.discriminatedUnion('type', [
   z.object({ type: z.literal('spawned'), sessionId: z.string(), at: z.string().datetime(), pid: z.number().int() }),
   z.object({ type: z.literal('output'), sessionId: z.string(), at: z.string().datetime(), data: z.string() }),
@@ -128,7 +129,7 @@ export const PtyEvent = z.discriminatedUnion('type', [
 ]);
 export type PtyEvent = z.infer<typeof PtyEvent>;
 
-// AgentEvent — agents OWNS the public event (R3-17, R3-1). Shell consumes only this.
+// AgentEvent — agents OWNS the public presence event. The shell consumes only this.
 export const AgentEvent = z.discriminatedUnion('type', [
   z.object({ type: z.literal('spawned'), agentId: z.string(), sessionId: z.string(), at: z.string().datetime() }),
   z.object({ type: z.literal('online'), agentId: z.string(), sessionId: z.string(), at: z.string().datetime() }),

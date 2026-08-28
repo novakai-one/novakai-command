@@ -1,14 +1,14 @@
-// The public event stream (§15, §12.2 `subscribeRunEvents`).
+// The public event stream (`subscribeRunEvents`).
 //
-// Events are NOT durable records: §18.1's store inventory has no events file,
-// and inventing one would make Agent Runtime the writer of a kind no capability
-// owns. So this is a bounded in-process log, and its cursor says so — a cursor
-// minted by an earlier Runtime is `CursorExpired` with a typed gap rather than
-// a silent resume at "now" (§15, and §20's last row).
+// Events are NOT durable records: no capability owns an events file, and
+// inventing one would make Agent Runtime the writer of a kind nobody owns. So
+// this is a bounded in-process log, and its cursor says so — a cursor minted by
+// an earlier Runtime is `CursorExpired` with a typed gap rather than a silent
+// resume at "now".
 //
 // The log is what makes an external consumer possible at all. Before it, thirty
 // event kinds were published into a function that dropped them, and a second
-// host could only poll (hold-out H3, §24.4).
+// host could only poll.
 import { randomUUID } from 'node:crypto';
 import {
   b3err, b3fail, b3ok, mintTraceCorrelationId, nowIsoUtc,
@@ -44,7 +44,7 @@ const cursorOf = (logId: string, sequence: number): EventCursor =>
 
 const sequenceOf = (event: RunEvent): number => Number(event.cursor.split('.')[1] ?? 0);
 
-/** §11 names this detail field `gap`, which is shorter than the house minimum. */
+/** The wire names this detail field `gap`; kept short on purpose. LOAD-BEARING: it is part of the CursorExpired detail shape consumers may read. */
 const GAP_FIELD = 'gap';
 const gapDetail = (because: string): Record<string, string> => ({ [GAP_FIELD]: because });
 
@@ -87,10 +87,10 @@ export function createRunEventLog(capacity = DEFAULT_CAPACITY): RunEventLog {
       schemaVersion: 1,
       occurredAt: committedAt,
       committedAt,
-      // §15: every event names the capability that OWNS the fact, not the
-      // process that happened to append it. B3c's messaging/transcript facts
-      // ride this one stream so a consumer keeps ONE cursor (§24.4), and
-      // saying they came from agent-runtime would be a lie about ownership.
+      // Every event names the capability that OWNS the fact, not the process
+      // that happened to append it. Messaging/Transcript facts ride this one
+      // stream so a consumer keeps ONE cursor, and saying they came from
+      // agent-runtime would be a lie about ownership.
       sourceOwner,
       // The command's trace when the emitter had one to hand over; otherwise
       // this event's own. A correlation handle either way — never a claim that

@@ -1,6 +1,6 @@
 /* eslint-disable max-lines -- Runs wire validators stay beside their public payloads. */
 
-// Runtime validators for every Run boundary payload (§4.2 MUST).
+// Runtime validators for every Run boundary payload.
 //
 // A cast is erased and a brand proves nothing at runtime, so every payload that
 // arrives from a socket, a CLI or a script is read here before anything acts on
@@ -84,7 +84,7 @@ export function readSpawnAgentInput(candidate: unknown): B3Result<SpawnAgentInpu
 /**
  * The presence of a supervised task is what makes the two-turn gate apply, so
  * it is read as a discriminated shape rather than a loose object: a `task` with
- * a misspelled `kind` must not quietly become "no task" (§6.3).
+ * a misspelled `kind` must not quietly become "no task".
  */
 function readTask(field: FieldReader): Pick<SpawnAgentInput, 'task'> {
   const given = field.given('task');
@@ -143,7 +143,7 @@ export function readContinueAgentInput(candidate: unknown): B3Result<ContinueAge
     return {
       agentId: field.id<AgentId>('agentId', 'agent', 'uuidv4'),
       expectedOldRunId: field.id<AgentRunId>('expectedOldRunId', 'agentRun'),
-      // Never defaulted: §12.2's "no automatic resume" is enforced by the
+      // Never defaulted: "no automatic resume" is enforced by the
       // caller having to say which of the four it means, every time.
       mode: field.choice('mode', CONTINUATION_MODES),
       configurationMode: field.choice('configurationMode', LAUNCH_CONFIGURATION_MODES),
@@ -202,7 +202,7 @@ export function readListAgentRunsFilter(candidate: unknown): B3Result<ListAgentR
     const launchSurface = field.optionalChoice<LaunchSurface>('launchSurface', LAUNCH_SURFACES);
     // 1–200, required — the same call its own sibling `readListProviderTurnsInput`
     // already makes below. `optionalCount(…, 1, 10_000)` accepted fifty times
-    // the ratified cap, and accepted omission (A7-03 item 2).
+    // the intended cap, and accepted omission.
     const limit = field.count('limit', 1, 200);
     const onlyFinal = optionalFlag(field, 'onlyFinal');
     const controllerState = field.optionalChoice<ControllerState>('controllerState', CONTROLLER_STATES);

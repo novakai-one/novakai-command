@@ -22,7 +22,7 @@ import {
 } from '../../../agent-runtime/contract/index.js';
 import {
   readCreateRoleProfileInput, readIssueDelegationGrantInput, readUpdateRoleProfileInput,
-} from '../../../agents/b3/contract/index.js';
+} from '../../../agents/governed/contract/index.js';
 import {
   parseEnsureProviderTurnCompletionEvidenceInput,
   parseProviderTurnCompletionEvidenceFilter,

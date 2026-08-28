@@ -14,34 +14,34 @@ import type { StoreId } from '@novakai/foundation/dist/contract/index.js';
 
 export interface AgentsContext {
   handle: ScopedStoreHandle;
-  /** M10: skill path refs are constrained to .novakai/skills/ (one store, req 10). */
+  /** Skill path refs are constrained to this root (one store, one skills dir). */
   skillsRoot: string;
   adapters: Record<ProviderName, TerminalAdapter>;
   bus: AgentEventBus;
-  /** sessionId → agentId for sessions this process spawned (DEC-C1: temporary). */
+  /** sessionId → agentId for sessions this process spawned. */
   sessions: Map<string, { agentId: string; provider: ProviderName }>;
-  /** Sessions ended via closeSession — exit maps to offline(closed) (§7.2). */
+  /** Sessions ended via closeSession — exit maps to offline(closed). */
   closedSessions: Set<string>;
   /**
-   * S2a hooks: inject-context-text text buffered at onSpawn/onMessagePost,
-   * prepended to the session's NEXT input (DEC-S2-2: "the agent's next input").
-   * Entries carry their deferred provenance-trace payload (L14).
+   * inject-context-text hook output buffered at onSpawn/onMessagePost,
+   * prepended to the session's NEXT input. Entries carry their deferred
+   * provenance-trace payload.
    */
   pendingInjections: Map<string, PendingInjection[]>;
-  /** S2a hooks: onExit fires exactly once per session (close OR natural exit). */
+  /** onExit fires exactly once per session (close OR natural exit). */
   exitHooksFired: Set<string>;
   /**
-   * M7: trace-write failures that could not be surfaced even as hook_error
+   * Trace-write failures that could not be surfaced even as hook_error
    * traces land here — inspectable, never silent; the host action is unaffected.
    */
   hookTraceFailures: Array<{ event: HookEvent; agentId: string; reason: string; at: string }>;
   /**
-   * S2b context advisories (DEC-S2-6, §22 ruling 1): sessions with an attached
-   * live lane get focus-change advisories as system context lines BETWEEN
-   * turns. busyUntil tracks the streaming turn; queue holds mid-turn advisories.
+   * Sessions with an attached live lane get focus-change advisories as system
+   * context lines BETWEEN turns. busyUntil tracks the streaming turn; queue
+   * holds mid-turn advisories.
    */
   laneState: Map<string, { pending: { line: string; at: string } | null; busyUntil: number; timer: ReturnType<typeof setTimeout> | null }>;
-  /** Quiet window that ends a turn for advisory delivery (ruling 12's 5s; tests shrink it). */
+  /** Quiet window that ends a turn for advisory delivery (5s in production; tests shrink it). */
   advisoryQuietMs: number;
   /** Foundation-owned identity of the `.novakai` authority that spawned this Agent. */
   storeId?: StoreId;
@@ -53,7 +53,7 @@ export interface AgentsContext {
 
 export interface ComposeAgentsOptions {
   root: string;                    // .novakai/
-  /** §18.1 canonical JSONL directory (stores/). Defaults to `root` (legacy flat layout). */
+  /** Canonical JSONL directory (stores/). Defaults to `root` (legacy flat layout). */
   dataRoot?: string;
   legacyRoot?: string;
   principal: string;               // token-derived at the app seam; CLI passes its authed principal
@@ -61,26 +61,25 @@ export interface ComposeAgentsOptions {
   /**
    * The existing terminal runtime (TerminalManager or TerminalHostClient from
    * src/backend/terminal). When omitted, every provider resolves to the mock
-   * adapter — the seam is identical (AGT-001) and no PTY is opened.
+   * adapter — the seam is identical and no PTY is opened.
    */
   terminalRuntime?: TerminalRuntimeLike;
   /**
-   * B1 (§3 boot step 4): a runtime PER PROVIDER. The production server binds
-   * the kimi CLI runtime to 'kimi' and leaves claude/codex unbound until their
-   * B1b adapters land — an unbound provider fails TYPED at spawn rather than
-   * silently answering as a mock. Takes precedence over terminalRuntime.
+   * A runtime PER PROVIDER. The production server binds the kimi CLI runtime
+   * to 'kimi' and leaves the others unbound until their adapters land — an
+   * unbound provider fails TYPED at spawn rather than silently answering as a
+   * mock. Takes precedence over terminalRuntime.
    */
   providerRuntimes?: Partial<Record<ProviderName, TerminalRuntimeLike>>;
   /**
-   * B1 (closes M10): register the mock adapter at all. Defaults to true so the
-   * demo and the existing suites are unchanged; the server passes
-   * config.dev.allowMock, so production compositions have no mock and no
-   * `__emit` test seam.
+   * Register the mock adapter at all. Defaults to true so the demo and the
+   * existing suites are unchanged; the server passes config.dev.allowMock, so
+   * production compositions have no mock and no `__emit` test seam.
    */
   allowMock?: boolean;
   cwd?: string;
-  /** S2b: quiet window (ms) after which a live-lane session's turn is over and
-   * queued context advisories flush. Default 5000 (§22 ruling 12's quiet window). */
+  /** Quiet window (ms) after which a live-lane session's turn is over and
+   * queued context advisories flush. Default 5000. */
   advisoryQuietMs?: number;
   /** Resolved once by the composition root; never accepted from a send caller. */
   storeId?: StoreId;
@@ -92,9 +91,8 @@ export function composeAgents(options: ComposeAgentsOptions): AgentsContext {
     ...(options.dataRoot === undefined ? {} : { dataRoot: options.dataRoot }),
     legacyRoot: options.legacyRoot,
     capability: 'agents' as CapabilityId,
-    // S2a: agents owns the agent + skill stores (req 10 one-store).
-    // B1 DEC-B1-6: it also owns providerSession — the resumable provider handle
-    // registry — and is its sole writer.
+    // Agents owns the agent + skill stores. It also owns providerSession — the
+    // resumable provider handle registry — and is its sole writer.
     allowedKinds: ['agent', 'skill', 'providerSession'],
     principal: options.principal,
     lockTimeoutMs: options.lockTimeoutMs,
@@ -137,8 +135,8 @@ export function composeAgents(options: ComposeAgentsOptions): AgentsContext {
 
 /**
  * A provider with no runtime behind it. spawn() throws so the contract turns it
- * into the typed ProviderSpawnFailed it already produces for a provider outage
- * (C §11) — the failure is visible, not a mock pretending to be a CLI.
+ * into the typed SpawnFailed it already produces for a provider outage — the
+ * failure is visible, not a mock pretending to be a CLI.
  */
 function unavailableAdapter(provider: ProviderName, reason: string): TerminalAdapter {
   return {

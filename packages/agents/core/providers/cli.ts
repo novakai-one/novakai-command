@@ -1,10 +1,9 @@
-// core/providers/cli.ts — the two things every print-mode CLI adapter needs,
-// in one place, so kimi/codex/claude do not each grow their own copy.
+// The two things every print-mode CLI adapter needs, in one place, so
+// kimi/codex/claude do not each grow their own copy.
 //
 // This file is provider-NEUTRAL on purpose: it knows about "an executable on
 // disk" and "a stream of JSON lines". Every provider-specific fact (argv,
-// event shapes, resume flags) stays in that provider's own adapter, which is
-// what red gate 2 actually protects.
+// event shapes, resume flags) stays in that provider's own adapter.
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';

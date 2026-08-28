@@ -23,7 +23,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { mintClientOpId } from '@novakai/foundation/contract';
 import { createFakePtyHost } from '../../../terminal/adapters/pty-host/fake.js';
-import { createFakeProviderAdapters } from '../../../agents/b3/contract/index.js';
+import { createFakeProviderAdapters } from '../../../agents/governed/contract/index.js';
 import { startRuntimeHost } from '../../core/runtime-host/host.js';
 import { connectRuntime } from '../../core/runtime-host/client.js';
 import { governedRole } from '../governed-role.js';

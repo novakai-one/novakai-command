@@ -1,20 +1,19 @@
-// core/hooks — hooks engine v1 (S2-pass1 §B + §22 rulings 2/3/9/14).
-// Lifecycle events onSpawn/onMessagePre/onMessagePost/onExit; many
-// subscriptions per (agentId, event) run in creation (array) order; v1
-// actions = log-to-trace + inject-context-text ONLY; every injection fires a
-// system.action context.inject trace carrying the injected text; budgets:
-// spawn-path 2s, send-path 500ms TOTAL per chain (L13 ruling — not per-hook);
+// The hooks engine. Lifecycle events onSpawn/onMessagePre/onMessagePost/
+// onExit; many subscriptions per (agentId, event) run in creation (array)
+// order; v1 actions = log-to-trace + inject-context-text ONLY; every injection
+// fires a system.action context.inject trace carrying the injected text;
+// budgets: spawn-path 2s, send-path 500ms TOTAL per chain (not per hook);
 // timeout/budget-exhaustion/failure = skip + hook_error trace; a hook NEVER
-// blocks or fails the host action (DEC-S2-3: liveness wins).
+// blocks or fails the host action — liveness wins.
 //
-// M7: every recordSystemAction Result is CHECKED — a trace-write failure
-// throws inside the hook sandbox → surfaced as a hook_error trace; if even
-// that write fails, the failure lands on ctx.hookTraceFailures (never silent).
+// Every recordSystemAction Result is CHECKED — a trace-write failure throws
+// inside the hook sandbox and is surfaced as a hook_error trace; if even that
+// write fails, the failure lands on ctx.hookTraceFailures (never silent).
 //
-// L14: context.inject provenance traces fire ONLY after the adapter send
-// succeeds — executeAction defers them (returns the text + trace payload);
-// sendToSession fires them on success and re-buffers the injections on
-// failure (an injection that never went out is neither traced nor consumed).
+// context.inject provenance traces fire ONLY after the adapter send succeeds —
+// executeAction defers them (returns the text + trace payload); sendToSession
+// fires them on success and re-buffers the injections on failure (an injection
+// that never went out is neither traced nor consumed).
 import { mintClientOpId } from '@novakai/foundation/dist/contract/brands.js';
 import { recordSystemAction } from '@novakai/foundation/dist/contract/index.js';
 import type {
@@ -22,7 +21,7 @@ import type {
 } from '../../contract/schemas.js';
 import type { AgentsContext } from '../composition.js';
 
-/** §22 ruling 14 + L13: spawn-path 2s, send-path 500ms TOTAL for the whole chain. */
+/** Spawn-path 2s, send-path 500ms TOTAL for the whole chain. */
 export const HOOK_BUDGETS: Record<HookEvent, number> = {
   onSpawn: 2000,
   onMessagePre: 500,
@@ -36,7 +35,7 @@ export interface HookRefs {
   messageText?: string;
 }
 
-/** An injection plus the provenance-trace payload, fired on send success (L14). */
+/** An injection plus the provenance-trace payload, fired on send success. */
 export interface PendingInjection {
   text: string;
   trace: {
@@ -47,7 +46,7 @@ export interface PendingInjection {
   };
 }
 
-/** Record one system.action trace; on failure, surface it (M7 — never silent). */
+/** Record one system.action trace; on failure, surface it — never silent. */
 async function recordChecked(
   ctx: AgentsContext,
   input: Parameters<typeof recordSystemAction>[1],
@@ -68,7 +67,7 @@ async function recordChecked(
   });
   if (!errRes.ok) {
     // …and if even THAT fails, record it on the context — inspectable, never
-    // swallowed; the host action is unaffected (M7's simplest never-silent shape).
+    // swallowed; the host action is unaffected.
     ctx.hookTraceFailures.push({
       event: failContext.event,
       agentId: failContext.agentId,
@@ -79,10 +78,10 @@ async function recordChecked(
 }
 
 /**
- * Execute ONE action. log-to-trace writes its trace now (checked, M7 — a
- * failed write throws into the sandbox). inject-context-text DEFERS its
- * provenance trace (L14): returns the PendingInjection; the trace fires only
- * when the send consuming the injection succeeds.
+ * Execute ONE action. log-to-trace writes its trace now (checked — a failed
+ * write throws into the sandbox). inject-context-text DEFERS its provenance
+ * trace: returns the PendingInjection; the trace fires only when the send
+ * consuming the injection succeeds.
  */
 export async function executeAction(
   ctx: AgentsContext, action: HookAction, refs: HookRefs & { event: HookEvent; agentId: string },
@@ -100,13 +99,13 @@ export async function executeAction(
     if (!res.ok) throw new Error(`hook_log trace write failed: ${res.error.message}`);
     return undefined;
   }
-  // inject-context-text — trace deferred to send success (L14).
+  // inject-context-text — trace deferred to send success.
   return action.text;
 }
 
 /**
- * Fire the deferred provenance trace for ONE injection (L14 + §22 ruling 3):
- * the trace line carries the injected text, auditable forever. Checked (M7).
+ * Fire the deferred provenance trace for ONE injection: the trace line carries
+ * the injected text, auditable forever. Checked — never silent.
  */
 export async function fireInjectionTrace(ctx: AgentsContext, inj: PendingInjection): Promise<void> {
   await recordChecked(ctx, {
@@ -132,11 +131,11 @@ function withTimeout<T>(p: Promise<T>, budgetMs: number): Promise<T> {
 
 /**
  * Run every subscription of `agent` for `event`, in creation order. Returns
- * the merged inject-context-text entries (sequential concatenation, §22
- * ruling 2) with their deferred provenance traces (L14). Never throws:
- * per-hook timeout/failure → skip + hook_error trace (checked, M7).
+ * the merged inject-context-text entries (sequential concatenation) with their
+ * deferred provenance traces. Never throws: per-hook timeout/failure → skip +
+ * hook_error trace (checked).
  *
- * L13: the budget is TOTAL for the chain — one deadline shared by every hook;
+ * The budget is TOTAL for the chain — one deadline shared by every hook;
  * once it is gone, remaining hooks are skipped with a hook_error each.
  */
 export async function runEventHooks(
@@ -146,7 +145,7 @@ export async function runEventHooks(
   refs: HookRefs = {},
 ): Promise<{ injections: PendingInjection[] }> {
   const budgetMs = HOOK_BUDGETS[event];
-  const deadline = Date.now() + budgetMs; // L13: TOTAL chain budget, not per-hook
+  const deadline = Date.now() + budgetMs; // TOTAL chain budget, not per-hook
   const executor = ctx.__hookExecutor ?? ((action: HookAction, r: HookRefs & { event: HookEvent; agentId: string }) => executeAction(ctx, action, r));
   const injections: PendingInjection[] = [];
 
@@ -192,8 +191,8 @@ export async function runEventHooks(
         });
       }
     } catch (cause) {
-      // timeout or failure: skip the hook, record it, keep going (never-silent
-      // law, but liveness wins — DEC-S2-3).
+      // timeout or failure: skip the hook, record it, keep going (never-silent,
+      // but liveness wins).
       await recordHookError(sub.id, cause instanceof Error ? cause.message : String(cause));
     }
   }

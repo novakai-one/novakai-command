@@ -1,13 +1,13 @@
 #!/usr/bin/env node
-// nvk-agent — CLI adapter over the SAME contract functions (DEC-F11 parity).
+// nvk-agent — CLI adapter over the SAME contract functions the server calls.
 // Verbs: define | get | list | set-model | spawn | send | events | close
 // Root: NOVAKAI_ROOT (default ./.novakai).
-// Auth (M6): bearer token from .novakai/tokens/ via --token or NOVAKAI_TOKEN
-// (mirrors nvk-store, R3-5/R3-6); the token's principal is the ONLY createdBy
-// source — NOVAKAI_PRINCIPAL is NOT honored (red gate 4).
+// Auth: bearer token from .novakai/tokens/ via --token or NOVAKAI_TOKEN
+// (mirrors nvk-store); the token's principal is the ONLY createdBy
+// source — NOVAKAI_PRINCIPAL is NOT honored.
 // Adapter: NVK_AGENTS_ADAPTER=mock (default) — the real terminal runtime is
 // wired by the app composition root (TerminalManager / TerminalHostClient);
-// a CLI without a host gets the mock seam, recorded in NOTES.md.
+// a CLI without a host gets the mock seam.
 import { mintClientOpId, authenticate } from '@novakai/foundation/dist/contract/index.js';
 import type { AgentId, SessionId } from '@novakai/foundation/dist/contract/brands.js';
 import { composeAgents } from '../core/composition.js';
@@ -41,7 +41,7 @@ async function main(): Promise<void> {
   const { verb, args } = parseArgs(process.argv.slice(2));
   const root = process.env.NOVAKAI_ROOT ?? '.novakai';
 
-  // M6: every verb requires bearer auth against .novakai/tokens/ (same law as
+  // Every verb requires bearer auth against .novakai/tokens/ (same law as
   // nvk-store); the principal derives from the token, never from the env.
   const bearer = typeof args.token === 'string' ? args.token : (process.env.NOVAKAI_TOKEN ?? '');
   if (!bearer) {
@@ -89,7 +89,7 @@ async function main(): Promise<void> {
     }
     case 'send': {
       const sessionId = str(args.session, 'session') as SessionId;
-      // Contract-level send path (S2a): hooks fire (onMessagePre/onMessagePost).
+      // Contract-level send path: hooks fire (onMessagePre/onMessagePost).
       const okSend = await agents.sendToSession(sessionId, str(args.input, 'input'));
       return okSend ? out({ sent: true, sessionId }) : die({ code: 'SendFailed', message: 'no live session in this process, or session not running' });
     }

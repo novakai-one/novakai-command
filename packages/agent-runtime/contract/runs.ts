@@ -1,11 +1,11 @@
-// Agent Runtime's durable records (B3V4-P2 §6).
+// Agent Runtime's durable records.
 //
-// An Agent is a person; a Run is one of its shifts (DEC-B3V4-02). Everything
-// here describes a shift: what it is doing, what replaced it, who supervises it,
-// and — the load-bearing one — the journal that lets an interrupted spawn be
-// resumed rather than repeated.
+// An Agent is a person; a Run is one of its shifts. Everything here describes
+// a shift: what it is doing, what replaced it, who supervises it, and — the
+// load-bearing one — the journal that lets an interrupted spawn be resumed
+// rather than repeated.
 //
-// Agent Runtime is the sole writer of all five (§3.3).
+// Agent Runtime is the sole writer of all five.
 import type {
   ActivityGeneration, AgentId, AgentRunId, CommandReceiptId, HumanPrincipalId,
   IsoUtc, NotificationId, NotificationInputReservationId, ProviderSessionId,
@@ -18,7 +18,7 @@ import type {
   ProviderTurnOperationFence,
 } from './provider-turns.js';
 
-// ── The Run (§6.1) ──────────────────────────────────────────────────────────
+// ── The Run ──────────────────────────────────────────────────────────
 
 export const AGENT_RUN_LIFECYCLES = [
   'provisioning', 'ready', 'interrupted', 'continuation-pending',
@@ -38,8 +38,7 @@ export type RunFinalReason =
 
 /**
  * Something this Run cannot honestly claim to know. Carried in the record so a
- * reader is never handed a confident answer that was actually a guess
- * (red gate 27).
+ * reader is never handed a confident answer that was actually a guess.
  */
 export interface RunUncertainty {
   readonly code:
@@ -49,7 +48,7 @@ export interface RunUncertainty {
   readonly evidenceRefs: readonly string[];
 }
 
-/** The tuple a lifecycle interrupt may target (§13.3). Never just an id. */
+/** The tuple a lifecycle interrupt may target. Never just an id. */
 export interface ActiveProviderTurn {
   readonly providerTurnId: ProviderTurnId;
   readonly activityGeneration: ActivityGeneration;
@@ -63,12 +62,11 @@ export const LAUNCH_SURFACES = [
 export type LaunchSurface = typeof LAUNCH_SURFACES[number];
 
 /**
- * §12.7:2647's `ListAgentRunsFilter.controllerState`. Spelled once so the
- * boundary reader and the filter cannot disagree about the vocabulary.
+ * The vocabulary of `ListAgentRunsFilter.controllerState`, spelled once so the
+ * boundary reader and the filter cannot disagree about it.
  *
  * Deliberately NOT a launch surface and not a lifecycle: it names whether a
- * controller is connected right now, which §24.5 requires to stay independent
- * of both.
+ * controller is connected right now, which must stay independent of both.
  */
 export const CONTROLLER_STATES = ['attached', 'headless'] as const;
 export type ControllerState = typeof CONTROLLER_STATES[number];
@@ -85,7 +83,7 @@ export interface AgentRun extends RecordEnvelope<AgentRunId, 'agentRun'> {
   readonly activeProviderTurn?: ActiveProviderTurn;
   readonly providerTurnOperationFence?: ProviderTurnOperationFence;
   readonly lastCompletedProviderTurn?: CompletedProviderTurnDisposition;
-  /** Historical truth. Never inferred from who is attached now (red gate 4). */
+  /** Historical truth. Never inferred from who is attached now. */
   readonly launchSurface: LaunchSurface;
   readonly requestedBy: B3PrincipalId;
   readonly parentRequestingRunId?: AgentRunId;
@@ -100,7 +98,7 @@ export interface AgentRun extends RecordEnvelope<AgentRunId, 'agentRun'> {
 export const FINAL_LIFECYCLES: ReadonlySet<AgentRunLifecycle> =
   new Set<AgentRunLifecycle>(['stopped', 'failed', 'interrupted']);
 
-// ── Continuation, supervision, tree fence (§6.2) ────────────────────────────
+// ── Continuation, supervision, tree fence ────────────────────────────
 
 export const CONTINUATION_MODES = ['resume', 'fresh', 'compact', 'handover'] as const;
 export type ContinuationMode = typeof CONTINUATION_MODES[number];
@@ -111,8 +109,8 @@ export const LAUNCH_CONFIGURATION_MODES = [
 export type LaunchConfigurationMode = typeof LAUNCH_CONFIGURATION_MODES[number];
 
 /**
- * Restarting yourself is not spawning a subordinate (DEC-B3V4-09, red gate 8).
- * A continuation is its own edge, in its own file, with its own vocabulary.
+ * Restarting yourself is not spawning a subordinate. A continuation is its
+ * own edge, in its own record, with its own vocabulary.
  */
 export interface RunContinuation
   extends RecordEnvelope<RunContinuationId, 'runContinuation'> {
@@ -127,7 +125,7 @@ export interface RunContinuation
 
 /**
  * Who looks after this Agent TODAY. Separate from who spawned it, which is
- * immutable history — adoption moves this and never that (red gate 9).
+ * immutable history — adoption moves this and never that.
  */
 export interface SupervisionAssignment
   extends RecordEnvelope<SupervisionAssignmentId, 'supervisionAssignment'> {
@@ -144,7 +142,7 @@ export interface SupervisionAssignment
 /**
  * A stop-tree in progress. While this is `closing`, nothing may be spawned,
  * continued or adopted inside the subtree — otherwise the snapshot the stop is
- * working from is never complete (§13.7).
+ * working from is never complete.
  */
 export interface TreeMutationFence
   extends RecordEnvelope<TreeMutationFenceId, 'treeMutationFence'> {
@@ -154,7 +152,7 @@ export interface TreeMutationFence
   readonly descendantSnapshotVersion: number;
 }
 
-// ── The recoverable journal (§6.3) ──────────────────────────────────────────
+// ── The recoverable journal ──────────────────────────────────────────
 
 export const RUN_OPERATION_KINDS = [
   'spawn', 'continue', 'stop-one', 'stop-tree', 'adopt', 'deliver-notification',
@@ -162,7 +160,7 @@ export const RUN_OPERATION_KINDS = [
 export type RunOperationKind = typeof RUN_OPERATION_KINDS[number];
 
 /**
- * The stage ladder. Pass 1's ORDER is normative: a stage advances only after
+ * The stage ladder. The ORDER is normative: a stage advances only after
  * the named owner confirms a durable outcome, and recovery queries each effect
  * by its stable key before ever repeating it.
  */
@@ -188,11 +186,11 @@ export interface RunOperationStageOutcome {
   readonly ownerObjectId?: string;
   readonly completedAt: IsoUtc;
   /**
-   * Additive to §6.3: a stage that did not APPLY is recorded as `not-needed`
-   * with the reason, rather than silently skipped. Two reasons exist — the
-   * owning capability arrives in a later slice, or this particular Run never
-   * needed it (a root Agent has no family edge to record). A gap in the ladder
-   * that nobody wrote down is how a later slice discovers it was never wired.
+   * A stage that did not APPLY is recorded as `not-needed` with the reason,
+   * rather than silently skipped. Two reasons exist — the owning capability is
+   * not composed in this host, or this particular Run never needed it (a root
+   * Agent has no family edge to record). A gap in the ladder that nobody wrote
+   * down is how a wire that was never connected reads as deliberate.
    */
   readonly outcome?: 'completed' | 'not-needed';
   readonly notNeededBecause?: string;
@@ -215,7 +213,7 @@ export interface RunOperation extends RecordEnvelope<RunOperationId, 'runOperati
   /**
    * Required from the FIRST persisted record for spawn and continue. A crash
    * before the Run exists therefore recovers the same reservation instead of
-   * minting a second provider session (§5.4, §20).
+   * minting a second provider session.
    */
   readonly reservedProviderSessionId?: ProviderSessionId;
   readonly notificationId?: NotificationId;

@@ -1,5 +1,5 @@
 import { b3err, b3fail, b3ok } from '@novakai/foundation/contract';
-import type { GovernedAgentsContract } from '../../../agents/b3/contract/index.js';
+import type { GovernedAgentsContract } from '../../../agents/governed/contract/index.js';
 import type { MessagingRuntimeApi, TranscriptLine } from '../../../messaging/contract/index.js';
 import type {
   TranscriptUsageReader, TranscriptUsageSample,

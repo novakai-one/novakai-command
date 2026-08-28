@@ -1,4 +1,4 @@
-// Reconcile a repeated Q7 command against Terminal and Supervision owner truth.
+// Reconcile a repeated delivery command against Terminal and Supervision owner truth.
 import {
   b3err, b3fail, b3ok, notificationInputReservationId,
   type AuthenticatedPrincipal, type B3Result, type TerminalInputAttemptId,
@@ -67,7 +67,7 @@ function semanticOutcome(
   };
 }
 
-/** Finish Supervision bookkeeping for an already-submitted AMD-002 turn. */
+/** Finish Supervision bookkeeping for an already-submitted semantic turn. */
 export async function recoverSemanticNotificationDelivery(
   core: RunsCore,
   notifications: NotificationDeliveryPort,

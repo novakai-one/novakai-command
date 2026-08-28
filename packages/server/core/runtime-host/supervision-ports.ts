@@ -13,7 +13,7 @@ import {
 import type {
   AgentRunsContract, NotificationDeliveryPort, RunEvent, RunWatcherPort,
 } from '../../../agent-runtime/contract/index.js';
-import type { GovernedAgentsContract } from '../../../agents/b3/contract/index.js';
+import type { GovernedAgentsContract } from '../../../agents/governed/contract/index.js';
 import type {
   SupervisionCore, WatchRuleGenerationPort,
 } from '../../../supervision/public/index.js';

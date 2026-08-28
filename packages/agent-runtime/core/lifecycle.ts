@@ -1,4 +1,4 @@
-// Interrupt, stop one, stop a tree (§13.3, §13.7, DEC-B3V4-10/11).
+// Interrupt, stop one, stop a tree.
 //
 // Three operations that are constantly mistaken for each other, kept apart on
 // purpose:
@@ -21,10 +21,10 @@ import { applyOrphanPolicy } from './orphan-policy.js';
 import { runFinal } from './runs-store.js';
 import { advance } from './journal.js';
 
-// ── Interrupt (§13.3) ───────────────────────────────────────────────────────
+// ── Interrupt ───────────────────────────────────────────────────────
 
 /**
- * The order in §13.3 is not advice; a different order loses the race.
+ * The order is not advice; a different order loses the race.
  *
  * Snapshot the active tuple, ask Terminal to compare-and-set a barrier against
  * that EXACT tuple, and only then treat the turn as interrupted. If the tuple is
@@ -84,7 +84,7 @@ export async function interruptAgentTurn(
   if (!barrier.ok) return barrier;
 
   if (barrier.value.kind === 'target-turn-not-active') {
-    // Nothing was changed, and nothing is claimed. §13.3 step 5.
+    // Nothing was changed, and nothing is claimed: the turn was already over.
     return b3ok({
       kind: 'not-working',
       agentRunId: agentRun.value.id,
@@ -117,7 +117,7 @@ export async function interruptAgentTurn(
   if (barrier.value.kind === 'raced-with-completion') {
     // The barrier WON the ordering race, so the visible revocation stands even
     // though the turn finished underneath it. Reporting anything else would
-    // pretend the lease stayed valid (§20).
+    // pretend the lease stayed valid.
     return b3ok({
       kind: 'raced-with-completion',
       agentRunId: agentRun.value.id,
@@ -134,7 +134,7 @@ export async function interruptAgentTurn(
   });
 }
 
-// ── Activity (§13.2) ────────────────────────────────────────────────────────
+// ── Activity ────────────────────────────────────────────────────────
 
 /**
  * A turn started. Run identity does not change; the ACTIVITY generation does,
@@ -210,7 +210,7 @@ export async function endProviderTurn(
   return idle;
 }
 
-// ── Stop one (DEC-B3V4-11) ──────────────────────────────────────────────────
+// ── Stop one ──────────────────────────────────────────────────
 
 export async function stopAgent(
   core: RunsCore, context: CommandContext, input: StopAgentInput,
@@ -227,7 +227,7 @@ export async function stopAgent(
   // `expectedLiveRunId` is a compare-and-set, and it has to LOSE when it names
   // a Run that is no longer the live one. `closeRun` is idempotent on a final
   // Run, so a stale id used to return a cheerful success while the Agent's
-  // actual Run kept running and kept billing (probe S-5).
+  // actual Run kept running and kept billing.
   const live = await liveRunOf(core, input.agentId);
   if (!live.ok) return live;
   if (live.value !== null && live.value.id !== agentRun.value.id) {
@@ -273,7 +273,7 @@ export async function closeRun(
     });
     if (!ended.ok) {
       // The PTY's fate is UNCERTAIN, so the Run says so rather than claiming a
-      // clean stop (§20: never silently kill or silently claim).
+      // clean stop: never silently kill, never silently claim.
       return patchRun(core, stopping.value, {
         lifecycle: 'recovery-required',
         uncertainty: [{

@@ -1,7 +1,6 @@
-// core/skills — the provider-neutral skills registry (S2-pass1 §C, DEC-S2-4):
-// kind 'skill' records in skills.jsonl via the foundation scoped handle.
-// v1 stores path refs only — no parsing, no execution (red gate S2-1: one
-// store, never inside a provider adapter).
+// The provider-neutral skills registry: kind 'skill' records in skills.jsonl
+// via the foundation scoped handle. v1 stores path refs only — no parsing, no
+// execution; one store, never inside a provider adapter.
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import {
@@ -34,7 +33,7 @@ export async function registerSkill(
       }, false),
     };
   }
-  // M10 (req 10, one store): skill path refs are constrained to
+  // Skill path refs are constrained to
   // .novakai/skills/ — the canonical relative form, or an absolute path that
   // resolves under this root's skills/ dir. Anything else is a typed rejection.
   const compliant =
@@ -56,7 +55,7 @@ export async function registerSkill(
     schemaVersion: 1,
     createdAt: new Date().toISOString(),
     permissionLevel: input.permissionLevel ?? 'private',
-    createdBy: 'overridden-by-foundation', // red gate 4: foundation stamps the token principal
+    createdBy: 'overridden-by-foundation', // foundation stamps the token principal over this placeholder
     name: input.name,
     path: input.path,
     description: input.description ?? '',

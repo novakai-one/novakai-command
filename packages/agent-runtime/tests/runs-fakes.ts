@@ -121,7 +121,7 @@ export interface FakeTerminal extends TerminalPort {
  * The grammar is copied off a real claude PTY capture, where the Runtime's own
  * sentence came back as `then a\x1b[26GJSON\x1b[32Grray of the\x1b[44Gt\x1b[46Gkens`
  * for a screen reading `then a JSON array of the tokens`
- * (`packages/agents/b3/tests/fixtures/claude-gate-screen.txt`). The character
+ * (`packages/agents/governed/tests/fixtures/claude-gate-screen.txt`). The character
  * stepped over is inside the token, which is what makes it fatal rather than
  * cosmetic.
  */

@@ -48,13 +48,13 @@ test('exactly one module composes the Runs store, and one composes governed Agen
       composers.runs.push(relative(file));
     }
     if (/\bcreateGovernedAgentsStore\s*\(/.test(source)
-      && !file.endsWith(path.join('b3', 'core', 'store.ts'))) {
+      && !file.endsWith(path.join('governed', 'core', 'store.ts'))) {
       composers.agents.push(relative(file));
     }
   }
   assert.deepEqual(composers.runs, ['packages/agent-runtime/core/runs-compose.ts'],
     'a second Runs store would be a second writer of every Run fact');
-  assert.deepEqual(composers.agents, ['packages/agents/b3/core/compose.ts'],
+  assert.deepEqual(composers.agents, ['packages/agents/governed/core/compose.ts'],
     'a second governed-Agents store would be a second writer of every role and grant');
 });
 

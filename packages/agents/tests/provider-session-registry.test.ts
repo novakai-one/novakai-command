@@ -7,7 +7,8 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { composeAgents } from '../contract/index.js';
-import { createProviderSessionRegistry, type ProcessProbe } from '../core/sessions/registry.js';
+import { createProviderSessionRegistry } from '../core/sessions/registry.js';
+import type { ProcessProbe } from '../core/sessions/process-probe.js';
 
 const root = () => mkdtempSync(path.join(tmpdir(), 'nvk-provider-sessions-'));
 const openRegistry = (dir: string, probe?: ProcessProbe) =>

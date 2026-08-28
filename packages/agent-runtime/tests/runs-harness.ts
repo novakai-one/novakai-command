@@ -38,7 +38,7 @@ import type {
 import {
   createFakeHeadlessChildMessaging, createFakeMessagingEndpoints, createFakeTranscriptCustody,
   type FakeHeadlessChildMessaging, type FakeMessagingEndpoints, type FakeTranscriptCustody,
-} from './runs-b3c-fakes.js';
+} from './runs-custody-fakes.js';
 import { createRunsStore, type RunsStore } from '../core/runs-store.js';
 import {
   createFakeNotificationDelivery, type FakeNotificationDelivery,
@@ -125,11 +125,11 @@ export interface RunsRigOptions extends FakeAgentsOptions {
   readonly terminal?: FakeTerminal;
   readonly providers?: FakeProviders;
   /**
-   * Compose WITHOUT the B3c capability ports, to prove the honest branch: a
-   * host with no Messaging or Transcript records those rungs `not-needed` with
-   * a reason naming the absent capability, rather than pretending.
+   * Compose WITHOUT the custody capability ports, to prove the honest branch:
+   * a host with no Messaging or Transcript records those rungs `not-needed`
+   * with a reason naming the absent capability, rather than pretending.
    */
-  readonly withoutB3cCapabilities?: boolean;
+  readonly withoutCustodyCapabilities?: boolean;
   /**
    * Shared across a crash/restart for the same reason `agents` and `terminal`
    * are: Messaging's claims and Transcript's bindings live on disk in
@@ -157,7 +157,7 @@ export interface RunsRigOptions extends FakeAgentsOptions {
 }
 
 export function createRunsRig(options: RunsRigOptions = {}): RunsRig {
-  const root = options.root ?? mkdtempSync(path.join(tmpdir(), 'nvk-b3b-runs-'));
+  const root = options.root ?? mkdtempSync(path.join(tmpdir(), 'nvk-agent-runs-'));
   const agents = options.agents ?? createFakeAgents(options);
   const terminal = options.terminal ?? createFakeTerminal();
   // The scripted agent is told what its role pins, from the same source the
@@ -275,9 +275,9 @@ export function createRunsRig(options: RunsRigOptions = {}): RunsRig {
     gateTimeoutMs: options.gateTimeoutMs ?? 2_000,
     ...(options.gateCompletionBudgetMs === undefined
       ? {} : { gateCompletionBudgetMs: options.gateCompletionBudgetMs }),
-    ...(options.withoutB3cCapabilities === true
+    ...(options.withoutCustodyCapabilities === true
       ? {} : { messagingEndpoint, transcriptCustody, headlessChildMessaging }),
-    ...(options.withoutB3cCapabilities === true
+    ...(options.withoutCustodyCapabilities === true
       ? {}
       : {
           async transcriptBinding(agentRunId: AgentRunId) {

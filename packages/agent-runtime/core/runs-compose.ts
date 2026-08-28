@@ -7,7 +7,7 @@
 // safe to re-enter because everything under them is a Foundation mutation keyed
 // by `clientOpId`. Spawn and continue are ALSO re-entrant — not because they
 // have no effects, but because their journal knows which effects already
-// happened and queries them by key instead of repeating them (§13.5). Refusing
+// happened and queries them by key instead of repeating them. Refusing
 // at the receipt layer would put that recovery permanently out of reach.
 import {
   b3err, b3fail, b3ok, composeReceiptStore, deriveClientOpId, mintClientOpId,
@@ -51,8 +51,9 @@ import { applyRunControl, discoverRunControls } from './controls.js';
 import { continueAgent } from './continue.js';
 import {
   getAgentRun, getRunLaunchPlanId, getRunOperation, listAgentRuns,
-  listRunOperations, reconcileAfterRestart, runsCensus, viewOfRun, observeTerminalExit,
+  listRunOperations, runsCensus, viewOfRun,
 } from './queries.js';
+import { observeTerminalExit, reconcileAfterRestart } from './recover.js';
 import {
   getRunOccurrenceEvent,
 } from './occurrence-queries.js';
@@ -94,8 +95,8 @@ const NO_INBOX: MessagingInboxPort = {
 
 export interface ComposeAgentRunsOptions extends RunsStoreOptions {
   /**
-   * @internal failure injection. §24.3 requires a crash before AND after every
-   * spawn/continuation stage; the honest way to produce one is a store that
+   * @internal failure injection. Crash testing needs a crash before AND after
+   * every spawn/continuation stage; the honest way to produce one is a store that
    * stops accepting writes, exactly as a dying process would.
    */
   readonly store?: RunsStore;
@@ -110,36 +111,36 @@ export interface ComposeAgentRunsOptions extends RunsStoreOptions {
   readonly gateTimeoutMs?: number;
   readonly gateCompletionBudgetMs?: number;
   readonly clock?: () => number;
-  /** §19.1's transcript section, read through Transcript's contract. */
+  /** The transcript section of the view, read through Transcript's contract. */
   readonly transcriptBinding?: TranscriptBindingLookup;
   /** Exact Transcript and Agents facts used by the sole completion mutation. */
   readonly providerTurnCompletionEvidence?: ProviderTurnCompletionEvidenceLookup;
   /** Composition-root saga across Transcript -> Agents -> Runtime. */
   readonly providerTurnCompletionCoordinator?: ProviderTurnCompletionCoordinator;
-  /** §13.5 rows 6/10 and §13.6's cutover, through Messaging's contract. */
+  /** Endpoint reservation/activation and the continuation cutover, through Messaging's contract. */
   readonly messagingEndpoint?: MessagingEndpointPort;
   /** Agent-created child bootstrap through transcript-first Messaging. */
   readonly headlessChildMessaging?: HeadlessChildMessagingPort;
-  /** §13.5 row 9 and §13.6's watermark, through Transcript's contract. */
+  /** Transcript binding at spawn and the final watermark at continuation, through Transcript's contract. */
   readonly transcriptCustody?: TranscriptCustodyPort;
   /**
-   * §8.1's delivery half. Absent means this host composes no Messaging, and the
+   * The inbox-delivery half. Absent means this host composes no Messaging, and the
    * pump this composition returns is one that finds nothing to do — never one
    * that silently marks items delivered.
    */
   readonly messagingInbox?: MessagingInboxPort;
   /** How often the delivery loop looks. Tests shorten it. */
   readonly inboxDeliveryIntervalMs?: number;
-  /** B3d §13.5's watcher rung, through Supervision's frozen contract. */
+  /** The watcher-installation rung, through Supervision's contract. */
   readonly watchers?: RunWatcherPort;
-  /** Q7's Supervision owner seam for Runtime-executed Notification delivery. */
+  /** The Supervision owner seam for Runtime-executed Notification delivery. */
   readonly notifications?: NotificationDeliveryPort;
-  /** B3d §19.1 usage projection, through Supervision's frozen contract. */
+  /** The usage projection in the Run view, read through Supervision's contract. */
   readonly usage?: RunUsageLookup;
 }
 
 /**
- * The Runtime, and the loop that keeps §8.1's promise.
+ * The Runtime, and the loop that keeps the inbox-delivery promise.
  *
  * The pump is returned beside the contract rather than on it: delivering an
  * inbox item is not something a CLIENT asks for, it is something the host runs.
@@ -178,7 +179,7 @@ const DEFAULT_GATE_COMPLETION_BUDGET_MS = 15_000;
  * the viewport edge destroys the evidence. At 120 columns a real kimi showed
  * `● SKILLS-CONFIRMED: ["elite-codebase-engineering@v3#a1b2c3d4",` and cut the
  * rest — a correct confirmation, unreadable, and a governed Run that timed out
- * at its own gate (NVK-KIMI-032, rebuilt public proof).
+ * at its own gate.
  *
  * The named limit: a role pinning enough skills to exceed this width would clip
  * again. 400 columns holds roughly eight `id@v1#digest` tokens.

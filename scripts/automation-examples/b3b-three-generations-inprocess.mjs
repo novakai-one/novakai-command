@@ -40,7 +40,7 @@ const { startRuntimeHost } = await import(
   path.join(repoRoot, 'packages/server/core/runtime-host/host.ts')
 );
 const { createFakeProviderAdapters } = await import(
-  path.join(repoRoot, 'packages/agents/b3/contract/index.ts')
+  path.join(repoRoot, 'packages/agents/governed/contract/index.ts')
 );
 
 let failures = 0;

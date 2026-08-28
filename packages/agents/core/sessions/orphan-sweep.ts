@@ -1,10 +1,8 @@
-// core/sessions/orphan-sweep.ts — the boot orphan sweep (split from
-// registry.ts, SUPFIX step 0).
+// The boot orphan sweep.
 //
-// §13 disposition 2 (restart-resume semantics): a server that dies while
-// generating leaves `inFlight` set; the boot sweep turns that into ONE typed
-// `ReplyInterrupted` per interrupted send — surfaced in the thread as
-// "reply interrupted — resend?", NEVER auto-retried.
+// A server that dies while generating leaves `inFlight` set; the boot sweep
+// turns that into ONE typed `ReplyInterrupted` per interrupted send — surfaced
+// in the thread as "reply interrupted — resend?", NEVER auto-retried.
 import type { Result } from '@novakai/foundation/dist/contract/types.js';
 import type { StoreError } from '@novakai/foundation/dist/contract/errors.js';
 import { inFlightFrom, type ProviderSessionRecord } from './record-shape.js';
@@ -34,7 +32,7 @@ export async function sweepOrphans(deps: SweepDeps): Promise<SweepResult> {
   for (const { record } of await deps.readAll()) {
     if (record.inFlight.status !== 'generating') continue;
     const { pid, pidStartedAt } = record.inFlight.queue[0]!;
-    // §13 disposition 10: only kill a pid we can PROVE is still the child we
+    // Only kill a pid we can PROVE is still the child we
     // spawned — a recycled pid belongs to somebody else's process.
     if (pid !== null && deps.probe.alive(pid) && pidStartedAt !== null && deps.probe.startedAt(pid) === pidStartedAt) {
       deps.probe.kill?.(pid);

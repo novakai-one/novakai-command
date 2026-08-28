@@ -1,3 +1,6 @@
+// Resolving which Run a usage question is about — by provider session, by
+// Agent, or by exact Run id — and projecting the Run's durable records into
+// the facts Supervision's usage views consume.
 import {
   b3err, b3fail, b3ok,
   type AgentId, type AgentRunId, type AuthenticatedPrincipal, type B3Result,

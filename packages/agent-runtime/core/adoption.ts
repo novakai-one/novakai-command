@@ -1,4 +1,4 @@
-// Adoption (DEC-B3V4-07, §13.7, red gate 9).
+// Adoption: moving who supervises an Agent.
 //
 // Who supervises an Agent can change. Who SPAWNED it never can. Everything in
 // this file writes `SupervisionAssignment` and nothing in it can reach an
@@ -35,7 +35,7 @@ export async function adoptAgent(
   if (!eligible.ok) return eligible;
 
   // Compare-and-set against the supervision GENERATION the caller read. Two
-  // concurrent adoptions cannot both win (§24.3 case 13).
+  // concurrent adoptions cannot both win.
   const chain = await assignmentChain(core, input.subjectAgentId);
   if (!chain.ok) return chain;
   if (chain.value.generation !== input.expectedAssignmentVersion) {
@@ -57,7 +57,7 @@ export async function adoptAgent(
 }
 
 /**
- * §13.7: the candidate must be live, eligible, outside a closing tree, and
+ * The candidate must be live, eligible, outside a closing tree, and
  * unable to create a cycle. A supervisor inside the subtree it supervises is a
  * cycle even though the FAMILY tree is untouched — supervision has its own
  * acyclicity to keep.
@@ -100,8 +100,7 @@ async function checkSupervisor(
  * Two Agents on unrelated trees may each lawfully be put under the other — one
  * at a time. Doing both closes a loop in which each supervises the other and
  * the chain never reaches a human, so nobody is accountable for either. The
- * family-descendant check cannot see this, because no family edge is involved
- * (hold-out F9).
+ * family-descendant check cannot see this, because no family edge is involved.
  */
 async function noCycle(
   core: RunsCore, subjectAgentId: AgentId, candidate: AgentId,

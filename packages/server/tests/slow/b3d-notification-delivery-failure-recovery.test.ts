@@ -26,7 +26,7 @@ import {
 import type { AgentRunsContract } from '../../../agent-runtime/contract/index.js';
 import type { Notification } from '../../../supervision/contract/index.js';
 import { createFakePtyHost } from '../../../terminal/adapters/pty-host/fake.js';
-import { createFakeProviderAdapters } from '../../../agents/b3/contract/index.js';
+import { createFakeProviderAdapters } from '../../../agents/governed/contract/index.js';
 import { templateDigest, type WatcherTemplate } from '../../../supervision/public/index.js';
 import type { ProviderPort, RunEvent } from '../../../agent-runtime/contract/index.js';
 import type { TerminalContract } from '../../../terminal/contract/index.js';

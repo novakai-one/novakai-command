@@ -4,7 +4,7 @@ import {
   type AgentRunId, type AuthenticatedPrincipal, type ControllerAttachmentId,
   type HumanPrincipalId, type SystemCommandContext, type TerminalSessionId,
 } from '@novakai/foundation/contract';
-import { HUMAN_SCOPES } from '../../../agents/b3/contract/index.js';
+import { HUMAN_SCOPES } from '../../../agents/governed/contract/index.js';
 import {
   DEFAULT_STALE_AFTER_MS, UNFINISHED_TERMINAL_SESSION_STATUSES,
 } from '../../../terminal/contract/index.js';

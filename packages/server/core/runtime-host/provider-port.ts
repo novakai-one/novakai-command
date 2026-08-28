@@ -8,7 +8,7 @@ import { b3fail, b3ok, type B3Result } from '@novakai/foundation/contract';
 import type { ProviderPort } from '../../../agent-runtime/contract/index.js';
 import type {
   InteractiveProviderAdapter, ProviderAdapterRegistry, ResolvedLaunchPlan,
-} from '../../../agents/b3/contract/index.js';
+} from '../../../agents/governed/contract/index.js';
 import type { LaunchAuthorityRegistrar } from '../../../terminal/adapters/pty-host/node-pty.js';
 
 /**

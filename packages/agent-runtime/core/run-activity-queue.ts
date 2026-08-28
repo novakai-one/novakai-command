@@ -1,6 +1,6 @@
 // One provider-activity decision at a time per Run.
 //
-// Foundation CAS protects one record write, but Q7's safe-boundary decision
+// Foundation CAS protects one record write, but a safe-boundary decision
 // spans Run truth, a Terminal reservation, and the ordered delivery protocol.
 // The Runtime is an OS-level singleton, so this private queue closes the
 // in-process gap without creating another durable authority.

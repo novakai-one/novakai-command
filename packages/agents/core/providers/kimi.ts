@@ -1,9 +1,8 @@
-// core/providers/kimi.ts — the KIMI provider adapter (DEC-B1-4).
+// The KIMI provider adapter.
 //
-// Promoted verbatim-in-behaviour from the S2 demo's kimiCliRuntime, which
-// proved the mechanism against the real CLI; B1a moves it inside the capability
-// that owns providers, so provider-specific code exists in exactly one place
-// (red gate C1) and the demo shim can die (§9).
+// Promoted verbatim-in-behaviour from the demo's kimiCliRuntime, which proved
+// the mechanism against the real CLI. It lives inside the capability that owns
+// providers, so provider-specific code exists in exactly one place.
 //
 // The machine surface (verified against kimi 0.29.1, 2026-07-28):
 //
@@ -14,17 +13,16 @@
 //     {"role":"assistant","content":"..."}                        ← user-facing
 //     {"role":"meta","type":"session.resume_hint","session_id":…} ← resume handle
 //
-// DEC-B1-5 (process model): ONE short-lived child process per message. The
-// LOGICAL session (create/kill, presence online/offline) spans processes;
-// continuity is provider-native resume via `-S`, never a long-lived process.
-// "Terminate after meaningful work" is therefore structural: there is no idle
-// process left to accumulate cost in.
+// Process model: ONE short-lived child process per message. The LOGICAL
+// session (create/kill, presence online/offline) spans processes; continuity
+// is provider-native resume via `-S`, never a long-lived process. "Terminate
+// after meaningful work" is therefore structural: there is no idle process
+// left to accumulate cost in.
 //
-// Usage records (DEC-B1-7): kimi 0.29.1 stream-json emits NO usage line — only
-// the assistant and resume_hint lines above. The adapter counts TURNS (real
-// data) and reports no token counts rather than inventing a format; token
-// accounting for kimi comes from transcript parsing in B1b (DEC-B1-11).
-// Recorded in packages/agents/NOTES.md.
+// Usage records: kimi 0.29.1 stream-json emits NO usage line — only the
+// assistant and resume_hint lines above. The adapter counts TURNS (real data)
+// and reports no token counts rather than inventing a format; token accounting
+// for kimi comes from transcript parsing.
 import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -38,17 +36,17 @@ export function defaultKimiCliPath(): string {
 }
 
 /**
- * Red gate 3: these values mean "pass no -m flag at all — use the model from
+ * These values mean "pass no -m flag at all — use the model from
  * the user's own config.toml". 'kimi-cli' is the legacy seed value that shipped
  * in demo data; it is NOT a model name and must never be sent to the CLI.
  */
 const NO_MODEL_FLAG = new Set(['cli-default', 'kimi-cli', '']);
 
 /**
- * B1b: kimi turns are now the shared provider turn record. kimi always reports
+ * kimi turns are the shared provider turn record. kimi always reports
  * `usage: null` — 0.29.1 stream-json carries no usage line — so the supervision
  * engine reads kimi token counts from the CLI's own wire.jsonl transcript
- * instead (DEC-B1-11). The gap is stated, never guessed.
+ * instead. The gap is stated, never guessed.
  */
 export type KimiTurnRecord = ProviderTurnRecord;
 
@@ -60,16 +58,16 @@ interface LogicalSession {
   /** Serializes per-message child processes: one prompt in flight at a time. */
   queue: Promise<void>;
   current: ChildProcess | null;
-  /** Provider-native spawn config (§22 ruling 5): argv is PREPENDED per message. */
+  /** Provider-native spawn config: argv is PREPENDED per message. */
   argv: string[];
   env: Record<string, string>;
-  /** OD-C3 RULED: sticky per CLI session; applied as `-m` on every invocation. */
+  /** Sticky per CLI session; applied as `-m` on every invocation. */
   model: string | null;
   turns: number;
 }
 
 export interface KimiCliRuntime extends ProviderCliRuntime {
-  /** OD-C3 RULED: kimi is the ONE provider with a verified mid-session switch. */
+  /** kimi is the ONE provider with a verified mid-session switch. */
   setModel(key: string, model: string): boolean;
 }
 
@@ -180,9 +178,9 @@ export function createKimiCliRuntime(options: KimiCliRuntimeOptions): KimiCliRun
       return { agentId: key, status: 'running' as const };
     },
 
-    // OD-C3 RULED (spike 2026-07-28): the kimi CLI switches an EXISTING
-    // session's model via `-S <id> -m <alias>`, and the choice persists in the
-    // CLI's own session record — so setting it here switches the session.
+    // The kimi CLI switches an EXISTING session's model via
+    // `-S <id> -m <alias>`, and the choice persists in the CLI's own session
+    // record — so setting it here switches the session.
     setModel(key, model) {
       const rec = sessions.get(key);
       if (!rec || rec.status !== 'running') return false;
@@ -231,9 +229,9 @@ export function createKimiCliRuntime(options: KimiCliRuntimeOptions): KimiCliRun
     },
 
     /**
-     * Restart path (DEC-B1-6): the registry knows the CLI conversation id, so
-     * a rebooted server re-creates the logical session pointing at it. Nothing
-     * is "attached" to — the next message spawns a fresh process with `-S`.
+     * Restart path: the registry knows the CLI conversation id, so a rebooted
+     * server re-creates the logical session pointing at it. Nothing is
+     * "attached" to — the next message spawns a fresh process with `-S`.
      */
     adopt(key, adoptOptions) {
       const existing = sessions.get(key);

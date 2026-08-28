@@ -12,7 +12,7 @@
 // The predicate injected below is claude's shape (two full-width `─` rules =
 // the composer box's borders). It is stated here rather than imported because
 // Terminal does not depend on Agents — the AUTHORITY for the predicate itself
-// is `agents/b3/tests/provider-input-readiness.test.ts`, which runs the real
+// is `agents/governed/tests/provider-input-readiness.test.ts`, which runs the real
 // adapter against real boot captures of all three CLIs. This suite is about the
 // GATE: refuse, write nothing, and stay retryable.
 import { createHash } from 'node:crypto';

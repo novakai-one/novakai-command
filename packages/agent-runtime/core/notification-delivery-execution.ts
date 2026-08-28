@@ -1,4 +1,4 @@
-// Execute the ordered Q7 saga after replay reconciliation has chosen continue.
+// Execute the ordered delivery saga after replay reconciliation has chosen continue.
 import { createHash } from 'node:crypto';
 import {
   b3err, b3fail, b3ok, deriveClientOpId, mintProviderTurnId,

@@ -16,7 +16,7 @@ import { createFakePtyHost, type FakePtyHost } from '../../../terminal/adapters/
 import {
   createLaunchAuthorities, type LaunchAuthorityRegistrar,
 } from '../../../terminal/adapters/pty-host/node-pty.js';
-import { createFakeProviderAdapters } from '../../../agents/b3/contract/index.js';
+import { createFakeProviderAdapters } from '../../../agents/governed/contract/index.js';
 import { startRuntimeHost, type RunningRuntimeHost } from '../../core/runtime-host/host.js';
 import { connectRuntime, type RuntimeClient } from '../../core/runtime-host/client.js';
 import { chatRole } from '../governed-role.js';

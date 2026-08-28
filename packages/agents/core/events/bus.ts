@@ -1,11 +1,11 @@
-// agentEvent bus (R3-17): agents OWNS the public event. Terminal's raw
-// PtyEvents are wrapped/re-published here; shell/subscribers see only AgentEvent.
+// The agentEvent bus: agents OWNS the public presence event. Terminal's raw
+// PtyEvents are wrapped/re-published here; subscribers see only AgentEvent.
 import { AgentEvent as AgentEventSchema, type AgentEvent, type Unsubscribe } from '../../contract/schemas.js';
 
 export class AgentEventBus {
   private readonly handlers: Array<(e: AgentEvent) => void> = [];
   /** Event log retained in-process so late subscribers can derive presence
-   * snapshots (§11 ruling 8: derived, ephemeral — never stored authoritatively). */
+   * snapshots — derived and ephemeral, never stored authoritatively. */
   private readonly log: AgentEvent[] = [];
 
   publish(e: AgentEvent): void {

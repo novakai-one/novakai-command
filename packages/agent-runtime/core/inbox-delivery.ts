@@ -1,14 +1,15 @@
-// The delivery half of §8.1: an accepted Message becomes keystrokes.
+// The delivery half of the inbox contract: an accepted Message becomes
+// keystrokes.
 //
-// §8.1 gives an inbox item six states and §12.5 publishes the two operations
-// that move it — `claimNextInboxItem` and `recordInboxSubmission`, both typed
+// An inbox item has six states and Messaging publishes the two operations that
+// move it — `claimNextInboxItem` and `recordInboxSubmission`, both typed
 // to `sys_agent_runtime`, because the Runtime is the only thing that holds a
 // terminal to type into. Nothing in production called either. So a Message
 // addressed to an Agent was accepted, made durable, announced on the event
-// stream, and then sat in `queued` for ever, and exam row E2 — which asks for a
-// NAMED submitted/observed state — read an empty list, correctly.
+// stream, and then sat in `queued` for ever — a consumer asking for a NAMED
+// submitted/observed state read an empty list, correctly.
 //
-// The rules this obeys are §20's, and they are all about not lying:
+// The rules this obeys are all about not lying:
 //
 //   - only a Run whose endpoint is ACTIVE is delivered to. `claimNext` enforces
 //     that on Messaging's side; this only offers Runs that are `ready`, so a
@@ -63,7 +64,7 @@ const deliveryContext = (effectKey: string): CommandContext => ({
 /**
  * A Run that can be typed into right now.
  *
- * `ready` and nothing else: `provisioning` is still climbing the §13.5 ladder
+ * `ready` and nothing else: `provisioning` is still climbing the spawn ladder
  * with its terminal mid-gate, and every other lifecycle — final or recovering —
  * has no PTY this Runtime may type into.
  */
@@ -137,7 +138,7 @@ export function createInboxDeliveryPump(options: InboxDeliveryOptions): InboxDel
       };
     }
 
-    // §20, in one line: the terminal is the only thing that can say whether the
+    // The terminal is the only thing that can say whether the
     // bytes were confirmed, and this records what it said rather than what
     // would be convenient.
     const recorded = await inbox.recordSubmission({

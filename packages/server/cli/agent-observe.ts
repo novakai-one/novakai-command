@@ -9,7 +9,7 @@ import type { B3ClientOpId, B3Result } from '@novakai/foundation/contract';
 import type {
   RunEventPage, RunOperationView, TreeMutationFence,
 } from '../../agent-runtime/contract/index.js';
-import type { DelegationGrant } from '../../agents/b3/contract/index.js';
+import type { DelegationGrant } from '../../agents/governed/contract/index.js';
 import type { RuntimeClient } from '../core/runtime-host/client.js';
 import type { CliCommand, Flags } from '../core/runtime-host/cli-shared.js';
 

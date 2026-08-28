@@ -1,4 +1,4 @@
-// Q7's Runtime-owned Notification delivery operation.
+// The Runtime-owned Notification delivery operation.
 //
 // This entry point owns command authority and delegates the three deep steps:
 // reconcile durable owner truth, prepare the safe boundary, execute the

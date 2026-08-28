@@ -54,8 +54,8 @@ export function createFileInstanceLease(options: FileInstanceLeaseOptions): Inst
    * process reading in that window sees a lock that names nobody — so the
    * machine briefly has no owner on record. `link()` publishes a file that is
    * already complete, and fails with EEXIST if somebody got there first, so the
-   * lock is never observable in a half-written state (NVK-KIMI-025 repair 2:
-   * eight real processes racing found the empty-file window).
+   * lock is never observable in a half-written state (eight real processes
+   * racing found the empty-file window).
    */
   function claim(): boolean {
     mkdirSync(path.dirname(lockPath), { recursive: true });

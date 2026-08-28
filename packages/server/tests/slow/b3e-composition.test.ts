@@ -30,7 +30,7 @@ import { fileURLToPath } from 'node:url';
 import { WebSocket } from 'ws';
 import { mintClientOpId } from '@novakai/foundation/contract';
 import { createFakePtyHost } from '../../../terminal/adapters/pty-host/fake.js';
-import { createFakeProviderAdapters } from '../../../agents/b3/contract/index.js';
+import { createFakeProviderAdapters } from '../../../agents/governed/contract/index.js';
 import { listFilterForState } from '../../../shell/app/agentRuns.js';
 import { bootServer, type NovakaiServer } from '../../core/boot.js';
 import { openConfigStore } from '../../core/config/store.js';

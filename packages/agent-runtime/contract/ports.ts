@@ -5,10 +5,10 @@
 // Agent Runtime never imports Agents or Terminal. It states the NARROW thing it
 // needs from each and the composition root supplies it. That is not plumbing
 // convenience: a Runtime that could reach the whole Agents contract could create
-// a role profile, and the one-writer law says it may not (§3.3). The port is
-// the enforcement.
+// a role profile, and the one-writer law says it may not. The port is the
+// enforcement.
 //
-// Each port is also the test seam. Every failure-injection case in this slice is
+// Each port is also the test seam. Every failure-injection case in this package is
 // a port that answers differently — a crash, a stale epoch, a substituted
 // session id — rather than a mocked internal.
 import type {
@@ -126,13 +126,13 @@ export interface AgentsPort {
   /**
    * This Agent's children, each with the edge that made it. One seam, not two:
    * a caller that only wants ids takes them off the edges, and the tree that
-   * must PUBLISH the edges (§12.7) does not need a second question.
+   * must PUBLISH the edges does not need a second question.
    */
   listChildRelationships(
     principal: AuthenticatedPrincipal, parentAgentId: AgentId,
   ): Promise<B3Result<readonly AgentRelationshipFacts[]>>;
 
-  /** Who spawned this Agent. Immutable history, owned by Agents (red gate 9). */
+  /** Who spawned this Agent. Immutable history, owned by Agents. */
   parentAgentIdOf(
     principal: AuthenticatedPrincipal, agentId: AgentId,
   ): Promise<B3Result<AgentId | null>>;
@@ -167,7 +167,7 @@ export interface AgentsPort {
    * Change one. The Runtime supplies the Run facts because it owns the Run;
    * Agents decides whether the role and the provider allow it, because it owns
    * the role. Neither half can answer alone, which is why this is a port call
-   * and not a re-derivation on either side (red gate 6).
+   * and not a re-derivation on either side.
    */
   applyAgentControl(
     context: CommandContext,
@@ -312,13 +312,13 @@ export interface TerminalPort {
   ): Promise<B3Result<TerminalFacts>>;
 
   /**
-   * §19.1's controllers section. Terminal owns ControllerAttachment and
-   * TerminalInputLease (§7); the Runtime asks and never caches.
+   * The controllers section of the view. Terminal owns ControllerAttachment
+   * and TerminalInputLease; the Runtime asks and never caches.
    *
-   * There is no unavailable answer on purpose: the ratified shape has no such
+   * There is no unavailable answer on purpose: the shape has no such
    * representation, so a port that cannot answer returns its error and the
-   * view read fails with it. A fabricated `0` would be the lie §24.5 and
-   * FZ-VIEW-010 forbid — "unavailable" is not zero.
+   * view read fails with it. A fabricated `0` would be a lie — "unavailable"
+   * is not zero.
    */
   controllerFacts(
     principal: AuthenticatedPrincipal,
@@ -328,7 +328,7 @@ export interface TerminalPort {
   /**
    * Submit one turn as the Runtime, not as a controller. Returns `false` when
    * the bytes were accepted but the outcome is unconfirmed, which is a
-   * different fact from failure (§20's `submitted-unconfirmed`).
+   * different fact from failure.
    */
   submitRuntimeInput(
     context: CommandContext,
@@ -498,7 +498,7 @@ export interface TerminalPort {
     },
   ): Promise<B3Result<null>>;
 
-  /** §13.3's compare-and-set barrier against the exact active turn tuple. */
+  /** The compare-and-set barrier an interrupt commits against the exact active turn tuple. */
   interruptTurn(
     input: {
       readonly terminalSessionId: TerminalSessionId;
@@ -533,10 +533,10 @@ export type { ProviderLaunchFacts, ProviderPort } from './provider-ports.js';
 
 
 /**
- * How a spawned Agent authenticates as ITSELF from inside its own PTY
- * (DEC-B3V4-05). The Runtime hands the child a run id and a secret derived
- * from it; the transport re-derives and compares. No caller-supplied identity
- * is ever trusted, and nothing durable has to be written to make it work.
+ * How a spawned Agent authenticates as ITSELF from inside its own PTY. The
+ * Runtime hands the child a run id and a secret derived from it; the transport
+ * re-derives and compares. No caller-supplied identity is ever trusted, and
+ * nothing durable has to be written to make it work.
  */
 export interface RunCredentialPort {
   issue(agentRunId: AgentRunId): Readonly<Record<string, string>>;

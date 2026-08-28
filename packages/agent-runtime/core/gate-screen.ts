@@ -1,4 +1,4 @@
-// Reading a provider's screen (§13.5, NVK-KIMI-030 N-1, NVK-KIMI-054).
+// Reading a provider's screen.
 //
 // The gate judges one thing — what the AGENT said — and everything in this file
 // exists to separate that from what the Runtime typed at it. That used to be
@@ -24,7 +24,7 @@ const MAX_ROW_JUMP = 512;
  * a neutral act. A TUI redrawing a row it has already drawn does not redraw the
  * whole row — it steps the cursor over the columns whose content is already
  * correct and paints only the runs that changed. Straight out of a real claude
- * PTY (`packages/agents/b3/tests/fixtures/claude-gate-screen.txt`):
+ * PTY (`packages/agents/governed/tests/fixtures/claude-gate-screen.txt`):
  *
  *     then one space, then a\u001B[26GJSON\u001B[32Grray of the\u001B[44Gt\u001B[46Gkens
  *

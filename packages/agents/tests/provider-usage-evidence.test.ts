@@ -10,11 +10,11 @@ import {
   transcriptTurnCompletionId,
   type SystemCommandContext,
 } from '@novakai/foundation/contract';
-import {
-  composeProviderUsageEvidence,
-  type ProviderUsageEvidence,
-  type RecordProviderUsageEvidenceInput,
-} from '../contract/index.js';
+import { composeProviderUsageEvidence } from '../core/provider-usage-evidence.js';
+import type {
+  ProviderUsageEvidence,
+  RecordProviderUsageEvidenceInput,
+} from '../contract/provider-usage-evidence.js';
 
 const SESSION_ID = 'sess_123e4567-e89b-42d3-a456-426614174000' as never;
 

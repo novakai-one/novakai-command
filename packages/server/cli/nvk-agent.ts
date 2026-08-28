@@ -40,7 +40,7 @@ import type {
   RunEventPage, RunOperationView, StopTreeConfirmation, SupervisionAssignment,
   TreeMutationFence,
 } from '../../agent-runtime/contract/index.js';
-import type { Agent, AgentRoleProfile, DelegationGrant } from '../../agents/b3/contract/index.js';
+import type { Agent, AgentRoleProfile, DelegationGrant } from '../../agents/governed/contract/index.js';
 import type { AgentRunUsage, AgentUsageSummary } from '../../supervision/contract/index.js';
 import { connectRuntime, type RuntimeClient } from '../core/runtime-host/client.js';
 import {

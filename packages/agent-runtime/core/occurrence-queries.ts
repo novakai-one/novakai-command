@@ -1,3 +1,6 @@
+// Deriving one occurrence's truth from the retained event envelope plus the
+// durable Run/operation records — so a query answers from evidence, never from
+// whatever happens to be in memory.
 import {
   b3err, b3fail, b3ok, canonicalRequestHash,
   type ActivityGeneration, type AgentRunId, type AuthenticatedPrincipal,

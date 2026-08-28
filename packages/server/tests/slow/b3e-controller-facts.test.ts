@@ -25,7 +25,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createFakePtyHost } from '../../../terminal/adapters/pty-host/fake.js';
-import { createFakeProviderAdapters } from '../../../agents/b3/contract/index.js';
+import { createFakeProviderAdapters } from '../../../agents/governed/contract/index.js';
 import { startRuntimeHost, type RunningRuntimeHost } from '../../core/runtime-host/host.js';
 import { controllersOf } from '../../core/runtime-host/run-ports.js';
 import { chatRole } from '../governed-role.js';

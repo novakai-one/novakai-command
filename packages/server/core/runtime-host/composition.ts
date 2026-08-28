@@ -13,7 +13,7 @@ import {
 import {
   composeGovernedAgents, createProviderAdapters,
   type GovernedAgentsContract, type ProviderAdapterRegistry,
-} from '../../../agents/b3/contract/index.js';
+} from '../../../agents/governed/contract/index.js';
 import {
   composeProviderUsageEvidence, type AgentsContract, type ProviderUsageEvidenceContract,
 } from '../../../agents/contract/index.js';
