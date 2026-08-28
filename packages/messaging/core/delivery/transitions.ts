@@ -9,7 +9,12 @@ const permitted: Readonly<Record<PendingDeliveryState, readonly PendingDeliveryS
   failed: [],
 };
 
-/** Refuses every rewind, skip and evidence-free failure. */
+/**
+ * Rejects a PendingDelivery state change that is not on the permitted path,
+ * and rejects any failure recorded without a reason. A delivery may only move
+ * forward through proven states, so it can never skip submission or lose the
+ * evidence of why it failed.
+ */
 export function assertPendingDeliveryTransition(
   id: string,
   from: PendingDeliveryState,

@@ -1,6 +1,12 @@
 import type { TranscriptStore } from '../../contract/ports/transcript-store.js';
 
-/** Reconciles transcript-only confirmation, including restart after line commit. */
+/**
+ * Marks waiting sends as confirmed once their text shows up in the provider
+ * transcript, and returns how many were newly confirmed. The transcript is
+ * the only trustworthy proof that the provider actually received a message,
+ * and this runs after every ingest pass, so sends still confirm after a
+ * restart that happened while they were waiting.
+ */
 export async function confirmPendingSends(
   store: TranscriptStore,
   updatedAt: string,

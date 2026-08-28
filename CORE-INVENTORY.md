@@ -38,7 +38,7 @@ All present, all matching the data-model diagram:
 
 - **Ingestion (one door):** `ingestion/` — watch, ingest, ingest-queue, select-sources, normalize-growth, ingest-records (checkpoint + dedupe), reconcile, classify-session (identity-hook evidence), assign-session, adopt-session
 - **Send:** `send/` — accept (idempotent SendJournal), dispatch (one effect via ProviderSend port), confirm (transcript-only reconciliation), send
-- **Delivery Router:** `delivery/` — router (idle-boundary claims), transitions (queued→…→transcript-observed), queue-addressed, agent-delivery-marker
+- **Delivery Router:** `delivery/` — router (idle-boundary claims), transitions (queued→…→transcript-observed), addressed-delivery-reconciler, delivery-marker-codec
 - **App view:** `conversations/` — views, messages, message-stream, directory
 - **Projections (rebuildable):** `projections/rebuild.ts` (usage rollups + tool-call index)
 - **Runtime/queries:** `runtime/committed-records.ts`, `communications/queries.ts`
@@ -51,5 +51,5 @@ Every intended capability exists in core/: ingestion-as-only-reader, transcript 
 ## Cosmetic residue (optional later cleanup)
 
 - `communications/queries.ts` mints `thread_transcript-…` fallback ids / exposes `threadId` fields — old-system vocabulary inside an A file
-- `delivery/agent-delivery-marker.ts` permits an optional `threadId`
+- `delivery/delivery-marker-codec.ts` permits an optional `threadId`
 - B-era vocabulary in otherwise pure-A files; rename when convenient, not urgent

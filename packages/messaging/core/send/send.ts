@@ -15,7 +15,13 @@ interface SendDependencies {
   readonly now: () => string;
 }
 
-/** The complete host send: durable acceptance, one claimed effect, transcript wait. */
+/**
+ * Sends one conversation message end to end: validate and journal the
+ * request, hand it to the provider exactly once, then report the state the
+ * send now waits in. This is the single entry point for sending, so every
+ * send gets idempotent journaling and one-shot dispatch without callers
+ * coordinating the steps themselves.
+ */
 export async function sendConversationMessage(
   dependencies: SendDependencies,
   input: ConversationSendInput,

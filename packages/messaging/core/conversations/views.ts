@@ -7,26 +7,14 @@ import type { ConversationView } from '../../contract/records/conversation-view.
 import type { Timestamp, TranscriptLineId } from '../../contract/types.js';
 import { parseConversationId } from '../../contract/conversation-id.js';
 
-function alreadyApplied(current: ConversationView, input: EnsureConversationViewInput): boolean {
-  return (input.titleOverride === undefined || input.titleOverride === current.titleOverride)
-    && (input.pinned === undefined || input.pinned === current.pinned)
-    && (input.archived === undefined || input.archived === current.archived)
-    && (input.lastActivityAt === undefined || input.lastActivityAt === current.lastActivityAt)
-    && (input.lastReadLineId === undefined || input.lastReadLineId === current.lastReadLineId)
-    && (input.address === undefined || input.address === current.address)
-    && (input.agentId === undefined || input.agentId === current.agentId)
-    && (input.provider === undefined || input.provider === current.provider);
-}
-
-function validateParticipants(participants: readonly string[]): readonly string[] {
-  const normalized = [...new Set(participants.filter((value) => value.trim() !== ''))];
-  if (normalized.length === 0 || normalized.length !== participants.length) {
-    throw new Error('Conversation View requires unique, non-empty participant IDs');
-  }
-  return normalized;
-}
-
-/** Idempotently creates a durable View, or updates presentation state without rebinding it. */
+/**
+ * Creates the host-facing view of one conversation, or applies new
+ * presentation fields to the existing one. One call covers both cases so
+ * every writer is idempotent: repeating an already-applied input returns the
+ * current view unchanged. The conversation id and its participants are fixed
+ * at creation — rebinding an existing view to different people is rejected,
+ * because the view is the host's durable join onto transcript history.
+ */
 export async function ensureConversationView(
   store: TranscriptStore,
   input: EnsureConversationViewInput,
@@ -63,7 +51,12 @@ export async function ensureConversationView(
   return store.setConversationView({ view, clientOpId: input.clientOpId });
 }
 
-/** Replaces only declared mutable fields on an existing View. */
+/**
+ * Applies new presentation fields to an existing conversation view. Only the
+ * fields present in the input change; everything else carries over untouched.
+ * Unknown conversations are rejected rather than created — creation goes
+ * through `ensureConversationView`, which owns the immutable facts.
+ */
 export async function updateConversationView(
   store: TranscriptStore,
   input: UpdateConversationViewInput,
@@ -82,4 +75,25 @@ export async function updateConversationView(
       ? {} : { lastReadLineId: input.lastReadLineId as TranscriptLineId }),
   };
   return store.setConversationView({ view, clientOpId: input.clientOpId });
+}
+
+/** True when every field the input declares already matches the stored view. */
+function alreadyApplied(current: ConversationView, input: EnsureConversationViewInput): boolean {
+  return (input.titleOverride === undefined || input.titleOverride === current.titleOverride)
+    && (input.pinned === undefined || input.pinned === current.pinned)
+    && (input.archived === undefined || input.archived === current.archived)
+    && (input.lastActivityAt === undefined || input.lastActivityAt === current.lastActivityAt)
+    && (input.lastReadLineId === undefined || input.lastReadLineId === current.lastReadLineId)
+    && (input.address === undefined || input.address === current.address)
+    && (input.agentId === undefined || input.agentId === current.agentId)
+    && (input.provider === undefined || input.provider === current.provider);
+}
+
+/** Participant lists must be unique and non-empty to be a durable join key. */
+function validateParticipants(participants: readonly string[]): readonly string[] {
+  const normalized = [...new Set(participants.filter((value) => value.trim() !== ''))];
+  if (normalized.length === 0 || normalized.length !== participants.length) {
+    throw new Error('Conversation View requires unique, non-empty participant IDs');
+  }
+  return normalized;
 }

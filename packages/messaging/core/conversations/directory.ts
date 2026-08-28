@@ -3,13 +3,14 @@ import type { ConversationDirectory } from '../../contract/ports/conversation-di
 import type { TranscriptStore } from '../../contract/ports/transcript-store.js';
 import { ensureConversationView } from './views.js';
 
-const digest = (value: string): string =>
-  createHash('sha256').update(value).digest('hex').slice(0, 32);
-
-const providerTitle = (provider: string, resumeId?: string): string =>
-  `External ${provider[0]!.toUpperCase()}${provider.slice(1)} ${resumeId?.slice(-8) ?? 'session'}`;
-
-/** Messaging-owned ConversationDirectory backed by the canonical store. */
+/**
+ * Implements the ConversationDirectory seam against the transcript store, for
+ * hosts that have no conversation store of their own. An adopted external
+ * agent gets a human↔agent conversation titled after its provider session;
+ * an agent-to-agent delivery gets an archived "Agent communication" view.
+ * Conversation ids are derived deterministically from the participants, so
+ * repeat calls converge on the same view instead of minting duplicates.
+ */
 export function createStoredConversationDirectory(options: {
   readonly store: TranscriptStore;
   readonly humanPrincipalId: string;
@@ -44,3 +45,10 @@ export function createStoredConversationDirectory(options: {
     },
   };
 }
+
+/** Stable short id fragment, so participant sets map to one durable id. */
+const digest = (value: string): string =>
+  createHash('sha256').update(value).digest('hex').slice(0, 32);
+
+const providerTitle = (provider: string, resumeId?: string): string =>
+  `External ${provider[0]!.toUpperCase()}${provider.slice(1)} ${resumeId?.slice(-8) ?? 'session'}`;

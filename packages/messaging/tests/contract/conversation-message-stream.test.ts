@@ -1,15 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {
-  createMemoryTranscriptStore,
-  createMessagingRuntime,
-  providerNormalizer,
-  type IngestCheckpoint,
-  type ProviderSession,
-  type ProviderTranscriptSource,
-  type SendJournal,
-  type TranscriptLine,
-} from '../../contract/index.js';
+import { createMessagingRuntime } from '../../core/ingestion/messaging-runtime.js';
+import { createMemoryTranscriptStore } from '../../adapters/stores/memory.js';
+import { providerNormalizer } from '../../adapters/provider-transcripts/normalizers/index.js';
+import type { ProviderTranscriptSource } from '../../contract/ports/provider-transcript-source.js';
+import type { IngestCheckpoint } from '../../contract/records/ingest-checkpoint.js';
+import type { ProviderSession } from '../../contract/records/provider-session.js';
+import type { SendJournal } from '../../contract/records/send-journal.js';
+import type { TranscriptLine } from '../../contract/records/transcript-line.js';
 
 const at = '2026-08-26T00:00:00.000Z' as never;
 const sourceId = `source_${'a'.repeat(64)}` as never;

@@ -45,7 +45,12 @@ const validate = (input: ConversationSendInput): ConversationId => {
   return conversationId;
 };
 
-/** Persist one idempotent accepted request before provider execution. */
+/**
+ * Validates one send request and durably records it as an accepted send
+ * journal. The journal lands before the provider is ever touched, so a
+ * retried request — same issuer, same clientOpId — returns the original
+ * record instead of sending the message twice.
+ */
 export async function acceptSend(
   dependencies: AcceptDependencies,
   input: ConversationSendInput,

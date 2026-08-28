@@ -3,12 +3,9 @@ import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import {
-  createDefaultMessagingRuntime,
-  type AgentDirectory,
-  type AgentDirectoryEntry,
-  type ConversationDirectory,
-} from '../../contract/index.js';
+import { createDefaultMessagingRuntime } from '../../contract/compose/ingestion.js';
+import type { AgentDirectory, AgentDirectoryEntry } from '../../contract/ports/agent-directory.js';
+import type { ConversationDirectory } from '../../contract/ports/conversation-directory.js';
 
 const row = (resumeId: string, text: string): string => `${JSON.stringify({
   type: 'assistant',

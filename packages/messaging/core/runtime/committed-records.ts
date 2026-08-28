@@ -22,7 +22,7 @@ import { ensureConversationView, updateConversationView } from '../conversations
 import { listAgentConversationMessages } from '../conversations/messages.js';
 import { rebuildProjections } from '../projections/rebuild.js';
 import { sendConversationMessage } from '../send/send.js';
-import { agentDeliveryMarker } from '../delivery/agent-delivery-marker.js';
+import { agentDeliveryMarker } from '../delivery/delivery-marker-codec.js';
 import { parseProviderName } from '../../contract/provider-name.js';
 
 type RecordsApi = Pick<MessagingRuntimeApi,
@@ -32,34 +32,13 @@ type RecordsApi = Pick<MessagingRuntimeApi,
   | 'sendConversationMessage' | 'listProviderSessions' | 'listTranscriptLines'
   | 'listAgentConversationMessages' | 'listSendJournals' | 'listAgentCommunications'>;
 
-const failed = <T>(cause: unknown): Outcome<T> => ({
-  kind: 'error',
-  error: new MessagingError('DependencyUnavailable', {
-    message: cause instanceof Error ? cause.message : 'Messaging records unavailable',
-    retryable: true,
-    fields: { dependency: 'messaging-store' },
-  }),
-});
-
-function lineQuery(input: unknown): TranscriptLineQuery {
-  if (input === undefined) return {};
-  if (typeof input !== 'object' || input === null || Array.isArray(input)) {
-    throw new Error('Transcript line query must be an object');
-  }
-  const value = input as Record<string, unknown>;
-  const provider = parseProviderName(value.provider);
-  return {
-    ...(typeof value.sessionId === 'string'
-      ? { sessionId: value.sessionId as ProviderSessionId } : {}),
-    ...(provider === undefined ? {} : { provider }),
-    ...(typeof value.sourceId === 'string'
-      ? { sourceId: value.sourceId as TranscriptSourceId } : {}),
-    ...(typeof value.resumeId === 'string'
-      ? { resumeId: value.resumeId as ProviderResumeId } : {}),
-  };
-}
-
-/** Committed record operations kept separate from watcher lifecycle policy. */
+/**
+ * The committed-record half of the runtime API. Every operation here only
+ * reads or writes durable records through the store — it never triggers
+ * ingestion, watching, or delivery scheduling. Each call is wrapped so a
+ * store failure reaches the host as a retryable `DependencyUnavailable`
+ * outcome instead of leaking an implementation exception.
+ */
 export function createCommittedRecordsApi(options: {
   readonly store: TranscriptStore;
   readonly now: () => string;
@@ -88,7 +67,8 @@ export function createCommittedRecordsApi(options: {
       transcriptMarker: agentDeliveryMarker(input),
     })),
     listProviderSessions: () => safe(() => options.store.listProviderSessions()),
-    listTranscriptLines: (input) => safe(() => options.store.listTranscriptLines(lineQuery(input))),
+    listTranscriptLines: (input) => safe(() =>
+      options.store.listTranscriptLines(parseTranscriptLineQuery(input))),
     listAgentConversationMessages: (input) => safe(() =>
       listAgentConversationMessages(options.store, options.normalizers, input)),
     listSendJournals: () => safe(() => options.store.listSendJournals()),
@@ -104,5 +84,37 @@ export function createCommittedRecordsApi(options: {
         now: options.now,
       }, input);
     }),
+  };
+}
+
+/** Maps any store failure to the one outcome shape hosts handle. */
+const failed = <T>(cause: unknown): Outcome<T> => ({
+  kind: 'error',
+  error: new MessagingError('DependencyUnavailable', {
+    message: cause instanceof Error ? cause.message : 'Messaging records unavailable',
+    retryable: true,
+    fields: { dependency: 'messaging-store' },
+  }),
+});
+
+/**
+ * Parses the optional line-query filter from untrusted host input at the seam;
+ * unknown shapes are rejected instead of silently ignored.
+ */
+function parseTranscriptLineQuery(input: unknown): TranscriptLineQuery {
+  if (input === undefined) return {};
+  if (typeof input !== 'object' || input === null || Array.isArray(input)) {
+    throw new Error('Transcript line query must be an object');
+  }
+  const value = input as Record<string, unknown>;
+  const provider = parseProviderName(value.provider);
+  return {
+    ...(typeof value.sessionId === 'string'
+      ? { sessionId: value.sessionId as ProviderSessionId } : {}),
+    ...(provider === undefined ? {} : { provider }),
+    ...(typeof value.sourceId === 'string'
+      ? { sourceId: value.sourceId as TranscriptSourceId } : {}),
+    ...(typeof value.resumeId === 'string'
+      ? { resumeId: value.resumeId as ProviderResumeId } : {}),
   };
 }

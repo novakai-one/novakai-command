@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { findAgentDeliveryMarker } from './agent-delivery-marker.js';
+import { findAgentDeliveryMarker } from './delivery-marker-codec.js';
 import type { TranscriptStore } from '../../contract/ports/transcript-store.js';
 import type { PendingDelivery } from '../../contract/records/pending-delivery.js';
 import type { EventCursor, PendingDeliveryId } from '../../contract/types.js';
@@ -58,10 +58,19 @@ async function acceptPage(
   return added;
 }
 
-/** Incrementally projects authenticated CLI result markers into durable work. */
+/**
+ * Watches the transcript event stream and queues one PendingDelivery for each
+ * tool-result line that carries a valid delivery marker. Each pass is
+ * incremental thanks to the cursor, so a restart resumes where the last pass
+ * stopped instead of re-queueing old work.
+ */
 export class AddressedDeliveryReconciler {
   private cursor: EventCursor | undefined;
 
+  /**
+   * Scans every transcript event since the previous pass and queues a
+   * delivery for each newly seen marker; returns how many were added.
+   */
   async reconcile(store: TranscriptStore): Promise<number> {
     let added = 0;
     while (true) {

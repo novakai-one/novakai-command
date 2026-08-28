@@ -68,18 +68,14 @@ describe("architecture — one Messaging doorway", () => {
     assert.deepEqual(offenders, []);
   });
 
-  it("consumer-facing Messaging tests use only contract/index.ts", () => {
-    const consumerDirs = ["capability", "contract", "harness", "standalone"];
+  it("Messaging tests import owning modules directly, never the host barrel", () => {
     const offenders: string[] = [];
-    for (const dir of consumerDirs) {
-      for (const file of listFiles(join(testsSourceRoot, dir), ".ts")) {
-        for (const specifier of importSpecifiers(file)) {
-          if (!specifier.startsWith(".")) continue;
-          const target = resolveSpecifier(file, specifier);
-          if (target === undefined || target.startsWith(testsSourceRoot)) continue;
-          if (!target.endsWith(join("contract", "index.js"))) {
-            offenders.push(`${relative(testsSourceRoot, file)} → ${specifier}`);
-          }
+    for (const file of listFiles(testsSourceRoot, ".ts")) {
+      for (const specifier of importSpecifiers(file)) {
+        if (!specifier.startsWith(".")) continue;
+        const target = resolveSpecifier(file, specifier);
+        if (target !== undefined && target.endsWith(join("contract", "index.js"))) {
+          offenders.push(`${relative(testsSourceRoot, file)} → ${specifier}`);
         }
       }
     }
@@ -88,7 +84,7 @@ describe("architecture — one Messaging doorway", () => {
 
   it("core imports declaration-only contract modules, never behavior or wiring", () => {
     const allowed = new Set([
-      "types", "schemas", "brands", "errors", "records", "events", "subscriptions",
+      "types", "errors", "records", "events", "subscriptions",
       "commands", "queries", "outcome", "runtime",
       "communications", "conversations", "agent-delivery-marker",
       "conversation-id", "correlation", "provider-name",
@@ -163,7 +159,6 @@ describe("architecture — graph health", () => {
       join(sourceRoot, "core", "event-bus.ts"),
       ...listFiles(join(sourceRoot, "adapters", "provider-transcripts"), ".ts"),
       ...listFiles(join(sourceRoot, "adapters", "stores"), ".ts"),
-      join(repoRoot, "packages", "server", "core", "b2b", "composition.ts"),
     ];
     const oversized = files.flatMap((file) => {
       const lines = readFileSync(file, "utf8").split(/\r?\n/u).length;

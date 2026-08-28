@@ -3,17 +3,17 @@ import { mkdtemp, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import {
-  createMemoryTranscriptStore,
-  createMessagingRuntime,
-  openFoundationTranscriptStore,
-  providerNormalizer,
-  type AgentDirectory,
-  type ProviderSourceGrowth,
-  type ProviderSourceStat,
-  type ProviderTranscriptSource,
-  type TranscriptStore,
-} from "../../contract/index.js";
+import { createMessagingRuntime } from "../../core/ingestion/messaging-runtime.js";
+import { createMemoryTranscriptStore } from "../../adapters/stores/memory.js";
+import { openFoundationTranscriptStore } from "../../adapters/stores/jsonl.js";
+import { providerNormalizer } from "../../adapters/provider-transcripts/normalizers/index.js";
+import type { AgentDirectory } from "../../contract/ports/agent-directory.js";
+import type {
+  ProviderSourceGrowth,
+  ProviderSourceStat,
+  ProviderTranscriptSource,
+} from "../../contract/ports/provider-transcript-source.js";
+import type { TranscriptStore } from "../../contract/ports/transcript-store.js";
 
 const row = JSON.stringify({
   type: "assistant",

@@ -9,8 +9,64 @@ import type { TranscriptLine } from '../../contract/records/transcript-line.js';
 import type { ProviderName } from '../../contract/types.js';
 
 /**
- * The only TranscriptLine-to-conversation projection. Snapshot reads and live
- * delivery both pass through this function, so provider noise cannot diverge.
+ * Answers the host's one conversation question: the human-readable message
+ * stream for one agent, oldest first. Reads the transcript lines of every
+ * session the agent owns and runs them through the shared projection below,
+ * so a snapshot and a live stream event can never disagree. Providers own the
+ * semantic selection through their normalizer; hosts never inspect transcript
+ * formats.
+ */
+export async function listAgentConversationMessages(
+  store: TranscriptStore,
+  normalizers: Readonly<Record<ProviderName, ProviderNormalizer>>,
+  input: AgentConversationMessagesQuery,
+): Promise<readonly AgentConversationMessage[]> {
+  const sessions = (await store.listProviderSessions())
+    .filter((session) => session.agentId === input.agentId);
+  const sessionOrder = new Map(sessions.map((session) => [session.id, session.createdAt]));
+  const lines = (await Promise.all(sessions.map((session) =>
+    store.listTranscriptLines({ sessionId: session.id })))).flat();
+  const journals = await store.listSendJournals();
+  const orderedLines = lines
+    .sort((left, right) =>
+      (sessionOrder.get(left.sessionId) ?? '').localeCompare(
+        sessionOrder.get(right.sessionId) ?? '',
+      )
+      || left.sourcePosition.sourceEpoch - right.sourcePosition.sourceEpoch
+      || left.sourcePosition.offset - right.sourcePosition.offset);
+  return projectAgentConversationMessages(orderedLines, normalizers, journals);
+}
+
+/**
+ * The single transcript-to-conversation projection. Both the snapshot query
+ * above and the live stream in message-stream.ts call this function, so
+ * provider noise is filtered in exactly one place and the two surfaces cannot
+ * diverge.
+ */
+export function projectAgentConversationMessages(
+  lines: readonly TranscriptLine[],
+  normalizers: Readonly<Record<ProviderName, ProviderNormalizer>>,
+  journals: readonly SendJournal[],
+): readonly AgentConversationMessage[] {
+  const projected = lines.flatMap((line): ProjectedConversationLine[] => {
+    const message = projectAgentConversationMessage(line, normalizers[line.provider]);
+    return message === null ? [] : [{ line, message }];
+  });
+  const clientOpByLine = correlateClientOperations(lines, projected, journals);
+  return projected.map(({ line, message }) => ({
+    ...message,
+    ...(clientOpByLine.has(line.id) ? { clientOpId: clientOpByLine.get(line.id)! } : {}),
+  }));
+}
+
+interface ProjectedConversationLine {
+  readonly line: TranscriptLine;
+  readonly message: AgentConversationMessage;
+}
+
+/**
+ * Keeps one transcript line only when its provider says it belongs in the
+ * human conversation: user and assistant text, nothing else.
  */
 function projectAgentConversationMessage(
   line: TranscriptLine,
@@ -32,15 +88,11 @@ function projectAgentConversationMessage(
   };
 }
 
-interface ProjectedConversationLine {
-  readonly line: TranscriptLine;
-  readonly message: AgentConversationMessage;
-}
-
 /**
- * Correlates the accepted operation with the first canonical user row at or
- * after its confirmed provider evidence. Internal provider wrappers may be
- * the confirmation line, so confirmedLineId alone is not a display identity.
+ * Matches each confirmed send to the first canonical user message at or after
+ * the line that confirmed it. A provider's internal wrapper line can be the
+ * confirmation evidence, so the confirmed line alone is not the display
+ * identity — the correlation walks forward to the real user message.
  */
 function correlateClientOperations(
   lines: readonly TranscriptLine[],
@@ -68,46 +120,4 @@ function correlateClientOperations(
     }
   }
   return clientOpByLine;
-}
-
-/** Canonical projection shared by snapshot queries and live subscriptions. */
-export function projectAgentConversationMessages(
-  lines: readonly TranscriptLine[],
-  normalizers: Readonly<Record<ProviderName, ProviderNormalizer>>,
-  journals: readonly SendJournal[],
-): readonly AgentConversationMessage[] {
-  const projected = lines.flatMap((line): ProjectedConversationLine[] => {
-    const message = projectAgentConversationMessage(line, normalizers[line.provider]);
-    return message === null ? [] : [{ line, message }];
-  });
-  const clientOpByLine = correlateClientOperations(lines, projected, journals);
-  return projected.map(({ line, message }) => ({
-    ...message,
-    ...(clientOpByLine.has(line.id) ? { clientOpId: clientOpByLine.get(line.id)! } : {}),
-  }));
-}
-
-/**
- * Projects provider-owned evidence into the sole host-facing conversation stream.
- * Provider adapters own semantic selection; hosts never inspect transcript formats.
- */
-export async function listAgentConversationMessages(
-  store: TranscriptStore,
-  normalizers: Readonly<Record<ProviderName, ProviderNormalizer>>,
-  input: AgentConversationMessagesQuery,
-): Promise<readonly AgentConversationMessage[]> {
-  const sessions = (await store.listProviderSessions())
-    .filter((session) => session.agentId === input.agentId);
-  const sessionOrder = new Map(sessions.map((session) => [session.id, session.createdAt]));
-  const lines = (await Promise.all(sessions.map((session) =>
-    store.listTranscriptLines({ sessionId: session.id })))).flat();
-  const journals = await store.listSendJournals();
-  const orderedLines = lines
-    .sort((left, right) =>
-      (sessionOrder.get(left.sessionId) ?? '').localeCompare(
-        sessionOrder.get(right.sessionId) ?? '',
-      )
-      || left.sourcePosition.sourceEpoch - right.sourcePosition.sourceEpoch
-      || left.sourcePosition.offset - right.sourcePosition.offset);
-  return projectAgentConversationMessages(orderedLines, normalizers, journals);
 }

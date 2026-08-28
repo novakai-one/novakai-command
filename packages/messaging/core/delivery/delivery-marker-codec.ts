@@ -24,13 +24,23 @@ const valid = (value: unknown): value is AgentDeliveryMarker => {
       && !Array.isArray(marker.screenContext));
 };
 
-/** Encode one validated Agent-addressed delivery as provider transcript evidence. */
+/**
+ * Serializes one delivery instruction into a single-line marker token that
+ * can ride inside provider transcript text. Agents hand messages to each
+ * other through the transcript itself, so the instruction must survive as
+ * plain text that any provider will echo back verbatim.
+ */
 export function agentDeliveryMarker(marker: AgentDeliveryMarker): string {
   if (!valid(marker)) throw new Error('Invalid Agent delivery marker');
   return `${PREFIX}${Buffer.from(JSON.stringify(marker), 'utf8').toString('base64url')}`;
 }
 
-/** Return the first valid Novakai delivery marker embedded in provider evidence. */
+/**
+ * Extracts the first valid delivery marker from transcript text, or undefined
+ * when there is none. Provider output is untrusted — it may be partial,
+ * mangled, or contain look-alikes — so every candidate token is decoded and
+ * fully validated before it counts.
+ */
 export function findAgentDeliveryMarker(evidence: string): AgentDeliveryMarker | undefined {
   TOKEN.lastIndex = 0;
   for (const match of evidence.matchAll(TOKEN)) {

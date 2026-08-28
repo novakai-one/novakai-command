@@ -12,8 +12,12 @@ interface AgentConversationMessageStreamDependencies {
 }
 
 /**
- * Projects durable transcript events into the same canonical messages returned
- * by snapshot queries. Hosts never inspect sessions, providers, or raw lines.
+ * Pushes the same messages `listAgentConversationMessages` returns, as they
+ * land: each committed transcript line is re-read in its session's order,
+ * projected through the shared projection in messages.ts, and delivered to
+ * the sink only if it is human-visible. Hosts never see sessions, providers,
+ * or raw lines — the subscription speaks the canonical message vocabulary
+ * only.
  */
 export function subscribeAgentConversationMessageStream(
   dependencies: AgentConversationMessageStreamDependencies,

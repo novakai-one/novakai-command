@@ -3,7 +3,7 @@ import path from "node:path";
 import { createProviderTranscriptSource } from "../../adapters/provider-transcripts/source.js";
 import { providerNormalizer } from "../../adapters/provider-transcripts/normalizers/index.js";
 import { openFoundationTranscriptStore } from "../../adapters/stores/jsonl.js";
-import { createMessagingRuntime } from "../../core/ingestion/watch.js";
+import { createMessagingRuntime } from "../../core/ingestion/messaging-runtime.js";
 import type { MessagingRuntimeApi } from "../runtime.js";
 import type { AgentDirectory } from "../ports/agent-directory.js";
 import type { AdoptionAssignment } from "../ports/agent-directory.js";

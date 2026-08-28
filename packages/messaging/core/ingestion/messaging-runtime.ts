@@ -15,7 +15,7 @@ import type { ProviderName } from "../../contract/types.js";
 import type { TranscriptSourceId } from "../../contract/types.js";
 import { MessagingError } from "../../contract/types.js";
 import { createDurableTranscriptEventBus, type DurableTranscriptEventBus } from "../event-bus.js";
-import { ingestNow as runIngest } from "./ingest.js";
+import { runIngestionPass } from "./ingest.js";
 import type {
   AdoptionAssignment,
   AgentDirectory,
@@ -27,7 +27,7 @@ import { createStoredConversationDirectory } from '../conversations/directory.js
 import { createCommittedRecordsApi } from '../runtime/committed-records.js';
 import { subscribeAgentConversationMessageStream } from '../conversations/message-stream.js';
 import { ProviderIngestQueue } from './ingest-queue.js';
-import { IngestionDeliveryRuntime } from './delivery-runtime.js';
+import { DeliveryRuntime } from './delivery-runtime.js';
 
 /**
  * Configures provider ingestion and delivery scheduling. Maintenance defaults
@@ -82,7 +82,12 @@ const ingestFailure = <T>(cause: unknown): Outcome<T> => {
   return unavailable(cause);
 };
 
-class IngestionRuntime implements MessagingRuntimeApi {
+/**
+ * The composed messaging runtime: the constructor is the wiring, `start`/`stop`
+ * own the lifecycle, and every ingestion trigger converges on `runPass` — one
+ * ingestion pass (see ingest.ts), then delivery drains what it committed.
+ */
+class MessagingRuntime implements MessagingRuntimeApi {
   readonly eventBus: DurableTranscriptEventBus;
   private readonly clock: () => string;
   private readonly intervalMs: number;
@@ -97,7 +102,7 @@ class IngestionRuntime implements MessagingRuntimeApi {
   private lastResult: IngestResult | undefined;
   private lastError: string | undefined;
   private readonly ingestQueue: ProviderIngestQueue;
-  private readonly delivery: IngestionDeliveryRuntime;
+  private readonly delivery: DeliveryRuntime;
   private readonly conversations: ConversationDirectory | undefined;
   private readonly records: ReturnType<typeof createCommittedRecordsApi>;
 
@@ -108,7 +113,7 @@ class IngestionRuntime implements MessagingRuntimeApi {
     this.changeDebounceMs = options.changeDebounceMs ?? 25;
     this.ingestQueue = new ProviderIngestQueue(
       this.changeDebounceMs,
-      (sourceIds) => this.runOnce(sourceIds),
+      (sourceIds) => this.runPass(sourceIds),
     );
     this.discoveryFloor = this.clock();
     this.eventBus = options.eventBus ?? createDurableTranscriptEventBus(options.store);
@@ -120,7 +125,7 @@ class IngestionRuntime implements MessagingRuntimeApi {
           humanPrincipalId: options.conversationPrincipalId,
           now: this.clock,
         }));
-    this.delivery = new IngestionDeliveryRuntime({
+    this.delivery = new DeliveryRuntime({
       store: options.store,
       now: this.clock,
       ...(options.agentDirectory === undefined ? {} : { agents: options.agentDirectory }),
@@ -196,14 +201,14 @@ class IngestionRuntime implements MessagingRuntimeApi {
     return this.ingestQueue.requestDiscovery();
   }
 
-  private async runOnce(
+  private async runPass(
     sourceIds?: readonly TranscriptSourceId[],
   ): Promise<Outcome<IngestResult>> {
     try {
       const candidates = sourceIds === undefined
         ? undefined
         : await this.options.source.statKnown!(sourceIds);
-      const value = await runIngest({
+      const value = await runIngestionPass({
         store: this.options.store,
         source: this.options.source,
         normalizers: this.options.normalizers,
@@ -290,5 +295,5 @@ class IngestionRuntime implements MessagingRuntimeApi {
 export function createMessagingRuntime(
   options: MessagingRuntimeOptions,
 ): MessagingRuntimeApi & { readonly eventBus: DurableTranscriptEventBus } {
-  return new IngestionRuntime(options);
+  return new MessagingRuntime(options);
 }

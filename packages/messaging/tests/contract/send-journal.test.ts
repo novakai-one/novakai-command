@@ -3,16 +3,14 @@ import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import {
-  createMemoryTranscriptStore,
-  createMessagingRuntime,
-  messageCorrelationHint,
-  openFoundationTranscriptStore,
-  type AgentDirectory,
-  type ProviderSend,
-  type ProviderTranscriptSource,
-  type TranscriptLine,
-} from '../../contract/index.js';
+import { createMessagingRuntime } from '../../core/ingestion/messaging-runtime.js';
+import { createMemoryTranscriptStore } from '../../adapters/stores/memory.js';
+import { openFoundationTranscriptStore } from '../../adapters/stores/jsonl.js';
+import { messageCorrelationHint } from '../../contract/correlation.js';
+import type { AgentDirectory } from '../../contract/ports/agent-directory.js';
+import type { ProviderSend } from '../../contract/ports/provider-send.js';
+import type { ProviderTranscriptSource } from '../../contract/ports/provider-transcript-source.js';
+import type { TranscriptLine } from '../../contract/records/transcript-line.js';
 
 const emptySource: ProviderTranscriptSource = {
   scan: async () => [],

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { findAgentDeliveryMarker } from '../delivery/agent-delivery-marker.js';
+import { findAgentDeliveryMarker } from '../delivery/delivery-marker-codec.js';
 import type {
   AgentCommunicationPage,
   AgentCommunicationsQuery,
@@ -11,24 +11,66 @@ import type { ProviderSession } from '../../contract/records/provider-session.js
 import type { SendJournal } from '../../contract/records/send-journal.js';
 import type { TranscriptLine } from '../../contract/records/transcript-line.js';
 
-const preview = (text: string): string => {
-  const value = text.replace(/\s+/gu, ' ').trim();
-  return value.length <= 160 ? value : `${value.slice(0, 159)}…`;
-};
+/**
+ * Answers the Communications screen from root records alone: send journals
+ * plus committed transcript lines. Nothing on this page is stored — the list
+ * is re-derived on every call, so restart, replay, and rebuild all produce
+ * the same rows.
+ *
+ * Rows come from two sources, merged and ordered by time:
+ * 1. send journals — messages sent through Messaging, with their delivery
+ *    state;
+ * 2. transcript lines — everything observed on provider transcripts:
+ *    agent-to-agent deliveries (carrying a delivery marker) and plain
+ *    provider conversation lines.
+ *
+ * The `threadId` field keeps its old-screen name for host compatibility. In
+ * this transcript-first system it is the conversation grouping key: the real
+ * conversation id when the row belongs to one, otherwise a deterministic
+ * stand-in derived from the row's participants (`fallbackConversationKey`).
+ */
+export async function listAgentCommunications(
+  store: TranscriptStore,
+  query: AgentCommunicationsQuery,
+): Promise<AgentCommunicationPage> {
+  if (query.agentIds.length === 0 || query.limit < 1 || query.limit > 200) {
+    throw new Error('Communications query requires 1..N Agents and limit 1..200');
+  }
+  const [sessions, lines, pending, journals] = await Promise.all([
+    store.listProviderSessions(), store.listTranscriptLines(),
+    store.listPendingDeliveries(), store.listSendJournals(),
+  ]);
+  const context: LineContext = {
+    sessions: new Map(sessions.map((item) => [item.id, item])),
+    pending: new Map(pending.map((item) => [item.transcriptLineId, item])),
+    deliveryJournals: new Map(journals.map((item) => [item.clientOpId, item])),
+    confirmedLineIds: new Set(journals.flatMap((item) =>
+      item.attempts.flatMap((attempt) => attempt.confirmedLineId === undefined
+        ? [] : [attempt.confirmedLineId]))),
+    subjects: new Set(query.agentIds),
+  };
+  const items = [
+    ...journals.filter((item) => !item.clientOpId.startsWith('delivery:'))
+      .map((item) => journalRow(item, context.subjects)),
+    ...lines.map((line) => lineRow(line, context)),
+  ].filter((item): item is AgentCommunicationView => item !== undefined)
+    .filter((item) => query.threadId === undefined || item.threadId === query.threadId)
+    .filter((item) => query.runIds === undefined
+      || item.relatedRunIds.some((runId) => query.runIds!.includes(runId)))
+    .sort((left, right) => left.occurredAt.localeCompare(right.occurredAt)
+      || left.messageId.localeCompare(right.messageId));
+  const from = query.cursor === undefined
+    ? 0 : Math.max(0, items.findIndex((item) => item.messageId === query.cursor) + 1);
+  const page = items.slice(from, from + query.limit);
+  const next = items[from + query.limit]?.messageId;
+  return { items: page, ...(next === undefined ? {} : { nextCursor: page.at(-1)!.messageId }) };
+}
 
-const fallbackThread = (participants: readonly string[]): string =>
-  `thread_transcript-${createHash('sha256')
-    .update([...participants].sort().join(':')).digest('hex').slice(0, 24)}`;
-
-const direction = (
-  senderAgentId: string | undefined,
-  subjects: ReadonlySet<string>,
-): AgentCommunicationView['direction'] => {
-  if (senderAgentId === undefined) return 'to-agent';
-  return subjects.has(senderAgentId) ? 'from-agent' : 'between-agents';
-};
-
-function journalView(
+/**
+ * One row for a send the journal owns. The journal's conversation id is the
+ * grouping key — these rows always belong to a real conversation.
+ */
+function journalRow(
   journal: SendJournal,
   subjects: ReadonlySet<string>,
 ): AgentCommunicationView | undefined {
@@ -60,7 +102,31 @@ interface LineContext {
   readonly subjects: ReadonlySet<string>;
 }
 
-function addressedView(
+/**
+ * Chooses which row, if any, one transcript line contributes: a delivery row
+ * when a pending delivery claims the line, nothing when a send confirmation
+ * already covers it, otherwise a plain provider conversation row.
+ */
+function lineRow(line: TranscriptLine, context: LineContext): AgentCommunicationView | undefined {
+  const ownerAgentId = context.sessions.get(line.sessionId)?.agentId;
+  if (ownerAgentId === undefined) return undefined;
+  const pending = context.pending.get(line.id);
+  if (pending !== undefined) {
+    return addressedLineRow(
+      line, ownerAgentId, pending,
+      context.deliveryJournals.get(`delivery:${pending.id}`), context.subjects,
+    );
+  }
+  if (context.confirmedLineIds.has(line.id)) return undefined;
+  return plainLineRow(line, ownerAgentId, context.subjects);
+}
+
+/**
+ * One row for a transcript line carrying an agent-to-agent delivery marker.
+ * The grouping key prefers the marker's own hint, then the delivery's
+ * conversation, then a deterministic stand-in for the participant pair.
+ */
+function addressedLineRow(
   line: TranscriptLine,
   ownerAgentId: string,
   pending: PendingDelivery,
@@ -74,7 +140,7 @@ function addressedView(
   return {
     messageId: line.id,
     threadId: marker.threadId ?? conversationId
-      ?? fallbackThread([ownerAgentId, marker.recipientAgentId]),
+      ?? fallbackConversationKey([ownerAgentId, marker.recipientAgentId]),
     ...(conversationId === undefined ? {} : { conversationId }),
     senderPrincipalId: ownerAgentId,
     recipientAgentIds: [marker.recipientAgentId],
@@ -89,7 +155,12 @@ function addressedView(
   };
 }
 
-function ordinaryLineView(
+/**
+ * One row for a plain provider conversation line. No conversation exists for
+ * these, so the grouping key is a deterministic stand-in derived from the
+ * owning agent alone.
+ */
+function plainLineRow(
   line: TranscriptLine,
   ownerAgentId: string,
   subjects: ReadonlySet<string>,
@@ -99,7 +170,7 @@ function ordinaryLineView(
   const fromAgent = line.role === 'assistant';
   return {
     messageId: line.id,
-    threadId: fallbackThread([ownerAgentId]),
+    threadId: fallbackConversationKey([ownerAgentId]),
     senderPrincipalId: fromAgent ? ownerAgentId : 'external-provider-user',
     recipientAgentIds: fromAgent ? [] : [ownerAgentId],
     relatedRunIds: [],
@@ -111,54 +182,24 @@ function ordinaryLineView(
   };
 }
 
-function lineView(line: TranscriptLine, context: LineContext): AgentCommunicationView | undefined {
-  const ownerAgentId = context.sessions.get(line.sessionId)?.agentId;
-  if (ownerAgentId === undefined) return undefined;
-  const pending = context.pending.get(line.id);
-  if (pending !== undefined) {
-    return addressedView(
-      line, ownerAgentId, pending,
-      context.deliveryJournals.get(`delivery:${pending.id}`), context.subjects,
-    );
-  }
-  if (context.confirmedLineIds.has(line.id)) return undefined;
-  return ordinaryLineView(line, ownerAgentId, context.subjects);
-}
+/**
+ * Deterministic grouping key for rows that belong to no conversation. Derived
+ * from the sorted participants so every query run — and both sides of an
+ * agent pair — lands on the same key. Never persisted; safe to change.
+ */
+const fallbackConversationKey = (participants: readonly string[]): string =>
+  `conv_transcript-${createHash('sha256')
+    .update([...participants].sort().join(':')).digest('hex').slice(0, 24)}`;
 
-/** Rebuilds the frozen Communications list from root records only. */
-export async function listAgentCommunications(
-  store: TranscriptStore,
-  query: AgentCommunicationsQuery,
-): Promise<AgentCommunicationPage> {
-  if (query.agentIds.length === 0 || query.limit < 1 || query.limit > 200) {
-    throw new Error('Communications query requires 1..N Agents and limit 1..200');
-  }
-  const [sessions, lines, pending, journals] = await Promise.all([
-    store.listProviderSessions(), store.listTranscriptLines(),
-    store.listPendingDeliveries(), store.listSendJournals(),
-  ]);
-  const context: LineContext = {
-    sessions: new Map(sessions.map((item) => [item.id, item])),
-    pending: new Map(pending.map((item) => [item.transcriptLineId, item])),
-    deliveryJournals: new Map(journals.map((item) => [item.clientOpId, item])),
-    confirmedLineIds: new Set(journals.flatMap((item) =>
-      item.attempts.flatMap((attempt) => attempt.confirmedLineId === undefined
-        ? [] : [attempt.confirmedLineId]))),
-    subjects: new Set(query.agentIds),
-  };
-  const items = [
-    ...journals.filter((item) => !item.clientOpId.startsWith('delivery:'))
-      .map((item) => journalView(item, context.subjects)),
-    ...lines.map((line) => lineView(line, context)),
-  ].filter((item): item is AgentCommunicationView => item !== undefined)
-    .filter((item) => query.threadId === undefined || item.threadId === query.threadId)
-    .filter((item) => query.runIds === undefined
-      || item.relatedRunIds.some((runId) => query.runIds!.includes(runId)))
-    .sort((left, right) => left.occurredAt.localeCompare(right.occurredAt)
-      || left.messageId.localeCompare(right.messageId));
-  const from = query.cursor === undefined
-    ? 0 : Math.max(0, items.findIndex((item) => item.messageId === query.cursor) + 1);
-  const page = items.slice(from, from + query.limit);
-  const next = items[from + query.limit]?.messageId;
-  return { items: page, ...(next === undefined ? {} : { nextCursor: page.at(-1)!.messageId }) };
-}
+const preview = (text: string): string => {
+  const value = text.replace(/\s+/gu, ' ').trim();
+  return value.length <= 160 ? value : `${value.slice(0, 159)}…`;
+};
+
+const direction = (
+  senderAgentId: string | undefined,
+  subjects: ReadonlySet<string>,
+): AgentCommunicationView['direction'] => {
+  if (senderAgentId === undefined) return 'to-agent';
+  return subjects.has(senderAgentId) ? 'from-agent' : 'between-agents';
+};

@@ -14,7 +14,7 @@ export interface EnsureAgentPairConversationInput {
   readonly clientOpId: string;
 }
 
-/** Temporary host seam until TF-06 moves Conversation View into Messaging. */
+/** Host seam Messaging crosses to ensure a Conversation exists for an adopted Agent or an Agent pair; view storage stays host-owned. */
 export interface ConversationDirectory {
   ensureForAdoptedAgent(
     input: EnsureAdoptedConversationInput,

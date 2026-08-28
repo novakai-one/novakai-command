@@ -43,7 +43,14 @@ async function sourceFenceFor(
   };
 }
 
-/** Claims and dispatches one accepted send. A second claimant starts no effect. */
+/**
+ * Hands one accepted send to the provider and records the outcome on the
+ * journal. The claim transition runs before the provider call, so if two
+ * workers race the same send only one effect ever leaves the process; the
+ * loser gets the journal back unchanged. A refused effect is recorded as
+ * failed, while a thrown error is recorded as indeterminate because the
+ * provider may or may not have received the message.
+ */
 export async function dispatchAcceptedSend(
   dependencies: DispatchDependencies,
   journal: SendJournal,

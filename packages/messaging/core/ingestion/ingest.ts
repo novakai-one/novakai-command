@@ -71,6 +71,115 @@ const emptySourceResult = (): SourceIngestResult => ({
   foreign: false,
 });
 
+/**
+ * Runs one ingestion pass: stat the provider sources, select the ones worth
+ * reading, then per selected source read its growth, normalize the new bytes
+ * into transcript records, and commit them as one batch. Without candidates it
+ * requests full source discovery; with candidates it skips discovery and
+ * processes only those sources. One source failing does not prevent others
+ * from committing.
+ */
+export async function runIngestionPass(
+  dependencies: IngestionDependencies,
+  candidates?: readonly ProviderSourceStat[],
+): Promise<IngestResult> {
+  const scanned = candidates ?? await dependencies.source.scan();
+  const sessions = [...await dependencies.store.listProviderSessions()];
+  const sources = await selectSourcesForIngest({
+    sources: scanned,
+    sessions,
+    journals: await dependencies.store.listSendJournals(),
+    discoveryFloor: dependencies.discoveryFloor,
+    ...(dependencies.agentDirectory === undefined
+      ? {} : { directory: dependencies.agentDirectory }),
+  });
+  let added = 0;
+  let duplicates = 0;
+  let sessionsRegistered = 0;
+  let sessionsAdopted = 0;
+  let foreignSources = 0;
+  const failures = [] as Array<{ sourceId: string; provider: string; message: string }>;
+  const adoptionBudget = { remaining: dependencies.adoption?.limitPerTick ?? 0 };
+  for (const source of sources) {
+    let result: SourceIngestResult;
+    try {
+      result = await ingestSource(dependencies, source, sessions, adoptionBudget);
+    } catch (cause) {
+      failures.push({
+        sourceId: source.sourceId,
+        provider: source.provider,
+        message: cause instanceof Error ? cause.message : String(cause),
+      });
+      continue;
+    }
+    added += result.added;
+    duplicates += result.duplicates;
+    sessionsRegistered += result.registered;
+    if (result.adopted) sessionsAdopted += 1;
+    if (result.foreign) foreignSources += 1;
+    if (result.session !== undefined) {
+      const current = sessions.findIndex((candidate) => candidate.id === result.session?.id);
+      if (current < 0) sessions.push(result.session);
+      else sessions[current] = result.session;
+    }
+  }
+  await confirmPendingSends(dependencies.store, dependencies.now());
+  return {
+    sources: sources.length,
+    added,
+    duplicates,
+    sessionsRegistered,
+    sessionsAdopted,
+    foreignSources,
+    failedSources: failures.length,
+    failures: failures.slice(0, 20),
+  };
+}
+
+/**
+ * Ingests one selected source: prepare, classify the session the evidence
+ * points to, then either commit the new lines or defer the source as
+ * metadata-only.
+ */
+async function ingestSource(
+  dependencies: IngestionDependencies,
+  source: ProviderSourceStat,
+  sessions: readonly ProviderSession[],
+  adoptionBudget: { remaining: number },
+): Promise<SourceIngestResult> {
+  const prepared = await prepareSource(dependencies, source, sessions);
+  if (prepared === null) return emptySourceResult();
+  const classification = await classifyProviderSession({
+    session: prepared.discovered,
+    lines: prepared.normalized.items.map((item) => item.value),
+    complete: prepared.normalized.complete,
+    adoptionEligible: source.adoptionEligible,
+    adoptionRemaining: adoptionBudget.remaining,
+    store: dependencies.store,
+    now: dependencies.now,
+    ...(dependencies.storeId === undefined ? {} : { storeId: dependencies.storeId }),
+    ...(dependencies.agentDirectory === undefined
+      ? {} : { directory: dependencies.agentDirectory }),
+    ...(dependencies.adoption === undefined ? {} : { adoption: dependencies.adoption }),
+  });
+  if (classification.kind === "defer") {
+    return deferSource(dependencies, prepared, classification.status, classification.foreign ?? false);
+  }
+  const result = await commitSource(
+    dependencies,
+    prepared,
+    classification.session,
+    classification.adopted,
+  );
+  if (result.adopted) adoptionBudget.remaining -= 1;
+  return result;
+}
+
+/**
+ * Reads and normalizes one source's growth and resolves which stored session
+ * the evidence names. Returns null when the source has not moved since the
+ * stored checkpoint or yields no complete records.
+ */
 async function prepareSource(
   dependencies: IngestionDependencies,
   source: ProviderSourceStat,
@@ -125,30 +234,7 @@ async function prepareSource(
   };
 }
 
-async function deferSource(
-  dependencies: IngestionDependencies,
-  prepared: PreparedSource,
-  status: "adoption-pending" | "discovered-only",
-  foreign = false,
-): Promise<SourceIngestResult> {
-  const { discovered, existing, growth, normalized, now, source, storedCheckpoint } = prepared;
-  const session = await dependencies.store.upsertProviderSession({ ...discovered, status });
-  if (status === "discovered-only") {
-    await dependencies.store.commitIngestBatch({
-      expectedCheckpoint: storedCheckpoint,
-      session,
-      lines: [],
-      checkpoint: ingestCheckpointFor(source, growth, storedCheckpoint, normalized, now),
-    });
-  }
-  return {
-    ...emptySourceResult(),
-    registered: existing === undefined ? 1 : 0,
-    session,
-    foreign,
-  };
-}
-
+/** Commits one prepared source's lines and advanced checkpoint as one batch. */
 async function commitSource(
   dependencies: IngestionDependencies,
   prepared: PreparedSource,
@@ -174,98 +260,31 @@ async function commitSource(
   };
 }
 
-async function ingestSource(
-  dependencies: IngestionDependencies,
-  source: ProviderSourceStat,
-  sessions: readonly ProviderSession[],
-  adoptionBudget: { remaining: number },
-): Promise<SourceIngestResult> {
-  const prepared = await prepareSource(dependencies, source, sessions);
-  if (prepared === null) return emptySourceResult();
-  const classification = await classifyProviderSession({
-    session: prepared.discovered,
-    lines: prepared.normalized.items.map((item) => item.value),
-    complete: prepared.normalized.complete,
-    adoptionEligible: source.adoptionEligible,
-    adoptionRemaining: adoptionBudget.remaining,
-    store: dependencies.store,
-    now: dependencies.now,
-    ...(dependencies.storeId === undefined ? {} : { storeId: dependencies.storeId }),
-    ...(dependencies.agentDirectory === undefined
-      ? {} : { directory: dependencies.agentDirectory }),
-    ...(dependencies.adoption === undefined ? {} : { adoption: dependencies.adoption }),
-  });
-  if (classification.kind === "defer") {
-    return deferSource(dependencies, prepared, classification.status, classification.foreign ?? false);
-  }
-  const result = await commitSource(
-    dependencies,
-    prepared,
-    classification.session,
-    classification.adopted,
-  );
-  if (result.adopted) adoptionBudget.remaining -= 1;
-  return result;
-}
-
 /**
- * Runs one provider-transcript ingestion pass. Without candidates it requests
- * full source discovery; with candidates it skips discovery and processes only
- * those sources. One source failing does not prevent others from committing.
+ * Registers a session without publishing its lines: the source is remembered
+ * so later passes can reclassify it, but its bytes stay invisible until it is
+ * adopted or assigned.
  */
-export async function ingestNow(
+async function deferSource(
   dependencies: IngestionDependencies,
-  candidates?: readonly ProviderSourceStat[],
-): Promise<IngestResult> {
-  const scanned = candidates ?? await dependencies.source.scan();
-  const sessions = [...await dependencies.store.listProviderSessions()];
-  const sources = await selectSourcesForIngest({
-    sources: scanned,
-    sessions,
-    journals: await dependencies.store.listSendJournals(),
-    discoveryFloor: dependencies.discoveryFloor,
-    ...(dependencies.agentDirectory === undefined
-      ? {} : { directory: dependencies.agentDirectory }),
-  });
-  let added = 0;
-  let duplicates = 0;
-  let sessionsRegistered = 0;
-  let sessionsAdopted = 0;
-  let foreignSources = 0;
-  const failures = [] as Array<{ sourceId: string; provider: string; message: string }>;
-  const adoptionBudget = { remaining: dependencies.adoption?.limitPerTick ?? 0 };
-  for (const source of sources) {
-    let result: SourceIngestResult;
-    try {
-      result = await ingestSource(dependencies, source, sessions, adoptionBudget);
-    } catch (cause) {
-      failures.push({
-        sourceId: source.sourceId,
-        provider: source.provider,
-        message: cause instanceof Error ? cause.message : String(cause),
-      });
-      continue;
-    }
-    added += result.added;
-    duplicates += result.duplicates;
-    sessionsRegistered += result.registered;
-    if (result.adopted) sessionsAdopted += 1;
-    if (result.foreign) foreignSources += 1;
-    if (result.session !== undefined) {
-      const current = sessions.findIndex((candidate) => candidate.id === result.session?.id);
-      if (current < 0) sessions.push(result.session);
-      else sessions[current] = result.session;
-    }
+  prepared: PreparedSource,
+  status: "adoption-pending" | "discovered-only",
+  foreign = false,
+): Promise<SourceIngestResult> {
+  const { discovered, existing, growth, normalized, now, source, storedCheckpoint } = prepared;
+  const session = await dependencies.store.upsertProviderSession({ ...discovered, status });
+  if (status === "discovered-only") {
+    await dependencies.store.commitIngestBatch({
+      expectedCheckpoint: storedCheckpoint,
+      session,
+      lines: [],
+      checkpoint: ingestCheckpointFor(source, growth, storedCheckpoint, normalized, now),
+    });
   }
-  await confirmPendingSends(dependencies.store, dependencies.now());
   return {
-    sources: sources.length,
-    added,
-    duplicates,
-    sessionsRegistered,
-    sessionsAdopted,
-    foreignSources,
-    failedSources: failures.length,
-    failures: failures.slice(0, 20),
+    ...emptySourceResult(),
+    registered: existing === undefined ? 1 : 0,
+    session,
+    foreign,
   };
 }

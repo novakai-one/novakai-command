@@ -6,14 +6,24 @@ import type { EventCursor } from "../contract/types.js";
 
 type TranscriptEventSink = (event: TranscriptEvent) => void | Promise<void>;
 
-/** In-process delivery of durable events, resumable from the store cursor. */
+/**
+ * In-process subscription to the store's committed transcript events. Sinks
+ * receive events in commit order; `pump` drains the journal from the last
+ * delivered cursor, so nothing is replayed and nothing is skipped.
+ */
 export interface DurableTranscriptEventBus {
   subscribe(sink: TranscriptEventSink): { close(): void };
   pump(): Promise<number>;
   cursor(): EventCursor | undefined;
 }
 
-/** Journal-backed fan-out. It never creates or persists message content. */
+/**
+ * Journal-backed fan-out over the transcript store. The bus only moves
+ * committed events to subscribers — it never creates or persists content, so
+ * the store journal remains the single authority and a restarted bus resumes
+ * from its cursor without loss. Pumps are chained so concurrent triggers
+ * collapse into one ordered drain.
+ */
 export function createDurableTranscriptEventBus(
   store: TranscriptStore,
 ): DurableTranscriptEventBus {

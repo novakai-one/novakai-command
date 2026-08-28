@@ -4,6 +4,7 @@ import type {
 } from '../../contract/ports/agent-directory.js';
 import type { ConversationDirectory } from '../../contract/ports/conversation-directory.js';
 import type { NormalizedProviderLine } from '../../contract/ports/provider-transcript-source.js';
+import type { AgentIdentityMarker } from '../../contract/records/agent-identity.js';
 import type { TranscriptStore } from '../../contract/ports/transcript-store.js';
 import type { ProviderSession } from '../../contract/records/provider-session.js';
 import { adoptProviderSession } from './adopt-session.js';
@@ -39,8 +40,8 @@ interface ClassificationInput {
 
 async function ownedMarkers(
   input: ClassificationInput,
-  markers: readonly import('../../contract/records/agent-identity.js').AgentIdentityMarker[],
-): Promise<readonly import('../../contract/records/agent-identity.js').AgentIdentityMarker[] | 'foreign'> {
+  markers: readonly AgentIdentityMarker[],
+): Promise<readonly AgentIdentityMarker[] | 'foreign'> {
   const current = markers.filter((marker) => marker.schemaVersion === 2
     && marker.storeId === input.storeId);
   const foreignV2 = markers.filter((marker) => marker.schemaVersion === 2

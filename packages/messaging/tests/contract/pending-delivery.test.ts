@@ -3,20 +3,18 @@ import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import {
-  createMemoryTranscriptStore,
-  createMessagingRuntime,
-  messageCorrelationHint,
-  openFoundationTranscriptStore,
-  type AgentDirectory,
-  type ConversationDirectory,
-  type PendingDelivery,
-  type PendingDeliveryState,
-  type ProviderSend,
-  type ProviderSession,
-  type TranscriptLine,
-  type TranscriptStore,
-} from '../../contract/index.js';
+import { createMessagingRuntime } from '../../core/ingestion/messaging-runtime.js';
+import { createMemoryTranscriptStore } from '../../adapters/stores/memory.js';
+import { openFoundationTranscriptStore } from '../../adapters/stores/jsonl.js';
+import { messageCorrelationHint } from '../../contract/correlation.js';
+import type { AgentDirectory } from '../../contract/ports/agent-directory.js';
+import type { ConversationDirectory } from '../../contract/ports/conversation-directory.js';
+import type { ProviderSend } from '../../contract/ports/provider-send.js';
+import type { TranscriptStore } from '../../contract/ports/transcript-store.js';
+import type { PendingDelivery } from '../../contract/records/pending-delivery.js';
+import type { ProviderSession } from '../../contract/records/provider-session.js';
+import type { TranscriptLine } from '../../contract/records/transcript-line.js';
+import type { PendingDeliveryState } from '../../contract/types.js';
 
 const emptySource = {
   scan: async () => [],
