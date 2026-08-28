@@ -29,7 +29,7 @@ import { chatRole } from '../governed-role.js';
 import { spawnAgentFixture } from '../support/spawn-agent-fixture.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const repoRoot = path.resolve(here, '..', '..', '..');
+const repoRoot = path.resolve(here, '..', '..', '..', '..');
 const nvk = path.join(repoRoot, 'scripts', 'nvk.mjs');
 
 /** The hermetic root of `b3e-cli-command.test.ts`: no token, so every command

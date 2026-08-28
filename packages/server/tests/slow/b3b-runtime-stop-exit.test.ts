@@ -19,7 +19,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const repoRoot = path.resolve(here, '..', '..', '..');
+const repoRoot = path.resolve(here, '..', '..', '..', '..');
 const tsx = path.join(repoRoot, 'node_modules', 'tsx', 'dist', 'cli.mjs');
 const runtimeCli = path.join(repoRoot, 'packages', 'server', 'cli', 'nvk-runtime.ts');
 

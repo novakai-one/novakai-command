@@ -33,7 +33,7 @@ import type { ControllerAttachment, TerminalSessionView } from '../../../termina
 import { spawnAgentFixture } from '../support/spawn-agent-fixture.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const repoRoot = path.resolve(here, '..', '..', '..');
+const repoRoot = path.resolve(here, '..', '..', '..', '..');
 const nvk = path.join(repoRoot, 'scripts', 'nvk.mjs');
 
 // ── Rules 1–3, over Terminal's own published view ───────────────────────────

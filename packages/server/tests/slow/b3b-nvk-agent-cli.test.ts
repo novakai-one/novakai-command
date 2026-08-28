@@ -14,7 +14,7 @@ import { chatRole } from '../governed-role.js';
 import { spawnAgentFixture } from '../support/spawn-agent-fixture.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const repoRoot = path.resolve(here, '..', '..', '..');
+const repoRoot = path.resolve(here, '..', '..', '..', '..');
 const nvk = path.join(repoRoot, 'scripts', 'nvk.mjs');
 
 function runNvk(args: readonly string[]): Promise<{ code: number | null; out: string }> {

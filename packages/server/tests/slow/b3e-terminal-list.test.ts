@@ -25,7 +25,7 @@ import { startRuntimeHost, type RunningRuntimeHost } from '../../core/runtime-ho
 import { connectRuntime } from '../../core/runtime-host/client.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const repoRoot = path.resolve(here, '..', '..', '..');
+const repoRoot = path.resolve(here, '..', '..', '..', '..');
 const nvk = path.join(repoRoot, 'scripts', 'nvk.mjs');
 
 interface CliRun { readonly code: number | null; readonly out: string }

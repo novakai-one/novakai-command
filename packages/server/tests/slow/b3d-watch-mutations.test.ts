@@ -18,7 +18,7 @@ import type { MethodTable } from '../../contract/protocol.js';
 import { governedRole, governedTokens } from '../governed-role.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const repoRoot = path.resolve(here, '..', '..', '..');
+const repoRoot = path.resolve(here, '..', '..', '..', '..');
 const nvk = path.join(repoRoot, 'scripts', 'nvk.mjs');
 
 const HUMAN = {
