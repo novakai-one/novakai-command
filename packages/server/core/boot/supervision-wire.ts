@@ -10,7 +10,6 @@ import type {
 } from '../../../agents/contract/index.js';
 import type { composeShellPersistence } from '../../../shell/contract/persistence.node.js';
 import type { ServerConfig, ProviderName } from '../../contract/config.js';
-import type { MessagingSessionHolder } from '../session/holders.js';
 import { createSupervisionEngine, type SupervisionRecord } from '../supervision/engine.js';
 import { createUsageLog } from '../supervision/log.js';
 import { createSupervisedTransport } from '../supervision/transport.js';
@@ -26,8 +25,6 @@ export async function composeSupervision(input: {
   providerRuntimes: Partial<Record<ProviderName, ProviderCliRuntime>>;
   persistence: ReturnType<typeof composeShellPersistence>;
   appendSystemAction: typeof recordSystemAction;
-  humanHolder: MessagingSessionHolder;
-  humanPersonId: string;
   note: BootNote;
   broadcast(name: string, data: unknown): void;
 }) {
@@ -122,14 +119,10 @@ export async function composeSupervision(input: {
       if (failure) console.error(`[nvk-server] usage.jsonl append failed: ${failure}`);
     },
     async escalate(text) {
-      await input.humanHolder.call((session) => (
-        session as { sendMessage(value: object): Promise<unknown> }
-      ).sendMessage({
-        address: `person:${input.humanPersonId}`,
-        body: { text: `⚠️ supervision: ${text}` },
-        priority: 'normal',
-        clientMessageId: `cmsg_${randomUUID()}`,
-      }));
+      // The old person-to-person messaging lane is gone; an escalation is a
+      // broadcast to every connected shell plus an operator log line.
+      console.error(`[nvk-server] ⚠️ supervision escalation: ${text}`);
+      input.broadcast('supervision-escalation', { text });
     },
     policy: config.supervision,
     skillPaths: await registeredSkillPaths(agents),

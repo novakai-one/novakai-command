@@ -30,7 +30,7 @@ function invoke(
   });
 }
 
-test('nvk dispatches the project, artifact, and spine offline command groups', () => {
+test('nvk dispatches the project and artifact offline command groups', () => {
   const workspace = mkdtempSync(path.join(tmpdir(), 'nvk-umbrella-'));
   const root = path.join(workspace, '.novakai');
   const source = path.join(workspace, 'evidence.bin');
@@ -40,7 +40,7 @@ test('nvk dispatches the project, artifact, and spine offline command groups', (
     const token = mintToken(
       root,
       'person_cli',
-      ['project', 'projectItem', 'artifact', 'spine', 'spineStep'],
+      ['project', 'projectItem', 'artifact'],
       'person_local',
     );
 
@@ -68,13 +68,6 @@ test('nvk dispatches the project, artifact, and spine offline command groups', (
       bytes.byteLength,
     );
 
-    const workflows = invoke(root, token.bearer, [
-      'spine',
-      'workflows',
-    ]);
-    assert.equal(workflows.status, 0, workflows.stderr);
-    assert.deepEqual(JSON.parse(workflows.stdout), { items: [] });
-
     const bypass = invoke(root, token.bearer, [
       'project',
       'attach',
@@ -97,7 +90,7 @@ test('nvk rejects inherited object names through the typed Usage path', () => {
     assert.equal(inherited.status, 2);
     assert.deepEqual(JSON.parse(inherited.stderr), {
       code: 'Usage',
-      message: 'usage: nvk project|artifact|spine|transcript|agent|runtime|terminal|watch '
+      message: 'usage: nvk deploy|project|artifact|agent|child|runtime|terminal|watch '
         + '<verb> [options]',
     });
     assert.doesNotMatch(inherited.stderr, /TypeError|ERR_INVALID_ARG_TYPE|\n\s+at /);

@@ -11,13 +11,17 @@ import type { FocusSnapshot } from '../../../shell/contract/context.js';
 import type { MethodTable } from '../../contract/protocol.js';
 import type { ServerConfig, ProviderName } from '../../contract/config.js';
 import type { ConfigStore } from '../config/store.js';
-import type { MessagingSessionHolder, SessionHolderFactory } from '../session/holders.js';
+import type { MessagingRuntimeApi } from '../../../messaging/contract/index.js';
 import type { SupervisionEngine } from '../supervision/engine.js';
 import type { WatchdogHook } from '../supervision/watchdog.js';
 import type { B2aServerCapabilities } from '../b2a/composition.js';
-import type { TranscriptServerHost } from '../b2b/composition.js';
 
 type ShellPersistence = ReturnType<typeof composeShellPersistence>;
+
+/** The running transcript-first Messaging runtime owned by this server. */
+export interface MessagingRuntimeHost {
+  readonly runtime: MessagingRuntimeApi;
+}
 
 export interface Conversation {
   id: string;
@@ -42,8 +46,7 @@ export interface Conversation {
 export interface ServerRuntime {
   root: string;
   cwd: string;
-  human: { personId: string; holder: MessagingSessionHolder };
-  holders: SessionHolderFactory;
+  human: { personId: string };
   agents: AgentsContract;
   kimiRuntime: KimiCliRuntime;
   providerRuntimes: Partial<Record<ProviderName, ProviderCliRuntime>>;
@@ -51,14 +54,13 @@ export interface ServerRuntime {
   supervision: SupervisionEngine;
   watchdog: WatchdogHook;
   b2a: B2aServerCapabilities;
-  transcript: TranscriptServerHost;
+  transcript: MessagingRuntimeHost;
   persistence: ShellPersistence;
   conversations: Map<string, Conversation>;
   configStore: ConfigStore;
   config: ServerConfig;
   focus: FocusSnapshot;
   broadcast(name: string, data: unknown): void;
-  holderForPerson(personId: string): Promise<MessagingSessionHolder | null>;
   mintOpId(): string;
 }
 

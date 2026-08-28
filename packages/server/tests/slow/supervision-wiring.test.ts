@@ -13,7 +13,7 @@ import path from 'node:path';
 import { WebSocket } from 'ws';
 import { mintClientOpId, queryTraceBound } from '@novakai/foundation/dist/contract/index.js';
 import { composeEngine } from '@novakai/foundation/dist/contract/compose.js';
-import { canonicalDataRoot } from '../../core/store-route.js';
+import { canonicalDataRoot } from '../../core/store-paths.js';
 import { bootServer, type NovakaiServer } from '../../core/boot.js';
 import { openConfigStore } from '../../contract/index.js';
 

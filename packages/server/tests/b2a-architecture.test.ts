@@ -145,52 +145,6 @@ test('B2a Server integration consumes capability contracts', () => {
   assert.deepEqual(offenders, []);
 });
 
-test('B2b Server integration consumes only Messaging contract and never Shell', () => {
-  const b2bRoot = path.join(serverRoot, 'core', 'b2b');
-  const offenders: string[] = [];
-  for (const sourcePath of typescriptSources(b2bRoot)) {
-    const source = readFileSync(sourcePath, 'utf8');
-    for (const match of source.matchAll(/\bfrom\s+['"]([^'"]+)['"]/g)) {
-      const specifier = match[1]!;
-      if (
-        specifier.includes('/messaging/')
-        && !/(?:^|\/)contract(?:\/|$)/.test(specifier)
-      ) {
-        offenders.push(
-          `${path.relative(serverRoot, sourcePath)} -> ${specifier}`,
-        );
-      }
-      if (/(?:^|\/|@)shell(?:\/|$)/.test(specifier)) {
-        offenders.push(
-          `${path.relative(serverRoot, sourcePath)} -> ${specifier}`,
-        );
-      }
-    }
-  }
-  assert.deepEqual(offenders, []);
-});
-
-test('B2b scheduled ingestion is owned by Messaging, never the Server host', () => {
-  const composition = readFileSync(
-    path.join(serverRoot, 'core', 'b2b', 'composition.ts'),
-    'utf8',
-  );
-  const messagingRuntime = readFileSync(
-    path.join(repositoryRoot, 'packages', 'messaging', 'core', 'ingestion', 'watch.ts'),
-    'utf8',
-  );
-  assert.doesNotMatch(
-    composition,
-    /\bsetInterval\s*\(/u,
-    'the Server host may start the runtime but must not own its schedule',
-  );
-  assert.match(
-    messagingRuntime,
-    /\bsetInterval\s*\(/u,
-    'the Messaging runtime owns scheduled ingestion',
-  );
-});
-
 test('every Server persistence-writer authority is explicitly classified', () => {
   const authorities: string[] = [];
   for (const sourcePath of typescriptSources(serverRoot)) {
@@ -223,7 +177,7 @@ test('every Server persistence-writer authority is explicitly classified', () =>
   ]);
 });
 
-test('B2a Server WS adapter cannot reach byte or Spine-only attachment doors', () => {
+test('B2a Server WS adapter cannot reach byte or internal attachment doors', () => {
   const source = readFileSync(
     path.join(serverRoot, 'core', 'b2a', 'methods.ts'),
     'utf8',
@@ -237,7 +191,7 @@ test('B2a Server WS adapter cannot reach byte or Spine-only attachment doors', (
 test('approved capabilities do not depend back on Server', () => {
   const offenders: string[] = [];
   for (
-    const packageName of ['projects', 'artifacts', 'spine', 'messaging']
+    const packageName of ['projects', 'artifacts', 'messaging']
   ) {
     const packageRoot = path.join(repositoryRoot, 'packages', packageName);
     for (const sourcePath of typescriptSources(packageRoot)) {

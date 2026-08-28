@@ -7,7 +7,7 @@
 //      kept running while nobody was watching.
 import {
   b3err, b3fail, b3ok, mintClientOpId, mintTraceCorrelationId,
-  type AgentRunId, type AuthenticatedPrincipal, tyxpe B3Result, type CommandContext,
+  type AgentRunId, type AuthenticatedPrincipal, type B3Result, type CommandContext,
   type RuntimeEpochId, type SystemCommandContext, type TerminalSessionId,
 } from '@novakai/foundation/contract';
 import type {

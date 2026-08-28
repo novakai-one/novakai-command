@@ -6,22 +6,15 @@ import {
   composeProjects,
   type ProjectsHost,
 } from '../../../projects/contract/index.js';
-import {
-  composeSpine,
-  type MessageExistenceQuery,
-  type SpineHost,
-} from '../../../spine/contract/index.js';
 
 export interface B2aServerCapabilities {
   readonly artifacts: ArtifactsHost;
   readonly projects: ProjectsHost;
-  readonly spine: SpineHost;
 }
 
 export interface ComposeB2aServerCapabilitiesOptions {
   root: string;
   principal: string;
-  messaging: MessageExistenceQuery;
   lockTimeoutMs?: number;
 }
 
@@ -39,13 +32,5 @@ export function composeB2aServerCapabilities(
     principal: options.principal,
     lockTimeoutMs: options.lockTimeoutMs,
   });
-  const spine = composeSpine({
-    root: options.root,
-    principal: options.principal,
-    messaging: options.messaging,
-    projects: projects.spine,
-    artifacts: artifacts.operations,
-    lockTimeoutMs: options.lockTimeoutMs,
-  });
-  return { artifacts, projects, spine };
+  return { artifacts, projects };
 }

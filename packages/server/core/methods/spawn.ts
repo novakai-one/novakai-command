@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import type { AgentsContract } from '../../../agents/contract/index.js';
 import type { MethodTable } from '../../contract/protocol.js';
 import type { ProviderName } from '../../contract/config.js';
-import { ensureAgent, ensureAgentPerson } from '../door/provision.js';
+import { ensureAgent, ensureAgentPerson } from './provision.js';
 import type { Conversation, ServerRuntime } from './runtime.js';
 import { now, persistView, summarize } from './runtime.js';
 

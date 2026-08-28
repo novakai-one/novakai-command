@@ -220,10 +220,6 @@ describe("architecture — graph health", () => {
     const production = [
       ...listFiles(join(sourceRoot, 'contract'), '.ts'),
       ...listFiles(join(sourceRoot, 'cli'), '.ts'),
-      ...listFiles(join(repoRoot, 'packages', 'spine'), '.ts')
-        .filter((file) => !file.includes(`${sep}tests${sep}`)
-          && !file.includes(`${sep}node_modules${sep}`)
-          && !file.includes(`${sep}dist${sep}`)),
     ];
     const offenders = production.filter((file) =>
       readFileSync(file, 'utf8').includes('openJsonlStore'))

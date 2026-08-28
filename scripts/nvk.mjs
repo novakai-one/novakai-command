@@ -10,7 +10,6 @@ const repoRoot = path.resolve(
 const adapters = new Map([
   ['project', path.join(repoRoot, 'packages/projects/cli/nvk-project.ts')],
   ['artifact', path.join(repoRoot, 'packages/artifacts/cli/nvk-artifact.ts')],
-  ['spine', path.join(repoRoot, 'packages/spine/cli/nvk-spine.ts')],
   // B3 Agent inspection and control. Agent creation deliberately travels
   // through the dedicated headless child flow, not this Server client.
   ['agent', path.join(repoRoot, 'packages/server/cli/nvk-agent.ts')],

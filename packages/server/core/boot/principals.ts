@@ -3,7 +3,7 @@
 import path from 'node:path';
 import { composeShellPersistence } from '../../../shell/contract/persistence.node.js';
 import { openConfigStore, type ConfigStore } from '../config/store.js';
-import { canonicalDataRoot, StoreRouteConflictError } from '../store-route.js';
+import { canonicalDataRoot } from '../store-paths.js';
 import type { BootNote, BootOptions, BootResult } from './contract.js';
 import { refuse } from './contract.js';
 
@@ -12,13 +12,7 @@ const MINT_RUNBOOK =
   'run: npx tsx packages/server/cli/nvk-token.ts mint person_chris --grants layout,settings,conversationView --roles Human';
 
 export async function composePrincipals(options: BootOptions, note: BootNote) {
-  let opened: Awaited<ReturnType<typeof openConfigStore>>;
-  try {
-    opened = await openConfigStore({ root: options.root, principal: 'sys_spine' });
-  } catch (cause) {
-    if (!(cause instanceof StoreRouteConflictError)) throw cause;
-    return { ok: false as const, result: refuse('StoreRouteConflict', cause.message) };
-  }
+  const opened = await openConfigStore({ root: options.root, principal: 'sys_spine' });
   if (!opened.ok) {
     return { ok: false as const, result: refuse('ConfigUnavailable', opened.error.message) };
   }

@@ -5,7 +5,6 @@ import type { ProcessProbe, ProviderSessionRegistry } from '../../../agents/cont
 import type { ServerConfig } from '../../contract/config.js';
 import type { B3RuntimeOptions } from '../b3/composition.js';
 import type { ServerRuntime } from '../methods.js';
-import type { MessagingSessionHolder } from '../session/holders.js';
 import type { SupervisionEngine } from '../supervision/engine.js';
 
 export interface BootOptions {
@@ -33,11 +32,8 @@ export interface BootStep {
 export interface BootError {
   code:
     | 'ConfigUnavailable'
-    | 'StoreRouteConflict'
     | 'NoHumanPrincipal'
-    | 'MessagingUnavailable'
     | 'StoreUnavailable'
-    | 'MigrationTraceFailed'
     | 'RuntimeUnavailable';
   message: string;
 }
@@ -69,5 +65,3 @@ export const refuse = (code: BootError['code'], message: string): BootResult => 
   ok: false,
   error: { code, message },
 });
-
-export type { MessagingSessionHolder };

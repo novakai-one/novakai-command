@@ -19,7 +19,7 @@ import {
 } from '../../../agents/contract/index.js';
 import { agentsPort, createRunCredentials, terminalPort } from './run-ports.js';
 import { createProviderPort } from './provider-port.js';
-import { canonicalDataRoot, gateStoreRoute } from '../store-route.js';
+import { canonicalDataRoot } from '../store-paths.js';
 import type {
   MessagingRuntimeApi,
 } from '../../../messaging/contract/index.js';
@@ -98,7 +98,6 @@ export interface B3Runtime {
 /** Compose Runtime capabilities with Messaging as the transcript authority. */
 export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Runtime> {
   const dataRoot = canonicalDataRoot(options.root);
-  await gateStoreRoute(options.root, dataRoot);
   const authorities = options.authorities ?? createLaunchAuthorities();
   const ptyHost = options.ptyHost ?? await createNodePtyHost({ authorities });
   const providerAdapters = options.providers ?? createProviderAdapters();
