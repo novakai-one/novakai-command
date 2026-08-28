@@ -7,10 +7,12 @@ import type {
 } from "../../contract/runtime.js";
 import type {
   ProviderNormalizer,
+  ProviderSourceSubscription,
   ProviderTranscriptSource,
 } from "../../contract/ports/provider-transcript-source.js";
 import type { TranscriptStore } from "../../contract/ports/transcript-store.js";
 import type { ProviderName } from "../../contract/types.js";
+import type { TranscriptSourceId } from "../../contract/types.js";
 import { MessagingError } from "../../contract/types.js";
 import { createDurableTranscriptEventBus, type DurableTranscriptEventBus } from "../event-bus.js";
 import { ingestNow as runIngest } from "./ingest.js";
@@ -21,19 +23,26 @@ import type {
 import type { ConversationDirectory } from "../../contract/ports/conversation-directory.js";
 import type { ProviderSend } from "../../contract/ports/provider-send.js";
 import { AmbiguousProviderSessionEvidenceError } from "./reconcile.js";
-import { AddressedDeliveryReconciler } from '../delivery/queue-addressed.js';
-import { routePendingDeliveries } from '../delivery/router.js';
 import { createStoredConversationDirectory } from '../conversations/directory.js';
 import { createCommittedRecordsApi } from '../runtime/committed-records.js';
 import { subscribeAgentConversationMessageStream } from '../conversations/message-stream.js';
+import { ProviderIngestQueue } from './ingest-queue.js';
+import { IngestionDeliveryRuntime } from './delivery-runtime.js';
 
-/** Dependencies and cadence for the provider-transcript ingestion runtime. */
+/**
+ * Configures provider ingestion and delivery scheduling. Maintenance defaults
+ * to one second and remains the polling cadence for sources without complete
+ * event support; safety discovery defaults to 60 seconds and source changes
+ * are coalesced for 25 milliseconds by default.
+ */
 export interface MessagingRuntimeOptions {
   readonly store: TranscriptStore;
   readonly source: ProviderTranscriptSource;
   readonly normalizers: Readonly<Record<ProviderName, ProviderNormalizer>>;
   readonly now?: () => string;
   readonly intervalMs?: number;
+  readonly safetySweepMs?: number;
+  readonly changeDebounceMs?: number;
   readonly eventBus?: DurableTranscriptEventBus;
   readonly agentDirectory?: AgentDirectory;
   readonly providerSend?: ProviderSend;
@@ -77,22 +86,30 @@ class IngestionRuntime implements MessagingRuntimeApi {
   readonly eventBus: DurableTranscriptEventBus;
   private readonly clock: () => string;
   private readonly intervalMs: number;
+  private readonly safetySweepMs: number;
+  private readonly changeDebounceMs: number;
   private readonly discoveryFloor: string;
   private state: MessagingHealth["state"] = "stopped";
-  private timer: ReturnType<typeof setInterval> | undefined;
+  private maintenanceTimer: ReturnType<typeof setInterval> | undefined;
+  private safetyTimer: ReturnType<typeof setInterval> | undefined;
+  private sourceSubscription: ProviderSourceSubscription | undefined;
   private runs = 0;
   private lastResult: IngestResult | undefined;
   private lastError: string | undefined;
-  private inFlight: Promise<Outcome<IngestResult>> | undefined;
-  private deliveryInFlight: Promise<Outcome<DeliveryRunResult>> | undefined;
-  private lastDeliveryRunAt: string | undefined;
-  private readonly addressedDeliveries = new AddressedDeliveryReconciler();
+  private readonly ingestQueue: ProviderIngestQueue;
+  private readonly delivery: IngestionDeliveryRuntime;
   private readonly conversations: ConversationDirectory | undefined;
   private readonly records: ReturnType<typeof createCommittedRecordsApi>;
 
   constructor(private readonly options: MessagingRuntimeOptions) {
     this.clock = options.now ?? (() => new Date().toISOString());
     this.intervalMs = options.intervalMs ?? 1_000;
+    this.safetySweepMs = options.safetySweepMs ?? 60_000;
+    this.changeDebounceMs = options.changeDebounceMs ?? 25;
+    this.ingestQueue = new ProviderIngestQueue(
+      this.changeDebounceMs,
+      (sourceIds) => this.runOnce(sourceIds),
+    );
     this.discoveryFloor = this.clock();
     this.eventBus = options.eventBus ?? createDurableTranscriptEventBus(options.store);
     this.conversations = options.conversations ?? options.adoption?.conversations
@@ -103,6 +120,13 @@ class IngestionRuntime implements MessagingRuntimeApi {
           humanPrincipalId: options.conversationPrincipalId,
           now: this.clock,
         }));
+    this.delivery = new IngestionDeliveryRuntime({
+      store: options.store,
+      now: this.clock,
+      ...(options.agentDirectory === undefined ? {} : { agents: options.agentDirectory }),
+      ...(options.providerSend === undefined ? {} : { providerSend: options.providerSend }),
+      ...(this.conversations === undefined ? {} : { conversations: this.conversations }),
+    });
     this.records = createCommittedRecordsApi({
       store: options.store,
       now: this.clock,
@@ -115,16 +139,42 @@ class IngestionRuntime implements MessagingRuntimeApi {
   async start(): Promise<Outcome<void>> {
     if (this.state !== "stopped") return { kind: "ok", value: undefined };
     this.state = "running";
-    this.timer = setInterval(() => { void this.ingestNow(); }, this.intervalMs);
-    this.timer.unref();
+    const eventDriven = this.options.source.watchChanges !== undefined
+      && this.options.source.statKnown !== undefined;
+    if (eventDriven) {
+      try {
+        this.sourceSubscription = await this.options.source.watchChanges!(
+          (change) => {
+            if (this.state !== 'stopped') this.ingestQueue.notify(change);
+          },
+        );
+      } catch (cause) {
+        this.lastError = cause instanceof Error ? cause.message : String(cause);
+      }
+    }
+    this.maintenanceTimer = setInterval(() => {
+      if (this.sourceSubscription === undefined) void this.ingestNow();
+      else void this.runMaintenanceTick();
+    }, this.intervalMs);
+    this.maintenanceTimer.unref();
+    if (this.sourceSubscription !== undefined) {
+      this.safetyTimer = setInterval(() => { void this.ingestQueue.requestDiscovery(); }, this.safetySweepMs);
+      this.safetyTimer.unref();
+    }
     await this.ingestNow();
     return { kind: "ok", value: undefined };
   }
 
   async stop(): Promise<Outcome<void>> {
-    if (this.timer !== undefined) clearInterval(this.timer);
-    this.timer = undefined;
-    if (this.inFlight !== undefined) await this.inFlight;
+    if (this.maintenanceTimer !== undefined) clearInterval(this.maintenanceTimer);
+    if (this.safetyTimer !== undefined) clearInterval(this.safetyTimer);
+    this.maintenanceTimer = undefined;
+    this.safetyTimer = undefined;
+    this.sourceSubscription?.close();
+    this.sourceSubscription = undefined;
+    this.ingestQueue.cancelPending();
+    await this.ingestQueue.waitForIdle();
+    await this.delivery.waitForIdle();
     this.state = "stopped";
     return { kind: "ok", value: undefined };
   }
@@ -132,24 +182,27 @@ class IngestionRuntime implements MessagingRuntimeApi {
   async health(): Promise<MessagingHealth> {
     return {
       state: this.state,
-      ingesting: this.inFlight !== undefined,
+      ingesting: this.ingestQueue.active,
       runs: this.runs,
       ...(this.lastResult === undefined ? {} : { lastResult: this.lastResult }),
       ...(this.lastError === undefined ? {} : { lastError: this.lastError }),
-      ...(this.lastDeliveryRunAt === undefined ? {} : { lastDeliveryRunAt: this.lastDeliveryRunAt }),
+      ...(this.delivery.lastRunAt === undefined ? {} : { lastDeliveryRunAt: this.delivery.lastRunAt }),
       pendingDeliveryCount: (await this.options.store.listPendingDeliveries())
         .filter((delivery) => delivery.state === 'queued' || delivery.state === 'claimed').length,
     };
   }
 
   ingestNow(): Promise<Outcome<IngestResult>> {
-    if (this.inFlight !== undefined) return this.inFlight;
-    this.inFlight = this.runOnce();
-    return this.inFlight;
+    return this.ingestQueue.requestDiscovery();
   }
 
-  private async runOnce(): Promise<Outcome<IngestResult>> {
+  private async runOnce(
+    sourceIds?: readonly TranscriptSourceId[],
+  ): Promise<Outcome<IngestResult>> {
     try {
+      const candidates = sourceIds === undefined
+        ? undefined
+        : await this.options.source.statKnown!(sourceIds);
       const value = await runIngest({
         store: this.options.store,
         source: this.options.source,
@@ -161,13 +214,8 @@ class IngestionRuntime implements MessagingRuntimeApi {
           ? {} : { agentDirectory: this.options.agentDirectory }),
         ...(this.options.adoption === undefined || this.conversations === undefined
           ? {} : { adoption: { ...this.options.adoption, conversations: this.conversations } }),
-      });
-      await this.addressedDeliveries.reconcile(this.options.store);
-      if (this.deliveryComposed()) {
-        const routed = await this.routePending();
-        if (routed.kind === 'error') throw routed.error;
-      }
-      await this.eventBus.pump();
+      }, candidates);
+      await this.delivery.maintain(this.eventBus);
       this.runs += 1;
       this.lastResult = value;
       this.lastError = undefined;
@@ -177,41 +225,21 @@ class IngestionRuntime implements MessagingRuntimeApi {
       this.lastError = cause instanceof Error ? cause.message : String(cause);
       if (this.state !== "stopped") this.state = "degraded";
       return ingestFailure(cause);
-    } finally {
-      this.inFlight = undefined;
+    }
+  }
+
+  private async runMaintenanceTick(): Promise<void> {
+    if (this.state === 'stopped' || this.ingestQueue.active) return;
+    try {
+      await this.delivery.maintain(this.eventBus);
+    } catch (cause) {
+      this.lastError = cause instanceof Error ? cause.message : String(cause);
+      this.state = 'degraded';
     }
   }
 
   routePending(): Promise<Outcome<DeliveryRunResult>> {
-    if (this.deliveryInFlight !== undefined) return this.deliveryInFlight;
-    this.deliveryInFlight = this.runDelivery();
-    return this.deliveryInFlight;
-  }
-
-  private async runDelivery(): Promise<Outcome<DeliveryRunResult>> {
-    try {
-      if (!this.deliveryComposed()) throw new Error('Messaging delivery dependencies are not composed');
-      await this.addressedDeliveries.reconcile(this.options.store);
-      const value = await routePendingDeliveries({
-        store: this.options.store,
-        agents: this.options.agentDirectory!,
-        conversations: this.conversations!,
-        providerSend: this.options.providerSend!,
-        now: this.clock,
-      });
-      this.lastDeliveryRunAt = this.clock();
-      return { kind: 'ok', value };
-    } catch (cause) {
-      return unavailable(cause);
-    } finally {
-      this.deliveryInFlight = undefined;
-    }
-  }
-
-  private deliveryComposed(): boolean {
-    return this.options.agentDirectory !== undefined
-      && this.options.providerSend !== undefined
-      && this.conversations !== undefined;
+    return this.delivery.routePending();
   }
 
   ensureConversationView: MessagingRuntimeApi['ensureConversationView'] =
@@ -253,7 +281,12 @@ class IngestionRuntime implements MessagingRuntimeApi {
   }
 }
 
-/** Creates the 1-second, single-flight Messaging ingestion runtime. */
+/**
+ * Creates the Messaging ingestion runtime, stopped. Sources that implement
+ * `watchChanges` and `statKnown` get event-driven ingestion with a default 60s
+ * safety sweep; other sources fall back to interval polling. `start` and `stop`
+ * are idempotent; `stop` releases all timers and filesystem watchers.
+ */
 export function createMessagingRuntime(
   options: MessagingRuntimeOptions,
 ): MessagingRuntimeApi & { readonly eventBus: DurableTranscriptEventBus } {

@@ -33,9 +33,37 @@ export interface ProviderSourceGrowth {
   readonly signatureAtRead: Omit<ProviderFileSignature, "tailHash">;
 }
 
-/** The only port allowed to represent provider-owned transcript files. */
+/**
+ * Keeps filesystem paths outside Messaging core. A source signal permits a
+ * targeted metadata refresh; discovery invalidates targeted work and requires
+ * a complete scan.
+ */
+export type ProviderSourceChange =
+  | { readonly kind: 'source'; readonly sourceId: TranscriptSourceId }
+  | { readonly kind: 'discovery' };
+
+/**
+ * Represents one active provider-source notification subscription. Closing is
+ * idempotent and permanently silences that subscription.
+ */
+export interface ProviderSourceSubscription {
+  close(): void;
+}
+
+/**
+ * Owns all provider-transcript filesystem access. Sources implementing both
+ * optional change capabilities use targeted event-driven ingestion; other
+ * sources retain interval polling. Targeted reads are valid only after the same
+ * adapter instance has discovered the source.
+ */
 export interface ProviderTranscriptSource {
   scan(): Promise<readonly ProviderSourceStat[]>;
+  statKnown?(
+    sourceIds?: readonly TranscriptSourceId[],
+  ): Promise<readonly ProviderSourceStat[]>;
+  watchChanges?(
+    notify: (change: ProviderSourceChange) => void,
+  ): Promise<ProviderSourceSubscription>;
   readGrowth(
     source: ProviderSourceStat,
     checkpoint: IngestCheckpoint | null,
