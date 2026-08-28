@@ -3,10 +3,9 @@
  * generate-ts.mjs — law #3 codegen for the Novakai Messaging capability.
  *
  * Reads ../contract/messaging-contract.json (THE single machine-readable source)
- * and emits contract/types.ts. Every enumeration, constant, branded
- * ID, name union, and the R5 delivery state machine in TypeScript derives from
- * this file only. Hand-written code MUST import from generated.ts and never
- * re-type a contract literal.
+ * and emits contract/types.ts. Every enumeration, constant, and branded
+ * ID in TypeScript derives from this file only. Hand-written code MUST
+ * import from generated.ts and never re-type a contract literal.
  *
  * Usage:
  *   node tools/generate-ts.mjs           regenerate contract/types.ts
@@ -120,13 +119,11 @@ for (const event of contract.events ?? []) {
 }
 
 // ---------------------------------------------------------------------------
-// 2. Branded identity types. Any $def that is a patterned/formatted string or
-//    the integer Sequence becomes a brand. Mintable ID kinds derive from the
-//    pattern prefixes (Messaging-Seams.md §5.1: person_ is minted by the
-//    Identity authority, never here — excluded explicitly).
+// 2. Branded identity types. Any $def that is a patterned/formatted string
+//    becomes a brand. Mintable ID kinds derive from the pattern prefixes.
 // ---------------------------------------------------------------------------
 
-const NON_MINTED = new Set(["PersonId"]); // Messaging-Seams §5.1
+const NON_MINTED = new Set(["PersonId"]); // minted by the Identity authority, never here
 
 /** @type {{ name: string, base: "string" | "number", pattern?: string }[]} */
 const idDefs = [];
@@ -169,11 +166,12 @@ const subscriptionNames = (contract.subscriptions ?? []).map((s) => s.name);
 const errors = contract.errors ?? [];
 
 // ---------------------------------------------------------------------------
-// 4. Delivery state machine (R5) as a typed transition table.
+// 4. Legacy delivery state machine — emitted only when the contract source
+//    still carries one (removed with the DEC-spec system).
 // ---------------------------------------------------------------------------
 
-const machine = contract.stateMachines.delivery;
-const triggers = [...new Set(machine.transitions.map((t) => t.trigger))];
+const machine = contract.stateMachines?.delivery;
+const triggers = machine ? [...new Set(machine.transitions.map((t) => t.trigger))] : [];
 
 // ---------------------------------------------------------------------------
 // 5. Emit.
@@ -196,8 +194,12 @@ out();
 out(`// --- versions & constants ------------------------------------------------`);
 out(`export const contractVersion = ${JSON.stringify(contract.contractVersion)} as const;`);
 out(`export const schemaVersion = ${JSON.stringify(contract.schemaVersion)} as const;`);
-out(`export const constants = ${JSON.stringify(contract.constants, null, 2)} as const;`);
-out(`export const templateBindablePaths = ${JSON.stringify(contract.templateBindablePaths, null, 2)} as const;`);
+if (contract.constants !== undefined) {
+  out(`export const constants = ${JSON.stringify(contract.constants, null, 2)} as const;`);
+}
+if (contract.templateBindablePaths !== undefined) {
+  out(`export const templateBindablePaths = ${JSON.stringify(contract.templateBindablePaths, null, 2)} as const;`);
+}
 out();
 
 out(`// --- branded identities ----------------------------------------------------`);
@@ -215,7 +217,7 @@ for (const def of idDefs) {
 out(`} as const;`);
 out();
 
-out(`// --- mintable id kinds (Messaging-Seams §5.1) -------------------------------`);
+out(`// --- mintable id kinds ------------------------------------------------------`);
 out(`export const idPrefixes = {`);
 for (const kind of [...mintable.keys()].sort()) {
   out(`  ${JSON.stringify(kind)}: ${JSON.stringify(kind + "_")},`);
@@ -239,6 +241,7 @@ out();
 
 out(`// --- operation / event / error name catalogues -----------------------------`);
 const emitNameUnion = (varName, typeName, names) => {
+  if (names.length === 0) return;
   out(`export const ${varName} = ${JSON.stringify(names)} as const;`);
   out(`export type ${typeName} = (typeof ${varName})[number];`);
 };
@@ -248,7 +251,7 @@ emitNameUnion("eventNames", "EventName", eventNames);
 emitNameUnion("subscriptionNames", "SubscriptionName", subscriptionNames);
 out();
 
-out(`// --- error catalogue (13 errors; RateLimited is forward-reserved) -----------`);
+out(`// --- error catalogue -------------------------------------------------------`);
 out(`export const errorCatalogue = [`);
 for (const err of errors) {
   out(
@@ -260,7 +263,6 @@ out(`export type ErrorName = (typeof errorCatalogue)[number]["name"];`);
 out();
 out(`/**`);
 out(` * The public error type. One umbrella class; the name discriminates.`);
-out(` * Field shapes per error are the *Fields interfaces in ./errors.ts.`);
 out(` */`);
 out(`export class MessagingError extends Error {`);
 out(`  override readonly name: ErrorName;`);
@@ -279,37 +281,43 @@ out(`  }`);
 out(`}`);
 out();
 
-out(`// --- R5 delivery state machine ---------------------------------------------`);
-out(`export const deliveryTriggerValues = ${JSON.stringify(triggers)} as const;`);
-out(`export type DeliveryTrigger = (typeof deliveryTriggerValues)[number];`);
-out(`export interface DeliveryTransition {`);
-out(`  readonly from: DeliveryState;`);
-out(`  readonly to: DeliveryState;`);
-out(`  readonly trigger: DeliveryTrigger;`);
-out(`  readonly reason: DeliveryStateReason;`);
-out(`}`);
-out(`export const deliveryStateMachine: {`);
-out(`  readonly initial: DeliveryState;`);
-out(`  readonly terminal: readonly DeliveryState[];`);
-out(`  readonly transitions: readonly DeliveryTransition[];`);
-out(`} = {`);
-out(`  initial: ${JSON.stringify(machine.initial)},`);
-out(`  terminal: ${JSON.stringify(machine.terminal)},`);
-out(`  transitions: [`);
-for (const t of machine.transitions) {
-  out(
-    `    { from: ${JSON.stringify(t.from)}, to: ${JSON.stringify(t.to)}, trigger: ${JSON.stringify(t.trigger)}, reason: ${JSON.stringify(t.reason)} },`,
-  );
+if (machine) {
+  out(`// --- delivery state machine ------------------------------------------------`);
+  out(`export const deliveryTriggerValues = ${JSON.stringify(triggers)} as const;`);
+  out(`export type DeliveryTrigger = (typeof deliveryTriggerValues)[number];`);
+  out(`export interface DeliveryTransition {`);
+  out(`  readonly from: DeliveryState;`);
+  out(`  readonly to: DeliveryState;`);
+  out(`  readonly trigger: DeliveryTrigger;`);
+  out(`  readonly reason: DeliveryStateReason;`);
+  out(`}`);
+  out(`export const deliveryStateMachine: {`);
+  out(`  readonly initial: DeliveryState;`);
+  out(`  readonly terminal: readonly DeliveryState[];`);
+  out(`  readonly transitions: readonly DeliveryTransition[];`);
+  out(`} = {`);
+  out(`  initial: ${JSON.stringify(machine.initial)},`);
+  out(`  terminal: ${JSON.stringify(machine.terminal)},`);
+  out(`  transitions: [`);
+  for (const t of machine.transitions) {
+    out(
+      `    { from: ${JSON.stringify(t.from)}, to: ${JSON.stringify(t.to)}, trigger: ${JSON.stringify(t.trigger)}, reason: ${JSON.stringify(t.reason)} },`,
+    );
+  }
+  out(`  ],`);
+  out(`};`);
+  out();
 }
-out(`  ],`);
-out(`};`);
-out();
 
-out(`// --- cursor codec (Store-Seam §3: opaque "s_<n>" wrapping the sequence) -----`);
-out(`export function cursorFor(sequence: Sequence): Cursor {`);
-out(`  return \`s_\${sequence}\` as Cursor;`);
-out(`}`);
-out();
+const cursorId = idDefs.some((def) => def.name === "Cursor");
+const sequenceId = idDefs.some((def) => def.name === "Sequence");
+if (cursorId && sequenceId) {
+  out(`// --- cursor codec (opaque "s_<n>" wrapping the sequence) -------------------`);
+  out(`export function cursorFor(sequence: Sequence): Cursor {`);
+  out(`  return \`s_\${sequence}\` as Cursor;`);
+  out(`}`);
+  out();
+}
 
 const text = lines.join("\n");
 

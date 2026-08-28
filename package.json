@@ -9,7 +9,7 @@
   "scripts": {
     "prototype:messaging": "python3 -m http.server 3040 --bind 127.0.0.1 --directory docs",
     "lint": "node tools/gates/standards.mjs",
-    "messaging:test": "npm --prefix packages/messaging test && node packages/messaging/contract/check-map-drift.mjs",
+    "messaging:test": "npm --prefix packages/messaging test",
     "test:fast": "npm --prefix packages/shell run test:fast && for p in packages/*; do [ \"$p\" = \"packages/shell\" ] && continue; node tools/test-fast.mjs \"$p\" || exit 1; done",
     "test:guards": "for p in packages/*; do [ \"$p\" = \"packages/shell\" ] && continue; node tools/test-fast.mjs \"$p\" --guards || exit 1; done; npm --prefix packages/shell run test:contrast",
     "test:full": "for p in packages/*; do (cd \"$p\" && npm test) || exit 1; done",

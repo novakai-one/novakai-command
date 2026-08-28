@@ -116,25 +116,6 @@ describe("architecture — one Messaging doorway", () => {
       assert.equal(existsSync(join(packageRoot, dir)), false, `${dir}/ must be absent`);
     }
   });
-
-  it("the external Chief client has only its ws runtime dependency", () => {
-    const client = join(distRoot, "tests", "standalone", "external-chief.js");
-    const imports = importSpecifiers(client).filter((value) => !value.startsWith("node:"));
-    assert.deepEqual(imports, ["ws"]);
-  });
-
-  it("the second host has no import path into Messaging internals", () => {
-    const appRoot = join(packageRoot, "examples", "messenger-cli");
-    const sources = [
-      ...listFiles(appRoot, ".js"),
-      ...listFiles(appRoot, ".mjs"),
-      ...listFiles(appRoot, ".cjs"),
-    ];
-    const offenders = sources.flatMap((file) => importSpecifiers(file)
-      .filter((specifier) => !specifier.startsWith("node:") && specifier !== "ws")
-      .map((specifier) => `${relative(appRoot, file)} → ${specifier}`));
-    assert.deepEqual(offenders, []);
-  });
 });
 
 describe("architecture — graph health", () => {
@@ -160,8 +141,6 @@ describe("architecture — graph health", () => {
     const shellRoot = join(repoRoot, "packages", "shell", "ui", "screens", "messaging");
     const files = [
       ...listFiles(join(sourceRoot, "contract"), ".ts"),
-      ...listFiles(join(sourceRoot, "adapters", "standalone"), ".ts"),
-      join(sourceRoot, "cli", "nvk-messaging.ts"),
       join(serverRoot, "boot.ts"),
       ...listFiles(join(serverRoot, "boot"), ".ts"),
       join(serverRoot, "methods.ts"),
@@ -219,7 +198,7 @@ describe("architecture — graph health", () => {
 
   it("adapter families do not import other adapter families", () => {
     const adapterRoot = join(distRoot, "adapters");
-    const allowedShared = new Set(["store-shared.js", "store-operation-identity.js"]);
+    const allowedShared = new Set<string>();
     const offenders: string[] = [];
     for (const file of listFiles(adapterRoot, ".js")) {
       const from = relative(adapterRoot, file).split(sep).join("/");
