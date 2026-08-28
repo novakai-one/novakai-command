@@ -18,7 +18,7 @@ export interface RuntimeClientOptions {
   readonly token?: string;
   readonly connectTimeoutMs?: number;
   /**
-   * B3b: an Agent running inside a managed PTY presents the credential the
+   * An Agent running inside a managed PTY presents the credential the
    * Runtime handed it at launch, so it authenticates as ITSELF rather than as
    * the human who happens to own the machine (DEC-B3V4-05).
    */

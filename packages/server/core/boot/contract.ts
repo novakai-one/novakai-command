@@ -3,7 +3,7 @@
 import type { recordSystemAction } from '@novakai/foundation/dist/contract/index.js';
 import type { ProcessProbe, ProviderSessionRegistry } from '../../../agents/contract/index.js';
 import type { ServerConfig } from '../../contract/config.js';
-import type { B3RuntimeOptions } from '../b3/composition.js';
+import type { RuntimeHostOptions } from '../runtime-host/composition.js';
 import type { ServerRuntime } from '../methods.js';
 import type { SupervisionEngine } from '../supervision/engine.js';
 
@@ -20,7 +20,7 @@ export interface BootOptions {
   watchdogDir?: string;
   processProbe?: ProcessProbe;
   recordSystemAction?: typeof recordSystemAction;
-  b3?: Omit<B3RuntimeOptions, 'root' | 'publish'>;
+  runtimeHost?: Omit<RuntimeHostOptions, 'root' | 'publish'>;
 }
 
 export interface BootStep {

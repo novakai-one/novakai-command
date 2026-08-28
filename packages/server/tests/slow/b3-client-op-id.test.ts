@@ -14,7 +14,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createFakePtyHost } from '../../../terminal/adapters/pty-host/fake.js';
-import { startRuntimeHost, type RunningRuntimeHost } from '../../core/b3/host.js';
+import { startRuntimeHost, type RunningRuntimeHost } from '../../core/runtime-host/host.js';
 
 const repoRoot = path.resolve('../..');
 const tsx = path.join(repoRoot, 'node_modules', 'tsx', 'dist', 'cli.mjs');

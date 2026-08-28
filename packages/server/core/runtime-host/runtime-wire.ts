@@ -10,12 +10,12 @@ import {
 } from '../../../terminal/contract/index.js';
 import type { CallerIdentity, CallerSession, MethodTable } from '../../contract/protocol.js';
 import type { DispatchedCall } from '../transport/server.js';
-import { composeB3Runtime, type B3Runtime, type B3RuntimeOptions } from './composition.js';
-import { buildB3Methods } from './methods.js';
+import { composeRuntimeHost, type RuntimeHost, type RuntimeHostOptions } from './composition.js';
+import { buildRuntimeHostMethods } from './methods.js';
 import { readAllTerminalSessions } from './terminal-paging.js';
-import { buildB3AgentMethods } from './agent-methods.js';
+import { buildRuntimeHostAgentMethods } from './agent-methods.js';
 import { buildMessagingRuntimeMethods } from './messaging-runtime-methods.js';
-import { buildB3SupervisionMethods } from './supervision-methods.js';
+import { buildRuntimeHostSupervisionMethods } from './supervision-methods.js';
 
 /** Comfortably inside the stale window, so a live window is never called gone. */
 const SIGHTING_INTERVAL_MS = Math.floor(DEFAULT_STALE_AFTER_MS / 3);
@@ -35,8 +35,8 @@ function attachmentIn(result: unknown): OpenedController | null {
   return { attachmentId, terminalSessionId: outcome.value.terminalSessionId };
 }
 
-/** Host inputs for the B3 transport adapter. */
-export interface B3WireOptions extends B3RuntimeOptions {
+/** Host inputs for the runtime-host transport adapter. */
+export interface RuntimeHostWireOptions extends RuntimeHostOptions {
   readonly principalId?: HumanPrincipalId;
   /**
    * The runtime has been stopped through its own contract. A serving daemon
@@ -51,8 +51,8 @@ interface EventSink {
 }
 
 /** Authenticated method table and lifecycle exposed to a listening host. */
-export interface B3Wire {
-  readonly runtime: B3Runtime;
+export interface RuntimeHostWire {
+  readonly runtime: RuntimeHost;
   /** Every `b3.*` method, ready to merge into a host's table. */
   readonly methods: MethodTable;
   /** Who a connection is — decided at the upgrade, refused rather than downgraded. */
@@ -71,14 +71,14 @@ export interface B3Wire {
   close(): Promise<void>;
 }
 
-/** Compose the B3 host wire without taking ownership of the listening socket. */
-export async function composeB3Wire(options: B3WireOptions): Promise<B3Wire> {
+/** Compose the runtime-host wire without taking ownership of the listening socket. */
+export async function composeRuntimeHostWire(options: RuntimeHostWireOptions): Promise<RuntimeHostWire> {
   // Live events leave as ordinary v1 event frames, exactly as terminal output
   // does. Composition is where that is decided: the capability publishes, and
   // the HOST chooses who hears it (§12.6 — server transports, it owns no state).
   let broadcastEvent: (kind: string, payload: Readonly<Record<string, unknown>>) => void
     = () => undefined;
-  const runtime = await composeB3Runtime({
+  const runtime = await composeRuntimeHost({
     ...options,
     publish: (kind, payload) => {
       options.publish?.(kind, payload);
@@ -120,14 +120,14 @@ export async function composeB3Wire(options: B3WireOptions): Promise<B3Wire> {
   };
 
   const methods = {
-    ...buildB3Methods({
+    ...buildRuntimeHostMethods({
       runtime, principalId,
       // Announced, not acted on here: whether a stopped runtime should exit its
       // process is the HOST's decision (a serving daemon exits; an in-process
       // test host does not), so this adapter only forwards the fact.
       onRuntimeStopped: () => { options.onRuntimeStopped?.(); },
     }),
-    ...buildB3AgentMethods({
+    ...buildRuntimeHostAgentMethods({
       runtime,
       principalFor,
       contextFor: (principal, _session, clientOpId) => ({
@@ -151,7 +151,7 @@ export async function composeB3Wire(options: B3WireOptions): Promise<B3Wire> {
       },
       principalFor,
     }),
-    ...buildB3SupervisionMethods({
+    ...buildRuntimeHostSupervisionMethods({
       supervision: runtime.supervision,
       principalFor,
       activityGenerationFor: async (agentRunId) => {

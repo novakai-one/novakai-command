@@ -6,7 +6,7 @@
 // `b3.agent.*` on that same socket. Until this slice the product had two
 // composition roots and neither served both halves:
 //
-//   * `bootServer` (the `nvk-server` production root) wired NO B3 runtime, so
+//   * `bootServer` (the `nvk-server` production root) wired NO runtime host, so
 //     `b3.agent.listRuns` came back `unknown method` — the Runs screen, the
 //     watchers screen and the usage table all fail on the real server;
 //   * `startRuntimeHost` serves `b3.*` and none of the Shell's boot methods.
@@ -62,8 +62,8 @@ interface Booted {
 }
 
 /**
- * The production root, on a throwaway data root, with the two seams every B3
- * suite uses so no real PTY or provider CLI is touched.
+ * The production root, on a throwaway data root, with the two seams every
+ * runtime-host suite uses so no real PTY or provider CLI is touched.
  */
 async function boot(options: { readonly serveBundle?: boolean } = {}): Promise<Booted> {
   const root = mkdtempSync(path.join(tmpdir(), 'nvk-b3e-composition-'));
@@ -77,7 +77,7 @@ async function boot(options: { readonly serveBundle?: boolean } = {}): Promise<B
     cwd: root,
     watchdogDir: root,
     ...(options.serveBundle === false ? {} : { staticDir }),
-    b3: { ptyHost: createFakePtyHost(), providers: createFakeProviderAdapters() },
+    runtimeHost: { ptyHost: createFakePtyHost(), providers: createFakeProviderAdapters() },
   });
   if (!booted.ok) throw new Error(`boot failed: ${booted.error.code} ${booted.error.message}`);
   return { server: booted.value, root, staticDir };

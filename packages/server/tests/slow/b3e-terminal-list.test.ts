@@ -21,8 +21,8 @@ import type { B3Result } from '@novakai/foundation/contract';
 import { createFakePtyHost } from '../../../terminal/adapters/pty-host/fake.js';
 import { UNFINISHED_TERMINAL_SESSION_STATUSES } from '../../../terminal/contract/index.js';
 import { createFakeProviderAdapters } from '../../../agents/b3/contract/index.js';
-import { startRuntimeHost, type RunningRuntimeHost } from '../../core/b3/host.js';
-import { connectRuntime } from '../../core/b3/client.js';
+import { startRuntimeHost, type RunningRuntimeHost } from '../../core/runtime-host/host.js';
+import { connectRuntime } from '../../core/runtime-host/client.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '..', '..', '..');

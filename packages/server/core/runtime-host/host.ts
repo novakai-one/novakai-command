@@ -10,10 +10,10 @@
 // the headless host and the backed Shell cannot be handed different surfaces.
 import { startTransport, type RunningTransport } from '../transport/server.js';
 import { createDefaultMessagingRuntime } from '../../../messaging/contract/index.js';
-import { composeB3Wire, type B3Wire, type B3WireOptions } from './runtime-wire.js';
-import type { B3Runtime } from './composition.js';
+import { composeRuntimeHostWire, type RuntimeHostWire, type RuntimeHostWireOptions } from './runtime-wire.js';
+import type { RuntimeHost } from './composition.js';
 
-export interface RuntimeHostProcessOptions extends B3WireOptions {
+export interface RuntimeHostProcessOptions extends RuntimeHostWireOptions {
   readonly port: number;
   /** Bundle directory, when this host also serves the shell. */
   readonly staticDir?: string;
@@ -23,7 +23,7 @@ export interface RunningRuntimeHost {
   readonly httpUrl: string;
   readonly port: number;
   readonly token: string;
-  readonly runtime: B3Runtime;
+  readonly runtime: RuntimeHost;
   readonly transport: RunningTransport;
   close(): Promise<void>;
 }
@@ -41,9 +41,9 @@ export async function startRuntimeHost(
       })
     : null;
   if (ingestion !== null) await ingestion.runtime.start();
-  let wire: B3Wire;
+  let wire: RuntimeHostWire;
   try {
-    wire = await composeB3Wire({
+    wire = await composeRuntimeHostWire({
       ...options,
       ...(ingestion === null ? {} : { messagingRuntime: ingestion.runtime }),
     });

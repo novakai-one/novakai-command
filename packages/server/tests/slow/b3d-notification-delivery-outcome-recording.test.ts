@@ -34,7 +34,7 @@ import type { AgentRunsContract, ProviderPort } from '../../../agent-runtime/con
 import type { TerminalContract } from '../../../terminal/contract/index.js';
 import {
   createNotificationDeliveryPump, type NotificationDeliveryPumpOptions,
-} from '../../core/b3/notification-delivery-pump.js';
+} from '../../core/runtime-host/notification-delivery-pump.js';
 
 const RUN_ID = 'agentrun_01960000000000000000000081';
 const OTHER_RUN_ID = 'agentrun_01960000000000000000000181';

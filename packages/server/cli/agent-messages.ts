@@ -17,8 +17,8 @@ import type {
 import type {
   AgentCommunicationView, AgentDeliveryInstruction,
 } from '../../messaging/contract/index.js';
-import type { RuntimeClient } from '../core/b3/client.js';
-import { pageFlags, type CliCommand, type Flags } from '../core/b3/cli-shared.js';
+import type { RuntimeClient } from '../core/runtime-host/client.js';
+import { pageFlags, type CliCommand, type Flags } from '../core/runtime-host/cli-shared.js';
 
 interface MessageDeps {
   withClient<Value>(

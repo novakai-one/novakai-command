@@ -17,22 +17,22 @@ import {
 } from '../../../terminal/contract/index.js';
 import { readRequestRuntimeStopInput } from '../../../agent-runtime/contract/index.js';
 import type { MethodTable } from '../../contract/protocol.js';
-import type { B3Runtime } from './composition.js';
+import type { RuntimeHost } from './composition.js';
 
 /**
  * The one shape every b3 request carries. Authentication comes from the
  * token-authenticated transport session; the payload never names a principal
  * (red gate 5).
  */
-export interface B3Params<Payload> {
+export interface WireParams<Payload> {
   readonly contractVersion: 1;
   readonly clientOpId?: B3ClientOpId;
   readonly payload: Payload;
 }
 
-export interface B3MethodOptions {
-  readonly runtime: B3Runtime;
-  /** The authenticated local human. B3a has exactly one. */
+export interface RuntimeHostMethodOptions {
+  readonly runtime: RuntimeHost;
+  /** The authenticated local human. This host has exactly one. */
   readonly principalId: HumanPrincipalId;
   /**
    * Fired once a stop request actually stopped the runtime, so a serving
@@ -52,15 +52,15 @@ const malformed = (): B3Result<never> => b3fail(
     { issues: [{ path: 'params', message: 'missing contractVersion or payload' }] }, false),
 );
 
-function readParams<Payload>(candidate: unknown): B3Result<B3Params<Payload>> {
+function readParams<Payload>(candidate: unknown): B3Result<WireParams<Payload>> {
   if (typeof candidate !== 'object' || candidate === null) return malformed();
-  const params = candidate as Partial<B3Params<Payload>>;
+  const params = candidate as Partial<WireParams<Payload>>;
   if (params.payload === undefined) return malformed();
   if (params.contractVersion !== 1) return unsupportedVersion(params.contractVersion);
-  return b3ok(params as B3Params<Payload>);
+  return b3ok(params as WireParams<Payload>);
 }
 
-export function buildB3Methods(options: B3MethodOptions): MethodTable {
+export function buildRuntimeHostMethods(options: RuntimeHostMethodOptions): MethodTable {
   const { runtime, terminal } = options.runtime;
 
   const principal: AuthenticatedPrincipal = {

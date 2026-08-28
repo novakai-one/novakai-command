@@ -7,7 +7,7 @@ import { recordSystemAction } from '@novakai/foundation/dist/contract/index.js';
 import type { FocusSnapshot } from '../../shell/contract/context.js';
 import { startTransport, type RunningTransport } from './transport/server.js';
 import { buildMethods, type ServerRuntime } from './methods.js';
-import { composeB3Wire } from './b3/runtime-wire.js';
+import { composeRuntimeHostWire } from './runtime-host/runtime-wire.js';
 import { composePrincipals } from './boot/principals.js';
 import { composeCapabilities } from './boot/capabilities.js';
 import { hydrateConversations } from './boot/conversation-hydration.js';
@@ -126,8 +126,8 @@ export async function bootServer(options: BootOptions): Promise<BootResult> {
 
   await wireTurnAccounting({ providerRuntimes, sessions, usageReader });
 
-  const b3Wire = await composeB3Wire({
-    ...(options.b3 ?? {}),
+  const runtimeHostWire = await composeRuntimeHostWire({
+    ...(options.runtimeHost ?? {}),
     root: options.root,
     messagingRuntime: transcript.runtime,
     providerAgents: agents,
@@ -135,29 +135,29 @@ export async function bootServer(options: BootOptions): Promise<BootResult> {
       if (kind === 'conversation.created') runtime.broadcast('conversation', payload);
     },
   });
-  note(12, 'runtime', `b3.* composed on ${b3Wire.runtime.dataRoot}`);
-  const methods = { ...buildMethods(runtime), ...b3Wire.methods };
+  note(12, 'runtime', `b3.* composed on ${runtimeHostWire.runtime.dataRoot}`);
+  const methods = { ...buildMethods(runtime), ...runtimeHostWire.methods };
   const transport: RunningTransport = await startTransport({
     root: options.root,
     port: options.port,
     ...(options.staticDir ? { staticDir: options.staticDir } : {}),
     methods,
     artifacts: b2a.artifacts,
-    identifyCaller: b3Wire.identifyCaller,
-    onDispatch: b3Wire.onDispatch,
-    onDisconnect: b3Wire.onDisconnect,
+    identifyCaller: runtimeHostWire.identifyCaller,
+    onDispatch: runtimeHostWire.onDispatch,
+    onDisconnect: runtimeHostWire.onDisconnect,
   });
   runtime.broadcast = (name, data) => transport.broadcast(name, data);
   const transcriptEvents = wireTranscriptEvents(runtime);
   try {
-    await b3Wire.serve(transport);
+    await runtimeHostWire.serve(transport);
   } catch (cause) {
     await transport.close();
-    await b3Wire.close();
+    await runtimeHostWire.close();
     await stopMessaging();
     return refuse(
       'RuntimeUnavailable',
-      `the B3 Runtime for ${options.root} refused to start: `
+      `the runtime host for ${options.root} refused to start: `
         + `${cause instanceof Error ? cause.message : String(cause)}`,
     );
   }
@@ -188,7 +188,7 @@ export async function bootServer(options: BootOptions): Promise<BootResult> {
         configWatcher.close();
         transcriptEvents.close();
         await transport.close();
-        await b3Wire.close();
+        await runtimeHostWire.close();
         await stopMessaging();
       },
     },

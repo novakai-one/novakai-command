@@ -16,7 +16,7 @@ const repoRoot = path.resolve(here, '..', '..', '..');
 const B3A_ROOTS = [
   'packages/terminal',
   'packages/agent-runtime',
-  'packages/server/core/b3',
+  'packages/server/core/runtime-host',
   'packages/server/cli/nvk-runtime.ts',
   'packages/server/cli/nvk-terminal.ts',
   'packages/shell/ui/screens/terminal',

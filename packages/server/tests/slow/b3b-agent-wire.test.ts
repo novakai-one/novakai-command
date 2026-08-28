@@ -17,9 +17,9 @@ import {
 } from '@novakai/foundation/dist/contract/index.js';
 import { createFakePtyHost } from '../../../terminal/adapters/pty-host/fake.js';
 import { createFakeProviderAdapters } from '../../../agents/b3/contract/index.js';
-import { startRuntimeHost, type RunningRuntimeHost } from '../../core/b3/host.js';
-import { connectRuntime, type RuntimeClient } from '../../core/b3/client.js';
-import { buildB3AgentMethods } from '../../core/b3/agent-methods.js';
+import { startRuntimeHost, type RunningRuntimeHost } from '../../core/runtime-host/host.js';
+import { connectRuntime, type RuntimeClient } from '../../core/runtime-host/client.js';
+import { buildRuntimeHostAgentMethods } from '../../core/runtime-host/agent-methods.js';
 
 interface WireState {
   managerRoleId: string;
@@ -386,7 +386,7 @@ async function createRig(): Promise<Rig> {
 test('every b3.agent.* method answers on the v1 frame, in one team\'s life', async () => {
   const rig = await createRig();
   try {
-    const served = Object.keys(buildB3AgentMethods({
+    const served = Object.keys(buildRuntimeHostAgentMethods({
       runtime: rig.host.runtime,
       principalFor: () => ({ id: 'person_chris' as never, kind: 'human', verifiedScopes: [] }),
       contextFor: (principal) => ({

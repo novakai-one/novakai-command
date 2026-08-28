@@ -1,11 +1,11 @@
 // `b3.agent.*` on the EXISTING nvk-ws v1 frame (§16.2, AMD-001 A-02).
 //
-// Same rules as the B3a methods: no second dialect, no field added to the socket
-// frame, and every payload VALIDATED at runtime rather than cast. The one thing
-// these add is a principal that is not always Chris — a spawned Agent using a
-// B3 client from inside its own PTY authenticates as itself, and its identity
-// comes from the connection rather than from anything in `params`
-// (red gate 5).
+// Same rules as the other method tables: no second dialect, no field added to
+// the socket frame, and every payload VALIDATED at runtime rather than cast.
+// The one thing these add is a principal that is not always Chris — a spawned
+// Agent using a runtime client from inside its own PTY authenticates as
+// itself, and its identity comes from the connection rather than from anything
+// in `params` (red gate 5).
 import {
   b3err, b3fail, b3ok, mintClientOpId,
   type AuthenticatedPrincipal, type B3Result, type ClientOpId, type CommandContext,
@@ -32,10 +32,10 @@ import {
   readResolveRoleByNameInput,
 } from './agent-reads.js';
 import type { CallerSession, MethodTable } from '../../contract/protocol.js';
-import type { B3Runtime } from './composition.js';
+import type { RuntimeHost } from './composition.js';
 
-export interface B3AgentMethodOptions {
-  readonly runtime: B3Runtime;
+export interface RuntimeHostAgentMethodOptions {
+  readonly runtime: RuntimeHost;
   /** Resolve the caller from the connection. Never from `params`. */
   readonly principalFor: (session: CallerSession | undefined) => AuthenticatedPrincipal;
   readonly contextFor: (
@@ -50,22 +50,22 @@ const malformed = (): B3Result<never> => b3fail(
     { issues: [{ path: 'params', message: 'missing contractVersion or payload' }] }, false),
 );
 
-interface B3Params<Payload> {
+interface WireParams<Payload> {
   readonly contractVersion: 1;
   readonly clientOpId?: string;
   readonly payload: Payload;
 }
 
-function readParams<Payload>(candidate: unknown): B3Result<B3Params<Payload>> {
+function readParams<Payload>(candidate: unknown): B3Result<WireParams<Payload>> {
   if (typeof candidate !== 'object' || candidate === null) return malformed();
-  const params = candidate as Partial<B3Params<Payload>>;
+  const params = candidate as Partial<WireParams<Payload>>;
   if (params.payload === undefined) return malformed();
   if (params.contractVersion !== 1) {
     return b3fail(b3err('UnsupportedContractVersion',
       `contract version ${String(params.contractVersion)} is not supported`,
       { received: params.contractVersion, supported: [1] }, false));
   }
-  return b3ok(params as B3Params<Payload>);
+  return b3ok(params as WireParams<Payload>);
 }
 
 /**
@@ -102,7 +102,7 @@ function readClientOpId(given: string | undefined): B3Result<ClientOpId> {
  * so it asks each owner its own question and joins the answers here.
  */
 async function issuerWithinReach(
-  runtime: B3Runtime,
+  runtime: RuntimeHost,
   principal: AuthenticatedPrincipal,
   issuerAgentRunId: string,
 ): Promise<B3Result<null>> {
@@ -126,7 +126,7 @@ async function issuerWithinReach(
   return inside ? b3ok(null) : denied;
 }
 
-export function buildB3AgentMethods(options: B3AgentMethodOptions): MethodTable {
+export function buildRuntimeHostAgentMethods(options: RuntimeHostAgentMethodOptions): MethodTable {
   const { runs, agents, usageEvidence } = options.runtime;
 
   /**

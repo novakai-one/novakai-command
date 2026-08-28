@@ -14,12 +14,12 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { b3err, b3fail, type B3ClientOpId, type B3Result } from '@novakai/foundation/contract';
 import type { RuntimeStatus, RuntimeStopOutcome } from '../../agent-runtime/contract/index.js';
-import { startRuntimeHost } from '../core/b3/host.js';
-import { connectRuntime, type RuntimeClient } from '../core/b3/client.js';
+import { startRuntimeHost } from '../core/runtime-host/host.js';
+import { connectRuntime, type RuntimeClient } from '../core/runtime-host/client.js';
 import {
   clientOpIdFrom, confirmedRuns, emit, expectedEpoch, fail, parseFlags,
   type CliCommand, type Flags,
-} from '../core/b3/cli-shared.js';
+} from '../core/runtime-host/cli-shared.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '..', '..', '..');

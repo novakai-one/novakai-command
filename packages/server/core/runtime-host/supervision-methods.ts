@@ -1,7 +1,7 @@
 // `b3.supervision.*` on the EXISTING nvk-ws v1 frame (§16.2, AMD-001 A-02).
 //
-// Same rules as every other B3 method table: no second dialect, no field added
-// to the socket frame, and every payload validated rather than cast.
+// Same rules as every other method table in this host: no second dialect, no
+// field added to the socket frame, and every payload validated rather than cast.
 //
 // TRACER SCOPE. These are the two reads §17.1's `nvk watch list` and
 // `nvk watch notifications` need, and nothing else. The rest of §12.4's
@@ -32,7 +32,7 @@ import type { SupervisionCore } from '../../../supervision/public/index.js';
 import type { CallerSession, MethodTable } from '../../contract/protocol.js';
 import { readAgentIdInput } from './agent-reads.js';
 
-export interface B3SupervisionMethodOptions {
+export interface RuntimeHostSupervisionMethodOptions {
   readonly supervision: SupervisionCore;
   readonly principalFor: (session: CallerSession | undefined) => AuthenticatedPrincipal;
   readonly activityGenerationFor: (agentRunId: AgentRunId) => Promise<ActivityGeneration | null>;
@@ -171,7 +171,7 @@ export interface WatcherListing {
   readonly omissions: readonly { readonly reason: 'permission' | 'unsupported-version'; readonly count: number }[];
 }
 
-export function buildB3SupervisionMethods(options: B3SupervisionMethodOptions): MethodTable {
+export function buildRuntimeHostSupervisionMethods(options: RuntimeHostSupervisionMethodOptions): MethodTable {
   const { supervision } = options;
 
   async function listWatchers(

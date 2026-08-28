@@ -42,12 +42,12 @@ import type {
 } from '../../agent-runtime/contract/index.js';
 import type { Agent, AgentRoleProfile, DelegationGrant } from '../../agents/b3/contract/index.js';
 import type { AgentRunUsage, AgentUsageSummary } from '../../supervision/contract/index.js';
-import { connectRuntime, type RuntimeClient } from '../core/b3/client.js';
+import { connectRuntime, type RuntimeClient } from '../core/runtime-host/client.js';
 import {
   clientOpIdFrom, emit, expectedVersion, fail, isRunForm, pageFlags, parseFlags,
   verbOf, EXPECT_VERSION_FLAG,
   type CliCommand, type Flags,
-} from '../core/b3/cli-shared.js';
+} from '../core/runtime-host/cli-shared.js';
 import {
   describeAgent, describeControls, describeList, describeRun, describeTree, describeUsage,
 } from './agent-describe.js';

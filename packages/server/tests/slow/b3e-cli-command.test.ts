@@ -18,7 +18,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { RULED_COMMANDS } from '../../core/b3/cli-shared.js';
+import { RULED_COMMANDS } from '../../core/runtime-host/cli-shared.js';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 const nvk = path.join(repoRoot, 'scripts', 'nvk.mjs');

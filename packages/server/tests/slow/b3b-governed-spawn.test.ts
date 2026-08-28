@@ -28,8 +28,8 @@ import type {
   InteractiveProviderAdapter, ProviderAdapterRegistry,
 } from '../../../agents/b3/contract/providers.js';
 import type { ProviderKind } from '../../../agents/b3/contract/records.js';
-import { startRuntimeHost, type RunningRuntimeHost } from '../../core/b3/host.js';
-import { connectRuntime, type RuntimeClient } from '../../core/b3/client.js';
+import { startRuntimeHost, type RunningRuntimeHost } from '../../core/runtime-host/host.js';
+import { connectRuntime, type RuntimeClient } from '../../core/runtime-host/client.js';
 import { governedRole, governedTokens } from '../governed-role.js';
 
 interface Rig {

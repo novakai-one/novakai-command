@@ -14,8 +14,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createFakePtyHost } from '../../../terminal/adapters/pty-host/fake.js';
 import { createFakeProviderAdapters } from '../../../agents/b3/contract/index.js';
-import { startRuntimeHost } from '../../core/b3/host.js';
-import { buildB3AgentMethods } from '../../core/b3/agent-methods.js';
+import { startRuntimeHost } from '../../core/runtime-host/host.js';
+import { buildRuntimeHostAgentMethods } from '../../core/runtime-host/agent-methods.js';
 
 /** The §16.2 names, as written in the spec. */
 const PUBLISHED = [
@@ -34,7 +34,7 @@ test('every method §16.2 publishes is on the table, by its published name', asy
     root, port: 0, ptyHost: createFakePtyHost(), providers: createFakeProviderAdapters(),
   });
   try {
-    const table = buildB3AgentMethods({
+    const table = buildRuntimeHostAgentMethods({
       runtime: host.runtime,
       principalFor: () => ({ id: 'person_chris' as never, kind: 'human', verifiedScopes: [] }),
       contextFor: (principal, _session, clientOpId) => ({

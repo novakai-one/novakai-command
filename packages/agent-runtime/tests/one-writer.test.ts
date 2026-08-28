@@ -103,5 +103,5 @@ test('the governed spawn has exactly one internal production door', () => {
     const source = readFileSync(file, 'utf8');
     if (/['"]b3\.agent\.spawn['"]\s*:/.test(source)) builders.push(relative(file));
   }
-  assert.deepEqual(builders, ['packages/server/core/b3/agent-methods.ts']);
+  assert.deepEqual(builders, ['packages/server/core/runtime-host/agent-methods.ts']);
 });

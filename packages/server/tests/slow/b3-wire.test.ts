@@ -14,9 +14,9 @@ import type {
 import { createFakePtyHost } from '../../../terminal/adapters/pty-host/fake.js';
 import type { TerminalSession, TerminalSessionView } from '../../../terminal/contract/index.js';
 import type { RuntimeStatus } from '../../../agent-runtime/contract/index.js';
-import { startRuntimeHost, type RunningRuntimeHost } from '../../core/b3/host.js';
-import { connectRuntime, type RuntimeClient } from '../../core/b3/client.js';
-import { buildB3Methods } from '../../core/b3/methods.js';
+import { startRuntimeHost, type RunningRuntimeHost } from '../../core/runtime-host/host.js';
+import { connectRuntime, type RuntimeClient } from '../../core/runtime-host/client.js';
+import { buildRuntimeHostMethods } from '../../core/runtime-host/methods.js';
 
 interface Rig {
   readonly host: RunningRuntimeHost;
@@ -48,7 +48,7 @@ function unwrap<Value>(result: B3Result<Value>, what: string): Value {
 /**
  * NVK-KIMI-025 repair 4: this test used to check ONE method and claim "every".
  * It is now parameterised over the whole B3a method table, and the table is
- * READ FROM THE SERVER (`buildB3Methods`) rather than copied here — so a method
+ * READ FROM THE SERVER (`buildRuntimeHostMethods`) rather than copied here — so a method
  * added without wire coverage fails this test instead of quietly riding along.
  *
  * Ordered on purpose: the calls are a real session's life (open, attach, take
@@ -176,7 +176,7 @@ test('every b3 method rides the existing {id, method, params, v:1} frame', async
   const rig = await createRig();
   try {
     // The list of methods is the SERVER's, not this file's opinion of it.
-    const served = Object.keys(buildB3Methods({
+    const served = Object.keys(buildRuntimeHostMethods({
       runtime: rig.host.runtime, principalId: 'person_chris' as HumanPrincipalId,
     }));
     assert.deepEqual(

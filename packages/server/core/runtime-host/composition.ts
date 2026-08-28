@@ -1,6 +1,6 @@
 // Background Runtime composition; Messaging remains the transcript authority.
 import {
-  composeAgentRuns, composeRuntimeHost, createFileInstanceLease,
+  composeAgentRuns, composeRuntimeHost as composeAgentRuntimeHost, createFileInstanceLease,
   type AgentRunsContract, type ComposedAgentRuns, type RuntimeHostContract,
 } from '../../../agent-runtime/contract/index.js';
 import {
@@ -38,7 +38,7 @@ import { agentRunsRecovery, terminalRecovery } from './runtime-recovery.js';
 import { composeRuntimeSupervision } from './runtime-supervision.js';
 
 /** Dependencies and cadence overrides for the background Runtime host. */
-export interface B3RuntimeOptions {
+export interface RuntimeHostOptions {
   /** `.novakai/` root. Domain records live in `<root>/stores`. */
   readonly root: string;
   readonly hostVersion?: string;
@@ -81,22 +81,22 @@ export interface B3RuntimeOptions {
   readonly watcherTemplates?: readonly WatcherTemplate[];
 }
 
-/** Composed capabilities owned by one B3 Runtime process. */
-export interface B3Runtime {
+/** Composed capabilities owned by one runtime host process. */
+export interface RuntimeHost {
   readonly runtime: RuntimeHostContract;
   readonly terminal: TerminalContract;
   readonly agents: GovernedAgentsContract;
   readonly usageEvidence: ProviderUsageEvidenceContract;
   readonly runs: AgentRunsContract;
   readonly credentials: ReturnType<typeof createRunCredentials>;
-  readonly messaging: NonNullable<B3RuntimeOptions['messagingRuntime']>;
+  readonly messaging: NonNullable<RuntimeHostOptions['messagingRuntime']>;
   readonly supervision: SupervisionCore;
   readonly dataRoot: string;
   close(): Promise<void>;
 }
 
 /** Compose Runtime capabilities with Messaging as the transcript authority. */
-export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Runtime> {
+export async function composeRuntimeHost(options: RuntimeHostOptions): Promise<RuntimeHost> {
   const dataRoot = canonicalDataRoot(options.root);
   const authorities = options.authorities ?? createLaunchAuthorities();
   const ptyHost = options.ptyHost ?? await createNodePtyHost({ authorities });
@@ -104,7 +104,7 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
 
   let terminal: TerminalContract | null = null;
   let runs: ComposedAgentRuns | null = null;
-  const runtime = composeRuntimeHost({
+  const runtime = composeAgentRuntimeHost({
     root: options.root,
     dataRoot,
     hostVersion: options.hostVersion ?? 'b3a',
@@ -212,7 +212,7 @@ export async function composeB3Runtime(options: B3RuntimeOptions): Promise<B3Run
   });
   const credentials = createRunCredentials(options.root);
   const messaging = options.messagingRuntime;
-  if (messaging === undefined) throw new Error('Messaging Runtime is required by the B3 host');
+  if (messaging === undefined) throw new Error('Messaging Runtime is required by the runtime host');
   const supervision = composeRuntimeSupervision({
     root: options.root,
     dataRoot,

@@ -7,8 +7,8 @@
 import { mkdirSync, mkdtempSync, readFileSync, existsSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { startRuntimeHost } from '../core/b3/host.js';
-import { connectRuntime } from '../core/b3/client.js';
+import { startRuntimeHost } from '../core/runtime-host/host.js';
+import { connectRuntime } from '../core/runtime-host/client.js';
 import { governedRole } from './governed-role.js';
 
 const arg = (name: string, fallback: string): string => {

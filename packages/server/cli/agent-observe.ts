@@ -10,8 +10,8 @@ import type {
   RunEventPage, RunOperationView, TreeMutationFence,
 } from '../../agent-runtime/contract/index.js';
 import type { DelegationGrant } from '../../agents/b3/contract/index.js';
-import type { RuntimeClient } from '../core/b3/client.js';
-import type { CliCommand, Flags } from '../core/b3/cli-shared.js';
+import type { RuntimeClient } from '../core/runtime-host/client.js';
+import type { CliCommand, Flags } from '../core/runtime-host/cli-shared.js';
 
 export interface ObserveDeps {
   withClient<Value>(
