@@ -2,12 +2,18 @@ import { createHash } from "node:crypto";
 import { open, lstat, readdir, realpath } from "node:fs/promises";
 import path from "node:path";
 import type {
+  ProviderSourceChange,
   ProviderSourceGrowth,
+  ProviderSourceSubscription,
   ProviderSourceStat,
   ProviderTranscriptSource,
 } from "../../contract/ports/provider-transcript-source.js";
 import type { IngestCheckpoint } from "../../contract/records/ingest-checkpoint.js";
 import type { ProviderName, TranscriptSourceId } from "../../contract/types.js";
+import {
+  ProviderSourceMonitor,
+  type DiscoveredSource,
+} from './source-monitor.js';
 
 const VERIFY_BYTES = 64;
 // Unscoped files exist machine-wide and may be hundreds of megabytes. They
@@ -21,10 +27,6 @@ export interface ProviderTranscriptRoots {
   readonly claude?: readonly string[];
   readonly codex?: readonly string[];
   readonly kimi?: readonly string[];
-}
-
-interface DiscoveredSource extends ProviderSourceStat {
-  readonly filePath: string;
 }
 
 const sourceIdOf = (provider: ProviderName, root: string, relative: string): TranscriptSourceId =>
@@ -144,7 +146,7 @@ function growthResult(
 }
 
 class FileProviderTranscriptSource implements ProviderTranscriptSource {
-  private discovered = new Map<TranscriptSourceId, DiscoveredSource>();
+  private readonly monitor: ProviderSourceMonitor;
 
   constructor(
     private readonly roots: ProviderTranscriptRoots,
@@ -154,27 +156,44 @@ class FileProviderTranscriptSource implements ProviderTranscriptSource {
       from: number,
       length: number,
     ) => Promise<Uint8Array>,
-  ) {}
+  ) {
+    this.monitor = new ProviderSourceMonitor([...new Set([
+      ...(roots.claude ?? []),
+      ...(roots.codex ?? []),
+      ...(roots.kimi ?? []),
+    ])]);
+  }
 
   async scan(): Promise<readonly ProviderSourceStat[]> {
-    const next = new Map<TranscriptSourceId, DiscoveredSource>();
+    const next: DiscoveredSource[] = [];
     for (const provider of ["claude", "codex", "kimi"] as const) {
       const adoptRoots = await existingRoots(this.adoptRoots[provider] ?? []);
       for (const configuredRoot of this.roots[provider] ?? []) {
         for (const source of await discoverRoot(provider, configuredRoot, adoptRoots)) {
-          next.set(source.sourceId, source);
+          next.push(source);
         }
       }
     }
-    this.discovered = next;
-    return [...next.values()].map(({ filePath: _hidden, ...source }) => source);
+    return this.monitor.replace(next);
+  }
+
+  async statKnown(
+    sourceIds?: readonly TranscriptSourceId[],
+  ): Promise<readonly ProviderSourceStat[]> {
+    return this.monitor.statKnown(sourceIds);
+  }
+
+  async watchChanges(
+    notify: (change: ProviderSourceChange) => void,
+  ): Promise<ProviderSourceSubscription> {
+    return this.monitor.watchChanges(notify);
   }
 
   async readGrowth(
     source: ProviderSourceStat,
     checkpoint: IngestCheckpoint | null,
   ): Promise<ProviderSourceGrowth> {
-    const discovered = this.discovered.get(source.sourceId);
+    const discovered = this.monitor.get(source.sourceId);
     if (discovered === undefined) throw new Error("provider source was not scanned");
     const metadata = await lstat(discovered.filePath);
     if (!metadata.isFile() || metadata.isSymbolicLink()) {
@@ -239,7 +258,12 @@ class FileProviderTranscriptSource implements ProviderTranscriptSource {
   }
 }
 
-/** Creates the only read-only adapter over provider-owned session files. */
+/**
+ * Creates a read-only provider source whose filesystem paths remain private to
+ * the adapter. Its first scan builds the targeted-source map reused by metadata
+ * refreshes and change notifications; missing roots remain dormant until later
+ * discovery finds them.
+ */
 export const createProviderTranscriptSource = (
   roots: ProviderTranscriptRoots,
   instrumentation: {

@@ -208,11 +208,16 @@ async function ingestSource(
   return result;
 }
 
-/** Executes one serialized provider scan and atomic ingest pass. */
+/**
+ * Runs one provider-transcript ingestion pass. Without candidates it requests
+ * full source discovery; with candidates it skips discovery and processes only
+ * those sources. One source failing does not prevent others from committing.
+ */
 export async function ingestNow(
   dependencies: IngestionDependencies,
+  candidates?: readonly ProviderSourceStat[],
 ): Promise<IngestResult> {
-  const scanned = await dependencies.source.scan();
+  const scanned = candidates ?? await dependencies.source.scan();
   const sessions = [...await dependencies.store.listProviderSessions()];
   const sources = await selectSourcesForIngest({
     sources: scanned,

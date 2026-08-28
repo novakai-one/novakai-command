@@ -18,7 +18,9 @@ export type {
   NormalizedProviderLine,
   ProviderLineExtent,
   ProviderNormalizer,
+  ProviderSourceChange,
   ProviderSourceGrowth,
+  ProviderSourceSubscription,
   ProviderSourceStat,
   ProviderTranscriptSource,
 } from "./ports/provider-transcript-source.js";
