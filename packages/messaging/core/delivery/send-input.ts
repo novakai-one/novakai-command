@@ -41,8 +41,16 @@ export type SendInputOutcome =
   | { readonly ok: true; readonly input: ConversationSendInput }
   | RoutingHold;
 
+/** The clientOpId prefix the delivery lane mints for its own sends; stated once, used twice. */
+const DELIVERY_CLIENT_OP_PREFIX = 'delivery:';
+
 /** The delivery-derived idempotency key; a resubmission finds the same send journal. */
-export const clientOpIdFor = (delivery: PendingDelivery): string => `delivery:${delivery.id}`;
+export const clientOpIdFor = (delivery: PendingDelivery): string =>
+  `${DELIVERY_CLIENT_OP_PREFIX}${delivery.id}`;
+
+/** True for the journal clientOpIds the delivery lane mints for its own sends. */
+export const isDeliveryClientOpId = (clientOpId: string): boolean =>
+  clientOpId.startsWith(DELIVERY_CLIENT_OP_PREFIX);
 
 const deferred = (): RoutingHold => ({ ok: false, kind: 'deferred' });
 const undeliverable = (reason: string): RoutingHold => ({

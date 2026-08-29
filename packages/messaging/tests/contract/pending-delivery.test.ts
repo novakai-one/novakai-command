@@ -3,7 +3,7 @@ import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { createMessagingRuntime } from '../../core/ingestion/messaging-runtime.js';
+import { createMessagingRuntime } from '../../core/runtime/messaging-runtime.js';
 import { createMemoryTranscriptStore } from '../../adapters/stores/memory.js';
 import { openFoundationTranscriptStore } from '../../adapters/stores/jsonl.js';
 import { messageCorrelationHint } from '../../contract/correlation.js';
@@ -174,7 +174,7 @@ test('addressed transcript work waits for idle, reuses the pair View and never r
   });
   assert.equal(communications.kind === 'ok' && communications.value.items.length, 2);
   if (communications.kind === 'ok') {
-    assert.equal(new Set(communications.value.items.map((item) => item.threadId)).size, 1);
+    assert.equal(new Set(communications.value.items.map((item) => item.conversationGroupingKey)).size, 1);
     assert.ok(communications.value.items.every((item) =>
       item.deliveryState === 'submitted-unconfirmed' && item.direction === 'from-agent'));
   }

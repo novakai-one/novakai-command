@@ -184,6 +184,31 @@
       }
     },
     {
+      "name": "InvalidQuery",
+      "summary": "A committed-query request failed validation before any read. Non-retryable; the message names which constraint failed so hosts can correct and resubmit. Distinct from DependencyUnavailable: the caller asked for something impossible, so retrying changes nothing.",
+      "retryable": false,
+      "fields": {
+        "query": {
+          "type": "string",
+          "description": "The committed query that failed validation, e.g. listAgentCommunications."
+        }
+      }
+    },
+    {
+      "name": "InvalidConversationView",
+      "summary": "A conversation view write failed validation before any durable write: a malformed conversation id, a rebinding of the immutable participant list, an update to an unknown view, or a malformed lastReadLineId. Non-retryable; the rule field names which invariant held.",
+      "retryable": false,
+      "fields": {
+        "conversationId": {
+          "type": "string"
+        },
+        "rule": {
+          "type": "string",
+          "description": "The invariant that held: malformed-id | invalid-participants | participants-immutable | unknown-conversation | invalid-last-read-line."
+        }
+      }
+    },
+    {
       "name": "UnknownTargetAgent",
       "summary": "The addressed Agent does not exist in the Agent directory. Non-retryable; the host should refresh its agent list before resubmitting.",
       "retryable": false,

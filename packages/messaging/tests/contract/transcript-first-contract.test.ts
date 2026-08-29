@@ -3,7 +3,7 @@ import { mkdtemp, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { createMessagingRuntime } from "../../core/ingestion/messaging-runtime.js";
+import { createMessagingRuntime } from "../../core/runtime/messaging-runtime.js";
 import { createMemoryTranscriptStore } from "../../adapters/stores/memory.js";
 import { openFoundationTranscriptStore } from "../../adapters/stores/jsonl.js";
 import { providerNormalizer } from "../../adapters/provider-transcripts/normalizers/index.js";

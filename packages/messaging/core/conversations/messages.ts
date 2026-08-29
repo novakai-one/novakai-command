@@ -3,10 +3,19 @@ import type {
   AgentConversationMessagesQuery,
 } from '../../contract/conversations.js';
 import type { ProviderNormalizer } from '../../contract/ports/provider-transcript-source.js';
-import type { TranscriptStore } from '../../contract/ports/transcript-store.js';
+import type { TranscriptLineQuery } from '../../contract/ports/transcript-store.js';
+import type { ProviderSession } from '../../contract/records/provider-session.js';
 import type { SendJournal } from '../../contract/records/send-journal.js';
 import type { TranscriptLine } from '../../contract/records/transcript-line.js';
-import type { ProviderName } from '../../contract/types.js';
+import type { ProviderName, TranscriptLineId } from '../../contract/types.js';
+import { present } from '../send/sparse.js';
+
+/** The three committed lists the conversation message surfaces read — nothing else. */
+export interface ConversationMessageReads {
+  listProviderSessions(): Promise<readonly ProviderSession[]>;
+  listTranscriptLines(query?: TranscriptLineQuery): Promise<readonly TranscriptLine[]>;
+  listSendJournals(): Promise<readonly SendJournal[]>;
+}
 
 /**
  * Answers the host's one conversation question: the human-readable message
@@ -17,7 +26,7 @@ import type { ProviderName } from '../../contract/types.js';
  * formats.
  */
 export async function listAgentConversationMessages(
-  store: TranscriptStore,
+  store: ConversationMessageReads,
   normalizers: Readonly<Record<ProviderName, ProviderNormalizer>>,
   input: AgentConversationMessagesQuery,
 ): Promise<readonly AgentConversationMessage[]> {
@@ -27,15 +36,20 @@ export async function listAgentConversationMessages(
   const lines = (await Promise.all(sessions.map((session) =>
     store.listTranscriptLines({ sessionId: session.id })))).flat();
   const journals = await store.listSendJournals();
-  const orderedLines = lines
-    .sort((left, right) =>
-      (sessionOrder.get(left.sessionId) ?? '').localeCompare(
-        sessionOrder.get(right.sessionId) ?? '',
-      )
-      || left.sourcePosition.sourceEpoch - right.sourcePosition.sourceEpoch
-      || left.sourcePosition.offset - right.sourcePosition.offset);
-  return projectAgentConversationMessages(orderedLines, normalizers, journals);
+  return projectAgentConversationMessages(
+    lines.sort(bySessionThenPosition(sessionOrder)), normalizers, journals,
+  );
 }
+
+/** Oldest session first (session id breaks ties); within one session, source order. */
+const bySessionThenPosition = (sessionOrder: ReadonlyMap<string, string>) =>
+  (left: TranscriptLine, right: TranscriptLine): number =>
+    (sessionOrder.get(left.sessionId) ?? '').localeCompare(
+      sessionOrder.get(right.sessionId) ?? '',
+    )
+    || left.sessionId.localeCompare(right.sessionId)
+    || left.sourcePosition.sourceEpoch - right.sourcePosition.sourceEpoch
+    || left.sourcePosition.offset - right.sourcePosition.offset;
 
 /**
  * The single transcript-to-conversation projection. Both the snapshot query
@@ -55,7 +69,7 @@ export function projectAgentConversationMessages(
   const clientOpByLine = correlateClientOperations(lines, projected, journals);
   return projected.map(({ line, message }) => ({
     ...message,
-    ...(clientOpByLine.has(line.id) ? { clientOpId: clientOpByLine.get(line.id)! } : {}),
+    ...present('clientOpId', clientOpByLine.get(line.id)),
   }));
 }
 
@@ -98,26 +112,66 @@ function correlateClientOperations(
   lines: readonly TranscriptLine[],
   projected: readonly ProjectedConversationLine[],
   journals: readonly SendJournal[],
-): ReadonlyMap<string, string> {
+): ReadonlyMap<TranscriptLineId, string> {
   const lineIndex = new Map(lines.map((line, index) => [line.id, index]));
-  const claimed = new Set<string>();
-  const clientOpByLine = new Map<string, string>();
-  for (const journal of [...journals].sort((left, right) =>
-    left.createdAt.localeCompare(right.createdAt))) {
-    for (const attempt of journal.attempts) {
-      if (attempt.confirmedLineId === undefined) continue;
-      const confirmedIndex = lineIndex.get(attempt.confirmedLineId);
-      if (confirmedIndex === undefined) continue;
-      const candidate = projected.find((entry) =>
-        entry.message.role === 'user'
-        && !claimed.has(entry.line.id)
-        && entry.line.sessionId === journal.targetSessionId
-        && (lineIndex.get(entry.line.id) ?? -1) >= confirmedIndex);
-      if (candidate === undefined) continue;
-      claimed.add(candidate.line.id);
-      clientOpByLine.set(candidate.line.id, journal.clientOpId);
-      break;
-    }
+  const claimed = new Set<TranscriptLineId>();
+  const clientOpByLine = new Map<TranscriptLineId, string>();
+  const ordered = [...journals].sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+  for (const journal of ordered) {
+    claimFirstAttempt(journal, lineIndex, claimed, clientOpByLine, projected);
   }
   return clientOpByLine;
 }
+
+/**
+ * The first attempt of one journal that can claim a line wins; later attempts
+ * of the same send never re-claim.
+ */
+function claimFirstAttempt(
+  journal: SendJournal,
+  lineIndex: ReadonlyMap<TranscriptLineId, number>,
+  claimed: Set<TranscriptLineId>,
+  clientOpByLine: Map<TranscriptLineId, string>,
+  projected: readonly ProjectedConversationLine[],
+): void {
+  for (const attempt of journal.attempts) {
+    const claim = claimableLine(journal, attempt, lineIndex, claimed, projected);
+    if (claim === undefined) continue;
+    claimed.add(claim);
+    clientOpByLine.set(claim, journal.clientOpId);
+    return;
+  }
+}
+
+type SendAttempt = SendJournal['attempts'][number];
+
+/**
+ * The line one send attempt claims: the first unclaimed canonical user
+ * message at or after the attempt's confirming line, in the target session.
+ */
+function claimableLine(
+  journal: SendJournal,
+  attempt: SendAttempt,
+  lineIndex: ReadonlyMap<TranscriptLineId, number>,
+  claimed: ReadonlySet<TranscriptLineId>,
+  projected: readonly ProjectedConversationLine[],
+): TranscriptLineId | undefined {
+  if (attempt.confirmedLineId === undefined) return undefined;
+  const confirmedIndex = lineIndex.get(attempt.confirmedLineId);
+  if (confirmedIndex === undefined) return undefined;
+  return projected.find((entry) =>
+    isClaimableUserMessage(entry, journal, lineIndex, claimed, confirmedIndex))?.line.id;
+}
+
+/** True when a projected line is the display identity a confirmation can claim. */
+const isClaimableUserMessage = (
+  entry: ProjectedConversationLine,
+  journal: SendJournal,
+  lineIndex: ReadonlyMap<TranscriptLineId, number>,
+  claimed: ReadonlySet<TranscriptLineId>,
+  confirmedIndex: number,
+): boolean =>
+  entry.message.role === 'user'
+  && !claimed.has(entry.line.id)
+  && entry.line.sessionId === journal.targetSessionId
+  && (lineIndex.get(entry.line.id) ?? -1) >= confirmedIndex;

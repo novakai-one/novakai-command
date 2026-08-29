@@ -3,6 +3,7 @@ import type {
   SendConversationResult,
 } from '../../contract/commands.js';
 import type { ProviderSend } from '../../contract/ports/provider-send.js';
+import type { MessagingTraceSink } from '../../contract/trace.js';
 import type { Timestamp } from '../../contract/types.js';
 import { acceptSend } from './accept.js';
 import { buildSendAcceptance } from './acceptance.js';
@@ -10,12 +11,14 @@ import type { AgentLookup } from './agent-lookup.js';
 import { dispatchAcceptedSend } from './dispatch.js';
 import { present } from './sparse.js';
 import type { SendStore } from './send-store.js';
+import { emitTrace } from '../trace.js';
 
 interface SendDependencies {
   readonly store: SendStore;
   readonly providerSend: ProviderSend;
   readonly agentDirectory: AgentLookup;
   readonly now: () => Timestamp;
+  readonly trace?: MessagingTraceSink;
 }
 
 /**
@@ -43,6 +46,11 @@ export async function sendConversationMessage(
 ): Promise<SendConversationResult> {
   const accepted = await acceptSend(dependencies, input);
   if (!accepted.ok) return accepted;
+  emitTrace(dependencies.trace, {
+    stage: 'send.accepted',
+    sendId: accepted.journal.id,
+    detail: accepted.duplicate ? 'duplicate-replayed' : 'journal-written',
+  });
   const dispatched = await dispatchAcceptedSend(dependencies, accepted.journal);
   if (!dispatched.ok) return dispatched;
   return {

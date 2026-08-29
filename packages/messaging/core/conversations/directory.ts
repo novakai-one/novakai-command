@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { ConversationDirectory } from '../../contract/ports/conversation-directory.js';
-import type { TranscriptStore } from '../../contract/ports/transcript-store.js';
-import { ensureConversationView } from './views.js';
+import type { Timestamp } from '../../contract/types.js';
+import { ensureConversationView, type ConversationViewStore } from './views.js';
 
 /**
  * Implements the ConversationDirectory seam against the transcript store, for
@@ -12,9 +12,9 @@ import { ensureConversationView } from './views.js';
  * repeat calls converge on the same view instead of minting duplicates.
  */
 export function createStoredConversationDirectory(options: {
-  readonly store: TranscriptStore;
+  readonly store: ConversationViewStore;
   readonly humanPrincipalId: string;
-  readonly now: () => string;
+  readonly now: () => Timestamp;
 }): ConversationDirectory {
   return {
     async ensureForAdoptedAgent(input) {
@@ -50,5 +50,6 @@ export function createStoredConversationDirectory(options: {
 const digest = (value: string): string =>
   createHash('sha256').update(value).digest('hex').slice(0, 32);
 
+/** "External Claude …ab12cd34" — or "…session" when the provider gave no resume id. */
 const providerTitle = (provider: string, resumeId?: string): string =>
-  `External ${provider[0]!.toUpperCase()}${provider.slice(1)} ${resumeId?.slice(-8) ?? 'session'}`;
+  `External ${provider.charAt(0).toUpperCase()}${provider.slice(1)} ${resumeId?.slice(-8) ?? 'session'}`;

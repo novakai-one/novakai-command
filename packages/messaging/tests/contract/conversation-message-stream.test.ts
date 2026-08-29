@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createMessagingRuntime } from '../../core/ingestion/messaging-runtime.js';
+import { createMessagingRuntime } from '../../core/runtime/messaging-runtime.js';
 import { createMemoryTranscriptStore } from '../../adapters/stores/memory.js';
 import { providerNormalizer } from '../../adapters/provider-transcripts/normalizers/index.js';
 import type { ProviderTranscriptSource } from '../../contract/ports/provider-transcript-source.js';

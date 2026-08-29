@@ -36,19 +36,22 @@ flowchart TD
 
 | Module | Owns | May import from | Status |
 | --- | --- | --- | --- |
-| `contract/index.ts` | controlled public exports — the one door | own contract, own core | ⬜ currently a barrel — needs its own slice |
-| `contract/` records, commands, ports | types, records, typed rejections, seams | nothing | partially rewritten |
-| `contract/compose.ts` | composition root — wiring only, no behavior | core + adapters | ⬜ last slice (today lives at `core/runtime/`) |
+| `contract/index.ts` | controlled public exports — the one door | own contract, own core | controlled doorway (verified PR #5) |
+| `contract/` records, commands, ports | types, records, typed rejections, seams | nothing | marker hint dropped, grouping key renamed (PR #5) |
+| `contract/compose.ts` | composition root — wiring only, no behavior | core + adapters | ⬜ last slice (today lives at `contract/compose/`) |
 | `core/send/` | one entry: `sendConversationMessage` | declaration-only contract | rewritten (PR #1) |
 | `core/delivery/` | one entry: `routePendingDeliveries` | contract, core/send | rewritten (PR #2) |
-| `core/ingestion/` | one entry: `runIngestionPass` | contract, core/send | ⬜ next slice |
-| `core/communications/` | queries and read models | contract | ⬜ not started |
+| `core/ingestion/` | one entry: `runIngestionPass` | contract, core/send | rewritten (PR #4) |
+| `core/communications/` | queries and read models | contract, core/delivery, core/send | rewritten (PR #6) |
+| `core/conversations/` | conversation views and message streams | contract, core/send | rewritten (PR #7) |
+| `core/projections/` | rebuildable usage rollups and tool-call index | contract | rewritten (PR #8) |
+| `core/runtime/` | composed runtime: lifecycle, wiring, committed-record door | all of core, contract | rewritten (PR #9) |
 | `adapters/` | store implementations, transcript parsers | contract only | ⬜ per-slice, as touched |
 
-Known deviations from the SOP, to be closed by the slices above: the
-composition root currently sits at `core/runtime/messaging-runtime.ts`
-(a forbidden `core → adapters` edge), and `contract/index.ts` re-exports
-everything instead of controlling the public surface.
+Known deviation from the SOP: the composition door lives in a
+`contract/compose/` directory, not a single `contract/compose.ts` file. The
+runtime itself (`core/runtime/messaging-runtime.ts`) imports zero adapters —
+only contract and core.
 
 Why this direction matters: contract knows nothing about anyone, core knows
 only contract, and exactly one file (`compose.ts`) knows both core and the
