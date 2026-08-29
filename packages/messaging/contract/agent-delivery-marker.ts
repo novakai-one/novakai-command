@@ -4,8 +4,6 @@ export interface AgentDeliveryMarker {
   readonly recipientAgentId: string;
   readonly text: string;
   readonly clientOpId: string;
-  /** Optional caller-supplied grouping-key hint; overrides the delivery's conversation when present. */
-  readonly threadId?: string;
   readonly screenContext?: Readonly<Record<string, unknown>>;
 }
 

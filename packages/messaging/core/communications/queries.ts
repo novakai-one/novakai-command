@@ -24,8 +24,7 @@ import type { TranscriptLine } from '../../contract/records/transcript-line.js';
  *    agent-to-agent deliveries (carrying a delivery marker) and plain
  *    provider conversation lines.
  *
- * The `threadId` field keeps its old-screen name for host compatibility. In
- * this transcript-first system it is the conversation grouping key: the real
+ * `conversationGroupingKey` is the conversation grouping key: the real
  * conversation id when the row belongs to one, otherwise a deterministic
  * stand-in derived from the row's participants (`fallbackConversationKey`).
  */
@@ -54,7 +53,8 @@ export async function listAgentCommunications(
       .map((item) => journalRow(item, context.subjects)),
     ...lines.map((line) => lineRow(line, context)),
   ].filter((item): item is AgentCommunicationView => item !== undefined)
-    .filter((item) => query.threadId === undefined || item.threadId === query.threadId)
+    .filter((item) => query.conversationGroupingKey === undefined
+      || item.conversationGroupingKey === query.conversationGroupingKey)
     .filter((item) => query.runIds === undefined
       || item.relatedRunIds.some((runId) => query.runIds!.includes(runId)))
     .sort((left, right) => left.occurredAt.localeCompare(right.occurredAt)
@@ -79,7 +79,7 @@ function journalRow(
     && (senderAgentId === undefined || !subjects.has(senderAgentId))) return undefined;
   return {
     messageId: journal.id,
-    threadId: journal.conversationId,
+    conversationGroupingKey: journal.conversationId,
     conversationId: journal.conversationId,
     senderPrincipalId: journal.issuedBy,
     recipientAgentIds: [journal.targetAgentId],
@@ -123,8 +123,8 @@ function lineRow(line: TranscriptLine, context: LineContext): AgentCommunication
 
 /**
  * One row for a transcript line carrying an agent-to-agent delivery marker.
- * The grouping key prefers the marker's own hint, then the delivery's
- * conversation, then a deterministic stand-in for the participant pair.
+ * The grouping key is the delivery's conversation when one exists, otherwise
+ * a deterministic stand-in for the participant pair.
  */
 function addressedLineRow(
   line: TranscriptLine,
@@ -139,7 +139,7 @@ function addressedLineRow(
   const conversationId = journal?.conversationId;
   return {
     messageId: line.id,
-    threadId: marker.threadId ?? conversationId
+    conversationGroupingKey: conversationId
       ?? fallbackConversationKey([ownerAgentId, marker.recipientAgentId]),
     ...(conversationId === undefined ? {} : { conversationId }),
     senderPrincipalId: ownerAgentId,
@@ -170,7 +170,7 @@ function plainLineRow(
   const fromAgent = line.role === 'assistant';
   return {
     messageId: line.id,
-    threadId: fallbackConversationKey([ownerAgentId]),
+    conversationGroupingKey: fallbackConversationKey([ownerAgentId]),
     senderPrincipalId: fromAgent ? ownerAgentId : 'external-provider-user',
     recipientAgentIds: fromAgent ? [] : [ownerAgentId],
     relatedRunIds: [],

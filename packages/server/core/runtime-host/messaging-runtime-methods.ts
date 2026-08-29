@@ -37,6 +37,14 @@ const object = (value: unknown): Record<string, unknown> | null =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
     ? value as Record<string, unknown> : null;
 
+/** Sparse screenContext field: present only when the caller supplied an object. */
+const screenContextOf = (
+  payload: Record<string, unknown>,
+): { screenContext?: Record<string, unknown> } => {
+  const found = object(payload['screenContext']);
+  return found === null ? {} : { screenContext: found };
+};
+
 const failure = (message: string): B3Result<never> => b3fail(b3err(
   'ValidationFailed', message, { issues: [{ path: 'payload', message }] }, false,
 ));
@@ -89,6 +97,49 @@ function method(options: MessagingMethodOptions, handler: Handler): MethodTable[
   };
 }
 
+/**
+ * Agent-run sends never touch a conversation: the run hands its Agent's peer
+ * a delivery instruction whose marker becomes provider-transcript evidence.
+ */
+async function sendAsAgentRun(
+  options: MessagingMethodOptions,
+  payload: Record<string, unknown>,
+  context: { readonly principal: AuthenticatedPrincipal; readonly clientOpId: string },
+  targetAgentId: string,
+  text: string,
+): Promise<B3Result<unknown>> {
+  if (await options.agentOfRun(context.principal.agentRunId ?? '') === null) {
+    return b3fail(b3err('PermissionDenied', 'Agent Run has no governed Agent', {}, false));
+  }
+  return fromOutcome(await options.messaging.createAgentDeliveryInstruction({
+    version: 1, recipientAgentId: targetAgentId, text,
+    clientOpId: context.clientOpId,
+    ...screenContextOf(payload),
+  }));
+}
+
+/** Get-or-create the conversation a human-sent message belongs to. */
+async function ensureWireConversation(
+  options: MessagingMethodOptions,
+  conversationId: string,
+  threadId: string,
+  participantIds: readonly string[],
+  clientOpId: string,
+  targetAgentId: string,
+): Promise<B3Result<unknown> | null> {
+  const present = await options.messaging.getConversationView(conversationId);
+  if (present.kind === 'error') return fromOutcome(present);
+  if (present.value !== null) return null;
+  const view = await options.messaging.ensureConversationView({
+    conversationId,
+    participantIds,
+    clientOpId: `${clientOpId}:view`,
+    address: threadId,
+    agentId: targetAgentId,
+  });
+  return view.kind === 'error' ? fromOutcome(view) : null;
+}
+
 async function send(
   options: MessagingMethodOptions,
   payload: Record<string, unknown>,
@@ -102,41 +153,28 @@ async function send(
     return failure('text must be non-empty');
   }
   const targetAgentId = target['agentId'];
+  if (context.principal.kind === 'agent-run') {
+    if (typeof payload['threadId'] === 'string') {
+      return failure('threadId no longer applies to Agent Run sends; grouping follows the conversation');
+    }
+    return sendAsAgentRun(options, payload, context, targetAgentId, payload['text']);
+  }
   const threadId = typeof payload['threadId'] === 'string'
     ? payload['threadId'] : threadIdFor([context.principal.id, targetAgentId]);
   if (!/^thread_[A-Za-z0-9-]+$/u.test(threadId)) return failure('threadId must be a thread_ id');
-  if (context.principal.kind === 'agent-run') {
-    if (await options.agentOfRun(context.principal.agentRunId ?? '') === null) {
-      return b3fail(b3err('PermissionDenied', 'Agent Run has no governed Agent', {}, false));
-    }
-    return fromOutcome(await options.messaging.createAgentDeliveryInstruction({
-      version: 1, recipientAgentId: targetAgentId, text: payload['text'],
-      clientOpId: context.clientOpId, threadId,
-      ...(object(payload['screenContext']) === null
-        ? {} : { screenContext: object(payload['screenContext'])! }),
-    }));
-  }
   const conversationId = conversationIdFor(threadId);
-  const present = await options.messaging.getConversationView(conversationId);
-  if (present.kind === 'error') return fromOutcome(present);
-  if (present.value === null) {
-    const view = await options.messaging.ensureConversationView({
-      conversationId,
-      participantIds: [context.principal.id, targetAgentId],
-      clientOpId: `${context.clientOpId}:view`,
-      address: threadId,
-      agentId: targetAgentId,
-    });
-    if (view.kind === 'error') return fromOutcome(view);
-  }
+  const failed = await ensureWireConversation(
+    options, conversationId, threadId,
+    [context.principal.id, targetAgentId], context.clientOpId, targetAgentId,
+  );
+  if (failed !== null) return failed;
   const accepted = await options.messaging.sendConversationMessage({
     conversationId,
     issuedBy: context.principal.id,
     targetAgentId,
     text: payload['text'],
     clientOpId: context.clientOpId,
-    ...(object(payload['screenContext']) === null
-      ? {} : { screenContext: object(payload['screenContext'])! }),
+    ...screenContextOf(payload),
   });
   if (accepted.kind === 'error') return fromOutcome(accepted);
   return b3ok({
@@ -170,11 +208,14 @@ export function buildMessagingRuntimeMethods(options: MessagingMethodOptions): M
   return {
     'b3.messaging.sendAgent': method(options, (payload, context) => send(options, payload, context)),
     'b3.messaging.listAgentCommunications': method(options, async (payload, context) => {
+      if (payload['threadId'] !== undefined) {
+        return failure('threadId was renamed conversationGroupingKey');
+      }
       const agentIds = Array.isArray(payload['agentIds'])
         ? payload['agentIds'].filter((item): item is string => typeof item === 'string') : [];
       if (context.principal.kind === 'agent-run') {
-        const own = await options.agentOfRun(context.principal.agentRunId ?? '');
-        if (own === null || agentIds.some((id) => id !== own)) {
+        const ownedAgentId = await options.agentOfRun(context.principal.agentRunId ?? '');
+        if (ownedAgentId === null || agentIds.some((id) => id !== ownedAgentId)) {
           return b3fail(b3err('PermissionDenied', 'Agent Run may only read its Agent', {}, false));
         }
       }
@@ -182,7 +223,8 @@ export function buildMessagingRuntimeMethods(options: MessagingMethodOptions): M
         agentIds,
         limit: typeof payload['limit'] === 'number' ? payload['limit'] : 200,
         ...(Array.isArray(payload['runIds']) ? { runIds: payload['runIds'] as string[] } : {}),
-        ...(typeof payload['threadId'] === 'string' ? { threadId: payload['threadId'] } : {}),
+        ...(typeof payload['conversationGroupingKey'] === 'string'
+          ? { conversationGroupingKey: payload['conversationGroupingKey'] } : {}),
         ...(typeof payload['cursor'] === 'string' ? { cursor: payload['cursor'] } : {}),
       }));
     }),

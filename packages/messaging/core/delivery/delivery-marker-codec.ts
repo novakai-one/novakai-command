@@ -17,8 +17,6 @@ const valid = (value: unknown): value is AgentDeliveryMarker => {
     && typeof marker.clientOpId === 'string'
     && marker.clientOpId.length > 0
     && marker.clientOpId.length <= 128
-    && (marker.threadId === undefined
-      || typeof marker.threadId === 'string' && /^thread_[A-Za-z0-9-]+$/u.test(marker.threadId))
     && (marker.screenContext === undefined
       || typeof marker.screenContext === 'object'
       && marker.screenContext !== null
@@ -36,6 +34,17 @@ export function agentDeliveryMarker(marker: AgentDeliveryMarker): string {
   return `${PREFIX}${Buffer.from(JSON.stringify(marker), 'utf8').toString('base64url')}`;
 }
 
+/** Decodes and fully validates one candidate token; look-alikes decode to undefined. */
+const decodeMarkerCandidate = (token: string): AgentDeliveryMarker | undefined => {
+  try {
+    const decoded = JSON.parse(Buffer.from(token, 'base64url').toString('utf8')) as unknown;
+    return valid(decoded) ? decoded : undefined;
+  } catch (cause) {
+    if (!(cause instanceof SyntaxError)) throw cause;
+    return undefined;
+  }
+};
+
 /**
  * Extracts the first valid delivery marker from transcript text, or undefined
  * when there is none. Provider output is untrusted — it may be partial,
@@ -45,12 +54,8 @@ export function agentDeliveryMarker(marker: AgentDeliveryMarker): string {
 export function findAgentDeliveryMarker(evidence: string): AgentDeliveryMarker | undefined {
   TOKEN.lastIndex = 0;
   for (const match of evidence.matchAll(TOKEN)) {
-    try {
-      const decoded = JSON.parse(Buffer.from(match[1]!, 'base64url').toString('utf8')) as unknown;
-      if (valid(decoded)) return decoded;
-    } catch (cause) {
-      if (!(cause instanceof SyntaxError)) throw cause;
-    }
+    const marker = decodeMarkerCandidate(match[1] ?? '');
+    if (marker !== undefined) return marker;
   }
   return undefined;
 }

@@ -13,7 +13,7 @@ export function communicationItem(
 ): AgentCommunicationItemView {
   return {
     messageId: 'msg_01J8ZK4T0000000000000001',
-    threadId: 'thread_01J8ZK4T0000000000000001',
+    conversationGroupingKey: 'conv_01J8ZK4T0000000000000001',
     senderPrincipalId: 'person_chris',
     recipientAgentIds: ['agent_kimi'],
     relatedRunIds: ['agentRun_01J8ZK4T0000000000000009'],

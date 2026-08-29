@@ -2,8 +2,8 @@
 export interface AgentCommunicationsQuery {
   readonly agentIds: readonly string[];
   readonly runIds?: readonly string[];
-  /** Narrows the page to one conversation grouping key (see AgentCommunicationView.threadId). */
-  readonly threadId?: string;
+  /** Narrows the page to one conversation grouping key (see AgentCommunicationView.conversationGroupingKey). */
+  readonly conversationGroupingKey?: string;
   readonly cursor?: string;
   readonly limit: number;
 }
@@ -12,12 +12,11 @@ export interface AgentCommunicationsQuery {
 export interface AgentCommunicationView {
   readonly messageId: string;
   /**
-   * Old-screen field name kept for host compatibility. In the
-   * transcript-first system this is the conversation grouping key: the real
-   * conversation id when the row belongs to a conversation, otherwise a
-   * deterministic stand-in derived from the row's participants.
+   * The conversation grouping key: the real conversation id when the row
+   * belongs to a conversation, otherwise a deterministic stand-in derived
+   * from the row's participants. Never a `thread_` wire address.
    */
-  readonly threadId: string;
+  readonly conversationGroupingKey: string;
   readonly conversationId?: string;
   readonly senderPrincipalId: string;
   readonly recipientAgentIds: readonly string[];

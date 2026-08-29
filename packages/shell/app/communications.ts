@@ -1,8 +1,9 @@
-/* eslint-disable id-length -- `ok` is the frozen result field every B3 caller
-   reads (FZ-CLI-SCHEMA-001/011); renaming it here would mean this door no
-   longer speaks the contract it exists to pass through. */
 // shell/app/communications.ts — the implementation behind FZ-VIEW-001's
 // `communications` read (`listAgentCommunications`).
+//
+// `ok` is the frozen result field every B3 caller reads (FZ-CLI-SCHEMA-001/011);
+// renaming it here would mean this door no longer speaks the contract it
+// exists to pass through.
 //
 // Same two jobs as the Runs door: translate the published request into the
 // published input, and hand the answer back untouched. It does not sort (the
@@ -28,7 +29,8 @@ export function communicationsInputFor(
     agentIds: [...request.agentIds],
     limit: request.limit ?? DEFAULT_LIMIT,
     ...(request.runIds === undefined ? {} : { runIds: [...request.runIds] }),
-    ...(request.threadId === undefined ? {} : { threadId: request.threadId }),
+    ...(request.conversationGroupingKey === undefined
+      ? {} : { conversationGroupingKey: request.conversationGroupingKey }),
     ...(request.cursor === undefined ? {} : { cursor: request.cursor }),
   };
 }
