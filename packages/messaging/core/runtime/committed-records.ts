@@ -16,11 +16,19 @@ import type {
   ProviderName,
 } from '../../contract/types.js';
 import { MessagingError } from '../../contract/types.js';
-import { listAgentCommunications } from '../communications/queries.js';
-import { ensureConversationView, updateConversationView } from '../conversations/views.js';
-import { listAgentConversationMessages } from '../conversations/messages.js';
+import { listAgentCommunications, type CommunicationsReads } from '../communications/queries.js';
+import {
+  ensureConversationView,
+  updateConversationView,
+  type ConversationViewStore,
+} from '../conversations/views.js';
+import {
+  listAgentConversationMessages,
+  type ConversationMessageReads,
+} from '../conversations/messages.js';
 import { rebuildProjections } from '../projections/rebuild.js';
 import { sendConversationMessage } from '../send/send.js';
+import type { SendStore } from '../send/send-store.js';
 import { agentDeliveryMarker } from '../delivery/delivery-marker-codec.js';
 import { parseProviderName } from '../../contract/provider-name.js';
 import { parseProviderSessionId } from '../../contract/provider-session-id.js';
@@ -37,6 +45,20 @@ type RecordsApi = Pick<MessagingRuntimeApi,
   | 'listAgentConversationMessages' | 'listSendJournals' | 'listAgentCommunications'>;
 
 /**
+ * The store this module needs, derived from the ports it feeds: each
+ * collaborator's own narrow reads, plus the three direct calls no
+ * collaborator owns. It can never drift — a collaborator's port growing
+ * grows this type automatically. The full TranscriptStore satisfies it
+ * structurally.
+ */
+type CommittedRecordsStore = ConversationViewStore
+  & ConversationMessageReads
+  & CommunicationsReads
+  & SendStore
+  & Pick<TranscriptStore,
+    | 'listConversationViews' | 'replaceProjections' | 'readProjections'>;
+
+/**
  * The committed-record half of the runtime API. Every operation here only
  * reads or writes durable records through the store — it never triggers
  * ingestion, watching, or delivery scheduling. Each call is wrapped so a
@@ -44,7 +66,7 @@ type RecordsApi = Pick<MessagingRuntimeApi,
  * outcome instead of leaking an implementation exception.
  */
 export function createCommittedRecordsApi(options: {
-  readonly store: TranscriptStore;
+  readonly store: CommittedRecordsStore;
   readonly now: () => string;
   readonly normalizers: Readonly<Record<ProviderName, ProviderNormalizer>>;
   readonly agentDirectory?: AgentDirectory;

@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { findAgentDeliveryMarkerInLine } from '../delivery/delivery-marker-codec.js';
 import { clientOpIdFor, isDeliveryClientOpId } from '../delivery/send-input.js';
 import { present } from '../send/sparse.js';
+import { compareStrings } from '../compare.js';
 import { MessagingError } from '../../contract/types.js';
 import type { TranscriptLineId } from '../../contract/types.js';
 import type {
@@ -107,12 +108,13 @@ function collectRows(context: LineContext): AgentCommunicationView[] {
     .sort(byOccurrence);
 }
 
+/** Occurrence order with a message-id tiebreak; code-unit order, so the page is identical on every host. */
 const byOccurrence = (
   left: AgentCommunicationView,
   right: AgentCommunicationView,
 ): number =>
-  left.occurredAt.localeCompare(right.occurredAt)
-  || left.messageId.localeCompare(right.messageId);
+  compareStrings(left.occurredAt, right.occurredAt)
+  || compareStrings(left.messageId, right.messageId);
 
 /** The caller's grouping-key and run filters, resolved once, applied per row. */
 const inScope = (query: AgentCommunicationsQuery) => {

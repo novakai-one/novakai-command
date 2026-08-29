@@ -33,7 +33,7 @@ export interface PreparedSource {
 
 /** The slice of ingestion dependencies prepareSource reads through. */
 export interface PrepareDependencies {
-  readonly store: IngestionStore;
+  readonly store: Pick<IngestionStore, 'getCheckpoint'>;
   readonly source: Pick<ProviderTranscriptSource, 'readGrowth'>;
   readonly normalizers: Readonly<Record<ProviderName, ProviderNormalizer>>;
   readonly adoption?: ExternalAdoptionRuntimePolicy;

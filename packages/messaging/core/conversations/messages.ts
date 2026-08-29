@@ -9,6 +9,7 @@ import type { SendJournal } from '../../contract/records/send-journal.js';
 import type { TranscriptLine } from '../../contract/records/transcript-line.js';
 import type { ProviderName, TranscriptLineId } from '../../contract/types.js';
 import { present } from '../send/sparse.js';
+import { compareStrings } from '../compare.js';
 
 /** The three committed lists the conversation message surfaces read — nothing else. */
 export interface ConversationMessageReads {
@@ -44,10 +45,11 @@ export async function listAgentConversationMessages(
 /** Oldest session first (session id breaks ties); within one session, source order. */
 const bySessionThenPosition = (sessionOrder: ReadonlyMap<string, string>) =>
   (left: TranscriptLine, right: TranscriptLine): number =>
-    (sessionOrder.get(left.sessionId) ?? '').localeCompare(
+    compareStrings(
+      sessionOrder.get(left.sessionId) ?? '',
       sessionOrder.get(right.sessionId) ?? '',
     )
-    || left.sessionId.localeCompare(right.sessionId)
+    || compareStrings(left.sessionId, right.sessionId)
     || left.sourcePosition.sourceEpoch - right.sourcePosition.sourceEpoch
     || left.sourcePosition.offset - right.sourcePosition.offset;
 
@@ -116,7 +118,7 @@ function correlateClientOperations(
   const lineIndex = new Map(lines.map((line, index) => [line.id, index]));
   const claimed = new Set<TranscriptLineId>();
   const clientOpByLine = new Map<TranscriptLineId, string>();
-  const ordered = [...journals].sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+  const ordered = [...journals].sort((left, right) => compareStrings(left.createdAt, right.createdAt));
   for (const journal of ordered) {
     claimFirstAttempt(journal, lineIndex, claimed, clientOpByLine, projected);
   }

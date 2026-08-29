@@ -41,7 +41,9 @@ const tally = (progress: Partial<DeliveryRunResult>): DeliveryRunResult => ({
 });
 
 /** Two tallies combined into a new one; neither operand is disturbed. */
-const addProgress = (left: DeliveryRunResult, right: DeliveryRunResult): DeliveryRunResult => ({
+const addProgress = (
+  left: DeliveryRunResult, 
+  right: DeliveryRunResult): DeliveryRunResult => ({
   claimed: left.claimed + right.claimed,
   deferredBusy: left.deferredBusy + right.deferredBusy,
   submitted: left.submitted + right.submitted,

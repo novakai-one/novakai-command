@@ -19,12 +19,12 @@ import {
   type SessionClassification,
 } from "./classify-session.js";
 import { prepareSource, type PreparedSource } from "./prepare-source.js";
+import { failureFor } from "./source-failure.js";
 import type { IngestionStore } from "./ingest-store.js";
 import {
   ingestCheckpointFor,
   transcriptLineFor,
 } from "./ingest-records.js";
-import { AmbiguousProviderSessionEvidenceError } from "./reconcile.js";
 import { selectSourcesForIngest } from './select-sources.js';
 
 interface IngestionDependencies {
@@ -138,16 +138,6 @@ async function ingestOneSafely(
     return { ...emptySourceResult(), failure: failureFor(source, cause) };
   }
 }
-
-/** Maps a thrown cause to its typed failure kind; the message stays for humans. */
-const failureFor = (source: ProviderSourceStat, cause: unknown): IngestSourceFailure => ({
-  sourceId: source.sourceId,
-  provider: source.provider,
-  kind: cause instanceof AmbiguousProviderSessionEvidenceError
-    ? 'ambiguous-evidence'
-    : 'unexpected',
-  message: cause instanceof Error ? cause.message : String(cause),
-});
 
 /** Folds one source's outcome into the pass tally. */
 function foldSourceResult(tally: PassTally, result: SourceIngestResult): void {

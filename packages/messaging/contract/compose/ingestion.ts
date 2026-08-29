@@ -16,6 +16,8 @@ import { ensureKimiIdentityHook } from "../../adapters/provider-hooks/registrati
 import type { ProviderTranscriptRoots } from "../../adapters/provider-transcripts/source.js";
 import { ensureStoreIdentity, type StoreId } from '@novakai/foundation/contract';
 import { present } from '../../core/send/sparse.js';
+import { thrownMessageOr } from '../../core/thrown.js';
+import { MessagingError } from '../types.js';
 import type { MessagingTraceSink } from '../trace.js';
 
 /**
@@ -63,24 +65,35 @@ export interface ComposedMessagingRuntime {
   close(): Promise<void>;
 }
 
-/** Production composition for the one provider-file ingestion door. */
+/**
+ * Production composition for the one provider-file ingestion door.
+ *
+ * Failure modes: startup wiring fails fast with a typed `DependencyUnavailable`
+ * naming the step in `fields.dependency` — `store-identity` (foundation could
+ * not establish the store id), `provider-hooks` (a hook registration could not
+ * be written), or `messaging-store` (the durable store could not be opened).
+ * Foundation and the filesystem throw untyped errors; they are wrapped here so
+ * no raw exception escapes the door. Once composed, the runtime speaks
+ * `Outcome` for every operation.
+ */
 export async function createDefaultMessagingRuntime(
   options: DefaultMessagingRuntimeOptions,
 ): Promise<ComposedMessagingRuntime> {
   const home = options.providerHome ?? homedir();
-  const storeId = options.storeId ?? (await ensureStoreIdentity(options.root)).id;
+  const storeId = options.storeId
+    ?? await composeStep('store-identity', async () => (await ensureStoreIdentity(options.root)).id);
   if (options.installIdentityHooks ?? true) {
     const command = agentIdentityHookCommand();
-    await Promise.all([
+    await composeStep('provider-hooks', () => Promise.all([
       ensureClaudeIdentityHook({ providerHome: home, command }),
       ensureCodexIdentityHook({ providerHome: home, command }),
       ensureKimiIdentityHook({ providerHome: home, command }),
-    ]);
+    ]));
   }
-  const store = await openFoundationTranscriptStore({
+  const store = await composeStep('messaging-store', () => openFoundationTranscriptStore({
     root: options.root,
     dataRoot: options.dataRoot ?? path.join(options.root, "stores"),
-  });
+  }));
   const roots = {
     claude: [path.join(home, ".claude", "projects")],
     codex: [
@@ -117,6 +130,24 @@ export async function createDefaultMessagingRuntime(
     },
   };
 }
+
+/**
+ * One startup wiring step. Foundation and fs failures arrive untyped; they
+ * leave as a typed `DependencyUnavailable` naming the step. An already-typed
+ * MessagingError passes through unchanged.
+ */
+const composeStep = async <T>(dependency: string, step: () => Promise<T> | T): Promise<T> => {
+  try {
+    return await step();
+  } catch (cause) {
+    if (cause instanceof MessagingError) throw cause;
+    throw new MessagingError('DependencyUnavailable', {
+      message: thrownMessageOr(cause, `Messaging compose failed: ${dependency}`),
+      retryable: true,
+      fields: { dependency },
+    });
+  }
+};
 
 /** The runtime's adoption wiring, or undefined when adoption is not configured. */
 function adoptionOptions(externalAdoption: ExternalAdoptionOptions | undefined) {

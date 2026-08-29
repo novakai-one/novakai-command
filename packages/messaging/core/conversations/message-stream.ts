@@ -15,7 +15,7 @@ import {
 } from './messages.js';
 
 interface AgentConversationMessageStreamDependencies {
-  readonly eventBus: DurableTranscriptEventBus;
+  readonly eventBus: Pick<DurableTranscriptEventBus, 'subscribe'>;
   readonly store: ConversationMessageReads;
   readonly normalizers: Readonly<Record<ProviderName, ProviderNormalizer>>;
   readonly trace?: MessagingTraceSink;

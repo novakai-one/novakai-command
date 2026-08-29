@@ -20,9 +20,12 @@ export interface PairConversations {
   ): Promise<{ readonly conversationId: string }>;
 }
 
+/** The two committed reads building a send input needs — nothing else. */
+export type SendInputReads = Pick<DeliveryStore, 'getTranscriptLine' | 'listProviderSessions'>;
+
 /** The collaborator slice send-input building needs from the router. */
 export interface SendInputDependencies {
-  readonly store: DeliveryStore;
+  readonly store: SendInputReads;
   readonly agents: RoutingAgents;
   readonly conversations: PairConversations;
 }
@@ -94,7 +97,7 @@ type DeliverySourceOutcome =
  * be reconstructed, so it is undeliverable rather than deferred.
  */
 async function readDeliverySource(
-  store: DeliveryStore,
+  store: SendInputReads,
   delivery: PendingDelivery,
 ): Promise<DeliverySourceOutcome> {
   const line = await store.getTranscriptLine(delivery.transcriptLineId);
@@ -119,7 +122,7 @@ type SenderOutcome =
  * defers, because assignment may land before the next pass.
  */
 async function senderFor(
-  store: DeliveryStore,
+  store: SendInputReads,
   delivery: PendingDelivery,
   line: TranscriptLine,
 ): Promise<SenderOutcome> {

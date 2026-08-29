@@ -49,8 +49,10 @@ test('runtime keeps its retry timer when the first provider scan fails', async (
     }
     assert.ok(scans >= 2);
     const health = await runtime.health();
-    assert.equal(health.state, 'running');
-    assert.ok(health.runs >= 1);
+    assert.equal(health.kind, 'ok');
+    if (health.kind !== 'ok') return;
+    assert.equal(health.value.state, 'running');
+    assert.ok(health.value.runs >= 1);
   } finally {
     await runtime.stop();
   }

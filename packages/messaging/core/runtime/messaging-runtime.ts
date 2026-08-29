@@ -6,12 +6,10 @@ import type {
   MessagingRuntimeApi,
 } from "../../contract/runtime.js";
 import type {
-  ProviderNormalizer,
   ProviderSourceSubscription,
   ProviderTranscriptSource,
 } from "../../contract/ports/provider-transcript-source.js";
-import type { TranscriptStore } from "../../contract/ports/transcript-store.js";
-import type { ProviderName, TranscriptSourceId } from "../../contract/types.js";
+import type { TranscriptSourceId } from "../../contract/types.js";
 import { MessagingError } from "../../contract/types.js";
 import type { MessagingTraceSink } from "../../contract/trace.js";
 import { createDurableTranscriptEventBus, type DurableTranscriptEventBus } from "../event-bus.js";
@@ -20,53 +18,21 @@ import { thrownMessage, thrownMessageOr } from "../thrown.js";
 import { emitTrace } from "../trace.js";
 import { present } from "../send/sparse.js";
 import { runIngestionPass } from "../ingestion/ingest.js";
-import type {
-  AdoptionAssignment,
-  AgentDirectory,
-} from "../../contract/ports/agent-directory.js";
 import type { ConversationDirectory } from "../../contract/ports/conversation-directory.js";
-import type { ProviderSend } from "../../contract/ports/provider-send.js";
 import { AmbiguousProviderSessionEvidenceError } from "../ingestion/reconcile.js";
 import { createStoredConversationDirectory } from '../conversations/directory.js';
 import { createCommittedRecordsApi } from './committed-records.js';
 import { subscribeAgentConversationMessageStream } from '../conversations/message-stream.js';
 import { ProviderIngestQueue } from '../ingestion/ingest-queue.js';
 import { DeliveryRuntime } from '../ingestion/delivery-runtime.js';
+import type { MessagingRuntimeOptions } from './runtime-options.js';
 
-/**
- * Configures provider ingestion and delivery scheduling. Maintenance defaults
- * to one second and remains the polling cadence for sources without complete
- * event support; safety discovery defaults to 60 seconds and source changes
- * are coalesced for 25 milliseconds by default.
- */
-export interface MessagingRuntimeOptions {
-  readonly store: TranscriptStore;
-  readonly source: ProviderTranscriptSource;
-  readonly normalizers: Readonly<Record<ProviderName, ProviderNormalizer>>;
-  readonly now?: () => string;
-  readonly intervalMs?: number;
-  readonly safetySweepMs?: number;
-  readonly changeDebounceMs?: number;
-  readonly eventBus?: DurableTranscriptEventBus;
-  readonly trace?: MessagingTraceSink;
-  readonly agentDirectory?: AgentDirectory;
-  readonly providerSend?: ProviderSend;
-  readonly conversations?: ConversationDirectory;
-  readonly conversationPrincipalId?: string;
-  readonly adoption?: {
-    readonly assignment: AdoptionAssignment;
-    readonly conversations?: ConversationDirectory;
-    readonly limitPerTick: number;
-  };
-  readonly storeId?: string;
-}
-
-const unavailable = <T>(cause: unknown): Outcome<T> => ({
+const unavailable = <T>(cause: unknown, dependency: string): Outcome<T> => ({
   kind: "error",
   error: new MessagingError("DependencyUnavailable", {
-    message: thrownMessageOr(cause, "Messaging ingestion unavailable"),
+    message: thrownMessageOr(cause, "Messaging dependency unavailable"),
     retryable: true,
-    fields: { dependency: "provider-transcript" },
+    fields: { dependency },
   }),
 });
 
@@ -84,7 +50,7 @@ const ingestFailure = <T>(cause: unknown): Outcome<T> => {
       }),
     };
   }
-  return unavailable(cause);
+  return unavailable(cause, 'provider-transcript');
 };
 
 /**
@@ -215,8 +181,17 @@ class MessagingRuntime implements MessagingRuntimeApi {
     this.safetyTimer = undefined;
   }
 
-  /** Point-in-time runtime state; a store failure here propagates to the host caller. */
-  async health(): Promise<MessagingHealth> {
+  /** Point-in-time runtime state; a store failure lands as a typed retryable outcome, like every other op. */
+  async health(): Promise<Outcome<MessagingHealth>> {
+    try {
+      return { kind: 'ok', value: await this.snapshot() };
+    } catch (cause) {
+      return unavailable(cause, 'messaging-store');
+    }
+  }
+
+  /** The health fields as of now; the pending-delivery read is the one that can fail. */
+  private async snapshot(): Promise<MessagingHealth> {
     return {
       state: this.state,
       ingesting: this.ingestQueue.active,
