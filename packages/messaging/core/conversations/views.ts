@@ -69,12 +69,16 @@ export async function ensureConversationView(
  * fields present in the input change; everything else carries over untouched.
  * Unknown conversations are rejected rather than created — creation goes
  * through `ensureConversationView`, which owns the immutable facts.
+ *
+ * Every rejection is a typed, non-retryable `InvalidConversationView`; the
+ * runtime door passes it through unchanged.
  */
 export async function updateConversationView(
   store: ConversationViewStore,
   input: UpdateConversationViewInput,
   clock: () => Timestamp,
 ): Promise<ConversationView> {
+  requireConversationId(input.conversationId);
   const lastReadLineId = requireLastReadLineId(input.conversationId, input.lastReadLineId);
   const current = await store.getConversationView(input.conversationId);
   if (current === null) {
@@ -190,13 +194,15 @@ const requireParticipants = (
   );
 };
 
-/** The participants fixed at creation may never be rebound. */
+/** The participants fixed at creation may never be rebound; order is not identity. */
 const requireSameParticipants = (
   conversationId: string,
   current: ConversationView,
   participants: readonly string[],
 ): void => {
-  if (JSON.stringify(current.participantIds) === JSON.stringify(participants)) return;
+  const same = [...current.participantIds].sort().join(' ')
+    === [...participants].sort().join(' ');
+  if (same) return;
   throw invalidView(
     conversationId, 'participants-immutable',
     `Conversation View ${conversationId} participants cannot change`,

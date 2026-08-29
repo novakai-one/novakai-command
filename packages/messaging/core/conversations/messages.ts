@@ -41,12 +41,13 @@ export async function listAgentConversationMessages(
   );
 }
 
-/** Oldest session first; within one session, source order. */
+/** Oldest session first (session id breaks ties); within one session, source order. */
 const bySessionThenPosition = (sessionOrder: ReadonlyMap<string, string>) =>
   (left: TranscriptLine, right: TranscriptLine): number =>
     (sessionOrder.get(left.sessionId) ?? '').localeCompare(
       sessionOrder.get(right.sessionId) ?? '',
     )
+    || left.sessionId.localeCompare(right.sessionId)
     || left.sourcePosition.sourceEpoch - right.sourcePosition.sourceEpoch
     || left.sourcePosition.offset - right.sourcePosition.offset;
 

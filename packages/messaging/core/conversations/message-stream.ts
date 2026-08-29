@@ -25,6 +25,11 @@ interface AgentConversationMessageStreamDependencies {
  * the sink only if it is human-visible. Hosts never see sessions, providers,
  * or raw lines — the subscription speaks the canonical message vocabulary
  * only.
+ *
+ * Failure semantics: a store or sink throw rejects the event-bus pump, so the
+ * remaining committed events in that batch are skipped until the next pump;
+ * a crash between sink delivery and cursor advance can replay an event, and
+ * hosts must treat messages as at-least-once.
  */
 export function subscribeAgentConversationMessageStream(
   dependencies: AgentConversationMessageStreamDependencies,
