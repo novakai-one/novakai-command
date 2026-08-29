@@ -108,7 +108,11 @@ const mergeSession = (
   };
 };
 
-/** Serialized semantic state shared by volatile and durable store adapters. */
+/**
+ * Serialized semantic state shared by volatile and durable store adapters.
+ * Crash recovery: persist precedes apply, so a crash mid-step replays from
+ * the store on next open.
+ */
 export class TranscriptState {
   private readonly checkpoints = new Map<TranscriptSourceId, IngestCheckpoint>();
   private readonly sessions = new Map<string, ProviderSession>();

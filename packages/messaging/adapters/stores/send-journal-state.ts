@@ -51,7 +51,11 @@ const settledTransition = (
   });
 };
 
-/** Serialized SendJournal semantics shared by memory and Foundation adapters. */
+/**
+ * Serialized SendJournal semantics shared by memory and Foundation adapters.
+ * Crash recovery: persist precedes apply, so a crash mid-step replays from
+ * the store on next open.
+ */
 export class SendJournalState {
   private readonly journals = new Map<string, SendJournal>();
   private readonly clientOps = new Map<string, string>();

@@ -17,7 +17,11 @@ export interface PersistedPendingDeliveryMutation {
 
 type Persist = (deliveries: readonly PendingDelivery[]) => Promise<void>;
 
-/** Serialized idempotency and CAS semantics shared by both store adapters. */
+/**
+ * Serialized idempotency and CAS semantics shared by both store adapters.
+ * Crash recovery: persist precedes apply, so a crash mid-step replays from
+ * the store on next open.
+ */
 export class PendingDeliveryState {
   private readonly deliveries = new Map<string, PendingDelivery>();
   private mutationTail: Promise<unknown> = Promise.resolve();
