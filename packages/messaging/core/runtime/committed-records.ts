@@ -26,6 +26,7 @@ import { parseProviderName } from '../../contract/provider-name.js';
 import { parseProviderSessionId } from '../../contract/provider-session-id.js';
 import { parseTranscriptSourceId } from '../../contract/transcript-source-id.js';
 import { present } from '../send/sparse.js';
+import { thrownMessageOr } from '../thrown.js';
 
 type RecordsApi = Pick<MessagingRuntimeApi,
   | 'ensureConversationView' | 'updateConversationView' | 'getConversationView'
@@ -113,16 +114,17 @@ const asMessagingError = (rejection: SendRejection): MessagingError => {
 };
 
 /** Maps any store failure to the one outcome shape hosts handle; contract errors pass through unchanged. */
-const failed = <T>(cause: unknown): Outcome<T> => ({
-  kind: 'error',
-  error: cause instanceof MessagingError
-    ? cause
-    : new MessagingError('DependencyUnavailable', {
-        message: cause instanceof Error ? cause.message : 'Messaging records unavailable',
-        retryable: true,
-        fields: { dependency: 'messaging-store' },
-      }),
-});
+const failed = <T>(cause: unknown): Outcome<T> => {
+  if (cause instanceof MessagingError) return { kind: 'error', error: cause };
+  return {
+    kind: 'error',
+    error: new MessagingError('DependencyUnavailable', {
+      message: thrownMessageOr(cause, 'Messaging records unavailable'),
+      retryable: true,
+      fields: { dependency: 'messaging-store' },
+    }),
+  };
+};
 
 /**
  * Parses the optional line-query filter from untrusted host input at the seam;

@@ -15,7 +15,7 @@ import type { ProviderName, TranscriptSourceId } from "../../contract/types.js";
 import { MessagingError } from "../../contract/types.js";
 import { createDurableTranscriptEventBus, type DurableTranscriptEventBus } from "../event-bus.js";
 import { brandClock } from "../clock.js";
-import { thrownMessage } from "../thrown.js";
+import { thrownMessage, thrownMessageOr } from "../thrown.js";
 import { present } from "../send/sparse.js";
 import { runIngestionPass } from "../ingestion/ingest.js";
 import type {
@@ -61,7 +61,7 @@ export interface MessagingRuntimeOptions {
 const unavailable = <T>(cause: unknown): Outcome<T> => ({
   kind: "error",
   error: new MessagingError("DependencyUnavailable", {
-    message: cause instanceof Error ? cause.message : "Messaging ingestion unavailable",
+    message: thrownMessageOr(cause, "Messaging ingestion unavailable"),
     retryable: true,
     fields: { dependency: "provider-transcript" },
   }),
