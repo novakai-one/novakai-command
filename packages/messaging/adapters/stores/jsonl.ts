@@ -67,8 +67,8 @@ function storeFacade(
       deliveries.transition(input, (items) => writer.persistDeliveries(items)),
     listPendingDeliveries: async () => deliveries.list(),
     setConversationView: (input) =>
-      conversations.set(input, (mutation) => writer.persistConversation(mutation)),
-    getConversationView: async (id) => conversations.get(id),
+      conversations.setView(input, (mutation) => writer.persistConversation(mutation)),
+    getConversationView: async (id) => conversations.getView(id),
     listConversationViews: async () => conversations.list(),
     replaceProjections: (result) =>
       projections.replace(result, (value) => writer.persistProjections(value)),
@@ -96,14 +96,13 @@ export async function openFoundationTranscriptStore(
     ...(options.lockTimeoutMs === undefined ? {} : { lockTimeoutMs: options.lockTimeoutMs }),
   });
   const restored = await restoreFoundationMessagingStore(handle);
-  const writer = new FoundationMessagingWriter(
-    handle,
-    restored.transcriptSequence,
-    restored.sendSequence,
-    restored.deliverySequence,
-    restored.conversationSequence,
-    restored.projectionSequence,
-  );
+  const writer = new FoundationMessagingWriter(handle, {
+    transcript: restored.transcriptSequence,
+    send: restored.sendSequence,
+    delivery: restored.deliverySequence,
+    conversation: restored.conversationSequence,
+    projection: restored.projectionSequence,
+  });
   return storeFacade(restored, writer, lease);
   } catch (cause) {
     await lease.release();

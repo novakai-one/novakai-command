@@ -18,7 +18,9 @@ export const failureFor = (
 const failureKindFor = (cause: unknown): IngestSourceFailure['kind'] => {
   if (cause instanceof AmbiguousProviderSessionEvidenceError) return 'ambiguous-evidence';
   if (cause instanceof MessagingError && cause.name === 'IdempotencyConflict') {
-    return 'checkpoint-conflict';
+    return cause.fields['conflict'] === 'session-identity'
+      ? 'session-conflict'
+      : 'checkpoint-conflict';
   }
   return 'unexpected';
 };

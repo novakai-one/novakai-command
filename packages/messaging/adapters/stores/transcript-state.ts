@@ -9,6 +9,7 @@ import type { ProviderSession } from "../../contract/records/provider-session.js
 import type { TranscriptLine } from "../../contract/records/transcript-line.js";
 import type { EventCursor, TranscriptSourceId } from "../../contract/types.js";
 import { MessagingError } from "../../contract/types.js";
+import { present } from "../../core/send/sparse.js";
 
 /** Replay envelope used by durable TranscriptStore adapters. */
 export interface PersistedTranscriptBatch {
@@ -32,30 +33,70 @@ const checkpointEqual = (
   && left?.fileSignature.inode === right?.fileSignature.inode
   && left?.fileSignature.tailHash === right?.fileSignature.tailHash;
 
+/** A commit at or behind the stored checkpoint already happened; only duplicates remain. */
+const alreadyCommitted = (current: IngestCheckpoint, input: TranscriptBatchInput): boolean =>
+  current.sourceEpoch === input.checkpoint.sourceEpoch
+  && current.offset >= input.checkpoint.offset;
+
+/** A checkpoint throw that ingest maps to the checkpoint-conflict failure kind. */
+const checkpointConflict = (sourceId: TranscriptSourceId, detail: string): MessagingError =>
+  new MessagingError('IdempotencyConflict', {
+    message: `Ingest checkpoint ${detail} for ${sourceId}`,
+    retryable: true,
+    fields: { sourceId, conflict: 'checkpoint' },
+  });
+
+/** The batch must continue exactly from the stored checkpoint — never sideways, never backwards. */
+const requireExpectedCheckpoint = (
+  current: IngestCheckpoint | null,
+  input: TranscriptBatchInput,
+): void => {
+  if (!checkpointEqual(current, input.expectedCheckpoint)) {
+    throw checkpointConflict(input.checkpoint.sourceId, 'conflict');
+  }
+  if (input.checkpoint.sourceEpoch === input.expectedCheckpoint?.sourceEpoch
+    && input.checkpoint.offset < input.expectedCheckpoint.offset) {
+    throw checkpointConflict(input.checkpoint.sourceId, 'moved backwards');
+  }
+};
+
+/** Every line in a batch belongs to the batch's session; mixing sessions is a caller defect. */
+const requireOwnLines = (input: TranscriptBatchInput): void => {
+  if (input.lines.some((line) => line.sessionId !== input.session.id)) {
+    throw new Error("TranscriptLine references a different ProviderSession");
+  }
+};
+
+/** True when both sides supply a value and they disagree. */
+const disagrees = (left: string | undefined, right: string | undefined): boolean =>
+  left !== undefined && right !== undefined && left !== right;
+
+/** A stored session's identity evidence contradicting itself: typed, permanent, host-actionable. */
+const sessionConflict = (sessionId: string, field: string): MessagingError =>
+  new MessagingError('IdempotencyConflict', {
+    message: `ProviderSession ${sessionId} ${field} conflict`,
+    fields: { sessionId, field, conflict: 'session-identity' },
+  });
+
+/** The identity facts a stored session never trades away; a disagreement is a typed conflict. */
+const requireCompatibleSession = (current: ProviderSession, incoming: ProviderSession): void => {
+  if (current.provider !== incoming.provider) throw sessionConflict(incoming.id, 'provider');
+  if (disagrees(current.resumeId, incoming.resumeId)) throw sessionConflict(incoming.id, 'resumeId');
+  if (disagrees(current.agentId, incoming.agentId)) throw sessionConflict(incoming.id, 'agentId');
+};
+
 const mergeSession = (
   current: ProviderSession | undefined,
   incoming: ProviderSession,
 ): ProviderSession => {
   if (current === undefined) return incoming;
-  if (current.provider !== incoming.provider) {
-    throw new Error(`ProviderSession ${incoming.id} provider conflict`);
-  }
-  if (current.resumeId !== undefined && incoming.resumeId !== undefined
-    && current.resumeId !== incoming.resumeId) {
-    throw new Error(`ProviderSession ${incoming.id} resume handle conflict`);
-  }
-  if (current.agentId !== undefined && incoming.agentId !== undefined
-    && current.agentId !== incoming.agentId) {
-    throw new Error(`ProviderSession ${incoming.id} Agent assignment conflict`);
-  }
+  requireCompatibleSession(current, incoming);
   return {
     ...current,
     sourceIds: [...new Set([...current.sourceIds, ...incoming.sourceIds])],
     status: incoming.status,
-    ...(current.resumeId === undefined && incoming.resumeId !== undefined
-      ? { resumeId: incoming.resumeId } : {}),
-    ...(current.agentId === undefined && incoming.agentId !== undefined
-      ? { agentId: incoming.agentId } : {}),
+    ...present('resumeId', current.resumeId ?? incoming.resumeId),
+    ...present('agentId', current.agentId ?? incoming.agentId),
   };
 };
 
@@ -113,30 +154,12 @@ export class TranscriptState {
     persist?: (input: TranscriptBatchInput) => Promise<void>,
   ): Promise<TranscriptBatchResult> {
     const current = this.getCheckpoint(input.checkpoint.sourceId);
-    if (current !== null
-      && current.sourceEpoch === input.checkpoint.sourceEpoch
-      && current.offset >= input.checkpoint.offset) {
+    if (current !== null && alreadyCommitted(current, input)) {
       const duplicates = input.lines.filter((line) => this.lines.has(line.id)).length;
       return { added: 0, duplicates, checkpoint: current };
     }
-    if (!checkpointEqual(current, input.expectedCheckpoint)) {
-      throw new MessagingError('IdempotencyConflict', {
-        message: `Ingest checkpoint conflict for ${input.checkpoint.sourceId}`,
-        retryable: true,
-        fields: { sourceId: input.checkpoint.sourceId },
-      });
-    }
-    if (input.checkpoint.sourceEpoch === input.expectedCheckpoint?.sourceEpoch
-      && input.checkpoint.offset < input.expectedCheckpoint.offset) {
-      throw new MessagingError('IdempotencyConflict', {
-        message: `Ingest checkpoint moved backwards for ${input.checkpoint.sourceId}`,
-        retryable: true,
-        fields: { sourceId: input.checkpoint.sourceId },
-      });
-    }
-    if (input.lines.some((line) => line.sessionId !== input.session.id)) {
-      throw new Error("TranscriptLine references a different ProviderSession");
-    }
+    requireExpectedCheckpoint(current, input);
+    requireOwnLines(input);
     if (persist !== undefined) await persist(input);
     return this.apply(input);
   }

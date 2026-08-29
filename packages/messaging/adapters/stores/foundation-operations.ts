@@ -14,6 +14,19 @@ export type MessagingStoreOp =
   | { readonly op: 'conversation-view-mutation'; readonly mutation: ConversationViewMutation }
   | { readonly op: 'projection-rebuild'; readonly result: ProjectionRebuildResult };
 
+/** The mutation lane one op belongs to; each lane replays in its own sequence order. */
+export type MutationLane = 'transcript' | 'send' | 'delivery' | 'conversation' | 'projection';
+
+/** The lane each store op mutates — transcript ingest and session upserts share one lane. */
+export const laneOf: Record<MessagingStoreOp['op'], MutationLane> = {
+  'transcript-ingest': 'transcript',
+  'provider-session-upsert': 'transcript',
+  'send-journal-mutation': 'send',
+  'pending-delivery-mutation': 'delivery',
+  'conversation-view-mutation': 'conversation',
+  'projection-rebuild': 'projection',
+};
+
 /** Foundation envelope around one replayable Messaging operation. */
 export interface MessagingStoreRecord {
   readonly kind: 'messagingStoreOp';
@@ -33,18 +46,31 @@ export interface MessagingStoreRecord {
   readonly storeOp: MessagingStoreOp;
 }
 
-/** Rejects unknown historical payloads without inventing replay meaning. */
+/** Untrusted replay input is a plain string-keyed object, not an array or null. */
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+const KNOWN_OPS: readonly unknown[] = [
+  'transcript-ingest',
+  'provider-session-upsert',
+  'send-journal-mutation',
+  'pending-delivery-mutation',
+  'conversation-view-mutation',
+  'projection-rebuild',
+];
+
+/**
+ * Rejects unknown historical payloads without inventing replay meaning. The
+ * envelope's own invariants are checked field by field; the one `as` owns the
+ * step from "known op envelope" to the full record shape, the boundary parse
+ * this module exists to own.
+ */
 export function messagingStoreRecord(value: unknown): MessagingStoreRecord | undefined {
-  if (typeof value !== 'object' || value === null) return undefined;
-  const record = value as Partial<MessagingStoreRecord>;
-  if (record.kind !== 'messagingStoreOp'
-    || typeof record.operationKey !== 'string'
-    || typeof record.payloadDigest !== 'string'
-    || typeof record.storeOp !== 'object'
-    || record.storeOp === null) return undefined;
-  const op = (record.storeOp as { op?: unknown }).op;
-  return op === 'transcript-ingest' || op === 'provider-session-upsert'
-    || op === 'send-journal-mutation' || op === 'pending-delivery-mutation'
-    || op === 'conversation-view-mutation' || op === 'projection-rebuild'
-    ? record as MessagingStoreRecord : undefined;
+  if (!isRecord(value)) return undefined;
+  if (value['kind'] !== 'messagingStoreOp'
+    || typeof value['operationKey'] !== 'string'
+    || typeof value['payloadDigest'] !== 'string'
+    || !isRecord(value['storeOp'])
+    || !KNOWN_OPS.includes(value['storeOp']['op'])) return undefined;
+  return value as unknown as MessagingStoreRecord;
 }
