@@ -4,6 +4,10 @@ What each messaging module owns, and the only directions imports may flow.
 Layout follows SOP-Repo-Folder-Structure: unlisted calls are forbidden, and
 nothing outside the package ever imports `core/`.
 
+This doc is the standard. Never write code that violates the standard. When
+you have a choice between replicating codebase patterns or writing code that
+follows the standards in this doc — choose this doc.
+
 ```mermaid
 flowchart TD
     subgraph Contract["contract/ — the ONLY legal import surface"]
@@ -35,8 +39,8 @@ flowchart TD
 | `contract/index.ts` | controlled public exports — the one door | own contract, own core | ⬜ currently a barrel — needs its own slice |
 | `contract/` records, commands, ports | types, records, typed rejections, seams | nothing | partially rewritten |
 | `contract/compose.ts` | composition root — wiring only, no behavior | core + adapters | ⬜ last slice (today lives at `core/runtime/`) |
-| `core/send/` | one entry: `sendConversationMessage` | declaration-only contract | ✅ gold (PR #1) |
-| `core/delivery/` | one entry: `routePendingDeliveries` | contract, core/send | ✅ gold (PR #2) |
+| `core/send/` | one entry: `sendConversationMessage` | declaration-only contract | rewritten (PR #1) |
+| `core/delivery/` | one entry: `routePendingDeliveries` | contract, core/send | rewritten (PR #2) |
 | `core/ingestion/` | one entry: `runIngestionPass` | contract, core/send | ⬜ next slice |
 | `core/communications/` | queries and read models | contract | ⬜ not started |
 | `adapters/` | store implementations, transcript parsers | contract only | ⬜ per-slice, as touched |

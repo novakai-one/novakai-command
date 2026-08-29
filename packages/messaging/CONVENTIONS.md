@@ -2,6 +2,10 @@
 
 Breaking a rule gets code sent back — no exceptions, no matter who wrote it.
 
+This doc is the standard. Never write code that violates the standard. When
+you have a choice between replicating codebase patterns or writing code that
+follows the standards in this doc — choose this doc.
+
 ## 1. Expected failures are typed values, never strings
 
 Callers branch on a kind; nobody parses a message.
