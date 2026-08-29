@@ -171,9 +171,8 @@ async function settleProviderEffect(
       ...present('resumeId', session?.resumeId),
       ...present('screenContext', journal.request.screenContext),
     });
-    return effect.ok
-      ? recordSubmission(dependencies, journal, attempt, effect, sessionId)
-      : recordRefusal(dependencies, journal, attempt, effect);
+    if (!effect.ok) return recordRefusal(dependencies, journal, attempt, effect);
+    return recordSubmission(dependencies, journal, attempt, effect, sessionId);
   } catch (cause) {
     return recordUncertainty(dependencies, journal, attempt, cause);
   }

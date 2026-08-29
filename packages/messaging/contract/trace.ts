@@ -10,6 +10,7 @@ export const messagingTraceStages = [
   'send.dispatch-started',
   'send.dispatch-settled',
   'ingest.pass',
+  'ingest.failed',
   'eventbus.drained',
   'message.published',
 ] as const;

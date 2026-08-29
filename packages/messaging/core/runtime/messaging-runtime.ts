@@ -283,7 +283,7 @@ class MessagingRuntime implements MessagingRuntimeApi {
   private recordFailure(cause: unknown): Outcome<IngestResult> {
     this.lastError = thrownMessage(cause);
     if (this.state !== "stopped") this.state = "degraded";
-    emitTrace(this.options.trace, { stage: 'ingest.pass', detail: `failed: ${this.lastError}` });
+    emitTrace(this.options.trace, { stage: 'ingest.failed', detail: this.lastError });
     return ingestFailure(cause);
   }
 
