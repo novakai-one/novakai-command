@@ -257,18 +257,10 @@ export function buildMessagingRuntimeMethods(options: MessagingMethodOptions): M
       context.principal.kind === 'agent-run'
         ? b3fail(b3err('PermissionDenied', 'Agent Run may not read the sidebar', {}, false))
         : fromOutcome(await options.messaging.listConversationViews())),
-    'b3.messaging.health': method(options, async (_payload, context) => {
-      if (context.principal.kind === 'agent-run') {
-        return b3fail(b3err('PermissionDenied', 'Agent Run may not read runtime health', {}, false));
-      }
-      try {
-        return b3ok(await options.messaging.health());
-      } catch (cause) {
-        return b3fail(b3err('RuntimeUnavailable',
-          cause instanceof Error ? cause.message : 'Messaging health unavailable',
-          { owner: 'messaging' }, true));
-      }
-    }),
+    'b3.messaging.health': method(options, async (_payload, context) =>
+      context.principal.kind === 'agent-run'
+        ? b3fail(b3err('PermissionDenied', 'Agent Run may not read runtime health', {}, false))
+        : fromOutcome(await options.messaging.health())),
     'b3.messaging.closeConversation': method(options, async (payload, context) => {
       if (typeof payload['threadId'] !== 'string') return failure('threadId is required');
       return fromOutcome(await options.messaging.updateConversationView({

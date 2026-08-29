@@ -8,6 +8,7 @@ import type { IngestCheckpoint } from "../../contract/records/ingest-checkpoint.
 import type { ProviderSession } from "../../contract/records/provider-session.js";
 import type { TranscriptLine } from "../../contract/records/transcript-line.js";
 import type { EventCursor, TranscriptSourceId } from "../../contract/types.js";
+import { MessagingError } from "../../contract/types.js";
 
 /** Replay envelope used by durable TranscriptStore adapters. */
 export interface PersistedTranscriptBatch {
@@ -87,32 +88,24 @@ export class TranscriptState {
     input: TranscriptBatchInput,
     persist?: (input: TranscriptBatchInput) => Promise<void>,
   ): Promise<TranscriptBatchResult> {
-    const run = this.mutationTail.then(
-      () => this.commitSerialized(input, persist),
-      () => this.commitSerialized(input, persist),
-    );
-    this.mutationTail = run.then(() => undefined, () => undefined);
-    return run;
+    const commitNext = () => this.commitSerialized(input, persist);
+    const mutation = this.mutationTail.then(commitNext, commitNext);
+    this.mutationTail = mutation.then(() => undefined, () => undefined);
+    return mutation;
   }
 
   upsertSession(
     session: ProviderSession,
     persist?: (session: ProviderSession) => Promise<void>,
   ): Promise<ProviderSession> {
-    const run = this.mutationTail.then(
-      async () => {
-        const merged = mergeSession(this.sessions.get(session.id), session);
-        if (persist !== undefined) await persist(merged);
-        return this.applySession(merged);
-      },
-      async () => {
-        const merged = mergeSession(this.sessions.get(session.id), session);
-        if (persist !== undefined) await persist(merged);
-        return this.applySession(merged);
-      },
-    );
-    this.mutationTail = run.then(() => undefined, () => undefined);
-    return run;
+    const upsert = async () => {
+      const merged = mergeSession(this.sessions.get(session.id), session);
+      if (persist !== undefined) await persist(merged);
+      return this.applySession(merged);
+    };
+    const mutation = this.mutationTail.then(upsert, upsert);
+    this.mutationTail = mutation.then(() => undefined, () => undefined);
+    return mutation;
   }
 
   private async commitSerialized(
@@ -127,11 +120,19 @@ export class TranscriptState {
       return { added: 0, duplicates, checkpoint: current };
     }
     if (!checkpointEqual(current, input.expectedCheckpoint)) {
-      throw new Error(`Ingest checkpoint conflict for ${input.checkpoint.sourceId}`);
+      throw new MessagingError('IdempotencyConflict', {
+        message: `Ingest checkpoint conflict for ${input.checkpoint.sourceId}`,
+        retryable: true,
+        fields: { sourceId: input.checkpoint.sourceId },
+      });
     }
     if (input.checkpoint.sourceEpoch === input.expectedCheckpoint?.sourceEpoch
       && input.checkpoint.offset < input.expectedCheckpoint.offset) {
-      throw new Error(`Ingest checkpoint moved backwards for ${input.checkpoint.sourceId}`);
+      throw new MessagingError('IdempotencyConflict', {
+        message: `Ingest checkpoint moved backwards for ${input.checkpoint.sourceId}`,
+        retryable: true,
+        fields: { sourceId: input.checkpoint.sourceId },
+      });
     }
     if (input.lines.some((line) => line.sessionId !== input.session.id)) {
       throw new Error("TranscriptLine references a different ProviderSession");

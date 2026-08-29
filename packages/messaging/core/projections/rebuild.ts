@@ -4,6 +4,7 @@ import type {
 } from '../../contract/records/projections.js';
 import type { TranscriptLine } from '../../contract/records/transcript-line.js';
 import type { ProviderSessionId } from '../../contract/types.js';
+import { compareStrings } from '../compare.js';
 
 /**
  * Recomputes every rebuildable projection from the ordered transcript lines:
@@ -101,10 +102,3 @@ function sortedToolCalls(toolCalls: readonly ToolCallIndex[]): readonly ToolCall
   return [...toolCalls].sort((left, right) =>
     compareStrings(left.transcriptLineId, right.transcriptLineId));
 }
-
-/** Code-unit string order — locale-independent, identical on every host. */
-const compareStrings = (left: string, right: string): number => {
-  if (left < right) return -1;
-  if (left > right) return 1;
-  return 0;
-};
