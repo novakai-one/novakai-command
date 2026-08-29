@@ -84,8 +84,8 @@ export class PendingDeliveryState {
   }
 
   private serialized<T>(operation: () => Promise<T>): Promise<T> {
-    const run = this.mutationTail.then(operation, operation);
-    this.mutationTail = run.then(() => undefined, () => undefined);
-    return run;
+    const chained = this.mutationTail.then(operation, operation);
+    this.mutationTail = chained.then(() => undefined, () => undefined);
+    return chained;
   }
 }

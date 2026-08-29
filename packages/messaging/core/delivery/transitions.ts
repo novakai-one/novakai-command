@@ -1,3 +1,4 @@
+import type { DeliveryFailure } from '../../contract/records/pending-delivery.js';
 import type { PendingDeliveryState } from '../../contract/types.js';
 
 const permitted: Readonly<Record<PendingDeliveryState, readonly PendingDeliveryState[]>> = {
@@ -11,9 +12,9 @@ const permitted: Readonly<Record<PendingDeliveryState, readonly PendingDeliveryS
 
 /**
  * Rejects a PendingDelivery state change that is not on the permitted path,
- * and rejects any failure recorded without a reason. A delivery may only move
- * forward through proven states, so it can never skip submission or lose the
- * evidence of why it failed.
+ * and rejects any failure recorded without typed evidence. A delivery may
+ * only move forward through proven states, so it can never skip submission
+ * or lose the evidence of why it failed.
  *
  * A violation here is a programmer defect — every transition is chosen by
  * Messaging's own router and stores, never derived from outside input — so it
@@ -28,12 +29,12 @@ export function assertPendingDeliveryTransition(
   id: string,
   from: PendingDeliveryState,
   nextState: PendingDeliveryState,
-  failure?: string,
+  failure?: DeliveryFailure,
 ): void {
   if (!permitted[from].includes(nextState)) {
     throw new Error(`PendingDelivery ${id} cannot move ${from} -> ${nextState}`);
   }
-  if (nextState === 'failed' && (failure === undefined || failure.trim().length === 0)) {
+  if (nextState === 'failed' && failure === undefined) {
     throw new Error(`PendingDelivery ${id} failure requires evidence`);
   }
 }

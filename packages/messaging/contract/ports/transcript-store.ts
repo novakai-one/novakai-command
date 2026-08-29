@@ -2,7 +2,7 @@ import type { IngestCheckpoint } from "../records/ingest-checkpoint.js";
 import type { ProviderSession } from "../records/provider-session.js";
 import type { TranscriptLine } from "../records/transcript-line.js";
 import type { SendAttempt, SendJournal } from "../records/send-journal.js";
-import type { PendingDelivery } from '../records/pending-delivery.js';
+import type { DeliveryFailure, PendingDelivery } from '../records/pending-delivery.js';
 import type {
   ConversationView,
   ConversationViewMutation,
@@ -92,7 +92,7 @@ export interface PendingDeliveryTransitionInput {
   readonly expectedState: PendingDeliveryState;
   readonly state: PendingDeliveryState;
   readonly updatedAt: string;
-  readonly failure?: string;
+  readonly failure?: DeliveryFailure;
 }
 
 /** Current delivery plus whether this invocation changed it. */

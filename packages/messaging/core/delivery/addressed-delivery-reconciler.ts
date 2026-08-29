@@ -76,8 +76,11 @@ async function acceptPage(
 /**
  * Watches the transcript event stream and queues one PendingDelivery for each
  * tool-result line that carries a valid delivery marker. Each pass is
- * incremental thanks to the cursor, so a restart resumes where the last pass
- * stopped instead of re-queueing old work.
+ * incremental thanks to the cursor. The cursor is an in-memory field, so a
+ * restart re-scans from the beginning; that is safe because the store's
+ * accept is idempotent on the delivery id, so a rescan never queues
+ * duplicates. Store failures — scanning events, listing lines, accepting a
+ * delivery — throw to the caller.
  */
 export class AddressedDeliveryReconciler {
   private cursor: EventCursor | undefined;

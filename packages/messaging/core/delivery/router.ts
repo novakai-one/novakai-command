@@ -3,7 +3,7 @@ import type {
   ConversationSendInput,
 } from '../../contract/commands.js';
 import type { ProviderSend } from '../../contract/ports/provider-send.js';
-import type { PendingDelivery } from '../../contract/records/pending-delivery.js';
+import type { DeliveryFailure, PendingDelivery } from '../../contract/records/pending-delivery.js';
 import type { SendJournal } from '../../contract/records/send-journal.js';
 import type { DeliveryRunResult } from '../../contract/runtime.js';
 import type { Timestamp } from '../../contract/types.js';
@@ -60,7 +60,7 @@ async function moveDelivery(
   expectedState: PendingDelivery['state'],
   state: PendingDelivery['state'],
   timestamp: Timestamp,
-  failure?: string,
+  failure?: DeliveryFailure,
 ): Promise<boolean> {
   const moved = await store.transitionPendingDelivery({
     id: delivery.id,
@@ -83,6 +83,9 @@ async function moveDelivery(
  * Crash recovery: a delivery claimed by a worker that never reports back is
  * freed by closeStaleClaims on a later pass, and a submitted delivery whose
  * send reached transcript evidence is settled by observeConfirmedDeliveries.
+ * Crash ownership: a throw while submitting a claimed delivery is caught and
+ * recorded as that delivery's typed failure, while throws during listing,
+ * observing, or transitioning propagate to the caller.
  * Known gap: a delivery stranded in submitted-unconfirmed whose send journal
  * is never confirmed — a crash between claim and journal write, or a send
  * that failed after settlement — has no path back, because the state machine
@@ -190,7 +193,7 @@ async function routeOneDelivery(
 
 /**
  * A deferred delivery stays queued for the next pass; an undeliverable one is
- * failed now with the reason it can never proceed.
+ * failed now with the routing reason it can never proceed.
  */
 async function recordHold(
   dependencies: DeliveryRouterDependencies,
@@ -198,7 +201,9 @@ async function recordHold(
   outcome: RoutingHold,
 ): Promise<DeliveryRunResult> {
   if (outcome.kind === 'deferred') return tally({ deferredBusy: 1 });
-  return failDelivery(dependencies, delivery, 'queued', outcome.reason);
+  return failDelivery(
+    dependencies, delivery, 'queued', { kind: 'routing-failed', detail: outcome.reason },
+  );
 }
 
 /** The failure reason a thrown cause leaves behind for the delivery's evidence trail. */
@@ -210,8 +215,9 @@ const failureMessage = (cause: unknown): string =>
  * then records on the delivery whether that send reached the provider. The
  * delivery's clientOpId is derived from its own id, so a resubmission finds
  * the existing send journal instead of sending twice. Any throw along the way
- * — send slice, journal read, or the settlement write itself — is recorded as
- * the delivery's failure, so a claimed delivery never hangs without evidence.
+ * — send slice, journal read, or the settlement write itself — is caught and
+ * recorded as the delivery's typed submission-error failure, so a claimed
+ * delivery never hangs without evidence.
  */
 async function submitClaimedDelivery(
   dependencies: DeliveryRouterDependencies,
@@ -221,13 +227,15 @@ async function submitClaimedDelivery(
   try {
     return await submitAndSettle(dependencies, delivery, input);
   } catch (cause) {
-    return failClaimedDelivery(dependencies, delivery, failureMessage(cause));
+    return failClaimedDelivery(
+      dependencies, delivery, { kind: 'submission-error', detail: failureMessage(cause) },
+    );
   }
 }
 
 /**
  * Runs the conversation send for one claimed delivery. A typed rejection
- * fails the delivery with the rejection's code and message as evidence; an
+ * fails the delivery with the rejection carried whole as evidence; an
  * acceptance is settled against the send journal's evidence.
  */
 async function submitAndSettle(
@@ -243,7 +251,7 @@ async function submitAndSettle(
   }, input);
   if (!result.ok) {
     return failClaimedDelivery(
-      dependencies, delivery, `${result.rejection.code}: ${result.rejection.message}`,
+      dependencies, delivery, { kind: 'send-rejected', rejection: result.rejection },
     );
   }
   return recordSubmissionOutcome(dependencies, delivery, result.acceptance);
@@ -253,9 +261,9 @@ async function submitAndSettle(
 async function failClaimedDelivery(
   dependencies: DeliveryRouterDependencies,
   delivery: PendingDelivery,
-  reason: string,
+  failure: DeliveryFailure,
 ): Promise<DeliveryRunResult> {
-  const failed = await failDelivery(dependencies, delivery, 'claimed', reason);
+  const failed = await failDelivery(dependencies, delivery, 'claimed', failure);
   return tally({ claimed: 1, failed: failed.failed });
 }
 
@@ -282,8 +290,8 @@ async function recordSubmissionOutcome(
   const state = submissionState(
     findAcceptedJournal(acceptance.sendId, await dependencies.store.listSendJournals()),
   );
-  const failure = state === 'failed'
-    ? 'provider dispatch failed before transcript evidence'
+  const failure: DeliveryFailure | undefined = state === 'failed'
+    ? { kind: 'dispatch-failed', detail: 'provider dispatch failed before transcript evidence' }
     : undefined;
   const moved = await moveDelivery(
     dependencies.store, delivery, 'claimed', state, dependencies.now(), failure,
@@ -291,12 +299,12 @@ async function recordSubmissionOutcome(
   return settlementProgress(state, moved);
 }
 
-/** Records a delivery as failed with the reason it can never proceed. */
+/** Records a delivery as failed with the typed evidence of why it can never proceed. */
 async function failDelivery(
   dependencies: DeliveryRouterDependencies,
   delivery: PendingDelivery,
   expectedState: 'queued' | 'claimed',
-  failure: string,
+  failure: DeliveryFailure,
 ): Promise<DeliveryRunResult> {
   const moved = await moveDelivery(
     dependencies.store, delivery, expectedState, 'failed', dependencies.now(), failure,
