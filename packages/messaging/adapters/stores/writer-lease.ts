@@ -2,6 +2,7 @@ import { mkdir, open, readFile, unlink, type FileHandle } from 'node:fs/promises
 import path from 'node:path';
 import { MessagingError } from '../../contract/types.js';
 import { isErrno } from '../../core/thrown.js';
+import { isRecord } from './foundation-operations.js';
 
 interface LeaseRecord {
   readonly id: string;
@@ -25,10 +26,6 @@ const processAlive = (processId: number): boolean => {
     return !isErrno(cause, 'ESRCH');
   }
 };
-
-/** Untrusted lease file contents are a plain object, not an array or null. */
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
 
 /** A lease envelope carries our kind and schema — anything else is a foreign file. */
 const isLeaseEnvelope = (value: unknown): value is Record<string, unknown> =>

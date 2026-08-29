@@ -19,8 +19,8 @@ const failureKindFor = (cause: unknown): IngestSourceFailure['kind'] => {
   if (cause instanceof AmbiguousProviderSessionEvidenceError) return 'ambiguous-evidence';
   if (!(cause instanceof MessagingError)) return 'unexpected';
   if (cause.name === 'ConcurrentModification') return 'checkpoint-conflict';
-  if (cause.name === 'IdempotencyConflict' && cause.fields['conflict'] === 'session-identity') {
-    return 'session-conflict';
-  }
+  if (cause.name !== 'IdempotencyConflict') return 'unexpected';
+  const conflict = cause.fields['conflict'];
+  if (conflict === 'session-identity' || conflict === 'session-binding') return 'session-conflict';
   return 'unexpected';
 };

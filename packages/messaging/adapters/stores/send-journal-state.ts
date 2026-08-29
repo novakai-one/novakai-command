@@ -191,7 +191,7 @@ const requireSameSession = (journal: SendJournal, sessionId: ProviderSessionId):
   if (journal.targetSessionId === sessionId) return;
   throw new MessagingError('IdempotencyConflict', {
     message: `Send ${journal.id} already targets another ProviderSession`,
-    fields: { sendId: journal.id, bound: journal.targetSessionId, assigned: sessionId },
+    fields: { sendId: journal.id, bound: journal.targetSessionId, assigned: sessionId, conflict: 'session-binding' },
   });
 };
 

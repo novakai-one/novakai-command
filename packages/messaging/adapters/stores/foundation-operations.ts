@@ -55,8 +55,8 @@ export interface MessagingStoreRecord {
   readonly storeOp: MessagingStoreOp;
 }
 
-/** Untrusted replay input is a plain string-keyed object, not an array or null. */
-const isRecord = (value: unknown): value is Record<string, unknown> =>
+/** Untrusted input is a plain string-keyed object, not an array or null. Shared across the stores family. */
+export const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
 const KNOWN_OPS: readonly unknown[] = [

@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // GENERATED FILE — DO NOT EDIT.
 // Source: contract/messaging-contract.json (law #3 single source of truth).
-// contractVersion 1.2.0 · schemaVersion 1 · sha256:078c11a30c8181d7
+// contractVersion 1.3.0 · schemaVersion 1 · sha256:d44626ab1f6dc043
 // Regenerate: npm run generate
 // ---------------------------------------------------------------------------
 
@@ -9,7 +9,7 @@ declare const brand: unique symbol;
 type Brand<Name extends string> = { readonly [brand]: Name };
 
 // --- versions & constants ------------------------------------------------
-export const contractVersion = "1.2.0" as const;
+export const contractVersion = "1.3.0" as const;
 export const schemaVersion = 1 as const;
 
 // --- branded identities ----------------------------------------------------
