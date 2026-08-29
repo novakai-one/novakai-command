@@ -1,43 +1,37 @@
-import type { IngestResult } from "../../contract/runtime.js";
+import type {
+  IngestResult,
+  IngestSourceFailure,
+} from "../../contract/runtime.js";
 import type {
   ProviderNormalizer,
-  ProviderSourceGrowth,
   ProviderSourceStat,
   ProviderTranscriptSource,
 } from "../../contract/ports/provider-transcript-source.js";
-import type { TranscriptStore } from "../../contract/ports/transcript-store.js";
-import type { IngestCheckpoint } from "../../contract/records/ingest-checkpoint.js";
 import type { ProviderSession } from "../../contract/records/provider-session.js";
-import type {
-  ProviderName,
-  Timestamp,
-} from "../../contract/types.js";
+import type { ProviderName, Timestamp } from "../../contract/types.js";
 import type { AgentDirectory } from "../../contract/ports/agent-directory.js";
 import { confirmPendingSends } from "../send/confirm.js";
+import { present } from "../send/sparse.js";
 import {
   classifyProviderSession,
+  type EvidenceRejection,
   type ExternalAdoptionRuntimePolicy,
+  type SessionClassification,
 } from "./classify-session.js";
-import {
-  normalizeGrowth,
-  type NormalizedGrowth,
-} from "./normalize-growth.js";
+import { prepareSource, type PreparedSource } from "./prepare-source.js";
+import type { IngestionStore } from "./ingest-store.js";
 import {
   ingestCheckpointFor,
-  providerSessionFor,
   transcriptLineFor,
 } from "./ingest-records.js";
-import {
-  AmbiguousProviderSessionEvidenceError,
-  reconcileProviderSessionEvidence,
-} from "./reconcile.js";
+import { AmbiguousProviderSessionEvidenceError } from "./reconcile.js";
 import { selectSourcesForIngest } from './select-sources.js';
 
 interface IngestionDependencies {
-  readonly store: TranscriptStore;
-  readonly source: ProviderTranscriptSource;
+  readonly store: IngestionStore;
+  readonly source: Pick<ProviderTranscriptSource, 'scan' | 'readGrowth'>;
   readonly normalizers: Readonly<Record<ProviderName, ProviderNormalizer>>;
-  readonly now: () => string;
+  readonly now: () => Timestamp;
   readonly discoveryFloor: string;
   readonly agentDirectory?: AgentDirectory;
   readonly adoption?: ExternalAdoptionRuntimePolicy;
@@ -51,17 +45,21 @@ interface SourceIngestResult {
   readonly session?: ProviderSession;
   readonly adopted: boolean;
   readonly foreign: boolean;
+  readonly failure?: IngestSourceFailure;
 }
 
-interface PreparedSource {
-  readonly source: ProviderSourceStat;
-  readonly growth: ProviderSourceGrowth;
-  readonly normalized: NormalizedGrowth;
-  readonly storedCheckpoint: IngestCheckpoint | null;
-  readonly existing?: ProviderSession;
-  readonly discovered: ProviderSession;
-  readonly now: Timestamp;
+/** One pass's running tally; folded per source, reported at the end. */
+interface PassTally {
+  added: number;
+  duplicates: number;
+  sessionsRegistered: number;
+  sessionsAdopted: number;
+  foreignSources: number;
+  readonly failures: IngestSourceFailure[];
 }
+
+/** Failure detail reported to hosts is capped; the count always reflects every failure. */
+const MAX_REPORTED_FAILURES = 20;
 
 const emptySourceResult = (): SourceIngestResult => ({
   added: 0,
@@ -71,13 +69,28 @@ const emptySourceResult = (): SourceIngestResult => ({
   foreign: false,
 });
 
+const emptyPassTally = (): PassTally => ({
+  added: 0,
+  duplicates: 0,
+  sessionsRegistered: 0,
+  sessionsAdopted: 0,
+  foreignSources: 0,
+  failures: [],
+});
+
 /**
  * Runs one ingestion pass: stat the provider sources, select the ones worth
  * reading, then per selected source read its growth, normalize the new bytes
  * into transcript records, and commit them as one batch. Without candidates it
  * requests full source discovery; with candidates it skips discovery and
- * processes only those sources. One source failing does not prevent others
- * from committing.
+ * processes only those sources. One source failing never blocks the others:
+ * the failure is caught, given a typed kind, and reported in the result.
+ *
+ * Crash recovery: a pass that dies mid-source leaves that source's checkpoint
+ * unmoved, so the next pass re-reads it and line-id dedupe keeps the recommit
+ * safe. Store and provider failures outside per-source work throw; the
+ * runtime door (messaging-runtime.ts) maps them to a retryable
+ * DependencyUnavailable outcome.
  */
 export async function runIngestionPass(
   dependencies: IngestionDependencies,
@@ -90,56 +103,73 @@ export async function runIngestionPass(
     sessions,
     journals: await dependencies.store.listSendJournals(),
     discoveryFloor: dependencies.discoveryFloor,
-    ...(dependencies.agentDirectory === undefined
-      ? {} : { directory: dependencies.agentDirectory }),
+    ...present('directory', dependencies.agentDirectory),
   });
-  let added = 0;
-  let duplicates = 0;
-  let sessionsRegistered = 0;
-  let sessionsAdopted = 0;
-  let foreignSources = 0;
-  const failures = [] as Array<{ sourceId: string; provider: string; message: string }>;
+  const tally = emptyPassTally();
   const adoptionBudget = { remaining: dependencies.adoption?.limitPerTick ?? 0 };
   for (const source of sources) {
-    let result: SourceIngestResult;
-    try {
-      result = await ingestSource(dependencies, source, sessions, adoptionBudget);
-    } catch (cause) {
-      failures.push({
-        sourceId: source.sourceId,
-        provider: source.provider,
-        message: cause instanceof Error ? cause.message : String(cause),
-      });
-      continue;
-    }
-    added += result.added;
-    duplicates += result.duplicates;
-    sessionsRegistered += result.registered;
-    if (result.adopted) sessionsAdopted += 1;
-    if (result.foreign) foreignSources += 1;
-    if (result.session !== undefined) {
-      const current = sessions.findIndex((candidate) => candidate.id === result.session?.id);
-      if (current < 0) sessions.push(result.session);
-      else sessions[current] = result.session;
-    }
+    const result = await ingestOneSafely(dependencies, source, sessions, adoptionBudget);
+    foldSourceResult(tally, result);
+    rememberSession(sessions, result.session);
   }
   await confirmPendingSends(dependencies.store, dependencies.now());
   return {
     sources: sources.length,
-    added,
-    duplicates,
-    sessionsRegistered,
-    sessionsAdopted,
-    foreignSources,
-    failedSources: failures.length,
-    failures: failures.slice(0, 20),
+    added: tally.added,
+    duplicates: tally.duplicates,
+    sessionsRegistered: tally.sessionsRegistered,
+    sessionsAdopted: tally.sessionsAdopted,
+    foreignSources: tally.foreignSources,
+    failedSources: tally.failures.length,
+    failures: tally.failures.slice(0, MAX_REPORTED_FAILURES),
   };
+}
+
+/** One source failing never blocks the others — the throw is caught and typed here. */
+async function ingestOneSafely(
+  dependencies: IngestionDependencies,
+  source: ProviderSourceStat,
+  sessions: ProviderSession[],
+  adoptionBudget: { remaining: number },
+): Promise<SourceIngestResult> {
+  try {
+    return await ingestSource(dependencies, source, sessions, adoptionBudget);
+  } catch (cause) {
+    return { ...emptySourceResult(), failure: failureFor(source, cause) };
+  }
+}
+
+/** Maps a thrown cause to its typed failure kind; the message stays for humans. */
+const failureFor = (source: ProviderSourceStat, cause: unknown): IngestSourceFailure => ({
+  sourceId: source.sourceId,
+  provider: source.provider,
+  kind: cause instanceof AmbiguousProviderSessionEvidenceError
+    ? 'ambiguous-evidence'
+    : 'unexpected',
+  message: cause instanceof Error ? cause.message : String(cause),
+});
+
+/** Folds one source's outcome into the pass tally. */
+function foldSourceResult(tally: PassTally, result: SourceIngestResult): void {
+  tally.added += result.added;
+  tally.duplicates += result.duplicates;
+  tally.sessionsRegistered += result.registered;
+  if (result.adopted) tally.sessionsAdopted += 1;
+  if (result.foreign) tally.foreignSources += 1;
+  if (result.failure !== undefined) tally.failures.push(result.failure);
+}
+
+/** Remembers the session a source produced so later sources this pass see it. */
+function rememberSession(sessions: ProviderSession[], session: ProviderSession | undefined): void {
+  if (session === undefined) return;
+  const current = sessions.findIndex((candidate) => candidate.id === session.id);
+  if (current < 0) sessions.push(session);
+  else sessions[current] = session;
 }
 
 /**
  * Ingests one selected source: prepare, classify the session the evidence
- * points to, then either commit the new lines or defer the source as
- * metadata-only.
+ * points to, then settle that decision into writes.
  */
 async function ingestSource(
   dependencies: IngestionDependencies,
@@ -157,12 +187,27 @@ async function ingestSource(
     adoptionRemaining: adoptionBudget.remaining,
     store: dependencies.store,
     now: dependencies.now,
-    ...(dependencies.storeId === undefined ? {} : { storeId: dependencies.storeId }),
-    ...(dependencies.agentDirectory === undefined
-      ? {} : { directory: dependencies.agentDirectory }),
-    ...(dependencies.adoption === undefined ? {} : { adoption: dependencies.adoption }),
+    ...present('storeId', dependencies.storeId),
+    ...present('directory', dependencies.agentDirectory),
+    ...present('adoption', dependencies.adoption),
   });
-  if (classification.kind === "defer") {
+  return settleClassification(dependencies, source, prepared, classification, adoptionBudget);
+}
+
+/**
+ * Turns one classification into writes: a rejection fails the source with
+ * typed evidence, a deferral registers it metadata-only, and a commit
+ * batches its lines. An adoption spends one unit of the per-tick budget.
+ */
+async function settleClassification(
+  dependencies: IngestionDependencies,
+  source: ProviderSourceStat,
+  prepared: PreparedSource,
+  classification: SessionClassification,
+  adoptionBudget: { remaining: number },
+): Promise<SourceIngestResult> {
+  if (classification.kind === 'reject') return rejectedSource(source, classification);
+  if (classification.kind === 'defer') {
     return deferSource(dependencies, prepared, classification.status, classification.foreign ?? false);
   }
   const result = await commitSource(
@@ -175,64 +220,23 @@ async function ingestSource(
   return result;
 }
 
-/**
- * Reads and normalizes one source's growth and resolves which stored session
- * the evidence names. Returns null when the source has not moved since the
- * stored checkpoint or yields no complete records.
- */
-async function prepareSource(
-  dependencies: IngestionDependencies,
+/** A rejected source fails this pass with its typed evidence; nothing is written. */
+const rejectedSource = (
   source: ProviderSourceStat,
-  sessions: readonly ProviderSession[],
-): Promise<PreparedSource | null> {
-  const existingBySource = sessions.find((candidate) =>
-    candidate.sourceIds.includes(source.sourceId));
-  const storedCheckpoint = await dependencies.store.getCheckpoint(source.sourceId);
-  const shouldReclassify = existingBySource?.status === "discovered-only"
-    && source.adoptionEligible
-    && dependencies.adoption !== undefined;
-  const readCheckpoint = shouldReclassify ? null : storedCheckpoint;
-  if (readCheckpoint !== null
-    && readCheckpoint.offset === source.size
-    && readCheckpoint.fileSignature.device === source.device
-    && readCheckpoint.fileSignature.inode === source.inode) return null;
+  rejection: EvidenceRejection,
+): SourceIngestResult => ({
+  ...emptySourceResult(),
+  failure: {
+    sourceId: source.sourceId,
+    provider: source.provider,
+    kind: rejection.failure,
+    message: rejection.message,
+  },
+});
 
-  const observedGrowth = await dependencies.source.readGrowth(source, readCheckpoint);
-  // A source first seen outside the adoption roots has a metadata-only
-  // checkpoint. Re-reading it from byte zero must begin a new source epoch;
-  // otherwise TranscriptState quite correctly treats the lower/equal offset
-  // as an already-committed batch and drops the newly authorised history.
-  const growth = shouldReclassify && storedCheckpoint !== null
-    ? { ...observedGrowth, sourceEpoch: storedCheckpoint.sourceEpoch + 1 }
-    : observedGrowth;
-  const normalized = normalizeGrowth(
-    dependencies.normalizers[source.provider],
-    growth,
-    readCheckpoint,
-  );
-  if (normalized.items.length === 0) return null;
-  const resumeId = normalized.items.find((item) => item.value.resumeId !== undefined)?.value.resumeId
-    ?? source.resumeIdHint;
-  const resolution = reconcileProviderSessionEvidence(sessions, source, resumeId);
-  if (resolution.kind === 'ambiguous') {
-    throw new AmbiguousProviderSessionEvidenceError(
-      source.sourceId,
-      resumeId,
-      resolution.sessionIds,
-    );
-  }
-  const existing = resolution.kind === 'unique' ? resolution.session : undefined;
-  const timestamp = dependencies.now() as Timestamp;
-  return {
-    source,
-    growth,
-    normalized,
-    storedCheckpoint,
-    ...(existing === undefined ? {} : { existing }),
-    discovered: providerSessionFor(source, resumeId, timestamp, existing),
-    now: timestamp,
-  };
-}
+/** A source registers its session only when the session is new to the store. */
+const registrationCount = (existing: ProviderSession | undefined): number =>
+  existing === undefined ? 1 : 0;
 
 /** Commits one prepared source's lines and advanced checkpoint as one batch. */
 async function commitSource(
@@ -253,7 +257,7 @@ async function commitSource(
   return {
     added: committed.added,
     duplicates: committed.duplicates,
-    registered: existing === undefined ? 1 : 0,
+    registered: registrationCount(existing),
     session,
     adopted,
     foreign: false,
@@ -283,7 +287,7 @@ async function deferSource(
   }
   return {
     ...emptySourceResult(),
-    registered: existing === undefined ? 1 : 0,
+    registered: registrationCount(existing),
     session,
     foreign,
   };

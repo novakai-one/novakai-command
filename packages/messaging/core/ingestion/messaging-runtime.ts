@@ -15,6 +15,7 @@ import type { ProviderName } from "../../contract/types.js";
 import type { TranscriptSourceId } from "../../contract/types.js";
 import { MessagingError } from "../../contract/types.js";
 import { createDurableTranscriptEventBus, type DurableTranscriptEventBus } from "../event-bus.js";
+import { brandClock } from "../clock.js";
 import { runIngestionPass } from "./ingest.js";
 import type {
   AdoptionAssignment,
@@ -212,7 +213,7 @@ class MessagingRuntime implements MessagingRuntimeApi {
         store: this.options.store,
         source: this.options.source,
         normalizers: this.options.normalizers,
-        now: this.clock,
+        now: brandClock(this.clock),
         discoveryFloor: this.discoveryFloor,
         ...(this.options.storeId === undefined ? {} : { storeId: this.options.storeId }),
         ...(this.options.agentDirectory === undefined

@@ -46,8 +46,8 @@ export class DeliveryRuntime {
 
   maintain(eventBus: DurableTranscriptEventBus): Promise<void> {
     if (this.maintenanceInFlight !== undefined) return this.maintenanceInFlight;
-    const run = this.performMaintenance(eventBus);
-    this.maintenanceInFlight = run.finally(() => {
+    const maintenance = this.performMaintenance(eventBus);
+    this.maintenanceInFlight = maintenance.finally(() => {
       this.maintenanceInFlight = undefined;
     });
     return this.maintenanceInFlight;
