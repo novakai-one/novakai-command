@@ -3,7 +3,7 @@ import path from "node:path";
 import { createProviderTranscriptSource } from "../../adapters/provider-transcripts/source.js";
 import { providerNormalizer } from "../../adapters/provider-transcripts/normalizers/index.js";
 import { openFoundationTranscriptStore } from "../../adapters/stores/jsonl.js";
-import { createMessagingRuntime } from "../../core/ingestion/messaging-runtime.js";
+import { createMessagingRuntime } from "../../core/runtime/messaging-runtime.js";
 import type { MessagingRuntimeApi } from "../runtime.js";
 import type { AgentDirectory } from "../ports/agent-directory.js";
 import type { AdoptionAssignment } from "../ports/agent-directory.js";
@@ -15,6 +15,7 @@ import { ensureCodexIdentityHook } from "../../adapters/provider-hooks/registrat
 import { ensureKimiIdentityHook } from "../../adapters/provider-hooks/registrations/kimi.js";
 import type { ProviderTranscriptRoots } from "../../adapters/provider-transcripts/source.js";
 import { ensureStoreIdentity, type StoreId } from '@novakai/foundation/contract';
+import { present } from '../../core/send/sparse.js';
 
 /** Explicit scope, operating assignment and rate limit for external-session adoption. */
 export interface ExternalAdoptionOptions {
@@ -73,8 +74,7 @@ export async function createDefaultMessagingRuntime(
       ],
       kimi: [path.join(home, ".kimi-code", "sessions")],
     }, {
-      ...(options.externalAdoption === undefined
-        ? {} : { adoptRoots: options.externalAdoption.roots }),
+      ...present('adoptRoots', options.externalAdoption?.roots),
     }),
     normalizers: {
       claude: providerNormalizer("claude"),
@@ -82,20 +82,12 @@ export async function createDefaultMessagingRuntime(
       kimi: providerNormalizer("kimi"),
     },
     storeId,
-    ...(options.agentDirectory === undefined ? {} : { agentDirectory: options.agentDirectory }),
-    ...(options.providerSend === undefined ? {} : { providerSend: options.providerSend }),
-    ...(options.conversations === undefined ? {} : { conversations: options.conversations }),
-    ...(options.conversationPrincipalId === undefined
-      ? {} : { conversationPrincipalId: options.conversationPrincipalId }),
-    ...(options.externalAdoption === undefined ? {} : {
-      adoption: {
-        assignment: options.externalAdoption.assignment,
-        ...(options.externalAdoption.conversations === undefined
-          ? {} : { conversations: options.externalAdoption.conversations }),
-        limitPerTick: options.externalAdoption.limitPerTick ?? 10,
-      },
-    }),
-    ...(options.intervalMs === undefined ? {} : { intervalMs: options.intervalMs }),
+    ...present('agentDirectory', options.agentDirectory),
+    ...present('providerSend', options.providerSend),
+    ...present('conversations', options.conversations),
+    ...present('conversationPrincipalId', options.conversationPrincipalId),
+    ...present('adoption', adoptionOptions(options.externalAdoption)),
+    ...present('intervalMs', options.intervalMs),
   });
   return {
     runtime,
@@ -103,5 +95,15 @@ export async function createDefaultMessagingRuntime(
       await runtime.stop();
       await store.close();
     },
+  };
+}
+
+/** The runtime's adoption wiring, or undefined when adoption is not configured. */
+function adoptionOptions(externalAdoption: ExternalAdoptionOptions | undefined) {
+  if (externalAdoption === undefined) return undefined;
+  return {
+    assignment: externalAdoption.assignment,
+    ...present('conversations', externalAdoption.conversations),
+    limitPerTick: externalAdoption.limitPerTick ?? 10,
   };
 }

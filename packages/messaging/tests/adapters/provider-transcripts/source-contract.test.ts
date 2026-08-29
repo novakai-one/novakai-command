@@ -4,7 +4,7 @@ import { appendFile, mkdir, mkdtemp, open, readFile, writeFile } from "node:fs/p
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { createMessagingRuntime } from "../../../core/ingestion/messaging-runtime.js";
+import { createMessagingRuntime } from "../../../core/runtime/messaging-runtime.js";
 import {
   agentIdentityHookCommand,
   runAgentIdentityHook,

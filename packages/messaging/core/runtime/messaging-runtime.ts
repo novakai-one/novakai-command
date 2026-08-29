@@ -16,19 +16,20 @@ import type { TranscriptSourceId } from "../../contract/types.js";
 import { MessagingError } from "../../contract/types.js";
 import { createDurableTranscriptEventBus, type DurableTranscriptEventBus } from "../event-bus.js";
 import { brandClock } from "../clock.js";
-import { runIngestionPass } from "./ingest.js";
+import { present } from "../send/sparse.js";
+import { runIngestionPass } from "../ingestion/ingest.js";
 import type {
   AdoptionAssignment,
   AgentDirectory,
 } from "../../contract/ports/agent-directory.js";
 import type { ConversationDirectory } from "../../contract/ports/conversation-directory.js";
 import type { ProviderSend } from "../../contract/ports/provider-send.js";
-import { AmbiguousProviderSessionEvidenceError } from "./reconcile.js";
+import { AmbiguousProviderSessionEvidenceError } from "../ingestion/reconcile.js";
 import { createStoredConversationDirectory } from '../conversations/directory.js';
-import { createCommittedRecordsApi } from '../runtime/committed-records.js';
+import { createCommittedRecordsApi } from './committed-records.js';
 import { subscribeAgentConversationMessageStream } from '../conversations/message-stream.js';
-import { ProviderIngestQueue } from './ingest-queue.js';
-import { DeliveryRuntime } from './delivery-runtime.js';
+import { ProviderIngestQueue } from '../ingestion/ingest-queue.js';
+import { DeliveryRuntime } from '../ingestion/delivery-runtime.js';
 
 /**
  * Configures provider ingestion and delivery scheduling. Maintenance defaults
@@ -60,7 +61,7 @@ export interface MessagingRuntimeOptions {
 const unavailable = <T>(cause: unknown): Outcome<T> => ({
   kind: "error",
   error: new MessagingError("DependencyUnavailable", {
-    message: cause instanceof Error ? cause.message : "Messaging ingestion unavailable",
+    message: errorMessage(cause) ?? "Messaging ingestion unavailable",
     retryable: true,
     fields: { dependency: "provider-transcript" },
   }),
@@ -83,17 +84,37 @@ const ingestFailure = <T>(cause: unknown): Outcome<T> => {
   return unavailable(cause);
 };
 
+/** The message of a thrown value, or undefined when it carries none. */
+const errorMessage = (cause: unknown): string | undefined =>
+  cause instanceof Error ? cause.message : undefined;
+
+/** The message of a thrown value, coerced for anything without one. */
+const thrownMessage = (cause: unknown): string =>
+  cause instanceof Error ? cause.message : String(cause);
+
+/**
+ * A source is event-driven only when it can both watch for changes and stat
+ * the sources a change names; one capability without the other means polling.
+ */
+function eventSupport(source: ProviderTranscriptSource): {
+  watchChanges: NonNullable<ProviderTranscriptSource['watchChanges']>;
+  statKnown: NonNullable<ProviderTranscriptSource['statKnown']>;
+} | undefined {
+  if (source.watchChanges === undefined || source.statKnown === undefined) return undefined;
+  return { watchChanges: source.watchChanges, statKnown: source.statKnown };
+}
+
 /**
  * The composed messaging runtime: the constructor is the wiring, `start`/`stop`
  * own the lifecycle, and every ingestion trigger converges on `runPass` — one
- * ingestion pass (see ingest.ts), then delivery drains what it committed.
+ * ingestion pass (see ingestion/ingest.ts), then delivery drains what it
+ * committed.
  */
 class MessagingRuntime implements MessagingRuntimeApi {
   readonly eventBus: DurableTranscriptEventBus;
   private readonly clock: () => string;
   private readonly intervalMs: number;
   private readonly safetySweepMs: number;
-  private readonly changeDebounceMs: number;
   private readonly discoveryFloor: string;
   private state: MessagingHealth["state"] = "stopped";
   private maintenanceTimer: ReturnType<typeof setInterval> | undefined;
@@ -111,9 +132,8 @@ class MessagingRuntime implements MessagingRuntimeApi {
     this.clock = options.now ?? (() => new Date().toISOString());
     this.intervalMs = options.intervalMs ?? 1_000;
     this.safetySweepMs = options.safetySweepMs ?? 60_000;
-    this.changeDebounceMs = options.changeDebounceMs ?? 25;
     this.ingestQueue = new ProviderIngestQueue(
-      this.changeDebounceMs,
+      options.changeDebounceMs ?? 25,
       (sourceIds) => this.runPass(sourceIds),
     );
     this.discoveryFloor = this.clock();
@@ -129,46 +149,51 @@ class MessagingRuntime implements MessagingRuntimeApi {
     this.delivery = new DeliveryRuntime({
       store: options.store,
       now: this.clock,
-      ...(options.agentDirectory === undefined ? {} : { agents: options.agentDirectory }),
-      ...(options.providerSend === undefined ? {} : { providerSend: options.providerSend }),
-      ...(this.conversations === undefined ? {} : { conversations: this.conversations }),
+      ...present('agents', options.agentDirectory),
+      ...present('providerSend', options.providerSend),
+      ...present('conversations', this.conversations),
     });
     this.records = createCommittedRecordsApi({
       store: options.store,
       now: this.clock,
       normalizers: options.normalizers,
-      ...(options.agentDirectory === undefined ? {} : { agentDirectory: options.agentDirectory }),
-      ...(options.providerSend === undefined ? {} : { providerSend: options.providerSend }),
+      ...present('agentDirectory', options.agentDirectory),
+      ...present('providerSend', options.providerSend),
     });
   }
 
   async start(): Promise<Outcome<void>> {
     if (this.state !== "stopped") return { kind: "ok", value: undefined };
     this.state = "running";
-    const eventDriven = this.options.source.watchChanges !== undefined
-      && this.options.source.statKnown !== undefined;
-    if (eventDriven) {
-      try {
-        this.sourceSubscription = await this.options.source.watchChanges!(
-          (change) => {
-            if (this.state !== 'stopped') this.ingestQueue.notify(change);
-          },
-        );
-      } catch (cause) {
-        this.lastError = cause instanceof Error ? cause.message : String(cause);
-      }
+    await this.subscribeToChanges();
+    this.scheduleTimers();
+    await this.ingestNow();
+    return { kind: "ok", value: undefined };
+  }
+
+  /** Event-driven ingestion when the source supports it; polling falls to the timer. */
+  private async subscribeToChanges(): Promise<void> {
+    const events = eventSupport(this.options.source);
+    if (events === undefined) return;
+    try {
+      this.sourceSubscription = await events.watchChanges((change) => {
+        if (this.state !== 'stopped') this.ingestQueue.notify(change);
+      });
+    } catch (cause) {
+      this.lastError = thrownMessage(cause);
     }
+  }
+
+  /** The maintenance tick always runs; the safety sweep only for event-driven sources. */
+  private scheduleTimers(): void {
     this.maintenanceTimer = setInterval(() => {
       if (this.sourceSubscription === undefined) void this.ingestNow();
       else void this.runMaintenanceTick();
     }, this.intervalMs);
     this.maintenanceTimer.unref();
-    if (this.sourceSubscription !== undefined) {
-      this.safetyTimer = setInterval(() => { void this.ingestQueue.requestDiscovery(); }, this.safetySweepMs);
-      this.safetyTimer.unref();
-    }
-    await this.ingestNow();
-    return { kind: "ok", value: undefined };
+    if (this.sourceSubscription === undefined) return;
+    this.safetyTimer = setInterval(() => { void this.ingestQueue.requestDiscovery(); }, this.safetySweepMs);
+    this.safetyTimer.unref();
   }
 
   async stop(): Promise<Outcome<void>> {
@@ -190,12 +215,18 @@ class MessagingRuntime implements MessagingRuntimeApi {
       state: this.state,
       ingesting: this.ingestQueue.active,
       runs: this.runs,
-      ...(this.lastResult === undefined ? {} : { lastResult: this.lastResult }),
-      ...(this.lastError === undefined ? {} : { lastError: this.lastError }),
-      ...(this.delivery.lastRunAt === undefined ? {} : { lastDeliveryRunAt: this.delivery.lastRunAt }),
-      pendingDeliveryCount: (await this.options.store.listPendingDeliveries())
-        .filter((delivery) => delivery.state === 'queued' || delivery.state === 'claimed').length,
+      ...present('lastResult', this.lastResult),
+      ...present('lastError', this.lastError),
+      ...present('lastDeliveryRunAt', this.delivery.lastRunAt),
+      pendingDeliveryCount: await this.pendingDeliveryCount(),
     };
+  }
+
+  /** Deliveries still owed to a recipient: queued, or claimed but not yet submitted. */
+  private async pendingDeliveryCount(): Promise<number> {
+    const pending = await this.options.store.listPendingDeliveries();
+    return pending.filter((delivery) =>
+      delivery.state === 'queued' || delivery.state === 'claimed').length;
   }
 
   ingestNow(): Promise<Outcome<IngestResult>> {
@@ -206,32 +237,58 @@ class MessagingRuntime implements MessagingRuntimeApi {
     sourceIds?: readonly TranscriptSourceId[],
   ): Promise<Outcome<IngestResult>> {
     try {
-      const candidates = sourceIds === undefined
-        ? undefined
-        : await this.options.source.statKnown!(sourceIds);
-      const value = await runIngestionPass({
-        store: this.options.store,
-        source: this.options.source,
-        normalizers: this.options.normalizers,
-        now: brandClock(this.clock),
-        discoveryFloor: this.discoveryFloor,
-        ...(this.options.storeId === undefined ? {} : { storeId: this.options.storeId }),
-        ...(this.options.agentDirectory === undefined
-          ? {} : { agentDirectory: this.options.agentDirectory }),
-        ...(this.options.adoption === undefined || this.conversations === undefined
-          ? {} : { adoption: { ...this.options.adoption, conversations: this.conversations } }),
-      }, candidates);
-      await this.delivery.maintain(this.eventBus);
-      this.runs += 1;
-      this.lastResult = value;
-      this.lastError = undefined;
-      if (this.state !== "stopped") this.state = "running";
-      return { kind: "ok", value };
+      return this.recordSuccess(await this.executePass(sourceIds));
     } catch (cause) {
-      this.lastError = cause instanceof Error ? cause.message : String(cause);
-      if (this.state !== "stopped") this.state = "degraded";
-      return ingestFailure(cause);
+      return this.recordFailure(cause);
     }
+  }
+
+  /** One ingestion pass, then delivery drains what it committed. */
+  private async executePass(
+    sourceIds: readonly TranscriptSourceId[] | undefined,
+  ): Promise<IngestResult> {
+    const value = await runIngestionPass({
+      store: this.options.store,
+      source: this.options.source,
+      normalizers: this.options.normalizers,
+      now: brandClock(this.clock),
+      discoveryFloor: this.discoveryFloor,
+      ...present('storeId', this.options.storeId),
+      ...present('agentDirectory', this.options.agentDirectory),
+      ...present('adoption', this.adoptionConfig()),
+    }, await this.candidatesFor(sourceIds));
+    await this.delivery.maintain(this.eventBus);
+    return value;
+  }
+
+  private recordSuccess(value: IngestResult): Outcome<IngestResult> {
+    this.runs += 1;
+    this.lastResult = value;
+    this.lastError = undefined;
+    if (this.state !== "stopped") this.state = "running";
+    return { kind: "ok", value };
+  }
+
+  private recordFailure(cause: unknown): Outcome<IngestResult> {
+    this.lastError = thrownMessage(cause);
+    if (this.state !== "stopped") this.state = "degraded";
+    return ingestFailure(cause);
+  }
+
+  /** Stat the changed sources when the source supports it; otherwise a full pass. */
+  private async candidatesFor(
+    sourceIds: readonly TranscriptSourceId[] | undefined,
+  ) {
+    if (sourceIds === undefined) return undefined;
+    const events = eventSupport(this.options.source);
+    if (events === undefined) return undefined;
+    return events.statKnown(sourceIds);
+  }
+
+  /** Adoption wiring only when both the assignment and a conversation directory exist. */
+  private adoptionConfig() {
+    if (this.options.adoption === undefined || this.conversations === undefined) return undefined;
+    return { ...this.options.adoption, conversations: this.conversations };
   }
 
   private async runMaintenanceTick(): Promise<void> {
@@ -239,7 +296,7 @@ class MessagingRuntime implements MessagingRuntimeApi {
     try {
       await this.delivery.maintain(this.eventBus);
     } catch (cause) {
-      this.lastError = cause instanceof Error ? cause.message : String(cause);
+      this.lastError = thrownMessage(cause);
       this.state = 'degraded';
     }
   }

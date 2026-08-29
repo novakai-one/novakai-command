@@ -14,8 +14,6 @@ import type { MessagingRuntimeApi } from '../../contract/runtime.js';
 import type {
   ProviderResumeId,
   ProviderName,
-  ProviderSessionId,
-  TranscriptSourceId,
 } from '../../contract/types.js';
 import { MessagingError } from '../../contract/types.js';
 import { listAgentCommunications } from '../communications/queries.js';
@@ -25,6 +23,9 @@ import { rebuildProjections } from '../projections/rebuild.js';
 import { sendConversationMessage } from '../send/send.js';
 import { agentDeliveryMarker } from '../delivery/delivery-marker-codec.js';
 import { parseProviderName } from '../../contract/provider-name.js';
+import { parseProviderSessionId } from '../../contract/provider-session-id.js';
+import { parseTranscriptSourceId } from '../../contract/transcript-source-id.js';
+import { present } from '../send/sparse.js';
 
 type RecordsApi = Pick<MessagingRuntimeApi,
   | 'ensureConversationView' | 'updateConversationView' | 'getConversationView'
@@ -48,7 +49,11 @@ export function createCommittedRecordsApi(options: {
   readonly providerSend?: ProviderSend;
 }): RecordsApi {
   const safe = async <T>(operation: () => Promise<T>): Promise<Outcome<T>> => {
-    try { return { kind: 'ok', value: await operation() }; } catch (cause) { return failed(cause); }
+    try {
+      return { kind: 'ok', value: await operation() };
+    } catch (cause) {
+      return failed(cause);
+    }
   };
   return {
     ensureConversationView: (input: EnsureConversationViewInput) =>
@@ -94,16 +99,18 @@ export function createCommittedRecordsApi(options: {
 }
 
 /** Maps a typed send rejection onto the public error catalogue at the door. */
-const asMessagingError = (rejection: SendRejection): MessagingError =>
-  rejection.code === 'invalid-send-input'
-    ? new MessagingError('InvalidSendInput', {
-        message: rejection.message,
-        fields: { field: rejection.field },
-      })
-    : new MessagingError('UnknownTargetAgent', {
-        message: rejection.message,
-        fields: { targetAgentId: rejection.targetAgentId },
-      });
+const asMessagingError = (rejection: SendRejection): MessagingError => {
+  if (rejection.code === 'invalid-send-input') {
+    return new MessagingError('InvalidSendInput', {
+      message: rejection.message,
+      fields: { field: rejection.field },
+    });
+  }
+  return new MessagingError('UnknownTargetAgent', {
+    message: rejection.message,
+    fields: { targetAgentId: rejection.targetAgentId },
+  });
+};
 
 /** Maps any store failure to the one outcome shape hosts handle; contract errors pass through unchanged. */
 const failed = <T>(cause: unknown): Outcome<T> => ({
@@ -119,22 +126,54 @@ const failed = <T>(cause: unknown): Outcome<T> => ({
 
 /**
  * Parses the optional line-query filter from untrusted host input at the seam;
- * unknown shapes are rejected instead of silently ignored.
+ * unknown shapes and malformed values are rejected as a typed `InvalidQuery`
+ * instead of being silently ignored.
  */
 function parseTranscriptLineQuery(input: unknown): TranscriptLineQuery {
   if (input === undefined) return {};
-  if (typeof input !== 'object' || input === null || Array.isArray(input)) {
-    throw new Error('Transcript line query must be an object');
+  if (!isRecord(input)) {
+    throw new MessagingError('InvalidQuery', {
+      message: 'Transcript line query must be an object',
+      fields: { query: 'listTranscriptLines' },
+    });
   }
-  const value = input as Record<string, unknown>;
-  const provider = parseProviderName(value.provider);
   return {
-    ...(typeof value.sessionId === 'string'
-      ? { sessionId: value.sessionId as ProviderSessionId } : {}),
-    ...(provider === undefined ? {} : { provider }),
-    ...(typeof value.sourceId === 'string'
-      ? { sourceId: value.sourceId as TranscriptSourceId } : {}),
-    ...(typeof value.resumeId === 'string'
-      ? { resumeId: value.resumeId as ProviderResumeId } : {}),
+    ...present('sessionId', requireValidFilter('sessionId', input.sessionId, parseProviderSessionId)),
+    ...present('provider', requireValidFilter('provider', input.provider, parseProviderName)),
+    ...present('sourceId', requireValidFilter('sourceId', input.sourceId, parseTranscriptSourceId)),
+    ...present('resumeId', requireValidFilter('resumeId', input.resumeId, parseResumeId)),
   };
 }
+
+/** A supplied filter must parse against the contract; malformed means the query is impossible. */
+function requireValidFilter<Brand>(
+  field: string,
+  value: unknown,
+  parse: (value: unknown) => Brand | undefined,
+): Brand | undefined {
+  if (value === undefined) return undefined;
+  const parsed = parse(value);
+  if (parsed !== undefined) return parsed;
+  throw invalidFilter(field);
+}
+
+/** Untrusted input is a plain string-keyed object, not an array or null. */
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+/** The rejection every malformed query filter shares. */
+const invalidFilter = (field: string): MessagingError =>
+  new MessagingError('InvalidQuery', {
+    message: `Transcript line query ${field} is malformed`,
+    fields: { query: 'listTranscriptLines' },
+  });
+
+/**
+ * A resume id is provider-shaped, not contract-shaped — no pattern exists to
+ * validate against, so a non-empty string is branded unchecked at this seam.
+ */
+const parseResumeId = (value: unknown): ProviderResumeId | undefined => {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string' || value.trim() === '') return undefined;
+  return value as ProviderResumeId;
+};
