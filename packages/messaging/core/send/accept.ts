@@ -2,17 +2,17 @@ import type {
   ConversationSendInput,
   SendRejection,
 } from '../../contract/commands.js';
-import type { AgentDirectory } from '../../contract/ports/agent-directory.js';
 import type { SendJournal } from '../../contract/records/send-journal.js';
 import type { Timestamp } from '../../contract/types.js';
 import { parseConversationId } from '../../contract/conversation-id.js';
+import type { AgentLookup } from './agent-lookup.js';
 import { mintRequestHash, mintSendId } from './mint.js';
 import { present } from './sparse.js';
 import type { SendStore } from './send-store.js';
 
 interface AcceptDependencies {
   readonly store: SendStore;
-  readonly agentDirectory: AgentDirectory;
+  readonly agentDirectory: AgentLookup;
   readonly now: () => Timestamp;
 }
 

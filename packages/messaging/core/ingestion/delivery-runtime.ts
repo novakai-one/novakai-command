@@ -5,6 +5,7 @@ import type { ProviderSend } from '../../contract/ports/provider-send.js';
 import type { TranscriptStore } from '../../contract/ports/transcript-store.js';
 import type { DeliveryRunResult } from '../../contract/runtime.js';
 import { MessagingError } from '../../contract/types.js';
+import { brandClock } from '../clock.js';
 import { AddressedDeliveryReconciler } from '../delivery/addressed-delivery-reconciler.js';
 import { routePendingDeliveries } from '../delivery/router.js';
 import type { DurableTranscriptEventBus } from '../event-bus.js';
@@ -81,7 +82,7 @@ export class DeliveryRuntime {
         agents: this.options.agents!,
         conversations: this.options.conversations!,
         providerSend: this.options.providerSend!,
-        now: this.options.now,
+        now: brandClock(this.options.now),
       });
       this.lastRun = this.options.now();
       return { kind: 'ok', value };

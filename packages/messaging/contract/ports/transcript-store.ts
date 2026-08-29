@@ -80,6 +80,12 @@ export interface AcceptPendingDeliveryInput {
   readonly delivery: PendingDelivery;
 }
 
+/** Existing or newly committed idempotent PendingDelivery. */
+export interface AcceptPendingDeliveryResult {
+  readonly delivery: PendingDelivery;
+  readonly duplicate: boolean;
+}
+
 /** Compare-and-transition one PendingDelivery. */
 export interface PendingDeliveryTransitionInput {
   readonly id: PendingDelivery['id'];
@@ -108,7 +114,7 @@ export interface TranscriptStore {
   bindAgentSession(agentId: string, sessionId: ProviderSessionId, updatedAt: string): Promise<number>;
   confirmSendForLines(sessionId: ProviderSessionId, lines: readonly TranscriptLine[], updatedAt: string): Promise<number>;
   listSendJournals(): Promise<readonly SendJournal[]>;
-  acceptPendingDelivery(input: AcceptPendingDeliveryInput): Promise<PendingDelivery>;
+  acceptPendingDelivery(input: AcceptPendingDeliveryInput): Promise<AcceptPendingDeliveryResult>;
   transitionPendingDelivery(
     input: PendingDeliveryTransitionInput,
   ): Promise<PendingDeliveryTransitionResult>;

@@ -1,4 +1,5 @@
 import type {
+  AcceptPendingDeliveryResult,
   PendingDeliveryTransitionInput,
   PendingDeliveryTransitionResult,
 } from '../../contract/ports/transcript-store.js';
@@ -24,7 +25,7 @@ export class PendingDeliveryState {
     }
   }
 
-  accept(delivery: PendingDelivery, persist?: Persist): Promise<PendingDelivery> {
+  accept(delivery: PendingDelivery, persist?: Persist): Promise<AcceptPendingDeliveryResult> {
     return this.serialized(async () => {
       const existing = this.deliveries.get(delivery.id);
       if (existing !== undefined) {
@@ -32,11 +33,11 @@ export class PendingDeliveryState {
           || existing.recipientAgentId !== delivery.recipientAgentId) {
           throw new Error(`PendingDelivery ${delivery.id} conflicts`);
         }
-        return existing;
+        return { delivery: existing, duplicate: true };
       }
       if (persist !== undefined) await persist([delivery]);
       this.apply([delivery]);
-      return delivery;
+      return { delivery, duplicate: false };
     });
   }
 

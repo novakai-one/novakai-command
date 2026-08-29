@@ -1,48 +1,76 @@
-import { findAgentDeliveryMarker } from './delivery-marker-codec.js';
-import type { ConversationSendInput } from '../../contract/commands.js';
-import { brandClock } from '../clock.js';
-import type { AgentDirectory } from '../../contract/ports/agent-directory.js';
-import type { ConversationDirectory } from '../../contract/ports/conversation-directory.js';
+import type {
+  ConversationSendAcceptance,
+  ConversationSendInput,
+} from '../../contract/commands.js';
 import type { ProviderSend } from '../../contract/ports/provider-send.js';
-import type { TranscriptStore } from '../../contract/ports/transcript-store.js';
 import type { PendingDelivery } from '../../contract/records/pending-delivery.js';
 import type { SendJournal } from '../../contract/records/send-journal.js';
 import type { DeliveryRunResult } from '../../contract/runtime.js';
+import type { Timestamp } from '../../contract/types.js';
 import { sendConversationMessage } from '../send/send.js';
+import { present } from '../send/sparse.js';
+import type { DeliveryStore } from './delivery-store.js';
+import {
+  buildSendInput,
+  clientOpIdFor,
+  type PairConversations,
+  type RoutingAgents,
+  type RoutingHold,
+} from './send-input.js';
 
 interface DeliveryRouterDependencies {
-  readonly store: TranscriptStore;
-  readonly agents: AgentDirectory;
-  readonly conversations: ConversationDirectory;
+  readonly store: DeliveryStore;
+  readonly agents: RoutingAgents;
+  readonly conversations: PairConversations;
   readonly providerSend: ProviderSend;
-  readonly now: () => string;
-  readonly claimTimeoutMs?: number;
+  readonly now: () => Timestamp;
 }
 
-/** Running tally of what one delivery pass did; returned as the run result. */
-interface DeliveryProgress {
-  claimed: number;
-  deferredBusy: number;
-  submitted: number;
-  failed: number;
-  observed: number;
-}
+const zeroRun: DeliveryRunResult = {
+  claimed: 0,
+  deferredBusy: 0,
+  submitted: 0,
+  failed: 0,
+  observed: 0,
+};
 
-const zeroProgress = (values: Partial<DeliveryProgress> = {}): DeliveryProgress => ({
-  claimed: values.claimed ?? 0,
-  deferredBusy: values.deferredBusy ?? 0,
-  submitted: values.submitted ?? 0,
-  failed: values.failed ?? 0,
-  observed: values.observed ?? 0,
+/** One step's contribution to the run tally, counted against a zeroed run. */
+const tally = (progress: Partial<DeliveryRunResult>): DeliveryRunResult => ({
+  ...zeroRun,
+  ...progress,
 });
 
-const addProgress = (result: DeliveryProgress, next: DeliveryProgress): void => {
-  result.claimed += next.claimed;
-  result.deferredBusy += next.deferredBusy;
-  result.submitted += next.submitted;
-  result.failed += next.failed;
-  result.observed += next.observed;
-};
+/** Two tallies combined into a new one; neither operand is disturbed. */
+const addProgress = (left: DeliveryRunResult, right: DeliveryRunResult): DeliveryRunResult => ({
+  claimed: left.claimed + right.claimed,
+  deferredBusy: left.deferredBusy + right.deferredBusy,
+  submitted: left.submitted + right.submitted,
+  failed: left.failed + right.failed,
+  observed: left.observed + right.observed,
+});
+
+/**
+ * Moves one delivery to a new state when it is still in the expected one.
+ * Compare-and-set: if another worker moved it first, nothing changes and the
+ * caller counts nothing.
+ */
+async function moveDelivery(
+  store: DeliveryStore,
+  delivery: PendingDelivery,
+  expectedState: PendingDelivery['state'],
+  state: PendingDelivery['state'],
+  timestamp: Timestamp,
+  failure?: string,
+): Promise<boolean> {
+  const moved = await store.transitionPendingDelivery({
+    id: delivery.id,
+    expectedState,
+    state,
+    updatedAt: timestamp,
+    ...present('failure', failure),
+  });
+  return moved.changed;
+}
 
 /**
  * Runs one delivery pass: close claims that went stale, mark submitted
@@ -51,21 +79,38 @@ const addProgress = (result: DeliveryProgress, next: DeliveryProgress): void => 
  * routing. A queued delivery only moves once its recipient Agent is idle, so
  * a provider session is never interrupted mid-turn; anything not ready stays
  * queued for the next pass.
+ *
+ * Crash recovery: a delivery claimed by a worker that never reports back is
+ * freed by closeStaleClaims on a later pass, and a submitted delivery whose
+ * send reached transcript evidence is settled by observeConfirmedDeliveries.
+ * Known gap: a delivery stranded in submitted-unconfirmed whose send journal
+ * is never confirmed — a crash between claim and journal write, or a send
+ * that failed after settlement — has no path back, because the state machine
+ * (transitions.ts) allows no exit from submitted-unconfirmed except
+ * transcript-observed. Closing that gap is a behavior decision, not a
+ * clarity one, so it is documented here rather than silently patched.
  */
 export async function routePendingDeliveries(
   dependencies: DeliveryRouterDependencies,
 ): Promise<DeliveryRunResult> {
-  const now = dependencies.now();
-  const result = zeroProgress();
-  result.submitted = await closeStaleClaims(dependencies, now);
-  result.observed = await observeConfirmedDeliveries(dependencies.store, now);
+  const timestamp = dependencies.now();
+  let progress = tally({
+    submitted: await closeStaleClaims(dependencies, timestamp),
+    observed: await observeConfirmedDeliveries(dependencies.store, timestamp),
+  });
   const queued = (await dependencies.store.listPendingDeliveries())
     .filter((delivery) => delivery.state === 'queued');
   for (const delivery of queued) {
-    addProgress(result, await routeOneDelivery(dependencies, delivery));
+    progress = addProgress(progress, await routeOneDelivery(dependencies, delivery));
   }
-  return result;
+  return progress;
 }
+
+/** A claim older than this was abandoned by its worker and must be re-examined. */
+const CLAIM_TIMEOUT_MS = 30_000;
+
+const staleThreshold = (timestamp: Timestamp): number =>
+  Date.parse(timestamp) - CLAIM_TIMEOUT_MS;
 
 /**
  * Frees deliveries whose claim has gone stale — a worker claimed them but
@@ -74,45 +119,55 @@ export async function routePendingDeliveries(
  */
 async function closeStaleClaims(
   dependencies: DeliveryRouterDependencies,
-  now: string,
+  timestamp: Timestamp,
 ): Promise<number> {
-  const threshold = Date.parse(now) - (dependencies.claimTimeoutMs ?? 30_000);
+  const threshold = staleThreshold(timestamp);
+  const stale = (delivery: PendingDelivery): boolean =>
+    delivery.state === 'claimed' && Date.parse(delivery.updatedAt) <= threshold;
   let submitted = 0;
-  for (const delivery of await dependencies.store.listPendingDeliveries()) {
-    if (delivery.state !== 'claimed' || Date.parse(delivery.updatedAt) > threshold) continue;
-    const moved = await dependencies.store.transitionPendingDelivery({
-      id: delivery.id,
-      expectedState: 'claimed',
-      state: 'submitted-unconfirmed',
-      updatedAt: now,
-    });
-    if (moved.changed) submitted += 1;
+  for (const delivery of (await dependencies.store.listPendingDeliveries()).filter(stale)) {
+    if (await moveDelivery(
+      dependencies.store, delivery, 'claimed', 'submitted-unconfirmed', timestamp,
+    )) {
+      submitted += 1;
+    }
   }
   return submitted;
 }
+
+/** Only a delivery waiting on transcript evidence can be observed. */
+const awaitsObservation = (delivery: PendingDelivery): boolean =>
+  delivery.state === 'submitted-confirmed' || delivery.state === 'submitted-unconfirmed';
 
 /**
  * Advances submitted deliveries to transcript-observed once the send they
  * produced is confirmed in the transcript, closing the delivery loop.
  */
 async function observeConfirmedDeliveries(
-  store: TranscriptStore,
-  now: string,
+  store: DeliveryStore,
+  timestamp: Timestamp,
 ): Promise<number> {
   const journals = new Map((await store.listSendJournals()).map((item) => [item.clientOpId, item]));
   let observed = 0;
   for (const delivery of await store.listPendingDeliveries()) {
-    if (delivery.state !== 'submitted-confirmed' && delivery.state !== 'submitted-unconfirmed') continue;
-    if (journals.get(clientOpIdFor(delivery))?.state !== 'confirmed') continue;
-    const moved = await store.transitionPendingDelivery({
-      id: delivery.id,
-      expectedState: delivery.state,
-      state: 'transcript-observed',
-      updatedAt: now,
-    });
-    if (moved.changed) observed += 1;
+    observed += await observeIfConfirmed(store, delivery, journals, timestamp);
   }
   return observed;
+}
+
+/** Advances one submitted delivery to transcript-observed when its send journal is confirmed. */
+async function observeIfConfirmed(
+  store: DeliveryStore,
+  delivery: PendingDelivery,
+  journals: ReadonlyMap<string, SendJournal>,
+  timestamp: Timestamp,
+): Promise<number> {
+  if (!awaitsObservation(delivery)) return 0;
+  if (journals.get(clientOpIdFor(delivery))?.state !== 'confirmed') return 0;
+  if (!await moveDelivery(store, delivery, delivery.state, 'transcript-observed', timestamp)) {
+    return 0;
+  }
+  return 1;
 }
 
 /**
@@ -123,104 +178,117 @@ async function observeConfirmedDeliveries(
 async function routeOneDelivery(
   dependencies: DeliveryRouterDependencies,
   delivery: PendingDelivery,
-): Promise<DeliveryProgress> {
-  const input = await buildSendInput(dependencies, delivery);
-  if (input === 'deferred') return zeroProgress({ deferredBusy: 1 });
-  if (input instanceof Error) {
-    return failDelivery(dependencies, delivery, 'queued', input.message);
-  }
-  const claim = await dependencies.store.transitionPendingDelivery({
-    id: delivery.id,
-    expectedState: 'queued',
-    state: 'claimed',
-    updatedAt: dependencies.now(),
-  });
-  return claim.changed
-    ? submitClaimedDelivery(dependencies, delivery, input)
-    : zeroProgress();
+): Promise<DeliveryRunResult> {
+  const built = await buildSendInput(dependencies, delivery);
+  if (!built.ok) return recordHold(dependencies, delivery, built);
+  const claimed = await moveDelivery(
+    dependencies.store, delivery, 'queued', 'claimed', dependencies.now(),
+  );
+  if (!claimed) return tally({});
+  return submitClaimedDelivery(dependencies, delivery, built.input);
 }
 
 /**
- * Turns a queued delivery back into a conversation send input by reading its
- * source transcript line and checking both participants. Returns 'deferred'
- * when the recipient has no session or is busy — the delivery stays queued —
- * and an Error when the delivery can never succeed, with the reason.
+ * A deferred delivery stays queued for the next pass; an undeliverable one is
+ * failed now with the reason it can never proceed.
  */
-async function buildSendInput(
+async function recordHold(
   dependencies: DeliveryRouterDependencies,
   delivery: PendingDelivery,
-): Promise<ConversationSendInput | 'deferred' | Error> {
-  const line = await dependencies.store.getTranscriptLine(delivery.transcriptLineId);
-  if (line === null) return new Error(`source TranscriptLine ${delivery.transcriptLineId} is missing`);
-  const marker = findAgentDeliveryMarker(`${line.text}\n${line.raw}`);
-  if (marker?.recipientAgentId !== delivery.recipientAgentId) {
-    return new Error(`source TranscriptLine ${line.id} has no matching delivery marker`);
-  }
-  const session = (await dependencies.store.listProviderSessions())
-    .find((candidate) => candidate.id === line.sessionId);
-  if (session?.agentId === undefined) return 'deferred';
-  if (session.agentId === delivery.recipientAgentId) {
-    return new Error('Agent delivery requires two different participants');
-  }
-  const recipient = await dependencies.agents.get(delivery.recipientAgentId);
-  if (recipient === null) return new Error(`recipient Agent ${delivery.recipientAgentId} is missing`);
-  if (recipient.currentProviderSessionId === null
-    || await dependencies.agents.deliveryReadiness(recipient.agentId) !== 'idle') return 'deferred';
-  const participants = [session.agentId, recipient.agentId].sort() as [string, string];
-  const view = await dependencies.conversations.ensureForAgentPair({
-    participantAgentIds: participants,
-    clientOpId: `delivery-view:${participants.join(':')}`,
-  });
-  return {
-    conversationId: view.conversationId,
-    issuedBy: session.agentId,
-    targetAgentId: recipient.agentId,
-    text: marker.text,
-    clientOpId: clientOpIdFor(delivery),
-  };
+  outcome: RoutingHold,
+): Promise<DeliveryRunResult> {
+  if (outcome.kind === 'deferred') return tally({ deferredBusy: 1 });
+  return failDelivery(dependencies, delivery, 'queued', outcome.reason);
 }
+
+/** The failure reason a thrown cause leaves behind for the delivery's evidence trail. */
+const failureMessage = (cause: unknown): string =>
+  cause instanceof Error ? cause.message : String(cause);
 
 /**
  * Submits a claimed delivery by sending its text as a conversation message,
  * then records on the delivery whether that send reached the provider. The
  * delivery's clientOpId is derived from its own id, so a resubmission finds
- * the existing send journal instead of sending twice.
+ * the existing send journal instead of sending twice. Any throw along the way
+ * — send slice, journal read, or the settlement write itself — is recorded as
+ * the delivery's failure, so a claimed delivery never hangs without evidence.
  */
 async function submitClaimedDelivery(
   dependencies: DeliveryRouterDependencies,
   delivery: PendingDelivery,
   input: ConversationSendInput,
-): Promise<DeliveryProgress> {
+): Promise<DeliveryRunResult> {
   try {
-    const result = await sendConversationMessage({
-      store: dependencies.store,
-      agentDirectory: dependencies.agents,
-      providerSend: dependencies.providerSend,
-      now: brandClock(dependencies.now),
-    }, input);
-    if (!result.ok) {
-      const refused = await failDelivery(dependencies, delivery, 'claimed', result.rejection.message);
-      return zeroProgress({ claimed: 1, failed: refused.failed });
-    }
-    const accepted = result.acceptance;
-    const journals = await dependencies.store.listSendJournals();
-    const state = submissionState(findAcceptedJournal(accepted.sendId, journals));
-    const moved = await dependencies.store.transitionPendingDelivery({
-      id: delivery.id,
-      expectedState: 'claimed',
-      state,
-      updatedAt: dependencies.now(),
-      ...(state === 'failed'
-        ? { failure: 'provider dispatch failed before transcript evidence' } : {}),
-    });
-    return zeroProgress(state === 'failed'
-      ? { claimed: 1, failed: moved.changed ? 1 : 0 }
-      : { claimed: 1, submitted: moved.changed ? 1 : 0 });
+    return await submitAndSettle(dependencies, delivery, input);
   } catch (cause) {
-    const failure = cause instanceof Error ? cause.message : String(cause);
-    const failed = await failDelivery(dependencies, delivery, 'claimed', failure);
-    return zeroProgress({ claimed: 1, failed: failed.failed });
+    return failClaimedDelivery(dependencies, delivery, failureMessage(cause));
   }
+}
+
+/**
+ * Runs the conversation send for one claimed delivery. A typed rejection
+ * fails the delivery with the rejection's code and message as evidence; an
+ * acceptance is settled against the send journal's evidence.
+ */
+async function submitAndSettle(
+  dependencies: DeliveryRouterDependencies,
+  delivery: PendingDelivery,
+  input: ConversationSendInput,
+): Promise<DeliveryRunResult> {
+  const result = await sendConversationMessage({
+    store: dependencies.store,
+    agentDirectory: dependencies.agents,
+    providerSend: dependencies.providerSend,
+    now: dependencies.now,
+  }, input);
+  if (!result.ok) {
+    return failClaimedDelivery(
+      dependencies, delivery, `${result.rejection.code}: ${result.rejection.message}`,
+    );
+  }
+  return recordSubmissionOutcome(dependencies, delivery, result.acceptance);
+}
+
+/** One claimed delivery that failed, tallied. */
+async function failClaimedDelivery(
+  dependencies: DeliveryRouterDependencies,
+  delivery: PendingDelivery,
+  reason: string,
+): Promise<DeliveryRunResult> {
+  const failed = await failDelivery(dependencies, delivery, 'claimed', reason);
+  return tally({ claimed: 1, failed: failed.failed });
+}
+
+/** Claimed, plus failed or submitted depending on the state the send's evidence implies. */
+function settlementProgress(
+  state: PendingDelivery['state'],
+  changed: boolean,
+): DeliveryRunResult {
+  const count = changed ? 1 : 0;
+  if (state === 'failed') return tally({ claimed: 1, failed: count });
+  return tally({ claimed: 1, submitted: count });
+}
+
+/**
+ * Maps an accepted send back onto the delivery state it implies and moves the
+ * delivery there. A failed transition means another worker settled the
+ * delivery first, so the send's outcome is only counted when this pass moved it.
+ */
+async function recordSubmissionOutcome(
+  dependencies: DeliveryRouterDependencies,
+  delivery: PendingDelivery,
+  acceptance: ConversationSendAcceptance,
+): Promise<DeliveryRunResult> {
+  const state = submissionState(
+    findAcceptedJournal(acceptance.sendId, await dependencies.store.listSendJournals()),
+  );
+  const failure = state === 'failed'
+    ? 'provider dispatch failed before transcript evidence'
+    : undefined;
+  const moved = await moveDelivery(
+    dependencies.store, delivery, 'claimed', state, dependencies.now(), failure,
+  );
+  return settlementProgress(state, moved);
 }
 
 /** Records a delivery as failed with the reason it can never proceed. */
@@ -229,18 +297,13 @@ async function failDelivery(
   delivery: PendingDelivery,
   expectedState: 'queued' | 'claimed',
   failure: string,
-): Promise<DeliveryProgress> {
-  const moved = await dependencies.store.transitionPendingDelivery({
-    id: delivery.id,
-    expectedState,
-    state: 'failed',
-    updatedAt: dependencies.now(),
-    failure,
-  });
-  return zeroProgress({ failed: moved.changed ? 1 : 0 });
+): Promise<DeliveryRunResult> {
+  const moved = await moveDelivery(
+    dependencies.store, delivery, expectedState, 'failed', dependencies.now(), failure,
+  );
+  if (!moved) return tally({});
+  return tally({ failed: 1 });
 }
-
-const clientOpIdFor = (delivery: PendingDelivery): string => `delivery:${delivery.id}`;
 
 /**
  * Maps a send journal onto the delivery state it implies: a confirmed send
@@ -250,10 +313,16 @@ const clientOpIdFor = (delivery: PendingDelivery): string => `delivery:${deliver
 const submissionState = (journal: SendJournal): PendingDelivery['state'] => {
   if (journal.state === 'confirmed') return 'submitted-confirmed';
   if (journal.state === 'failed') return 'failed';
-  return journal.attempts.at(-1)?.submission === 'confirmed'
-    ? 'submitted-confirmed' : 'submitted-unconfirmed';
+  if (journal.attempts.at(-1)?.submission === 'confirmed') return 'submitted-confirmed';
+  return 'submitted-unconfirmed';
 };
 
+/**
+ * The journal the send slice just accepted must be in the store's own list;
+ * its absence means the store broke its contract. The throw does not halt the
+ * pass: submitClaimedDelivery catches it and records it as the delivery's
+ * failure evidence, so one store defect fails one delivery rather than the run.
+ */
 function findAcceptedJournal(sendId: string, journals: readonly SendJournal[]): SendJournal {
   const journal = journals.find((candidate) => candidate.id === sendId);
   if (journal === undefined) throw new Error(`accepted SendJournal ${sendId} is missing`);

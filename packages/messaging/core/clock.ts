@@ -6,5 +6,5 @@ import type { Timestamp } from '../contract/types.js';
  * place the raw `() => string` clock crosses into branded time, so the cast
  * has exactly one owner.
  */
-export const brandClock = (now: () => string): (() => Timestamp) =>
-  () => now() as Timestamp;
+export const brandClock = (rawClock: () => string): (() => Timestamp) =>
+  () => rawClock() as Timestamp;

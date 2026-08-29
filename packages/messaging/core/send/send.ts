@@ -2,11 +2,11 @@ import type {
   ConversationSendInput,
   SendConversationResult,
 } from '../../contract/commands.js';
-import type { AgentDirectory } from '../../contract/ports/agent-directory.js';
 import type { ProviderSend } from '../../contract/ports/provider-send.js';
 import type { Timestamp } from '../../contract/types.js';
 import { acceptSend } from './accept.js';
 import { buildSendAcceptance } from './acceptance.js';
+import type { AgentLookup } from './agent-lookup.js';
 import { dispatchAcceptedSend } from './dispatch.js';
 import { present } from './sparse.js';
 import type { SendStore } from './send-store.js';
@@ -14,7 +14,7 @@ import type { SendStore } from './send-store.js';
 interface SendDependencies {
   readonly store: SendStore;
   readonly providerSend: ProviderSend;
-  readonly agentDirectory: AgentDirectory;
+  readonly agentDirectory: AgentLookup;
   readonly now: () => Timestamp;
 }
 

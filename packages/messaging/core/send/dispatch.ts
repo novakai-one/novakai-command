@@ -1,11 +1,11 @@
 import type { SendRejection } from '../../contract/commands.js';
-import type { AgentDirectory } from '../../contract/ports/agent-directory.js';
 import type { ProviderDispatchResult, ProviderSend } from '../../contract/ports/provider-send.js';
 import type { IngestCheckpoint } from '../../contract/records/ingest-checkpoint.js';
 import type { ProviderSession } from '../../contract/records/provider-session.js';
 import type { SendAttempt, SendJournal } from '../../contract/records/send-journal.js';
 import type { ProviderSessionId, Timestamp } from '../../contract/types.js';
 import { messageCorrelationHint } from '../../contract/correlation.js';
+import type { AgentLookup } from './agent-lookup.js';
 import { mintSendAttemptId } from './mint.js';
 import { present } from './sparse.js';
 import type { SendStore } from './send-store.js';
@@ -13,7 +13,7 @@ import type { SendStore } from './send-store.js';
 interface DispatchDependencies {
   readonly store: SendStore;
   readonly providerSend: ProviderSend;
-  readonly agentDirectory: AgentDirectory;
+  readonly agentDirectory: AgentLookup;
   readonly now: () => Timestamp;
 }
 
