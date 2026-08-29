@@ -1,7 +1,7 @@
 import { mkdir, open, readFile, unlink, type FileHandle } from 'node:fs/promises';
 import path from 'node:path';
 import { MessagingError } from '../../contract/types.js';
-import { isErrno } from '../errno.js';
+import { isErrno } from '../../core/thrown.js';
 
 interface LeaseRecord {
   readonly id: string;

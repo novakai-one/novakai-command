@@ -27,6 +27,15 @@ export const laneOf: Record<MessagingStoreOp['op'], MutationLane> = {
   'projection-rebuild': 'projection',
 };
 
+/** The one lane→field mapping; replay reads and writer stamps both derive from this table. */
+export const laneSequenceField = {
+  transcript: 'transcriptSequence',
+  send: 'sendSequence',
+  delivery: 'deliverySequence',
+  conversation: 'conversationSequence',
+  projection: 'projectionSequence',
+} as const satisfies Record<MutationLane, keyof MessagingStoreRecord>;
+
 /** Foundation envelope around one replayable Messaging operation. */
 export interface MessagingStoreRecord {
   readonly kind: 'messagingStoreOp';

@@ -45,9 +45,8 @@ const settledTransition = (
   input: SendTransitionInput,
 ): SendTransitionResult => {
   if (current.state === input.state) return { journal: current, changed: false };
-  throw new MessagingError('IdempotencyConflict', {
+  throw new MessagingError('ConcurrentModification', {
     message: `Send ${input.sendId} state is ${current.state}, expected ${input.expectedState}`,
-    retryable: true,
     fields: { sendId: input.sendId, expected: input.expectedState, actual: current.state },
   });
 };

@@ -55,7 +55,9 @@ const applyOutcome = (outcome: ConfirmOutcome, changed: SendJournal[]): void => 
 
 /** The confirming line leaves the candidate pool, so no line confirms two sends. */
 const consumeLine = (candidates: TranscriptLine[], lineId: TranscriptLine['id']): void => {
-  candidates.splice(candidates.findIndex((line) => line.id === lineId), 1);
+  const found = candidates.findIndex((line) => line.id === lineId);
+  if (found < 0) return;
+  candidates.splice(found, 1);
 };
 
 /** Line ids already consumed by a confirmed attempt, so no line confirms two sends. */

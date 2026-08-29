@@ -158,6 +158,19 @@
       }
     },
     {
+      "name": "ConcurrentModification",
+      "summary": "Another writer moved the record first: a stale checkpoint, a lost compare-and-set race. Always retryable \u2014 the next attempt re-reads the winner's state and proceeds or no-ops. Distinct from IdempotencyConflict, which is permanent.",
+      "retryable": true,
+      "fields": {
+        "sourceId": {
+          "type": "string"
+        },
+        "sendId": {
+          "type": "string"
+        }
+      }
+    },
+    {
       "name": "DependencyUnavailable",
       "summary": "R6: typed public outcome for dependency failure. One umbrella shape; the dependency field names which seam failed. StoreUnavailable/StorageExhausted/StoreCorrupt map here (Store-Seam \u00a76); membership-timeout and authority-failure reuse THIS shape (Messaging-Seams \u00a72.2, \u00a73.3); clock/ID halt-class failures use dependency=clock (Messaging-Seams \u00a75.2). presence-transport is DELIBERATELY absent \u2014 its failures surface through the Delivery lane as typed state, a richer public outcome (Messaging-Seams \u00a74.2). Consumers assume non-retryable unless the instance's retryable field says true; they MUST tolerate unknown dependency values (treat as non-retryable).",
       "retryable": false,

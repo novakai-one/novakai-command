@@ -9,6 +9,7 @@ import {
 } from './transcript-state.js';
 import {
   laneOf,
+  laneSequenceField,
   messagingStoreRecord,
   type MessagingStoreRecord,
   type MutationLane,
@@ -55,15 +56,8 @@ const emptyAccumulator = (): ReplayAccumulator => ({
 });
 
 /** The lane sequence a record carries, defaulting to zero for records older than sequencing. */
-const sequenceOf = (record: MessagingStoreRecord, lane: MutationLane): number => {
-  switch (lane) {
-    case 'transcript': return record.transcriptSequence ?? 0;
-    case 'send': return record.sendSequence ?? 0;
-    case 'delivery': return record.deliverySequence ?? 0;
-    case 'conversation': return record.conversationSequence ?? 0;
-    case 'projection': return record.projectionSequence ?? 0;
-  }
-};
+const sequenceOf = (record: MessagingStoreRecord, lane: MutationLane): number =>
+  record[laneSequenceField[lane]] ?? 0;
 
 /** Folds one record into its lane's envelope list and high-water sequence. */
 const foldRecord = (replay: ReplayAccumulator, record: MessagingStoreRecord): void => {

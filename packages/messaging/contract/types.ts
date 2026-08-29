@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // GENERATED FILE — DO NOT EDIT.
 // Source: contract/messaging-contract.json (law #3 single source of truth).
-// contractVersion 1.2.0 · schemaVersion 1 · sha256:8c7c35709437e41f
+// contractVersion 1.2.0 · schemaVersion 1 · sha256:078c11a30c8181d7
 // Regenerate: npm run generate
 // ---------------------------------------------------------------------------
 
@@ -72,6 +72,7 @@ export type TranscriptRole = (typeof transcriptRoleValues)[number];
 // --- error catalogue -------------------------------------------------------
 export const errorCatalogue = [
   { name: "IdempotencyConflict", retryable: false, reserved: false },
+  { name: "ConcurrentModification", retryable: true, reserved: false },
   { name: "DependencyUnavailable", retryable: false, reserved: false },
   { name: "InvalidSendInput", retryable: false, reserved: false },
   { name: "InvalidQuery", retryable: false, reserved: false },

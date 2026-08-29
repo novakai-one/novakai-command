@@ -17,6 +17,7 @@ import type { ConversationViewMutation } from '../../contract/records/conversati
 import type { ProjectionRebuildResult } from '../../contract/records/projections.js';
 import { MessagingError } from '../../contract/types.js';
 import {
+  laneSequenceField,
   type MessagingStoreOp,
   type MessagingStoreRecord,
   type MutationLane,
@@ -30,15 +31,8 @@ const storeOpObjectId = (operationKey: string): ObjectId =>
   mintMessagingStoreOpId(operationKey) as unknown as ObjectId;
 
 /** The per-lane sequence field one record carries — each lane stamps exactly its own. */
-const sequenceStamp = (lane: MutationLane, value: number): Partial<MessagingStoreRecord> => {
-  switch (lane) {
-    case 'transcript': return { transcriptSequence: value };
-    case 'send': return { sendSequence: value };
-    case 'delivery': return { deliverySequence: value };
-    case 'conversation': return { conversationSequence: value };
-    case 'projection': return { projectionSequence: value };
-  }
-};
+const sequenceStamp = (lane: MutationLane, value: number): Partial<MessagingStoreRecord> =>
+  ({ [laneSequenceField[lane]]: value });
 
 /** Serializes all Foundation appends while preserving per-lane replay order. */
 export class FoundationMessagingWriter {

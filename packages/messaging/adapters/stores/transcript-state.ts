@@ -9,7 +9,16 @@ import type { ProviderSession } from "../../contract/records/provider-session.js
 import type { TranscriptLine } from "../../contract/records/transcript-line.js";
 import type { EventCursor, TranscriptSourceId } from "../../contract/types.js";
 import { MessagingError } from "../../contract/types.js";
+import { parseEventCursor } from "../../contract/event-cursor.js";
+import { compareStrings } from "../../core/compare.js";
 import { present } from "../../core/send/sparse.js";
+
+/** Event cursors mint here only, checked against the contract pattern — a mint failure is a defect. */
+const mintEventCursor = (sequence: number): EventCursor => {
+  const minted = parseEventCursor(`event_${sequence}`);
+  if (minted === undefined) throw new Error(`EventCursor mint failed for sequence ${sequence}`);
+  return minted;
+};
 
 /** Replay envelope used by durable TranscriptStore adapters. */
 export interface PersistedTranscriptBatch {
@@ -40,9 +49,8 @@ const alreadyCommitted = (current: IngestCheckpoint, input: TranscriptBatchInput
 
 /** A checkpoint throw that ingest maps to the checkpoint-conflict failure kind. */
 const checkpointConflict = (sourceId: TranscriptSourceId, detail: string): MessagingError =>
-  new MessagingError('IdempotencyConflict', {
+  new MessagingError('ConcurrentModification', {
     message: `Ingest checkpoint ${detail} for ${sourceId}`,
-    retryable: true,
     fields: { sourceId, conflict: 'checkpoint' },
   });
 
@@ -197,11 +205,12 @@ export class TranscriptState {
 
   private pushEvent(input: Omit<TranscriptEvent, "cursor">): void {
     this.eventSequence += 1;
-    this.events.push({ ...input, cursor: `event_${this.eventSequence}` as EventCursor });
+    this.events.push({ ...input, cursor: mintEventCursor(this.eventSequence) });
   }
 
   listProviderSessions(): readonly ProviderSession[] {
-    return [...this.sessions.values()].sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+    return [...this.sessions.values()].sort((left, right) =>
+      compareStrings(left.createdAt, right.createdAt));
   }
 
   listTranscriptLines(query: TranscriptLineQuery = {}): readonly TranscriptLine[] {
@@ -214,7 +223,7 @@ export class TranscriptState {
       .filter((line) => query.sourceId === undefined || line.sourcePosition.sourceId === query.sourceId)
       .filter((line) => query.resumeId === undefined || line.sessionId === sessionForResume)
       .sort((left, right) =>
-        left.sourcePosition.sourceId.localeCompare(right.sourcePosition.sourceId)
+        compareStrings(left.sourcePosition.sourceId, right.sourcePosition.sourceId)
         || left.sourcePosition.sourceEpoch - right.sourcePosition.sourceEpoch
         || left.sourcePosition.offset - right.sourcePosition.offset);
   }
