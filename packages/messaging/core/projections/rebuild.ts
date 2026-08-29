@@ -9,8 +9,12 @@ import type { ProviderSessionId } from '../../contract/types.js';
  * Recomputes every rebuildable projection from the ordered transcript lines:
  * per-session token rollups and the tool-call index. Projections carry no
  * authority of their own — they can be dropped and rebuilt from the lines at
- * any time, so this function is deterministic, pure, and safe to rerun after
- * any crash.
+ * any time, so this function is deterministic and pure. Crash safety is owned
+ * by the caller: the runtime wraps this in the store's `replaceProjections`,
+ * so a crash before that call leaves the previous projection intact.
+ *
+ * Ordering is code-unit based, never locale-dependent, so the same lines
+ * produce byte-identical output on any host.
  */
 export function rebuildProjections(
   lines: readonly TranscriptLine[],
@@ -37,7 +41,12 @@ function accrueTokens(
   tokensBySession.set(line.sessionId, running + tokenTotal(line));
 }
 
-/** Sums a line's reported token usage, ignoring malformed entries. */
+/**
+ * Sums a line's reported token usage, ignoring malformed entries. Totals are
+ * exact while one session's lifetime usage stays below
+ * Number.MAX_SAFE_INTEGER (~9 quadrillion tokens); beyond that the contract's
+ * non-negative guarantee holds but precision does not.
+ */
 function tokenTotal(line: TranscriptLine): number {
   let total = 0;
   for (const value of Object.values(line.tokenUsage ?? {})) {
@@ -84,11 +93,18 @@ function sortedRollups(
 ): ProjectionRebuildResult['usageRollups'] {
   return [...tokensBySession.entries()]
     .map(([sessionId, tokens]) => ({ sessionId, tokens }))
-    .sort((left, right) => left.sessionId.localeCompare(right.sessionId));
+    .sort((left, right) => compareStrings(left.sessionId, right.sessionId));
 }
 
-/** Tool calls in line-id order, so reruns produce byte-identical output. */
+/** Tool calls in line-id order (not transcript position), so reruns produce byte-identical output. */
 function sortedToolCalls(toolCalls: readonly ToolCallIndex[]): readonly ToolCallIndex[] {
   return [...toolCalls].sort((left, right) =>
-    left.transcriptLineId.localeCompare(right.transcriptLineId));
+    compareStrings(left.transcriptLineId, right.transcriptLineId));
 }
+
+/** Code-unit string order — locale-independent, identical on every host. */
+const compareStrings = (left: string, right: string): number => {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
+};
