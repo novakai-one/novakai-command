@@ -11,7 +11,7 @@ import type { AgentDirectory } from '../../contract/ports/agent-directory.js';
 import type { ConversationDirectory } from '../../contract/ports/conversation-directory.js';
 import type { ProviderSend } from '../../contract/ports/provider-send.js';
 import type { TranscriptStore } from '../../contract/ports/transcript-store.js';
-import type { PendingDelivery } from '../../contract/records/pending-delivery.js';
+import type { DeliveryFailure, PendingDelivery } from '../../contract/records/pending-delivery.js';
 import type { ProviderSession } from '../../contract/records/provider-session.js';
 import type { ProviderSessionId, Timestamp } from '../../contract/types.js';
 import type { TranscriptLine } from '../../contract/records/transcript-line.js';
@@ -92,6 +92,9 @@ function deliveryMarker(recipientAgentId: string, text: string, key: string): st
   }), 'utf8').toString('base64url');
   return `NOVAKAI_DELIVERY_V1:${payload}`;
 }
+
+/** Typed failure evidence used wherever a test needs a failed delivery. */
+const proofFailure: DeliveryFailure = { kind: 'dispatch-failed', detail: 'proof' };
 
 function dependencies(store: TranscriptStore) {
   const current = new Map<string, string | null>([
@@ -224,7 +227,8 @@ test('every PendingDelivery state survives restart and illegal skips are refused
       const first = target === 'failed' ? 'failed' : 'claimed';
       await store.transitionPendingDelivery({
         id: item.id, expectedState: 'queued', state: first,
-        updatedAt: timestamp, ...(first === 'failed' ? { failure: 'proof' } : {}),
+        updatedAt: timestamp,
+        ...(first === 'failed' ? { failure: proofFailure } : {}),
       });
       if (target.startsWith('submitted')) {
         await store.transitionPendingDelivery({
@@ -241,7 +245,9 @@ test('every PendingDelivery state survives restart and illegal skips are refused
     }
     await store.close();
     const reopened = await openFoundationTranscriptStore(options);
-    assert.equal((await reopened.listPendingDeliveries())[0]?.state, target);
+    const restored = (await reopened.listPendingDeliveries())[0];
+    assert.equal(restored?.state, target);
+    if (target === 'failed') assert.deepEqual(restored?.failure, proofFailure);
     await reopened.close();
   }
 

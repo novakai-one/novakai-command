@@ -1,4 +1,5 @@
 import type { AgentDeliveryMarker } from '../../contract/agent-delivery-marker.js';
+import type { TranscriptLine } from '../../contract/records/transcript-line.js';
 
 const PREFIX = 'NOVAKAI_DELIVERY_V1:';
 const TOKEN = /NOVAKAI_DELIVERY_V1:([A-Za-z0-9_-]+)/gu;
@@ -52,4 +53,15 @@ export function findAgentDeliveryMarker(evidence: string): AgentDeliveryMarker |
     }
   }
   return undefined;
+}
+
+/**
+ * Finds the delivery marker on one transcript line, searching its normalized
+ * text and its verbatim raw form together — the marker may survive in either
+ * representation depending on how the provider echoed the turn.
+ */
+export function findAgentDeliveryMarkerInLine(
+  line: Pick<TranscriptLine, 'text' | 'raw'>,
+): AgentDeliveryMarker | undefined {
+  return findAgentDeliveryMarker(`${line.text}\n${line.raw}`);
 }
