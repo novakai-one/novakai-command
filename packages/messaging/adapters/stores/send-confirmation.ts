@@ -22,7 +22,9 @@ type ConfirmOutcome =
  * Matches one session's awaiting-transcript journals against fresh lines in
  * dispatch order: exactly one eligible line confirms, more than one is honest
  * indeterminate, none leaves the journal waiting for a later pass. A confirmed
- * line is consumed, so no line ever confirms two sends.
+ * line is consumed, so no line ever confirms two sends. Crash recovery: this
+ * pass is pure — the caller persists the changed journals before applying
+ * them, so a crash mid-confirm replays from the store on next open.
  */
 export function confirmJournalsForLines(
   journals: ReadonlyMap<string, SendJournal>,

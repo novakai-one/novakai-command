@@ -97,7 +97,12 @@ const foldAll = (items: readonly { object: unknown }[]): ReplayAccumulator => {
   return replay;
 };
 
-/** Replays the one Messaging store into its private state owners, one lane each. */
+/**
+ * Replays the one Messaging store into its private state owners, one lane
+ * each. Crash recovery: this pass IS the recovery — on open it rebuilds all
+ * in-memory state from persisted records, so anything never persisted never
+ * happened.
+ */
 export async function restoreFoundationMessagingStore(
   handle: ScopedStoreHandle,
 ): Promise<RestoredFoundationMessagingStore> {

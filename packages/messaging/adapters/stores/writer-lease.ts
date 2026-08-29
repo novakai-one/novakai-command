@@ -72,7 +72,11 @@ const leaseHolder = async (file: string, lane: string): Promise<void> => {
   await unlink(file).catch(() => undefined);
 };
 
-/** Holds one process-level writer lane for the lifetime of its store adapter. */
+/**
+ * Holds one process-level writer lane for the lifetime of its store adapter.
+ * Crash recovery: a lease whose process is dead (ESRCH) is stale and reclaimed
+ * here on next open, so a crashed writer never blocks the lane forever.
+ */
 export async function acquireMessagingWriterLease(
   root: string,
   lane: string,

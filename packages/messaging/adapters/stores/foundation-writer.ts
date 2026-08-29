@@ -15,7 +15,7 @@ import type { ProviderSession } from '../../contract/records/provider-session.js
 import type { SendJournal } from '../../contract/records/send-journal.js';
 import type { ConversationViewMutation } from '../../contract/records/conversation-view.js';
 import type { ProjectionRebuildResult } from '../../contract/records/projections.js';
-import { MessagingError } from '../../contract/types.js';
+import { MessagingError, type Timestamp } from '../../contract/types.js';
 import {
   laneSequenceField,
   type MessagingStoreOp,
@@ -34,13 +34,19 @@ const storeOpObjectId = (operationKey: string): ObjectId =>
 const sequenceStamp = (lane: MutationLane, value: number): Partial<MessagingStoreRecord> =>
   ({ [laneSequenceField[lane]]: value });
 
-/** Serializes all Foundation appends while preserving per-lane replay order. */
+/**
+ * Serializes all Foundation appends while preserving per-lane replay order.
+ * Crash recovery: a record either lands in the Foundation store or the
+ * sequence is rolled back and the caller sees a typed failure — a crash
+ * mid-append replays from the store on next open.
+ */
 export class FoundationMessagingWriter {
   private mutationTail: Promise<unknown> = Promise.resolve();
 
   constructor(
     private readonly handle: ScopedStoreHandle,
     private readonly sequences: Record<MutationLane, number>,
+    private readonly now: () => Timestamp,
   ) {}
 
   persistTranscript(input: TranscriptBatchInput): Promise<void> {
@@ -65,7 +71,7 @@ export class FoundationMessagingWriter {
     return this.persistContent(
       `send-journal:${journals.map((item) => item.id).join(',')}`,
       { op: 'send-journal-mutation', journals },
-      journals[0]?.updatedAt ?? new Date().toISOString(),
+      journals[0]?.updatedAt ?? this.now(),
       'send',
     );
   }
@@ -74,7 +80,7 @@ export class FoundationMessagingWriter {
     return this.persistContent(
       `pending-delivery:${deliveries.map((item) => item.id).join(',')}`,
       { op: 'pending-delivery-mutation', deliveries },
-      deliveries[0]?.updatedAt ?? new Date().toISOString(),
+      deliveries[0]?.updatedAt ?? this.now(),
       'delivery',
     );
   }
@@ -92,7 +98,7 @@ export class FoundationMessagingWriter {
     return this.persistContent(
       'projection-rebuild',
       { op: 'projection-rebuild', result },
-      new Date().toISOString(),
+      this.now(),
       'projection',
     );
   }
@@ -100,7 +106,7 @@ export class FoundationMessagingWriter {
   private persistContent(
     prefix: string,
     storeOp: MessagingStoreOp,
-    createdAt: string,
+    createdAt: Timestamp,
     lane: MutationLane,
   ): Promise<void> {
     const digest = createHash('sha256').update(canonicalJson(storeOp)).digest('hex');
@@ -110,7 +116,7 @@ export class FoundationMessagingWriter {
   private persist(
     operationKey: string,
     storeOp: MessagingStoreOp,
-    createdAt: string,
+    createdAt: Timestamp,
     lane: MutationLane,
   ): Promise<void> {
     const operation = () => this.persistSerialized(operationKey, storeOp, createdAt, lane);
@@ -122,7 +128,7 @@ export class FoundationMessagingWriter {
   private async persistSerialized(
     operationKey: string,
     storeOp: MessagingStoreOp,
-    createdAt: string,
+    createdAt: Timestamp,
     lane: MutationLane,
   ): Promise<void> {
     const payloadDigest = createHash('sha256').update(canonicalJson(storeOp)).digest('hex');

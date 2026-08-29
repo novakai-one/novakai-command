@@ -20,8 +20,10 @@ import type { TranscriptLine } from '../../contract/records/transcript-line.js';
 import type {
   EventCursor,
   ProviderSessionId,
+  Timestamp,
   TranscriptSourceId,
 } from '../../contract/types.js';
+import { brandClock } from '../../core/clock.js';
 import { restoreFoundationMessagingStore } from './foundation-replay.js';
 import type { RestoredFoundationMessagingStore } from './foundation-replay.js';
 import { FoundationMessagingWriter } from './foundation-writer.js';
@@ -32,6 +34,8 @@ export interface FoundationTranscriptStoreOptions {
   readonly root: string;
   readonly dataRoot: string;
   readonly lockTimeoutMs?: number;
+  /** Host clock for envelope timestamps; defaults to the wall clock, branded once here. */
+  readonly now?: () => Timestamp;
 }
 
 function storeFacade(
@@ -96,13 +100,14 @@ export async function openFoundationTranscriptStore(
     ...(options.lockTimeoutMs === undefined ? {} : { lockTimeoutMs: options.lockTimeoutMs }),
   });
   const restored = await restoreFoundationMessagingStore(handle);
+  const clock = options.now ?? brandClock(() => new Date().toISOString());
   const writer = new FoundationMessagingWriter(handle, {
     transcript: restored.transcriptSequence,
     send: restored.sendSequence,
     delivery: restored.deliverySequence,
     conversation: restored.conversationSequence,
     projection: restored.projectionSequence,
-  });
+  }, clock);
   return storeFacade(restored, writer, lease);
   } catch (cause) {
     await lease.release();

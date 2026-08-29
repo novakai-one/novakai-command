@@ -38,7 +38,7 @@ export interface EnsureConversationViewInput {
   readonly titleOverride?: string;
   readonly pinned?: boolean;
   readonly archived?: boolean;
-  readonly lastActivityAt?: string;
+  readonly lastActivityAt?: Timestamp | string;
   readonly lastReadLineId?: TranscriptLineId | string;
   readonly address?: string;
   readonly agentId?: string;
@@ -52,6 +52,6 @@ export interface UpdateConversationViewInput {
   readonly titleOverride?: string;
   readonly pinned?: boolean;
   readonly archived?: boolean;
-  readonly lastActivityAt?: string;
+  readonly lastActivityAt?: Timestamp | string;
   readonly lastReadLineId?: TranscriptLineId | string;
 }
