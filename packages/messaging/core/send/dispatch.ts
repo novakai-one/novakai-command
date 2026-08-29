@@ -6,6 +6,7 @@ import type { SendAttempt, SendJournal } from '../../contract/records/send-journ
 import type { ProviderSessionId, Timestamp } from '../../contract/types.js';
 import { messageCorrelationHint } from '../../contract/correlation.js';
 import type { MessagingTraceSink } from '../../contract/trace.js';
+import { emitTrace } from '../trace.js';
 import type { AgentLookup } from './agent-lookup.js';
 import { mintSendAttemptId } from './mint.js';
 import { present } from './sparse.js';
@@ -23,6 +24,9 @@ interface DispatchDependencies {
 export type DispatchOutcome =
   | { readonly ok: true; readonly journal: SendJournal; readonly response?: string }
   | { readonly ok: false; readonly rejection: SendRejection };
+
+/** Every recorded dispatch settles ok — refusal and uncertainty are journal states, not rejections. */
+type SettledDispatch = Extract<DispatchOutcome, { ok: true }>;
 
 /** Journal and attempt always land on the same post-dispatch state. */
 type SettledDispatchState = 'awaiting-session-assignment' | 'awaiting-transcript' | 'failed' | 'indeterminate';
@@ -86,7 +90,7 @@ async function recordSubmission(
   attempt: SendAttempt,
   effect: Extract<ProviderDispatchResult, { ok: true }>,
   sessionId: ProviderSessionId | undefined,
-): Promise<DispatchOutcome> {
+): Promise<SettledDispatch> {
   const state: SettledDispatchState = sessionId === undefined
     ? 'awaiting-session-assignment'
     : 'awaiting-transcript';
@@ -105,7 +109,7 @@ async function recordRefusal(
   journal: SendJournal,
   attempt: SendAttempt,
   effect: Extract<ProviderDispatchResult, { ok: false }>,
-): Promise<DispatchOutcome> {
+): Promise<SettledDispatch> {
   const recorded = await transitionFromDispatching(dependencies, journal, 'failed', {
     ...attempt,
     state: 'failed',
@@ -120,7 +124,7 @@ async function recordUncertainty(
   journal: SendJournal,
   attempt: SendAttempt,
   cause: unknown,
-): Promise<DispatchOutcome> {
+): Promise<SettledDispatch> {
   const recorded = await transitionFromDispatching(dependencies, journal, 'indeterminate', {
     ...attempt,
     state: 'indeterminate',
@@ -136,12 +140,29 @@ async function runProviderEffect(
   attempt: SendAttempt,
   sessionId: ProviderSessionId | undefined,
   session: ProviderSession | undefined,
-): Promise<DispatchOutcome> {
-  dependencies.trace?.({
+): Promise<SettledDispatch> {
+  emitTrace(dependencies.trace, {
     stage: 'send.dispatch-started',
     sendId: journal.id,
     ...present('sessionId', sessionId),
   });
+  const settled = await settleProviderEffect(dependencies, journal, attempt, sessionId, session);
+  emitTrace(dependencies.trace, {
+    stage: 'send.dispatch-settled',
+    sendId: journal.id,
+    detail: settled.journal.state,
+  });
+  return settled;
+}
+
+/** The provider call plus the journal write that records its ending. */
+async function settleProviderEffect(
+  dependencies: DispatchDependencies,
+  journal: SendJournal,
+  attempt: SendAttempt,
+  sessionId: ProviderSessionId | undefined,
+  session: ProviderSession | undefined,
+): Promise<SettledDispatch> {
   try {
     const effect = await dependencies.providerSend.dispatch({
       sendId: journal.id,
@@ -150,23 +171,11 @@ async function runProviderEffect(
       ...present('resumeId', session?.resumeId),
       ...present('screenContext', journal.request.screenContext),
     });
-    const settled = effect.ok
-      ? await recordSubmission(dependencies, journal, attempt, effect, sessionId)
-      : await recordRefusal(dependencies, journal, attempt, effect);
-    dependencies.trace?.({
-      stage: 'send.dispatch-settled',
-      sendId: journal.id,
-      detail: settled.ok ? settled.journal.state : 'refused',
-    });
-    return settled;
+    return effect.ok
+      ? recordSubmission(dependencies, journal, attempt, effect, sessionId)
+      : recordRefusal(dependencies, journal, attempt, effect);
   } catch (cause) {
-    const uncertain = await recordUncertainty(dependencies, journal, attempt, cause);
-    dependencies.trace?.({
-      stage: 'send.dispatch-settled',
-      sendId: journal.id,
-      detail: 'indeterminate',
-    });
-    return uncertain;
+    return recordUncertainty(dependencies, journal, attempt, cause);
   }
 }
 

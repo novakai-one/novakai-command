@@ -8,6 +8,7 @@ import type {
   TranscriptLineId,
 } from '../../contract/types.js';
 import type { DurableTranscriptEventBus } from '../event-bus.js';
+import { emitTrace } from '../trace.js';
 import {
   projectAgentConversationMessages,
   type ConversationMessageReads,
@@ -63,7 +64,7 @@ async function publishAppendedLine(
   ).find((candidate) => candidate.id === line.id);
   if (message === undefined) return;
   await sink({ agentId, message });
-  dependencies.trace?.({
+  emitTrace(dependencies.trace, {
     stage: 'message.published',
     sessionId,
     detail: `${agentId} ← ${message.role} message ${message.id}`,

@@ -4,6 +4,7 @@ import type {
 } from "../contract/ports/transcript-store.js";
 import type { MessagingTraceSink } from "../contract/trace.js";
 import type { EventCursor } from "../contract/types.js";
+import { emitTrace } from "./trace.js";
 
 type TranscriptEventSink = (event: TranscriptEvent) => void | Promise<void>;
 
@@ -60,7 +61,7 @@ export function createDurableTranscriptEventBus(
   const tracedPump = async (): Promise<number> => {
     const delivered = await pumpOnce();
     if (delivered > 0 && deliveredThrough !== undefined) {
-      trace?.({
+      emitTrace(trace, {
         stage: 'eventbus.drained',
         detail: `delivered ${delivered} events through ${deliveredThrough}`,
       });

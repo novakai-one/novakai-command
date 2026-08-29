@@ -49,6 +49,11 @@ export interface DefaultMessagingRuntimeOptions {
   readonly installIdentityHooks?: boolean;
   readonly externalAdoption?: ExternalAdoptionOptions;
   readonly storeId?: StoreId;
+  /**
+   * Trace sink for observable messaging moments. Default-on: when omitted,
+   * one structured line per moment goes to stdout. Pass a no-op to silence,
+   * or your own sink to route traces elsewhere.
+   */
   readonly trace?: MessagingTraceSink;
 }
 

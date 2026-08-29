@@ -27,6 +27,7 @@ export interface MessagingTraceEvent {
 /**
  * Where trace events go. Core emits structured events only; hosts own the
  * rendering (a console line today, a websocket feed later) by supplying a
- * sink, and the sink stamps the time it observed the event.
+ * sink, and the sink stamps the time it observed the event. Emission is
+ * guarded: a throwing sink is swallowed and never breaks the work it observes.
  */
 export type MessagingTraceSink = (event: MessagingTraceEvent) => void;

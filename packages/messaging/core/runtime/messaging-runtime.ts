@@ -17,6 +17,7 @@ import type { MessagingTraceSink } from "../../contract/trace.js";
 import { createDurableTranscriptEventBus, type DurableTranscriptEventBus } from "../event-bus.js";
 import { brandClock } from "../clock.js";
 import { thrownMessage, thrownMessageOr } from "../thrown.js";
+import { emitTrace } from "../trace.js";
 import { present } from "../send/sparse.js";
 import { runIngestionPass } from "../ingestion/ingest.js";
 import type {
@@ -264,7 +265,7 @@ class MessagingRuntime implements MessagingRuntimeApi {
       ...present('adoption', this.adoptionConfig()),
     }, await this.candidatesFor(sourceIds));
     await this.delivery.maintain(this.eventBus);
-    this.options.trace?.({
+    emitTrace(this.options.trace, {
       stage: 'ingest.pass',
       detail: `sources=${value.sources} added=${value.added} duplicates=${value.duplicates} failed=${value.failedSources}`,
     });
@@ -282,6 +283,7 @@ class MessagingRuntime implements MessagingRuntimeApi {
   private recordFailure(cause: unknown): Outcome<IngestResult> {
     this.lastError = thrownMessage(cause);
     if (this.state !== "stopped") this.state = "degraded";
+    emitTrace(this.options.trace, { stage: 'ingest.pass', detail: `failed: ${this.lastError}` });
     return ingestFailure(cause);
   }
 

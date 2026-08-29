@@ -11,6 +11,7 @@ import type { AgentLookup } from './agent-lookup.js';
 import { dispatchAcceptedSend } from './dispatch.js';
 import { present } from './sparse.js';
 import type { SendStore } from './send-store.js';
+import { emitTrace } from '../trace.js';
 
 interface SendDependencies {
   readonly store: SendStore;
@@ -45,7 +46,7 @@ export async function sendConversationMessage(
 ): Promise<SendConversationResult> {
   const accepted = await acceptSend(dependencies, input);
   if (!accepted.ok) return accepted;
-  dependencies.trace?.({
+  emitTrace(dependencies.trace, {
     stage: 'send.accepted',
     sendId: accepted.journal.id,
     detail: accepted.duplicate ? 'duplicate-replayed' : 'journal-written',
