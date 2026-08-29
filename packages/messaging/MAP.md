@@ -1,9 +1,8 @@
 # Messaging — Module Map
 
-One page: what messaging is made of, what each part owns, and where imports
-are allowed to flow. Arrows point in the only direction a module may import.
-Layout follows SOP-Repo-Folder-Structure: calls not listed there are
-forbidden, and nothing outside the package ever imports `core/`.
+What each messaging module owns, and the only directions imports may flow.
+Layout follows SOP-Repo-Folder-Structure: unlisted calls are forbidden, and
+nothing outside the package ever imports `core/`.
 
 ```mermaid
 flowchart TD

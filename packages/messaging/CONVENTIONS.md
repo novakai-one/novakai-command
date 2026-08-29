@@ -1,8 +1,6 @@
 # Messaging — Conventions
 
-The rules every file in this package follows. Each rule exists because a
-review caught its violation once. New code that breaks a rule gets sent back,
-no matter who wrote it.
+Breaking a rule gets code sent back — no exceptions, no matter who wrote it.
 
 ## 1. Expected failures are typed values, never strings
 
