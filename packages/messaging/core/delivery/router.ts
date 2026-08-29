@@ -81,17 +81,14 @@ async function moveDelivery(
  * queued for the next pass.
  *
  * Crash recovery: a delivery claimed by a worker that never reports back is
- * freed by closeStaleClaims on a later pass, and a submitted delivery whose
- * send reached transcript evidence is settled by observeConfirmedDeliveries.
+ * freed by closeStaleClaims on a later pass, a submitted delivery whose send
+ * reached transcript evidence is settled by observeConfirmedDeliveries, and
+ * a submitted delivery with no transcript evidence past the confirmation
+ * deadline is failed loudly by failUnconfirmedDeliveries — a message either
+ * lands or visibly fails, it never hangs silently.
  * Crash ownership: a throw while submitting a claimed delivery is caught and
  * recorded as that delivery's typed failure, while throws during listing,
  * observing, or transitioning propagate to the caller.
- * Known gap: a delivery stranded in submitted-unconfirmed whose send journal
- * is never confirmed — a crash between claim and journal write, or a send
- * that failed after settlement — has no path back, because the state machine
- * (transitions.ts) allows no exit from submitted-unconfirmed except
- * transcript-observed. Closing that gap is a behavior decision, not a
- * clarity one, so it is documented here rather than silently patched.
  */
 export async function routePendingDeliveries(
   dependencies: DeliveryRouterDependencies,
@@ -100,6 +97,7 @@ export async function routePendingDeliveries(
   let progress = tally({
     submitted: await closeStaleClaims(dependencies, timestamp),
     observed: await observeConfirmedDeliveries(dependencies.store, timestamp),
+    failed: await failUnconfirmedDeliveries(dependencies, timestamp),
   });
   const queued = (await dependencies.store.listPendingDeliveries())
     .filter((delivery) => delivery.state === 'queued');
@@ -112,8 +110,16 @@ export async function routePendingDeliveries(
 /** A claim older than this was abandoned by its worker and must be re-examined. */
 const CLAIM_TIMEOUT_MS = 30_000;
 
-const staleThreshold = (timestamp: Timestamp): number =>
-  Date.parse(timestamp) - CLAIM_TIMEOUT_MS;
+/**
+ * Confirmation means the message landed in the transcript, which a healthy
+ * path shows within seconds of dispatch; two minutes covers a cold CLI
+ * start, and past that the honest state is failed — never a silent hang.
+ */
+const CONFIRMATION_TIMEOUT_MS = 120_000;
+
+/** A delivery whose last state change is longer ago than timeoutMs is overdue. */
+const overdue = (delivery: PendingDelivery, timestamp: Timestamp, timeoutMs: number): boolean =>
+  Date.parse(delivery.updatedAt) <= Date.parse(timestamp) - timeoutMs;
 
 /**
  * Frees deliveries whose claim has gone stale — a worker claimed them but
@@ -124,9 +130,8 @@ async function closeStaleClaims(
   dependencies: DeliveryRouterDependencies,
   timestamp: Timestamp,
 ): Promise<number> {
-  const threshold = staleThreshold(timestamp);
   const stale = (delivery: PendingDelivery): boolean =>
-    delivery.state === 'claimed' && Date.parse(delivery.updatedAt) <= threshold;
+    delivery.state === 'claimed' && overdue(delivery, timestamp, CLAIM_TIMEOUT_MS);
   let submitted = 0;
   for (const delivery of (await dependencies.store.listPendingDeliveries()).filter(stale)) {
     if (await moveDelivery(
@@ -171,6 +176,30 @@ async function observeIfConfirmed(
     return 0;
   }
   return 1;
+}
+
+/**
+ * Fails a delivery stuck in submitted-unconfirmed past the confirmation
+ * deadline: its send never produced transcript evidence, so the honest state
+ * is failed with the deadline as evidence. Runs after
+ * observeConfirmedDeliveries so fresh evidence always wins over the deadline.
+ */
+async function failUnconfirmedDeliveries(
+  dependencies: DeliveryRouterDependencies,
+  timestamp: Timestamp,
+): Promise<number> {
+  const stranded = (delivery: PendingDelivery): boolean =>
+    delivery.state === 'submitted-unconfirmed'
+    && overdue(delivery, timestamp, CONFIRMATION_TIMEOUT_MS);
+  let failed = 0;
+  for (const delivery of (await dependencies.store.listPendingDeliveries()).filter(stranded)) {
+    const moved = await moveDelivery(
+      dependencies.store, delivery, 'submitted-unconfirmed', 'failed', timestamp,
+      { kind: 'confirmation-timeout', detail: 'no transcript evidence within the confirmation deadline' },
+    );
+    if (moved) failed += 1;
+  }
+  return failed;
 }
 
 /**

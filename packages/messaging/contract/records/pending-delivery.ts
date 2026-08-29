@@ -12,13 +12,16 @@ import type {
  * `dispatch-failed` means the provider dispatch left no transcript evidence;
  * `routing-failed` means routing proved the delivery can never proceed;
  * `submission-error` means a throw during submission was caught at the
- * delivery boundary and reduced to its message.
+ * delivery boundary and reduced to its message;
+ * `confirmation-timeout` means the send produced no transcript evidence
+ * before the deadline, so the delivery failed loudly instead of hanging.
  */
 export type DeliveryFailure =
   | { readonly kind: 'send-rejected'; readonly rejection: SendRejection }
   | { readonly kind: 'dispatch-failed'; readonly detail: string }
   | { readonly kind: 'routing-failed'; readonly detail: string }
-  | { readonly kind: 'submission-error'; readonly detail: string };
+  | { readonly kind: 'submission-error'; readonly detail: string }
+  | { readonly kind: 'confirmation-timeout'; readonly detail: string };
 
 /** One transcript-addressed Agent delivery and its monotonic effect state. */
 export interface PendingDelivery {

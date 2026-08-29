@@ -5,7 +5,7 @@ const permitted: Readonly<Record<PendingDeliveryState, readonly PendingDeliveryS
   queued: ['claimed', 'failed'],
   claimed: ['submitted-confirmed', 'submitted-unconfirmed', 'failed'],
   'submitted-confirmed': ['transcript-observed', 'failed'],
-  'submitted-unconfirmed': ['transcript-observed'],
+  'submitted-unconfirmed': ['transcript-observed', 'failed'],
   'transcript-observed': [],
   failed: [],
 };
