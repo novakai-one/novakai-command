@@ -171,6 +171,27 @@
           "description": "Per-instance flag. false for StoreCorrupt-class failures \u2014 operator intervention required. Absent/unknown \u2192 assume false."
         }
       }
+    },
+    {
+      "name": "InvalidSendInput",
+      "summary": "A conversation send request failed validation before any durable write. Non-retryable; the field names which input failed so hosts can correct and resubmit.",
+      "retryable": false,
+      "fields": {
+        "field": {
+          "type": "string",
+          "description": "The ConversationSendInput field that failed validation: conversationId | issuedBy | targetAgentId | clientOpId | text."
+        }
+      }
+    },
+    {
+      "name": "UnknownTargetAgent",
+      "summary": "The addressed Agent does not exist in the Agent directory. Non-retryable; the host should refresh its agent list before resubmitting.",
+      "retryable": false,
+      "fields": {
+        "targetAgentId": {
+          "type": "string"
+        }
+      }
     }
   ]
 }

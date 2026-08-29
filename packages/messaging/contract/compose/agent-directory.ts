@@ -1,5 +1,6 @@
 import { deriveClientOpId } from '@novakai/foundation/contract';
 import type { AgentDirectory } from '../ports/agent-directory.js';
+import type { ProviderSessionId } from '../types.js';
 
 interface AgentsContractDoor {
   getAgent(agentId: never): Promise<unknown>;
@@ -25,7 +26,11 @@ function asEntry(value: unknown) {
   return {
     agentId: String(found.id),
     provider,
-    currentProviderSessionId: typeof found.sessionId === 'string' ? found.sessionId : null,
+    // This adapter is the anti-corruption layer for Agent facts, so it owns
+    // the brand: anything beyond here treats the session id as contract-checked.
+    currentProviderSessionId: typeof found.sessionId === 'string'
+      ? found.sessionId as ProviderSessionId
+      : null,
   } as const;
 }
 

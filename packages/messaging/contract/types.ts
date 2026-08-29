@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // GENERATED FILE — DO NOT EDIT.
 // Source: contract/messaging-contract.json (law #3 single source of truth).
-// contractVersion 1.2.0 · schemaVersion 1 · sha256:e5bf5efe8a5d55cf
+// contractVersion 1.2.0 · schemaVersion 1 · sha256:6b389fa9ad89b0d5
 // Regenerate: npm run generate
 // ---------------------------------------------------------------------------
 
@@ -73,6 +73,8 @@ export type TranscriptRole = (typeof transcriptRoleValues)[number];
 export const errorCatalogue = [
   { name: "IdempotencyConflict", retryable: false, reserved: false },
   { name: "DependencyUnavailable", retryable: false, reserved: false },
+  { name: "InvalidSendInput", retryable: false, reserved: false },
+  { name: "UnknownTargetAgent", retryable: false, reserved: false },
 ] as const;
 export type ErrorName = (typeof errorCatalogue)[number]["name"];
 

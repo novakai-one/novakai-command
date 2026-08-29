@@ -8,6 +8,7 @@ import type { IngestCheckpoint } from '../../contract/records/ingest-checkpoint.
 import type { ProviderSession } from '../../contract/records/provider-session.js';
 import type { SendJournal } from '../../contract/records/send-journal.js';
 import type { TranscriptLine } from '../../contract/records/transcript-line.js';
+import type { RequestHash } from '../../contract/types.js';
 
 const at = '2026-08-26T00:00:00.000Z' as never;
 const sourceId = `source_${'a'.repeat(64)}` as never;
@@ -74,7 +75,7 @@ test('snapshot and live delivery share one canonical provider projection', async
     targetSessionId: sessionId,
     clientOpId: 'op_kimi',
     request: { text: 'hello' },
-    requestHash: 'hash',
+    requestHash: 'hash' as RequestHash,
     state: 'confirmed',
     attempts: [{
       attemptId: `sendAttempt_${'d'.repeat(64)}` as never,

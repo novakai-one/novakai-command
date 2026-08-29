@@ -13,6 +13,7 @@ import type { ProviderSend } from '../../contract/ports/provider-send.js';
 import type { TranscriptStore } from '../../contract/ports/transcript-store.js';
 import type { PendingDelivery } from '../../contract/records/pending-delivery.js';
 import type { ProviderSession } from '../../contract/records/provider-session.js';
+import type { ProviderSessionId, Timestamp } from '../../contract/types.js';
 import type { TranscriptLine } from '../../contract/records/transcript-line.js';
 import type { PendingDeliveryState } from '../../contract/types.js';
 
@@ -25,7 +26,7 @@ const normalizers = {
   codex: { provider: 'codex', normalize: () => { throw new Error('unused'); } },
   kimi: { provider: 'kimi', normalize: () => { throw new Error('unused'); } },
 } as const;
-const timestamp = '2026-08-26T00:00:00.000Z';
+const timestamp = '2026-08-26T00:00:00.000Z' as Timestamp;
 
 const session = (id: string, agentId: string, sourceId: string): ProviderSession => ({
   id: id as never,
@@ -111,7 +112,7 @@ function dependencies(store: TranscriptStore) {
       return {
         agentId,
         provider: 'claude',
-        currentProviderSessionId: current.get(agentId)!,
+        currentProviderSessionId: current.get(agentId)! as ProviderSessionId | null,
       };
     },
     async deliveryReadiness(agentId) { return readiness.get(agentId) ?? 'unavailable'; },

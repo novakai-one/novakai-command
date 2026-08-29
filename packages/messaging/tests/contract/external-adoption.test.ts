@@ -6,6 +6,7 @@ import test from 'node:test';
 import { createDefaultMessagingRuntime } from '../../contract/compose/ingestion.js';
 import type { AgentDirectory, AgentDirectoryEntry } from '../../contract/ports/agent-directory.js';
 import type { ConversationDirectory } from '../../contract/ports/conversation-directory.js';
+import type { ProviderSessionId } from '../../contract/types.js';
 
 const row = (resumeId: string, text: string): string => `${JSON.stringify({
   type: 'assistant',
@@ -39,7 +40,7 @@ function fakeDirectories() {
     },
     async attachProviderSession(agentId, providerSessionId) {
       const agent = agents.get(agentId)!;
-      agents.set(agentId, { ...agent, currentProviderSessionId: providerSessionId });
+      agents.set(agentId, { ...agent, currentProviderSessionId: providerSessionId as ProviderSessionId });
       attached.push(providerSessionId);
       return { ok: true, state: 'attached' };
     },
