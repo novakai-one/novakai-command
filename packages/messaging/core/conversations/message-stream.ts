@@ -1,13 +1,20 @@
 import type { AgentConversationMessageSink } from '../../contract/conversations.js';
 import type { ProviderNormalizer } from '../../contract/ports/provider-transcript-source.js';
-import type { TranscriptStore } from '../../contract/ports/transcript-store.js';
-import type { ProviderName } from '../../contract/types.js';
+import type { TranscriptLine } from '../../contract/records/transcript-line.js';
+import type {
+  ProviderName,
+  ProviderSessionId,
+  TranscriptLineId,
+} from '../../contract/types.js';
 import type { DurableTranscriptEventBus } from '../event-bus.js';
-import { projectAgentConversationMessages } from './messages.js';
+import {
+  projectAgentConversationMessages,
+  type ConversationMessageReads,
+} from './messages.js';
 
 interface AgentConversationMessageStreamDependencies {
   readonly eventBus: DurableTranscriptEventBus;
-  readonly store: TranscriptStore;
+  readonly store: ConversationMessageReads;
   readonly normalizers: Readonly<Record<ProviderName, ProviderNormalizer>>;
 }
 
@@ -24,27 +31,35 @@ export function subscribeAgentConversationMessageStream(
   sink: AgentConversationMessageSink,
 ): { close(): void } {
   return dependencies.eventBus.subscribe(async (event) => {
-    if (event.kind !== 'transcript-line.appended'
-      || event.transcriptLineId === undefined) return;
-
-    const [lines, sessions, journals] = await Promise.all([
-      dependencies.store.listTranscriptLines({ sessionId: event.sessionId }),
-      dependencies.store.listProviderSessions(),
-      dependencies.store.listSendJournals(),
-    ]);
-    const line = lines.find((candidate) => candidate.id === event.transcriptLineId);
-    const session = sessions.find((candidate) => candidate.id === event.sessionId);
-    if (line === undefined || session?.agentId === undefined) return;
-
-    const orderedLines = [...lines].sort((left, right) =>
-      left.sourcePosition.sourceEpoch - right.sourcePosition.sourceEpoch
-      || left.sourcePosition.offset - right.sourcePosition.offset);
-    const message = projectAgentConversationMessages(
-      orderedLines,
-      dependencies.normalizers,
-      journals,
-    ).find((candidate) => candidate.id === line.id);
-    if (message === undefined) return;
-    await sink({ agentId: session.agentId, message });
+    if (event.kind !== 'transcript-line.appended' || event.transcriptLineId === undefined) return;
+    await publishAppendedLine(dependencies, event.sessionId, event.transcriptLineId, sink);
   });
 }
+
+/** Projects the session's lines and publishes the appended one when it is human-visible. */
+async function publishAppendedLine(
+  dependencies: AgentConversationMessageStreamDependencies,
+  sessionId: ProviderSessionId,
+  transcriptLineId: TranscriptLineId,
+  sink: AgentConversationMessageSink,
+): Promise<void> {
+  const [lines, sessions, journals] = await Promise.all([
+    dependencies.store.listTranscriptLines({ sessionId }),
+    dependencies.store.listProviderSessions(),
+    dependencies.store.listSendJournals(),
+  ]);
+  const line = lines.find((candidate) => candidate.id === transcriptLineId);
+  const agentId = sessions.find((candidate) => candidate.id === sessionId)?.agentId;
+  if (line === undefined || agentId === undefined) return;
+  const message = projectAgentConversationMessages(
+    orderedBySourcePosition(lines), dependencies.normalizers, journals,
+  ).find((candidate) => candidate.id === line.id);
+  if (message === undefined) return;
+  await sink({ agentId, message });
+}
+
+/** Source order within one session, so the projection sees the lines the provider wrote. */
+const orderedBySourcePosition = (lines: readonly TranscriptLine[]): TranscriptLine[] =>
+  [...lines].sort((left, right) =>
+    left.sourcePosition.sourceEpoch - right.sourcePosition.sourceEpoch
+    || left.sourcePosition.offset - right.sourcePosition.offset);

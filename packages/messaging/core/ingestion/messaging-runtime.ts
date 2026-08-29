@@ -124,7 +124,7 @@ class MessagingRuntime implements MessagingRuntimeApi {
       : createStoredConversationDirectory({
           store: options.store,
           humanPrincipalId: options.conversationPrincipalId,
-          now: this.clock,
+          now: brandClock(this.clock),
         }));
     this.delivery = new DeliveryRuntime({
       store: options.store,

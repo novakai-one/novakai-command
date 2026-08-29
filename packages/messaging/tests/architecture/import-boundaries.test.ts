@@ -87,7 +87,7 @@ describe("architecture — one Messaging doorway", () => {
       "types", "errors", "records", "events", "subscriptions",
       "commands", "queries", "outcome", "runtime",
       "communications", "conversations", "agent-delivery-marker",
-      "conversation-id", "correlation", "provider-name",
+      "conversation-id", "transcript-line-id", "correlation", "provider-name",
     ]);
     const offenders: string[] = [];
     for (const file of listFiles(join(sourceRoot, "core"), ".ts")) {

@@ -43,6 +43,7 @@ flowchart TD
 | `core/delivery/` | one entry: `routePendingDeliveries` | contract, core/send | rewritten (PR #2) |
 | `core/ingestion/` | one entry: `runIngestionPass` | contract, core/send | rewritten (PR #4) |
 | `core/communications/` | queries and read models | contract, core/delivery, core/send | rewritten (PR #6) |
+| `core/conversations/` | conversation views and message streams | contract, core/send | rewritten (PR #7) |
 | `adapters/` | store implementations, transcript parsers | contract only | ⬜ per-slice, as touched |
 
 Known deviation from the SOP, to be closed by the last slice: the

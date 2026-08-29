@@ -52,9 +52,9 @@ export function createCommittedRecordsApi(options: {
   };
   return {
     ensureConversationView: (input: EnsureConversationViewInput) =>
-      safe(() => ensureConversationView(options.store, input, options.now)),
+      safe(() => ensureConversationView(options.store, input, brandClock(options.now))),
     updateConversationView: (input: UpdateConversationViewInput) =>
-      safe(() => updateConversationView(options.store, input, options.now)),
+      safe(() => updateConversationView(options.store, input, brandClock(options.now))),
     getConversationView: (id) => safe(() => options.store.getConversationView(id)),
     listConversationViews: () => safe(() => options.store.listConversationViews()),
     rebuildProjections: () => safe(async () => options.store.replaceProjections(

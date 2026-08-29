@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // GENERATED FILE — DO NOT EDIT.
 // Source: contract/messaging-contract.json (law #3 single source of truth).
-// contractVersion 1.2.0 · schemaVersion 1 · sha256:931da1200b16568a
+// contractVersion 1.2.0 · schemaVersion 1 · sha256:8c7c35709437e41f
 // Regenerate: npm run generate
 // ---------------------------------------------------------------------------
 
@@ -75,6 +75,7 @@ export const errorCatalogue = [
   { name: "DependencyUnavailable", retryable: false, reserved: false },
   { name: "InvalidSendInput", retryable: false, reserved: false },
   { name: "InvalidQuery", retryable: false, reserved: false },
+  { name: "InvalidConversationView", retryable: false, reserved: false },
   { name: "UnknownTargetAgent", retryable: false, reserved: false },
 ] as const;
 export type ErrorName = (typeof errorCatalogue)[number]["name"];
