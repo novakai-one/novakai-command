@@ -11,11 +11,11 @@ import type {
   ProviderTranscriptSource,
 } from "../../contract/ports/provider-transcript-source.js";
 import type { TranscriptStore } from "../../contract/ports/transcript-store.js";
-import type { ProviderName } from "../../contract/types.js";
-import type { TranscriptSourceId } from "../../contract/types.js";
+import type { ProviderName, TranscriptSourceId } from "../../contract/types.js";
 import { MessagingError } from "../../contract/types.js";
 import { createDurableTranscriptEventBus, type DurableTranscriptEventBus } from "../event-bus.js";
 import { brandClock } from "../clock.js";
+import { thrownMessage } from "../thrown.js";
 import { present } from "../send/sparse.js";
 import { runIngestionPass } from "../ingestion/ingest.js";
 import type {
@@ -61,7 +61,7 @@ export interface MessagingRuntimeOptions {
 const unavailable = <T>(cause: unknown): Outcome<T> => ({
   kind: "error",
   error: new MessagingError("DependencyUnavailable", {
-    message: errorMessage(cause) ?? "Messaging ingestion unavailable",
+    message: cause instanceof Error ? cause.message : "Messaging ingestion unavailable",
     retryable: true,
     fields: { dependency: "provider-transcript" },
   }),
@@ -83,14 +83,6 @@ const ingestFailure = <T>(cause: unknown): Outcome<T> => {
   }
   return unavailable(cause);
 };
-
-/** The message of a thrown value, or undefined when it carries none. */
-const errorMessage = (cause: unknown): string | undefined =>
-  cause instanceof Error ? cause.message : undefined;
-
-/** The message of a thrown value, coerced for anything without one. */
-const thrownMessage = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);
 
 /**
  * A source is event-driven only when it can both watch for changes and stat
@@ -162,6 +154,11 @@ class MessagingRuntime implements MessagingRuntimeApi {
     });
   }
 
+  /**
+   * Starts ingestion and runs the first pass. A failed first pass does not
+   * fail `start` — it lands in `health()` as `degraded` with `lastError`,
+   * and the maintenance timer retries on the next tick.
+   */
   async start(): Promise<Outcome<void>> {
     if (this.state !== "stopped") return { kind: "ok", value: undefined };
     this.state = "running";
@@ -210,6 +207,7 @@ class MessagingRuntime implements MessagingRuntimeApi {
     return { kind: "ok", value: undefined };
   }
 
+  /** Point-in-time runtime state; a store failure here propagates to the host caller. */
   async health(): Promise<MessagingHealth> {
     return {
       state: this.state,
@@ -229,6 +227,7 @@ class MessagingRuntime implements MessagingRuntimeApi {
       delivery.state === 'queued' || delivery.state === 'claimed').length;
   }
 
+  /** Runs one full discovery pass now; failures return a typed outcome and mark the runtime `degraded`. */
   ingestNow(): Promise<Outcome<IngestResult>> {
     return this.ingestQueue.requestDiscovery();
   }
@@ -301,6 +300,7 @@ class MessagingRuntime implements MessagingRuntimeApi {
     }
   }
 
+  /** Drains pending deliveries now; failures return a typed outcome, the queue is retried next tick. */
   routePending(): Promise<Outcome<DeliveryRunResult>> {
     return this.delivery.routePending();
   }

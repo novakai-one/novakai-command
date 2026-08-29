@@ -48,9 +48,10 @@ flowchart TD
 | `core/runtime/` | composed runtime: lifecycle, wiring, committed-record door | all of core, contract | rewritten (PR #9) |
 | `adapters/` | store implementations, transcript parsers | contract only | ⬜ per-slice, as touched |
 
-Known deviation from the SOP, to be closed by the last slice: the
-composition root currently sits at `core/runtime/messaging-runtime.ts`
-(a forbidden `core → adapters` edge).
+Known deviation from the SOP: the composition door lives in a
+`contract/compose/` directory, not a single `contract/compose.ts` file. The
+runtime itself (`core/runtime/messaging-runtime.ts`) imports zero adapters —
+only contract and core.
 
 Why this direction matters: contract knows nothing about anyone, core knows
 only contract, and exactly one file (`compose.ts`) knows both core and the
