@@ -1,5 +1,6 @@
-import type { ConversationSendInput } from '../../contract/commands.js';
+import type { ConversationSendInput, SendRejection } from '../../contract/commands.js';
 import type { AgentDeliveryMarker } from '../../contract/agent-delivery-marker.js';
+import { brandClock } from '../clock.js';
 import type {
   EnsureConversationViewInput,
   UpdateConversationViewInput,
@@ -73,28 +74,47 @@ export function createCommittedRecordsApi(options: {
       listAgentConversationMessages(options.store, options.normalizers, input)),
     listSendJournals: () => safe(() => options.store.listSendJournals()),
     listAgentCommunications: (input) => safe(() => listAgentCommunications(options.store, input)),
-    sendConversationMessage: (input: ConversationSendInput) => safe(() => {
+    sendConversationMessage: (input: ConversationSendInput) => safe(async () => {
       if (options.agentDirectory === undefined || options.providerSend === undefined) {
-        throw new Error('Messaging send dependencies are not composed');
+        throw new MessagingError('DependencyUnavailable', {
+          message: 'Messaging send dependencies are not composed',
+          fields: { dependency: 'messaging-send' },
+        });
       }
-      return sendConversationMessage({
+      const result = await sendConversationMessage({
         store: options.store,
         agentDirectory: options.agentDirectory,
         providerSend: options.providerSend,
-        now: options.now,
+        now: brandClock(options.now),
       }, input);
+      if (!result.ok) throw asMessagingError(result.rejection);
+      return result.acceptance;
     }),
   };
 }
 
-/** Maps any store failure to the one outcome shape hosts handle. */
+/** Maps a typed send rejection onto the public error catalogue at the door. */
+const asMessagingError = (rejection: SendRejection): MessagingError =>
+  rejection.code === 'invalid-send-input'
+    ? new MessagingError('InvalidSendInput', {
+        message: rejection.message,
+        fields: { field: rejection.field },
+      })
+    : new MessagingError('UnknownTargetAgent', {
+        message: rejection.message,
+        fields: { targetAgentId: rejection.targetAgentId },
+      });
+
+/** Maps any store failure to the one outcome shape hosts handle; contract errors pass through unchanged. */
 const failed = <T>(cause: unknown): Outcome<T> => ({
   kind: 'error',
-  error: new MessagingError('DependencyUnavailable', {
-    message: cause instanceof Error ? cause.message : 'Messaging records unavailable',
-    retryable: true,
-    fields: { dependency: 'messaging-store' },
-  }),
+  error: cause instanceof MessagingError
+    ? cause
+    : new MessagingError('DependencyUnavailable', {
+        message: cause instanceof Error ? cause.message : 'Messaging records unavailable',
+        retryable: true,
+        fields: { dependency: 'messaging-store' },
+      }),
 });
 
 /**

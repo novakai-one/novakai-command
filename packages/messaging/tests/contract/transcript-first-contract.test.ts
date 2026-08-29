@@ -8,6 +8,7 @@ import { createMemoryTranscriptStore } from "../../adapters/stores/memory.js";
 import { openFoundationTranscriptStore } from "../../adapters/stores/jsonl.js";
 import { providerNormalizer } from "../../adapters/provider-transcripts/normalizers/index.js";
 import type { AgentDirectory } from "../../contract/ports/agent-directory.js";
+import type { ProviderSessionId } from "../../contract/types.js";
 import type {
   ProviderSourceGrowth,
   ProviderSourceStat,
@@ -59,7 +60,7 @@ const normalizers = {
 } as const;
 
 function adoption() {
-  let currentProviderSessionId: string | null = null;
+  let currentProviderSessionId: ProviderSessionId | null = null;
   const agentDirectory: AgentDirectory = {
     async get(agentId) {
       return agentId === 'agent_external'
@@ -75,7 +76,7 @@ function adoption() {
     async deliveryReadiness() { return 'idle'; },
     async attachProviderSession(_agentId, providerSessionId) {
       const replay = currentProviderSessionId === providerSessionId;
-      currentProviderSessionId = providerSessionId;
+      currentProviderSessionId = providerSessionId as ProviderSessionId;
       return { ok: true, state: replay ? 'already-attached' : 'attached' };
     },
   };

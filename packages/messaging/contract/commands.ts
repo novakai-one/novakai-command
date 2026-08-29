@@ -21,3 +21,28 @@ export interface ConversationSendAcceptance {
   readonly targetSessionId?: SendJournal['targetSessionId'];
   readonly response?: string;
 }
+
+/**
+ * Why a send was rejected before any durable write. Expected failures are
+ * values, not exceptions: hosts branch on `code` instead of parsing error
+ * message strings.
+ */
+export type SendRejection =
+  | {
+      readonly code: 'invalid-send-input';
+      readonly field: 'conversationId' | 'issuedBy' | 'targetAgentId' | 'clientOpId' | 'text';
+      readonly message: string;
+    }
+  | {
+      readonly code: 'unknown-target-agent';
+      readonly targetAgentId: string;
+      readonly message: string;
+    };
+
+/**
+ * Result of one send: journaled acceptance, or a typed rejection raised
+ * before the store or provider was touched.
+ */
+export type SendConversationResult =
+  | { readonly ok: true; readonly acceptance: ConversationSendAcceptance }
+  | { readonly ok: false; readonly rejection: SendRejection };

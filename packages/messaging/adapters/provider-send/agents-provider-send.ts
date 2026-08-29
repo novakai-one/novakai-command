@@ -3,6 +3,7 @@ import type {
   ProviderSend,
   ProviderSendInput,
 } from '../../contract/ports/provider-send.js';
+import type { Timestamp } from '../../contract/types.js';
 
 interface AgentsSendDoor {
   executeProviderTurn(input: never): Promise<unknown>;
@@ -19,7 +20,9 @@ const providerInput = (input: ProviderSendInput): string => input.screenContext 
 export function createAgentsProviderSend(agents: AgentsSendDoor): ProviderSend {
   return {
     async dispatch(input): Promise<ProviderDispatchResult> {
-      const dispatchedAt = new Date().toISOString();
+      // The provider boundary owns the Timestamp brand: the wall clock is read here,
+      // at the anti-corruption layer, not inside the core slice.
+      const dispatchedAt = new Date().toISOString() as Timestamp;
       const outcome = object(await agents.executeProviderTurn({
         agentId: input.targetAgentId,
         text: providerInput(input),

@@ -1,6 +1,7 @@
 import type {
   ConversationId,
   ProviderSessionId,
+  RequestHash,
   SendAttemptId,
   SendAttemptState,
   SendId,
@@ -45,7 +46,7 @@ export interface SendJournal {
   readonly targetSessionId?: ProviderSessionId;
   readonly clientOpId: string;
   readonly request: AcceptedSendRequest;
-  readonly requestHash: string;
+  readonly requestHash: RequestHash;
   readonly state: SendState;
   readonly attempts: readonly SendAttempt[];
 }

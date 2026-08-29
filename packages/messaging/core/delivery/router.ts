@@ -1,5 +1,6 @@
 import { findAgentDeliveryMarker } from './delivery-marker-codec.js';
 import type { ConversationSendInput } from '../../contract/commands.js';
+import { brandClock } from '../clock.js';
 import type { AgentDirectory } from '../../contract/ports/agent-directory.js';
 import type { ConversationDirectory } from '../../contract/ports/conversation-directory.js';
 import type { ProviderSend } from '../../contract/ports/provider-send.js';
@@ -191,12 +192,17 @@ async function submitClaimedDelivery(
   input: ConversationSendInput,
 ): Promise<DeliveryProgress> {
   try {
-    const accepted = await sendConversationMessage({
+    const result = await sendConversationMessage({
       store: dependencies.store,
       agentDirectory: dependencies.agents,
       providerSend: dependencies.providerSend,
-      now: dependencies.now,
+      now: brandClock(dependencies.now),
     }, input);
+    if (!result.ok) {
+      const refused = await failDelivery(dependencies, delivery, 'claimed', result.rejection.message);
+      return zeroProgress({ claimed: 1, failed: refused.failed });
+    }
+    const accepted = result.acceptance;
     const journals = await dependencies.store.listSendJournals();
     const state = submissionState(findAcceptedJournal(accepted.sendId, journals));
     const moved = await dependencies.store.transitionPendingDelivery({
