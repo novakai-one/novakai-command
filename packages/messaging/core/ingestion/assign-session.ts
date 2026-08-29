@@ -1,7 +1,8 @@
 import { deriveClientOpId } from '@novakai/foundation/contract';
 import type { AgentIdentityMarker } from '../../contract/records/agent-identity.js';
 import type { AgentDirectory } from '../../contract/ports/agent-directory.js';
-import type { TranscriptStore } from '../../contract/ports/transcript-store.js';
+import type { Timestamp } from '../../contract/types.js';
+import type { AssignmentStore } from './ingest-store.js';
 import type { ProviderSession } from '../../contract/records/provider-session.js';
 
 /** Assignment evidence extracted from one uncommitted provider-source batch. */
@@ -10,8 +11,8 @@ export interface SessionAssignmentInput {
   readonly markers: readonly AgentIdentityMarker[];
   readonly externalAgentId?: string;
   readonly directory?: AgentDirectory;
-  readonly store: TranscriptStore;
-  readonly now: () => string;
+  readonly store: AssignmentStore;
+  readonly now: () => Timestamp;
 }
 
 const attachmentOpId = (sessionId: string, agentId: string): string =>

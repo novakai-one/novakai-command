@@ -4,7 +4,8 @@ import type {
   AgentDirectory,
 } from '../../contract/ports/agent-directory.js';
 import type { ConversationDirectory } from '../../contract/ports/conversation-directory.js';
-import type { TranscriptStore } from '../../contract/ports/transcript-store.js';
+import type { Timestamp } from '../../contract/types.js';
+import type { AssignmentStore } from './ingest-store.js';
 import type { ProviderSession } from '../../contract/records/provider-session.js';
 import { assignProviderSession } from './assign-session.js';
 
@@ -13,8 +14,8 @@ interface AdoptProviderSessionInput {
   readonly directory: AgentDirectory;
   readonly conversations: ConversationDirectory;
   readonly assignment: AdoptionAssignment;
-  readonly store: TranscriptStore;
-  readonly now: () => string;
+  readonly store: AssignmentStore;
+  readonly now: () => Timestamp;
 }
 
 /** Creates one external Agent/View, then reuses the sole assignment writer. */
