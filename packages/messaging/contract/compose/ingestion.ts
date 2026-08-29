@@ -16,6 +16,17 @@ import { ensureKimiIdentityHook } from "../../adapters/provider-hooks/registrati
 import type { ProviderTranscriptRoots } from "../../adapters/provider-transcripts/source.js";
 import { ensureStoreIdentity, type StoreId } from '@novakai/foundation/contract';
 import { present } from '../../core/send/sparse.js';
+import type { MessagingTraceSink } from '../trace.js';
+
+/**
+ * The default trace rendering: one line per observable moment on stdout, so
+ * `grep send_abc123` (or a stage name) reads one journey top to bottom.
+ */
+const consoleTraceSink: MessagingTraceSink = (event) => {
+  const parts = [event.sendId, event.sessionId, event.detail]
+    .filter((part): part is string => part !== undefined);
+  console.log(`[messaging] ${new Date().toISOString()} ${event.stage} ${parts.join(' ')}`);
+};
 
 /** Explicit scope, operating assignment and rate limit for external-session adoption. */
 export interface ExternalAdoptionOptions {
@@ -38,6 +49,7 @@ export interface DefaultMessagingRuntimeOptions {
   readonly installIdentityHooks?: boolean;
   readonly externalAdoption?: ExternalAdoptionOptions;
   readonly storeId?: StoreId;
+  readonly trace?: MessagingTraceSink;
 }
 
 /** Running contract plus one idempotent resource teardown operation. */
@@ -64,16 +76,18 @@ export async function createDefaultMessagingRuntime(
     root: options.root,
     dataRoot: options.dataRoot ?? path.join(options.root, "stores"),
   });
+  const roots = {
+    claude: [path.join(home, ".claude", "projects")],
+    codex: [
+      path.join(home, ".codex", "sessions"),
+      path.join(home, ".codex", "archived_sessions"),
+    ],
+    kimi: [path.join(home, ".kimi-code", "sessions")],
+  };
+  console.log(`[messaging] watching provider roots: ${Object.values(roots).flat().join(', ')}`);
   const runtime = createMessagingRuntime({
     store,
-    source: createProviderTranscriptSource({
-      claude: [path.join(home, ".claude", "projects")],
-      codex: [
-        path.join(home, ".codex", "sessions"),
-        path.join(home, ".codex", "archived_sessions"),
-      ],
-      kimi: [path.join(home, ".kimi-code", "sessions")],
-    }, {
+    source: createProviderTranscriptSource(roots, {
       ...present('adoptRoots', options.externalAdoption?.roots),
     }),
     normalizers: {
@@ -82,6 +96,7 @@ export async function createDefaultMessagingRuntime(
       kimi: providerNormalizer("kimi"),
     },
     storeId,
+    trace: options.trace ?? consoleTraceSink,
     ...present('agentDirectory', options.agentDirectory),
     ...present('providerSend', options.providerSend),
     ...present('conversations', options.conversations),

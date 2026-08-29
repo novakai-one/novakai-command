@@ -25,6 +25,7 @@ import { agentDeliveryMarker } from '../delivery/delivery-marker-codec.js';
 import { parseProviderName } from '../../contract/provider-name.js';
 import { parseProviderSessionId } from '../../contract/provider-session-id.js';
 import { parseTranscriptSourceId } from '../../contract/transcript-source-id.js';
+import type { MessagingTraceSink } from '../../contract/trace.js';
 import { present } from '../send/sparse.js';
 import { thrownMessageOr } from '../thrown.js';
 
@@ -48,6 +49,7 @@ export function createCommittedRecordsApi(options: {
   readonly normalizers: Readonly<Record<ProviderName, ProviderNormalizer>>;
   readonly agentDirectory?: AgentDirectory;
   readonly providerSend?: ProviderSend;
+  readonly trace?: MessagingTraceSink;
 }): RecordsApi {
   const safe = async <T>(operation: () => Promise<T>): Promise<Outcome<T>> => {
     try {
@@ -92,6 +94,7 @@ export function createCommittedRecordsApi(options: {
         agentDirectory: options.agentDirectory,
         providerSend: options.providerSend,
         now: brandClock(options.now),
+        ...present('trace', options.trace),
       }, input);
       if (!result.ok) throw asMessagingError(result.rejection);
       return result.acceptance;

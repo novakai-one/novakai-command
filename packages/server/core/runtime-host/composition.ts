@@ -61,7 +61,7 @@ export interface RuntimeHostOptions {
     | 'listConversationViews'
     | 'listAgentCommunications' | 'listProviderSessions' | 'listTranscriptLines'
     | 'createAgentDeliveryInstruction' | 'sendConversationMessage' | 'listSendJournals'
-    | 'ingestNow' | 'subscribeTranscriptEvents'
+    | 'ingestNow' | 'subscribeTranscriptEvents' | 'health'
   >;
   /** Target Agents door used only to prepare a headless child's CLI runtime. */
   readonly providerAgents?: Pick<AgentsContract, 'spawnAgent'>;

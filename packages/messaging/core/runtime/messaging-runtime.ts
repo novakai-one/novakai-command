@@ -13,6 +13,7 @@ import type {
 import type { TranscriptStore } from "../../contract/ports/transcript-store.js";
 import type { ProviderName, TranscriptSourceId } from "../../contract/types.js";
 import { MessagingError } from "../../contract/types.js";
+import type { MessagingTraceSink } from "../../contract/trace.js";
 import { createDurableTranscriptEventBus, type DurableTranscriptEventBus } from "../event-bus.js";
 import { brandClock } from "../clock.js";
 import { thrownMessage, thrownMessageOr } from "../thrown.js";
@@ -46,6 +47,7 @@ export interface MessagingRuntimeOptions {
   readonly safetySweepMs?: number;
   readonly changeDebounceMs?: number;
   readonly eventBus?: DurableTranscriptEventBus;
+  readonly trace?: MessagingTraceSink;
   readonly agentDirectory?: AgentDirectory;
   readonly providerSend?: ProviderSend;
   readonly conversations?: ConversationDirectory;
@@ -129,7 +131,7 @@ class MessagingRuntime implements MessagingRuntimeApi {
       (sourceIds) => this.runPass(sourceIds),
     );
     this.discoveryFloor = this.clock();
-    this.eventBus = options.eventBus ?? createDurableTranscriptEventBus(options.store);
+    this.eventBus = options.eventBus ?? createDurableTranscriptEventBus(options.store, options.trace);
     this.conversations = options.conversations ?? options.adoption?.conversations
       ?? (options.conversationPrincipalId === undefined
       ? undefined
@@ -151,6 +153,7 @@ class MessagingRuntime implements MessagingRuntimeApi {
       normalizers: options.normalizers,
       ...present('agentDirectory', options.agentDirectory),
       ...present('providerSend', options.providerSend),
+      ...present('trace', options.trace),
     });
   }
 
@@ -194,10 +197,7 @@ class MessagingRuntime implements MessagingRuntimeApi {
   }
 
   async stop(): Promise<Outcome<void>> {
-    if (this.maintenanceTimer !== undefined) clearInterval(this.maintenanceTimer);
-    if (this.safetyTimer !== undefined) clearInterval(this.safetyTimer);
-    this.maintenanceTimer = undefined;
-    this.safetyTimer = undefined;
+    this.clearTimers();
     this.sourceSubscription?.close();
     this.sourceSubscription = undefined;
     this.ingestQueue.cancelPending();
@@ -205,6 +205,13 @@ class MessagingRuntime implements MessagingRuntimeApi {
     await this.delivery.waitForIdle();
     this.state = "stopped";
     return { kind: "ok", value: undefined };
+  }
+
+  private clearTimers(): void {
+    if (this.maintenanceTimer !== undefined) clearInterval(this.maintenanceTimer);
+    if (this.safetyTimer !== undefined) clearInterval(this.safetyTimer);
+    this.maintenanceTimer = undefined;
+    this.safetyTimer = undefined;
   }
 
   /** Point-in-time runtime state; a store failure here propagates to the host caller. */
@@ -257,6 +264,10 @@ class MessagingRuntime implements MessagingRuntimeApi {
       ...present('adoption', this.adoptionConfig()),
     }, await this.candidatesFor(sourceIds));
     await this.delivery.maintain(this.eventBus);
+    this.options.trace?.({
+      stage: 'ingest.pass',
+      detail: `sources=${value.sources} added=${value.added} duplicates=${value.duplicates} failed=${value.failedSources}`,
+    });
     return value;
   }
 
@@ -305,38 +316,26 @@ class MessagingRuntime implements MessagingRuntimeApi {
     return this.delivery.routePending();
   }
 
-  ensureConversationView: MessagingRuntimeApi['ensureConversationView'] =
-    (input) => this.records.ensureConversationView(input);
-  updateConversationView: MessagingRuntimeApi['updateConversationView'] =
-    (input) => this.records.updateConversationView(input);
-  getConversationView: MessagingRuntimeApi['getConversationView'] =
-    (id) => this.records.getConversationView(id);
-  listConversationViews: MessagingRuntimeApi['listConversationViews'] =
-    () => this.records.listConversationViews();
-  rebuildProjections: MessagingRuntimeApi['rebuildProjections'] =
-    () => this.records.rebuildProjections();
-  readProjections: MessagingRuntimeApi['readProjections'] =
-    () => this.records.readProjections();
-  createAgentDeliveryInstruction: MessagingRuntimeApi['createAgentDeliveryInstruction'] =
-    (input) => this.records.createAgentDeliveryInstruction(input);
-  listProviderSessions: MessagingRuntimeApi['listProviderSessions'] =
-    () => this.records.listProviderSessions();
-  sendConversationMessage: MessagingRuntimeApi['sendConversationMessage'] =
-    (input) => this.records.sendConversationMessage(input);
-  listTranscriptLines: MessagingRuntimeApi['listTranscriptLines'] =
-    (input) => this.records.listTranscriptLines(input);
-  listAgentConversationMessages: MessagingRuntimeApi['listAgentConversationMessages'] =
-    (input) => this.records.listAgentConversationMessages(input);
-  listSendJournals: MessagingRuntimeApi['listSendJournals'] =
-    () => this.records.listSendJournals();
-  listAgentCommunications: MessagingRuntimeApi['listAgentCommunications'] =
-    (input) => this.records.listAgentCommunications(input);
+  ensureConversationView: MessagingRuntimeApi['ensureConversationView'] = (input) => this.records.ensureConversationView(input);
+  updateConversationView: MessagingRuntimeApi['updateConversationView'] = (input) => this.records.updateConversationView(input);
+  getConversationView: MessagingRuntimeApi['getConversationView'] = (id) => this.records.getConversationView(id);
+  listConversationViews: MessagingRuntimeApi['listConversationViews'] = () => this.records.listConversationViews();
+  rebuildProjections: MessagingRuntimeApi['rebuildProjections'] = () => this.records.rebuildProjections();
+  readProjections: MessagingRuntimeApi['readProjections'] = () => this.records.readProjections();
+  createAgentDeliveryInstruction: MessagingRuntimeApi['createAgentDeliveryInstruction'] = (input) => this.records.createAgentDeliveryInstruction(input);
+  listProviderSessions: MessagingRuntimeApi['listProviderSessions'] = () => this.records.listProviderSessions();
+  sendConversationMessage: MessagingRuntimeApi['sendConversationMessage'] = (input) => this.records.sendConversationMessage(input);
+  listTranscriptLines: MessagingRuntimeApi['listTranscriptLines'] = (input) => this.records.listTranscriptLines(input);
+  listAgentConversationMessages: MessagingRuntimeApi['listAgentConversationMessages'] = (input) => this.records.listAgentConversationMessages(input);
+  listSendJournals: MessagingRuntimeApi['listSendJournals'] = () => this.records.listSendJournals();
+  listAgentCommunications: MessagingRuntimeApi['listAgentCommunications'] = (input) => this.records.listAgentCommunications(input);
 
   subscribeAgentConversationMessages: MessagingRuntimeApi['subscribeAgentConversationMessages'] =
     (sink) => subscribeAgentConversationMessageStream({
       eventBus: this.eventBus,
       store: this.options.store,
       normalizers: this.options.normalizers,
+      ...present('trace', this.options.trace),
     }, sink);
 
   subscribeTranscriptEvents(sink: Parameters<DurableTranscriptEventBus["subscribe"]>[0]) {

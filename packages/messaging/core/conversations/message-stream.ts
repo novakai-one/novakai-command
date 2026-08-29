@@ -1,6 +1,7 @@
 import type { AgentConversationMessageSink } from '../../contract/conversations.js';
 import type { ProviderNormalizer } from '../../contract/ports/provider-transcript-source.js';
 import type { TranscriptLine } from '../../contract/records/transcript-line.js';
+import type { MessagingTraceSink } from '../../contract/trace.js';
 import type {
   ProviderName,
   ProviderSessionId,
@@ -16,6 +17,7 @@ interface AgentConversationMessageStreamDependencies {
   readonly eventBus: DurableTranscriptEventBus;
   readonly store: ConversationMessageReads;
   readonly normalizers: Readonly<Record<ProviderName, ProviderNormalizer>>;
+  readonly trace?: MessagingTraceSink;
 }
 
 /**
@@ -61,6 +63,11 @@ async function publishAppendedLine(
   ).find((candidate) => candidate.id === line.id);
   if (message === undefined) return;
   await sink({ agentId, message });
+  dependencies.trace?.({
+    stage: 'message.published',
+    sessionId,
+    detail: `${agentId} ← ${message.role} message ${message.id}`,
+  });
 }
 
 /** Source order within one session, so the projection sees the lines the provider wrote. */

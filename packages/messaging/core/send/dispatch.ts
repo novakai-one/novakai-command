@@ -5,6 +5,7 @@ import type { ProviderSession } from '../../contract/records/provider-session.js
 import type { SendAttempt, SendJournal } from '../../contract/records/send-journal.js';
 import type { ProviderSessionId, Timestamp } from '../../contract/types.js';
 import { messageCorrelationHint } from '../../contract/correlation.js';
+import type { MessagingTraceSink } from '../../contract/trace.js';
 import type { AgentLookup } from './agent-lookup.js';
 import { mintSendAttemptId } from './mint.js';
 import { present } from './sparse.js';
@@ -15,6 +16,7 @@ interface DispatchDependencies {
   readonly providerSend: ProviderSend;
   readonly agentDirectory: AgentLookup;
   readonly now: () => Timestamp;
+  readonly trace?: MessagingTraceSink;
 }
 
 /** Provider effect recorded on the journal, or the typed reason dispatch was refused. */
@@ -135,6 +137,11 @@ async function runProviderEffect(
   sessionId: ProviderSessionId | undefined,
   session: ProviderSession | undefined,
 ): Promise<DispatchOutcome> {
+  dependencies.trace?.({
+    stage: 'send.dispatch-started',
+    sendId: journal.id,
+    ...present('sessionId', sessionId),
+  });
   try {
     const effect = await dependencies.providerSend.dispatch({
       sendId: journal.id,
@@ -143,11 +150,23 @@ async function runProviderEffect(
       ...present('resumeId', session?.resumeId),
       ...present('screenContext', journal.request.screenContext),
     });
-    return effect.ok
-      ? recordSubmission(dependencies, journal, attempt, effect, sessionId)
-      : recordRefusal(dependencies, journal, attempt, effect);
+    const settled = effect.ok
+      ? await recordSubmission(dependencies, journal, attempt, effect, sessionId)
+      : await recordRefusal(dependencies, journal, attempt, effect);
+    dependencies.trace?.({
+      stage: 'send.dispatch-settled',
+      sendId: journal.id,
+      detail: settled.ok ? settled.journal.state : 'refused',
+    });
+    return settled;
   } catch (cause) {
-    return recordUncertainty(dependencies, journal, attempt, cause);
+    const uncertain = await recordUncertainty(dependencies, journal, attempt, cause);
+    dependencies.trace?.({
+      stage: 'send.dispatch-settled',
+      sendId: journal.id,
+      detail: 'indeterminate',
+    });
+    return uncertain;
   }
 }
 

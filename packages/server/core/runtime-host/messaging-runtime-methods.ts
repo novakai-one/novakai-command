@@ -13,7 +13,7 @@ type WireMessaging = Pick<
   MessagingRuntimeApi,
   | 'ensureConversationView' | 'updateConversationView' | 'getConversationView'
   | 'listConversationViews' | 'listAgentCommunications'
-  | 'createAgentDeliveryInstruction' | 'sendConversationMessage'
+  | 'createAgentDeliveryInstruction' | 'sendConversationMessage' | 'health'
 >;
 
 interface MessagingMethodOptions {
@@ -257,6 +257,8 @@ export function buildMessagingRuntimeMethods(options: MessagingMethodOptions): M
       context.principal.kind === 'agent-run'
         ? b3fail(b3err('PermissionDenied', 'Agent Run may not read the sidebar', {}, false))
         : fromOutcome(await options.messaging.listConversationViews())),
+    'b3.messaging.health': method(options, async () =>
+      b3ok(await options.messaging.health())),
     'b3.messaging.closeConversation': method(options, async (payload, context) => {
       if (typeof payload['threadId'] !== 'string') return failure('threadId is required');
       return fromOutcome(await options.messaging.updateConversationView({
