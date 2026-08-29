@@ -184,6 +184,17 @@
       }
     },
     {
+      "name": "InvalidQuery",
+      "summary": "A committed-query request failed validation before any read. Non-retryable; the message names which constraint failed so hosts can correct and resubmit. Distinct from DependencyUnavailable: the caller asked for something impossible, so retrying changes nothing.",
+      "retryable": false,
+      "fields": {
+        "query": {
+          "type": "string",
+          "description": "The committed query that failed validation, e.g. listAgentCommunications."
+        }
+      }
+    },
+    {
       "name": "UnknownTargetAgent",
       "summary": "The addressed Agent does not exist in the Agent directory. Non-retryable; the host should refresh its agent list before resubmitting.",
       "retryable": false,
