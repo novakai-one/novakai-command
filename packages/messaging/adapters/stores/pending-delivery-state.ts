@@ -4,7 +4,10 @@ import type {
   PendingDeliveryTransitionResult,
 } from '../../contract/ports/transcript-store.js';
 import type { PendingDelivery } from '../../contract/records/pending-delivery.js';
+import { MessagingError } from '../../contract/types.js';
 import { assertPendingDeliveryTransition } from '../../core/delivery/transitions.js';
+import { compareStrings } from '../../core/compare.js';
+import { present } from '../../core/send/sparse.js';
 
 /** Replay envelope for one or more PendingDelivery mutations. */
 export interface PersistedPendingDeliveryMutation {
@@ -14,7 +17,11 @@ export interface PersistedPendingDeliveryMutation {
 
 type Persist = (deliveries: readonly PendingDelivery[]) => Promise<void>;
 
-/** Serialized idempotency and CAS semantics shared by both store adapters. */
+/**
+ * Serialized idempotency and CAS semantics shared by both store adapters.
+ * Crash recovery: persist precedes apply, so a crash mid-step replays from
+ * the store on next open.
+ */
 export class PendingDeliveryState {
   private readonly deliveries = new Map<string, PendingDelivery>();
   private mutationTail: Promise<unknown> = Promise.resolve();
@@ -27,17 +34,26 @@ export class PendingDeliveryState {
 
   accept(delivery: PendingDelivery, persist?: Persist): Promise<AcceptPendingDeliveryResult> {
     return this.serialized(async () => {
-      const existing = this.deliveries.get(delivery.id);
-      if (existing !== undefined) {
-        if (existing.transcriptLineId !== delivery.transcriptLineId
-          || existing.recipientAgentId !== delivery.recipientAgentId) {
-          throw new Error(`PendingDelivery ${delivery.id} conflicts`);
-        }
-        return { delivery: existing, duplicate: true };
-      }
+      const existing = this.existingOrConflict(delivery);
+      if (existing !== undefined) return { delivery: existing, duplicate: true };
       if (persist !== undefined) await persist([delivery]);
       this.apply([delivery]);
       return { delivery, duplicate: false };
+    });
+  }
+
+  /**
+   * The stored delivery with this id: identical means a duplicate accept, a
+   * different payload under the same id is a typed conflict.
+   */
+  private existingOrConflict(delivery: PendingDelivery): PendingDelivery | undefined {
+    const existing = this.deliveries.get(delivery.id);
+    if (existing === undefined) return undefined;
+    if (existing.transcriptLineId === delivery.transcriptLineId
+      && existing.recipientAgentId === delivery.recipientAgentId) return existing;
+    throw new MessagingError('IdempotencyConflict', {
+      message: `PendingDelivery ${delivery.id} conflicts`,
+      fields: { deliveryId: delivery.id },
     });
   }
 
@@ -59,8 +75,8 @@ export class PendingDeliveryState {
       const next: PendingDelivery = {
         ...current,
         state: input.state,
-        updatedAt: input.updatedAt as PendingDelivery['updatedAt'],
-        ...(input.failure === undefined ? {} : { failure: input.failure }),
+        updatedAt: input.updatedAt,
+        ...present('failure', input.failure),
       };
       if (persist !== undefined) await persist([next]);
       this.apply([next]);
@@ -70,7 +86,7 @@ export class PendingDeliveryState {
 
   list(): readonly PendingDelivery[] {
     return [...this.deliveries.values()].sort((left, right) =>
-      left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id));
+      compareStrings(left.createdAt, right.createdAt) || compareStrings(left.id, right.id));
   }
 
   private required(id: string): PendingDelivery {

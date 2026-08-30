@@ -16,6 +16,14 @@ import {
 } from '../../contract/types.js';
 import { present } from '../send/sparse.js';
 
+/**
+ * Hosts supply activity timestamps as plain strings; the brand has no pattern
+ * to parse against, so this one seam is the single place a host string becomes
+ * a `Timestamp` — the same role the ID parsers play for branded IDs.
+ */
+const hostTimestamp = (value: Timestamp | string | undefined): Timestamp | undefined =>
+  value === undefined ? undefined : (value as Timestamp);
+
 /** The two view operations conversations need — nothing else. */
 export interface ConversationViewStore {
   getConversationView(id: string): Promise<ConversationView | null>;
@@ -94,7 +102,7 @@ export async function updateConversationView(
       ...present('titleOverride', input.titleOverride),
       ...present('pinned', input.pinned),
       ...present('archived', input.archived),
-      ...present('lastActivityAt', input.lastActivityAt),
+      ...present('lastActivityAt', hostTimestamp(input.lastActivityAt)),
       ...present('lastReadLineId', lastReadLineId),
     },
     clientOpId: input.clientOpId,
@@ -117,7 +125,7 @@ const createdView = (
   participantIds: participants,
   pinned: input.pinned ?? false,
   archived: input.archived ?? false,
-  lastActivityAt: input.lastActivityAt ?? timestamp,
+  lastActivityAt: hostTimestamp(input.lastActivityAt) ?? timestamp,
   ...present('titleOverride', input.titleOverride),
   ...present('lastReadLineId', lastReadLineId),
   ...present('address', input.address),
@@ -136,7 +144,7 @@ const mergedView = (
   updatedAt: timestamp,
   pinned: input.pinned ?? current.pinned,
   archived: input.archived ?? current.archived,
-  lastActivityAt: input.lastActivityAt ?? current.lastActivityAt,
+  lastActivityAt: hostTimestamp(input.lastActivityAt) ?? current.lastActivityAt,
   ...present('titleOverride', carried(input.titleOverride, current.titleOverride)),
   ...present('lastReadLineId', carried(lastReadLineId, current.lastReadLineId)),
   ...present('address', carried(input.address, current.address)),

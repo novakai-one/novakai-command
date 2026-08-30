@@ -14,6 +14,7 @@ import type {
   ProviderName,
   ProviderResumeId,
   ProviderSessionId,
+  Timestamp,
   TranscriptEventKind,
   TranscriptSourceId,
 } from "../types.js";
@@ -91,7 +92,7 @@ export interface PendingDeliveryTransitionInput {
   readonly id: PendingDelivery['id'];
   readonly expectedState: PendingDeliveryState;
   readonly state: PendingDeliveryState;
-  readonly updatedAt: string;
+  readonly updatedAt: Timestamp;
   readonly failure?: DeliveryFailure;
 }
 
@@ -111,8 +112,8 @@ export interface TranscriptStore {
   getTranscriptLine(id: TranscriptLine['id']): Promise<TranscriptLine | null>;
   acceptSend(input: AcceptSendInput): Promise<AcceptSendResult>;
   transitionSend(input: SendTransitionInput): Promise<SendTransitionResult>;
-  bindAgentSession(agentId: string, sessionId: ProviderSessionId, updatedAt: string): Promise<number>;
-  confirmSendForLines(sessionId: ProviderSessionId, lines: readonly TranscriptLine[], updatedAt: string): Promise<number>;
+  bindAgentSession(agentId: string, sessionId: ProviderSessionId, updatedAt: Timestamp): Promise<number>;
+  confirmSendForLines(sessionId: ProviderSessionId, lines: readonly TranscriptLine[], updatedAt: Timestamp): Promise<number>;
   listSendJournals(): Promise<readonly SendJournal[]>;
   acceptPendingDelivery(input: AcceptPendingDeliveryInput): Promise<AcceptPendingDeliveryResult>;
   transitionPendingDelivery(

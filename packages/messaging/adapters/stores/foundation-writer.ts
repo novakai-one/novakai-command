@@ -15,21 +15,38 @@ import type { ProviderSession } from '../../contract/records/provider-session.js
 import type { SendJournal } from '../../contract/records/send-journal.js';
 import type { ConversationViewMutation } from '../../contract/records/conversation-view.js';
 import type { ProjectionRebuildResult } from '../../contract/records/projections.js';
-import type { MessagingStoreOp, MessagingStoreRecord } from './foundation-operations.js';
+import { MessagingError, type Timestamp } from '../../contract/types.js';
+import {
+  laneSequenceField,
+  type MessagingStoreOp,
+  type MessagingStoreRecord,
+  type MutationLane,
+} from './foundation-operations.js';
 
-type MutationLane = 'transcript' | 'send' | 'delivery' | 'conversation' | 'projection';
+/**
+ * Foundation's ObjectId brand is opaque to Messaging; the minted op id crosses
+ * at this one seam, the single place the two brands meet.
+ */
+const storeOpObjectId = (operationKey: string): ObjectId =>
+  mintMessagingStoreOpId(operationKey) as unknown as ObjectId;
 
-/** Serializes all Foundation appends while preserving per-lane replay order. */
+/** The per-lane sequence field one record carries — each lane stamps exactly its own. */
+const sequenceStamp = (lane: MutationLane, value: number): Partial<MessagingStoreRecord> =>
+  ({ [laneSequenceField[lane]]: value });
+
+/**
+ * Serializes all Foundation appends while preserving per-lane replay order.
+ * Crash recovery: a record either lands in the Foundation store or the
+ * sequence is rolled back and the caller sees a typed failure — a crash
+ * mid-append replays from the store on next open.
+ */
 export class FoundationMessagingWriter {
   private mutationTail: Promise<unknown> = Promise.resolve();
 
   constructor(
     private readonly handle: ScopedStoreHandle,
-    private transcriptSequence: number,
-    private sendSequence: number,
-    private deliverySequence: number,
-    private conversationSequence: number,
-    private projectionSequence: number,
+    private readonly sequences: Record<MutationLane, number>,
+    private readonly now: () => Timestamp,
   ) {}
 
   persistTranscript(input: TranscriptBatchInput): Promise<void> {
@@ -54,7 +71,7 @@ export class FoundationMessagingWriter {
     return this.persistContent(
       `send-journal:${journals.map((item) => item.id).join(',')}`,
       { op: 'send-journal-mutation', journals },
-      journals[0]?.updatedAt ?? new Date().toISOString(),
+      journals[0]?.updatedAt ?? this.now(),
       'send',
     );
   }
@@ -63,7 +80,7 @@ export class FoundationMessagingWriter {
     return this.persistContent(
       `pending-delivery:${deliveries.map((item) => item.id).join(',')}`,
       { op: 'pending-delivery-mutation', deliveries },
-      deliveries[0]?.updatedAt ?? new Date().toISOString(),
+      deliveries[0]?.updatedAt ?? this.now(),
       'delivery',
     );
   }
@@ -81,7 +98,7 @@ export class FoundationMessagingWriter {
     return this.persistContent(
       'projection-rebuild',
       { op: 'projection-rebuild', result },
-      new Date().toISOString(),
+      this.now(),
       'projection',
     );
   }
@@ -89,7 +106,7 @@ export class FoundationMessagingWriter {
   private persistContent(
     prefix: string,
     storeOp: MessagingStoreOp,
-    createdAt: string,
+    createdAt: Timestamp,
     lane: MutationLane,
   ): Promise<void> {
     const digest = createHash('sha256').update(canonicalJson(storeOp)).digest('hex');
@@ -99,56 +116,57 @@ export class FoundationMessagingWriter {
   private persist(
     operationKey: string,
     storeOp: MessagingStoreOp,
-    createdAt: string,
+    createdAt: Timestamp,
     lane: MutationLane,
   ): Promise<void> {
     const operation = () => this.persistSerialized(operationKey, storeOp, createdAt, lane);
-    const run = this.mutationTail.then(operation, operation);
-    this.mutationTail = run.then(() => undefined, () => undefined);
-    return run;
+    const chained = this.mutationTail.then(operation, operation);
+    this.mutationTail = chained.then(() => undefined, () => undefined);
+    return chained;
   }
 
   private async persistSerialized(
     operationKey: string,
     storeOp: MessagingStoreOp,
-    createdAt: string,
+    createdAt: Timestamp,
     lane: MutationLane,
   ): Promise<void> {
     const payloadDigest = createHash('sha256').update(canonicalJson(storeOp)).digest('hex');
-    const id = mintMessagingStoreOpId(operationKey) as unknown as ObjectId;
-    const existing = await getObject<MessagingStoreRecord>(this.handle, 'messagingStoreOp', id);
-    if (existing.ok && !isAbsent(existing.value)) {
-      if (existing.value.object.payloadDigest !== payloadDigest) {
-        throw new Error(`Messaging operation ${operationKey} conflicts`);
-      }
-      return;
-    }
-    this.increment(lane, 1);
+    const id = storeOpObjectId(operationKey);
+    if (await this.alreadyPersisted(id, operationKey, payloadDigest)) return;
+    this.sequences[lane] += 1;
     const record: MessagingStoreRecord = {
-      kind: 'messagingStoreOp', id: id as string, schemaVersion: 1, createdAt,
+      kind: 'messagingStoreOp', id: String(id), schemaVersion: 1, createdAt,
       permissionLevel: 'private', createdBy: 'overridden-by-foundation', storeSequence: 0,
-      operationKey, payloadDigest, storeOp, ...this.sequence(lane),
+      operationKey, payloadDigest, storeOp,
+      ...sequenceStamp(lane, this.sequences[lane]),
     };
     const written = await createObject(this.handle, record, deriveClientOpId(`messaging:${operationKey}`));
     if (!written.ok) {
-      this.increment(lane, -1);
-      throw new Error(`Messaging append failed: ${written.error.code}`);
+      this.sequences[lane] -= 1;
+      throw new MessagingError('DependencyUnavailable', {
+        message: `Messaging append failed: ${written.error.code}`,
+        retryable: true,
+        fields: { dependency: 'foundation-store', code: written.error.code },
+      });
     }
   }
 
-  private sequence(lane: MutationLane): object {
-    if (lane === 'transcript') return { transcriptSequence: this.transcriptSequence };
-    if (lane === 'send') return { sendSequence: this.sendSequence };
-    if (lane === 'delivery') return { deliverySequence: this.deliverySequence };
-    if (lane === 'conversation') return { conversationSequence: this.conversationSequence };
-    return { projectionSequence: this.projectionSequence };
-  }
-
-  private increment(lane: MutationLane, amount: number): void {
-    if (lane === 'transcript') this.transcriptSequence += amount;
-    else if (lane === 'send') this.sendSequence += amount;
-    else if (lane === 'delivery') this.deliverySequence += amount;
-    else if (lane === 'conversation') this.conversationSequence += amount;
-    else this.projectionSequence += amount;
+  /**
+   * True when this operation key is already persisted with the same payload;
+   * the same key carrying a different payload is a typed conflict.
+   */
+  private async alreadyPersisted(
+    id: ObjectId,
+    operationKey: string,
+    payloadDigest: string,
+  ): Promise<boolean> {
+    const existing = await getObject<MessagingStoreRecord>(this.handle, 'messagingStoreOp', id);
+    if (!existing.ok || isAbsent(existing.value)) return false;
+    if (existing.value.object.payloadDigest === payloadDigest) return true;
+    throw new MessagingError('IdempotencyConflict', {
+      message: `Messaging operation ${operationKey} conflicts`,
+      fields: { operationKey },
+    });
   }
 }

@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // GENERATED FILE — DO NOT EDIT.
 // Source: contract/messaging-contract.json (law #3 single source of truth).
-// contractVersion 1.2.0 · schemaVersion 1 · sha256:8c7c35709437e41f
+// contractVersion 1.3.0 · schemaVersion 1 · sha256:d44626ab1f6dc043
 // Regenerate: npm run generate
 // ---------------------------------------------------------------------------
 
@@ -9,7 +9,7 @@ declare const brand: unique symbol;
 type Brand<Name extends string> = { readonly [brand]: Name };
 
 // --- versions & constants ------------------------------------------------
-export const contractVersion = "1.2.0" as const;
+export const contractVersion = "1.3.0" as const;
 export const schemaVersion = 1 as const;
 
 // --- branded identities ----------------------------------------------------
@@ -72,6 +72,7 @@ export type TranscriptRole = (typeof transcriptRoleValues)[number];
 // --- error catalogue -------------------------------------------------------
 export const errorCatalogue = [
   { name: "IdempotencyConflict", retryable: false, reserved: false },
+  { name: "ConcurrentModification", retryable: true, reserved: false },
   { name: "DependencyUnavailable", retryable: false, reserved: false },
   { name: "InvalidSendInput", retryable: false, reserved: false },
   { name: "InvalidQuery", retryable: false, reserved: false },
