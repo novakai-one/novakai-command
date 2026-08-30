@@ -1,4 +1,5 @@
 import { lstat } from 'node:fs/promises';
+import type { Stats } from 'node:fs';
 import path from 'node:path';
 import type {
   ProviderSourceChange,
@@ -6,6 +7,7 @@ import type {
   ProviderSourceSubscription,
 } from '../../contract/ports/provider-transcript-source.js';
 import type { TranscriptSourceId } from '../../contract/types.js';
+import { isErrno } from '../../core/thrown.js';
 import {
   createTranscriptRootsWatcher,
   type TranscriptRootsWatcher,
@@ -22,6 +24,16 @@ export interface DiscoveredSource extends ProviderSourceStat {
 
 const publicStat = ({ filePath: _hidden, ...source }: DiscoveredSource): ProviderSourceStat =>
   source;
+
+/** Fresh metadata for one path, or nothing when the file vanished mid-pass. */
+const statExisting = async (filePath: string): Promise<Stats | undefined> => {
+  try {
+    return await lstat(filePath);
+  } catch (cause) {
+    if (isErrno(cause, 'ENOENT')) return undefined;
+    throw cause;
+  }
+};
 
 /**
  * Keeps provider filesystem paths inside the adapter while exposing opaque
@@ -44,38 +56,43 @@ export class ProviderSourceMonitor {
     return sources.map(publicStat);
   }
 
-  get(sourceId: TranscriptSourceId): DiscoveredSource | undefined {
+  find(sourceId: TranscriptSourceId): DiscoveredSource | undefined {
     return this.discovered.get(sourceId);
+  }
+
+  /** The sources a targeted refresh covers — everything when no targets are given. */
+  private selected(sourceIds?: readonly TranscriptSourceId[]): readonly DiscoveredSource[] {
+    if (sourceIds === undefined) return [...this.discovered.values()];
+    return sourceIds.flatMap((sourceId) => {
+      const source = this.discovered.get(sourceId);
+      return source === undefined ? [] : [source];
+    });
+  }
+
+  /** Re-stats one source and updates the map, or skips it when the file is gone. */
+  private async refreshOne(source: DiscoveredSource): Promise<ProviderSourceStat | undefined> {
+    const metadata = await statExisting(source.filePath);
+    if (metadata === undefined || !metadata.isFile() || metadata.isSymbolicLink()) {
+      return undefined;
+    }
+    const next: DiscoveredSource = {
+      ...source,
+      size: metadata.size,
+      device: String(metadata.dev),
+      inode: String(metadata.ino),
+      modifiedAt: metadata.mtime.toISOString(),
+    };
+    this.discovered.set(source.sourceId, next);
+    return publicStat(next);
   }
 
   async statKnown(
     sourceIds?: readonly TranscriptSourceId[],
   ): Promise<readonly ProviderSourceStat[]> {
-    const selected = sourceIds === undefined
-      ? [...this.discovered.values()]
-      : sourceIds.flatMap((sourceId) => {
-          const source = this.discovered.get(sourceId);
-          return source === undefined ? [] : [source];
-        });
     const refreshed: ProviderSourceStat[] = [];
-    for (const source of selected) {
-      let metadata;
-      try {
-        metadata = await lstat(source.filePath);
-      } catch (cause) {
-        if ((cause as NodeJS.ErrnoException).code === 'ENOENT') continue;
-        throw cause;
-      }
-      if (!metadata.isFile() || metadata.isSymbolicLink()) continue;
-      const next: DiscoveredSource = {
-        ...source,
-        size: metadata.size,
-        device: String(metadata.dev),
-        inode: String(metadata.ino),
-        modifiedAt: metadata.mtime.toISOString(),
-      };
-      this.discovered.set(source.sourceId, next);
-      refreshed.push(publicStat(next));
+    for (const source of this.selected(sourceIds)) {
+      const next = await this.refreshOne(source);
+      if (next !== undefined) refreshed.push(next);
     }
     return refreshed;
   }
