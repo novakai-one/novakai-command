@@ -46,7 +46,13 @@ flowchart TD
 | `core/conversations/` | conversation views and message streams | contract, core/send | rewritten (PR #7) |
 | `core/projections/` | rebuildable usage rollups and tool-call index | contract | rewritten (PR #8) |
 | `core/runtime/` | composed runtime: lifecycle, wiring, committed-record door | all of core, contract | rewritten (PR #9) |
-| `adapters/` | store implementations, transcript parsers | contract, core shared helpers (thrown, compare, clock, sparse) | provider-source lane rewritten (PR #15); normalizers rewritten (PR #16); stores, provider-send per-slice |
+| `adapters/` | store implementations, transcript parsers | contract, core shared helpers (thrown, compare, clock, sparse) | stores rewritten (PR #14); provider-source lane rewritten (PR #15); normalizers rewritten (PR #16); provider-hooks per-slice |
+
+The Agents seam lives in `contract/compose/` — `agents-door.ts` declares the
+structural slice of the (unaudited) Agents capability Messaging binds to, and
+`agent-directory.ts` + `agents-provider-send.ts` are the anti-corruption
+adapters over it. Agents facts are re-validated there before Messaging code
+sees them.
 
 Known deviation from the SOP: the composition door lives in a
 `contract/compose/` directory, not a single `contract/compose.ts` file. The

@@ -35,7 +35,7 @@ export { createDefaultMessagingRuntime } from "./compose/ingestion.js";
 export { createAgentDirectory } from "./compose/agent-directory.js";
 
 /** Adapts the public Agents contract to one completed provider CLI turn. */
-export { createAgentsProviderSend } from "../adapters/provider-send/agents-provider-send.js";
+export { createAgentsProviderSend } from "./compose/agents-provider-send.js";
 
 /** One observable messaging moment and the sink hosts supply to receive them. */
 export type { MessagingTraceEvent, MessagingTraceSink } from "./trace.js";
