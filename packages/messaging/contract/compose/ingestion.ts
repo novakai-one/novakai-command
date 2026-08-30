@@ -1,28 +1,30 @@
-import { homedir } from "node:os";
-import path from "node:path";
-import { createProviderTranscriptSource } from "../../adapters/provider-transcripts/source.js";
-import { providerNormalizer } from "../../adapters/provider-transcripts/normalizers/index.js";
-import { openFoundationTranscriptStore } from "../../adapters/stores/jsonl.js";
-import { createMessagingRuntime } from "../../core/runtime/messaging-runtime.js";
-import type { MessagingRuntimeApi } from "../runtime.js";
-import type { AgentDirectory } from "../ports/agent-directory.js";
-import type { AdoptionAssignment } from "../ports/agent-directory.js";
-import type { ConversationDirectory } from "../ports/conversation-directory.js";
-import type { ProviderSend } from "../ports/provider-send.js";
-import { agentIdentityHookCommand } from "../../adapters/provider-hooks/agent-identity-hook.js";
-import { ensureClaudeIdentityHook } from "../../adapters/provider-hooks/registrations/claude.js";
-import { ensureCodexIdentityHook } from "../../adapters/provider-hooks/registrations/codex.js";
-import { ensureKimiIdentityHook } from "../../adapters/provider-hooks/registrations/kimi.js";
-import type { ProviderTranscriptRoots } from "../../adapters/provider-transcripts/source.js";
+import { homedir } from 'node:os';
+import path from 'node:path';
 import { ensureStoreIdentity, type StoreId } from '@novakai/foundation/contract';
+import { createProviderTranscriptSource } from '../../adapters/provider-transcripts/source.js';
+import type { ProviderTranscriptRoots } from '../../adapters/provider-transcripts/source.js';
+import { providerNormalizer } from '../../adapters/provider-transcripts/normalizers/index.js';
+import { openFoundationTranscriptStore } from '../../adapters/stores/jsonl.js';
+import { agentIdentityHookCommand } from '../../adapters/provider-hooks/agent-identity-hook.js';
+import { ensureClaudeIdentityHook } from '../../adapters/provider-hooks/registrations/claude.js';
+import { ensureCodexIdentityHook } from '../../adapters/provider-hooks/registrations/codex.js';
+import { ensureKimiIdentityHook } from '../../adapters/provider-hooks/registrations/kimi.js';
+import { createMessagingRuntime } from '../../core/runtime/messaging-runtime.js';
 import { present } from '../../core/sparse.js';
 import { thrownMessageOr } from '../../core/thrown.js';
+import type { MessagingRuntimeApi } from '../runtime.js';
+import type { AgentDirectory, AdoptionAssignment } from '../ports/agent-directory.js';
+import type { ConversationDirectory } from '../ports/conversation-directory.js';
+import type { ProviderSend } from '../ports/provider-send.js';
+import type { TranscriptStore } from '../ports/transcript-store.js';
 import { MessagingError } from '../types.js';
 import type { MessagingTraceSink } from '../trace.js';
 
 /**
  * The default trace rendering: one line per observable moment on stdout, so
- * `grep send_abc123` (or a stage name) reads one journey top to bottom.
+ * `grep send_abc123` (or a stage name) reads one journey top to bottom. The
+ * sink stamps the time it observed the event — that is the trace contract's
+ * job for a sink, so the wall clock is read here and nowhere else.
  */
 const consoleTraceSink: MessagingTraceSink = (event) => {
   const parts = [event.sendId, event.sessionId, event.detail]
@@ -53,8 +55,8 @@ export interface DefaultMessagingRuntimeOptions {
   readonly storeId?: StoreId;
   /**
    * Trace sink for observable messaging moments. Default-on: when omitted,
-   * one structured line per moment goes to stdout. Pass a no-op to silence,
-   * or your own sink to route traces elsewhere.
+   * one structured line per moment goes to stdout. Pass a no-op to silence —
+   * the sink is the only output channel this composition writes to.
    */
   readonly trace?: MessagingTraceSink;
 }
@@ -75,43 +77,27 @@ export interface ComposedMessagingRuntime {
  * Foundation and the filesystem throw untyped errors; they are wrapped here so
  * no raw exception escapes the door. Once composed, the runtime speaks
  * `Outcome` for every operation.
+ *
+ * Crash recovery: every step is safe to retry — hook installs report
+ * `unchanged` when already present — so the recovery owner is the caller
+ * invoking this door again.
  */
 export async function createDefaultMessagingRuntime(
   options: DefaultMessagingRuntimeOptions,
 ): Promise<ComposedMessagingRuntime> {
   const home = options.providerHome ?? homedir();
-  const storeId = options.storeId
-    ?? await composeStep('store-identity', async () => (await ensureStoreIdentity(options.root)).id);
-  if (options.installIdentityHooks ?? true) {
-    const command = agentIdentityHookCommand();
-    await composeStep('provider-hooks', () => Promise.all([
-      ensureClaudeIdentityHook({ providerHome: home, command }),
-      ensureCodexIdentityHook({ providerHome: home, command }),
-      ensureKimiIdentityHook({ providerHome: home, command }),
-    ]));
-  }
-  const store = await composeStep('messaging-store', () => openFoundationTranscriptStore({
-    root: options.root,
-    dataRoot: options.dataRoot ?? path.join(options.root, "stores"),
-  }));
-  const roots = {
-    claude: [path.join(home, ".claude", "projects")],
-    codex: [
-      path.join(home, ".codex", "sessions"),
-      path.join(home, ".codex", "archived_sessions"),
-    ],
-    kimi: [path.join(home, ".kimi-code", "sessions")],
-  };
-  console.log(`[messaging] watching provider roots: ${Object.values(roots).flat().join(', ')}`);
+  const storeId = await composeStoreId(options);
+  await installIdentityHooks(home, options.installIdentityHooks ?? true);
+  const store = await composeStep('messaging-store', () => openMessagingStore(options));
   const runtime = createMessagingRuntime({
     store,
-    source: createProviderTranscriptSource(roots, {
+    source: createProviderTranscriptSource(providerRoots(home), {
       ...present('adoptRoots', options.externalAdoption?.roots),
     }),
     normalizers: {
-      claude: providerNormalizer("claude"),
-      codex: providerNormalizer("codex"),
-      kimi: providerNormalizer("kimi"),
+      claude: providerNormalizer('claude'),
+      codex: providerNormalizer('codex'),
+      kimi: providerNormalizer('kimi'),
     },
     storeId,
     trace: options.trace ?? consoleTraceSink,
@@ -128,6 +114,43 @@ export async function createDefaultMessagingRuntime(
       await runtime.stop();
       await store.close();
     },
+  };
+}
+
+/** The store id the host supplied, or the one foundation establishes for this root. */
+async function composeStoreId(options: DefaultMessagingRuntimeOptions): Promise<StoreId> {
+  if (options.storeId !== undefined) return options.storeId;
+  return composeStep('store-identity', async () => (await ensureStoreIdentity(options.root)).id);
+}
+
+/** Registers Novakai's identity hook with all three providers, unless the host opted out. */
+async function installIdentityHooks(home: string, install: boolean): Promise<void> {
+  if (!install) return;
+  const command = agentIdentityHookCommand();
+  await composeStep('provider-hooks', () => Promise.all([
+    ensureClaudeIdentityHook({ providerHome: home, command }),
+    ensureCodexIdentityHook({ providerHome: home, command }),
+    ensureKimiIdentityHook({ providerHome: home, command }),
+  ]));
+}
+
+/** The durable messaging store under the host's root. */
+function openMessagingStore(options: DefaultMessagingRuntimeOptions): Promise<TranscriptStore> {
+  return openFoundationTranscriptStore({
+    root: options.root,
+    dataRoot: options.dataRoot ?? path.join(options.root, 'stores'),
+  });
+}
+
+/** Where each provider persists its session transcripts. */
+function providerRoots(home: string): ProviderTranscriptRoots {
+  return {
+    claude: [path.join(home, '.claude', 'projects')],
+    codex: [
+      path.join(home, '.codex', 'sessions'),
+      path.join(home, '.codex', 'archived_sessions'),
+    ],
+    kimi: [path.join(home, '.kimi-code', 'sessions')],
   };
 }
 
