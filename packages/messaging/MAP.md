@@ -38,7 +38,7 @@ flowchart TD
 | --- | --- | --- | --- |
 | `contract/index.ts` | controlled public exports — the one door | own contract, own core | controlled doorway (verified PR #5) |
 | `contract/` records, commands, ports | types, records, typed rejections, seams | nothing | marker hint dropped, grouping key renamed (PR #5) |
-| `contract/compose.ts` | composition root — wiring only, no behavior | core + adapters | ⬜ last slice (today lives at `contract/compose/`) |
+| `contract/compose.ts` | composition root — wiring, plus the default trace rendering | core + adapters | rewritten (PR #19; lives at `contract/compose/`) |
 | `core/send/` | one entry: `sendConversationMessage` | declaration-only contract | rewritten (PR #1) |
 | `core/delivery/` | one entry: `routePendingDeliveries` | contract, core/send | rewritten (PR #2) |
 | `core/ingestion/` | one entry: `runIngestionPass` | contract, core/send | rewritten (PR #4) |
@@ -46,7 +46,7 @@ flowchart TD
 | `core/conversations/` | conversation views and message streams | contract, core/send | rewritten (PR #7) |
 | `core/projections/` | rebuildable usage rollups and tool-call index | contract | rewritten (PR #8) |
 | `core/runtime/` | composed runtime: lifecycle, wiring, committed-record door | all of core, contract | rewritten (PR #9) |
-| `adapters/` | store implementations, transcript parsers | contract, core shared helpers (thrown, compare, clock, sparse) | stores rewritten (PR #14); provider-source lane rewritten (PR #15); normalizers rewritten (PR #16); provider-hooks per-slice |
+| `adapters/` | store implementations, transcript parsers | contract, core shared helpers (thrown, compare, clock, sparse) | stores rewritten (PR #14); provider-source lane rewritten (PR #15); normalizers rewritten (PR #16); provider-hooks rewritten (PR #18) |
 
 The Agents seam lives in `contract/compose/` — `agents-door.ts` declares the
 structural slice of the (unaudited) Agents capability Messaging binds to, and
