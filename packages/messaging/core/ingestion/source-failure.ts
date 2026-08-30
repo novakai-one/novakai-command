@@ -17,8 +17,10 @@ export const failureFor = (
 /** Known typed causes name their kind; anything else is unexpected. */
 const failureKindFor = (cause: unknown): IngestSourceFailure['kind'] => {
   if (cause instanceof AmbiguousProviderSessionEvidenceError) return 'ambiguous-evidence';
-  if (cause instanceof MessagingError && cause.name === 'IdempotencyConflict') {
-    return 'checkpoint-conflict';
-  }
+  if (!(cause instanceof MessagingError)) return 'unexpected';
+  if (cause.name === 'ConcurrentModification') return 'checkpoint-conflict';
+  if (cause.name !== 'IdempotencyConflict') return 'unexpected';
+  const conflict = cause.fields['conflict'];
+  if (conflict === 'session-identity' || conflict === 'session-binding') return 'session-conflict';
   return 'unexpected';
 };

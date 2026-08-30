@@ -10,7 +10,7 @@ export class ProjectionState {
   private result: ProjectionRebuildResult = { usageRollups: [], toolCalls: [] };
 
   restore(items: readonly PersistedProjectionRebuild[]): void {
-    const latest = [...items].sort((a, b) => a.sequence - b.sequence).at(-1);
+    const latest = [...items].sort((left, right) => left.sequence - right.sequence).at(-1);
     if (latest !== undefined) this.result = latest.result;
   }
 
