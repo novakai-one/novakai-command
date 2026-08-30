@@ -44,15 +44,15 @@ export function createMemoryTranscriptStore(): TranscriptStore {
     transitionSend: (input: SendTransitionInput): Promise<SendTransitionResult> =>
       sends.transition(input),
     bindAgentSession: (agentId, sessionId, updatedAt) =>
-      sends.bindAgentSession(agentId, sessionId as ProviderSessionId, updatedAt),
+      sends.bindAgentSession(agentId, sessionId, updatedAt),
     confirmSendForLines: (sessionId, lines, updatedAt) =>
       sends.confirmForLines(sessionId, lines, updatedAt),
     listSendJournals: async (): Promise<readonly SendJournal[]> => sends.list(),
     acceptPendingDelivery: (input) => deliveries.accept(input.delivery),
     transitionPendingDelivery: (input) => deliveries.transition(input),
     listPendingDeliveries: async () => deliveries.list(),
-    setConversationView: (input) => conversations.set(input, async () => undefined),
-    getConversationView: async (id) => conversations.get(id),
+    setConversationView: (input) => conversations.setView(input, async () => undefined),
+    getConversationView: async (id) => conversations.getView(id),
     listConversationViews: async () => conversations.list(),
     replaceProjections: (result) => projections.replace(result, async () => undefined),
     readProjections: async () => projections.read(),

@@ -3,7 +3,7 @@
   "$id": "https://novakai.local/messaging/contract/messaging-contract.json",
   "kind": "messaging-contract",
   "title": "Novakai Messaging \u2014 public contract source (Step 2)",
-  "contractVersion": "1.2.0",
+  "contractVersion": "1.3.0",
   "schemaVersion": 1,
   "authority": "Messaging-Ratification.md \u00a79/\u00a710; Messaging-Store-Seam.md \u00a76 (and its \u00a711 errata). This file is the SINGLE source of truth for every contract shape (law #3). Docs, validators, and the visual map generate from it; nothing is hand-copied into prose.",
   "$defs": {
@@ -154,6 +154,19 @@
         },
         "originalMessageId": {
           "$ref": "#/$defs/MessageId"
+        }
+      }
+    },
+    {
+      "name": "ConcurrentModification",
+      "summary": "Another writer moved the record first: a stale checkpoint, a lost compare-and-set race. Always retryable \u2014 the next attempt re-reads the winner's state and proceeds or no-ops. Distinct from IdempotencyConflict, which is permanent.",
+      "retryable": true,
+      "fields": {
+        "sourceId": {
+          "type": "string"
+        },
+        "sendId": {
+          "type": "string"
         }
       }
     },

@@ -5,3 +5,12 @@ export const thrownMessage = (cause: unknown): string =>
 /** The message of a thrown Error, or the fallback when the value carries none. */
 export const thrownMessageOr = (cause: unknown, fallback: string): string =>
   cause instanceof Error ? cause.message : fallback;
+
+/** The errno of a thrown filesystem failure, when the cause is one. */
+export const errnoCode = (cause: unknown): string | undefined =>
+  cause instanceof Error && 'code' in cause && typeof cause.code === 'string'
+    ? cause.code
+    : undefined;
+
+/** True when the thrown failure is the named errno — the only honest way to branch on fs errors. */
+export const isErrno = (cause: unknown, code: string): boolean => errnoCode(cause) === code;

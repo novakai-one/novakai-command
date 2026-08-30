@@ -9,6 +9,16 @@ import type { ProviderSession } from "../../contract/records/provider-session.js
 import type { TranscriptLine } from "../../contract/records/transcript-line.js";
 import type { EventCursor, TranscriptSourceId } from "../../contract/types.js";
 import { MessagingError } from "../../contract/types.js";
+import { parseEventCursor } from "../../contract/event-cursor.js";
+import { compareStrings } from "../../core/compare.js";
+import { present } from '../../core/sparse.js';
+
+/** Event cursors mint here only, checked against the contract pattern — a mint failure is a defect. */
+const mintEventCursor = (sequence: number): EventCursor => {
+  const minted = parseEventCursor(`event_${sequence}`);
+  if (minted === undefined) throw new Error(`EventCursor mint failed for sequence ${sequence}`);
+  return minted;
+};
 
 /** Replay envelope used by durable TranscriptStore adapters. */
 export interface PersistedTranscriptBatch {
@@ -32,34 +42,77 @@ const checkpointEqual = (
   && left?.fileSignature.inode === right?.fileSignature.inode
   && left?.fileSignature.tailHash === right?.fileSignature.tailHash;
 
+/** A commit at or behind the stored checkpoint already happened; only duplicates remain. */
+const alreadyCommitted = (current: IngestCheckpoint, input: TranscriptBatchInput): boolean =>
+  current.sourceEpoch === input.checkpoint.sourceEpoch
+  && current.offset >= input.checkpoint.offset;
+
+/** A checkpoint throw that ingest maps to the checkpoint-conflict failure kind. */
+const checkpointConflict = (sourceId: TranscriptSourceId, detail: string): MessagingError =>
+  new MessagingError('ConcurrentModification', {
+    message: `Ingest checkpoint ${detail} for ${sourceId}`,
+    fields: { sourceId, conflict: 'checkpoint' },
+  });
+
+/** The batch must continue exactly from the stored checkpoint — never sideways, never backwards. */
+const requireExpectedCheckpoint = (
+  current: IngestCheckpoint | null,
+  input: TranscriptBatchInput,
+): void => {
+  if (!checkpointEqual(current, input.expectedCheckpoint)) {
+    throw checkpointConflict(input.checkpoint.sourceId, 'conflict');
+  }
+  if (input.checkpoint.sourceEpoch === input.expectedCheckpoint?.sourceEpoch
+    && input.checkpoint.offset < input.expectedCheckpoint.offset) {
+    throw checkpointConflict(input.checkpoint.sourceId, 'moved backwards');
+  }
+};
+
+/** Every line in a batch belongs to the batch's session; mixing sessions is a caller defect. */
+const requireOwnLines = (input: TranscriptBatchInput): void => {
+  if (input.lines.some((line) => line.sessionId !== input.session.id)) {
+    throw new Error("TranscriptLine references a different ProviderSession");
+  }
+};
+
+/** True when both sides supply a value and they disagree. */
+const disagrees = (left: string | undefined, right: string | undefined): boolean =>
+  left !== undefined && right !== undefined && left !== right;
+
+/** A stored session's identity evidence contradicting itself: typed, permanent, host-actionable. */
+const sessionConflict = (sessionId: string, field: string): MessagingError =>
+  new MessagingError('IdempotencyConflict', {
+    message: `ProviderSession ${sessionId} ${field} conflict`,
+    fields: { sessionId, field, conflict: 'session-identity' },
+  });
+
+/** The identity facts a stored session never trades away; a disagreement is a typed conflict. */
+const requireCompatibleSession = (current: ProviderSession, incoming: ProviderSession): void => {
+  if (current.provider !== incoming.provider) throw sessionConflict(incoming.id, 'provider');
+  if (disagrees(current.resumeId, incoming.resumeId)) throw sessionConflict(incoming.id, 'resumeId');
+  if (disagrees(current.agentId, incoming.agentId)) throw sessionConflict(incoming.id, 'agentId');
+};
+
 const mergeSession = (
   current: ProviderSession | undefined,
   incoming: ProviderSession,
 ): ProviderSession => {
   if (current === undefined) return incoming;
-  if (current.provider !== incoming.provider) {
-    throw new Error(`ProviderSession ${incoming.id} provider conflict`);
-  }
-  if (current.resumeId !== undefined && incoming.resumeId !== undefined
-    && current.resumeId !== incoming.resumeId) {
-    throw new Error(`ProviderSession ${incoming.id} resume handle conflict`);
-  }
-  if (current.agentId !== undefined && incoming.agentId !== undefined
-    && current.agentId !== incoming.agentId) {
-    throw new Error(`ProviderSession ${incoming.id} Agent assignment conflict`);
-  }
+  requireCompatibleSession(current, incoming);
   return {
     ...current,
     sourceIds: [...new Set([...current.sourceIds, ...incoming.sourceIds])],
     status: incoming.status,
-    ...(current.resumeId === undefined && incoming.resumeId !== undefined
-      ? { resumeId: incoming.resumeId } : {}),
-    ...(current.agentId === undefined && incoming.agentId !== undefined
-      ? { agentId: incoming.agentId } : {}),
+    ...present('resumeId', current.resumeId ?? incoming.resumeId),
+    ...present('agentId', current.agentId ?? incoming.agentId),
   };
 };
 
-/** Serialized semantic state shared by volatile and durable store adapters. */
+/**
+ * Serialized semantic state shared by volatile and durable store adapters.
+ * Crash recovery: persist precedes apply, so a crash mid-step replays from
+ * the store on next open.
+ */
 export class TranscriptState {
   private readonly checkpoints = new Map<TranscriptSourceId, IngestCheckpoint>();
   private readonly sessions = new Map<string, ProviderSession>();
@@ -113,30 +166,12 @@ export class TranscriptState {
     persist?: (input: TranscriptBatchInput) => Promise<void>,
   ): Promise<TranscriptBatchResult> {
     const current = this.getCheckpoint(input.checkpoint.sourceId);
-    if (current !== null
-      && current.sourceEpoch === input.checkpoint.sourceEpoch
-      && current.offset >= input.checkpoint.offset) {
+    if (current !== null && alreadyCommitted(current, input)) {
       const duplicates = input.lines.filter((line) => this.lines.has(line.id)).length;
       return { added: 0, duplicates, checkpoint: current };
     }
-    if (!checkpointEqual(current, input.expectedCheckpoint)) {
-      throw new MessagingError('IdempotencyConflict', {
-        message: `Ingest checkpoint conflict for ${input.checkpoint.sourceId}`,
-        retryable: true,
-        fields: { sourceId: input.checkpoint.sourceId },
-      });
-    }
-    if (input.checkpoint.sourceEpoch === input.expectedCheckpoint?.sourceEpoch
-      && input.checkpoint.offset < input.expectedCheckpoint.offset) {
-      throw new MessagingError('IdempotencyConflict', {
-        message: `Ingest checkpoint moved backwards for ${input.checkpoint.sourceId}`,
-        retryable: true,
-        fields: { sourceId: input.checkpoint.sourceId },
-      });
-    }
-    if (input.lines.some((line) => line.sessionId !== input.session.id)) {
-      throw new Error("TranscriptLine references a different ProviderSession");
-    }
+    requireExpectedCheckpoint(current, input);
+    requireOwnLines(input);
     if (persist !== undefined) await persist(input);
     return this.apply(input);
   }
@@ -174,11 +209,12 @@ export class TranscriptState {
 
   private pushEvent(input: Omit<TranscriptEvent, "cursor">): void {
     this.eventSequence += 1;
-    this.events.push({ ...input, cursor: `event_${this.eventSequence}` as EventCursor });
+    this.events.push({ ...input, cursor: mintEventCursor(this.eventSequence) });
   }
 
   listProviderSessions(): readonly ProviderSession[] {
-    return [...this.sessions.values()].sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+    return [...this.sessions.values()].sort((left, right) =>
+      compareStrings(left.createdAt, right.createdAt));
   }
 
   listTranscriptLines(query: TranscriptLineQuery = {}): readonly TranscriptLine[] {
@@ -191,7 +227,7 @@ export class TranscriptState {
       .filter((line) => query.sourceId === undefined || line.sourcePosition.sourceId === query.sourceId)
       .filter((line) => query.resumeId === undefined || line.sessionId === sessionForResume)
       .sort((left, right) =>
-        left.sourcePosition.sourceId.localeCompare(right.sourcePosition.sourceId)
+        compareStrings(left.sourcePosition.sourceId, right.sourcePosition.sourceId)
         || left.sourcePosition.sourceEpoch - right.sourcePosition.sourceEpoch
         || left.sourcePosition.offset - right.sourcePosition.offset);
   }

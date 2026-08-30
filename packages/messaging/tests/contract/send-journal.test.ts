@@ -93,7 +93,7 @@ test('acceptance is durable before one provider effect and confirms only from tr
   assert.equal(await store.bindAgentSession(
     'agent_alpha',
     sessionId,
-    '2026-08-25T00:00:04.000Z',
+    '2026-08-25T00:00:04.000Z' as Timestamp,
   ), 1);
   assert.equal((await store.listSendJournals())[0]?.state, 'awaiting-transcript');
 
@@ -125,13 +125,13 @@ test('acceptance is durable before one provider effect and confirms only from tr
   assert.equal(await store.confirmSendForLines(
     sessionId,
     [unrelated],
-    '2026-08-25T00:00:05.500Z',
+    '2026-08-25T00:00:05.500Z' as Timestamp,
   ), 0);
   assert.equal((await store.listSendJournals())[0]?.state, 'awaiting-transcript');
   assert.equal(await store.confirmSendForLines(
     sessionId,
     [line],
-    '2026-08-25T00:00:06.000Z',
+    '2026-08-25T00:00:06.000Z' as Timestamp,
   ), 1);
   const confirmed = (await store.listSendJournals())[0];
   assert.equal(confirmed?.state, 'confirmed');
@@ -180,7 +180,7 @@ test('ambiguous close sends become indeterminate instead of taking the wrong use
     raw: '{}',
   }));
   assert.equal(await store.confirmSendForLines(
-    sessionId, lines, '2026-08-25T00:00:20.000Z',
+    sessionId, lines, '2026-08-25T00:00:20.000Z' as Timestamp,
   ), 0);
   const journals = await store.listSendJournals();
   assert.equal(journals.every((journal) => journal.state === 'indeterminate'), true);
@@ -230,10 +230,10 @@ test('a resumed send confirms only beyond its persisted source fence', async () 
     correlationHint: messageCorrelationHint('hello'), raw: '{}',
   });
   assert.equal(await store.confirmSendForLines(
-    sessionId, [lineAt(99)], '2026-08-25T00:00:02.000Z',
+    sessionId, [lineAt(99)], '2026-08-25T00:00:02.000Z' as Timestamp,
   ), 0);
   assert.equal(await store.confirmSendForLines(
-    sessionId, [lineAt(100)], '2026-08-25T00:00:03.000Z',
+    sessionId, [lineAt(100)], '2026-08-25T00:00:03.000Z' as Timestamp,
   ), 1);
 });
 

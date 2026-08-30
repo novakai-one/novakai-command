@@ -1,4 +1,5 @@
 import { listObjects, type ScopedStoreHandle } from '@novakai/foundation/contract';
+import { MessagingError } from '../../contract/types.js';
 import { PendingDeliveryState, type PersistedPendingDeliveryMutation } from './pending-delivery-state.js';
 import { SendJournalState, type PersistedSendMutation } from './send-journal-state.js';
 import {
@@ -6,7 +7,13 @@ import {
   type PersistedProviderSession,
   type PersistedTranscriptBatch,
 } from './transcript-state.js';
-import { messagingStoreRecord } from './foundation-operations.js';
+import {
+  laneOf,
+  laneSequenceField,
+  messagingStoreRecord,
+  type MessagingStoreRecord,
+  type MutationLane,
+} from './foundation-operations.js';
 import {
   ConversationViewState,
   type PersistedConversationMutation,
@@ -27,7 +34,75 @@ export interface RestoredFoundationMessagingStore {
   readonly projectionSequence: number;
 }
 
-/** Replays the one Messaging store into its three private state owners. */
+/** Every lane's replay envelopes plus the highest sequence seen per lane. */
+interface ReplayAccumulator {
+  readonly batches: PersistedTranscriptBatch[];
+  readonly sessions: PersistedProviderSession[];
+  readonly sends: PersistedSendMutation[];
+  readonly deliveries: PersistedPendingDeliveryMutation[];
+  readonly conversations: PersistedConversationMutation[];
+  readonly projections: PersistedProjectionRebuild[];
+  readonly sequences: Record<MutationLane, number>;
+}
+
+const emptyAccumulator = (): ReplayAccumulator => ({
+  batches: [],
+  sessions: [],
+  sends: [],
+  deliveries: [],
+  conversations: [],
+  projections: [],
+  sequences: { transcript: 0, send: 0, delivery: 0, conversation: 0, projection: 0 },
+});
+
+/** The lane sequence a record carries, defaulting to zero for records older than sequencing. */
+const sequenceOf = (record: MessagingStoreRecord, lane: MutationLane): number =>
+  record[laneSequenceField[lane]] ?? 0;
+
+/** Folds one record into its lane's envelope list and high-water sequence. */
+const foldRecord = (replay: ReplayAccumulator, record: MessagingStoreRecord): void => {
+  const lane = laneOf[record.storeOp.op];
+  const sequence = sequenceOf(record, lane);
+  replay.sequences[lane] = Math.max(replay.sequences[lane], sequence);
+  switch (record.storeOp.op) {
+    case 'transcript-ingest':
+      replay.batches.push({ sequence, input: record.storeOp.batch });
+      return;
+    case 'provider-session-upsert':
+      replay.sessions.push({ sequence, session: record.storeOp.session });
+      return;
+    case 'send-journal-mutation':
+      replay.sends.push({ sequence, journals: record.storeOp.journals });
+      return;
+    case 'pending-delivery-mutation':
+      replay.deliveries.push({ sequence, deliveries: record.storeOp.deliveries });
+      return;
+    case 'conversation-view-mutation':
+      replay.conversations.push({ sequence, mutation: record.storeOp.mutation });
+      return;
+    case 'projection-rebuild':
+      replay.projections.push({ sequence, result: record.storeOp.result });
+      return;
+  }
+};
+
+/** Folds every parseable record into the accumulator; unknown payloads are skipped. */
+const foldAll = (items: readonly { object: unknown }[]): ReplayAccumulator => {
+  const replay = emptyAccumulator();
+  for (const item of items) {
+    const record = messagingStoreRecord(item.object);
+    if (record === undefined) continue;
+    foldRecord(replay, record);
+  }
+  return replay;
+};
+
+/**
+ * Replays the one Messaging store into its private state owners, one lane
+ * each. Crash recovery: this pass IS the recovery — on open it rebuilds all
+ * in-memory state from persisted records, so anything never persisted never
+ * happened.
+ */
 export async function restoreFoundationMessagingStore(
   handle: ScopedStoreHandle,
 ): Promise<RestoredFoundationMessagingStore> {
@@ -37,68 +112,35 @@ export async function restoreFoundationMessagingStore(
     undefined,
     { limit: 1_000_000 },
   );
-  if (!listed.ok) throw new Error(`Messaging replay failed: ${listed.error.code}`);
-  const batches: PersistedTranscriptBatch[] = [];
-  const sessions: PersistedProviderSession[] = [];
-  const sends: PersistedSendMutation[] = [];
-  const deliveries: PersistedPendingDeliveryMutation[] = [];
-  const conversations: PersistedConversationMutation[] = [];
-  const projections: PersistedProjectionRebuild[] = [];
-  let transcriptSequence = 0;
-  let sendSequence = 0;
-  let deliverySequence = 0;
-  let conversationSequence = 0;
-  let projectionSequence = 0;
-  for (const item of listed.value.items) {
-    const record = messagingStoreRecord(item.object);
-    if (record === undefined) continue;
-    if (record.storeOp.op === 'transcript-ingest') {
-      const sequence = record.transcriptSequence ?? 0;
-      transcriptSequence = Math.max(transcriptSequence, sequence);
-      batches.push({ sequence, input: record.storeOp.batch });
-    } else if (record.storeOp.op === 'provider-session-upsert') {
-      const sequence = record.transcriptSequence ?? 0;
-      transcriptSequence = Math.max(transcriptSequence, sequence);
-      sessions.push({ sequence, session: record.storeOp.session });
-    } else if (record.storeOp.op === 'send-journal-mutation') {
-      const sequence = record.sendSequence ?? 0;
-      sendSequence = Math.max(sendSequence, sequence);
-      sends.push({ sequence, journals: record.storeOp.journals });
-    } else if (record.storeOp.op === 'pending-delivery-mutation') {
-      const sequence = record.deliverySequence ?? 0;
-      deliverySequence = Math.max(deliverySequence, sequence);
-      deliveries.push({ sequence, deliveries: record.storeOp.deliveries });
-    } else if (record.storeOp.op === 'conversation-view-mutation') {
-      const sequence = record.conversationSequence ?? 0;
-      conversationSequence = Math.max(conversationSequence, sequence);
-      conversations.push({ sequence, mutation: record.storeOp.mutation });
-    } else {
-      const sequence = record.projectionSequence ?? 0;
-      projectionSequence = Math.max(projectionSequence, sequence);
-      projections.push({ sequence, result: record.storeOp.result });
-    }
+  if (!listed.ok) {
+    throw new MessagingError('DependencyUnavailable', {
+      message: `Messaging replay failed: ${listed.error.code}`,
+      retryable: true,
+      fields: { dependency: 'foundation-store', code: listed.error.code },
+    });
   }
+  const replay = foldAll(listed.value.items);
   const transcripts = new TranscriptState();
-  transcripts.restoreSessions(sessions);
-  transcripts.restore(batches);
-  const sendState = new SendJournalState();
-  sendState.restore(sends);
-  const deliveryState = new PendingDeliveryState();
-  deliveryState.restore(deliveries);
-  const conversationState = new ConversationViewState();
-  conversationState.restore(conversations);
-  const projectionState = new ProjectionState();
-  projectionState.restore(projections);
+  transcripts.restoreSessions(replay.sessions);
+  transcripts.restore(replay.batches);
+  const sends = new SendJournalState();
+  sends.restore(replay.sends);
+  const deliveries = new PendingDeliveryState();
+  deliveries.restore(replay.deliveries);
+  const conversations = new ConversationViewState();
+  conversations.restore(replay.conversations);
+  const projections = new ProjectionState();
+  projections.restore(replay.projections);
   return {
     transcripts,
-    sends: sendState,
-    deliveries: deliveryState,
-    conversations: conversationState,
-    projections: projectionState,
-    transcriptSequence,
-    sendSequence,
-    deliverySequence,
-    conversationSequence,
-    projectionSequence,
+    sends,
+    deliveries,
+    conversations,
+    projections,
+    transcriptSequence: replay.sequences.transcript,
+    sendSequence: replay.sequences.send,
+    deliverySequence: replay.sequences.delivery,
+    conversationSequence: replay.sequences.conversation,
+    projectionSequence: replay.sequences.projection,
   };
 }
