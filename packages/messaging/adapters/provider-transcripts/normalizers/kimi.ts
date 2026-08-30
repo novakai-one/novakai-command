@@ -15,6 +15,7 @@ import {
   numericUsage,
   parseExtent,
   textValue,
+  toolCallPayload,
   userCorrelation,
   type JsonObject,
 } from './support.js';
@@ -89,9 +90,6 @@ const wireText = (
   return textValue(part?.text) ?? textValue(part?.think) ?? '';
 };
 
-const wireToolCall = (role: TranscriptRole, event: JsonObject): JsonObject | undefined =>
-  role === 'tool_call' ? event : undefined;
-
 /** One wire-format loop event in the provider-neutral vocabulary. */
 function wireEventLine(event: JsonObject): NormalizedProviderLine {
   const eventType = textValue(event.type);
@@ -108,7 +106,7 @@ function wireEventLine(event: JsonObject): NormalizedProviderLine {
     ...present('providerLineId', textValue(event.uuid)),
     ...present('turnId', textValue(event.turnId)),
     ...present('tokenUsage', numericUsage(event.usage)),
-    ...present('toolCall', wireToolCall(role, event)),
+    ...present('toolCall', toolCallPayload(role, event)),
   };
 }
 
@@ -165,9 +163,6 @@ const kimiTurnId = (envelope: JsonObject, payload: JsonObject, turnIndex: number
 const kimiResumeId = (envelope: JsonObject, payload: JsonObject): string | undefined =>
   textValue(payload.sessionId) ?? textValue(envelope.session_id);
 
-const kimiToolCall = (role: TranscriptRole, payload: JsonObject): JsonObject | undefined =>
-  role === 'tool_call' ? payload : undefined;
-
 /** One native envelope's payload in the provider-neutral vocabulary. */
 function nativeLine(
   envelope: JsonObject,
@@ -189,7 +184,7 @@ function nativeLine(
     ...present('resumeId', kimiResumeId(envelope, payload)),
     ...present('parentTurnId', textValue(payload.parentTurnId)),
     ...present('tokenUsage', numericUsage(payload.usage)),
-    ...present('toolCall', kimiToolCall(role, payload)),
+    ...present('toolCall', toolCallPayload(role, payload)),
   };
 }
 

@@ -16,6 +16,7 @@ import {
   numericUsage,
   parseExtent,
   textValue,
+  toolCallPayload,
   userCorrelation,
   type JsonObject,
 } from './support.js';
@@ -106,7 +107,7 @@ function messageLine(record: JsonObject, message: JsonObject): NormalizedProvide
     ...present('tokenUsage', numericUsage(message.usage)),
     ...present('providerOccurredAt', textValue(record.timestamp)),
     ...present('correlationHint', userCorrelation(role, audience, text)),
-    ...present('toolCall', role === 'tool_call' ? blocks[0] : undefined),
+    ...present('toolCall', toolCallPayload(role, blocks[0])),
   };
 }
 

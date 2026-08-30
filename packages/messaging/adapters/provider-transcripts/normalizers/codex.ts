@@ -16,6 +16,7 @@ import {
   numericUsage,
   parseExtent,
   textValue,
+  toolCallPayload,
   userCorrelation,
   type JsonObject,
 } from './support.js';
@@ -141,7 +142,7 @@ const syntheticLineId = (
 ): string | undefined => {
   const callId = textValue(payload.call_id);
   if (callId === undefined) return undefined;
-  return `${textValue(record.type) ?? 'record'}:${eventType ?? 'event'}:${callId}`;
+  return `${textValue(record.type) ?? 'row'}:${eventType ?? 'event'}:${callId}`;
 };
 
 const codexLineId = (
@@ -150,9 +151,6 @@ const codexLineId = (
   payload: JsonObject,
 ): string | undefined =>
   textValue(payload.id) ?? syntheticLineId(record, eventType, payload);
-
-const codexToolCall = (role: TranscriptRole, payload: JsonObject): JsonObject | undefined =>
-  role === 'tool_call' ? payload : undefined;
 
 /** session_meta rows only carry the resume id forward. */
 const sessionMetaLine = (record: JsonObject): NormalizedProviderLine =>
@@ -184,7 +182,7 @@ function codexLine(
     ...present('tokenUsage', numericUsage(payload.usage)),
     ...present('providerOccurredAt', textValue(record.timestamp)),
     ...present('correlationHint', userCorrelation(role, audience, text)),
-    ...present('toolCall', codexToolCall(role, payload)),
+    ...present('toolCall', toolCallPayload(role, payload)),
     ...present('agentIdentity', agentIdentity),
   };
 }

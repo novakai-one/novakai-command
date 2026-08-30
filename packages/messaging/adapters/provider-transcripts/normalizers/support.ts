@@ -87,3 +87,10 @@ export const userCorrelation = (
   text: string,
 ): string | undefined =>
   role === 'user' && audience === 'conversation' ? messageCorrelationHint(text) : undefined;
+
+/** A tool_call line carries its payload; every other role carries none. */
+export const toolCallPayload = (
+  role: TranscriptRole,
+  payload: JsonObject | undefined,
+): JsonObject | undefined =>
+  role === 'tool_call' ? payload : undefined;
