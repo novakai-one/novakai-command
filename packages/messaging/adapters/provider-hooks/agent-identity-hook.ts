@@ -5,6 +5,7 @@ import {
   parseAgentIdentityMarker,
   type AgentIdentityMarker,
 } from '../../contract/agent-identity.js';
+import { present } from '../../core/sparse.js';
 
 /** Creates the one provider-neutral marker from a CLI child environment. */
 export function markerFromEnvironment(
@@ -16,7 +17,7 @@ export function markerFromEnvironment(
     schemaVersion: storeId === undefined ? 1 : 2,
     hookEvent: 'UserPromptSubmit',
     agentId: environment[novakaiAgentIdEnvironmentKey],
-    ...(storeId === undefined ? {} : { storeId }),
+    ...present('storeId', storeId),
   });
 }
 
@@ -31,6 +32,10 @@ export function runAgentIdentityHook(
   return true;
 }
 
+// Self-contained by design: provider configs execute this via `node -e`
+// with no module resolution, so it cannot import the contract. Its two
+// regex literals duplicate AGENT_ID / STORE_ID in contract/agent-identity.ts
+// — a change there is only complete when this copy changes with it.
 const INLINE_HOOK = `const a=process.env.NOVAKAI_AGENT_ID,s=process.env.NOVAKAI_STORE_ID;if(/^agent_[A-Za-z0-9-]+$/.test(a||'')){const v=/^store_[0-9a-f-]{36}$/.test(s||'')?2:1,m={kind:'novakai-agent-identity',schemaVersion:v,hookEvent:'UserPromptSubmit',agentId:a,...v===2?{storeId:s}:{}};process.stdout.write('NOVAKAI_AGENT_IDENTITY '+JSON.stringify(m)+'\\n')}`;
 
 const shellQuote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`;
