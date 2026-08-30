@@ -14,7 +14,7 @@ import {
   type Timestamp,
   type TranscriptLineId,
 } from '../../contract/types.js';
-import { present } from '../send/sparse.js';
+import { present } from '../sparse.js';
 
 /** The two view operations conversations need — nothing else. */
 export interface ConversationViewStore {

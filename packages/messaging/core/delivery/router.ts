@@ -8,7 +8,7 @@ import type { SendJournal } from '../../contract/records/send-journal.js';
 import type { DeliveryRunResult } from '../../contract/runtime.js';
 import type { Timestamp } from '../../contract/types.js';
 import { sendConversationMessage } from '../send/send.js';
-import { present } from '../send/sparse.js';
+import { present } from '../sparse.js';
 import type { DeliveryStore } from './delivery-store.js';
 import {
   buildSendInput,

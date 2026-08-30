@@ -1,10 +1,62 @@
-import type { ProviderNormalizer } from "../../../contract/ports/provider-transcript-source.js";
-import type { TranscriptRole } from "../../../contract/types.js";
-import { normalizerSupport } from "./support.js";
-import { findAgentIdentityMarker } from "../../../contract/agent-identity.js";
-import { messageCorrelationHint } from '../../../contract/correlation.js';
+import type {
+  NormalizedProviderLine,
+  ProviderNormalizer,
+} from '../../../contract/ports/provider-transcript-source.js';
+import type { TranscriptRole } from '../../../contract/types.js';
+import { findAgentIdentityMarker } from '../../../contract/agent-identity.js';
+import { present } from '../../../core/sparse.js';
+import {
+  contentText,
+  conversational,
+  declaredRole,
+  displayUserText,
+  isObject,
+  jsonText,
+  noise,
+  numericUsage,
+  parseExtent,
+  textValue,
+  userCorrelation,
+  type JsonObject,
+} from './support.js';
 
-const support = normalizerSupport;
+type AgentIdentity = NonNullable<ReturnType<typeof findAgentIdentityMarker>>;
+
+const TOOL_CALL_EVENTS: readonly string[] = ['function_call', 'custom_tool_call', 'web_search_call'];
+const TOOL_RESULT_EVENTS: readonly string[] = ['function_call_output', 'custom_tool_call_output'];
+const ATTACHMENT_CONTENT_TYPES: readonly string[] = ['input_image', 'input_file', 'attachment'];
+const HARNESS_PREFIXES: readonly string[] = [
+  '<recommended_plugins>',
+  '# AGENTS.md instructions',
+  '<environment_context>',
+  '<app-context>',
+  '<skills_instructions>',
+  '<permissions instructions>',
+  '<collaboration_mode>',
+];
+
+const hasEvent = (events: readonly string[], eventType: string | undefined): boolean =>
+  eventType !== undefined && events.includes(eventType);
+
+/** event_msg rows carry the conversational roles directly. */
+const eventMessageRole = (eventType: string | undefined): TranscriptRole => {
+  if (eventType === 'user_message') return 'user';
+  return eventType === 'agent_message' ? 'assistant' : 'system';
+};
+
+/** Structured wire events name their role; anything else is undecided here. */
+const eventRole = (rowType: unknown, eventType: string | undefined): TranscriptRole | undefined => {
+  if (rowType === 'event_msg') return eventMessageRole(eventType);
+  if (hasEvent(TOOL_CALL_EVENTS, eventType)) return 'tool_call';
+  return hasEvent(TOOL_RESULT_EVENTS, eventType) ? 'tool_result' : undefined;
+};
+
+const attachmentContent = (contentTypes: ReadonlySet<string | undefined>): boolean =>
+  [...contentTypes].some((type) => type !== undefined && ATTACHMENT_CONTENT_TYPES.includes(type));
+
+/** Codex calls its system persona 'developer'; everything else uses the shared vocabulary. */
+const declaredFallback = (declared: unknown): TranscriptRole =>
+  declared === 'developer' ? 'system' : declaredRole(declared) ?? 'system';
 
 function codexRole(
   rowType: unknown,
@@ -12,107 +64,139 @@ function codexRole(
   declared: unknown,
   contentTypes: ReadonlySet<string | undefined>,
 ): TranscriptRole {
-  if (rowType === "event_msg") {
-    if (eventType === "user_message") return "user";
-    if (eventType === "agent_message") return "assistant";
-    return "system";
-  }
-  if (eventType === "function_call"
-    || eventType === "custom_tool_call"
-    || eventType === "web_search_call") return "tool_call";
-  if (eventType === "function_call_output"
-    || eventType === "custom_tool_call_output") return "tool_result";
-  if ([...contentTypes].some((type) =>
-    type === "input_image" || type === "input_file" || type === "attachment")) {
-    return "attachment";
-  }
-  return declared === "developer" ? "system" : support.declaredRole(declared) ?? "system";
+  const fromEvent = eventRole(rowType, eventType);
+  if (fromEvent !== undefined) return fromEvent;
+  if (attachmentContent(contentTypes)) return 'attachment';
+  return declaredFallback(declared);
 }
 
-function codexText(
+/** Tool payloads stay structured; everything else is prose. */
+const codexText = (
   role: TranscriptRole,
   eventType: string | undefined,
-  payload: Record<string, unknown>,
-): string {
-  if (role === "tool_call") {
-    return support.jsonText({ type: eventType, name: payload.name, arguments: payload.arguments });
+  payload: JsonObject,
+): string => {
+  if (role === 'tool_call') {
+    return jsonText({ type: eventType, name: payload.name, arguments: payload.arguments });
   }
-  if (role === "tool_result") return support.jsonText({ type: eventType, output: payload.output });
-  if (role === "attachment") return support.jsonText(payload.content);
-  return support.contentText(payload.content) ?? support.textValue(payload.message) ?? "";
-}
+  if (role === 'tool_result') return jsonText({ type: eventType, output: payload.output });
+  if (role === 'attachment') return jsonText(payload.content);
+  return contentText(payload.content) ?? textValue(payload.message) ?? '';
+};
 
-function isHarnessContent(content: readonly Record<string, unknown>[]): boolean {
-  const internalPrefixes = [
-    '<recommended_plugins>',
-    '# AGENTS.md instructions',
-    '<environment_context>',
-    '<app-context>',
-    '<skills_instructions>',
-    '<permissions instructions>',
-    '<collaboration_mode>',
-  ];
-  return content.some((part) => {
-    const text = support.textValue(part.text);
-    return text !== undefined && internalPrefixes.some((prefix) => text.startsWith(prefix));
+/** Harness-injected content is bookkeeping, never rendered conversation. */
+const isHarnessPrefix = (text: string): boolean =>
+  HARNESS_PREFIXES.some((prefix) => text.startsWith(prefix));
+
+const harnessContent = (content: readonly JsonObject[]): boolean =>
+  content.some((part) => {
+    const text = textValue(part.text);
+    return text !== undefined && isHarnessPrefix(text);
   });
+
+/** Only response_item messages with host metadata can be rendered conversation. */
+const responseMessage = (
+  record: JsonObject,
+  eventType: string | undefined,
+  metadata: JsonObject | undefined,
+): boolean =>
+  record.type === 'response_item' && eventType === 'message' && metadata !== undefined;
+
+const codexAudience = (
+  record: JsonObject,
+  eventType: string | undefined,
+  metadata: JsonObject | undefined,
+  role: TranscriptRole,
+  text: string,
+  content: readonly JsonObject[],
+): NormalizedProviderLine['audience'] =>
+  responseMessage(record, eventType, metadata) && conversational(role, text) && !harnessContent(content)
+    ? 'conversation'
+    : 'internal';
+
+const contentParts = (payload: JsonObject): readonly JsonObject[] =>
+  Array.isArray(payload.content) ? payload.content.filter(isObject) : [];
+
+const metadataPassthrough = (payload: JsonObject): JsonObject | undefined =>
+  isObject(payload.internal_chat_message_metadata_passthrough)
+    ? payload.internal_chat_message_metadata_passthrough
+    : undefined;
+
+/** A turn id from the payload, its metadata, or — last resort — the read order. */
+const codexTurnId = (
+  payload: JsonObject,
+  metadata: JsonObject | undefined,
+  turnIndex: number,
+): string =>
+  textValue(payload.turn_id)
+  ?? textValue(metadata?.turn_id)
+  ?? textValue(payload.id)
+  ?? `codex-turn-${turnIndex}`;
+
+/** Tool calls have no id of their own; the call id names the line instead. */
+const syntheticLineId = (
+  record: JsonObject,
+  eventType: string | undefined,
+  payload: JsonObject,
+): string | undefined => {
+  const callId = textValue(payload.call_id);
+  if (callId === undefined) return undefined;
+  return `${textValue(record.type) ?? 'record'}:${eventType ?? 'event'}:${callId}`;
+};
+
+const codexLineId = (
+  record: JsonObject,
+  eventType: string | undefined,
+  payload: JsonObject,
+): string | undefined =>
+  textValue(payload.id) ?? syntheticLineId(record, eventType, payload);
+
+const codexToolCall = (role: TranscriptRole, payload: JsonObject): JsonObject | undefined =>
+  role === 'tool_call' ? payload : undefined;
+
+/** session_meta rows only carry the resume id forward. */
+const sessionMetaLine = (record: JsonObject): NormalizedProviderLine =>
+  noise(isObject(record.payload) ? textValue(record.payload.id) : undefined);
+
+/** One Codex payload in the provider-neutral vocabulary. */
+function codexLine(
+  record: JsonObject,
+  payload: JsonObject,
+  turnIndex: number,
+): NormalizedProviderLine {
+  const agentIdentity = findAgentIdentityMarker(record);
+  const eventType = textValue(payload.type);
+  const content = contentParts(payload);
+  const contentTypes = new Set(content.map((part) => textValue(part.type)));
+  const role = agentIdentity === undefined
+    ? codexRole(record.type, eventType, payload.role, contentTypes)
+    : 'hook';
+  const normalized = codexText(role, eventType, payload);
+  const text = role === 'user' ? displayUserText(normalized) : normalized;
+  const metadata = metadataPassthrough(payload);
+  const audience = codexAudience(record, eventType, metadata, role, text, content);
+  return {
+    role,
+    text,
+    audience,
+    turnId: codexTurnId(payload, metadata, turnIndex),
+    ...present('providerLineId', codexLineId(record, eventType, payload)),
+    ...present('tokenUsage', numericUsage(payload.usage)),
+    ...present('providerOccurredAt', textValue(record.timestamp)),
+    ...present('correlationHint', userCorrelation(role, audience, text)),
+    ...present('toolCall', codexToolCall(role, payload)),
+    ...present('agentIdentity', agentIdentity),
+  };
 }
 
 /** Codex rollout JSONL to the provider-neutral TranscriptLine vocabulary. */
 export const codexNormalizer: ProviderNormalizer = {
-  provider: "codex",
+  provider: 'codex',
   normalize(extent, turnIndex) {
-    const row = support.parseExtent(extent);
-    if (row === null) return support.noise();
-    const agentIdentity = findAgentIdentityMarker(row);
-    const payload = support.isObject(row.payload) ? row.payload : undefined;
-    if (row.type === "session_meta") {
-      return support.noise(support.textValue(payload?.id));
-    }
-    if (payload === undefined) return support.noise();
-    const eventType = support.textValue(payload.type);
-    const content = Array.isArray(payload.content)
-      ? payload.content.filter(support.isObject)
-      : [];
-    const contentTypes = new Set(content.map((part) => support.textValue(part.type)));
-    const role = agentIdentity === undefined
-      ? codexRole(row.type, eventType, payload.role, contentTypes)
-      : "hook";
-    const normalizedText = codexText(role, eventType, payload);
-    const text = role === 'user' ? support.displayUserText(normalizedText) : normalizedText;
-    const metadata = support.isObject(payload.internal_chat_message_metadata_passthrough)
-      ? payload.internal_chat_message_metadata_passthrough
-      : undefined;
-    const audience = row.type === 'response_item'
-      && eventType === 'message'
-      && metadata !== undefined
-      && (role === 'user' || role === 'assistant')
-      && text.trim() !== ''
-      && !isHarnessContent(content)
-      ? 'conversation'
-      : 'internal';
-    const turnId = support.textValue(payload.turn_id)
-      ?? support.textValue(metadata?.turn_id)
-      ?? support.textValue(payload.id)
-      ?? `codex-turn-${turnIndex}`;
-    const usage = support.numericUsage(payload.usage);
-    const providerOccurredAt = support.textValue(row.timestamp);
-    const providerLineId = support.textValue(payload.id)
-      ?? (support.textValue(payload.call_id) === undefined
-        ? undefined
-        : `${support.textValue(row.type) ?? "row"}:${eventType ?? "event"}:${support.textValue(payload.call_id)}`);
-    return {
-      role,
-      text,
-      audience,
-      turnId,
-      ...(providerLineId === undefined ? {} : { providerLineId }),
-      ...(usage === undefined ? {} : { tokenUsage: usage }),
-      ...(providerOccurredAt === undefined ? {} : { providerOccurredAt }),
-      ...(role === 'user' && audience === 'conversation'
-        ? { correlationHint: messageCorrelationHint(text) } : {}),
-      ...(role === "tool_call" ? { toolCall: payload } : {}),
-      ...(agentIdentity === undefined ? {} : { agentIdentity }),
-    };
+    const record = parseExtent(extent);
+    if (record === null) return noise();
+    if (record.type === 'session_meta') return sessionMetaLine(record);
+    if (!isObject(record.payload)) return noise();
+    return codexLine(record, record.payload, turnIndex);
   },
 };

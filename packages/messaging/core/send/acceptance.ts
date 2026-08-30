@@ -1,6 +1,6 @@
 import type { ConversationSendAcceptance } from '../../contract/commands.js';
 import type { SendJournal } from '../../contract/records/send-journal.js';
-import { present } from './sparse.js';
+import { present } from '../sparse.js';
 
 /**
  * Shapes the public acceptance from the journaled outcome. One builder owns

@@ -15,7 +15,7 @@ import { ensureCodexIdentityHook } from "../../adapters/provider-hooks/registrat
 import { ensureKimiIdentityHook } from "../../adapters/provider-hooks/registrations/kimi.js";
 import type { ProviderTranscriptRoots } from "../../adapters/provider-transcripts/source.js";
 import { ensureStoreIdentity, type StoreId } from '@novakai/foundation/contract';
-import { present } from '../../core/send/sparse.js';
+import { present } from '../../core/sparse.js';
 import { thrownMessageOr } from '../../core/thrown.js';
 import { MessagingError } from '../types.js';
 import type { MessagingTraceSink } from '../trace.js';

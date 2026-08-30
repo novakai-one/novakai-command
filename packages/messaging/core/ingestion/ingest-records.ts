@@ -6,7 +6,7 @@ import type { IngestCheckpoint } from '../../contract/records/ingest-checkpoint.
 import type { ProviderSession } from '../../contract/records/provider-session.js';
 import type { TranscriptLine } from '../../contract/records/transcript-line.js';
 import type { Timestamp } from '../../contract/types.js';
-import { present } from '../send/sparse.js';
+import { present } from '../sparse.js';
 import {
   digest,
   mintIngestCheckpointId,

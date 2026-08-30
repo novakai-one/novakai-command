@@ -16,7 +16,7 @@ import { createDurableTranscriptEventBus, type DurableTranscriptEventBus } from 
 import { brandClock } from "../clock.js";
 import { thrownMessage, thrownMessageOr } from "../thrown.js";
 import { emitTrace } from "../trace.js";
-import { present } from "../send/sparse.js";
+import { present } from '../sparse.js';
 import { runIngestionPass } from "../ingestion/ingest.js";
 import type { ConversationDirectory } from "../../contract/ports/conversation-directory.js";
 import { AmbiguousProviderSessionEvidenceError } from "../ingestion/reconcile.js";
