@@ -7,7 +7,7 @@ export const thrownMessageOr = (cause: unknown, fallback: string): string =>
   cause instanceof Error ? cause.message : fallback;
 
 /** The errno code a thrown value carries, when it carries one. */
-export const errnoCode = (cause: unknown): string | undefined =>
+const errnoCode = (cause: unknown): string | undefined =>
   typeof cause === 'object' && cause !== null && 'code' in cause && typeof cause.code === 'string'
     ? cause.code
     : undefined;

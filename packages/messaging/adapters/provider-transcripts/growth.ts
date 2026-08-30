@@ -110,8 +110,9 @@ const unchangedGrowth = (
 
 /**
  * Reads one source's growth past its checkpoint. Crash recovery: this read is
- * pure — the caller persists the advanced checkpoint before applying lines, so
- * a crash mid-ingest re-reads from the last committed offset on next pass.
+ * pure — the caller commits the lines and the advanced checkpoint as one
+ * batch, so a crash mid-ingest re-reads from the last committed offset on
+ * next pass.
  */
 export async function readSourceGrowth(read: GrowthRead): Promise<ProviderSourceGrowth> {
   const context = await contextOf(read);
