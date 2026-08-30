@@ -9,7 +9,7 @@ import { acceptSend } from './accept.js';
 import { buildSendAcceptance } from './acceptance.js';
 import type { AgentLookup } from './agent-lookup.js';
 import { dispatchAcceptedSend } from './dispatch.js';
-import { present } from './sparse.js';
+import { present } from '../sparse.js';
 import type { SendStore } from './send-store.js';
 import { emitTrace } from '../trace.js';
 

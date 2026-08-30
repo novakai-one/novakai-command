@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { findAgentDeliveryMarkerInLine } from '../delivery/delivery-marker-codec.js';
 import { clientOpIdFor, isDeliveryClientOpId } from '../delivery/send-input.js';
-import { present } from '../send/sparse.js';
+import { present } from '../sparse.js';
 import { compareStrings } from '../compare.js';
 import { MessagingError } from '../../contract/types.js';
 import type { TranscriptLineId } from '../../contract/types.js';

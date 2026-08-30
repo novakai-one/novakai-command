@@ -7,7 +7,7 @@ import type { Timestamp } from '../../contract/types.js';
 import { parseConversationId } from '../../contract/conversation-id.js';
 import type { AgentLookup } from './agent-lookup.js';
 import { mintRequestHash, mintSendId } from './mint.js';
-import { present } from './sparse.js';
+import { present } from '../sparse.js';
 import type { SendStore } from './send-store.js';
 
 interface AcceptDependencies {

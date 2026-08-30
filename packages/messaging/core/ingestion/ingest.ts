@@ -11,7 +11,7 @@ import type { ProviderSession } from "../../contract/records/provider-session.js
 import type { ProviderName, Timestamp } from "../../contract/types.js";
 import type { AgentDirectory } from "../../contract/ports/agent-directory.js";
 import { confirmPendingSends } from "../send/confirm.js";
-import { present } from "../send/sparse.js";
+import { present } from '../sparse.js';
 import {
   classifyProviderSession,
   type EvidenceRejection,

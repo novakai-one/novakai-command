@@ -34,7 +34,7 @@ import { parseProviderName } from '../../contract/provider-name.js';
 import { parseProviderSessionId } from '../../contract/provider-session-id.js';
 import { parseTranscriptSourceId } from '../../contract/transcript-source-id.js';
 import type { MessagingTraceSink } from '../../contract/trace.js';
-import { present } from '../send/sparse.js';
+import { present } from '../sparse.js';
 import { thrownMessageOr } from '../thrown.js';
 
 type RecordsApi = Pick<MessagingRuntimeApi,

@@ -9,7 +9,7 @@ import type { MessagingTraceSink } from '../../contract/trace.js';
 import { emitTrace } from '../trace.js';
 import type { AgentLookup } from './agent-lookup.js';
 import { mintSendAttemptId } from './mint.js';
-import { present } from './sparse.js';
+import { present } from '../sparse.js';
 import type { SendStore } from './send-store.js';
 
 interface DispatchDependencies {

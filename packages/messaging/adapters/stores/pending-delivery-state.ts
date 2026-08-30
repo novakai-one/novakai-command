@@ -7,7 +7,7 @@ import type { PendingDelivery } from '../../contract/records/pending-delivery.js
 import { MessagingError } from '../../contract/types.js';
 import { assertPendingDeliveryTransition } from '../../core/delivery/transitions.js';
 import { compareStrings } from '../../core/compare.js';
-import { present } from '../../core/send/sparse.js';
+import { present } from '../../core/sparse.js';
 
 /** Replay envelope for one or more PendingDelivery mutations. */
 export interface PersistedPendingDeliveryMutation {

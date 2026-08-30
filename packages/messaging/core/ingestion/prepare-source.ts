@@ -7,7 +7,7 @@ import type {
 import type { IngestCheckpoint } from "../../contract/records/ingest-checkpoint.js";
 import type { ProviderSession } from "../../contract/records/provider-session.js";
 import type { ProviderName, Timestamp } from "../../contract/types.js";
-import { present } from "../send/sparse.js";
+import { present } from '../sparse.js';
 import type { ExternalAdoptionRuntimePolicy } from "./classify-session.js";
 import { providerSessionFor } from "./ingest-records.js";
 import type { IngestionStore } from "./ingest-store.js";

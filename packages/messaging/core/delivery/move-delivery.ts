@@ -4,7 +4,7 @@ import type {
 } from '../../contract/records/pending-delivery.js';
 import type { DeliveryRunResult } from '../../contract/runtime.js';
 import type { Timestamp } from '../../contract/types.js';
-import { present } from '../send/sparse.js';
+import { present } from '../sparse.js';
 import type { DeliveryStore } from './delivery-store.js';
 import { tally } from './run-tally.js';
 

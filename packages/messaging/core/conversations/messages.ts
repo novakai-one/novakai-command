@@ -8,7 +8,7 @@ import type { ProviderSession } from '../../contract/records/provider-session.js
 import type { SendJournal } from '../../contract/records/send-journal.js';
 import type { TranscriptLine } from '../../contract/records/transcript-line.js';
 import type { ProviderName, TranscriptLineId } from '../../contract/types.js';
-import { present } from '../send/sparse.js';
+import { present } from '../sparse.js';
 import { compareStrings } from '../compare.js';
 
 /** The three committed lists the conversation message surfaces read — nothing else. */

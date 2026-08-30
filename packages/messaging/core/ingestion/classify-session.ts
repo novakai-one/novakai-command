@@ -9,7 +9,7 @@ import type { ProviderSession } from '../../contract/records/provider-session.js
 import type { SendJournal } from '../../contract/records/send-journal.js';
 import type { IngestFailureKind } from '../../contract/runtime.js';
 import type { Timestamp } from '../../contract/types.js';
-import { present } from '../send/sparse.js';
+import { present } from '../sparse.js';
 import { adoptProviderSession } from './adopt-session.js';
 import { assignProviderSession } from './assign-session.js';
 import type { ClassificationStore } from './ingest-store.js';

@@ -14,7 +14,7 @@ import {
   type Timestamp,
   type TranscriptLineId,
 } from '../../contract/types.js';
-import { present } from '../send/sparse.js';
+import { present } from '../sparse.js';
 
 /**
  * Hosts supply activity timestamps as plain strings; the brand has no pattern

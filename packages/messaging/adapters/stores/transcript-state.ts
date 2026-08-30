@@ -11,7 +11,7 @@ import type { EventCursor, TranscriptSourceId } from "../../contract/types.js";
 import { MessagingError } from "../../contract/types.js";
 import { parseEventCursor } from "../../contract/event-cursor.js";
 import { compareStrings } from "../../core/compare.js";
-import { present } from "../../core/send/sparse.js";
+import { present } from '../../core/sparse.js';
 
 /** Event cursors mint here only, checked against the contract pattern — a mint failure is a defect. */
 const mintEventCursor = (sequence: number): EventCursor => {
