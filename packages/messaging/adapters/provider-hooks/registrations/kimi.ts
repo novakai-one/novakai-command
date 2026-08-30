@@ -1,19 +1,32 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { isErrno, thrownMessage } from '../../../core/thrown.js';
 import { isNovakaiIdentityCommand } from './owned-hook.js';
 
-const assignment = (line: string, name: string): string | undefined => {
-  const match = line.match(new RegExp(`^\\s*${name}\\s*=\\s*(.+?)\\s*(?:#.*)?$`));
-  if (match?.[1] === undefined) return undefined;
-  const literal = match[1];
-  if (literal.startsWith("'") && literal.endsWith("'")) return literal.slice(1, -1);
+const singleQuoted = (literal: string): boolean =>
+  literal.startsWith("'") && literal.endsWith("'");
+
+function parseJsonString(literal: string): string | undefined {
   try {
-    const value = JSON.parse(literal) as unknown;
-    return typeof value === 'string' ? value : undefined;
+    const value: unknown = JSON.parse(literal);
+    if (typeof value !== 'string') return undefined;
+    return value;
   } catch {
     return undefined;
   }
-};
+}
+
+/** One TOML string literal: single-quoted verbatim, or JSON-quoted with escapes. */
+function parseTomlString(literal: string): string | undefined {
+  if (singleQuoted(literal)) return literal.slice(1, -1);
+  return parseJsonString(literal);
+}
+
+function assignment(line: string, name: string): string | undefined {
+  const literal = line.match(new RegExp(`^\\s*${name}\\s*=\\s*(.+?)\\s*(?:#.*)?$`))?.[1];
+  if (literal === undefined) return undefined;
+  return parseTomlString(literal);
+}
 
 const hookValue = (block: string, name: string): string | undefined =>
   block.split(/\r?\n/u)
@@ -32,14 +45,19 @@ async function readConfig(filePath: string): Promise<string> {
   try {
     return await readFile(filePath, 'utf8');
   } catch (cause) {
-    if (typeof cause === 'object' && cause !== null && 'code' in cause
-      && cause.code === 'ENOENT') return '';
-    const message = cause instanceof Error ? cause.message : String(cause);
-    throw new Error(`Kimi config cannot be read: ${message}`);
+    if (isErrno(cause, 'ENOENT')) return '';
+    throw new Error(`Kimi config cannot be read: ${thrownMessage(cause)}`);
   }
 }
 
-/** Idempotently appends Novakai's Kimi UserPromptSubmit identity hook. */
+/**
+ * Idempotently appends Novakai's Kimi UserPromptSubmit identity hook.
+ * Atomic write (temp file plus rename, pid-named so two install processes
+ * never share one file) so a crash mid-write never leaves a truncated
+ * config; an orphaned temp is overwritten by the next install. Fs
+ * explosions propagate to the compose door (contract/compose/ingestion.ts),
+ * which wraps them as typed DependencyUnavailable.
+ */
 export async function ensureKimiIdentityHook(options: {
   readonly providerHome: string;
   readonly command: string;
