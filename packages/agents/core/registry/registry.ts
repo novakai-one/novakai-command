@@ -1,9 +1,8 @@
-// core/registry — agent definitions v2 in agents.jsonl via the foundation
-// scoped handle (kind 'agent'; the SCOPE CHECK lives in foundation's contract
-// layer (api.ts scopeCheck) — the engine performs no scope check; M3 audit
-// correction, DEC-S2-14). Envelope/trace laws are foundation's; this module
-// shapes the agent payload (AGT-004) and normalizes S1 lite defs on read
-// (DEC-F10 lazy upgrade — stored lines are never rewritten).
+// Agent definitions in agents.jsonl via the foundation scoped handle (kind
+// 'agent'; the scope check lives in foundation's contract layer — the engine
+// performs no scope check). Envelope/trace laws are foundation's; this module
+// shapes the agent payload and normalizes legacy lite defs on read (stored
+// lines are never rewritten).
 import { randomUUID } from 'node:crypto';
 import {
   createObject, getObject, listObjects, updateObject,
@@ -35,9 +34,9 @@ export type DefineAgentInput = {
 };
 
 /**
- * DEC-F10 upgrade-on-read: an S1 lite def (hooks = placeholder Ref[], no
+ * Upgrade-on-read: a legacy lite def (hooks = placeholder Ref[], no
  * skills/instructions) normalizes to v2 in memory. Placeholder Ref hooks are
- * uninterpretable as subscriptions → empty list (recorded in NOTES.md).
+ * uninterpretable as subscriptions → empty list.
  */
 export function normalizeAgent(flat: unknown): AgentDefinitionT | null {
   if (flat === null || typeof flat !== 'object' || Array.isArray(flat)) return null;
@@ -90,7 +89,7 @@ export async function defineAgent(
     schemaVersion: 1,
     createdAt: new Date().toISOString(),
     permissionLevel: def.permissionLevel ?? 'private',
-    createdBy: 'overridden-by-foundation', // red gate 4: foundation stamps the token principal
+    createdBy: 'overridden-by-foundation', // foundation stamps the token principal over this placeholder
     displayName: def.displayName,
     provider: def.provider,
     model: def.model,
@@ -165,7 +164,7 @@ export async function agentVersion(ctx: AgentsContext, id: AgentId): Promise<num
   return res.value.version;
 }
 
-// R3-22: model authority = agents. Def-level setModel is GUARANTEED (AGT-003).
+// Model authority lives here: a def-level setModel is guaranteed to stick.
 export async function setModel(
   ctx: AgentsContext, id: AgentId, model: string, clientOpId: ClientOpId,
 ): Promise<Result<AgentDefinitionT, StoreError>> {
@@ -180,7 +179,7 @@ export async function setModel(
   return updateAgent(ctx, id, { model }, version, clientOpId);
 }
 
-/** attachHook = one single-object mutation appending a subscription (R3-18). */
+/** attachHook = one single-object mutation appending a subscription. */
 export async function attachHook(
   ctx: AgentsContext, id: AgentId, input: HookInputT, clientOpId: ClientOpId,
 ): Promise<Result<AgentDefinitionT, StoreError>> {

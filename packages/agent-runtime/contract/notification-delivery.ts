@@ -1,8 +1,7 @@
-// Q7 — Agent Runtime's complete Notification delivery seam.
+// Agent Runtime's complete Notification delivery seam.
 //
 // Keeping the command/query result and the narrow Supervision port together
-// makes one bounded contract module for the durable operation. The public
-// barrel re-exports it; no wire shape changes here.
+// makes one bounded contract module for the durable operation.
 import type {
   ActivityGeneration, AgentRunId, AuthenticatedPrincipal, B3Result, IsoUtc,
   NotificationId, NotificationInputReservationId, ProviderTurnId, RecordVersion,

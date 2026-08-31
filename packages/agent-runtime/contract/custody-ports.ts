@@ -1,15 +1,12 @@
-// The two cross-capability seams the B3c Run lifecycle varies at: what Messaging
-// must answer about an Agent's terminal endpoint, and what Transcript must
-// answer about a Run's custody of its own mirror.
+// The cross-capability custody seams the Run lifecycle varies at: what
+// Messaging must answer about an Agent's terminal endpoint, and what
+// Transcript must answer about a Run's custody of its own mirror.
 //
 // Split out of `ports.ts` for the same reason those ports are narrow in the
 // first place: they are the only seams whose counterpart is another CAPABILITY
 // rather than a host facility (Agents, Terminal, the provider). Keeping them in
 // one file makes "what does the spawn ladder ask of its peers" a thing you can
-// read in one sitting — and it is exactly §13.5 rows 6/9/10 plus §13.6.
-//
-// Re-exported from `ports.ts`; the patch amendment adds the two install facts
-// Runtime owns at this seam: recipient and activity generation.
+// read in one sitting.
 import type {
   ActivityGeneration, AgentId, AgentRunId, B3ClientOpId, B3PrincipalId, B3Result,
   HumanPrincipalId, ProviderSessionId, ResolvedLaunchPlanId, TerminalSessionId,
@@ -18,7 +15,7 @@ import type {
 
 /**
  * The Messaging endpoint lifecycle, seen through the four questions the spawn
- * and continuation ladders actually ask (§13.5 rows 6/10, §13.6).
+ * and continuation ladders actually ask.
  *
  * Narrow on purpose. The Runtime cannot send a Message, cannot read an inbox,
  * and cannot open a conversation through this port — it can only reserve,
@@ -29,8 +26,8 @@ export interface MessagingEndpointPort {
   /**
    * The Thread this Agent's own conversation lives in, get-or-create.
    *
-   * Needed because a Transcript binding cannot exist without one (§12.5:
-   * every mirrored turn commits into a Thread) and nothing else in the spawn
+   * Needed because a Transcript binding cannot exist without one (every
+   * mirrored turn commits into a Thread) and nothing else in the spawn
    * ladder holds a Thread id.
    */
   ensureAgentThread(
@@ -65,7 +62,7 @@ export interface MessagingEndpointPort {
 
   activate(claimId: string): Promise<B3Result<{ readonly claimId: string }>>;
 
-  /** §13.6: the old endpoint stops accepting new work before the transfer. */
+  /** The old endpoint stops accepting new work before the transfer. */
   drain(claimId: string): Promise<B3Result<{ readonly claimId: string }>>;
 
   transfer(
@@ -109,8 +106,8 @@ export interface HeadlessChildMessagingPort {
 }
 
 /**
- * The delivery half of §8.1, seen through the two operations §12.5 already
- * types to `sys_agent_runtime`.
+ * Inbox delivery, seen through the two operations the Runtime is authorised
+ * to perform as `sys_agent_runtime`.
  *
  * As narrow as `MessagingEndpointPort` and for the same reason: a Runtime
  * holding this cannot send a Message, cannot read another Agent's inbox and
@@ -148,7 +145,7 @@ export interface MessagingInboxPort {
     readonly text: string;
   } | null>>;
 
-  /** What the terminal did. Never inferred, never optimistic (§20). */
+  /** What the terminal did. Never inferred, never optimistic. */
   recordSubmission(
     input: {
       readonly inboxItemId: string;
@@ -163,12 +160,11 @@ export interface MessagingInboxPort {
 
 /**
  * Transcript custody, seen through the two things a Run lifecycle owns: this
- * Run's binding is established at spawn (§13.5 row 9), and the watermark it
- * reached is committed before the endpoint moves on (§13.6's "final transcript
- * watermark committed").
+ * Run's binding is established at spawn, and the watermark it reached is
+ * committed before the endpoint moves on.
  *
- * Separate from `TranscriptBindingLookup`, which is the §19.1 read a Run VIEW
- * makes. This one mutates; that one does not.
+ * Separate from `TranscriptBindingLookup`, which is the read a Run VIEW makes.
+ * This one mutates; that one does not.
  */
 export interface TranscriptCustodyPort {
   bind(
@@ -196,13 +192,13 @@ export interface TranscriptCustodyPort {
 }
 
 /**
- * What Supervision must answer at §13.5's watcher rung (B3d).
+ * What Supervision must answer at the watcher-installation rung of the ladder.
  *
  * As narrow as its neighbours above, and for the same reason: the Runtime
  * cannot create a watcher of its own, cannot read one, and cannot fire one. It
  * can ask ONE question — "materialise the watchers this Run's immutable launch
  * plan pinned" — and Supervision remains the sole writer of every record that
- * answer touches (§3.3).
+ * answer touches.
  *
  * Optional on the Runtime, exactly like the two ports above: a host composed
  * without Supervision records the rung `not-needed` naming the absent

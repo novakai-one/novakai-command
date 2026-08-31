@@ -23,8 +23,8 @@ import { mintClientOpId, type B3Result, type ClientOpId } from '@novakai/foundat
 import { createFakePtyHost, type FakePty, type FakePtyHost } from '../../../terminal/adapters/pty-host/fake.js';
 import { createIdleWatchTemplate } from '../../../supervision/public/index.js';
 import type { Notification, WatchDeadline, WatchRule } from '../../../supervision/contract/index.js';
-import { startRuntimeHost, type RunningRuntimeHost } from '../../core/b3/host.js';
-import { connectRuntime, type RuntimeClient } from '../../core/b3/client.js';
+import { startRuntimeHost, type RunningRuntimeHost } from '../../core/runtime-host/host.js';
+import { connectRuntime, type RuntimeClient } from '../../core/runtime-host/client.js';
 import {
   chatRole, fakeProvidersWithCompletionLimit, governedRole, governedTokens,
 } from '../governed-role.js';

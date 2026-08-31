@@ -19,8 +19,7 @@
     "@novakai/foundation": "file:../foundation",
     "@novakai/agents": "file:../agents",
     "@novakai/projects": "file:../projects",
-    "@novakai/artifacts": "file:../artifacts",
-    "@novakai/spine": "file:../spine"
+    "@novakai/artifacts": "file:../artifacts"
   },
   "devDependencies": {
     "@types/node": "^20.14.9",

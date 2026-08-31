@@ -2,7 +2,7 @@
 // `lifecycle` and `runtime` slices.
 //
 // Every method here is a published one; nothing was added to the server for
-// this door (`packages/server/core/b3/agent-methods.ts:180–250`,
+// this door (`packages/server/core/runtime-host/agent-methods.ts:180–250`,
 // `methods.ts:103`). The Shell was simply not calling them, which is finding
 // L-20 — and the slice's absence, not any missing capability, is what made
 // FZ-VIEW-033's "Stop and close" unreachable.

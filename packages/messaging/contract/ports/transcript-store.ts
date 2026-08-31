@@ -2,7 +2,7 @@ import type { IngestCheckpoint } from "../records/ingest-checkpoint.js";
 import type { ProviderSession } from "../records/provider-session.js";
 import type { TranscriptLine } from "../records/transcript-line.js";
 import type { SendAttempt, SendJournal } from "../records/send-journal.js";
-import type { PendingDelivery } from '../records/pending-delivery.js';
+import type { DeliveryFailure, PendingDelivery } from '../records/pending-delivery.js';
 import type {
   ConversationView,
   ConversationViewMutation,
@@ -14,6 +14,7 @@ import type {
   ProviderName,
   ProviderResumeId,
   ProviderSessionId,
+  Timestamp,
   TranscriptEventKind,
   TranscriptSourceId,
 } from "../types.js";
@@ -80,13 +81,19 @@ export interface AcceptPendingDeliveryInput {
   readonly delivery: PendingDelivery;
 }
 
+/** Existing or newly committed idempotent PendingDelivery. */
+export interface AcceptPendingDeliveryResult {
+  readonly delivery: PendingDelivery;
+  readonly duplicate: boolean;
+}
+
 /** Compare-and-transition one PendingDelivery. */
 export interface PendingDeliveryTransitionInput {
   readonly id: PendingDelivery['id'];
   readonly expectedState: PendingDeliveryState;
   readonly state: PendingDeliveryState;
-  readonly updatedAt: string;
-  readonly failure?: string;
+  readonly updatedAt: Timestamp;
+  readonly failure?: DeliveryFailure;
 }
 
 /** Current delivery plus whether this invocation changed it. */
@@ -105,10 +112,10 @@ export interface TranscriptStore {
   getTranscriptLine(id: TranscriptLine['id']): Promise<TranscriptLine | null>;
   acceptSend(input: AcceptSendInput): Promise<AcceptSendResult>;
   transitionSend(input: SendTransitionInput): Promise<SendTransitionResult>;
-  bindAgentSession(agentId: string, sessionId: ProviderSessionId, updatedAt: string): Promise<number>;
-  confirmSendForLines(sessionId: ProviderSessionId, lines: readonly TranscriptLine[], updatedAt: string): Promise<number>;
+  bindAgentSession(agentId: string, sessionId: ProviderSessionId, updatedAt: Timestamp): Promise<number>;
+  confirmSendForLines(sessionId: ProviderSessionId, lines: readonly TranscriptLine[], updatedAt: Timestamp): Promise<number>;
   listSendJournals(): Promise<readonly SendJournal[]>;
-  acceptPendingDelivery(input: AcceptPendingDeliveryInput): Promise<PendingDelivery>;
+  acceptPendingDelivery(input: AcceptPendingDeliveryInput): Promise<AcceptPendingDeliveryResult>;
   transitionPendingDelivery(
     input: PendingDeliveryTransitionInput,
   ): Promise<PendingDeliveryTransitionResult>;

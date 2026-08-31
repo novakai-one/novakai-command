@@ -1,4 +1,4 @@
-// The durable epoch record and its compare-and-set advance (DEC-B3V4-27).
+// The durable epoch record and its compare-and-set advance.
 //
 // One epoch is `active`. Advancing means marking the old one `stale` under CAS
 // and appending the new one — so two hosts racing on the same store cannot

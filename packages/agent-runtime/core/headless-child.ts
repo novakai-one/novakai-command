@@ -1,3 +1,7 @@
+// Spawning a headless child: no PTY, no terminal — the child is bootstrapped
+// through its own transcript-first conversation and its brief is dispatched as
+// a Message. These are the rungs of the spawn ladder that replace
+// "open a terminal" when the child will never have one.
 import {
   b3ok,
   type AgentId, type B3Result, type CommandContext,

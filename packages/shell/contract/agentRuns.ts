@@ -183,7 +183,7 @@ export interface ShellCommunicationServices {
  * FZ-VIEW-001's `supervision` slice, as far as the notification surface reaches.
  *
  * The read and the one mutation the frozen state machine actually accepts. Both
- * are published methods (`packages/server/core/b3/supervision-methods.ts`); the
+ * are published methods (`packages/server/core/runtime-host/supervision-methods.ts`); the
  * Shell had invented its own pair beside them and reached neither (L-14).
  * `subscribeNotifications` is the third member and is not wired here — the
  * screen re-reads through this door instead, so there is no second projection of

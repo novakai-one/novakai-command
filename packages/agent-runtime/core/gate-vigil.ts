@@ -1,4 +1,4 @@
-// Watching a session that has been asked a question (§6.3, hold-out B3).
+// Watching a session that has been asked a question.
 //
 // A provider CLI does not read its stdin until it has finished painting itself,
 // and turn 1 goes out within a second of the PTY starting. The bytes are not

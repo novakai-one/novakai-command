@@ -3,9 +3,8 @@
 import type { recordSystemAction } from '@novakai/foundation/dist/contract/index.js';
 import type { ProcessProbe, ProviderSessionRegistry } from '../../../agents/contract/index.js';
 import type { ServerConfig } from '../../contract/config.js';
-import type { B3RuntimeOptions } from '../b3/composition.js';
+import type { RuntimeHostOptions } from '../runtime-host/composition.js';
 import type { ServerRuntime } from '../methods.js';
-import type { MessagingSessionHolder } from '../session/holders.js';
 import type { SupervisionEngine } from '../supervision/engine.js';
 
 export interface BootOptions {
@@ -21,7 +20,7 @@ export interface BootOptions {
   watchdogDir?: string;
   processProbe?: ProcessProbe;
   recordSystemAction?: typeof recordSystemAction;
-  b3?: Omit<B3RuntimeOptions, 'root' | 'publish'>;
+  runtimeHost?: Omit<RuntimeHostOptions, 'root' | 'publish'>;
 }
 
 export interface BootStep {
@@ -33,11 +32,8 @@ export interface BootStep {
 export interface BootError {
   code:
     | 'ConfigUnavailable'
-    | 'StoreRouteConflict'
     | 'NoHumanPrincipal'
-    | 'MessagingUnavailable'
     | 'StoreUnavailable'
-    | 'MigrationTraceFailed'
     | 'RuntimeUnavailable';
   message: string;
 }
@@ -69,5 +65,3 @@ export const refuse = (code: BootError['code'], message: string): BootResult => 
   ok: false,
   error: { code, message },
 });
-
-export type { MessagingSessionHolder };

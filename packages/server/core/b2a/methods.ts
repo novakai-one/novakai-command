@@ -14,14 +14,6 @@ import {
   ListProjectsFilter,
   Project,
 } from '../../../projects/contract/index.js';
-import {
-  AddMessageToProjectInput,
-  AttachArtifactToProjectInput,
-  SpineStep,
-  type AddMessageToProjectInput as AddMessageToProjectInputT,
-  type AttachArtifactToProjectInput as AttachArtifactToProjectInputT,
-  type SpineWorkflowId,
-} from '../../../spine/contract/index.js';
 import type { MethodTable } from '../../contract/protocol.js';
 import type { B2aServerCapabilities } from './composition.js';
 
@@ -38,18 +30,8 @@ const ArchiveProjectMethodInput = z.object({
 const ProjectItemsMethodInput = z.object({
   projectId: Project.shape.id,
 }).strict();
-const AddMessageMethodInput = AddMessageToProjectInput.extend({
-  clientOpId: ClientOpIdInput,
-}).strict();
-const AttachArtifactMethodInput = AttachArtifactToProjectInput.extend({
-  clientOpId: ClientOpIdInput,
-}).strict();
 const ArtifactMetaMethodInput = z.object({
   artifactId: Artifact.shape.id,
-}).strict();
-const WorkflowMutationMethodInput = z.object({
-  workflowId: SpineStep.shape.workflowId,
-  clientOpId: ClientOpIdInput,
 }).strict();
 
 interface InvalidMethodInput {
@@ -118,8 +100,8 @@ function parseInput<T>(
 }
 
 /**
- * Translate untrusted WS params into the three approved public contracts.
- * Artifact byte operations and Projects' Spine-only attachment door are
+ * Translate untrusted WS params into the two approved public contracts.
+ * Artifact byte operations and Projects' internal attachment door are
  * intentionally impossible to reach from this table.
  */
 export function buildB2aMethods(
@@ -127,7 +109,6 @@ export function buildB2aMethods(
 ): MethodTable {
   const projects = capabilities.projects.operations;
   const artifacts = capabilities.artifacts.operations;
-  const spine = capabilities.spine.operations;
   return {
     async createProject(params: never) {
       const parsed = parseInput('createProject', CreateProjectMethodInput, params);
@@ -153,28 +134,6 @@ export function buildB2aMethods(
       if (!parsed.ok) return parsed;
       return projects.getProjectItems(parsed.value.projectId as ProjectId);
     },
-    async addMessageToProject(params: never) {
-      const parsed = parseInput('addMessageToProject', AddMessageMethodInput, params);
-      if (!parsed.ok) return parsed;
-      const { clientOpId, ...input } = parsed.value;
-      return spine.addMessageToProject(
-        input as AddMessageToProjectInputT,
-        clientOpId as ClientOpId,
-      );
-    },
-    async attachArtifactToProject(params: never) {
-      const parsed = parseInput(
-        'attachArtifactToProject',
-        AttachArtifactMethodInput,
-        params,
-      );
-      if (!parsed.ok) return parsed;
-      const { clientOpId, ...input } = parsed.value;
-      return spine.attachArtifactToProject(
-        input as AttachArtifactToProjectInputT,
-        clientOpId as ClientOpId,
-      );
-    },
     async getArtifactMeta(params: never) {
       const parsed = parseInput('getArtifactMeta', ArtifactMetaMethodInput, params);
       if (!parsed.ok) return parsed;
@@ -199,35 +158,6 @@ export function buildB2aMethods(
           items: result.value.items.map(projectArtifactMetadata),
         },
       };
-    },
-    async getSpineWorkflows(params: never) {
-      const parsed = parseInput('getSpineWorkflows', EmptyInput, params);
-      if (!parsed.ok) return parsed;
-      return spine.getSpineWorkflows();
-    },
-    async continueWorkflow(params: never) {
-      const parsed = parseInput(
-        'continueWorkflow',
-        WorkflowMutationMethodInput,
-        params,
-      );
-      if (!parsed.ok) return parsed;
-      return spine.continueWorkflow(
-        parsed.value.workflowId as SpineWorkflowId,
-        parsed.value.clientOpId as ClientOpId,
-      );
-    },
-    async abandonWorkflow(params: never) {
-      const parsed = parseInput(
-        'abandonWorkflow',
-        WorkflowMutationMethodInput,
-        params,
-      );
-      if (!parsed.ok) return parsed;
-      return spine.abandonWorkflow(
-        parsed.value.workflowId as SpineWorkflowId,
-        parsed.value.clientOpId as ClientOpId,
-      );
     },
   };
 }

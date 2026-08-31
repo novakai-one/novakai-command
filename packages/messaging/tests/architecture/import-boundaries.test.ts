@@ -68,18 +68,14 @@ describe("architecture — one Messaging doorway", () => {
     assert.deepEqual(offenders, []);
   });
 
-  it("consumer-facing Messaging tests use only contract/index.ts", () => {
-    const consumerDirs = ["capability", "contract", "harness", "standalone"];
+  it("Messaging tests import owning modules directly, never the host barrel", () => {
     const offenders: string[] = [];
-    for (const dir of consumerDirs) {
-      for (const file of listFiles(join(testsSourceRoot, dir), ".ts")) {
-        for (const specifier of importSpecifiers(file)) {
-          if (!specifier.startsWith(".")) continue;
-          const target = resolveSpecifier(file, specifier);
-          if (target === undefined || target.startsWith(testsSourceRoot)) continue;
-          if (!target.endsWith(join("contract", "index.js"))) {
-            offenders.push(`${relative(testsSourceRoot, file)} → ${specifier}`);
-          }
+    for (const file of listFiles(testsSourceRoot, ".ts")) {
+      for (const specifier of importSpecifiers(file)) {
+        if (!specifier.startsWith(".")) continue;
+        const target = resolveSpecifier(file, specifier);
+        if (target !== undefined && target.endsWith(join("contract", "index.js"))) {
+          offenders.push(`${relative(testsSourceRoot, file)} → ${specifier}`);
         }
       }
     }
@@ -88,10 +84,11 @@ describe("architecture — one Messaging doorway", () => {
 
   it("core imports declaration-only contract modules, never behavior or wiring", () => {
     const allowed = new Set([
-      "types", "schemas", "brands", "errors", "records", "events", "subscriptions",
+      "types", "errors", "records", "events", "subscriptions",
       "commands", "queries", "outcome", "runtime",
       "communications", "conversations", "agent-delivery-marker",
-      "conversation-id", "correlation", "provider-name",
+      "conversation-id", "transcript-line-id", "correlation", "provider-name",
+      "provider-session-id", "transcript-source-id", "trace",
     ]);
     const offenders: string[] = [];
     for (const file of listFiles(join(sourceRoot, "core"), ".ts")) {
@@ -115,25 +112,6 @@ describe("architecture — one Messaging doorway", () => {
     for (const dir of ["public", "seams", "composition", "protocol", "api"]) {
       assert.equal(existsSync(join(packageRoot, dir)), false, `${dir}/ must be absent`);
     }
-  });
-
-  it("the external Chief client has only its ws runtime dependency", () => {
-    const client = join(distRoot, "tests", "standalone", "external-chief.js");
-    const imports = importSpecifiers(client).filter((value) => !value.startsWith("node:"));
-    assert.deepEqual(imports, ["ws"]);
-  });
-
-  it("the second host has no import path into Messaging internals", () => {
-    const appRoot = join(packageRoot, "examples", "messenger-cli");
-    const sources = [
-      ...listFiles(appRoot, ".js"),
-      ...listFiles(appRoot, ".mjs"),
-      ...listFiles(appRoot, ".cjs"),
-    ];
-    const offenders = sources.flatMap((file) => importSpecifiers(file)
-      .filter((specifier) => !specifier.startsWith("node:") && specifier !== "ws")
-      .map((specifier) => `${relative(appRoot, file)} → ${specifier}`));
-    assert.deepEqual(offenders, []);
   });
 });
 
@@ -160,8 +138,6 @@ describe("architecture — graph health", () => {
     const shellRoot = join(repoRoot, "packages", "shell", "ui", "screens", "messaging");
     const files = [
       ...listFiles(join(sourceRoot, "contract"), ".ts"),
-      ...listFiles(join(sourceRoot, "adapters", "standalone"), ".ts"),
-      join(sourceRoot, "cli", "nvk-messaging.ts"),
       join(serverRoot, "boot.ts"),
       ...listFiles(join(serverRoot, "boot"), ".ts"),
       join(serverRoot, "methods.ts"),
@@ -184,7 +160,6 @@ describe("architecture — graph health", () => {
       join(sourceRoot, "core", "event-bus.ts"),
       ...listFiles(join(sourceRoot, "adapters", "provider-transcripts"), ".ts"),
       ...listFiles(join(sourceRoot, "adapters", "stores"), ".ts"),
-      join(repoRoot, "packages", "server", "core", "b2b", "composition.ts"),
     ];
     const oversized = files.flatMap((file) => {
       const lines = readFileSync(file, "utf8").split(/\r?\n/u).length;
@@ -219,7 +194,7 @@ describe("architecture — graph health", () => {
 
   it("adapter families do not import other adapter families", () => {
     const adapterRoot = join(distRoot, "adapters");
-    const allowedShared = new Set(["store-shared.js", "store-operation-identity.js"]);
+    const allowedShared = new Set<string>();
     const offenders: string[] = [];
     for (const file of listFiles(adapterRoot, ".js")) {
       const from = relative(adapterRoot, file).split(sep).join("/");
@@ -241,10 +216,6 @@ describe("architecture — graph health", () => {
     const production = [
       ...listFiles(join(sourceRoot, 'contract'), '.ts'),
       ...listFiles(join(sourceRoot, 'cli'), '.ts'),
-      ...listFiles(join(repoRoot, 'packages', 'spine'), '.ts')
-        .filter((file) => !file.includes(`${sep}tests${sep}`)
-          && !file.includes(`${sep}node_modules${sep}`)
-          && !file.includes(`${sep}dist${sep}`)),
     ];
     const offenders = production.filter((file) =>
       readFileSync(file, 'utf8').includes('openJsonlStore'))

@@ -1,4 +1,4 @@
-// Durable owner-reconciled query for one Q7 delivery operation.
+// Durable owner-reconciled query for one delivery operation.
 import {
   b3err, b3fail, b3ok, notificationInputReservationId,
   type AuthenticatedPrincipal, type B3Result, type NotificationId,
@@ -19,7 +19,7 @@ const reader: AuthenticatedPrincipal = {
   id: 'sys_agent_runtime', kind: 'system', verifiedScopes: [],
 };
 
-/** The one AMD-002 semantic submission correlated to a Notification effect. */
+/** The one semantic submission correlated to a Notification effect. */
 export async function semanticNotificationSubmission(
   core: RunsCore,
   effectKey: string,

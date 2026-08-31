@@ -5,7 +5,6 @@
 //   nvk-runtime ensure [--start]
 //   nvk-runtime status
 //   nvk-runtime doctor
-//   nvk-runtime cutover-report [--root <path>]   ← out-of-tree (freeze §5b)
 //   nvk-runtime stop --live-runs refuse|stop-explicitly
 //
 // `ensure --start` is the point of the whole slice: it reaches the runtime, and
@@ -15,15 +14,12 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { b3err, b3fail, type B3ClientOpId, type B3Result } from '@novakai/foundation/contract';
 import type { RuntimeStatus, RuntimeStopOutcome } from '../../agent-runtime/contract/index.js';
-import { startRuntimeHost } from '../core/b3/host.js';
-import { connectRuntime, type RuntimeClient } from '../core/b3/client.js';
+import { startRuntimeHost } from '../core/runtime-host/host.js';
+import { connectRuntime, type RuntimeClient } from '../core/runtime-host/client.js';
 import {
   clientOpIdFrom, confirmedRuns, emit, expectedEpoch, fail, parseFlags,
   type CliCommand, type Flags,
-} from '../core/b3/cli-shared.js';
-import {
-  buildCutoverReport, describeCutover, LEGACY_MESSAGING_STORE,
-} from '../core/store-route-report.js';
+} from '../core/runtime-host/cli-shared.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '..', '..', '..');
@@ -187,26 +183,6 @@ const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
       client.call<RuntimeStatus>('b3.runtime.getStatus', {})), describeDoctor);
   },
 
-  // Answers a different question from the runtime health one — "did the store
-  // route actually move, and can I prove it?" — so it is its own verb rather
-  // than a flag on a ratified one (NVK-KIMI-092 §4; CL-A: a flag on a §17.1
-  // command needs an amendment, and none exists). Out-of-B3e extra under
-  // freeze §5b: lawful operator surface, outside X-1's set, carrying no proof.
-  //
-  // A pure read of the local data root, so it answers with no Runtime running
-  // — which is exactly the state someone reaches for it in.
-  async ['cutover-report'](argFlags) {
-    const report = await buildCutoverReport({
-      root,
-      dataRoot: path.join(root, 'stores'),
-      // The file the product actually writes (packages/server/core/boot.ts:146).
-      // It said `messaging-store.jsonl`, which nothing has ever written, so a
-      // root with a real legacy journal beside it reported `clear`.
-      legacySources: { messagingStoreOp: path.join(root, LEGACY_MESSAGING_STORE) },
-    });
-    emit('runtime.cutover-report', argFlags, report, describeCutover);
-  },
-
   /**
    * A5-02: `--expect-epoch <RuntimeEpochId>` and `--confirmed-run <AgentRunId>`
    * (repeatable).
@@ -241,11 +217,10 @@ const COMMANDS: Record<string, (argFlags: Flags) => Promise<never>> = {
 
 /** X-1's member for a verb. `serve` is not a command at all — it is the process
  * `ensure --start` spawns (NVK-KIMI-092 §3 row 11) — so it reports under its
- * group; `cutover-report` is an out-of-B3e extra, published outside X-1's set. */
+ * group. */
 const RUNTIME_COMMANDS: Readonly<Record<string, CliCommand>> = {
   ensure: 'runtime.ensure', status: 'runtime.status',
   doctor: 'runtime.doctor', stop: 'runtime.stop', serve: 'runtime',
-  'cutover-report': 'runtime.cutover-report',
 };
 
 async function runCommand(name: string, argFlags: Flags): Promise<never> {
@@ -258,7 +233,7 @@ async function runCommand(name: string, argFlags: Flags): Promise<never> {
     emit('runtime', argFlags, b3fail(
       b3err('ValidationFailed', `unknown command "${name}"`,
         { issues: [{ path: 'command',
-          message: 'expected serve|ensure|status|doctor|cutover-report|stop' }] }, false),
+          message: 'expected serve|ensure|status|doctor|stop' }] }, false),
     ), () => '');
   }
   return handler(argFlags);

@@ -23,7 +23,7 @@ import {
 import type { RunsStore, Persisted } from './runs-store.js';
 
 /**
- * What Agent Runtime may ask Transcript about a Run (§19.1).
+ * What Agent Runtime may ask Transcript about a Run.
  *
  * A read, through a contract, of a fact Transcript owns — never a store
  * access. Optional because a host with no Transcript wired is a legitimate
@@ -87,15 +87,15 @@ export interface RunsCore {
   readonly credentials: RunCredentialPort;
   readonly receipts: ReceiptStore;
   readonly fence: RuntimeHostContract['fence'];
-  /** §19.1's transcript section. Absent means no Transcript is composed. */
+  /** The transcript section of the view. Absent means no Transcript is composed. */
   readonly transcriptBinding?: TranscriptBindingLookup;
   readonly providerTurnCompletionEvidence?: ProviderTurnCompletionEvidenceLookup;
   readonly providerTurnCompletionCoordinator?: ProviderTurnCompletionCoordinator;
   /**
-   * §13.5 rows 6/10 and §13.6's endpoint cutover.
+   * Endpoint reservation/activation and the continuation endpoint cutover.
    *
    * Optional because a host composed without Messaging is a legitimate
-   * configuration — the B3a Runtime and every Runs-only test suite is one. What
+   * configuration — a bare Runtime and every Runs-only test suite is one. What
    * is NOT legitimate is a host that HAS Messaging and skips the stage anyway:
    * the ladder then records `not-needed` naming the absent capability, which is
    * a true statement about that host, and the production composition never
@@ -106,15 +106,15 @@ export interface RunsCore {
   readonly headlessChildMessaging?: HeadlessChildMessagingPort;
   /** Messaging-owned inbox source facts used by the semantic delivery route. */
   readonly messagingInbox?: MessagingInboxPort;
-  /** §13.5 row 9 and §13.6's final watermark. Optional for the same reason. */
+  /** Transcript binding and the final watermark. Optional for the same reason. */
   readonly transcriptCustody?: TranscriptCustodyPort;
-  /** B3d §13.5's watcher rung. Optional for the same reason as the two above. */
+  /** The watcher-installation rung. Optional for the same reason as the two above. */
   readonly watchers?: RunWatcherPort;
-  /** Q7 delivery owner seam; absent hosts cannot start Notification turns. */
+  /** The notification-delivery owner seam; absent hosts cannot start Notification turns. */
   readonly notifications?: NotificationDeliveryPort;
-  /** B3d §19.1 usage projection, read through Supervision's public contract. */
+  /** The usage projection, read through Supervision's public contract. */
   readonly usage?: RunUsageLookup;
-  /** Emitted after a commit, never before it (§15). */
+  /** Emitted after a commit, never before it. */
   readonly publish: (
     kind: string,
     payload: Readonly<Record<string, unknown>>,
@@ -151,7 +151,7 @@ export const RUN_SCOPES: readonly AuthorityScope[] = [
   'agent.spawn', 'agent.interrupt', 'agent.stop-one', 'agent.continue', 'agent.control',
 ] as AuthorityScope[];
 
-/** §3.5: an unknown newer contract version is refused, never guessed at. */
+/** An unknown newer contract version is refused, never guessed at. */
 export function versionGuard<T>(context: CommandContext): B3Result<T> | null {
   if (context.contractVersion === 1) return null;
   return b3fail(b3err('UnsupportedContractVersion',
@@ -180,7 +180,7 @@ export async function requireRun(
 }
 
 /**
- * One Agent has at most one Run that is not final (§6.1). This is the query
+ * One Agent has at most one Run that is not final. This is the query
  * that keeps it true, and it reads the store rather than any cache: a second
  * process asking the same question must get the same answer.
  */
@@ -283,19 +283,19 @@ export async function expireAuthorityOf(
 }
 
 /**
- * §8.1's cutoff, for a Run that has ended — by ANY road.
+ * The endpoint cutoff, for a Run that has ended — by ANY road.
  *
- * §13.6 drains the endpoint on CONTINUATION, because that is where it is handed
+ * A continuation drains the endpoint, because that is where it is handed
  * to a successor. A plain stop has no successor and had no such step, so the
  * claim stayed `active` with no cutoff and an exact-Run Message aimed at a Run
- * that no longer exists was accepted and queued for the Agent — the silent
- * redirect §8.1 forbids, reached by never closing the endpoint at all.
+ * that no longer exists was accepted and queued for the Agent — a silent
+ * redirect, reached by never closing the endpoint at all.
  *
  * It lives beside `expireAuthorityOf` because it is the same sentence about a
  * different thing the Run held, and because the two roads out of a shift need
- * it equally: an explicit stop, and a Run reconciled after its Runtime died
- * (DEC-B3V4-23). Boot settled the Run and expired its grants and left the
- * endpoint advertising an Agent nobody was behind — exam row D2's stall.
+ * it equally: an explicit stop, and a Run reconciled after its Runtime died.
+ * Boot settled the Run and expired its grants and left the endpoint
+ * advertising an Agent nobody was behind.
  *
  * Only the claim belonging to THIS Run is touched: a continuation that already
  * moved the endpoint on leaves the successor holding it, and draining that

@@ -1,5 +1,5 @@
-// Mock provider adapter (C §4: proves the seam is replaceable; AGT-001 adapter
-// conformance runs against it). Fully in-memory; tests script PtyEvents.
+// Mock provider adapter — proves the seam is replaceable; the adapter
+// conformance suite runs against it. Fully in-memory; tests script PtyEvents.
 import { randomUUID } from 'node:crypto';
 import type { PtyEvent, ProviderName, SpawnOpts, Unsubscribe } from '../../contract/schemas.js';
 import type { SpawnedSession, TerminalAdapter } from './adapter.js';
@@ -11,7 +11,7 @@ export interface MockSession {
   model: string;
   state: 'running' | 'exited';
   sent: string[];
-  /** S2a (§22 ruling 5): resolved skill dirs received at spawn — the mock's
+  /** Resolved skill dirs received at spawn — the mock's
    * declared mechanism is to RECORD the list (observable proof). */
   skills: string[];
 }

@@ -3,7 +3,7 @@
 // — both satisfy TerminalRuntimeLike). The provider CLI argv/env/discovery is
 // the terminal capability's job (src/backend/terminal/provider/); this adapter
 // only chooses the provider name and demuxes the runtime's global callbacks
-// into per-session PtyEvent streams (R3-15/R3-17).
+// into per-session PtyEvent streams.
 import { randomUUID } from 'node:crypto';
 import type { PtyEvent, ProviderName, SpawnOpts, Unsubscribe } from '../../contract/schemas.js';
 import type { SpawnedSession, TerminalAdapter, TerminalRuntimeLike } from './adapter.js';
@@ -11,7 +11,7 @@ import type { SpawnedSession, TerminalAdapter, TerminalRuntimeLike } from './ada
 interface SessionRecord {
   sessionId: string;
   agentId: string;
-  /** S3: the runtime keys terminals by its own agentId string, so each session
+  /** The runtime keys terminals by its own agentId string, so each session
    * gets a UNIQUE runtime key (the sessionId) — a second spawn of the same
    * agent can never overwrite the first session's routing. */
   runtimeKey: string;
@@ -19,13 +19,13 @@ interface SessionRecord {
   state: 'running' | 'exited';
   closedByUs: boolean;
   handlers: Array<(e: PtyEvent) => void>;
-  /** S2b activity heuristic (ruling 12): last emitted activity time + idle timer. */
+  /** Activity heuristic: last emitted activity time + idle timer. */
   lastActivityAt: number;
   idle: boolean;
   idleTimer: ReturnType<typeof setTimeout> | null;
 }
 
-/** Ruling 12 defaults: ≤1 activity event per 2s per session; 5s quiet → idle. */
+/** Activity-heuristic defaults: ≤1 activity event per 2s per session; 5s quiet → idle. */
 export interface ActivityHeuristicOpts {
   activityIntervalMs?: number;
   idleMs?: number;
@@ -42,10 +42,10 @@ export function createTerminalAdapter(
   const byRuntimeKey = new Map<string, SessionRecord>();
 
   /**
-   * S2a (§22 ruling 5): per-provider DECLARED skills mechanism.
+   * Per-provider DECLARED skills mechanism.
    * - kimi: native `--skills-dir <dir>` CLI flag (verified via `kimi --help`).
    * - claude/codex: NOVAKAI_SKILLS env (colon-joined dirs) — declared
-   *   mechanism; native support unverified, recorded in NOTES.md.
+   *   mechanism; native support unverified.
    */
   const skillsSpawnConfig = (provider: ProviderName, dirs: string[]):
     { argv?: string[]; env?: Record<string, string> } => {
@@ -59,10 +59,10 @@ export function createTerminalAdapter(
   };
 
   /**
-   * S2b (DEC-S2-15, ruling 12): derive activity from raw output. A chunk while
-   * the window has elapsed emits ONE 'working' signal; a quiet window emits
-   * ONE 'idle'. Adapter-internal heuristic — the contract sees only the
-   * standard PtyEvent shape.
+   * Derive activity from raw output. A chunk while the window has elapsed
+   * emits ONE 'working' signal; a quiet window emits ONE 'idle'.
+   * Adapter-internal heuristic — the contract sees only the standard PtyEvent
+   * shape.
    */
   const noteOutput = (rec: SessionRecord): void => {
     const now = Date.now();
@@ -85,7 +85,7 @@ export function createTerminalAdapter(
   };
 
   // The runtime's data/exit callbacks are GLOBAL (one registration each) —
-  // register once, demux by the per-session runtime key (S3), never agentId.
+  // register once, demux by the per-session runtime key, never agentId.
   let wired = false;
   const wire = (): void => {
     if (wired) return;
@@ -118,8 +118,8 @@ export function createTerminalAdapter(
         title: `agent:${agentId}`,
         cwd: opts.cwd ?? defaults.cwd,
         provider,
-        agentId: sessionId, // S3: unique per-session runtime key
-        ...(opts.model ? { model: opts.model } : {}), // OD-C3: at-spawn model reaches capable runtimes
+        agentId: sessionId, // unique per-session runtime key
+        ...(opts.model ? { model: opts.model } : {}), // an at-spawn model reaches capable runtimes
         ...skillsSpawnConfig(provider, opts.skills ?? []),
         env: {
           ...skillsSpawnConfig(provider, opts.skills ?? []).env,
@@ -145,10 +145,10 @@ export function createTerminalAdapter(
       return rec ? { sessionId, state: rec.state } : null;
     },
     /**
-     * B1 DEC-B1-6: rebuild this adapter's record for a session that outlived
-     * the process, and hand the provider conversation id back to the runtime.
-     * Refused (false) when the runtime cannot adopt — a session must never
-     * LOOK reattached while sends go nowhere.
+     * Rebuild this adapter's record for a session that outlived the process,
+     * and hand the provider conversation id back to the runtime. Refused
+     * (false) when the runtime cannot adopt — a session must never LOOK
+     * reattached while sends go nowhere.
      */
     adopt(input) {
       const adoptable = runtime as TerminalRuntimeLike & {
@@ -204,9 +204,9 @@ export function createTerminalAdapter(
       clearHeuristic(rec);
       return runtime.kill(rec.runtimeKey);
     },
-    // OD-C3 RULED: expose model-switch ONLY when the runtime declares the
-    // mechanism (kimi CLI). Other runtimes → no method → typed
-    // UnsupportedOperation at the contract layer.
+    // Expose model-switch ONLY when the runtime declares the mechanism
+    // (kimi CLI). Other runtimes → no method → typed UnsupportedOperation at
+    // the contract layer.
     ...(runtime.setModel
       ? {
         setSessionModel(sessionId: string, model: string): boolean {
@@ -218,13 +218,3 @@ export function createTerminalAdapter(
       : {}),
   };
 }
-
-// Per-provider factories (DEC-C2): one adapter each, zero core changes to add
-// a fourth provider. Today they share the terminal host because all three CLIs
-// are PTY-driven; the seam is what AGT-001/R3-28 ratifies.
-export const createKimiAdapter = (runtime: TerminalRuntimeLike, cwd: string): TerminalAdapter =>
-  createTerminalAdapter(runtime, { cwd, provider: 'kimi' });
-export const createClaudeAdapter = (runtime: TerminalRuntimeLike, cwd: string): TerminalAdapter =>
-  createTerminalAdapter(runtime, { cwd, provider: 'claude' });
-export const createCodexAdapter = (runtime: TerminalRuntimeLike, cwd: string): TerminalAdapter =>
-  createTerminalAdapter(runtime, { cwd, provider: 'codex' });

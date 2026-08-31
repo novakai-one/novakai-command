@@ -193,7 +193,7 @@ test('every stage is journalled with a stable effect key, in the ladder order', 
       assert.equal(done.effectKey, `${operation.id}:${done.stage}`,
         'an effect key must be derivable from the operation and the stage');
     }
-    // The three B3c rungs COMPLETED, each naming the object its owner made.
+    // The three custody rungs COMPLETED, each naming the object its owner made.
     for (const stage of ['endpoint-reserved', 'transcript-bound', 'endpoint-active'] as const) {
       const done = operation.completedStages.find((item) => item.stage === stage);
       assert.notEqual(done?.outcome, 'not-needed', `${stage} was recorded as deferred`);
@@ -231,8 +231,7 @@ test('every stage is journalled with a stable effect key, in the ladder order', 
 });
 
 test('a host with no Messaging or Transcript says so, naming the absent capability', async () => {
-  // The honest form of the deferral this slice failed on. "B3c" was a lie once
-  // B3c shipped; a statement about the HOST is checkable, and the production
+  // A statement about the HOST is checkable, and the production
   // composition — which composes both — can never produce it.
   await withRig(async (rig) => {
     const role = rig.agents.defineRole('builder');
@@ -255,9 +254,9 @@ test('a host with no Messaging or Transcript says so, naming the absent capabili
       'no Messaging capability is composed in this host');
     for (const reason of reasons.values()) {
       assert.equal(String(reason).includes('B3c'), false,
-        'a rung may not defer to the slice that already delivered it');
+        'a rung may not defer to a capability that already delivered it');
     }
-  }, { withoutB3cCapabilities: true });
+  }, { withoutCustodyCapabilities: true });
 });
 
 test('the provider session is reserved BEFORE any effect and never rebound', async () => {

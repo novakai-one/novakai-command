@@ -1,7 +1,7 @@
-// core/providers/claude.ts — the CLAUDE provider adapter (DEC-B1-4).
+// The CLAUDE provider adapter.
 //
-// Mirrors the kimi adapter's proven shape against the ratified terminal
-// mini-contract (R3-15). Provider-specific code lives ONLY here (red gate 2).
+// Mirrors the kimi adapter's proven shape against the terminal seam.
+// Provider-specific code lives ONLY here.
 //
 // The machine surface (verified LIVE against Claude Code 2.1.219, 2026-07-28 —
 // `claude --help` plus a real recorded run):
@@ -26,9 +26,9 @@
 //
 // MODEL: `--model <alias>` at spawn. Mid-session switch has no verified
 // mechanism → no `setModel` on this runtime → typed UnsupportedOperation at the
-// contract layer (OD-C3). Recorded in NOTES.md.
+// contract layer.
 //
-// USAGE (DEC-B1-7): the `result` line's `usage` block is the TURN total
+// USAGE: the `result` line's `usage` block is the TURN total
 // (input_tokens / output_tokens / cache_read_input_tokens /
 // cache_creation_input_tokens) — per-turn, not cumulative, so it is emitted
 // with cumulative=false. Unlike codex, claude's numbers need no baseline.
@@ -41,7 +41,7 @@ export function defaultClaudeCliPath(): string {
   return resolveCliPath('claude');
 }
 
-/** Red gate 3: these values mean "pass no --model flag; let claude decide". */
+/** These values mean "pass no --model flag; let claude decide". */
 const NO_MODEL_FLAG = new Set(['cli-default', 'claude-cli', '']);
 
 interface LogicalSession {
@@ -52,7 +52,7 @@ interface LogicalSession {
   /** Serializes per-message child processes: one prompt in flight at a time. */
   queue: Promise<void>;
   current: ChildProcess | null;
-  /** Provider-native spawn config (§22 ruling 5): argv is PREPENDED per message. */
+  /** Provider-native spawn config: argv is PREPENDED per message. */
   argv: string[];
   env: Record<string, string>;
   model: string | null;
@@ -251,7 +251,7 @@ export function createClaudeCliRuntime(options: ClaudeCliRuntimeOptions): Claude
       await (sessions.get(key)?.queue ?? Promise.resolve());
     },
 
-    /** Restart path (DEC-B1-6): rebuild the logical session around its session id. */
+    /** Restart path: rebuild the logical session around its session id. */
     adopt(key, adoptOptions) {
       const existing = sessions.get(key);
       if (existing) {

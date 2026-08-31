@@ -1,20 +1,19 @@
-// core/sessions/record-shape.ts — the providerSession record shape and its
-// parser (split from registry.ts, SUPFIX step 0; parse added in SUPFIX-01).
+// The providerSession record shape and its parser.
 //
 // A logical agents session (`sess_<uuid>`) maps to a PROVIDER CONVERSATION id.
-// Physical CLI processes come and go under it (DEC-B1-5), so what has to
-// survive a server restart is the resumable HANDLE, not a process:
+// Physical CLI processes come and go under it, so what has to survive a server
+// restart is the resumable HANDLE, not a process:
 //
 //     sessionId · agentId · provider · providerConversationId · cwd · model
 //     spawnedAt · lastActivityAt · turns · status · inFlight · lastInterruption
 //
-// Red gate 6 / A-7: these records are handles, never durable identity. Nothing
-// derives an identity from a pid or a provider session id.
+// These records are handles, never durable identity. Nothing derives an
+// identity from a pid or a provider session id.
 //
-// SUPFIX-01: a stored object is PARSED, never cast. A record that does not
-// carry this shape (for example a B3 handle record wrongly written under the
-// same kind) becomes a typed `malformed` result the caller can skip and
-// report — it never becomes a runtime TypeError three modules later.
+// A stored object is PARSED, never cast. A record that does not carry this
+// shape (for example a governed handle record wrongly written under the same
+// kind) becomes a typed `malformed` result the caller can skip and report — it
+// never becomes a runtime TypeError three modules later.
 import type { ProviderName } from '../../contract/schemas.js';
 
 export type ProviderSessionStatus = 'running' | 'closed' | 'exited';
@@ -118,9 +117,9 @@ const PROVIDERS: ReadonlySet<string> = new Set(['claude', 'codex', 'kimi', 'mock
 const STATUSES: ReadonlySet<string> = new Set(['running', 'closed', 'exited']);
 
 /**
- * SUPFIX-01: parse one stored object of kind `providerSession`. Returns the
- * typed record, or `{ ok: false, id, reason }` naming what was missing.
- * Never throws because of stored data.
+ * Parse one stored object of kind `providerSession`. Returns the typed record,
+ * or `{ ok: false, id, reason }` naming what was missing. Never throws because
+ * of stored data.
  */
 export function parseProviderSessionRecord(object: Record<string, unknown>): ParsedProviderSessionRecord {
   const raw = object as Record<string, unknown>;

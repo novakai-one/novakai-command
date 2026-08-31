@@ -23,13 +23,13 @@ import { mintClientOpId, type B3Result, type ClientOpId } from '@novakai/foundat
 import {
   createFakePtyHost, type FakePty, type FakePtyHost,
 } from '../../../terminal/adapters/pty-host/fake.js';
-import { createFakeProviderAdapters } from '../../../agents/b3/contract/index.js';
+import { createFakeProviderAdapters } from '../../../agents/governed/contract/index.js';
 import type {
   InteractiveProviderAdapter, ProviderAdapterRegistry,
-} from '../../../agents/b3/contract/providers.js';
-import type { ProviderKind } from '../../../agents/b3/contract/records.js';
-import { startRuntimeHost, type RunningRuntimeHost } from '../../core/b3/host.js';
-import { connectRuntime, type RuntimeClient } from '../../core/b3/client.js';
+} from '../../../agents/governed/contract/providers.js';
+import type { ProviderKind } from '../../../agents/governed/contract/records.js';
+import { startRuntimeHost, type RunningRuntimeHost } from '../../core/runtime-host/host.js';
+import { connectRuntime, type RuntimeClient } from '../../core/runtime-host/client.js';
 import { governedRole, governedTokens } from '../governed-role.js';
 
 interface Rig {

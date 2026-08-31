@@ -15,7 +15,7 @@ import type { AgentRunsContract, ProviderPort } from '../../../agent-runtime/con
 import type { TerminalContract } from '../../../terminal/contract/index.js';
 import type { SupervisionCore } from '../../../supervision/public/index.js';
 import type { Notification, WatchDeadline } from '../../../supervision/contract/index.js';
-import { createNotificationDeliveryPump } from '../../core/b3/notification-delivery-pump.js';
+import { createNotificationDeliveryPump } from '../../core/runtime-host/notification-delivery-pump.js';
 
 test('a fresh Runtime pass replays a submitted drift Notification whose deadline is still claimed',
   async () => {

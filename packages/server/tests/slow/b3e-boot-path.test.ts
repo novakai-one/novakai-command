@@ -17,7 +17,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -29,7 +29,7 @@ import { openConfigStore } from '../../contract/index.js';
 import { LIVE_SERVER_PORT, resolveServerLaunch } from '../../core/launch-options.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const repoRoot = path.resolve(here, '..', '..', '..');
+const repoRoot = path.resolve(here, '..', '..', '..', '..');
 const tsxCli = path.join(repoRoot, 'node_modules', 'tsx', 'dist', 'cli.mjs');
 const serverCli = path.join(repoRoot, 'packages', 'server', 'cli', 'nvk-server.ts');
 
@@ -94,14 +94,13 @@ test('a boot writes nothing on the legacy route', async () => {
   if (!booted.ok) return;
   await booted.value.close();
 
-  // This is the whole of E-01's cause. §18.1's gate refuses a root where a
-  // registered kind exists on both routes — so a boot that writes ANY
-  // registered kind beside the canonical directory has armed the next boot's
-  // refusal. `migratable` is checked too: a legacy file the gate would want to
-  // copy is a file this composition should never have created.
+  // This is the whole of E-01's cause. A boot that writes ANY registered kind
+  // beside the canonical directory has created a second route under the same
+  // root. `migratable` is checked too: a legacy-route file is a file this
+  // composition should never have created.
   const survey = surveyStoreRoute({ dataRoot: canonical(root), legacyRoot: root });
   assert.deepEqual([...survey.conflicting], [], 'a boot must not write a registered kind on the legacy route');
-  assert.deepEqual([...survey.migratable], [], 'a boot must not leave a legacy-route file for the gate to migrate');
+  assert.deepEqual([...survey.migratable], [], 'a boot must not leave a legacy-route file behind');
 });
 
 test('a fresh data root boots nvk-server twice', { timeout: 300_000 }, async () => {
@@ -114,25 +113,6 @@ test('a fresh data root boots nvk-server twice', { timeout: 300_000 }, async () 
 
   const second = await bootOnce(root, staticDir);
   assert.equal(second.ready, true, `second boot on the same root failed:\n${second.log}`);
-});
-
-test('a genuine route conflict is a typed boot error, not a thrown stack', async () => {
-  const root = freshRoot();
-
-  // Hand-build the conflict the old composition used to build for itself: the
-  // same registered kind present on both routes with no cutover receipt.
-  // Built before anything opens a handle, because the route gate is decided
-  // once per root per process — which is also why E-01's repro needs two
-  // processes rather than two calls.
-  mkdirSync(canonical(root), { recursive: true });
-  writeFileSync(path.join(canonical(root), 'layout.jsonl'), '');
-  writeFileSync(path.join(root, 'layout.jsonl'), '');
-
-  const booted = await bootServer({ root, port: 0, cwd: root, watchdogDir: root });
-  assert.equal(booted.ok, false, 'a blocked route must be a refusal, not a boot');
-  if (booted.ok) return;
-  assert.equal(booted.error.code, 'StoreRouteConflict');
-  assert.match(booted.error.message, /layout/);
 });
 
 // ── E-02: the port law ────────────────────────────────────────────────────

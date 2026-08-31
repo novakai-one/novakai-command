@@ -25,15 +25,15 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createFakePtyHost } from '../../../terminal/adapters/pty-host/fake.js';
-import { createFakeProviderAdapters } from '../../../agents/b3/contract/index.js';
-import { startRuntimeHost, type RunningRuntimeHost } from '../../core/b3/host.js';
-import { controllersOf } from '../../core/b3/run-ports.js';
+import { createFakeProviderAdapters } from '../../../agents/governed/contract/index.js';
+import { startRuntimeHost, type RunningRuntimeHost } from '../../core/runtime-host/host.js';
+import { controllersOf } from '../../core/runtime-host/run-ports.js';
 import { chatRole } from '../governed-role.js';
 import type { ControllerAttachment, TerminalSessionView } from '../../../terminal/contract/index.js';
 import { spawnAgentFixture } from '../support/spawn-agent-fixture.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const repoRoot = path.resolve(here, '..', '..', '..');
+const repoRoot = path.resolve(here, '..', '..', '..', '..');
 const nvk = path.join(repoRoot, 'scripts', 'nvk.mjs');
 
 // ── Rules 1–3, over Terminal's own published view ───────────────────────────

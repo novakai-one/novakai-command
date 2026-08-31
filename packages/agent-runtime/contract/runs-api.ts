@@ -1,11 +1,11 @@
 /* eslint-disable max-lines -- The public Runs capability surface remains co-located. */
 
-// The Agent Runtime public contract (B3V4-P2 §12.2). This is the only door.
+// The Agent Runtime public contract. This is the only door.
 //
-// One spawn operation serves human, Agent and script (DEC-B3V4-04). One
-// interrupt, one stop, one stop-tree, one continue, one adopt — because "similar
-// callers use different policy paths" is red gate 23, and the cheapest way to
-// hold that gate is to have exactly one path.
+// One spawn operation serves human, Agent and script. One interrupt, one stop,
+// one stop-tree, one continue, one adopt — because letting similar callers use
+// different policy paths is how the paths drift apart, and the cheapest way to
+// prevent that is to have exactly one path.
 import type {
   AgentId, AgentRunId, AuthenticatedPrincipal, B3Page, B3Result, CapabilityOwner, CommandContext,
   ControlReplacementPlanId, EventCursor, HumanPrincipalId, IsoUtc,
@@ -152,53 +152,48 @@ export interface ListAgentRunsFilter {
   readonly launchSurface?: LaunchSurface;
   readonly includeFinal: boolean;
   /**
-   * AMD-005 A5-06. When true, only Runs the OWNER considers final come back.
+   * When true, only Runs the OWNER considers final come back.
    * Requires `includeFinal:true`.
    *
-   * Deliberately not a lifecycle filter: §6.1 makes `interrupted` final only
+   * Deliberately not a lifecycle filter: `interrupted` becomes final only
    * after reconciliation confirms no live provider process, so finality is not
    * a function of the lifecycle enum and no consumer may derive it. The one
    * published observable is `finalAt` — present exactly when the owner has
-   * decided (OQ-07 ruling).
+   * decided.
    */
   readonly onlyFinal?: boolean;
   /**
-   * pass2 §12.7:2647, restored. It carries Chris point 6's direct proof — the
-   * "live/HEADLESS/final list" (pass1:1366) — and is the only surface in Build
-   * 3 that produces the headless third of it. Its two siblings already reach
-   * `includeFinal`/`onlyFinal` through `--state`.
+   * Filters on whether a controller is connected RIGHT NOW, which is what
+   * the "live/headless/final" list needs — and this is the only surface that
+   * produces the headless third of it.
    *
    * `"attached"` ⇔ at least one ControllerAttachment in state `attached` for
    * the Run's terminal session at query time ⇔ `AgentRunView.controllers
    * .attachedCount > 0`. `"headless"` is its exact complement. Omitted means
    * no filtering on attachment.
    *
-   * It is never inferred from and never constrains `launch.surface` (§24.5:
-   * "'Started externally' is not inferred from current attachment"), and it is
-   * not a lifecycle statement: a final Run with no attachments is `headless`,
+   * It is never inferred from and never constrains `launch.surface` ("started
+   * externally" is not inferred from current attachment), and it is not a
+   * lifecycle statement: a final Run with no attachments is `headless`,
    * not stopped.
    */
   readonly controllerState?: ControllerState;
   /**
-   * pass2 §12.7's own field, restored. It was declared in the spec and absent
-   * from this shape, so `nvk agent list --cursor <c>` (A5-01) travelled to the
+   * An opaque keyset position over stable `(createdAt,id)`, minted by this
+   * owner and by nobody else. Without it, a `--cursor <c>` travelled to the
    * boundary and was silently dropped there: the caller was handed page one
-   * again while believing it had resumed. An opaque keyset position over
-   * stable `(createdAt,id)`, minted by this owner and by nobody else
-   * (FZ-EVT-007).
+   * again while believing it had resumed.
    */
   readonly cursor?: EventCursor;
   /**
-   * pass2 §12.7:2650, and the same shape as all six list filters in that
-   * section: REQUIRED, 1–200. It was optional here — the only outlier in its
-   * own section — and the owner then invented `?? 500` behind it, so a wire
-   * caller that omitted it was handed 2.5× the ratified page with no
-   * `nextCursor` discipline to reason about (NVK-KIMI-094 A7-03 items 1–3).
+   * REQUIRED, 1–200 — the same shape as every other list filter. When it was
+   * optional, the owner invented `?? 500` behind it, so a wire caller that
+   * omitted it was handed 2.5× the page with no `nextCursor` discipline to
+   * reason about.
    *
-   * There is exactly one default in the build and it lives in the ADAPTER:
-   * A5-01's "when `--limit` is omitted the CLI supplies 200". An owner-side
-   * default means a raw wire caller silently gets a page size someone else
-   * chose.
+   * There is exactly one default and it lives in the ADAPTER: when `--limit`
+   * is omitted the CLI supplies 200. An owner-side default means a raw wire
+   * caller silently gets a page size someone else chose.
    */
   readonly limit: number;
 }
@@ -207,22 +202,21 @@ export interface GetAgentRunTreeInput {
   readonly rootAgentId: AgentId;
   readonly maxDepth: number;
   /**
-   * Which way to walk (§12.7). Absent means `descendants`, which is what every
-   * caller before this asked for — but a caller that ASKS for ancestors and is
-   * handed descendants has been lied to, and that is what the blind hold-out
-   * found (D8).
+   * Which way to walk. Absent means `descendants`, which is what most callers
+   * ask for — but a caller that ASKS for ancestors and is handed descendants
+   * has been lied to, and a blind review of this surface caught exactly that.
    */
   readonly direction?: TreeDirection;
 }
 
 export type TreeDirection = 'ancestors' | 'descendants' | 'both';
 
-// ── Views (§19.1) ───────────────────────────────────────────────────────────
+// ── Views ───────────────────────────────────────────────────────────
 
 /**
- * What Chris reads. Launch origin and current attachments are SEPARATE fields
- * because "no controller attached" and "started externally" are different facts
- * from "stopped" (red gate 4, §24.5).
+ * What a person reads. Launch origin and current attachments are SEPARATE
+ * fields because "no controller attached" and "started externally" are
+ * different facts from "stopped".
  */
 export interface AgentRunView {
   readonly agent: {
@@ -245,10 +239,9 @@ export interface AgentRunView {
     readonly startedAt?: IsoUtc;
   };
   /**
-   * §19.1 / FZ-VIEW-002. Current attachment truth, asked of Terminal on every
-   * read and never cached (§3.3). Separate from `launch` because "nobody is
-   * watching" and "started somewhere else" are different facts, and neither is
-   * "stopped" (FZ-VIEW-004, §24.5 red gate 4).
+   * Current attachment truth, asked of Terminal on every read and never
+   * cached. Separate from `launch` because "nobody is watching" and "started
+   * somewhere else" are different facts, and neither is "stopped".
    *
    * The shape is declared once at the Runtime's narrow Terminal port boundary,
    * so the projection and the port cannot drift without importing Terminal.
@@ -262,15 +255,14 @@ export interface AgentRunView {
      * How many times supervision has been assigned. This is the number an
      * adoption must quote as `expectedAssignmentVersion` — published here
      * because a compare-and-set whose "expected" side is unreadable from the
-     * contract is not a safety mechanism (§12.2, and the same lesson B3a
-     * learned about `expectedNextInputSequence`).
+     * contract is not a safety mechanism.
      */
     readonly supervisionVersion: RecordVersion;
   };
   /** Supervision-owned projection over Agents evidence for this exact Run. */
   readonly usage: AgentRunUsage;
   /**
-   * §19.1's transcript section (B3c).
+   * The transcript section of the view.
    *
    * `bindingState` is `unbound` when Transcript has never been asked about
    * this Run — a fourth answer beside bound/waiting/missing, and a different
@@ -343,10 +335,10 @@ export type RunUsageLookup = (
 
 /**
  * A Run in the family, plus the two facts that only the TREE knows: how far
- * from the queried root it sits, and who is supervising it right now (§12.7
- * `AgentTreeNode`). Supervision is repeated at node level on purpose — a
- * consumer reading a tree reads nodes, and making it dig into `family` for the
- * one field the tree contract names is the drift D9 caught.
+ * from the queried root it sits, and who is supervising it right now.
+ * Supervision is repeated at node level on purpose — a consumer reading a tree
+ * reads nodes, and making it dig into `family` for the one field the tree
+ * contract names is exactly the kind of drift this shape prevents.
  */
 export interface AgentRunTreeNode extends AgentRunView {
   readonly depth: number;
@@ -356,12 +348,12 @@ export interface AgentRunTreeNode extends AgentRunView {
 export interface AgentRunTreeView {
   readonly rootAgentId: AgentId;
   readonly nodes: readonly AgentRunTreeNode[];
-  /** Every parent→child edge inside the returned set (§12.7, normative). */
+  /** Every parent→child edge inside the returned set. */
   readonly edges: readonly AgentRelationshipFacts[];
   readonly generatedAt: IsoUtc;
 }
 
-/** The §15 envelope, whole. A consumer reads events, not payloads. */
+/** The event envelope, whole. A consumer reads events, not payloads. */
 export interface RunEvent {
   readonly eventId: string;
   readonly kind: string;
@@ -369,10 +361,9 @@ export interface RunEvent {
   readonly occurredAt: IsoUtc;
   readonly committedAt: IsoUtc;
   /**
-   * The capability that OWNS the fact. Was pinned to `agent-runtime` while
-   * the Runtime was the only publisher; B3c's messaging/transcript facts ride
-   * the same stream (§15, §24.4) and naming them agent-runtime would misstate
-   * who is authoritative for them.
+   * The capability that OWNS the fact. Messaging and Transcript facts ride
+   * this same stream, and naming them agent-runtime would misstate who is
+   * authoritative for them.
    */
   readonly sourceOwner: CapabilityOwner;
   readonly traceId: TraceCorrelationId;
@@ -424,21 +415,21 @@ export interface AgentRuntimeCommands {
   ): Promise<B3Result<SupervisionAssignment>>;
 
   /**
-   * Change one control on a live Run (§12.1, B3R-006/025). Answers natively,
-   * refuses with a reason, or returns a replacement plan — never restarts an
-   * Agent on its own initiative.
+   * Change one control on a live Run. Answers natively, refuses with a reason,
+   * or returns a replacement plan — never restarts an Agent on its own
+   * initiative.
    */
   applyRunControl(
     context: CommandContext, input: ApplyRunControlInput,
   ): Promise<B3Result<AgentControlOutcomeFacts>>;
 
   /**
-   * A provider turn began (§13.2). Activity is Runtime-authoritative, so
-   * SOMETHING has to commit it: the gate when it submits a turn, and the
-   * transport when a controller's input reaches a managed terminal.
+   * A provider turn began. Activity is Runtime-authoritative, so SOMETHING has
+   * to commit it: the gate when it submits a turn, and the transport when a
+   * controller's input reaches a managed terminal.
    *
-   * Without this the interrupt barrier has no tuple to target and §13.3 is
-   * unreachable code — a turn nobody recorded cannot be interrupted.
+   * Without this the interrupt barrier has no tuple to target — a turn nobody
+   * recorded cannot be interrupted.
    */
   beginProviderTurn(
     context: CommandContext,
@@ -471,7 +462,7 @@ export interface AgentRuntimeCommands {
     input: CloseProviderTurnCompletionUnprovenInput,
   ): Promise<B3Result<CloseProviderTurnCompletionUnprovenOutcome>>;
 
-  /** Resume an operation an earlier attempt left in the middle (§20). */
+  /** Resume an operation an earlier attempt left in the middle. */
   repairRunOperation(
     context: CommandContext, operationId: RunOperationId,
   ): Promise<B3Result<RunOperationView>>;
@@ -537,9 +528,9 @@ export interface AgentRuntimeQueries {
   ): Promise<B3Result<ProviderTurnSubmissionPage>>;
 
   /**
-   * §12.2's event subscription: every event after `after`, live, until the
+   * The event subscription: every event after `after`, live, until the
    * consumer stops reading. An expired cursor yields ONE typed gap and ends —
-   * §15 forbids resuming silently at "now".
+   * resuming silently at "now" is forbidden.
    */
   subscribeRunEvents(
     principal: AuthenticatedPrincipal, after?: EventCursor,
@@ -548,20 +539,18 @@ export interface AgentRuntimeQueries {
   /**
    * The same stream, pulled. A request/response wire cannot hold an
    * `AsyncIterable` open, so the socket method reads a bounded page and the
-   * host pushes what follows as ordinary v1 event frames (§16.1).
+   * host pushes what follows as ordinary event frames.
    */
   readRunEvents(
     principal: AuthenticatedPrincipal, input: ReadRunEventsInput,
   ): Promise<B3Result<RunEventPage>>;
 
   /**
-   * Let another capability publish a committed fact into the ONE event stream
-   * (§15, §24.4).
+   * Let another capability publish a committed fact into the ONE event stream.
    *
-   * B3c's `messaging.*` and `transcript.*` events are Messaging's and
-   * Transcript's facts, not the Runtime's — but a consumer that had to hold a
-   * second cursor for them would have no way to order the two streams against
-   * each other, and §24.4's second-host proof subscribes to exactly one. So
+   * `messaging.*` and `transcript.*` events are Messaging's and Transcript's
+   * facts, not the Runtime's — but a consumer that had to hold a second cursor
+   * for them would have no way to order the two streams against each other. So
    * the stream is shared and the event names its real owner.
    *
    * Runtime retains the exact envelope before it becomes observable so an
@@ -575,12 +564,12 @@ export interface AgentRuntimeQueries {
 
   /**
    * The tree-closing fence covering this Agent, or `null` when nothing is
-   * freezing it (§6.2, §13.7 step 3).
+   * freezing it.
    *
-   * Published because "fence" is named in B3b's exit line and was provable only
-   * from inside the code: a blind consumer could see `TreeClosing` refusals but
-   * could not read the fence that caused them, and a stop that only half worked
-   * leaves the fence closed with no other way to notice (hold-out E9).
+   * Published because the fence was otherwise provable only from inside the
+   * code: a blind consumer could see `TreeClosing` refusals but could not read
+   * the fence that caused them, and a stop that only half worked leaves the
+   * fence closed with no other way to notice.
    */
   getTreeFence(
     principal: AuthenticatedPrincipal, input: { readonly agentId: AgentId },
@@ -589,9 +578,9 @@ export interface AgentRuntimeQueries {
   /**
    * Every operation, or only the ones an earlier epoch left unfinished.
    *
-   * Boot recovery wants the unfinished set. Chris wants "what did that spawn
-   * actually do", which is the same ladder read after it succeeded. One query,
-   * because they are the same question asked at different times.
+   * Boot recovery wants the unfinished set. An operator wants "what did that
+   * spawn actually do", which is the same ladder read after it succeeded. One
+   * query, because they are the same question asked at different times.
    */
   listRunOperations(
     principal: AuthenticatedPrincipal,

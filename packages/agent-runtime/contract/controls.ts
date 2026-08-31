@@ -1,4 +1,4 @@
-// What a control looks like crossing the Runtime↔Agents seam (§12.1).
+// What a control looks like crossing the Runtime↔Agents seam.
 //
 // Its own file because these three types belong to neither side: Agents owns
 // what a control MEANS, the Runtime owns the Run it lands on, and this is the
@@ -34,7 +34,7 @@ export interface ControlCapabilityFacts {
 }
 
 /**
- * Three honest answers (§12.1, red gate 21). `replacement-required` is NOT a
+ * Three honest answers. `replacement-required` is NOT a
  * failure and NOT a silent restart — it hands back the plan and stops, because
  * restarting an Agent to change its model would throw away whatever it was
  * doing without anyone asking.

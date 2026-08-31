@@ -1,4 +1,4 @@
-/** Boot steps 3–5: Messaging, Agents/provider runtimes and Transcript. */
+/** Boot steps 3–5: Agents/provider runtimes and the transcript-first Messaging runtime. */
 
 import * as messaging from '../../../messaging/contract/index.js';
 import {
@@ -12,9 +12,7 @@ import {
   defaultKimiCliPath,
   type ProviderCliRuntime,
 } from '../../../agents/contract/index.js';
-import { canonicalDataRoot } from '../store-route.js';
-import { createLiveAuthority } from '../session/authority.js';
-import { composeTranscriptServerHost } from '../b2b/composition.js';
+import { canonicalDataRoot } from '../store-paths.js';
 import type { ConfigStore } from '../config/store.js';
 import type { BootNote, BootOptions } from './contract.js';
 import { ensureStoreIdentity } from '@novakai/foundation/contract';
@@ -28,25 +26,8 @@ export async function composeCapabilities(input: {
 }) {
   const { options, note, configStore, humanPersonId, cwd } = input;
   const config = configStore.current();
-  const clock = messaging.createSystemClock();
   const dataRoot = canonicalDataRoot(options.root);
   const storeId = (await ensureStoreIdentity(options.root)).id;
-  const store = await messaging.openFoundationMessagingStore(clock, {
-    root: options.root,
-    dataRoot,
-  });
-  const authority = createLiveAuthority({ snapshot: () => configStore.current(), clock });
-  const embedded = messaging.createEmbeddedMessaging({
-    clock,
-    store,
-    authority: authority as never,
-  });
-  await embedded.start();
-  note(
-    3,
-    'messaging',
-    `embedded capability up with ${config.principals.length} configured principal(s)`,
-  );
 
   const kimiCliPath = options.kimiCliPath
     ?? config.providers.kimi.cliPath
@@ -92,8 +73,9 @@ export async function composeCapabilities(input: {
     `mock=${config.dev.allowMock ? 'dev' : 'disabled'}`,
   ].join(', '));
 
-  const transcript = composeTranscriptServerHost({
+  const transcript = await messaging.createDefaultMessagingRuntime({
     root: options.root,
+    dataRoot,
     ...(options.providerHome ? { providerHome: options.providerHome } : {}),
     agentDirectory,
     providerSend: messaging.createAgentsProviderSend(agents),
@@ -109,7 +91,6 @@ export async function composeCapabilities(input: {
       : 'Messaging transcript-first ingestion disabled (config transcript.ingest=false)',
   );
   return {
-    embedded,
     agentsCtx,
     agents,
     kimiRuntime,

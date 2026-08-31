@@ -1,19 +1,20 @@
 import { createHash } from 'node:crypto';
 import type { ConversationDirectory } from '../../contract/ports/conversation-directory.js';
-import type { TranscriptStore } from '../../contract/ports/transcript-store.js';
-import { ensureConversationView } from './views.js';
+import type { Timestamp } from '../../contract/types.js';
+import { ensureConversationView, type ConversationViewStore } from './views.js';
 
-const digest = (value: string): string =>
-  createHash('sha256').update(value).digest('hex').slice(0, 32);
-
-const providerTitle = (provider: string, resumeId?: string): string =>
-  `External ${provider[0]!.toUpperCase()}${provider.slice(1)} ${resumeId?.slice(-8) ?? 'session'}`;
-
-/** Messaging-owned ConversationDirectory backed by the canonical store. */
+/**
+ * Implements the ConversationDirectory seam against the transcript store, for
+ * hosts that have no conversation store of their own. An adopted external
+ * agent gets a human↔agent conversation titled after its provider session;
+ * an agent-to-agent delivery gets an archived "Agent communication" view.
+ * Conversation ids are derived deterministically from the participants, so
+ * repeat calls converge on the same view instead of minting duplicates.
+ */
 export function createStoredConversationDirectory(options: {
-  readonly store: TranscriptStore;
+  readonly store: ConversationViewStore;
   readonly humanPrincipalId: string;
-  readonly now: () => string;
+  readonly now: () => Timestamp;
 }): ConversationDirectory {
   return {
     async ensureForAdoptedAgent(input) {
@@ -44,3 +45,11 @@ export function createStoredConversationDirectory(options: {
     },
   };
 }
+
+/** Stable short id fragment, so participant sets map to one durable id. */
+const digest = (value: string): string =>
+  createHash('sha256').update(value).digest('hex').slice(0, 32);
+
+/** "External Claude …ab12cd34" — or "…session" when the provider gave no resume id. */
+const providerTitle = (provider: string, resumeId?: string): string =>
+  `External ${provider.charAt(0).toUpperCase()}${provider.slice(1)} ${resumeId?.slice(-8) ?? 'session'}`;

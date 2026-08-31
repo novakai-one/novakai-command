@@ -26,12 +26,12 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createFakePtyHost } from '../../../terminal/adapters/pty-host/fake.js';
-import { createFakeProviderAdapters } from '../../../agents/b3/contract/index.js';
-import { startRuntimeHost, type RunningRuntimeHost } from '../../core/b3/host.js';
-import { RULED_COMMANDS, UNRULED_COMMANDS } from '../../core/b3/cli-shared.js';
+import { createFakeProviderAdapters } from '../../../agents/governed/contract/index.js';
+import { startRuntimeHost, type RunningRuntimeHost } from '../../core/runtime-host/host.js';
+import { RULED_COMMANDS, UNRULED_COMMANDS } from '../../core/runtime-host/cli-shared.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const repoRoot = path.resolve(here, '..', '..', '..');
+const repoRoot = path.resolve(here, '..', '..', '..', '..');
 const nvk = path.join(repoRoot, 'scripts', 'nvk.mjs');
 
 interface CliRun { readonly code: number | null; readonly out: string }
@@ -133,27 +133,6 @@ test('the human doctor states the controller truth and names recovery when non-z
   });
 });
 
-test('nvk runtime cutover-report is the out-of-tree verb, and needs no runtime', async () => {
-  // NVK-KIMI-092 §4: the capability is not lost, it moves beside the ratified
-  // command instead of hiding inside it. It is a pure read of the local data
-  // root — which is exactly the situation an operator reaches for it in, so it
-  // must answer with nothing running.
-  const root = mkdtempSync(path.join(tmpdir(), 'nvk-b3e-cutover-'));
-  try {
-    const run = await runNvk(['runtime', 'cutover-report', '--json',
-      '--root', root, '--port', '59418']);
-    assert.equal(run.code, 0, `cutover-report exited ${String(run.code)}: ${run.out}`);
-    const envelope = envelopeOf(run);
-    assert.equal(envelope.command, 'runtime.cutover-report');
-    const value = envelope.value ?? {};
-    assert.equal(value['schemaVersion'], 1);
-    assert.ok('perKind' in value, `no per-kind report: ${JSON.stringify(value)}`);
-    assert.ok('receipt' in value, `no receipt section: ${JSON.stringify(value)}`);
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
 test('the two command vocabularies are disjoint, and the argv-shaped member is gone', () => {
   // §0 consequence 5, as a runtime predicate: `command ∈ X-1's closed set` ⟺
   // the invocation was a ratified §17.1 command. That only holds if no member
@@ -164,5 +143,4 @@ test('the two command vocabularies are disjoint, and the argv-shaped member is g
     assert.equal(ruled.has(extra), false, `${extra} is in both vocabularies`);
     assert.equal(extra.includes('--'), false, `${extra} spells an extra as a ratified flag`);
   }
-  assert.equal((UNRULED_COMMANDS as readonly string[]).includes('runtime.cutover-report'), true);
 });

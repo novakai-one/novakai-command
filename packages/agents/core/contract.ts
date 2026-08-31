@@ -1,5 +1,5 @@
-// The agents public contract (Pass 2 §5 + S2a), bound to a composed context.
-// Every op is the same function the CLI calls (DEC-F11 parity).
+// The agents public contract, bound to a composed context.
+// Every op is the same function the CLI calls.
 import type { AgentId, ClientOpId, SessionId } from '@novakai/foundation/dist/contract/brands.js';
 import { mintClientOpId } from '@novakai/foundation/dist/contract/brands.js';
 import type { Absent, ListFilter, Page, Result } from '@novakai/foundation/dist/contract/types.js';
@@ -50,26 +50,26 @@ export interface AgentsContract {
   setModel(agentId: AgentId, model: string, clientOpId: ClientOpId)
     : Promise<Result<AgentDefinitionT, AgentsError>>;
   /**
-   * OD-C3 RULED (spike 2026-07-28): mid-session model switch is SUPPORTED for
-   * providers whose runtime declares a model mechanism (kimi CLI — sticky via
-   * `-S <id> -m <alias>`); providers without one keep typed
-   * UnsupportedOperation. Session-level only — the def's model is untouched
-   * (DEC-C1: editing a def never mutates a running session, and vice versa).
+   * Mid-session model switch is SUPPORTED for providers whose runtime declares
+   * a model mechanism (kimi CLI — sticky via `-S <id> -m <alias>`); providers
+   * without one keep typed UnsupportedOperation. Session-level only — the def's
+   * model is untouched (editing a def never mutates a running session, and vice
+   * versa).
    */
   setSessionModel(sessionId: SessionId, model: string)
     : Promise<Result<null, AgentsError>>;
-  /** S2a: hooks engine v1 — subscriptions live on the agent object (R3-18). */
+  /** Hooks engine v1 — subscriptions live on the agent object. */
   attachHook(agentId: AgentId, event: HookEvent, action: HookAction, clientOpId: ClientOpId)
     : Promise<Result<AgentDefinitionT, AgentsError>>;
   detachHook(agentId: AgentId, hookId: string, clientOpId: ClientOpId)
     : Promise<Result<AgentDefinitionT, AgentsError>>;
-  /** S2a: provider-neutral skills registry (DEC-S2-4). */
+  /** The provider-neutral skills registry. */
   registerSkill(input: skillsStore.RegisterSkillInput, clientOpId: ClientOpId)
     : Promise<Result<SkillDefinitionT, AgentsError>>;
   getSkill(id: string): Promise<Result<SkillDefinitionT | Absent, never>>;
   listSkills(filter?: ListFilter): Promise<Result<Page<SkillDefinitionT>, AgentsError>>;
   /**
-   * S2a: the contract-level session send path. onMessagePre hooks run (500ms
+   * The contract-level session send path. onMessagePre hooks run (500ms
    * budget), buffered + fresh injections prepend the input, the adapter send
    * fires, then onMessagePost hooks. Hooks never block the send.
    */
@@ -85,9 +85,9 @@ export interface AgentsContract {
   /** Process-backed boundary state for durable Agent-to-Agent delivery. */
   providerTurnReadiness(agentId: AgentId): 'idle' | 'busy' | 'unavailable';
   /**
-   * B1 DEC-B1-6: rebind a session that outlived the process, from its
-   * persisted registry record. Returns false when the provider has no runtime
-   * able to adopt it — a session never LOOKS reattached while sends go nowhere.
+   * Rebind a session that outlived the process, from its persisted registry
+   * record. Returns false when the provider has no runtime able to adopt it —
+   * a session never LOOKS reattached while sends go nowhere.
    */
   reattachSession(input: {
     sessionId: string;
@@ -98,12 +98,12 @@ export interface AgentsContract {
     cwd: string;
   }): boolean;
   subscribeAgentEvents(handler: (e: AgentEvent) => void): Unsubscribe;
-  /** Bind the live lane (R3-1) for a spawned session. */
+  /** Bind the live lane for a spawned session. */
   attachLiveLane(binding: { sessionId: string; address: string }): Unsubscribe;
-  /** S2b (§22 ruling 1): push a focus-change advisory to an in-app session —
+  /** Push a focus-change advisory to an in-app session —
    * system context line BETWEEN turns. False for pull-only/unknown sessions. */
   pushContextAdvisory(sessionId: SessionId, line: string): boolean;
-  /** End a session (terminal mini-contract close; maps to offline(closed), §7.2). */
+  /** End a session (terminal close; maps to offline(closed)). */
   closeSession(sessionId: SessionId): boolean;
 }
 
@@ -129,7 +129,7 @@ export function createAgentsContract(ctx: AgentsContext): AgentsContract {
     attachProviderSession: (input) => attachProviderSession(ctx, input),
 
     async spawnAgent(agentId, opts, clientOpId) {
-      void (clientOpId ?? mintClientOpId()); // spawn mutates no stored object (R3-18); id accepted for trace symmetry
+      void (clientOpId ?? mintClientOpId()); // spawn mutates no stored object; id accepted for trace symmetry
       const found = await registry.getAgent(ctx, agentId);
       if (!found.ok || isAbsent(found.value)) {
         return {
@@ -138,8 +138,8 @@ export function createAgentsContract(ctx: AgentsContext): AgentsContract {
         };
       }
       const def = found.value;
-      const model = opts?.model ?? def.model; // at-spawn override GUARANTEED (AGT-003)
-      // S2a (§22 ruling 5): resolve skill id refs → dirs BEFORE spawning; an
+      const model = opts?.model ?? def.model; // an at-spawn override always wins
+      // Resolve skill id refs → dirs BEFORE spawning; an
       // unknown id fails typed — no session starts without its declared skills.
       const resolved = await skillsStore.resolveSkillDirs(ctx, def.skills);
       if (!resolved.ok) return { ok: false, error: resolved.error };
@@ -157,7 +157,7 @@ export function createAgentsContract(ctx: AgentsContext): AgentsContract {
           },
         });
       } catch (cause) {
-        // C §11: provider outage = typed error + presence offline; never silent stall
+        // A provider outage is a typed error plus a presence offline; never a silent stall
         publish({
           type: 'offline', agentId, sessionId: `sess_failed_${Date.now()}`, at: now(),
           reason: 'provider_error',
@@ -168,7 +168,7 @@ export function createAgentsContract(ctx: AgentsContext): AgentsContract {
         };
       }
       ctx.sessions.set(spawned.sessionId, { agentId, provider: def.provider });
-      // R3-17: wrap the session's raw PtyEvents and re-publish as agentEvent.
+      // Wrap the session's raw PtyEvents and re-publish as agentEvent.
       adapter.subscribe(spawned.sessionId, (e) => {
         if (e.type === 'activity') {
           publish({ type: 'activity', agentId, sessionId: spawned.sessionId, at: e.at, activity: e.activity });
@@ -180,9 +180,9 @@ export function createAgentsContract(ctx: AgentsContext): AgentsContract {
           });
         }
       });
-      // S2a hooks: onSpawn fires on the spawn path (2s budget); injections are
-      // buffered and prepend the session's FIRST input (DEC-S2-2). A failing
-      // hook never blocks the spawn (DEC-S2-3).
+      // onSpawn hooks fire on the spawn path (2s budget); injections are
+      // buffered and prepend the session's FIRST input. A failing hook never
+      // blocks the spawn.
       const spawnHooks = await runEventHooks(ctx, def, 'onSpawn', { sessionId: spawned.sessionId });
       if (spawnHooks.injections.length > 0) {
         ctx.pendingInjections.set(spawned.sessionId, spawnHooks.injections);
@@ -199,9 +199,10 @@ export function createAgentsContract(ctx: AgentsContext): AgentsContract {
 
     setModel: (id, model, clientOpId) => registry.setModel(ctx, id, model, clientOpId),
 
-    // OD-C3 RULED (spike: spec/pass2-s2/OD-C3-spike.md): route to the session's
-    // adapter when it exposes a real model mechanism; otherwise the honest
-    // typed UnsupportedOperation stands (mock, unverified TUI hosts).
+    // Route to the session's adapter when it exposes a real model mechanism;
+    // otherwise the honest typed UnsupportedOperation stands (mock, unverified
+    // TUI hosts). The blockedBy tag 'OD-C3' is part of the wire error shape —
+    // consumers match on it — so it stays.
     async setSessionModel(sessionId, model) {
       const meta = ctx.sessions.get(sessionId);
       const adapter = meta
@@ -253,7 +254,7 @@ export function createAgentsContract(ctx: AgentsContext): AgentsContract {
       // A freshly spawned replacement is already subscribed and online. Only
       // process-start reattachment needs to rebuild those bindings.
       if (alreadyKnown) return true;
-      // Same event wiring as a fresh spawn (R3-17), so presence and exit hooks
+      // Same event wiring as a fresh spawn, so presence and exit hooks
       // behave identically for a reattached session.
       adapter.subscribe(input.sessionId, (e) => {
         if (e.type === 'activity') {

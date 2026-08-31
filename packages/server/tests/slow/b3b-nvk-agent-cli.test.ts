@@ -8,13 +8,13 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createFakePtyHost } from '../../../terminal/adapters/pty-host/fake.js';
-import { createFakeProviderAdapters } from '../../../agents/b3/contract/index.js';
-import { startRuntimeHost } from '../../core/b3/host.js';
+import { createFakeProviderAdapters } from '../../../agents/governed/contract/index.js';
+import { startRuntimeHost } from '../../core/runtime-host/host.js';
 import { chatRole } from '../governed-role.js';
 import { spawnAgentFixture } from '../support/spawn-agent-fixture.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const repoRoot = path.resolve(here, '..', '..', '..');
+const repoRoot = path.resolve(here, '..', '..', '..', '..');
 const nvk = path.join(repoRoot, 'scripts', 'nvk.mjs');
 
 function runNvk(args: readonly string[]): Promise<{ code: number | null; out: string }> {

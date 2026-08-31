@@ -1,4 +1,4 @@
-// Runtime's half of the §13.5 ready gate.
+// Runtime's half of the watcher-installation rung of the spawn ladder.
 //
 // Supervision owns watcher creation; Runtime owns whether a spawn may advance.
 // The adapter therefore returns identities plus pinned-template evidence, and

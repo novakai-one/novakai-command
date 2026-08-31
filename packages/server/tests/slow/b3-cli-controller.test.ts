@@ -14,8 +14,8 @@ import type { B3Result } from '@novakai/foundation/dist/contract/index.js';
 import { createFakePtyHost } from '../../../terminal/adapters/pty-host/fake.js';
 import type { TerminalSession } from '../../../terminal/contract/index.js';
 import type { RuntimeStatus } from '../../../agent-runtime/contract/index.js';
-import { startRuntimeHost, type RunningRuntimeHost } from '../../core/b3/host.js';
-import { connectRuntime } from '../../core/b3/client.js';
+import { startRuntimeHost, type RunningRuntimeHost } from '../../core/runtime-host/host.js';
+import { connectRuntime } from '../../core/runtime-host/client.js';
 
 const repoRoot = path.resolve('../..');
 const tsx = path.join(repoRoot, 'node_modules', 'tsx', 'dist', 'cli.mjs');

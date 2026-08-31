@@ -1,4 +1,4 @@
-// DEC-B3V4-11: what happens to an Agent's children when its Run goes final.
+// What happens to an Agent's children when its Run goes final.
 //
 // Split out of `lifecycle.ts` because it is not a lifecycle step. Interrupt,
 // stop and stop-tree are all about ONE Run; this is about the supervision tree
@@ -12,9 +12,9 @@ import {
 } from './runs-context.js';
 
 /**
- * DEC-B3V4-11: children do NOT die with their parent unless the role says so.
- * The default is adopt-and-continue, and the nearest LIVE ancestor is preferred
- * over Chris so a working subtree keeps a supervisor who knows about it.
+ * Children do NOT die with their parent unless the role says so. The default
+ * is adopt-and-continue, and the nearest LIVE ancestor is preferred over the
+ * root human, so a working subtree keeps a supervisor who knows about it.
  */
 export async function applyOrphanPolicy(
   core: RunsCore, context: CommandContext, parentAgentId: AgentId,

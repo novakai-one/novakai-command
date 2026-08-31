@@ -1,5 +1,5 @@
 import type { AgentRunView } from '../../../agent-runtime/contract/index.js';
-import { connectRuntime } from '../../core/b3/client.js';
+import { connectRuntime } from '../../core/runtime-host/client.js';
 
 export interface SpawnAgentFixtureInput {
   readonly root: string;

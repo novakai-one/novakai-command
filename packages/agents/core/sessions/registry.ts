@@ -1,9 +1,9 @@
-// core/sessions/registry.ts — the providerSession registry (DEC-B1-6).
+// The providerSession registry: the resumable provider handle records.
 //
-// CRUD only after the SUPFIX step-0 split: the record shape lives in
-// record-shape.ts, the OS probe in process-probe.ts, the boot sweep in
-// orphan-sweep.ts. This file owns reading and mutating kind `providerSession`
-// through the foundation store, and nothing else.
+// CRUD only: the record shape lives in record-shape.ts, the OS probe in
+// process-probe.ts, the boot sweep in orphan-sweep.ts. This file owns reading
+// and mutating kind `providerSession` through the foundation store, and
+// nothing else.
 import {
   createObject, getObject, listObjects, updateObject,
 } from '@novakai/foundation/dist/contract/index.js';
@@ -21,19 +21,6 @@ import {
 } from './record-shape.js';
 import { osProcessProbe, type ProcessProbe } from './process-probe.js';
 import { sweepOrphans, type SweepResult } from './orphan-sweep.js';
-
-// Split-compat re-exports: every name registry.ts exported before the split
-// keeps resolving from here, so no importer changes.
-export {
-  inFlightFrom, normalizeInFlight, parseProviderSessionRecord,
-  type InFlightState, type InFlightTurn,
-  type ParsedProviderSessionRecord,
-  type ProviderSessionRecord, type ProviderSessionStatus,
-  type ProviderSessionTokenUsage, type ProviderSessionUsageMeasurement,
-  type ProviderSessionUsageUnavailable,
-} from './record-shape.js';
-export { osProcessProbe, type ProcessProbe } from './process-probe.js';
-export type { SweepResult } from './orphan-sweep.js';
 
 export interface RegisterSessionInput {
   sessionId: string;
@@ -69,9 +56,9 @@ const mintOpId = (): ClientOpId => `op_${globalThis.crypto.randomUUID()}` as Cli
 
 export interface ProviderSessionRegistryOptions {
   /**
-   * SUPFIX-01: called once per bad record — an object stored under kind
-   * `providerSession` that does not parse as a registry record. The record is
-   * skipped, never thrown. Default reports to console.error once per id.
+   * Called once per bad record — an object stored under kind `providerSession`
+   * that does not parse as a registry record. The record is skipped, never
+   * thrown. Default reports to console.error once per id.
    */
   onBadRecord?: (id: string, reason: string) => void;
 }
@@ -130,7 +117,7 @@ export function createProviderSessionRegistry(
     return { record: parsed.record, version: res.value.version };
   };
 
-  /** Single-object mutation (R3-18): read → patch → CAS write, one object. */
+  /** Single-object mutation: read → patch → CAS write, one object. */
   const patch = async (
     sessionId: string, mutate: (record: ProviderSessionRecord) => Partial<ProviderSessionRecord>,
   ): Promise<Result<ProviderSessionRecord, StoreError>> => {
@@ -161,7 +148,7 @@ export function createProviderSessionRegistry(
         schemaVersion: 1,
         createdAt: at,
         permissionLevel: 'private' as const,
-        createdBy: 'overridden-by-foundation', // red gate 4
+        createdBy: 'overridden-by-foundation', // foundation stamps the token principal over this placeholder
         sessionId: input.sessionId,
         agentId: input.agentId,
         provider: input.provider,

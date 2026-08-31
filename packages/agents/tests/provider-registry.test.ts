@@ -7,7 +7,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { composeAgents, createAgentsContract, mockOf } from '../contract/index.js';
-import type { TerminalRuntimeLike } from '../contract/index.js';
+import type { TerminalRuntimeLike } from '../core/providers/adapter.js';
 
 const root = () => mkdtempSync(path.join(tmpdir(), 'nvk-agents-registry-'));
 

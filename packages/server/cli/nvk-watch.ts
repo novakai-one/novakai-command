@@ -23,11 +23,11 @@ import type {
   Notification, WatchDeadline, WatchRule,
 } from '../../supervision/contract/index.js';
 import { watchRemoveRetirement } from '../../supervision/contract/index.js';
-import { connectRuntime, type RuntimeClient } from '../core/b3/client.js';
+import { connectRuntime, type RuntimeClient } from '../core/runtime-host/client.js';
 import {
   clientOpIdFrom, emit, expectedEpisode, expectedVersion, fail, pageFlags, parseFlags,
   requiredReason, type Flags,
-} from '../core/b3/cli-shared.js';
+} from '../core/runtime-host/cli-shared.js';
 import { addWatchInput, replacementWatchInput } from './nvk-watch-inputs.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));

@@ -1,12 +1,11 @@
-// packages/agents/cli/migrate-provider-session-kinds.ts — SUPFIX-05.
+// One-off, idempotent migration: any record stored under kind
+// `providerSession` that is NOT a registry record is classified:
 //
-// One-off, idempotent: any record stored under kind `providerSession` that is
-// NOT a registry record is classified:
-//
-//   - parses as a B3 handle (POSITIVE validation, never "failed the other
-//     parse") → re-created under its own kind `providerSessionHandle`, then
-//     the original is quarantined (foundation tombstone — listObjects stops
-//     returning it; the journal line itself is never rewritten);
+//   - parses as a governed provider-session handle (POSITIVE validation, never
+//     "failed the other parse") → re-created under its own kind
+//     `providerSessionHandle`, then the original is quarantined (foundation
+//     tombstone — listObjects stops returning it; the journal line itself is
+//     never rewritten);
 //   - matches NEITHER shape → quarantined only, loudly reported, never moved.
 //
 // Runs through the foundation store handle (takes the store mutation lock).
@@ -32,9 +31,9 @@ const root = path.resolve(argOf('--root', path.join(process.cwd(), '.novakai')))
 const principal = argOf('--principal', 'person_chris');
 const mintOpId = (): ClientOpId => `op_${globalThis.crypto.randomUUID()}` as ClientOpId;
 
-/** POSITIVE B3 handle validation — a record moves only because it IS a B3
- *  handle, never merely because it failed the registry parse. */
-function isB3HandleRecord(raw: Record<string, unknown>): boolean {
+/** POSITIVE governed handle validation — a record moves only because it IS a
+ *  governed handle, never merely because it failed the registry parse. */
+function isGovernedHandleRecord(raw: Record<string, unknown>): boolean {
   if (typeof raw.agentId !== 'string') return false;
   if (typeof raw.provider !== 'string') return false;
   if (!('providerConversationId' in raw)
@@ -78,7 +77,7 @@ for (const item of listed.value.items) {
     continue;
   }
 
-  if (isB3HandleRecord(object)) {
+  if (isGovernedHandleRecord(object)) {
     const existing = await getObject<Record<string, unknown>>(handle, 'providerSessionHandle', id as never);
     const alreadyThere = existing.ok && !isAbsent(existing.value);
     if (!alreadyThere) {
@@ -123,7 +122,7 @@ for (const item of listed.value.items) {
     continue;
   }
   quarantinedOnly += 1;
-  console.log(`QUARANTINED "${id}" — matches neither the registry nor the B3 handle shape; left in the journal, excluded from reads`);
+  console.log(`QUARANTINED "${id}" — matches neither the registry nor the governed handle shape; left in the journal, excluded from reads`);
 }
 
 console.log(`done: ${untouched} registry record(s) untouched, ${moved} moved, ${alreadyMoved} finished from an interrupted run, ${quarantinedOnly} neither-shape quarantined`);

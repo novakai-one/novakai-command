@@ -2,793 +2,234 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://novakai.local/messaging/contract/messaging-contract.json",
   "kind": "messaging-contract",
-  "title": "Novakai Messaging — public contract source (Step 2)",
-  "contractVersion": "1.2.0",
+  "title": "Novakai Messaging \u2014 public contract source (Step 2)",
+  "contractVersion": "1.3.0",
   "schemaVersion": 1,
-  "authority": "Messaging-Ratification.md §9/§10; Messaging-Store-Seam.md §6 (and its §11 errata). This file is the SINGLE source of truth for every contract shape (law #3). Docs, validators, and the visual map generate from it; nothing is hand-copied into prose.",
-  "constants": {
-    "messageMaxBytes": 32768,
-    "pageLimitMax": 200,
-    "subscriptionBufferMax": 256
-  },
-  "constantNotes": {
-    "messageMaxBytes": "R13/O6: maximum serialized Message JSON bytes. Enforced at validation; over-limit → ValidationFailed. Adjust by editing THIS constant only.",
-    "pageLimitMax": "Store-Seam §4: paged-read limit is clamped to this, never rejected.",
-    "subscriptionBufferMax": "R1: per-subscription outbound event buffer. Overflow ends the subscription (ended.reason=overflow); the client re-subscribes with its last cursor."
-  },
-  "templateBindablePaths": [
-    "body.text",
-    "body.subject",
-    "body.format",
-    "body.fields.<name>",
-    "priority"
-  ],
-  "templateBindablePathsNote": "R12: the allowlist. Everything else on Message is core-owned and NOT bindable: id, kind, schemaVersion, createdAt, sequence, threadId, senderId, clientMessageId, template, and all delivery metadata.",
+  "authority": "Messaging-Ratification.md \u00a79/\u00a710; Messaging-Store-Seam.md \u00a76 (and its \u00a711 errata). This file is the SINGLE source of truth for every contract shape (law #3). Docs, validators, and the visual map generate from it; nothing is hand-copied into prose.",
   "$defs": {
-    "PersonId": { "type": "string", "pattern": "^person_[A-Za-z0-9-]+$", "description": "Durable identity, owned by the Identity authority. The only addressable identity (DEC-01). Branded: never interchangeable with other ID kinds." },
-    "PresenceId": { "type": "string", "pattern": "^presence_[A-Za-z0-9-]+$", "description": "Ephemeral runtime connection (DEC-02). Never an address." },
-    "ThreadId": { "type": "string", "pattern": "^thread_[A-Za-z0-9-]+$" },
-    "MessageId": { "type": "string", "pattern": "^message_[A-Za-z0-9-]+$" },
-    "DeliveryId": { "type": "string", "pattern": "^delivery_[A-Za-z0-9-]+$" },
-    "AttemptId": { "type": "string", "pattern": "^attempt_[A-Za-z0-9-]+$" },
-    "TemplateId": { "type": "string", "pattern": "^template_[A-Za-z0-9-]+$" },
-    "SnapshotId": { "type": "string", "pattern": "^snapshot_[A-Za-z0-9-]+$" },
-    "AcceptanceId": { "type": "string", "pattern": "^acceptance_[A-Za-z0-9-]+$" },
-    "PolicyId": { "type": "string", "pattern": "^(contactpolicy|dndpolicy)_[A-Za-z0-9-]+$" },
-    "SubscriptionId": { "type": "string", "pattern": "^subscription_[A-Za-z0-9-]+$" },
-    "Timestamp": { "type": "string", "format": "date-time", "description": "Display-only (DEC-19). Nothing in the capability orders by wall-clock." },
-    "Sequence": { "type": "integer", "minimum": 0, "description": "Global store sequence (Store-Seam §3). Strictly unique, assigned at commit. Gaps permitted — consumers compare, never count." },
-    "Cursor": { "type": "string", "pattern": "^s_[0-9]+$", "description": "Opaque cursor wrapping the last-seen sequence (Store-Seam §3). Survives restarts. Malformed/foreign → ValidationFailed." },
-    "ProviderSessionId": { "type": "string", "pattern": "^sess_[0-9a-f-]{36}$", "description": "Novakai-owned stable ProviderSession identity; distinct from the provider resume handle." },
-    "ProviderResumeId": { "type": "string", "minLength": 1, "description": "Provider-owned opaque resume handle. Never accepted where ProviderSessionId is required." },
-    "TranscriptSourceId": { "type": "string", "pattern": "^source_[0-9a-f]{64}$", "description": "Opaque identity of one provider file; paths stay inside the source adapter." },
-    "TranscriptLineId": { "type": "string", "pattern": "^transcriptLine_[0-9a-f]{64}$" },
-    "IngestCheckpointId": { "type": "string", "pattern": "^ingestCheckpoint_[0-9a-f]{64}$" },
-    "EventCursor": { "type": "string", "pattern": "^event_[0-9]+$", "description": "Durable Messaging event cursor; deliberately distinct from page Cursor." },
-    "ConversationId": { "type": "string", "pattern": "^conv_[A-Za-z0-9_-]+$" },
-    "SendId": { "type": "string", "pattern": "^send_[0-9a-f]{64}$" },
-    "SendAttemptId": { "type": "string", "pattern": "^sendAttempt_[0-9a-f]{64}$" },
-    "PendingDeliveryId": { "type": "string", "pattern": "^pendingDelivery_[0-9a-f]{64}$" },
-    "SendState": { "type": "string", "enum": ["accepted", "dispatching", "awaiting-session-assignment", "awaiting-transcript", "confirmed", "failed", "indeterminate"] },
-    "SendAttemptState": { "type": "string", "enum": ["claimed", "awaiting-session-assignment", "awaiting-transcript", "confirmed", "failed", "indeterminate"] },
-    "PendingDeliveryState": { "type": "string", "enum": ["queued", "claimed", "submitted-confirmed", "submitted-unconfirmed", "transcript-observed", "failed"] },
-    "ProviderSubmissionCertainty": { "type": "string", "enum": ["confirmed", "unconfirmed"] },
-    "ProviderName": { "type": "string", "enum": ["claude", "codex", "kimi"] },
-    "ProviderSessionStatus": { "type": "string", "enum": ["discovered-only", "assignment-pending", "adoption-pending", "idle", "busy", "closed", "failed"] },
-    "TranscriptRole": { "type": "string", "enum": ["user", "assistant", "system", "hook", "tool", "tool_call", "tool_result", "attachment"] },
-    "TranscriptEventKind": { "type": "string", "enum": ["provider-session.registered", "transcript-line.appended"] },
-    "RequestHash": { "type": "string", "pattern": "^[0-9a-f]{64}$", "description": "SHA-256 hex of the full request content: address, body, priority, template ID + fields (A5). Computed by the core, compared opaquely by the store." },
-    "ClientMessageId": { "type": "string", "minLength": 1, "maxLength": 128, "description": "Client-supplied idempotency key, unique per sender (DEC-13)." },
-    "Address": { "type": "string", "pattern": "^(person:person_|thread:thread_)[A-Za-z0-9-]+$", "description": "Typed destination (Plan §8): <kind>:<full durable ID> — e.g. person:person_7f3a, thread:thread_9b2c. person: resolves to the canonical direct Thread (DEC-03). thread: addresses a Thread by ID: for a DIRECT Thread the sender must be one of the canonical pair and the recipient is the other member (R4); for a Room Thread the R4 membership rule applies. Resolved at acceptance." },
-    "Priority": { "type": "string", "enum": ["normal", "urgent"], "description": "DEC-12: one field, one policy decision point." },
-    "Grant": { "type": "string", "enum": ["priority.override", "policy.admin", "template.write", "oversight.read"], "description": "Grants the core may verify via the Authority seam. priority.override is boolean per principal, global in v1 (R10); the role→grant mapping lives in authority-adapter config, never in core (DEC-07 amendment). oversight.read (A-R-N4-1): the holder may READ any direct Thread regardless of pair membership — lane oversight for the owner. READ-ONLY: send rules (R4 party-only) are unchanged." },
-    "TransportKind": { "type": "string", "enum": ["ws", "pty"], "description": "Presence TRANSPORT adapters in the v1 suite — the outbound delivery effect. The CLI is an inbound protocol adapter (DEC-17), not a presence transport. webhook is deferred (O4)." },
-    "MessageBody": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["text"],
-      "properties": {
-        "text": { "type": "string", "minLength": 1 },
-        "format": { "type": "string", "enum": ["text", "markdown"], "default": "text" },
-        "subject": { "type": "string" },
-        "fields": { "type": "object", "additionalProperties": true, "description": "Template-bound custom fields (R12 allowlist: body.fields.<name>)." }
-      }
-    },
-    "TemplateRef": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["templateId"],
-      "properties": {
-        "templateId": { "$ref": "#/$defs/TemplateId" },
-        "fields": { "type": "object", "additionalProperties": true }
-      }
-    },
-    "Message": {
-      "type": "object",
-      "additionalProperties": false,
-      "description": "Authoritative. One Message per send, including group sends (DEC-05). Serialized JSON MUST NOT exceed constants.messageMaxBytes (R13).",
-      "required": ["id", "kind", "schemaVersion", "createdAt", "threadId", "senderId", "clientMessageId", "sequence", "priority", "body"],
-      "properties": {
-        "id": { "$ref": "#/$defs/MessageId" },
-        "kind": { "const": "message" },
-        "schemaVersion": { "const": 1 },
-        "createdAt": { "$ref": "#/$defs/Timestamp" },
-        "threadId": { "$ref": "#/$defs/ThreadId" },
-        "senderId": { "$ref": "#/$defs/PersonId", "description": "The authenticated Principal, always (DEC-11, I4, G3). Never caller-supplied." },
-        "clientMessageId": { "$ref": "#/$defs/ClientMessageId" },
-        "sequence": { "$ref": "#/$defs/Sequence" },
-        "priority": { "$ref": "#/$defs/Priority" },
-        "body": { "$ref": "#/$defs/MessageBody" },
-        "template": { "$ref": "#/$defs/TemplateRef", "description": "Present when the Message was rendered from a template (DEC-15)." }
-      }
-    },
-    "Thread": {
-      "type": "object",
-      "additionalProperties": false,
-      "description": "Authoritative. Direct: canonical sorted Person pair, one per pair forever (DEC-03). Room: team|mission, referencing exactly one external membership authority (DEC-04).",
-      "required": ["id", "kind", "schemaVersion", "createdAt", "threadKind"],
-      "properties": {
-        "id": { "$ref": "#/$defs/ThreadId" },
-        "kind": { "const": "thread" },
-        "schemaVersion": { "const": 1 },
-        "createdAt": { "$ref": "#/$defs/Timestamp" },
-        "threadKind": { "type": "string", "enum": ["direct", "team", "mission"] },
-        "direct": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["pair"],
-          "properties": {
-            "pair": {
-              "type": "array",
-              "items": { "$ref": "#/$defs/PersonId" },
-              "minItems": 2,
-              "maxItems": 2,
-              "description": "Canonical sorted pair (DEC-03). (me, me) is a valid personal lane (Plan §8 self-send)."
-            }
-          },
-          "description": "Present iff threadKind = direct."
-        },
-        "room": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["authority", "externalId"],
-          "properties": {
-            "authority": { "type": "string", "description": "Name of the external membership authority (Team or Mission capability)." },
-            "externalId": { "type": "string", "description": "The room's ID in that authority. Membership truth stays with its owner." }
-          },
-          "description": "Present iff threadKind = team|mission."
-        }
-      }
-    },
-    "DeliveryState": { "type": "string", "enum": ["pending", "held", "delivered", "failed"], "description": "R5 state machine — see stateMachines.delivery." },
-    "DeliveryStateReason": {
+    "Timestamp": {
       "type": "string",
-      "enum": ["blocked-by-contact-policy", "retry-exhausted", "transport-failure", "dnd-hold", "dnd-released", "adapter-effect", "fan-out-loser"],
-      "description": "Machine-readable reason accompanying a state. delivered → adapter-effect. failed → blocked-by-contact-policy | retry-exhausted | transport-failure."
+      "format": "date-time",
+      "description": "Display-only (DEC-19). Nothing in the capability orders by wall-clock."
     },
-    "Delivery": {
-      "type": "object",
-      "additionalProperties": false,
-      "description": "Authoritative. One per Message×recipient (DEC-05). State changes only via store CAS (Store-Seam §5). delivered settles only on a real adapter effect (DEC-08, G10, I11).",
-      "required": ["id", "kind", "schemaVersion", "createdAt", "messageId", "threadId", "recipientId", "state", "updatedAt"],
-      "properties": {
-        "id": { "$ref": "#/$defs/DeliveryId" },
-        "kind": { "const": "delivery" },
-        "schemaVersion": { "const": 1 },
-        "createdAt": { "$ref": "#/$defs/Timestamp" },
-        "updatedAt": { "$ref": "#/$defs/Timestamp" },
-        "messageId": { "$ref": "#/$defs/MessageId" },
-        "threadId": { "$ref": "#/$defs/ThreadId" },
-        "recipientId": { "$ref": "#/$defs/PersonId" },
-        "state": { "$ref": "#/$defs/DeliveryState" },
-        "stateReason": { "$ref": "#/$defs/DeliveryStateReason" }
-      }
+    "ProviderSessionId": {
+      "type": "string",
+      "pattern": "^sess_[0-9a-f-]{36}$",
+      "description": "Novakai-owned stable ProviderSession identity; distinct from the provider resume handle."
     },
-    "DeliveryAttempt": {
-      "type": "object",
-      "additionalProperties": false,
-      "description": "Authoritative, append-only child of a Delivery (I6). Includes fan-out losers (superseded) so the DEC-16 race is auditable.",
-      "required": ["id", "kind", "schemaVersion", "createdAt", "deliveryId", "transport", "outcome"],
-      "properties": {
-        "id": { "$ref": "#/$defs/AttemptId" },
-        "kind": { "const": "delivery-attempt" },
-        "schemaVersion": { "const": 1 },
-        "createdAt": { "$ref": "#/$defs/Timestamp" },
-        "deliveryId": { "$ref": "#/$defs/DeliveryId" },
-        "presenceId": { "$ref": "#/$defs/PresenceId" },
-        "transport": { "$ref": "#/$defs/TransportKind" },
-        "outcome": { "type": "string", "enum": ["effect", "failure", "superseded"], "description": "effect = real adapter effect (DEC-08). superseded = lost the fan-out CAS race (Store-Seam §5)." },
-        "detail": { "type": "string", "description": "Adapter-reported failure detail. Never settles state by itself." }
-      }
+    "ProviderResumeId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Provider-owned opaque resume handle. Never accepted where ProviderSessionId is required."
     },
-    "Presence": {
-      "type": "object",
-      "additionalProperties": false,
-      "description": "Ephemeral (DEC-02). Registered ONLY by explicit OpenPresence — authentication alone never registers (R9). 0..n per Person; duplicate opens are allowed and mint a new Presence each time.",
-      "required": ["id", "kind", "schemaVersion", "createdAt", "personId", "transport"],
-      "properties": {
-        "id": { "$ref": "#/$defs/PresenceId" },
-        "kind": { "const": "presence" },
-        "schemaVersion": { "const": 1 },
-        "createdAt": { "$ref": "#/$defs/Timestamp" },
-        "personId": { "$ref": "#/$defs/PersonId" },
-        "transport": { "$ref": "#/$defs/TransportKind" },
-        "clientLabel": { "type": "string", "description": "Caller-chosen display label. Presentation data, never a durable join (G2)." }
-      }
+    "TranscriptSourceId": {
+      "type": "string",
+      "pattern": "^source_[0-9a-f]{64}$",
+      "description": "Opaque identity of one provider file; paths stay inside the source adapter."
     },
-    "ContactPolicy": {
-      "type": "object",
-      "additionalProperties": false,
-      "description": "Authoritative (DEC-14, A3). Per-recipient send right: allowlist + default rule. Provisioning grants addressability, NOT send-right (A3).",
-      "required": ["id", "kind", "schemaVersion", "createdAt", "personId", "allowlist", "defaultRule", "revision"],
-      "properties": {
-        "id": { "$ref": "#/$defs/PolicyId" },
-        "kind": { "const": "contact-policy" },
-        "schemaVersion": { "const": 1 },
-        "createdAt": { "$ref": "#/$defs/Timestamp" },
-        "personId": { "$ref": "#/$defs/PersonId" },
-        "allowlist": { "type": "array", "items": { "$ref": "#/$defs/PersonId" }, "uniqueItems": true },
-        "defaultRule": { "type": "string", "enum": ["allow", "deny"], "description": "deny blocks only senders neither allowlisted nor sharing a Thread with the recipient (DEC-14 implied-allow)." },
-        "revision": { "type": "integer", "minimum": 1, "description": "Optimistic-concurrency counter (Store-Seam §5)." }
-      }
+    "TranscriptLineId": {
+      "type": "string",
+      "pattern": "^transcriptLine_[0-9a-f]{64}$"
     },
-    "DndPolicy": {
-      "type": "object",
-      "additionalProperties": false,
-      "description": "Authoritative. On/off only in v1 (O3); schedules are a later additive field.",
-      "required": ["id", "kind", "schemaVersion", "createdAt", "personId", "enabled", "revision"],
-      "properties": {
-        "id": { "$ref": "#/$defs/PolicyId" },
-        "kind": { "const": "dnd-policy" },
-        "schemaVersion": { "const": 1 },
-        "createdAt": { "$ref": "#/$defs/Timestamp" },
-        "personId": { "$ref": "#/$defs/PersonId" },
-        "enabled": { "type": "boolean" },
-        "revision": { "type": "integer", "minimum": 1 }
-      }
+    "IngestCheckpointId": {
+      "type": "string",
+      "pattern": "^ingestCheckpoint_[0-9a-f]{64}$"
     },
-    "TemplateBinding": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["field", "path"],
-      "properties": {
-        "field": { "type": "string", "minLength": 1, "description": "The template-declared field name a sender supplies." },
-        "path": { "type": "string", "minLength": 1, "description": "Target path in the Message schema. MUST be in templateBindablePaths (R12)." }
-      }
+    "EventCursor": {
+      "type": "string",
+      "pattern": "^event_[0-9]+$",
+      "description": "Durable Messaging event cursor; deliberately distinct from page Cursor."
     },
-    "Template": {
-      "type": "object",
-      "additionalProperties": false,
-      "description": "Authoritative (DEC-15). Bindings render into Message-schema paths; the rendered send validates as SendMessage — templates cannot drift from the contract.",
-      "required": ["id", "kind", "schemaVersion", "createdAt", "name", "bindings", "retired", "revision"],
-      "properties": {
-        "id": { "$ref": "#/$defs/TemplateId" },
-        "kind": { "const": "template" },
-        "schemaVersion": { "const": 1 },
-        "createdAt": { "$ref": "#/$defs/Timestamp" },
-        "name": { "type": "string", "minLength": 1 },
-        "description": { "type": "string" },
-        "bindings": { "type": "array", "items": { "$ref": "#/$defs/TemplateBinding" }, "minItems": 1 },
-        "retired": { "type": "boolean", "description": "Retired templates reject new sends; history unchanged (I10)." },
-        "revision": { "type": "integer", "minimum": 1 }
-      }
+    "ConversationId": {
+      "type": "string",
+      "pattern": "^conv_[A-Za-z0-9_-]+$"
     },
-    "MembershipEvidence": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["authority", "revision", "resolvedAt"],
-      "properties": {
-        "authority": { "type": "string" },
-        "revision": { "type": "string", "description": "Opaque membership-authority revision at resolution time (Store-Seam §9, R8 store side)." },
-        "resolvedAt": { "$ref": "#/$defs/Timestamp" }
-      }
+    "SendId": {
+      "type": "string",
+      "pattern": "^send_[0-9a-f]{64}$"
     },
-    "RecipientSnapshot": {
-      "type": "object",
-      "additionalProperties": false,
-      "description": "Authoritative, immutable (I5). Frozen inside the acceptance transaction (DEC-20). Membership changes after acceptance never rewrite it.",
-      "required": ["id", "kind", "schemaVersion", "createdAt", "messageId", "recipients"],
-      "properties": {
-        "id": { "$ref": "#/$defs/SnapshotId" },
-        "kind": { "const": "recipient-snapshot" },
-        "schemaVersion": { "const": 1 },
-        "createdAt": { "$ref": "#/$defs/Timestamp" },
-        "messageId": { "$ref": "#/$defs/MessageId" },
-        "recipients": { "type": "array", "items": { "$ref": "#/$defs/PersonId" }, "minItems": 1, "uniqueItems": true },
-        "blocked": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["personId", "reason"],
-            "properties": {
-              "personId": { "$ref": "#/$defs/PersonId" },
-              "reason": { "const": "blocked-by-contact-policy" }
-            }
-          },
-          "description": "R4: room-send recipients whose ContactPolicy blocks the sender. Each gets a terminal failed Delivery; the send itself is accepted. Blocking here is an honesty SIGNAL, not access control — room history remains readable per membership (I10)."
-        },
-        "membership": { "$ref": "#/$defs/MembershipEvidence", "description": "Room sends only. Frozen with the snapshot (R8 store side, Store-Seam §9)." }
-      }
+    "SendAttemptId": {
+      "type": "string",
+      "pattern": "^sendAttempt_[0-9a-f]{64}$"
     },
-    "AcceptanceRecord": {
-      "type": "object",
-      "additionalProperties": false,
-      "description": "Authoritative. Durable proof of acceptance, keyed by (senderId, clientMessageId) with requestHash (DEC-13, A5). effectsPending drives the DEC-21 recovery sweep.",
-      "required": ["id", "kind", "schemaVersion", "createdAt", "senderId", "clientMessageId", "requestHash", "messageId", "threadId", "sequence", "effectsPending"],
-      "properties": {
-        "id": { "$ref": "#/$defs/AcceptanceId" },
-        "kind": { "const": "acceptance" },
-        "schemaVersion": { "const": 1 },
-        "createdAt": { "$ref": "#/$defs/Timestamp" },
-        "senderId": { "$ref": "#/$defs/PersonId" },
-        "clientMessageId": { "$ref": "#/$defs/ClientMessageId" },
-        "requestHash": { "$ref": "#/$defs/RequestHash" },
-        "messageId": { "$ref": "#/$defs/MessageId" },
-        "threadId": { "$ref": "#/$defs/ThreadId" },
-        "sequence": { "$ref": "#/$defs/Sequence" },
-        "effectsPending": { "type": "boolean", "description": "Written inside the acceptance transaction (DEC-21, Store-Seam §7). Cleared by markEffectsSettled after deliveries, events, and transport scheduling complete." },
-        "urgentDowngraded": { "type": "boolean", "description": "Persisted at acceptance when an urgent send was downgraded (MSG-010). Returned on duplicate retries so the typed outcome survives the retry (DEC-13; Store-Seam §11 errata)." }
-      }
+    "PendingDeliveryId": {
+      "type": "string",
+      "pattern": "^pendingDelivery_[0-9a-f]{64}$"
     },
-    "SendMessageInput": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["address", "body", "priority", "clientMessageId"],
-      "properties": {
-        "address": { "$ref": "#/$defs/Address" },
-        "body": { "$ref": "#/$defs/MessageBody" },
-        "priority": { "$ref": "#/$defs/Priority" },
-        "clientMessageId": { "$ref": "#/$defs/ClientMessageId" }
-      },
-      "description": "No sender field exists anywhere — identity comes from authentication only (DEC-11, G3)."
-    },
-    "SendFromTemplateInput": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["address", "templateId", "fields", "priority", "clientMessageId"],
-      "properties": {
-        "address": { "$ref": "#/$defs/Address" },
-        "templateId": { "$ref": "#/$defs/TemplateId" },
-        "fields": { "type": "object", "additionalProperties": true, "description": "Values for the template's declared binding fields. Rendered into allowlisted Message paths (R12), then validated as SendMessageInput." },
-        "priority": { "$ref": "#/$defs/Priority" },
-        "clientMessageId": { "$ref": "#/$defs/ClientMessageId" }
-      }
-    },
-    "OpenPresenceInput": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["transport"],
-      "properties": {
-        "transport": { "$ref": "#/$defs/TransportKind" },
-        "clientLabel": { "type": "string" }
-      }
-    },
-    "ClosePresenceInput": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["presenceId"],
-      "properties": { "presenceId": { "$ref": "#/$defs/PresenceId" } }
-    },
-    "SetDndPolicyInput": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["enabled"],
-      "properties": {
-        "personId": { "$ref": "#/$defs/PersonId", "description": "Defaults to the caller. Setting another Person's policy requires policy.admin." },
-        "enabled": { "type": "boolean" }
-      }
-    },
-    "SetContactPolicyInput": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["allowlist", "defaultRule"],
-      "properties": {
-        "personId": { "$ref": "#/$defs/PersonId", "description": "Defaults to the caller. Setting another Person's policy requires policy.admin." },
-        "allowlist": { "type": "array", "items": { "$ref": "#/$defs/PersonId" }, "uniqueItems": true },
-        "defaultRule": { "type": "string", "enum": ["allow", "deny"] }
-      }
-    },
-    "UpsertTemplateInput": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["name", "bindings"],
-      "properties": {
-        "templateId": { "$ref": "#/$defs/TemplateId", "description": "Omit to create; supply to revise (expectedRevision semantics per Store-Seam §5)." },
-        "name": { "type": "string", "minLength": 1 },
-        "description": { "type": "string" },
-        "bindings": { "type": "array", "items": { "$ref": "#/$defs/TemplateBinding" }, "minItems": 1 }
-      }
-    },
-    "RetireTemplateInput": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["templateId"],
-      "properties": { "templateId": { "$ref": "#/$defs/TemplateId" } }
-    },
-    "PresenceOpened": {
-      "type": "object", "additionalProperties": false,
-      "required": ["presenceId"],
-      "properties": { "presenceId": { "$ref": "#/$defs/PresenceId" } }
-    },
-    "PresenceClosed": {
-      "type": "object", "additionalProperties": false,
-      "properties": {},
-      "description": "Idempotent (R9): closing an unknown or already-closed Presence succeeds — already-closed is the desired end state."
-    },
-    "SendAccepted": {
-      "type": "object",
-      "additionalProperties": false,
-      "description": "MSG-019: the Message has crossed the durability boundary. A same-key + same-content retry returns THIS original acceptance (DEC-13) — including its urgentDowngraded flag, persisted on the AcceptanceRecord.",
-      "required": ["messageId", "threadId", "sequence"],
-      "properties": {
-        "messageId": { "$ref": "#/$defs/MessageId" },
-        "threadId": { "$ref": "#/$defs/ThreadId" },
-        "sequence": { "$ref": "#/$defs/Sequence" },
-        "urgentDowngraded": { "type": "boolean", "description": "True when priority=urgent lacked the priority.override grant against a DND recipient — downgraded with a typed outcome, never silently (DEC-07, MSG-010). Survives idempotent retries." },
-        "duplicate": { "type": "boolean", "description": "True when this is the original acceptance returned to a retry (Store-Seam §2 outcome kind=duplicate)." }
-      }
-    },
-    "PolicyUpdated": {
-      "type": "object", "additionalProperties": false,
-      "required": ["revision"],
-      "properties": { "revision": { "type": "integer", "minimum": 1 } }
-    },
-    "TemplateUpserted": {
-      "type": "object", "additionalProperties": false,
-      "required": ["templateId", "revision"],
-      "properties": {
-        "templateId": { "$ref": "#/$defs/TemplateId" },
-        "revision": { "type": "integer", "minimum": 1 }
-      }
-    },
-    "TemplateRetired": { "type": "object", "additionalProperties": false, "properties": {} },
-    "ThreadView": { "$ref": "#/$defs/Thread" },
-    "ThreadListResult": {
-      "type": "object", "additionalProperties": false,
-      "required": ["threads"],
-      "properties": { "threads": { "type": "array", "items": { "$ref": "#/$defs/Thread" } } }
-    },
-    "MessagePage": {
-      "type": "object", "additionalProperties": false,
-      "description": "Ordered by sequence ascending (DEC-19). limit is clamped to constants.pageLimitMax, never rejected (Store-Seam §4).",
-      "required": ["messages"],
-      "properties": {
-        "messages": { "type": "array", "items": { "$ref": "#/$defs/Message" } },
-        "nextCursor": { "$ref": "#/$defs/Cursor" }
-      }
-    },
-    "DeliveryListResult": {
-      "type": "object", "additionalProperties": false,
-      "required": ["deliveries"],
-      "properties": { "deliveries": { "type": "array", "items": { "$ref": "#/$defs/Delivery" } } }
-    },
-    "PolicyView": {
-      "type": "object", "additionalProperties": false,
-      "required": ["contact", "dnd"],
-      "properties": {
-        "contact": { "$ref": "#/$defs/ContactPolicy" },
-        "dnd": { "$ref": "#/$defs/DndPolicy" }
-      }
-    },
-    "TemplatePage": {
-      "type": "object", "additionalProperties": false,
-      "required": ["templates"],
-      "properties": {
-        "templates": { "type": "array", "items": { "$ref": "#/$defs/Template" } },
-        "nextCursor": { "$ref": "#/$defs/Cursor" }
-      }
-    },
-    "PresenceListResult": {
-      "type": "object", "additionalProperties": false,
-      "required": ["presences"],
-      "properties": { "presences": { "type": "array", "items": { "$ref": "#/$defs/Presence" } } }
-    },
-    "CapabilityView": {
-      "type": "object", "additionalProperties": false,
-      "required": ["contractVersion", "protocolVersion", "features", "limits"],
-      "properties": {
-        "contractVersion": { "type": "string" },
-        "protocolVersion": { "type": "string", "description": "DEC-17 WS protocol version." },
-        "features": { "type": "array", "items": { "type": "string", "enum": ["direct", "rooms", "subscribe", "attention", "templates"] } },
-        "limits": {
-          "type": "object", "additionalProperties": false,
-          "required": ["messageMaxBytes", "pageLimitMax", "subscriptionBufferMax"],
-          "properties": {
-            "messageMaxBytes": { "type": "integer" },
-            "pageLimitMax": { "type": "integer" },
-            "subscriptionBufferMax": { "type": "integer" }
-          },
-          "description": "Values copied from constants by the generator — never hand-written."
-        }
-      },
-      "description": "Discovery. Callable pre-authentication; reveals versions and limits only."
-    },
-    "SubscribeInput": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["events"],
-      "properties": {
-        "events": {
-          "type": "array",
-          "items": { "type": "string", "enum": ["MessageCommitted", "DeliveryUpdated", "PresenceChanged", "PolicyChanged"] },
-          "minItems": 1,
-          "uniqueItems": true
-        },
-        "threads": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/ThreadId" },
-          "uniqueItems": true,
-          "description": "Optional scope. Empty/absent = all threads the subscriber may read (R3). An explicit list naming any Thread the subscriber may NOT read fails the whole Subscribe with NotAuthorized — scope is never silently dropped (G6)."
-        },
-        "since": { "$ref": "#/$defs/Cursor", "description": "Optional resume cursor. Replay = committed-fact events with sequence > cursor, in order, then live (R1). Covers MessageCommitted, DeliveryUpdated, and PolicyChanged — the latter two are journaled with sequence per Store-Seam §11 errata." }
-      }
-    },
-    "SubscriptionMessage": {
-      "description": "R1: the Subscribe result stream. Control frames are part of the stream — subscription lifecycle never touches the command error catalogue. Every frame carries subscriptionId so multiple subscriptions can share one connection.",
-      "oneOf": [
-        {
-          "type": "object", "additionalProperties": false,
-          "required": ["kind", "subscriptionId"],
-          "properties": {
-            "kind": { "const": "started" },
-            "subscriptionId": { "$ref": "#/$defs/SubscriptionId" },
-            "replayedFrom": { "$ref": "#/$defs/Cursor" }
-          }
-        },
-        {
-          "type": "object", "additionalProperties": false,
-          "required": ["kind", "subscriptionId", "event"],
-          "properties": {
-            "kind": { "const": "event" },
-            "subscriptionId": { "$ref": "#/$defs/SubscriptionId" },
-            "sequence": { "$ref": "#/$defs/Sequence", "description": "Present on committed-fact events. Consumers dedupe by sequence (at-least-once, R1). Absent on PresenceChanged (observation, R11)." },
-            "event": { "type": "object" }
-          }
-        },
-        {
-          "type": "object", "additionalProperties": false,
-          "required": ["kind", "subscriptionId", "reason"],
-          "properties": {
-            "kind": { "const": "ended" },
-            "subscriptionId": { "$ref": "#/$defs/SubscriptionId" },
-            "reason": { "type": "string", "enum": ["overflow", "closed", "auth-lost", "dependency-lost"], "description": "overflow = backpressure bound hit (R1): re-subscribe with last cursor; replay closes the gap. closed = transport disconnect. auth-lost = session invalidated. dependency-lost = the journal/store failed mid-stream (DependencyUnavailable class); re-subscribe with last cursor." }
-          }
-        }
+    "SendState": {
+      "type": "string",
+      "enum": [
+        "accepted",
+        "dispatching",
+        "awaiting-session-assignment",
+        "awaiting-transcript",
+        "confirmed",
+        "failed",
+        "indeterminate"
       ]
+    },
+    "SendAttemptState": {
+      "type": "string",
+      "enum": [
+        "claimed",
+        "awaiting-session-assignment",
+        "awaiting-transcript",
+        "confirmed",
+        "failed",
+        "indeterminate"
+      ]
+    },
+    "PendingDeliveryState": {
+      "type": "string",
+      "enum": [
+        "queued",
+        "claimed",
+        "submitted-confirmed",
+        "submitted-unconfirmed",
+        "transcript-observed",
+        "failed"
+      ]
+    },
+    "ProviderSubmissionCertainty": {
+      "type": "string",
+      "enum": [
+        "confirmed",
+        "unconfirmed"
+      ]
+    },
+    "ProviderName": {
+      "type": "string",
+      "enum": [
+        "claude",
+        "codex",
+        "kimi"
+      ]
+    },
+    "ProviderSessionStatus": {
+      "type": "string",
+      "enum": [
+        "discovered-only",
+        "assignment-pending",
+        "adoption-pending",
+        "idle",
+        "busy",
+        "closed",
+        "failed"
+      ]
+    },
+    "TranscriptRole": {
+      "type": "string",
+      "enum": [
+        "user",
+        "assistant",
+        "system",
+        "hook",
+        "tool",
+        "tool_call",
+        "tool_result",
+        "attachment"
+      ]
+    },
+    "TranscriptEventKind": {
+      "type": "string",
+      "enum": [
+        "provider-session.registered",
+        "transcript-line.appended"
+      ]
+    },
+    "RequestHash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "SHA-256 hex of the full request content: address, body, priority, template ID + fields (A5). Computed by the core, compared opaquely by the store."
     }
   },
-  "records": {
-    "Message": { "$ref": "#/$defs/Message" },
-    "Thread": { "$ref": "#/$defs/Thread" },
-    "Delivery": { "$ref": "#/$defs/Delivery" },
-    "DeliveryAttempt": { "$ref": "#/$defs/DeliveryAttempt" },
-    "Presence": { "$ref": "#/$defs/Presence" },
-    "ContactPolicy": { "$ref": "#/$defs/ContactPolicy" },
-    "DndPolicy": { "$ref": "#/$defs/DndPolicy" },
-    "Template": { "$ref": "#/$defs/Template" },
-    "RecipientSnapshot": { "$ref": "#/$defs/RecipientSnapshot" },
-    "AcceptanceRecord": { "$ref": "#/$defs/AcceptanceRecord" }
-  },
-  "commands": [
-    {
-      "name": "OpenPresence",
-      "summary": "Register a live connection for this Person (R9: the ONLY registration mechanism — authentication alone never registers). Naming a transport with no registered adapter fails ValidationFailed (Messaging-Seams §4 composition rule).",
-      "authorization": "any authenticated principal",
-      "input": { "$ref": "#/$defs/OpenPresenceInput" },
-      "result": { "$ref": "#/$defs/PresenceOpened" },
-      "errors": ["NotAuthenticated", "VersionUnsupported", "ValidationFailed", "DependencyUnavailable"],
-      "rulings": ["R9"]
-    },
-    {
-      "name": "ClosePresence",
-      "summary": "Deregister a live connection. Idempotent: unknown/already-closed succeeds. Only the owning Person (or policy.admin) may close; transport-initiated close is always permitted for its own connection (R9).",
-      "authorization": "presence owner or policy.admin",
-      "input": { "$ref": "#/$defs/ClosePresenceInput" },
-      "result": { "$ref": "#/$defs/PresenceClosed" },
-      "errors": ["NotAuthenticated", "NotAuthorized"],
-      "rulings": ["R9"]
-    },
-    {
-      "name": "SendMessage",
-      "summary": "Accept one Message to an address, idempotent by clientMessageId (DEC-13). BlockedByContactPolicy is a DIRECT-send error only; on room sends, blocked recipients become terminal failed Deliveries instead (R4).",
-      "authorization": "authenticated principal; recipient ContactPolicy. thread:-addressed sends require membership (R4): DIRECT Thread — sender must be one of the canonical pair, recipient is the other member and their ContactPolicy applies; Room Thread — sender membership at acceptance.",
-      "input": { "$ref": "#/$defs/SendMessageInput" },
-      "result": { "$ref": "#/$defs/SendAccepted" },
-      "errors": ["NotAuthenticated", "NotAuthorized", "UnknownRecipient", "UnknownThread", "BlockedByContactPolicy", "ValidationFailed", "IdempotencyConflict", "DependencyUnavailable"],
-      "rulings": ["R4", "R6", "A5"]
-    },
-    {
-      "name": "SendFromTemplate",
-      "summary": "Render a template's fields into allowlisted Message paths (R12), then accept exactly as SendMessage.",
-      "authorization": "as SendMessage",
-      "input": { "$ref": "#/$defs/SendFromTemplateInput" },
-      "result": { "$ref": "#/$defs/SendAccepted" },
-      "errors": ["NotAuthenticated", "NotAuthorized", "UnknownRecipient", "UnknownThread", "BlockedByContactPolicy", "ValidationFailed", "IdempotencyConflict", "TemplateNotFound", "TemplateFieldMismatch", "DependencyUnavailable"],
-      "rulings": ["R12"]
-    },
-    {
-      "name": "SetDndPolicy",
-      "summary": "Set a Person's DND on/off (O3: no schedules in v1).",
-      "authorization": "self, or policy.admin",
-      "input": { "$ref": "#/$defs/SetDndPolicyInput" },
-      "result": { "$ref": "#/$defs/PolicyUpdated" },
-      "errors": ["NotAuthenticated", "NotAuthorized", "ValidationFailed", "DependencyUnavailable"]
-    },
-    {
-      "name": "SetContactPolicy",
-      "summary": "Set a Person's allowlist + default rule (DEC-14, A3).",
-      "authorization": "self, or policy.admin",
-      "input": { "$ref": "#/$defs/SetContactPolicyInput" },
-      "result": { "$ref": "#/$defs/PolicyUpdated" },
-      "errors": ["NotAuthenticated", "NotAuthorized", "ValidationFailed", "DependencyUnavailable"]
-    },
-    {
-      "name": "UpsertTemplate",
-      "summary": "Create or revise a template. Bindings must target templateBindablePaths only (R12) — violation is ValidationFailed.",
-      "authorization": "template.write grant",
-      "input": { "$ref": "#/$defs/UpsertTemplateInput" },
-      "result": { "$ref": "#/$defs/TemplateUpserted" },
-      "errors": ["NotAuthenticated", "NotAuthorized", "ValidationFailed", "DependencyUnavailable"],
-      "rulings": ["R12"]
-    },
-    {
-      "name": "RetireTemplate",
-      "summary": "Retire a template. New sends reject with TemplateNotFound; history unchanged (I10).",
-      "authorization": "template.write grant",
-      "input": { "$ref": "#/$defs/RetireTemplateInput" },
-      "result": { "$ref": "#/$defs/TemplateRetired" },
-      "errors": ["NotAuthenticated", "NotAuthorized", "TemplateNotFound", "DependencyUnavailable"]
-    }
-  ],
-  "queries": [
-    {
-      "name": "GetThread",
-      "summary": "Fetch one Thread's metadata.",
-      "authorization": "thread member (R3): direct — one of the pair; room — current member per the membership seam; or an oversight.read holder (A-R-N4-1)",
-      "input": { "type": "object", "additionalProperties": false, "required": ["threadId"], "properties": { "threadId": { "$ref": "#/$defs/ThreadId" } } },
-      "result": { "$ref": "#/$defs/ThreadView" },
-      "errors": ["NotAuthenticated", "NotAuthorized", "UnknownThread", "DependencyUnavailable"],
-      "rulings": ["R3"]
-    },
-    {
-      "name": "ListThreadsForPerson",
-      "summary": "Threads visible to a Person.",
-      "authorization": "self only (R3); policy.admin may list for others; an oversight.read holder listing SELF also sees every direct lane (A-R-N4-1)",
-      "input": { "type": "object", "additionalProperties": false, "properties": { "personId": { "$ref": "#/$defs/PersonId" } } },
-      "result": { "$ref": "#/$defs/ThreadListResult" },
-      "errors": ["NotAuthenticated", "NotAuthorized", "DependencyUnavailable"],
-      "rulings": ["R3"]
-    },
-    {
-      "name": "GetMessages",
-      "summary": "Ordered slice of a Thread's history, cursor-based, sequence ascending (DEC-19).",
-      "authorization": "thread member (R3); or an oversight.read holder (A-R-N4-1)",
-      "input": { "type": "object", "additionalProperties": false, "required": ["threadId"], "properties": { "threadId": { "$ref": "#/$defs/ThreadId" }, "cursor": { "$ref": "#/$defs/Cursor" }, "limit": { "type": "integer", "minimum": 1 } } },
-      "result": { "$ref": "#/$defs/MessagePage" },
-      "errors": ["NotAuthenticated", "NotAuthorized", "UnknownThread", "ValidationFailed", "DependencyUnavailable"],
-      "rulings": ["R3"]
-    },
-    {
-      "name": "GetInbox",
-      "summary": "Messages awaiting a Person — Deliveries in pending or held state ONLY. Terminal states (delivered, failed) never appear, so a room-blocked recipient (R4) is not served the blocked Message here. DND holds attention, never access (guarantee 6).",
-      "authorization": "self only (R3); policy.admin may act for others",
-      "input": { "type": "object", "additionalProperties": false, "properties": { "personId": { "$ref": "#/$defs/PersonId" }, "cursor": { "$ref": "#/$defs/Cursor" }, "limit": { "type": "integer", "minimum": 1 } } },
-      "result": { "$ref": "#/$defs/MessagePage" },
-      "errors": ["NotAuthenticated", "NotAuthorized", "ValidationFailed", "DependencyUnavailable"],
-      "rulings": ["R3"]
-    },
-    {
-      "name": "GetDelivery",
-      "summary": "Per-recipient delivery state for one Message (MSG-016: failure truth without an agent turn).",
-      "authorization": "thread member (R3); or an oversight.read holder (A-R-N4-1)",
-      "input": { "type": "object", "additionalProperties": false, "required": ["messageId"], "properties": { "messageId": { "$ref": "#/$defs/MessageId" } } },
-      "result": { "$ref": "#/$defs/DeliveryListResult" },
-      "errors": ["NotAuthenticated", "NotAuthorized", "UnknownMessage", "DependencyUnavailable"],
-      "rulings": ["R3"]
-    },
-    {
-      "name": "GetPolicy",
-      "summary": "A Person's DND + contact policy.",
-      "authorization": "self, or policy.admin (R3)",
-      "input": { "type": "object", "additionalProperties": false, "properties": { "personId": { "$ref": "#/$defs/PersonId" } } },
-      "result": { "$ref": "#/$defs/PolicyView" },
-      "errors": ["NotAuthenticated", "NotAuthorized", "DependencyUnavailable"],
-      "rulings": ["R3"]
-    },
-    {
-      "name": "ListTemplates",
-      "summary": "Visible templates.",
-      "authorization": "any authenticated principal (R3)",
-      "input": { "type": "object", "additionalProperties": false, "properties": { "includeRetired": { "type": "boolean" }, "cursor": { "$ref": "#/$defs/Cursor" }, "limit": { "type": "integer", "minimum": 1 } } },
-      "result": { "$ref": "#/$defs/TemplatePage" },
-      "errors": ["NotAuthenticated", "DependencyUnavailable"],
-      "rulings": ["R3"]
-    },
-    {
-      "name": "GetPresence",
-      "summary": "Live Presences for a Person (0..n).",
-      "authorization": "any authenticated principal (R3) — presence is observability, not addressing",
-      "input": { "type": "object", "additionalProperties": false, "required": ["personId"], "properties": { "personId": { "$ref": "#/$defs/PersonId" } } },
-      "result": { "$ref": "#/$defs/PresenceListResult" },
-      "errors": ["NotAuthenticated", "DependencyUnavailable"],
-      "rulings": ["R3"]
-    },
-    {
-      "name": "GetCapabilities",
-      "summary": "Protocol version + supported features + limits. Discovery for hosts whose deployments may differ.",
-      "authorization": "none — callable pre-authentication (R3); reveals versions and limits only",
-      "input": { "type": "object", "additionalProperties": false, "properties": {} },
-      "result": { "$ref": "#/$defs/CapabilityView" },
-      "errors": [],
-      "rulings": ["R3"]
-    }
-  ],
-  "subscriptions": [
-    {
-      "name": "Subscribe",
-      "summary": "R1: the push contract (MSG-007, MSG-023). A connected principal receives committed-fact events pushed over its live Presence — polling is a catch-up fallback after disconnect, never the liveness mechanism.",
-      "authorization": "any authenticated principal; event payload filtered to threads the subscriber may read (R3). An explicit threads[] naming a Thread the subscriber may NOT read fails the whole Subscribe with NotAuthorized — scope is never silently dropped (G6). An oversight.read holder passes direct-lane payload filtering and may name foreign direct Threads in explicit scope (A-R-N4-1).",
-      "input": { "$ref": "#/$defs/SubscribeInput" },
-      "result": { "$ref": "#/$defs/SubscriptionMessage", "description": "A STREAM of SubscriptionMessage frames: started → event* → ended. Every frame carries subscriptionId." },
-      "errors": ["NotAuthenticated", "NotAuthorized", "ValidationFailed", "DependencyUnavailable"],
-      "scope": "events filter (required) + optional threads scope; empty threads = all threads the subscriber may read",
-      "cursor": "Optional opaque sequence cursor (Store-Seam §3). Replay-after-disconnect: committed-fact events with sequence > cursor, in order via the journal, then live. Delivery transitions and policy writes are journaled with sequence (Store-Seam §11 errata), so replay covers all three committed-fact event kinds.",
-      "duplicates": "At-least-once. Committed-fact events carry their sequence; the consumer dedupes by sequence. Exactly-once is never promised.",
-      "backpressure": "Bounded per-subscription buffer (constants.subscriptionBufferMax). Overflow ENDS the subscription with ended.reason=overflow — the core never blocks on a slow subscriber. The client re-subscribes with its last cursor; replay closes the gap.",
-      "observations": "PresenceChanged is an observation, not a committed fact (R11): it carries no sequence, is not journaled, and is never replayed. On (re)subscribe, current presence state is sent as fresh observations.",
-      "rulings": ["R1", "R2", "R3", "R11"]
-    }
-  ],
-  "events": [
-    {
-      "name": "MessageCommitted",
-      "classification": "committed-fact",
-      "summary": "A Message crossed the durability boundary. Emitted only after commit (§13 event rule). Carries the full Message.",
-      "payload": { "type": "object", "additionalProperties": false, "required": ["sequence", "message"], "properties": { "sequence": { "$ref": "#/$defs/Sequence" }, "message": { "$ref": "#/$defs/Message" } } },
-      "audience": "subscribers authorized to read the message's thread (R3)"
-    },
-    {
-      "name": "DeliveryUpdated",
-      "classification": "committed-fact",
-      "summary": "A per-recipient Delivery changed state, carrying state + reason. Failure states included — DeliveryFailed is folded into this event (MSG-016). Journaled with sequence per Store-Seam §11 errata, so subscription replay covers it.",
-      "payload": { "type": "object", "additionalProperties": false, "required": ["sequence", "delivery"], "properties": { "sequence": { "$ref": "#/$defs/Sequence" }, "delivery": { "$ref": "#/$defs/Delivery" } } },
-      "audience": "subscribers authorized to read the delivery's thread (R3)"
-    },
-    {
-      "name": "PresenceChanged",
-      "classification": "observation",
-      "summary": "R11: a Presence opened/closed. Presence is ephemeral, so this is an OBSERVATION — no sequence, not journaled, never replayed. The durability-before-emission rule applies to committed-fact events only.",
-      "payload": { "type": "object", "additionalProperties": false, "required": ["presence", "change"], "properties": { "presence": { "$ref": "#/$defs/Presence" }, "change": { "type": "string", "enum": ["opened", "closed"] } } },
-      "audience": "all authenticated subscribers"
-    },
-    {
-      "name": "PolicyChanged",
-      "classification": "committed-fact",
-      "summary": "A DND or contact policy changed (policy writes are durable, so this is a committed fact). Journaled with sequence per Store-Seam §11 errata.",
-      "payload": { "type": "object", "additionalProperties": false, "required": ["sequence", "personId", "policy", "revision"], "properties": { "sequence": { "$ref": "#/$defs/Sequence" }, "personId": { "$ref": "#/$defs/PersonId" }, "policy": { "type": "string", "enum": ["contact", "dnd"] }, "revision": { "type": "integer", "minimum": 1 } } },
-      "audience": "the policy owner + policy.admin holders (R3)"
-    }
-  ],
   "errors": [
-    { "name": "NotAuthenticated", "summary": "No valid authenticated principal.", "retryable": false, "fields": {} },
-    { "name": "NotAuthorized", "summary": "Authenticated, but lacks the grant, membership, or ownership this operation requires (R3 matrix).", "retryable": false, "fields": { "requiredGrant": { "$ref": "#/$defs/Grant" } } },
-    { "name": "UnknownRecipient", "summary": "The address does not resolve to a provisioned Person (MSG-014).", "retryable": false, "fields": { "address": { "$ref": "#/$defs/Address" } } },
-    { "name": "UnknownThread", "summary": "No such Thread, including room Threads unknown at acceptance (Store-Seam §2.1).", "retryable": false, "fields": { "threadId": { "type": "string" } } },
-    { "name": "UnknownMessage", "summary": "No such Message.", "retryable": false, "fields": { "messageId": { "type": "string" } } },
-    { "name": "BlockedByContactPolicy", "summary": "DIRECT sends only: the recipient's ContactPolicy blocks this sender. Room sends instead record terminal failed Deliveries per blocked recipient (R4).", "retryable": false, "fields": { "recipientId": { "$ref": "#/$defs/PersonId" } } },
-    { "name": "ValidationFailed", "summary": "Input failed schema or policy validation — including over messageMaxBytes (R13) and malformed/foreign cursors (Store-Seam §6 CursorInvalid mapping).", "retryable": false, "fields": { "issues": { "type": "array", "items": { "type": "object", "additionalProperties": false, "required": ["path", "message"], "properties": { "path": { "type": "string" }, "message": { "type": "string" } } } } } },
-    { "name": "TemplateNotFound", "summary": "No such template, or it is retired.", "retryable": false, "fields": { "templateId": { "type": "string" } } },
-    { "name": "TemplateFieldMismatch", "summary": "Supplied fields do not match the template's declared bindings (DEC-15).", "retryable": false, "fields": { "templateId": { "type": "string" }, "issues": { "type": "array", "items": { "type": "object", "additionalProperties": false, "required": ["path", "message"], "properties": { "path": { "type": "string" }, "message": { "type": "string" } } } } } },
-    { "name": "VersionUnsupported", "summary": "The client speaks a protocol/contract version this deployment does not serve.", "retryable": false, "fields": { "supported": { "type": "array", "items": { "type": "string" } } } },
-    { "name": "RateLimited", "summary": "FORWARD-RESERVED (R13, O2): no send rate limits in v1. The shape exists in the catalogue but appears in no per-operation failure list until O2 activates.", "retryable": true, "reserved": true, "fields": { "retryAfterMs": { "type": "integer", "minimum": 0 } } },
-    { "name": "IdempotencyConflict", "summary": "A5: same (senderId, clientMessageId) but different requestHash. Pass-through from the store seam — public by design.", "retryable": false, "fields": { "clientMessageId": { "type": "string" }, "originalMessageId": { "$ref": "#/$defs/MessageId" } } },
-    { "name": "DependencyUnavailable", "summary": "R6: typed public outcome for dependency failure. One umbrella shape; the dependency field names which seam failed. StoreUnavailable/StorageExhausted/StoreCorrupt map here (Store-Seam §6); membership-timeout and authority-failure reuse THIS shape (Messaging-Seams §2.2, §3.3); clock/ID halt-class failures use dependency=clock (Messaging-Seams §5.2). presence-transport is DELIBERATELY absent — its failures surface through the Delivery lane as typed state, a richer public outcome (Messaging-Seams §4.2). Consumers assume non-retryable unless the instance's retryable field says true; they MUST tolerate unknown dependency values (treat as non-retryable).", "retryable": false, "fields": { "dependency": { "type": "string", "description": "Known values: store | membership | authority | clock (clock added at Step 3b). Typed as open string, NOT an enum — additive extension is the compatibility rule and consumers MUST tolerate unknown values (treat as non-retryable). presence-transport is deliberately absent (failures surface via the Delivery lane, Messaging-Seams §4.2)." }, "retryable": { "type": "boolean", "description": "Per-instance flag. false for StoreCorrupt-class failures — operator intervention required. Absent/unknown → assume false." } } }
-  ],
-  "errorNotes": {
-    "catalogueSize": 13,
-    "derivation": "11 named in Plan §9 + IdempotencyConflict (A5) + DependencyUnavailable (R6) = 13. RateLimited is forward-reserved (R13). The 11-vs-12 doc drift is resolved HERE at the source — this array is the only count that exists.",
-    "notPublic": "StateConflict and RevisionConflict (Store-Seam §6) are normal concurrency outcomes handled inside the core; they never cross the public contract. RecordNotFound maps to UnknownThread/UnknownMessage/etc. CursorInvalid maps to ValidationFailed."
-  },
-  "stateMachines": {
-    "delivery": {
-      "ruling": "R5",
-      "states": ["pending", "held", "delivered", "failed"],
-      "initial": "pending",
-      "terminal": ["delivered", "failed"],
-      "transitions": [
-        { "from": "pending", "to": "held", "trigger": "dnd-active", "reason": "dnd-hold", "note": "Recipient DND is on and the priority does not override (normal, or urgent downgraded for lack of the grant). The Message remains pullable via GetInbox — DND holds attention, never access." },
-        { "from": "pending", "to": "delivered", "trigger": "adapter-effect", "reason": "adapter-effect", "note": "A real transport effect on one of the recipient's live Presences (DEC-08, G10, I11). Fan-out first-success race resolves at the store CAS (Store-Seam §5): first effect wins; losers are recorded as superseded attempts." },
-        { "from": "pending", "to": "failed", "trigger": "policy-blocked", "reason": "blocked-by-contact-policy", "note": "Terminal AT ACCEPTANCE (R4): room-send recipient whose ContactPolicy blocks the sender. No attempts are ever made." },
-        { "from": "pending", "to": "failed", "trigger": "retry-exhausted", "reason": "retry-exhausted", "note": "The adapter's bounded retry budget (adapter config; v1 default 5 attempts with backoff) ran out." },
-        { "from": "pending", "to": "failed", "trigger": "transport-permanent-failure", "reason": "transport-failure", "note": "The adapter reports a non-retryable failure (e.g. PTY gone permanently). No further retries." },
-        { "from": "held", "to": "pending", "trigger": "dnd-released", "reason": "dnd-released", "note": "SetDndPolicy(enabled=false) releases every held Delivery for that Person back to pending; normal delivery attempts resume." },
-        { "from": "held", "to": "delivered", "trigger": "in-flight-effect", "reason": "adapter-effect", "note": "An attempt STARTED before the hold reports a real adapter effect after the Delivery moved to held. The effect genuinely occurred (DEC-08) and cannot be un-rung: it settles delivered. This is the one legal exit from held other than dnd-released; the attempt is recorded with outcome effect." }
-      ],
-      "noPresence": "A recipient with zero live Presences leaves the Delivery in pending — NOT failed (there is nothing to retry against, and v1 has no expiry, O1). Each PresenceChanged(opened) for that recipient re-triggers an attempt decision by the effect shell.",
-      "policyEvaluation": "DND and contact policy are re-evaluated at EVERY attempt decision point — acceptance, presence-open re-trigger, and each retry — against CURRENT policy, never a value cached from acceptance. A presence-open re-trigger during active DND moves pending→held instead of attempting.",
-      "urgentOverride": "Urgent WITH the priority.override grant skips held entirely: pending → delivery attempt immediately, DND notwithstanding (DEC-07, I9).",
-      "heldNeverFails": "held has no failure transitions: no attempts run while held, so retries cannot exhaust. held exits only via dnd-released or in-flight-effect."
+    {
+      "name": "IdempotencyConflict",
+      "summary": "A5: same (senderId, clientMessageId) but different requestHash. Pass-through from the store seam \u2014 public by design.",
+      "retryable": false,
+      "fields": {
+        "clientMessageId": {
+          "type": "string"
+        },
+        "originalMessageId": {
+          "$ref": "#/$defs/MessageId"
+        }
+      }
+    },
+    {
+      "name": "ConcurrentModification",
+      "summary": "Another writer moved the record first: a stale checkpoint, a lost compare-and-set race. Always retryable \u2014 the next attempt re-reads the winner's state and proceeds or no-ops. Distinct from IdempotencyConflict, which is permanent.",
+      "retryable": true,
+      "fields": {
+        "sourceId": {
+          "type": "string"
+        },
+        "sendId": {
+          "type": "string"
+        }
+      }
+    },
+    {
+      "name": "DependencyUnavailable",
+      "summary": "R6: typed public outcome for dependency failure. One umbrella shape; the dependency field names which seam failed. StoreUnavailable/StorageExhausted/StoreCorrupt map here (Store-Seam \u00a76); membership-timeout and authority-failure reuse THIS shape (Messaging-Seams \u00a72.2, \u00a73.3); clock/ID halt-class failures use dependency=clock (Messaging-Seams \u00a75.2). presence-transport is DELIBERATELY absent \u2014 its failures surface through the Delivery lane as typed state, a richer public outcome (Messaging-Seams \u00a74.2). Consumers assume non-retryable unless the instance's retryable field says true; they MUST tolerate unknown dependency values (treat as non-retryable).",
+      "retryable": false,
+      "fields": {
+        "dependency": {
+          "type": "string",
+          "description": "Known values: store | membership | authority | clock (clock added at Step 3b). Typed as open string, NOT an enum \u2014 additive extension is the compatibility rule and consumers MUST tolerate unknown values (treat as non-retryable). presence-transport is deliberately absent (failures surface via the Delivery lane, Messaging-Seams \u00a74.2)."
+        },
+        "retryable": {
+          "type": "boolean",
+          "description": "Per-instance flag. false for StoreCorrupt-class failures \u2014 operator intervention required. Absent/unknown \u2192 assume false."
+        }
+      }
+    },
+    {
+      "name": "InvalidSendInput",
+      "summary": "A conversation send request failed validation before any durable write. Non-retryable; the field names which input failed so hosts can correct and resubmit.",
+      "retryable": false,
+      "fields": {
+        "field": {
+          "type": "string",
+          "description": "The ConversationSendInput field that failed validation: conversationId | issuedBy | targetAgentId | clientOpId | text."
+        }
+      }
+    },
+    {
+      "name": "InvalidQuery",
+      "summary": "A committed-query request failed validation before any read. Non-retryable; the message names which constraint failed so hosts can correct and resubmit. Distinct from DependencyUnavailable: the caller asked for something impossible, so retrying changes nothing.",
+      "retryable": false,
+      "fields": {
+        "query": {
+          "type": "string",
+          "description": "The committed query that failed validation, e.g. listAgentCommunications."
+        }
+      }
+    },
+    {
+      "name": "InvalidConversationView",
+      "summary": "A conversation view write failed validation before any durable write: a malformed conversation id, a rebinding of the immutable participant list, an update to an unknown view, or a malformed lastReadLineId. Non-retryable; the rule field names which invariant held.",
+      "retryable": false,
+      "fields": {
+        "conversationId": {
+          "type": "string"
+        },
+        "rule": {
+          "type": "string",
+          "description": "The invariant that held: malformed-id | invalid-participants | participants-immutable | unknown-conversation | invalid-last-read-line."
+        }
+      }
+    },
+    {
+      "name": "UnknownTargetAgent",
+      "summary": "The addressed Agent does not exist in the Agent directory. Non-retryable; the host should refresh its agent list before resubmitting.",
+      "retryable": false,
+      "fields": {
+        "targetAgentId": {
+          "type": "string"
+        }
+      }
     }
-  }
+  ]
 }

@@ -20,13 +20,13 @@ import {
   type AuthenticatedPrincipal, type B3Result, type SystemCommandContext,
 } from '@novakai/foundation/contract';
 import { createFakePtyHost } from '../../../terminal/adapters/pty-host/fake.js';
-import { createFakeProviderAdapters } from '../../../agents/b3/contract/index.js';
+import { createFakeProviderAdapters } from '../../../agents/governed/contract/index.js';
 import { templateDigest, type WatcherTemplate } from '../../../supervision/public/index.js';
 import type { Notification } from '../../../supervision/contract/index.js';
 import type { ProviderPort } from '../../../agent-runtime/contract/index.js';
-import { startRuntimeHost } from '../../core/b3/host.js';
-import { connectRuntime } from '../../core/b3/client.js';
-import { createNotificationDeliveryPump } from '../../core/b3/notification-delivery-pump.js';
+import { startRuntimeHost } from '../../core/runtime-host/host.js';
+import { connectRuntime } from '../../core/runtime-host/client.js';
+import { createNotificationDeliveryPump } from '../../core/runtime-host/notification-delivery-pump.js';
 import { governedRole } from '../governed-role.js';
 
 const PRINCIPAL: AuthenticatedPrincipal = {

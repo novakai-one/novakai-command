@@ -1,4 +1,4 @@
-// The published family tree (§12.7), walked in the direction the caller asked
+// The published family tree, walked in the direction the caller asked
 // for and carrying the two facts only the tree knows: edges and depth.
 //
 // This lives beside `queries.ts` rather than inside it because the tree is a
@@ -16,7 +16,7 @@ import type { RunsCore } from './runs-context.js';
 import { runsOfAgent } from './queries.js';
 
 /**
- * The family, walked the way the caller ASKED for it (§12.7).
+ * The family, walked the way the caller ASKED for it.
  *
  * `direction` used to be accepted and dropped, so "show me this Agent's
  * ancestors" answered with its descendants — the same three nodes, which reads

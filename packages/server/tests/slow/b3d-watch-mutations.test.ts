@@ -7,18 +7,18 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { b3ok } from '@novakai/foundation/contract';
-import { createFakeProviderAdapters } from '../../../agents/b3/contract/index.js';
+import { createFakeProviderAdapters } from '../../../agents/governed/contract/index.js';
 import { createFakePtyHost, type FakePty } from '../../../terminal/adapters/pty-host/fake.js';
 import { composeSupervision } from '../../../supervision/public/index.js';
-import { buildB3SupervisionMethods } from '../../core/b3/supervision-methods.js';
-import { clientOpIdFrom } from '../../core/b3/cli-shared.js';
-import { startRuntimeHost } from '../../core/b3/host.js';
-import { connectRuntime } from '../../core/b3/client.js';
+import { buildRuntimeHostSupervisionMethods } from '../../core/runtime-host/supervision-methods.js';
+import { clientOpIdFrom } from '../../core/runtime-host/cli-shared.js';
+import { startRuntimeHost } from '../../core/runtime-host/host.js';
+import { connectRuntime } from '../../core/runtime-host/client.js';
 import type { MethodTable } from '../../contract/protocol.js';
 import { governedRole, governedTokens } from '../governed-role.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const repoRoot = path.resolve(here, '..', '..', '..');
+const repoRoot = path.resolve(here, '..', '..', '..', '..');
 const nvk = path.join(repoRoot, 'scripts', 'nvk.mjs');
 
 const HUMAN = {
@@ -119,7 +119,7 @@ test('b3.supervision.createWatch creates one event watcher through the frozen co
       installAuthority: { resolve: async () => { throw new Error('not used'); } },
       watchRuleAccess: { agentIdFor: async () => b3ok(null) },
     });
-    const table = buildB3SupervisionMethods({
+    const table = buildRuntimeHostSupervisionMethods({
       supervision,
       principalFor: () => HUMAN,
       activityGenerationFor: async () => 1 as never,
@@ -153,7 +153,7 @@ test('b3.supervision.createWatch accepts the published activity-drift policy and
       watchRuleAccess: { agentIdFor: async () => b3ok(null) },
       watchRuleGeneration: { generationFor: async () => b3ok(7 as never) },
     });
-    const table = buildB3SupervisionMethods({
+    const table = buildRuntimeHostSupervisionMethods({
       supervision,
       principalFor: () => ({
         ...HUMAN,
@@ -183,7 +183,7 @@ test('b3.supervision.createWatch accepts the published activity-drift policy and
 });
 
 test('b3.supervision.createWatch names noncanonical drift constants WatchRuleInvalid', async () => {
-  const table = buildB3SupervisionMethods({
+  const table = buildRuntimeHostSupervisionMethods({
     supervision: {
       createWatchRule: async () => { throw new Error('invalid input reached the core'); },
     } as never,
@@ -208,7 +208,7 @@ test('b3.supervision.createWatch names noncanonical drift constants WatchRuleInv
 });
 
 test('b3.supervision.createWatch enforces drift-policy presence by condition kind', async () => {
-  const table = buildB3SupervisionMethods({
+  const table = buildRuntimeHostSupervisionMethods({
     supervision: {
       createWatchRule: async () => { throw new Error('invalid input reached the core'); },
     } as never,
@@ -232,7 +232,7 @@ test('b3.supervision.createWatch enforces drift-policy presence by condition kin
 });
 
 test('b3.supervision.createWatch accepts both inclusive drift timing endpoints', async () => {
-  const table = buildB3SupervisionMethods({
+  const table = buildRuntimeHostSupervisionMethods({
     supervision: {
       createWatchRule: async (_context: unknown, input: unknown) => b3ok(input as never),
     } as never,
@@ -252,7 +252,7 @@ test('b3.supervision.createWatch accepts both inclusive drift timing endpoints',
 
 test('b3.supervision.resetDrift carries the exact episode/version fence', async () => {
   let received: unknown;
-  const table = buildB3SupervisionMethods({
+  const table = buildRuntimeHostSupervisionMethods({
     supervision: {
       resetDriftEpisode: async (_context: unknown, input: unknown) => {
         received = input;

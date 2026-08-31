@@ -27,10 +27,29 @@ export interface DeliveryRunResult {
   readonly observed: number;
 }
 
-/** Counts returned by one provider-source scan and commit pass. */
+/**
+ * Why one provider source failed to ingest, so hosts branch on the kind
+ * instead of parsing the message. `ambiguous-evidence` means the file named
+ * more than one session; `session-conflict` means its identity evidence
+ * contradicts itself; `checkpoint-conflict` means another writer committed
+ * the source first and the next pass re-reads it safely; `agent-unknown`
+ * means it names an Agent the directory does not know;
+ * `dependency-unavailable` means a required collaborator was not composed;
+ * `unexpected` is anything else — the message keeps the detail.
+ */
+export type IngestFailureKind =
+  | 'ambiguous-evidence'
+  | 'session-conflict'
+  | 'checkpoint-conflict'
+  | 'agent-unknown'
+  | 'dependency-unavailable'
+  | 'unexpected';
+
+/** One provider source that failed this pass, with typed evidence for hosts. */
 export interface IngestSourceFailure {
   readonly sourceId: string;
   readonly provider: string;
+  readonly kind: IngestFailureKind;
   readonly message: string;
 }
 
@@ -60,7 +79,7 @@ export interface MessagingHealth {
 export interface MessagingRuntimeApi {
   start(): Promise<Outcome<void>>;
   stop(): Promise<Outcome<void>>;
-  health(): Promise<MessagingHealth>;
+  health(): Promise<Outcome<MessagingHealth>>;
   ingestNow(): Promise<Outcome<IngestResult>>;
   routePending(): Promise<Outcome<DeliveryRunResult>>;
   ensureConversationView(input: EnsureConversationViewInput): Promise<Outcome<ConversationView>>;

@@ -6,9 +6,9 @@
 // is exactly what a crash is and exactly what a graceful `host.close()` can
 // never model.
 import { createFakePtyHost } from '../../../terminal/adapters/pty-host/fake.js';
-import { createFakeProviderAdapters } from '../../../agents/b3/contract/index.js';
-import { startRuntimeHost } from '../../core/b3/host.js';
-import { connectRuntime } from '../../core/b3/client.js';
+import { createFakeProviderAdapters } from '../../../agents/governed/contract/index.js';
+import { startRuntimeHost } from '../../core/runtime-host/host.js';
+import { connectRuntime } from '../../core/runtime-host/client.js';
 import { governedRole } from '../governed-role.js';
 import { mintClientOpId } from '@novakai/foundation/contract';
 

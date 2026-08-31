@@ -26,11 +26,11 @@ import type {
   ControllerAttachment, TerminalInputAttempt, TerminalInputLease,
   TerminalOutputFrame, TerminalSession, TerminalSessionStatus, TerminalSessionView,
 } from '../../terminal/contract/index.js';
-import { connectRuntime, type RuntimeClient } from '../core/b3/client.js';
+import { connectRuntime, type RuntimeClient } from '../core/runtime-host/client.js';
 import {
   clientOpIdFrom, emit, EXIT, fail, pageFlags, parseFlags, report, verbOf,
   type CliCommand, type Flags,
-} from '../core/b3/cli-shared.js';
+} from '../core/runtime-host/cli-shared.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '..', '..', '..');

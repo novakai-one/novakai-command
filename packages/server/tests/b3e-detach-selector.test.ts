@@ -26,9 +26,9 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createFakePtyHost } from '../../terminal/adapters/pty-host/fake.js';
-import { createFakeProviderAdapters } from '../../agents/b3/contract/index.js';
-import { startRuntimeHost, type RunningRuntimeHost } from '../core/b3/host.js';
-import { connectRuntime, type RuntimeClient } from '../core/b3/client.js';
+import { createFakeProviderAdapters } from '../../agents/governed/contract/index.js';
+import { startRuntimeHost, type RunningRuntimeHost } from '../core/runtime-host/host.js';
+import { connectRuntime, type RuntimeClient } from '../core/runtime-host/client.js';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 const nvk = path.join(repoRoot, 'scripts', 'nvk.mjs');

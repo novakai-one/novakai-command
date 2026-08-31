@@ -48,13 +48,13 @@ test('exactly one module composes the Runs store, and one composes governed Agen
       composers.runs.push(relative(file));
     }
     if (/\bcreateGovernedAgentsStore\s*\(/.test(source)
-      && !file.endsWith(path.join('b3', 'core', 'store.ts'))) {
+      && !file.endsWith(path.join('governed', 'core', 'store.ts'))) {
       composers.agents.push(relative(file));
     }
   }
   assert.deepEqual(composers.runs, ['packages/agent-runtime/core/runs-compose.ts'],
     'a second Runs store would be a second writer of every Run fact');
-  assert.deepEqual(composers.agents, ['packages/agents/b3/core/compose.ts'],
+  assert.deepEqual(composers.agents, ['packages/agents/governed/core/compose.ts'],
     'a second governed-Agents store would be a second writer of every role and grant');
 });
 
@@ -103,5 +103,5 @@ test('the governed spawn has exactly one internal production door', () => {
     const source = readFileSync(file, 'utf8');
     if (/['"]b3\.agent\.spawn['"]\s*:/.test(source)) builders.push(relative(file));
   }
-  assert.deepEqual(builders, ['packages/server/core/b3/agent-methods.ts']);
+  assert.deepEqual(builders, ['packages/server/core/runtime-host/agent-methods.ts']);
 });

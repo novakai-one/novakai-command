@@ -1,16 +1,17 @@
-// The published recovery action (§12.2 `repairRunOperation`, §20).
+// The published recovery action (`repairRunOperation`).
 //
-// §20 names exactly one recovery for a partially failed stop-tree — "resume
-// same operation" — and exactly one forbidden action: "unfreeze/restart subtree
-// silently". So repair resumes the stop under the fence that is still closed,
-// and settles only when every Agent in the snapshot is actually final.
+// There is exactly one recovery for a partially failed stop-tree — "resume
+// the same operation" — and exactly one forbidden action: unfreezing or
+// restarting the subtree silently. So repair resumes the stop under the fence
+// that is still closed, and settles only when every Agent in the snapshot is
+// actually final.
 //
 // For an operation an earlier epoch abandoned, repair does the paperwork boot
 // recovery deliberately left open: it confirms the Run this attempt reserved is
 // final, releases the fence it was holding, and closes the journal — unless
 // compensation recorded UNCERTAINTY, in which case it says so and leaves the
 // record open. An operation nobody can close is how a store fills with work
-// that looks live forever (hold-out G6); an operation closed over an effect
+// that looks live forever; an operation closed over an effect
 // nobody verified is worse.
 import {
   b3err, b3fail, b3ok, mintClientOpId,

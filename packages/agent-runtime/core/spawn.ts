@@ -1,9 +1,9 @@
-// The spawn saga (§13.5, DEC-B3V4-26).
+// The spawn saga.
 //
 // One operation serves a human at a keyboard, an Agent inside its own PTY, and
 // a script in a cron job. They differ in exactly one place — who the transport
 // authenticated — and everything downstream is identical, which is the cheapest
-// way to hold red gate 23.
+// way to keep the policy paths from drifting apart.
 //
 // Every stage advances only after its owner confirmed something durable, and
 // every effect underneath is keyed by this command's `clientOpId`, so a retry
@@ -24,7 +24,7 @@ import { runSkillsGate } from './gate.js';
 import {
   bindProviderSession, finishRun, installWatchers, reserveRun, startTerminal,
 } from './spawn-stages.js';
-import { activateEndpoint, bindTranscript, reserveEndpoint } from './spawn-b3c.js';
+import { activateEndpoint, bindTranscript, reserveEndpoint } from './custody-stages.js';
 import { provisionHeadlessChild } from './headless-child.js';
 
 export interface SpawnOutcome {
@@ -41,7 +41,7 @@ export async function spawnAgent(
   if (!epoch.ok) return epoch;
 
   // Authority FIRST. A caller who may not spawn learns so before a journal
-  // record exists, let alone an Agent (§13.5's ordering is not decoration).
+  // record exists, let alone an Agent — the ordering is not decoration.
   const authority = await core.agents.authoriseSpawn(context.principal, {
     roleProfileId: input.roleProfileId,
     ...(context.principal.agentRunId === undefined
@@ -88,14 +88,15 @@ export async function spawnAgent(
 /**
  * Whether this attempt may pick up where the last one stopped, and why not.
  *
- * §20 row 2 is a REQUIREMENT, not a courtesy: "Runtime dies after first
- * RunOperation append but before Run reservation → resume same operation and
- * same reservation." The command that arrives after that crash carries the same
+ * Resume is a REQUIREMENT, not a courtesy: if the Runtime dies after the first
+ * RunOperation append but before Run reservation, the recovery is "resume the
+ * same operation and the same reservation". The command that arrives after
+ * that crash carries the same
  * `clientOpId`, finds the same journal, and must be allowed to finish it — the
  * reservation predates every effect precisely so that it can.
  *
  * Two things stop it, and only two. An effect nobody has been able to verify
- * (§20's "PTY existence uncertain → reconcile and block input") — repair exists
+ * ("PTY existence uncertain → reconcile and block input") — repair exists
  * for that, and it works. And a Run this operation already reserved: past that
  * line the ladder points at a Run whose PTY died with its Runtime, and resuming
  * would drive a corpse. That case ends in repair too, then a fresh command.
@@ -120,7 +121,7 @@ function resumeRefusal(operation: RunOperation): ReturnType<typeof recoveryRequi
  * A tree being stopped may not GROW. Continue and adopt both check the closing
  * fence; spawn never did, so a parent inside a closing tree could add a child
  * the stop had already counted past — and the stop would then report success
- * over a live descendant it never saw (§13.7, NVK-KIMI-028 finding 6).
+ * over a live descendant it never saw.
  */
 async function treeAcceptsAChild(
   core: RunsCore, context: CommandContext, parentAgentId: AgentId | undefined,
@@ -168,7 +169,7 @@ async function governedIdentity(
     rootHumanPrincipalId: build.authority.rootHumanPrincipalId,
     // The AUTHENTICATED parent Run, not a fresh id. `createdFromRunId` is
     // durable provenance — "which shift of the parent made this child" — and a
-    // minted one referred to nothing that ever existed (NVK-KIMI-028 finding 9).
+    // minted one referred to nothing that ever existed.
     ...(build.authority.parentAgentId === undefined
       ? {}
       : {
@@ -292,9 +293,9 @@ async function provisionRun(
   });
   if (!live.ok) return live;
 
-  // §13.5 row 6, as soon as there is a terminal session to claim — and still
-  // strictly before any provider input exists. See `reserveEndpoint` for why
-  // this rung sits here rather than one rung earlier.
+  // The endpoint is reserved as soon as there is a terminal session to
+  // claim — and still strictly before any provider input exists. See
+  // `reserveEndpoint` for why this rung sits here rather than one rung earlier.
   const endpoint = await reserveEndpoint(core, {
     agentRun: live.value.agentRun,
     agentId: governed.agentId,

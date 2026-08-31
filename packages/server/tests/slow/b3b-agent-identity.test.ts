@@ -18,10 +18,10 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { B3Result } from '@novakai/foundation/dist/contract/index.js';
 import { createFakePtyHost } from '../../../terminal/adapters/pty-host/fake.js';
-import { createFakeProviderAdapters } from '../../../agents/b3/contract/index.js';
+import { createFakeProviderAdapters } from '../../../agents/governed/contract/index.js';
 import type { AgentRunView } from '../../../agent-runtime/contract/index.js';
-import { startRuntimeHost, type RunningRuntimeHost } from '../../core/b3/host.js';
-import { connectRuntime, type RuntimeClient } from '../../core/b3/client.js';
+import { startRuntimeHost, type RunningRuntimeHost } from '../../core/runtime-host/host.js';
+import { connectRuntime, type RuntimeClient } from '../../core/runtime-host/client.js';
 
 interface Rig {
   readonly host: RunningRuntimeHost;

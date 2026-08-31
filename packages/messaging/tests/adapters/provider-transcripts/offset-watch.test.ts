@@ -3,15 +3,13 @@ import { appendFile, mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import {
-  createMemoryTranscriptStore,
-  createMessagingRuntime,
-  createProviderTranscriptSource,
-  providerNormalizer,
-  type AgentDirectory,
-  type ProviderTranscriptSource,
-  type TranscriptStore,
-} from '../../../contract/index.js';
+import { createMessagingRuntime } from '../../../core/runtime/messaging-runtime.js';
+import { createProviderTranscriptSource } from '../../../adapters/provider-transcripts/source.js';
+import { providerNormalizer } from '../../../adapters/provider-transcripts/normalizers/index.js';
+import { createMemoryTranscriptStore } from '../../../adapters/stores/memory.js';
+import type { AgentDirectory } from '../../../contract/ports/agent-directory.js';
+import type { ProviderTranscriptSource } from '../../../contract/ports/provider-transcript-source.js';
+import type { TranscriptStore } from '../../../contract/ports/transcript-store.js';
 
 const AGENT_ID = 'agent_offset-watch';
 const SESSION_ID = 'provider-offset-watch';

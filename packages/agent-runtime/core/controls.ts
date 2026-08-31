@@ -1,4 +1,4 @@
-// Controls on a LIVE Run (§12.1, R3-006, R3-025).
+// Controls on a LIVE Run.
 //
 // Agents owns what a control means — which values a role permits, whether the
 // provider supports it natively, and what a replacement would have to look
@@ -8,7 +8,7 @@
 //
 // Everything else (the Agent, the pinned plan, the provider session) is looked
 // up from the Run rather than accepted from the request, because a caller that
-// can name the plan can name SOMEONE ELSE'S plan (red gate 5).
+// can name the plan can name SOMEONE ELSE'S plan.
 import {
   b3err, b3fail,
   type AuthenticatedPrincipal, type B3Result, type CommandContext, type RecordVersion,
@@ -43,7 +43,7 @@ export async function discoverRunControls(
  * applied natively, unsupported with a reason, or "this needs a replacement
  * Run" — which returns the plan rather than silently restarting anything. A
  * control that quietly became a restart would lose whatever the Agent was
- * doing, so §12.1 makes the caller ask for it separately.
+ * doing, so the caller must ask for a replacement separately.
  */
 export async function applyRunControl(
   core: RunsCore, context: CommandContext, input: ApplyRunControlInput,

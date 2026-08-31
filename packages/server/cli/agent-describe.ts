@@ -10,7 +10,7 @@ import type {
 import type {
   AgentRunUsage, AgentUsageSummary, UsageValue,
 } from '../../supervision/contract/index.js';
-import type { Agent } from '../../agents/b3/contract/index.js';
+import type { Agent } from '../../agents/governed/contract/index.js';
 
 function usageValue(value: UsageValue, label: string): string {
   const limitations = value.limitations.length === 0

@@ -25,6 +25,7 @@ export class ProviderIngestQueue {
     return this.inFlight !== undefined;
   }
 
+  /** Records a filesystem change notification; work starts after the debounce window. */
   notify(change: ProviderSourceChange): void {
     if (change.kind === 'discovery') {
       this.pendingDiscovery = true;
@@ -40,6 +41,7 @@ export class ProviderIngestQueue {
     this.debounceTimer.unref();
   }
 
+  /** Runs a full discovery pass now, superseding any debounced targeted work. */
   requestDiscovery(): Promise<Outcome<IngestResult>> {
     this.pendingDiscovery = true;
     this.pendingSourceIds.clear();
@@ -48,6 +50,7 @@ export class ProviderIngestQueue {
     return this.ensureDrain();
   }
 
+  /** Drops queued-but-unstarted work; an in-flight pass still completes. */
   cancelPending(): void {
     if (this.debounceTimer !== undefined) clearTimeout(this.debounceTimer);
     this.debounceTimer = undefined;
@@ -55,6 +58,7 @@ export class ProviderIngestQueue {
     this.pendingSourceIds.clear();
   }
 
+  /** Resolves once no ingestion pass is in flight; used by shutdown. */
   async waitForIdle(): Promise<void> {
     if (this.inFlight !== undefined) await this.inFlight;
   }

@@ -28,10 +28,10 @@ export interface LaunchPlanFacts {
         readonly onFailure: 'terminate-run-and-record-drift';
       };
   /**
-   * B3d §13.5: the role's watcher policy, pinned into the immutable plan at
-   * resolution. Optional in the FACTS because a host composed without
-   * Supervision genuinely has none to read — a Runtime that invented one would
-   * be installing watchers no role ever asked for.
+   * The role's watcher policy, pinned into the immutable plan at resolution.
+   * Optional in the FACTS because a host composed without Supervision
+   * genuinely has none to read — a Runtime that invented one would be
+   * installing watchers no role ever asked for.
    */
   readonly supervisionPolicy?: {
     readonly activityDrift: 'required' | 'disabled-explicitly';

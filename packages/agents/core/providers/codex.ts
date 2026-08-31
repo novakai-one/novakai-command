@@ -1,7 +1,7 @@
-// core/providers/codex.ts — the CODEX provider adapter (DEC-B1-4).
+// The CODEX provider adapter.
 //
-// Mirrors the kimi adapter's proven shape against the ratified terminal
-// mini-contract (R3-15). Provider-specific code lives ONLY here (red gate 2).
+// Mirrors the kimi adapter's proven shape against the terminal seam.
+// Provider-specific code lives ONLY here.
 //
 // The machine surface (verified LIVE against codex-cli 0.144.5, 2026-07-28 —
 // `codex exec --help`, `codex exec resume --help`, and a real recorded run):
@@ -17,11 +17,11 @@
 //     {"type":"turn.completed","usage":{"input_tokens":21312,
 //        "cached_input_tokens":0,"output_tokens":9,"reasoning_output_tokens":0}}
 //
-// OD-B1-1 CLOSED: codex HAS resume. `codex exec resume <session-id> "<prompt>"`
+// RESUME: codex HAS resume. `codex exec resume <session-id> "<prompt>"`
 // takes the thread_id printed on the first turn (it is also the session id in
 // the rollout filename ~/.codex/sessions/YYYY/MM/DD/rollout-<ts>-<id>.jsonl).
-// So the §13 disposition-5 "no-resume" fallback (rolling summary injection) is
-// NOT needed for codex, and no history is re-injected per turn.
+// So no "no-resume" fallback (rolling summary injection) is needed for codex,
+// and no history is re-injected per turn.
 //
 // GIT-REPO RULE (HANDOVER verified fact): codex refuses to run outside a git
 // repository unless `--skip-git-repo-check` is passed. The adapter DETECTS the
@@ -31,9 +31,9 @@
 //
 // MODEL: `-m <alias>` at spawn. Mid-session switch has no verified mechanism →
 // no `setModel` on this runtime → typed UnsupportedOperation at the contract
-// layer (OD-C3). Recorded in NOTES.md.
+// layer.
 //
-// USAGE (DEC-B1-7) — the calibration that live measurement corrected:
+// USAGE — the calibration that live measurement corrected:
 // `turn.completed.usage` in the stream tracks the rollout's cumulative
 // `total_token_usage`, NOT the per-turn `last_token_usage`. Measured across two
 // turns of one thread on 2026-07-28:
@@ -53,7 +53,7 @@ export function defaultCodexCliPath(): string {
   return resolveCliPath('codex');
 }
 
-/** Red gate 3: these values mean "pass no -m flag; let codex use its config". */
+/** These values mean "pass no -m flag; let codex use its config". */
 const NO_MODEL_FLAG = new Set(['cli-default', 'codex-cli', '']);
 
 interface LogicalSession {
@@ -64,7 +64,7 @@ interface LogicalSession {
   /** Serializes per-message child processes: one prompt in flight at a time. */
   queue: Promise<void>;
   current: ChildProcess | null;
-  /** Provider-native spawn config (§22 ruling 5): argv is PREPENDED per message. */
+  /** Provider-native spawn config: argv is PREPENDED per message. */
   argv: string[];
   env: Record<string, string>;
   model: string | null;
@@ -268,7 +268,7 @@ export function createCodexCliRuntime(options: CodexCliRuntimeOptions): CodexCli
       await (sessions.get(key)?.queue ?? Promise.resolve());
     },
 
-    /** Restart path (DEC-B1-6): rebuild the logical session around its thread id. */
+    /** Restart path: rebuild the logical session around its thread id. */
     adopt(key, adoptOptions) {
       const existing = sessions.get(key);
       if (existing) {

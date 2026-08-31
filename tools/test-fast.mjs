@@ -26,7 +26,7 @@ function walk(dir, out = []) {
   return out;
 }
 
-const all = [...walk(join(pkgDir, 'tests')), ...walk(join(pkgDir, 'b3/tests'))];
+const all = [...walk(join(pkgDir, 'tests')), ...walk(join(pkgDir, 'governed/tests'))];
 const isGuard = (f) => guards.some((r) => r.test(f));
 // The slow tier is a folder, not a name pattern: anything under tests/slow/.
 // (Also matches when pkgDir is '.', where paths have no leading slash.)

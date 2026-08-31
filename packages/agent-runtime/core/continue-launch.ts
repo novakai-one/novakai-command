@@ -1,4 +1,4 @@
-// Starting the Run that replaces another (§13.6).
+// Starting the Run that replaces another.
 //
 // Split from `continue.ts` so that file reads as the ORDER a continuation
 // happens in, and this one reads as what actually starts. Re-entrant: it looks
@@ -47,7 +47,7 @@ export async function startReplacement(
   // authenticates as itself with a credential minted for its own id. This used
   // to prepare first and pass `runtimeEnvironment: {}` — so every continued
   // Agent lost its identity, and a credential-less caller is the local human
-  // with every scope Chris holds (§13.6, DEC-B3V4-05, red gate 5).
+  // with every scope the operator holds.
   const created = await reserveReplacementRun(core, context, work);
   if (!created.ok) return created;
 
@@ -106,7 +106,7 @@ export async function startReplacement(
 
 /**
  * The replacement Run record — or the one an earlier attempt already reserved.
- * A crash between reserving and launching must not mint a second Run (§20).
+ * A crash between reserving and launching must not mint a second Run.
  */
 async function reserveReplacementRun(
   core: RunsCore,

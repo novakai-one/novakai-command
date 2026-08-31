@@ -4,7 +4,6 @@ export interface AgentDeliveryMarker {
   readonly recipientAgentId: string;
   readonly text: string;
   readonly clientOpId: string;
-  readonly threadId?: string;
   readonly screenContext?: Readonly<Record<string, unknown>>;
 }
 

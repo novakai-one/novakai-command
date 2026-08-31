@@ -1,16 +1,18 @@
 /** One accepted provider turn. */
+import type { ProviderResumeId, Timestamp } from '../types.js';
+
 export interface ProviderSendInput {
   readonly sendId: string;
   readonly targetAgentId: string;
   readonly text: string;
-  readonly resumeId?: string;
+  readonly resumeId?: ProviderResumeId;
   readonly screenContext?: Readonly<Record<string, unknown>>;
 }
 
 export type ProviderDispatchResult =
   | {
       readonly ok: true;
-      readonly dispatchedAt: string;
+      readonly dispatchedAt: Timestamp;
       readonly certainty: 'confirmed' | 'unconfirmed';
       readonly response: string;
     }

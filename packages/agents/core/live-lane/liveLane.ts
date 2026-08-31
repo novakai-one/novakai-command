@@ -1,6 +1,6 @@
-// core/live-lane — R3-1: agents owns the LIVE LANE. The session adapter
-// subscribes terminal output and issues messages.send via messaging's PUBLIC
-// contract in real time. Messaging's store is never touched (sealed capability).
+// The live lane: agents owns it. The session adapter subscribes terminal
+// output and issues messages.send via messaging's PUBLIC contract in real
+// time. Messaging's store is never touched (sealed capability).
 //
 import type { PtyEvent, Unsubscribe } from '../../contract/schemas.js';
 import type { AgentsContext } from '../composition.js';
@@ -14,11 +14,11 @@ export interface LiveLaneBinding {
 /**
  * Attach the telemetry lane for context advisories and turn boundaries.
  * Provider output never crosses a message-content interface.
- * S2b: attaching registers the session for context advisories (ruling 1)
- * and tracks turn boundaries — output/activity extends the turn; an 'idle'
- * activity ENDS it (M5: idle never extends); a quiet window
- * (ctx.advisoryQuietMs) ends it too. Advisory queue semantics (ruled, DEC-S2-6):
- * latest-wins coalescing, capped at ONE timestamped pending advisory.
+ * Attaching registers the session for context advisories and tracks turn
+ * boundaries — output/activity extends the turn; an 'idle' activity ENDS it
+ * (idle never extends); a quiet window (ctx.advisoryQuietMs) ends it too.
+ * Advisory queue semantics: latest-wins coalescing, capped at ONE timestamped
+ * pending advisory.
  */
 export function attachLiveLane(ctx: AgentsContext, binding: LiveLaneBinding): Unsubscribe {
   const adapter = Object.values(ctx.adapters).find((a) => a.attach(binding.sessionId));
@@ -42,7 +42,7 @@ export function attachLiveLane(ctx: AgentsContext, binding: LiveLaneBinding): Un
 
 /**
  * Turn tracking: output/activity extends the turn; an 'idle' activity event
- * ENDS the turn immediately (M5 — the adapter's quiet-window heuristic says the
+ * ENDS the turn immediately (the adapter's quiet-window heuristic says the
  * turn is over, so queued advisories flush between turns right away); quiet
  * ends it via the timer.
  */
@@ -73,9 +73,9 @@ export function flushAdvisories(ctx: AgentsContext, sessionId: string): void {
 }
 
 /**
- * Push a focus-change advisory to an in-app session (DEC-S2-6). Idle session →
- * delivered immediately as a system context line; mid-turn → queued,
- * latest-wins (a newer advisory REPLACES the pending one — capped at 1).
+ * Push a focus-change advisory to an in-app session. Idle session → delivered
+ * immediately as a system context line; mid-turn → queued, latest-wins (a
+ * newer advisory REPLACES the pending one — capped at 1).
  * Sessions without a live lane are pull-only (nvk-context) — refused (false),
  * never silently dropped.
  */

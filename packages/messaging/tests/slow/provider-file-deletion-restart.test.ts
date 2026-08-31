@@ -3,10 +3,8 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import {
-  createDefaultMessagingRuntime,
-  type AgentDirectory,
-} from '../../contract/index.js';
+import { createDefaultMessagingRuntime } from '../../contract/compose/ingestion.js';
+import type { AgentDirectory } from '../../contract/ports/agent-directory.js';
 
 const AGENT_ID = 'agent_restart-proof';
 

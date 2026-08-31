@@ -1,6 +1,6 @@
 import { watch, type FSWatcher } from 'node:fs';
-import { realpath } from 'node:fs/promises';
 import path from 'node:path';
+import { existingRoots } from './available-roots.js';
 
 /**
  * Normalizes provider-root filesystem notifications for the source monitor. A
@@ -34,43 +34,45 @@ export function createTranscriptRootsWatcher(
   const watchers = new Map<string, FSWatcher>();
   let closed = false;
 
-  const refresh = async (): Promise<void> => {
-    if (closed) return;
-    const active = new Set<string>();
-    for (const configuredRoot of configuredRoots) {
-      let root: string;
-      try {
-        root = await realpath(configuredRoot);
-      } catch (cause) {
-        if ((cause as NodeJS.ErrnoException).code === 'ENOENT') continue;
-        throw cause;
-      }
-      active.add(root);
-      if (watchers.has(root)) continue;
-      try {
-        const watcher = watch(root, { recursive: true }, (eventType, filename) => {
-          notify({
-            eventType,
-            ...(filename === null
-              ? {}
-              : { filePath: path.resolve(root, filename.toString()) }),
-          });
+  /** One root's events, normalized; a dead watcher asks for rediscovery. */
+  const attach = (root: string): void => {
+    if (watchers.has(root)) return;
+    try {
+      const watcher = watch(root, { recursive: true }, (eventType, filename) => {
+        notify({
+          eventType,
+          ...(filename === null
+            ? {}
+            : { filePath: path.resolve(root, filename.toString()) }),
         });
-        watcher.on('error', () => {
-          watcher.close();
-          watchers.delete(root);
-          notify({ eventType: 'rename' });
-        });
-        watchers.set(root, watcher);
-      } catch {
+      });
+      watcher.on('error', () => {
+        watcher.close();
+        watchers.delete(root);
         notify({ eventType: 'rename' });
-      }
+      });
+      watchers.set(root, watcher);
+    } catch {
+      // A root that cannot be watched (permissions, race with deletion) is
+      // treated like a rename: the monitor falls back to full discovery.
+      notify({ eventType: 'rename' });
     }
+  };
+
+  /** Watchers whose root vanished are closed so only live roots notify. */
+  const detachVanished = (active: ReadonlySet<string>): void => {
     for (const [root, watcher] of watchers) {
       if (active.has(root)) continue;
       watcher.close();
       watchers.delete(root);
     }
+  };
+
+  const refresh = async (): Promise<void> => {
+    if (closed) return;
+    const active = new Set(await existingRoots(configuredRoots));
+    detachVanished(active);
+    for (const root of active) attach(root);
   };
 
   return {

@@ -1,9 +1,8 @@
-// core/sessions/process-probe.ts — OS process liveness probe (split from
-// registry.ts, SUPFIX step 0).
+// OS process liveness probe.
 //
-// Internal seam (§13 disposition 10): "is this pid still alive, and is it still
-// the process we spawned?" Production probes the OS; tests inject a fake. Two
-// real adapters, so the seam earns its place.
+// Internal seam: "is this pid still alive, and is it still the process we
+// spawned?" Production probes the OS; tests inject a fake. Two real adapters,
+// so the seam earns its place.
 import { execFileSync } from 'node:child_process';
 
 export interface ProcessProbe {

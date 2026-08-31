@@ -4,23 +4,23 @@ import { appendFile, mkdir, mkdtemp, open, readFile, writeFile } from "node:fs/p
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { createMessagingRuntime } from "../../../core/runtime/messaging-runtime.js";
 import {
   agentIdentityHookCommand,
-  createDefaultMessagingRuntime,
-  createMemoryTranscriptStore,
-  createMessagingRuntime,
-  createProviderTranscriptSource,
-  ensureClaudeIdentityHook,
-  ensureCodexIdentityHook,
-  ensureKimiIdentityHook,
-  findAgentIdentityMarker,
-  providerNormalizer,
   runAgentIdentityHook,
-  type AgentDirectory,
-  type IngestCheckpoint,
-  type ProviderLineExtent,
-  type ProviderName,
-} from "../../../contract/index.js";
+} from "../../../adapters/provider-hooks/agent-identity-hook.js";
+import { ensureClaudeIdentityHook } from "../../../adapters/provider-hooks/registrations/claude.js";
+import { ensureCodexIdentityHook } from "../../../adapters/provider-hooks/registrations/codex.js";
+import { ensureKimiIdentityHook } from "../../../adapters/provider-hooks/registrations/kimi.js";
+import { createProviderTranscriptSource } from "../../../adapters/provider-transcripts/source.js";
+import { providerNormalizer } from "../../../adapters/provider-transcripts/normalizers/index.js";
+import { createMemoryTranscriptStore } from "../../../adapters/stores/memory.js";
+import { findAgentIdentityMarker } from "../../../contract/agent-identity.js";
+import { createDefaultMessagingRuntime } from "../../../contract/compose/ingestion.js";
+import type { AgentDirectory } from "../../../contract/ports/agent-directory.js";
+import type { ProviderLineExtent } from "../../../contract/ports/provider-transcript-source.js";
+import type { IngestCheckpoint } from "../../../contract/records/ingest-checkpoint.js";
+import type { ProviderName } from "../../../contract/types.js";
 
 test('runtime keeps its retry timer when the first provider scan fails', async () => {
   let scans = 0;
@@ -49,8 +49,10 @@ test('runtime keeps its retry timer when the first provider scan fails', async (
     }
     assert.ok(scans >= 2);
     const health = await runtime.health();
-    assert.equal(health.state, 'running');
-    assert.ok(health.runs >= 1);
+    assert.equal(health.kind, 'ok');
+    if (health.kind !== 'ok') return;
+    assert.equal(health.value.state, 'running');
+    assert.ok(health.value.runs >= 1);
   } finally {
     await runtime.stop();
   }

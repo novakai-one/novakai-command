@@ -3,16 +3,15 @@ import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import {
-  createMemoryTranscriptStore,
-  createMessagingRuntime,
-  messageCorrelationHint,
-  openFoundationTranscriptStore,
-  type AgentDirectory,
-  type ProviderSend,
-  type ProviderTranscriptSource,
-  type TranscriptLine,
-} from '../../contract/index.js';
+import { createMessagingRuntime } from '../../core/runtime/messaging-runtime.js';
+import { createMemoryTranscriptStore } from '../../adapters/stores/memory.js';
+import { openFoundationTranscriptStore } from '../../adapters/stores/jsonl.js';
+import { messageCorrelationHint } from '../../contract/correlation.js';
+import type { AgentDirectory } from '../../contract/ports/agent-directory.js';
+import type { ProviderSend } from '../../contract/ports/provider-send.js';
+import type { ProviderTranscriptSource } from '../../contract/ports/provider-transcript-source.js';
+import type { TranscriptLine } from '../../contract/records/transcript-line.js';
+import type { ProviderSessionId, Timestamp } from '../../contract/types.js';
 
 const emptySource: ProviderTranscriptSource = {
   scan: async () => [],
@@ -26,7 +25,7 @@ const normalizers = {
 } as const;
 
 function directory() {
-  let sessionId: string | null = null;
+  let sessionId: ProviderSessionId | null = null;
   const value: AgentDirectory = {
     async get(agentId) {
       return agentId === 'agent_alpha'
@@ -38,11 +37,11 @@ function directory() {
     },
     async deliveryReadiness() { return 'idle'; },
     async attachProviderSession(_agentId, providerSessionId) {
-      sessionId = providerSessionId;
+      sessionId = providerSessionId as ProviderSessionId;
       return { ok: true, state: 'attached' };
     },
   };
-  return { value, attach: (next: string) => { sessionId = next; } };
+  return { value, attach: (next: string) => { sessionId = next as ProviderSessionId; } };
 }
 
 const sendInput = {
@@ -64,7 +63,7 @@ test('acceptance is durable before one provider effect and confirms only from tr
       assert.equal(journals[0]?.state, 'dispatching');
       return {
         ok: true,
-        dispatchedAt: '2026-08-25T00:00:01.000Z',
+        dispatchedAt: '2026-08-25T00:00:01.000Z' as Timestamp,
         certainty: 'unconfirmed',
         response: '',
       };
@@ -94,7 +93,7 @@ test('acceptance is durable before one provider effect and confirms only from tr
   assert.equal(await store.bindAgentSession(
     'agent_alpha',
     sessionId,
-    '2026-08-25T00:00:04.000Z',
+    '2026-08-25T00:00:04.000Z' as Timestamp,
   ), 1);
   assert.equal((await store.listSendJournals())[0]?.state, 'awaiting-transcript');
 
@@ -126,13 +125,13 @@ test('acceptance is durable before one provider effect and confirms only from tr
   assert.equal(await store.confirmSendForLines(
     sessionId,
     [unrelated],
-    '2026-08-25T00:00:05.500Z',
+    '2026-08-25T00:00:05.500Z' as Timestamp,
   ), 0);
   assert.equal((await store.listSendJournals())[0]?.state, 'awaiting-transcript');
   assert.equal(await store.confirmSendForLines(
     sessionId,
     [line],
-    '2026-08-25T00:00:06.000Z',
+    '2026-08-25T00:00:06.000Z' as Timestamp,
   ), 1);
   const confirmed = (await store.listSendJournals())[0];
   assert.equal(confirmed?.state, 'confirmed');
@@ -153,7 +152,7 @@ test('ambiguous close sends become indeterminate instead of taking the wrong use
     providerSend: {
       dispatch: async () => ({
         ok: true,
-        dispatchedAt: `2026-08-25T00:00:0${tick++}.000Z`,
+        dispatchedAt: `2026-08-25T00:00:0${tick++}.000Z` as Timestamp,
         certainty: 'unconfirmed',
         response: '',
       }),
@@ -181,7 +180,7 @@ test('ambiguous close sends become indeterminate instead of taking the wrong use
     raw: '{}',
   }));
   assert.equal(await store.confirmSendForLines(
-    sessionId, lines, '2026-08-25T00:00:20.000Z',
+    sessionId, lines, '2026-08-25T00:00:20.000Z' as Timestamp,
   ), 0);
   const journals = await store.listSendJournals();
   assert.equal(journals.every((journal) => journal.state === 'indeterminate'), true);
@@ -215,7 +214,7 @@ test('a resumed send confirms only beyond its persisted source fence', async () 
   const runtime = createMessagingRuntime({
     store, source: emptySource, normalizers, agentDirectory: agents.value,
     providerSend: { dispatch: async () => ({
-      ok: true, dispatchedAt: '2026-08-25T00:00:01.000Z', certainty: 'unconfirmed', response: '',
+      ok: true, dispatchedAt: '2026-08-25T00:00:01.000Z' as Timestamp, certainty: 'unconfirmed', response: '',
     }) },
   });
   await runtime.sendConversationMessage({ ...sendInput, clientOpId: 'fenced-send' });
@@ -231,10 +230,10 @@ test('a resumed send confirms only beyond its persisted source fence', async () 
     correlationHint: messageCorrelationHint('hello'), raw: '{}',
   });
   assert.equal(await store.confirmSendForLines(
-    sessionId, [lineAt(99)], '2026-08-25T00:00:02.000Z',
+    sessionId, [lineAt(99)], '2026-08-25T00:00:02.000Z' as Timestamp,
   ), 0);
   assert.equal(await store.confirmSendForLines(
-    sessionId, [lineAt(100)], '2026-08-25T00:00:03.000Z',
+    sessionId, [lineAt(100)], '2026-08-25T00:00:03.000Z' as Timestamp,
   ), 1);
 });
 
@@ -252,7 +251,7 @@ test('a reused client operation with different content is rejected before effect
         effects += 1;
         return {
           ok: true,
-          dispatchedAt: new Date().toISOString(),
+          dispatchedAt: new Date().toISOString() as Timestamp,
           certainty: 'unconfirmed',
           response: '',
         };
@@ -277,7 +276,7 @@ test('Foundation adapter replays SendJournal state from the canonical database',
     providerSend: {
       dispatch: async () => ({
         ok: true,
-        dispatchedAt: '2026-08-25T00:00:00.000Z',
+        dispatchedAt: '2026-08-25T00:00:00.000Z' as Timestamp,
         certainty: 'unconfirmed',
         response: '',
       }),

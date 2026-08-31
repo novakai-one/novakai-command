@@ -4,15 +4,10 @@ import type { B2aServerCapabilities } from '../../core/b2a/composition.js';
 import { buildB2aMethods } from '../../core/b2a/methods.js';
 
 const EXACT_METHODS = [
-  'abandonWorkflow',
-  'addMessageToProject',
   'archiveProject',
-  'attachArtifactToProject',
-  'continueWorkflow',
   'createProject',
   'getArtifactMeta',
   'getProjectItems',
-  'getSpineWorkflows',
   'listArtifacts',
   'listProjects',
 ];
@@ -54,13 +49,6 @@ function harness(): {
           listProjects: operation('listProjects'),
           getProjectItems: operation('getProjectItems'),
         },
-        spine: {
-          createProject: operation('spine.createProject'),
-          archiveProject: operation('spine.archiveProject'),
-          listProjects: operation('spine.listProjects'),
-          getProjectItems: operation('spine.getProjectItems'),
-          attach: operation('projects.attach'),
-        },
       },
       artifacts: {
         operations: {
@@ -75,23 +63,11 @@ function harness(): {
           sweepOrphans: operation('sweepOrphans'),
         },
       },
-      spine: {
-        operations: {
-          addMessageToProject: operation('addMessageToProject'),
-          attachArtifactToProject: operation('attachArtifactToProject'),
-          continueWorkflow: operation('continueWorkflow'),
-          abandonWorkflow: operation('abandonWorkflow'),
-          getSpineWorkflows: operation('getSpineWorkflows'),
-        },
-        boot: {
-          scanWorkflows: operation('scanWorkflows'),
-        },
-      },
     } as unknown as B2aServerCapabilities,
   };
 }
 
-test('B2a WS methods expose exactly eleven non-byte operations through public contracts', async () => {
+test('B2a WS methods expose exactly six non-byte operations through public contracts', async () => {
   const h = harness();
   const methods = buildB2aMethods(h.capabilities);
   assert.deepEqual(Object.keys(methods).sort(), EXACT_METHODS);
@@ -111,29 +87,8 @@ test('B2a WS methods expose exactly eleven non-byte operations through public co
     }, 'archiveProject'],
     ['listProjects', { status: 'active' }, 'listProjects'],
     ['getProjectItems', { projectId: 'proj_ws' }, 'getProjectItems'],
-    ['addMessageToProject', {
-      messageId: 'message_ws',
-      projectId: 'proj_ws',
-      note: 'message evidence',
-      clientOpId: 'op_ws_message',
-    }, 'addMessageToProject'],
-    ['attachArtifactToProject', {
-      artifactId: 'artifact_ws',
-      projectId: 'proj_ws',
-      note: 'artifact evidence',
-      clientOpId: 'op_ws_artifact',
-    }, 'attachArtifactToProject'],
     ['getArtifactMeta', { artifactId: 'artifact_ws' }, 'getArtifactMeta'],
     ['listArtifacts', undefined, 'listArtifacts'],
-    ['getSpineWorkflows', {}, 'getSpineWorkflows'],
-    ['continueWorkflow', {
-      workflowId: 'spineWorkflow_ws',
-      clientOpId: 'op_ws_continue',
-    }, 'continueWorkflow'],
-    ['abandonWorkflow', {
-      workflowId: 'spineWorkflow_ws',
-      clientOpId: 'op_ws_abandon',
-    }, 'abandonWorkflow'],
   ];
 
   for (const [method, params, delegated] of valid) {
@@ -210,24 +165,8 @@ test('every B2a WS method rejects malformed external input before delegation', a
     ['archiveProject', { projectId: 'wrong', clientOpId: 'op_archive' }],
     ['listProjects', { status: 'deleted' }],
     ['getProjectItems', { projectId: 'wrong' }],
-    ['addMessageToProject', {
-      messageId: 'wrong',
-      projectId: 'proj_ws',
-      clientOpId: 'op_message',
-    }],
-    ['attachArtifactToProject', {
-      artifactId: 'wrong',
-      projectId: 'proj_ws',
-      clientOpId: 'op_artifact',
-    }],
     ['getArtifactMeta', { artifactId: 'wrong' }],
     ['listArtifacts', { bytes: 'forbidden' }],
-    ['getSpineWorkflows', { autoContinue: true }],
-    ['continueWorkflow', { workflowId: 'wrong', clientOpId: 'op_continue' }],
-    ['abandonWorkflow', {
-      workflowId: 'spineWorkflow_ws',
-      clientOpId: '',
-    }],
   ];
 
   for (const [method, params] of invalid) {

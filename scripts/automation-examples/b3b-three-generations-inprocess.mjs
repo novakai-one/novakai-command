@@ -37,10 +37,10 @@ const live = process.argv.includes('--live');
 
 // The one import: the runtime this harness is about to treat as a stranger.
 const { startRuntimeHost } = await import(
-  path.join(repoRoot, 'packages/server/core/b3/host.ts')
+  path.join(repoRoot, 'packages/server/core/runtime-host/host.ts')
 );
 const { createFakeProviderAdapters } = await import(
-  path.join(repoRoot, 'packages/agents/b3/contract/index.ts')
+  path.join(repoRoot, 'packages/agents/governed/contract/index.ts')
 );
 
 let failures = 0;

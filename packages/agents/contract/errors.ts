@@ -1,4 +1,4 @@
-// §6 agents-lite typed errors. Values, never throws (A §11).
+// Typed errors, returned as values and never thrown.
 import type { ContractError, StoreError } from '@novakai/foundation/dist/contract/errors.js';
 
 export type UnsupportedOperationError = ContractError<'UnsupportedOperation',

@@ -1,8 +1,10 @@
 /** Minimal Agent fact needed by Messaging. */
+import type { ProviderSessionId } from '../types.js';
+
 export interface AgentDirectoryEntry {
   readonly agentId: string;
   readonly provider: 'claude' | 'codex' | 'kimi';
-  readonly currentProviderSessionId: string | null;
+  readonly currentProviderSessionId: ProviderSessionId | null;
 }
 
 export type AgentSessionAttachment =

@@ -49,7 +49,7 @@ const sourceFile = (relative: string): string =>
 describe('FZ-VIEW-013: the row is the frozen row, field for field', () => {
   it('names exactly the eight members the freeze names', () => {
     expect([...COMMUNICATION_VIEW_FROZEN]).toEqual([
-      'messageId', 'threadId', 'senderPrincipalId', 'recipientAgentIds',
+      'messageId', 'conversationGroupingKey', 'senderPrincipalId', 'recipientAgentIds',
       'relatedRunIds', 'deliveryState', 'occurredAt', 'screenContext',
     ]);
   });
@@ -69,9 +69,9 @@ describe('FZ-VIEW-013: the row is the frozen row, field for field', () => {
 
   it('reports a field nobody has heard of, in either direction', () => {
     expect(agentCommunicationDrift(communicationItem())).toEqual([]);
-    const { threadId: _dropped, ...missing } = communicationItem();
+    const { conversationGroupingKey: _dropped, ...missing } = communicationItem();
     expect(agentCommunicationDrift(missing).join(' '))
-      .toContain('threadId is missing');
+      .toContain('conversationGroupingKey is missing');
     expect(agentCommunicationDrift({ ...communicationItem(), mood: 'chipper' }).join(' '))
       .toContain('mood is not in the frozen projection');
   });

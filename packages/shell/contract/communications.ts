@@ -47,7 +47,8 @@ export interface ScreenContextEcho {
 /** FZ-VIEW-013, verbatim. The extras below are the owner's, marked as such. */
 export interface AgentCommunicationItemView {
   readonly messageId: string;
-  readonly threadId: string;
+  /** The conversation grouping key (FZ-VIEW-013's `threadId`, renamed by the owner). */
+  readonly conversationGroupingKey: string;
   readonly senderPrincipalId: string;
   readonly recipientAgentIds: readonly string[];
   readonly relatedRunIds: readonly string[];
@@ -78,13 +79,13 @@ export interface AgentCommunicationsPageView {
 export interface ListAgentCommunicationsRequest {
   readonly agentIds: readonly string[];
   readonly runIds?: readonly string[];
-  readonly threadId?: string;
+  readonly conversationGroupingKey?: string;
   readonly cursor?: string;
   readonly limit?: number;
 }
 
 export const COMMUNICATION_VIEW_FROZEN = [
-  'messageId', 'threadId', 'senderPrincipalId', 'recipientAgentIds',
+  'messageId', 'conversationGroupingKey', 'senderPrincipalId', 'recipientAgentIds',
   'relatedRunIds', 'deliveryState', 'occurredAt', 'screenContext',
 ] as const;
 
@@ -99,7 +100,7 @@ export const SCREEN_CONTEXT_ECHO_FROZEN = [
 
 /** Required on every row — an absent one means a fact went missing in transit. */
 export const COMMUNICATION_VIEW_REQUIRED = [
-  'messageId', 'threadId', 'senderPrincipalId', 'recipientAgentIds',
+  'messageId', 'conversationGroupingKey', 'senderPrincipalId', 'recipientAgentIds',
   'relatedRunIds', 'deliveryState', 'occurredAt',
 ] as const;
 
@@ -277,8 +278,8 @@ export const COMMUNICATION_FACTS: readonly CommunicationFact[] = [
     describe: (item) => readableUtc(item.occurredAt),
   },
   {
-    id: 'thread', term: 'Thread', sourceOf: frozen(),
-    describe: (item) => item.threadId,
+    id: 'conversation', term: 'Conversation', sourceOf: frozen(),
+    describe: (item) => item.conversationGroupingKey,
   },
   {
     id: 'screen-context', term: 'Screen context',

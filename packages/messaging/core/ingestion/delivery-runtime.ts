@@ -5,7 +5,8 @@ import type { ProviderSend } from '../../contract/ports/provider-send.js';
 import type { TranscriptStore } from '../../contract/ports/transcript-store.js';
 import type { DeliveryRunResult } from '../../contract/runtime.js';
 import { MessagingError } from '../../contract/types.js';
-import { AddressedDeliveryReconciler } from '../delivery/queue-addressed.js';
+import { brandClock } from '../clock.js';
+import { AddressedDeliveryReconciler } from '../delivery/addressed-delivery-reconciler.js';
 import { routePendingDeliveries } from '../delivery/router.js';
 import type { DurableTranscriptEventBus } from '../event-bus.js';
 
@@ -31,7 +32,7 @@ const unavailable = (cause: unknown): Outcome<DeliveryRunResult> => ({
  * filesystem ingestion. Concurrent maintenance requests share one execution;
  * shutdown can wait until all active delivery work settles.
  */
-export class IngestionDeliveryRuntime {
+export class DeliveryRuntime {
   private readonly addressed = new AddressedDeliveryReconciler();
   private deliveryInFlight: Promise<Outcome<DeliveryRunResult>> | undefined;
   private maintenanceInFlight: Promise<void> | undefined;
@@ -45,8 +46,8 @@ export class IngestionDeliveryRuntime {
 
   maintain(eventBus: DurableTranscriptEventBus): Promise<void> {
     if (this.maintenanceInFlight !== undefined) return this.maintenanceInFlight;
-    const run = this.performMaintenance(eventBus);
-    this.maintenanceInFlight = run.finally(() => {
+    const maintenance = this.performMaintenance(eventBus);
+    this.maintenanceInFlight = maintenance.finally(() => {
       this.maintenanceInFlight = undefined;
     });
     return this.maintenanceInFlight;
@@ -81,7 +82,7 @@ export class IngestionDeliveryRuntime {
         agents: this.options.agents!,
         conversations: this.options.conversations!,
         providerSend: this.options.providerSend!,
-        now: this.options.now,
+        now: brandClock(this.options.now),
       });
       this.lastRun = this.options.now();
       return { kind: 'ok', value };

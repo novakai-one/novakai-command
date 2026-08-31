@@ -1,12 +1,13 @@
-/** Novakai Server composition root: the same 13 ordered boot steps. */
+/** Novakai Server composition root: the ordered boot steps. Step numbers are
+ *  stable identifiers — removed capabilities (3 messaging, 10 spine) leave
+ *  gaps rather than renumbering the steps operators and tests know. */
 
 import { randomUUID } from 'node:crypto';
 import { recordSystemAction } from '@novakai/foundation/dist/contract/index.js';
 import type { FocusSnapshot } from '../../shell/contract/context.js';
 import { startTransport, type RunningTransport } from './transport/server.js';
-import { buildMethods, restoreLiveSessions, type ServerRuntime } from './methods.js';
-import { handleDoorHttpRequest } from './door/routes.js';
-import { composeB3Wire } from './b3/runtime-wire.js';
+import { buildMethods, type ServerRuntime } from './methods.js';
+import { composeRuntimeHostWire } from './runtime-host/runtime-wire.js';
 import { composePrincipals } from './boot/principals.js';
 import { composeCapabilities } from './boot/capabilities.js';
 import { hydrateConversations } from './boot/conversation-hydration.js';
@@ -23,7 +24,6 @@ export type {
   BootOptions,
   BootResult,
   BootStep,
-  MessagingSessionHolder,
   NovakaiServer,
 } from './boot/contract.js';
 
@@ -31,7 +31,7 @@ export async function bootServer(options: BootOptions): Promise<BootResult> {
   const steps: BootStep[] = [];
   const note = (step: number, name: string, detail: string): void => {
     steps.push({ step, name, detail });
-    console.log(`[nvk-server] ${step}/13 ${name}: ${detail}`);
+    console.log(`[nvk-server] step ${step} ${name}: ${detail}`);
   };
   const cwd = options.cwd ?? process.cwd();
 
@@ -48,13 +48,17 @@ export async function bootServer(options: BootOptions): Promise<BootResult> {
     cwd,
   });
   const {
-    embedded,
     agentsCtx,
     agents,
     kimiRuntime,
     providerRuntimes,
     transcript,
   } = capabilities;
+  const transcriptHost = { runtime: transcript.runtime };
+  const stopMessaging = async (): Promise<void> => {
+    await transcript.runtime.stop();
+    await transcript.close();
+  };
   const hydrated = await hydrateConversations(
     persistence.conversationViewDriver,
     transcript.runtime,
@@ -67,20 +71,16 @@ export async function bootServer(options: BootOptions): Promise<BootResult> {
     config,
     human,
     persistence,
-    embedded,
-    transcript,
-    conversations: hydrated.conversations,
-    views: hydrated.views,
+    conversationCount: hydrated.conversations.size,
     agentsCtx,
     appendSystemAction,
   });
-  if (!prepared.ok) return prepared.result;
-  const { holders, humanHolder, sessions, sweep, b2a } = prepared;
+  const { sessions, sweep, b2a } = prepared;
 
   const capabilityFailure = await runCapabilityBoot({
     b2a,
-    transcript,
-    embedded,
+    transcript: transcriptHost,
+    stopMessaging,
     persistence,
     appendSystemAction,
     note,
@@ -96,8 +96,6 @@ export async function bootServer(options: BootOptions): Promise<BootResult> {
     providerRuntimes,
     persistence,
     appendSystemAction,
-    humanHolder,
-    humanPersonId: human.personId,
     note,
     broadcast(name, data) {
       runtimeRef.current?.broadcast(name, data);
@@ -107,8 +105,7 @@ export async function bootServer(options: BootOptions): Promise<BootResult> {
   const runtime: ServerRuntime = {
     root: options.root,
     cwd,
-    human: { personId: human.personId, holder: humanHolder },
-    holders,
+    human: { personId: human.personId },
     agents,
     kimiRuntime,
     providerRuntimes,
@@ -116,38 +113,21 @@ export async function bootServer(options: BootOptions): Promise<BootResult> {
     supervision,
     watchdog,
     b2a,
-    transcript,
+    transcript: transcriptHost,
     persistence,
     conversations: hydrated.conversations,
     configStore,
     config,
     focus: { app: 'messaging', ref: 'none' } as FocusSnapshot,
     broadcast: () => undefined,
-    holderForPerson: async (personId: string) => {
-      const principal = configStore.current().principals
-        .find((candidate) => candidate.personId === personId);
-      if (!principal) return null;
-      const holder = await holders.holderFor({ token: principal.token, personId });
-      return holder.ok ? holder.value : null;
-    },
     mintOpId: () => `op_${randomUUID()}`,
   };
   runtimeRef.current = runtime;
 
-  const others = config.principals
-    .map((principal) => principal.personId)
-    .filter((personId) => personId !== human.personId);
-  await humanHolder.call((session) => (
-    session as { setContactPolicy(value: object): Promise<unknown> }
-  ).setContactPolicy({ allowlist: others, defaultRule: 'deny' }));
   await wireTurnAccounting({ providerRuntimes, sessions, usageReader });
-  const restored = await restoreLiveSessions(runtime);
-  if (restored > 0) {
-    note(7, 'sessions', `${restored} session(s) reattached to their conversations`);
-  }
 
-  const b3Wire = await composeB3Wire({
-    ...(options.b3 ?? {}),
+  const runtimeHostWire = await composeRuntimeHostWire({
+    ...(options.runtimeHost ?? {}),
     root: options.root,
     messagingRuntime: transcript.runtime,
     providerAgents: agents,
@@ -155,36 +135,35 @@ export async function bootServer(options: BootOptions): Promise<BootResult> {
       if (kind === 'conversation.created') runtime.broadcast('conversation', payload);
     },
   });
-  note(12, 'runtime', `b3.* composed on ${b3Wire.runtime.dataRoot}`);
-  const methods = { ...buildMethods(runtime), ...b3Wire.methods };
+  note(12, 'runtime', `b3.* composed on ${runtimeHostWire.runtime.dataRoot}`);
+  const methods = { ...buildMethods(runtime), ...runtimeHostWire.methods };
   const transport: RunningTransport = await startTransport({
     root: options.root,
     port: options.port,
     ...(options.staticDir ? { staticDir: options.staticDir } : {}),
     methods,
     artifacts: b2a.artifacts,
-    door: (context) => handleDoorHttpRequest({ runtime, methods }, context),
-    identifyCaller: b3Wire.identifyCaller,
-    onDispatch: b3Wire.onDispatch,
-    onDisconnect: b3Wire.onDisconnect,
+    identifyCaller: runtimeHostWire.identifyCaller,
+    onDispatch: runtimeHostWire.onDispatch,
+    onDisconnect: runtimeHostWire.onDisconnect,
   });
   runtime.broadcast = (name, data) => transport.broadcast(name, data);
   const transcriptEvents = wireTranscriptEvents(runtime);
   try {
-    await b3Wire.serve(transport);
+    await runtimeHostWire.serve(transport);
   } catch (cause) {
     await transport.close();
-    await b3Wire.close();
-    await embedded.close();
+    await runtimeHostWire.close();
+    await stopMessaging();
     return refuse(
       'RuntimeUnavailable',
-      `the B3 Runtime for ${options.root} refused to start: `
+      `the runtime host for ${options.root} refused to start: `
         + `${cause instanceof Error ? cause.message : String(cause)}`,
     );
   }
   agents.subscribeAgentEvents((event) => transport.broadcast('presence', event));
   note(13, 'transport', `listening on ${transport.url} (nvk-ws v1, token-gated)`);
-  if (config.transcript.ingest) transcript.topology.start();
+  if (config.transcript.ingest) void transcript.runtime.start();
   if (options.supervisionTimers ?? true) supervision.start();
 
   config = configStore.current();
@@ -207,11 +186,10 @@ export async function bootServer(options: BootOptions): Promise<BootResult> {
       async close() {
         supervision.stop();
         configWatcher.close();
-        await transcript.topology.stop();
         transcriptEvents.close();
         await transport.close();
-        await b3Wire.close();
-        await embedded.close();
+        await runtimeHostWire.close();
+        await stopMessaging();
       },
     },
   };

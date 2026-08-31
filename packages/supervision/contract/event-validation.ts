@@ -312,7 +312,7 @@ export function parseNotificationRecord(candidate: unknown): B3Result<Notificati
 
 const CAPABILITY_OWNERS = [
   'foundation', 'agents', 'agent-runtime', 'terminal', 'messaging', 'transcript',
-  'supervision', 'shell', 'server', 'projects', 'artifacts', 'spine',
+  'supervision', 'shell', 'server', 'projects', 'artifacts',
 ] as const;
 
 /** Parse the generic committed event envelope accepted by evaluateEvent. */

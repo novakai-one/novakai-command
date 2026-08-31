@@ -19,7 +19,7 @@ import {
   CLI_DEFAULT_MODEL, ConfigObjectInput, DEFAULT_SUPERVISION, PROVIDER_NAMES,
   configKeyOf, type ConfigObject, type ServerConfig,
 } from '../../contract/config.js';
-import { canonicalDataRoot, gateStoreRoute } from '../store-route.js';
+import { canonicalDataRoot } from '../store-paths.js';
 import { resolveServerConfig } from './resolve.js';
 
 const ok = <T>(value: T): Result<T, never> => ({ ok: true, value });
@@ -30,14 +30,10 @@ export interface OpenConfigStoreOptions {
   root: string;
   /**
    * The canonical JSONL directory. Defaults to `<root>/stores`, which is where
-   * §18.1's inventory puts `config.jsonl` alongside every other registered kind.
-   *
-   * It defaulted to the root, so `nvk token mint` — the first command anyone
-   * runs — wrote `.novakai/config.jsonl` and, because its engine's dataRoot came
-   * with it, `.novakai/traces.jsonl`: two record journals on a route no B3
-   * handle reads, in a root whose law is "no Novakai JSONL file outside
-   * `.novakai/stores/`". A root that already has them is migrated by §18.1's
-   * boot cutover, which treats `config` as one more legacy kind to copy.
+   * every registered kind lives. (It once defaulted to the root, so
+   * `nvk token mint` — the first command anyone runs — wrote
+   * `.novakai/config.jsonl` and `.novakai/traces.jsonl` on a route no handle
+   * reads; the legacy route and its cutover gate are since removed.)
    */
   dataRoot?: string;
   /** The principal foundation stamps onto config writes (server identity). */
@@ -91,12 +87,6 @@ export async function openConfigStore(
   options: OpenConfigStoreOptions,
 ): Promise<Result<ConfigStore, StoreError>> {
   const dataRoot = options.dataRoot ?? canonicalDataRoot(options.root);
-  // §18.1: the cutover runs before ANY handle opens under the root, and this is
-  // routinely the first one — `nvk token mint` is offline and has to precede
-  // the Runtime. An explicit `dataRoot` means the caller is deliberately naming
-  // a route (a test seeding a legacy shape, the doctor reading one), so it is
-  // not the canonical open the gate is about.
-  if (options.dataRoot === undefined) await gateStoreRoute(options.root, dataRoot);
   const handle = composeHandle({
     root: options.root,
     dataRoot,

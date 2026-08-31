@@ -1,4 +1,4 @@
-// Runtime-host boundary validation (§3.2, §4.2 MUST).
+// Runtime-host boundary validation.
 //
 // A stop is the one command here that can end things a person cares about, so
 // what it is aimed at has to be an epoch id — not a terminal id that happens to

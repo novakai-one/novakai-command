@@ -5,7 +5,10 @@ import type {
 } from '../../contract/ports/transcript-store.js';
 import type { SendAttempt, SendJournal } from '../../contract/records/send-journal.js';
 import type { TranscriptLine } from '../../contract/records/transcript-line.js';
-import type { ProviderSessionId } from '../../contract/types.js';
+import type { ProviderSessionId, Timestamp } from '../../contract/types.js';
+import { MessagingError } from '../../contract/types.js';
+import { compareStrings } from '../../core/compare.js';
+import { confirmJournalsForLines } from './send-confirmation.js';
 
 export interface PersistedSendMutation {
   readonly sequence: number;
@@ -33,7 +36,26 @@ const updatedAttempt = (
 const terminal = (journal: SendJournal): boolean =>
   journal.state === 'confirmed' || journal.state === 'failed' || journal.state === 'indeterminate';
 
-/** Serialized SendJournal semantics shared by memory and Foundation adapters. */
+/**
+ * A transition whose expected state is already stale: the journal sitting in
+ * the target state is a harmless repeat, anywhere else is a typed race.
+ */
+const settledTransition = (
+  current: SendJournal,
+  input: SendTransitionInput,
+): SendTransitionResult => {
+  if (current.state === input.state) return { journal: current, changed: false };
+  throw new MessagingError('ConcurrentModification', {
+    message: `Send ${input.sendId} state is ${current.state}, expected ${input.expectedState}`,
+    fields: { sendId: input.sendId, expected: input.expectedState, actual: current.state },
+  });
+};
+
+/**
+ * Serialized SendJournal semantics shared by memory and Foundation adapters.
+ * Crash recovery: persist precedes apply, so a crash mid-step replays from
+ * the store on next open.
+ */
 export class SendJournalState {
   private readonly journals = new Map<string, SendJournal>();
   private readonly clientOps = new Map<string, string>();
@@ -47,27 +69,34 @@ export class SendJournalState {
 
   accept(journal: SendJournal, persist?: Persist): Promise<AcceptSendResult> {
     return this.serialized(async () => {
-      const existingId = this.clientOps.get(journal.clientOpId);
-      const existing = existingId === undefined ? undefined : this.journals.get(existingId);
-      if (existing !== undefined) {
-        if (!sameRequest(existing, journal)) {
-          throw new Error(`Send client operation ${journal.clientOpId} conflicts`);
-        }
-        return { journal: existing, duplicate: true };
-      }
+      const existing = this.duplicateOf(journal);
+      if (existing !== undefined) return { journal: existing, duplicate: true };
       if (persist !== undefined) await persist([journal]);
       this.apply([journal]);
       return { journal, duplicate: false };
     });
   }
 
+  /**
+   * The stored journal for this client op: identical means a duplicate
+   * accept, different content under the same op is a typed conflict.
+   */
+  private duplicateOf(journal: SendJournal): SendJournal | undefined {
+    const existingId = this.clientOps.get(journal.clientOpId);
+    if (existingId === undefined) return undefined;
+    const existing = this.journals.get(existingId);
+    if (existing === undefined) return undefined;
+    if (sameRequest(existing, journal)) return existing;
+    throw new MessagingError('IdempotencyConflict', {
+      message: `Send client operation ${journal.clientOpId} conflicts`,
+      fields: { clientOpId: journal.clientOpId, sendId: existing.id },
+    });
+  }
+
   transition(input: SendTransitionInput, persist?: Persist): Promise<SendTransitionResult> {
     return this.serialized(async () => {
       const current = this.required(input.sendId);
-      if (current.state !== input.expectedState) {
-        if (current.state === input.state) return { journal: current, changed: false };
-        throw new Error(`Send ${input.sendId} state is ${current.state}, expected ${input.expectedState}`);
-      }
+      if (current.state !== input.expectedState) return settledTransition(current, input);
       const next: SendJournal = {
         ...current,
         state: input.state,
@@ -83,29 +112,12 @@ export class SendJournalState {
   bindAgentSession(
     agentId: string,
     sessionId: ProviderSessionId,
-    updatedAt: string,
+    updatedAt: Timestamp,
     persist?: Persist,
   ): Promise<number> {
     return this.serialized(async () => {
-      const changed = [...this.journals.values()].flatMap((journal): SendJournal[] => {
-        if (terminal(journal) || journal.targetAgentId !== agentId) return [];
-        if (journal.targetSessionId !== undefined && journal.targetSessionId !== sessionId) {
-          throw new Error(`Send ${journal.id} already targets another ProviderSession`);
-        }
-        if (journal.targetSessionId === sessionId && journal.state !== 'awaiting-session-assignment') return [];
-        const attempts = journal.attempts.map((attempt) =>
-          attempt.state === 'awaiting-session-assignment'
-            ? { ...attempt, state: 'awaiting-transcript' as const }
-            : attempt);
-        return [{
-          ...journal,
-          targetSessionId: sessionId,
-          updatedAt: updatedAt as SendJournal['updatedAt'],
-          state: journal.state === 'awaiting-session-assignment'
-            ? 'awaiting-transcript' : journal.state,
-          attempts,
-        }];
-      });
+      const changed = [...this.journals.values()].flatMap((journal) =>
+        bindingFor(journal, agentId, sessionId, updatedAt));
       if (changed.length === 0) return 0;
       if (persist !== undefined) await persist(changed);
       this.apply(changed);
@@ -116,70 +128,13 @@ export class SendJournalState {
   confirmForLines(
     sessionId: ProviderSessionId,
     lines: readonly TranscriptLine[],
-    updatedAt: string,
+    updatedAt: Timestamp,
     persist?: Persist,
   ): Promise<number> {
     return this.serialized(async () => {
-      const used = new Set([...this.journals.values()].flatMap((journal) =>
-        journal.attempts.flatMap((attempt) => attempt.confirmedLineId === undefined
-          ? [] : [attempt.confirmedLineId])));
-      const candidates = lines
-        .filter((line) => line.sessionId === sessionId && line.role === 'user' && !used.has(line.id))
-        .sort((left, right) => left.sourcePosition.sourceEpoch - right.sourcePosition.sourceEpoch
-          || left.sourcePosition.offset - right.sourcePosition.offset);
-      const pending = [...this.journals.values()]
-        .filter((journal) => journal.targetSessionId === sessionId && journal.state === 'awaiting-transcript')
-        .sort((left, right) => {
-          const leftAt = left.attempts.at(-1)?.dispatchedAt ?? left.createdAt;
-          const rightAt = right.attempts.at(-1)?.dispatchedAt ?? right.createdAt;
-          return leftAt.localeCompare(rightAt) || left.id.localeCompare(right.id);
-        });
-      const changed: SendJournal[] = [];
-      let confirmed = 0;
-      for (const journal of pending) {
-        const attempt = journal.attempts.at(-1);
-        if (attempt?.correlationHint === undefined) continue;
-        const eligible = candidates.filter((line) => {
-          if (line.correlationHint !== attempt.correlationHint) return false;
-          if (attempt.sourceFence === undefined) {
-            return (line.providerOccurredAt ?? line.createdAt)
-              .localeCompare(attempt.dispatchedAt) >= 0;
-          }
-          return line.sourcePosition.sourceId === attempt.sourceFence.sourceId
-            && (line.sourcePosition.sourceEpoch > attempt.sourceFence.sourceEpoch
-              || line.sourcePosition.sourceEpoch === attempt.sourceFence.sourceEpoch
-                && line.sourcePosition.offset >= attempt.sourceFence.offset);
-        });
-        if (eligible.length === 0) continue;
-        if (eligible.length > 1) {
-          changed.push({
-            ...journal,
-            state: 'indeterminate',
-            updatedAt: updatedAt as SendJournal['updatedAt'],
-            attempts: updatedAttempt(journal.attempts, {
-              ...attempt,
-              state: 'indeterminate',
-              failure: 'TranscriptCorrelationAmbiguous',
-            }),
-          });
-          continue;
-        }
-        const line = eligible[0]!;
-        const lineIndex = candidates.findIndex((candidate) => candidate.id === line.id);
-        if (lineIndex >= 0) candidates.splice(lineIndex, 1);
-        used.add(line.id);
-        confirmed += 1;
-        changed.push({
-          ...journal,
-          state: 'confirmed',
-          updatedAt: updatedAt as SendJournal['updatedAt'],
-          attempts: updatedAttempt(journal.attempts, {
-            ...attempt,
-            state: 'confirmed',
-            confirmedLineId: line.id,
-          }),
-        });
-      }
+      const { changed, confirmed } = confirmJournalsForLines(
+        this.journals, sessionId, lines, updatedAt,
+      );
       if (changed.length === 0) return 0;
       if (persist !== undefined) await persist(changed);
       this.apply(changed);
@@ -189,7 +144,7 @@ export class SendJournalState {
 
   list(): readonly SendJournal[] {
     return [...this.journals.values()].sort((left, right) =>
-      left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id));
+      compareStrings(left.createdAt, right.createdAt) || compareStrings(left.id, right.id));
   }
 
   private required(id: string): SendJournal {
@@ -206,8 +161,65 @@ export class SendJournalState {
   }
 
   private serialized<T>(operation: () => Promise<T>): Promise<T> {
-    const run = this.mutationTail.then(operation, operation);
-    this.mutationTail = run.then(() => undefined, () => undefined);
-    return run;
+    const chained = this.mutationTail.then(operation, operation);
+    this.mutationTail = chained.then(() => undefined, () => undefined);
+    return chained;
   }
 }
+
+/** The bind one journal needs for this assignment, or none. */
+const bindingFor = (
+  journal: SendJournal,
+  agentId: string,
+  sessionId: ProviderSessionId,
+  updatedAt: Timestamp,
+): SendJournal[] => {
+  if (!needsBinding(journal, agentId, sessionId)) return [];
+  return [boundToSession(journal, sessionId, updatedAt)];
+};
+
+/** A journal binds only when it is live, targets this agent, and is not already settled here. */
+const needsBinding = (
+  journal: SendJournal,
+  agentId: string,
+  sessionId: ProviderSessionId,
+): boolean => {
+  if (terminal(journal) || journal.targetAgentId !== agentId) return false;
+  if (journal.targetSessionId === undefined) return true;
+  requireSameSession(journal, sessionId);
+  return journal.state === 'awaiting-session-assignment';
+};
+
+/** A journal bound to a different session can never be rebound — a typed conflict. */
+const requireSameSession = (journal: SendJournal, sessionId: ProviderSessionId): void => {
+  if (journal.targetSessionId === sessionId) return;
+  throw new MessagingError('IdempotencyConflict', {
+    message: `Send ${journal.id} already targets another ProviderSession`,
+    fields: { sendId: journal.id, bound: journal.targetSessionId, assigned: sessionId, conflict: 'session-binding' },
+  });
+};
+
+/** The journal rebound to its session, with any waiting attempt advanced to await the transcript. */
+const boundToSession = (
+  journal: SendJournal,
+  sessionId: ProviderSessionId,
+  updatedAt: Timestamp,
+): SendJournal => ({
+  ...journal,
+  targetSessionId: sessionId,
+  updatedAt,
+  state: boundState(journal.state),
+  attempts: journal.attempts.map(advanceAttempt),
+});
+
+/** Assignment advances only a journal still waiting for a session; every other state keeps its course. */
+const boundState = (state: SendJournal['state']): SendJournal['state'] => {
+  if (state === 'awaiting-session-assignment') return 'awaiting-transcript';
+  return state;
+};
+
+/** The same advance at attempt granularity. */
+const advanceAttempt = (attempt: SendAttempt): SendAttempt => {
+  if (attempt.state !== 'awaiting-session-assignment') return attempt;
+  return { ...attempt, state: 'awaiting-transcript' };
+};

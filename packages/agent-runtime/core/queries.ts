@@ -1,14 +1,13 @@
-// What a Run looks like from outside (§19.1), and what recovery finds at boot.
+// What a Run looks like from outside.
 //
 // The view's job is to keep four facts apart that a careless UI collapses into
 // one word: where a Run STARTED, who is attached NOW, whether the provider is
 // live, and whether it is working. "No controller" is not "stopped"; "unknown"
-// is not "zero" (§24.5, red gates 4 and 13).
+// is not "zero".
 import {
-  b3err, b3fail, b3ok, mintClientOpId, nowIsoUtc,
-  type ActivityGeneration, type AgentId, type AgentRunId, type AuthenticatedPrincipal, type B3Page,
+  b3err, b3fail, b3ok,
+  type AgentId, type AgentRunId, type AuthenticatedPrincipal, type B3Page,
   type B3Result, type EventCursor, type IsoUtc, type ResolvedLaunchPlanId, type RunOperationId,
-  type TerminalSessionId,
 } from '@novakai/foundation/contract';
 import type {
   AgentRunView, ListAgentRunsFilter, RunOperationView,
@@ -17,72 +16,16 @@ import type { AgentRunUsage, UsageValue } from '../../supervision/contract/index
 import {
   FINAL_LIFECYCLES, type AgentRun, type RunOperation,
 } from '../contract/runs.js';
-import {
-  assignmentChain, closeEndpointOf, expireAuthorityOf, requireRun, type RunsCore,
-} from './runs-context.js';
+import { assignmentChain, requireRun, type RunsCore } from './runs-context.js';
 import { recoveryRequired, unknownRun } from './runs-store.js';
-import { completed } from './journal.js';
-import { reconcileAllProviderTurnSubmissions } from './provider-turns.js';
+import { settleIfTerminalGone } from './recover.js';
 
 /**
- * §19.1 names this view field `run`. It is a compatibility contract — the CLI
- * `--json` and the wire both carry it — so it is built through this key rather
- * than written as a literal the house identifier rule would reject. Same
- * technique the B3a CLI used for §17.2's `ok`.
+ * The view field is named `run`. LOAD-BEARING: it is a compatibility contract
+ * — the CLI `--json` and the wire both carry it — so it is built through this
+ * key rather than written as a bare literal.
  */
 const RUN_FIELD = 'run';
-
-/**
- * A Run whose managed terminal is provably gone is settled here, at the moment
- * the fact becomes observable.
- *
- * The probe killed a provider's PTY and then watched three operator surfaces
- * report `ready, idle` for as long as anyone cared to wait: the Agent layer
- * never reconciled against the Terminal layer directly beneath it. Agent
- * Runtime is the sole writer of Run truth (§3.3), so noticing and recording is
- * its job — and `exited` is a fact Terminal already holds, not a guess.
- *
- * Only a DEFINITE non-live status settles a Run. `reserved` and `starting` are
- * a launch in progress, and `recovery-required` is Terminal saying it does not
- * know — none of those is evidence the provider is gone.
- */
-const TERMINAL_IS_OVER: ReadonlySet<string> = new Set(['exited', 'failed']);
-
-/**
- * Commit one honest interrupted edge and announce it through Runtime's one
- * lifecycle stream. The successful CAS is the edge: failed or replayed
- * settlements publish nothing.
- */
-async function settleInterruptedRun(
-  core: RunsCore,
-  agentRun: AgentRun,
-  observations: Readonly<Partial<Pick<AgentRun, 'activity' | 'finalAt' | 'uncertainty'>>>,
-): Promise<B3Result<AgentRun>> {
-  const settled = await core.store.update<AgentRun>(
-    'sys_agent_runtime', agentRun.id,
-    {
-      ...observations,
-      lifecycle: 'interrupted',
-      finalReason: 'runtime-reconciled-missing',
-    },
-    agentRun.recordVersion, mintClientOpId(),
-  );
-  if (!settled.ok) return settled;
-  const announced = await core.publish('agent.run.lifecycle.changed', {
-    agentRunId: agentRun.id,
-    fromLifecycle: agentRun.lifecycle,
-    toLifecycle: 'interrupted',
-    activityGeneration: settled.value.activityGeneration,
-    uncertaintyCodes: settled.value.uncertainty.map((item) => item.code),
-    final: true,
-    reconciledFinal: true,
-  });
-  if (!announced.ok) return b3fail(announced.error);
-  await expireAuthorityOf(core, settled.value);
-  // The shift is over, so the endpoint stops advertising it (§8.1's cutoff).
-  await closeEndpointOf(core, settled.value);
-  return b3ok(settled.value);
-}
 
 function unavailableUsage(agentRun: AgentRun, observedAt: IsoUtc): AgentRunUsage {
   const unavailable = (): UsageValue => ({
@@ -102,82 +45,13 @@ function unavailableUsage(agentRun: AgentRun, observedAt: IsoUtc): AgentRunUsage
   };
 }
 
-async function settleIfTerminalGone(
-  core: RunsCore, agentRun: AgentRun,
-): Promise<B3Result<AgentRun>> {
-  if (FINAL_LIFECYCLES.has(agentRun.lifecycle)) return b3ok(agentRun);
-  const terminalSessionId = agentRun.terminalSessionId;
-  if (terminalSessionId === undefined) return b3ok(agentRun);
-  const found = await core.terminal.getTerminal(
-    { id: 'sys_agent_runtime', kind: 'system', verifiedScopes: [] }, terminalSessionId,
-  );
-  if (!found.ok) return b3ok(agentRun);
-  if (found.value === null || !TERMINAL_IS_OVER.has(found.value.status)) return b3ok(agentRun);
-
-  const livenessCode = 'provider-liveness-unknown';
-  let disconnected = agentRun;
-  if (!agentRun.uncertainty.some((item) => item.code === livenessCode)) {
-    const generation = (Number(agentRun.activityGeneration) + 1) as ActivityGeneration;
-    const observedAt = nowIsoUtc();
-    const observed = await core.store.update<AgentRun>(
-      'sys_agent_runtime', agentRun.id,
-      {
-        activity: 'unknown',
-        activityGeneration: generation,
-        uncertainty: [...agentRun.uncertainty, {
-        code: 'provider-liveness-unknown',
-        summary: 'the managed terminal for this Run has ended; whether the provider '
-          + 'finished its work or was killed mid-turn is not known',
-        evidenceRefs: [terminalSessionId],
-        }],
-      } as Record<string, unknown>,
-      agentRun.recordVersion, mintClientOpId(),
-    );
-    if (!observed.ok) return b3ok(agentRun);
-    disconnected = observed.value;
-    const announced = await core.publish('agent.run.activity.changed', {
-      agentRunId: agentRun.id,
-      activityGeneration: generation,
-      previous: {
-        activity: agentRun.activity,
-        activityGeneration: agentRun.activityGeneration,
-        uncertaintyCodes: agentRun.uncertainty.map((item) => item.code),
-        observedAt,
-      },
-      current: {
-        activity: disconnected.activity,
-        activityGeneration: generation,
-        uncertaintyCodes: disconnected.uncertainty.map((item) => item.code),
-        observedAt,
-      },
-    });
-    if (!announced.ok) return b3fail(announced.error);
-  }
-
-  const settled = await settleInterruptedRun(core, disconnected, { finalAt: nowIsoUtc() });
-  if (!settled.ok) return b3ok(agentRun);
-  return settled;
-}
-
-/** Reconcile the Run that owned a Terminal-reported unexpected provider exit. */
-export async function observeTerminalExit(
-  core: RunsCore, terminalSessionId: TerminalSessionId,
-): Promise<B3Result<null>> {
-  const runs = await core.store.list<AgentRun>('agentRun', { terminalSessionId });
-  if (!runs.ok) return runs;
-  const live = runs.value.find((agentRun) => !FINAL_LIFECYCLES.has(agentRun.lifecycle));
-  if (live === undefined) return b3ok(null);
-  const reconciled = await settleIfTerminalGone(core, live);
-  return reconciled.ok ? b3ok(null) : b3fail(reconciled.error);
-}
-
-/** No terminal session ⇒ no attachments to hang off one (§7:1165). Truth, not a default. */
+/** No terminal session ⇒ no attachments to hang off one. Truth, not a default. */
 const NO_CONTROLLERS: AgentRunView['controllers'] = { attachedCount: 0, kinds: [] };
 
 /**
- * §19.1's controllers section, from the one owner of ControllerAttachment and
- * TerminalInputLease. The Runtime asks Terminal every read and caches nothing
- * (§3.3), and it never derives this from `launch.surface` (FZ-VIEW-004).
+ * The controllers section of the view, from the one owner of
+ * ControllerAttachment and TerminalInputLease. The Runtime asks Terminal every
+ * read and caches nothing, and it never derives this from `launch.surface`.
  */
 async function controllersOfRun(
   core: RunsCore, principal: AuthenticatedPrincipal, agentRun: AgentRun,
@@ -201,17 +75,17 @@ export async function viewOfRun(
   if (!children.ok) return children;
   const supervision = await assignmentChain(core, agentRun.agentId);
   if (!supervision.ok) return supervision;
-  // Parentage is asked for, never cached: Agents owns it (§3.3, red gate 9).
+  // Parentage is asked for, never cached: Agents owns it.
   const parent = await core.agents.parentAgentIdOf(principal, agentRun.agentId);
   if (!parent.ok) return parent;
   // Transcript owns this fact; the Runtime asks. A null answer is "no binding",
   // never "no transcript" — the two are told apart in the view below.
   const binding = (await core.transcriptBinding?.(agentRun.id)) ?? null;
-  // §19.1's controllers section, asked of Terminal on every read and never
-  // cached (§3.3). A Run with no terminal session has no attachments to hang
-  // off one (§7:1165), so `{0, []}` there is truth rather than a fallback —
+  // The controllers section, asked of Terminal on every read and never
+  // cached. A Run with no terminal session has no attachments to hang
+  // off one, so `{0, []}` there is truth rather than a fallback —
   // and when Terminal cannot answer, the read FAILS below rather than
-  // fabricating a zero ("unavailable" is not zero, §24.5/FZ-VIEW-010).
+  // fabricating a zero ("unavailable" is not zero).
   const controllers = await controllersOfRun(core, principal, agentRun);
   if (!controllers.ok) return controllers;
   const usage = core.usage === undefined
@@ -248,7 +122,7 @@ export async function viewOfRun(
       supervisionVersion: supervision.value.generation,
     },
     usage: usage.value,
-    // §19.1: where this Run's transcript is, in the same four words Transcript
+    // Where this Run's transcript is, in the same four words Transcript
     // uses. `unbound` is the fifth: nobody has bound this Run at all, which is
     // a different fact from a file that is missing.
     transcript: binding === null
@@ -275,10 +149,10 @@ const RUN_CURSOR_PREFIX = 'agentRuns.';
 interface RunCursorPosition { readonly createdAt: string; readonly id: string }
 
 /**
- * The opaque keyset position §12.7 gives this listing, over the stable
- * `(createdAt,id)` order every list method in the build pages by. Minted here
- * and read here, because a cursor belongs to the stream owner that made it
- * (FZ-EVT-007) — the prefix is what lets a cursor from another listing be
+ * The opaque keyset position for this listing, over the stable
+ * `(createdAt,id)` order every list method pages by. Minted here
+ * and read here, because a cursor belongs to the stream owner that made it —
+ * the prefix is what lets a cursor from another listing be
  * refused rather than silently misread as a position in this one.
  */
 function runCursorFor(agentRun: AgentRun): EventCursor {
@@ -311,23 +185,22 @@ const afterRunCursor = (agentRun: AgentRun, from: RunCursorPosition): boolean =>
 
 function matchesRunFilter(agentRun: AgentRun, filter: ListAgentRunsFilter): boolean {
   if (!filter.includeFinal && FINAL_LIFECYCLES.has(agentRun.lifecycle)) return false;
-  // A5-06. `finalAt` is the owner's decision made observable; asking whether
+  // `finalAt` is the owner's decision made observable; asking whether
   // the lifecycle LOOKS final would be the consumer deriving finality, which
-  // is exactly what OQ-07 forbids.
+  // is forbidden.
   if (filter.onlyFinal === true && agentRun.finalAt === undefined) return false;
   if (filter.lifecycle && !filter.lifecycle.includes(agentRun.lifecycle)) return false;
   return filter.launchSurface === undefined || agentRun.launchSurface === filter.launchSurface;
 }
 
 /**
- * §12.7:2647's attachment filter, applied conjunctively with the record-only
+ * The attachment filter, applied conjunctively with the record-only
  * members above.
  *
  * It runs BEFORE the page is cut, never after: filtering a already-sliced page
  * would hand the caller fewer items than it asked for while `nextCursor`
- * claimed a full window, which is the silent-truncation shape L-11 and L-15
- * name one capability over. The Terminal read is paid only when the caller
- * actually states the filter.
+ * claimed a full window — silent truncation. The Terminal read is paid only
+ * when the caller actually states the filter.
  */
 async function matchesControllerState(
   core: RunsCore,
@@ -383,9 +256,9 @@ async function runPageWindow(
   const narrowed = await narrowByControllerState(core, principal, byRecord, filter);
   if (!narrowed.ok) return narrowed;
   const matching = narrowed.value;
-  // No owner-side default: `limit` is required (§12.7:2650) and the one default
-  // in the build is the CLI's 200 (A5-01). `?? 500` was a second authority
-  // answering "how big is a page" — the B3d SEVERE-2 shape (A7-03 item 3).
+  // No owner-side default: `limit` is required and the one default
+  // is the CLI's 200. `?? 500` was a second authority
+  // answering "how big is a page".
   const wanted = matching.slice(0, filter.limit);
   return b3ok({ wanted, more: wanted.length < matching.length });
 }
@@ -406,7 +279,7 @@ export async function listAgentRuns(
   for (const agentRun of wanted) {
     const view = await viewOfRun(core, principal, agentRun);
     // A Run whose Agent this reader cannot resolve is COUNTED, never dropped —
-    // red gate 11 says a Run is not hidden for lacking something.
+    // a Run is not hidden for lacking something.
     if (!view.ok) {
       omitted += 1;
       continue;
@@ -471,114 +344,6 @@ export async function getRunLaunchPlanId(
   if (agentRun.value === null) return b3fail(unknownRun(agentRunId));
   return b3ok(agentRun.value.launchPlanId);
 }
-
-/**
- * Boot recovery (DEC-B3V4-23). A Run recorded under a DEAD epoch cannot be
- * claimed as still running: its PTY lived in that process. The honest answer is
- * `interrupted` with the uncertainty stated, never a silent revival and never a
- * cheerful `stopped` that implies somebody chose it.
- */
-// eslint-disable-next-line sonarjs/cognitive-complexity -- Startup custody passes are deliberately explicit.
-export async function reconcileAfterRestart(
-  core: RunsCore, activeEpochId: string,
-): Promise<B3Result<{ readonly reconciledRunIds: readonly AgentRunId[] }>> {
-  // R3 N2-L1/L2: settle dead controller operations while Terminal can still
-  // prove and cancel their pre-effect reservations. Marking the Run final first
-  // would erase the only safe opportunity to do this owner-ordered cleanup.
-  const providerTurns = await reconcileAllProviderTurnSubmissions(core, 'startup');
-  if (!providerTurns.ok) return providerTurns;
-  const runs = await core.store.list<AgentRun>('agentRun');
-  if (!runs.ok) return runs;
-  const operations = await core.store.list<RunOperation>('runOperation');
-  if (!operations.ok) return operations;
-  const epochOf = new Map(operations.value.map(
-    (operation) => [operation.newRunId ?? '', operation.runtimeEpochId],
-  ));
-
-  const reconciled: AgentRunId[] = [];
-  for (const agentRun of runs.value) {
-    if (FINAL_LIFECYCLES.has(agentRun.lifecycle)) continue;
-    if (epochOf.get(agentRun.id) === activeEpochId) continue;
-    const settled = await settleInterruptedRun(core, agentRun, {
-      activity: 'unknown',
-      uncertainty: [{
-        code: 'provider-liveness-unknown',
-        summary: 'the runtime that owned this agentRun ended; its managed terminal '
-          + 'went with it and no claim is made about the provider process',
-        evidenceRefs: [agentRun.terminalSessionId ?? 'no terminal was recorded'],
-      }],
-    });
-    if (!settled.ok) return settled;
-    reconciled.push(settled.value.id);
-  }
-  const operations2 = await settleAbandonedOperations(core, operations.value, activeEpochId);
-  if (!operations2.ok) return operations2;
-  return b3ok({ reconciledRunIds: reconciled });
-}
-
-/**
- * §13.1.6: "Startup reconciles all non-final RunOperation records before
- * accepting new lifecycle commands for their Agents."
- *
- * An operation belonging to an epoch that is over cannot make progress: the
- * process that was running it is gone. It is settled as `recovery-required`
- * rather than left `running`, because "running" is a claim about a process, and
- * a Runtime that reports thirteen running operations it is not running is
- * lying in the one place an operator goes to find out what is in flight.
- *
- * What boot may NOT do is invent doubt. It used to append an `uncertain`
- * compensation line to every abandoned operation, including the ones that died
- * at `receipt-accepted` with no Agent, no Run, no PTY and nothing to be
- * uncertain about — after which spawn refused to resume them and repair refused
- * to close them, so §20's "resume same operation and same reservation" row
- * became a permanent quarantine (NVK-KIMI-031 finding 1).
- *
- * Uncertainty is a claim about a specific EFFECT, and boot knows of exactly one
- * it cannot see the end of: a PTY this operation started, which lived in the
- * process that died. That line is keyed to the terminal stage, so the repair
- * that later confirms the terminal is gone supersedes it instead of arguing
- * with it.
- */
-async function settleAbandonedOperations(
-  core: RunsCore, operations: readonly RunOperation[], activeEpochId: string,
-): Promise<B3Result<null>> {
-  for (const operation of operations) {
-    if (SETTLED_OPERATION_STATES.has(operation.state)) continue;
-    if (operation.runtimeEpochId === activeEpochId) continue;
-    const settled = await core.store.update<RunOperation>(
-      'sys_agent_runtime', operation.id,
-      {
-        state: 'recovery-required',
-        compensation: [...operation.compensation, ...unverifiableEffectsOf(operation)],
-      } as Record<string, unknown>,
-      operation.recordVersion, `op_${crypto.randomUUID()}` as never,
-    );
-    if (!settled.ok) return settled;
-    const announced = await core.publish('runtime.recovery.required', {
-      operationId: operation.id, reason: 'abandoned by a runtime that ended',
-    });
-    if (!announced.ok) return b3fail(announced.error);
-  }
-  return b3ok(null);
-}
-
-/** The effects of a dead epoch whose outcome this Runtime genuinely cannot see. */
-function unverifiableEffectsOf(
-  operation: RunOperation,
-): readonly RunOperation['compensation'][number][] {
-  const terminal = completed(operation, 'terminal-live') ?? completed(operation, 'terminal-reserved');
-  if (terminal === null) return [];
-  return [{
-    stage: terminal.stage,
-    effectKey: terminal.effectKey,
-    outcome: 'uncertain',
-    reason: 'the runtime running this operation ended before it settled; whether '
-      + 'its managed terminal stopped with it is not known from here',
-  }];
-}
-
-const SETTLED_OPERATION_STATES: ReadonlySet<RunOperation['state']> =
-  new Set<RunOperation['state']>(['completed', 'recovery-required']);
 
 /**
  * What this Runtime is currently responsible for, in Run terms. Counted from

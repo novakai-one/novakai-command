@@ -3,20 +3,19 @@ import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import {
-  createMemoryTranscriptStore,
-  createMessagingRuntime,
-  messageCorrelationHint,
-  openFoundationTranscriptStore,
-  type AgentDirectory,
-  type ConversationDirectory,
-  type PendingDelivery,
-  type PendingDeliveryState,
-  type ProviderSend,
-  type ProviderSession,
-  type TranscriptLine,
-  type TranscriptStore,
-} from '../../contract/index.js';
+import { createMessagingRuntime } from '../../core/runtime/messaging-runtime.js';
+import { createMemoryTranscriptStore } from '../../adapters/stores/memory.js';
+import { openFoundationTranscriptStore } from '../../adapters/stores/jsonl.js';
+import { messageCorrelationHint } from '../../contract/correlation.js';
+import type { AgentDirectory } from '../../contract/ports/agent-directory.js';
+import type { ConversationDirectory } from '../../contract/ports/conversation-directory.js';
+import type { ProviderSend } from '../../contract/ports/provider-send.js';
+import type { TranscriptStore } from '../../contract/ports/transcript-store.js';
+import type { DeliveryFailure, PendingDelivery } from '../../contract/records/pending-delivery.js';
+import type { ProviderSession } from '../../contract/records/provider-session.js';
+import type { ProviderSessionId, Timestamp } from '../../contract/types.js';
+import type { TranscriptLine } from '../../contract/records/transcript-line.js';
+import type { PendingDeliveryState } from '../../contract/types.js';
 
 const emptySource = {
   scan: async () => [],
@@ -27,7 +26,7 @@ const normalizers = {
   codex: { provider: 'codex', normalize: () => { throw new Error('unused'); } },
   kimi: { provider: 'kimi', normalize: () => { throw new Error('unused'); } },
 } as const;
-const timestamp = '2026-08-26T00:00:00.000Z';
+const timestamp = '2026-08-26T00:00:00.000Z' as Timestamp;
 
 const session = (id: string, agentId: string, sourceId: string): ProviderSession => ({
   id: id as never,
@@ -94,6 +93,9 @@ function deliveryMarker(recipientAgentId: string, text: string, key: string): st
   return `NOVAKAI_DELIVERY_V1:${payload}`;
 }
 
+/** Typed failure evidence used wherever a test needs a failed delivery. */
+const proofFailure: DeliveryFailure = { kind: 'dispatch-failed', detail: 'proof' };
+
 function dependencies(store: TranscriptStore) {
   const current = new Map<string, string | null>([
     ['agent_alpha', 'session_alpha'],
@@ -113,7 +115,7 @@ function dependencies(store: TranscriptStore) {
       return {
         agentId,
         provider: 'claude',
-        currentProviderSessionId: current.get(agentId)!,
+        currentProviderSessionId: current.get(agentId)! as ProviderSessionId | null,
       };
     },
     async deliveryReadiness(agentId) { return readiness.get(agentId) ?? 'unavailable'; },
@@ -172,7 +174,7 @@ test('addressed transcript work waits for idle, reuses the pair View and never r
   });
   assert.equal(communications.kind === 'ok' && communications.value.items.length, 2);
   if (communications.kind === 'ok') {
-    assert.equal(new Set(communications.value.items.map((item) => item.threadId)).size, 1);
+    assert.equal(new Set(communications.value.items.map((item) => item.conversationGroupingKey)).size, 1);
     assert.ok(communications.value.items.every((item) =>
       item.deliveryState === 'submitted-unconfirmed' && item.direction === 'from-agent'));
   }
@@ -225,7 +227,8 @@ test('every PendingDelivery state survives restart and illegal skips are refused
       const first = target === 'failed' ? 'failed' : 'claimed';
       await store.transitionPendingDelivery({
         id: item.id, expectedState: 'queued', state: first,
-        updatedAt: timestamp, ...(first === 'failed' ? { failure: 'proof' } : {}),
+        updatedAt: timestamp,
+        ...(first === 'failed' ? { failure: proofFailure } : {}),
       });
       if (target.startsWith('submitted')) {
         await store.transitionPendingDelivery({
@@ -242,7 +245,9 @@ test('every PendingDelivery state survives restart and illegal skips are refused
     }
     await store.close();
     const reopened = await openFoundationTranscriptStore(options);
-    assert.equal((await reopened.listPendingDeliveries())[0]?.state, target);
+    const restored = (await reopened.listPendingDeliveries())[0];
+    assert.equal(restored?.state, target);
+    if (target === 'failed') assert.deepEqual(restored?.failure, proofFailure);
     await reopened.close();
   }
 

@@ -290,7 +290,7 @@ function sameEvidence(
   return JSON.stringify(content(existing)) === JSON.stringify(content(input));
 }
 
-/** §5.5's deterministic identity tuple. */
+/** The evidence record's deterministic identity tuple: the same observation re-recorded resolves to the same id. */
 export function providerUsageEvidenceId(
   input: RecordProviderUsageEvidenceInput,
 ): ProviderUsageEvidenceId {

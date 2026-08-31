@@ -9,7 +9,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { b3err, type B3ErrorCode } from '@novakai/foundation/contract';
-import { EXIT_BY_CODE, exitCodeFor } from '../core/b3/exit-codes.js';
+import { EXIT_BY_CODE, exitCodeFor } from '../core/runtime-host/exit-codes.js';
 
 /** The ruled assignment, exactly as published. Nothing here is derived. */
 const RULED: Readonly<Record<string, number>> = {

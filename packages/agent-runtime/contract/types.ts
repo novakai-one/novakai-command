@@ -2,11 +2,12 @@
 //
 // Kept apart from contract/index.ts so the core can import these WITHOUT
 // importing the door that re-exports the core — the shape that would otherwise
-// be a genuine import cycle (red gate 26).
+// be a genuine import cycle.
 //
-// B3a scope: the Runtime HOST. Who owns this machine's Novakai runtime, which
-// epoch is active, and what is honestly true after a restart. Agent Runs,
-// roles, family and delegation arrive in B3b and do not reopen this door.
+// Scope: the Runtime HOST. Who owns this machine's Novakai runtime, which epoch
+// is active, and what is honestly true after a restart. Agent Runs, roles,
+// family and delegation live in runs.ts / runs-api.ts and do not reopen this
+// door.
 import type {
   AgentRunId, AuthenticatedPrincipal, B3Result, CommandContext, IsoUtc,
   RecordEnvelope, RuntimeEpochId, SystemCommandContext, TerminalSessionId,
@@ -16,11 +17,8 @@ export type RuntimeEpochState =
   | 'starting' | 'active' | 'draining' | 'stopped' | 'failed' | 'stale';
 
 /**
- * DEC-B3V4-27. The durable fence that makes split-brain impossible: exactly one
- * epoch is `active`, and every Runtime-owned mutation carries it.
- *
- * Pass 2 names this record and its states but not its payload; these fields are
- * this build's choice and are flagged in the slice report.
+ * The durable fence that makes split-brain impossible: exactly one epoch is
+ * `active`, and every Runtime-owned mutation carries it.
  */
 export interface RuntimeEpoch extends RecordEnvelope<RuntimeEpochId, 'runtimeEpoch'> {
   readonly state: RuntimeEpochState;
@@ -42,7 +40,7 @@ export interface RuntimeStatus {
   readonly attachedControllerCount: number;
   /**
    * Whether THIS process holds the OS single-instance lease. A process that
-   * does not may report status; it may not mutate (§13.1 rule 5).
+   * does not may report status; it may not mutate.
    */
   readonly ownedByThisProcess: boolean;
 }
@@ -58,9 +56,9 @@ export interface RuntimeStopOutcome {
   readonly stoppedRunIds: readonly AgentRunId[];
   readonly refusedLiveRunIds: readonly AgentRunId[];
   /**
-   * Additive for B3a (§3.5): no Agent Runs exist yet, so the live things a
-   * stop must not silently kill are terminal sessions. `refuse` reports them
-   * and changes nothing; `stop-explicitly` stops them and lists them.
+   * The host stop pre-dates Agent Runs, so the live things a stop must not
+   * silently kill here are terminal sessions. `refuse` reports them and
+   * changes nothing; `stop-explicitly` stops them and lists them.
    */
   readonly refusedTerminalSessionIds: readonly TerminalSessionId[];
   readonly stoppedTerminalSessionIds: readonly TerminalSessionId[];
@@ -106,7 +104,7 @@ export type RuntimeHostContract = RuntimeHostCommands & RuntimeHostQueries & {
 
 // ── Seams ──────────────────────────────────────────────────────────────────
 
-/** The OS single-instance lease (DEC-B3V4-27 step 1). */
+/** The OS single-instance lease: one machine, one runtime. */
 export interface InstanceLease {
   /** Take the lease, stealing it only from a process that is provably gone. */
   acquire(): { readonly held: true } | { readonly held: false; readonly holderPid: number };
@@ -143,10 +141,10 @@ export interface RuntimeCensus {
   /** Named, not just counted, so `nvk runtime doctor` can point at them. */
   readonly recoveryRequiredSessionIds: readonly TerminalSessionId[];
   /**
-   * Additive (§3.5). Runs are not sessions, and a Runtime that could only count
-   * terminal sessions reported `liveAgentRunCount: 0` while three Agents were
-   * running — and `recoveryRequiredCount: 0` over stranded operations, which is
-   * the §24.5 honesty failure the hold-out named.
+   * Runs are not sessions, and a Runtime that could only count terminal
+   * sessions reported `liveAgentRunCount: 0` while three Agents were running —
+   * and `recoveryRequiredCount: 0` over stranded operations, which is exactly
+   * the dishonest status this field exists to end.
    */
   readonly liveAgentRunCount?: number;
   /** Whatever needs recovery, by id, when it is not a terminal session. */
@@ -160,7 +158,8 @@ export interface RuntimeCensus {
  *
  * Delivery is never one write. A provider TUI takes a big fast burst for a
  * PASTE and absorbs an Enter inside it as text, so the turn lands in the
- * composer and is never submitted (hold-out B3, measured 2026-08-02).
+ * composer and is never submitted (measured against a live provider,
+ * 2026-08-02).
  */
 export interface TurnDeliveryStep {
   readonly utf8Text: string;

@@ -1,4 +1,4 @@
-// Agent Runtime's durability seam onto Foundation (AMD-001 A-01).
+// Agent Runtime's durability seam onto Foundation.
 //
 // One scoped handle, five kinds, no JSONL file opened anywhere.
 import {

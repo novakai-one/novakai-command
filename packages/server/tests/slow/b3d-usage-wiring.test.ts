@@ -9,10 +9,10 @@ import {
   mintClientOpId, mintTraceCorrelationId, type B3Result,
 } from '@novakai/foundation/contract';
 import type { AgentRunView } from '../../../agent-runtime/contract/index.js';
-import { createFakeProviderAdapters } from '../../../agents/b3/contract/index.js';
+import { createFakeProviderAdapters } from '../../../agents/governed/contract/index.js';
 import { createFakePtyHost } from '../../../terminal/adapters/pty-host/fake.js';
-import { connectRuntime } from '../../core/b3/client.js';
-import { startRuntimeHost } from '../../core/b3/host.js';
+import { connectRuntime } from '../../core/runtime-host/client.js';
+import { startRuntimeHost } from '../../core/runtime-host/host.js';
 import { sanitizeCwd } from '../../core/supervision/usage.js';
 import { chatRole } from '../governed-role.js';
 import type { AgentRunUsage, AgentUsageSummary } from '../../../supervision/contract/index.js';

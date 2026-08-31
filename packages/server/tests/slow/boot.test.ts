@@ -11,7 +11,7 @@ import { bootServer, type NovakaiServer } from '../../core/boot.js';
 // The boot writes its traces on the canonical route (§18.1) like every other
 // capability; reading them from the root would be reading the legacy file that
 // only ever existed because the composition opened on the wrong route (E-01).
-import { canonicalDataRoot } from '../../core/store-route.js';
+import { canonicalDataRoot } from '../../core/store-paths.js';
 import { openConfigStore } from '../../contract/index.js';
 import {
   mintClientOpId, queryTraceBound,
@@ -29,15 +29,6 @@ import {
 import {
   getConversationView, setConversationView,
 } from '../../../shell/contract/conversationView.js';
-import {
-  composeArtifacts,
-} from '../../../artifacts/contract/index.js';
-import {
-  composeProjects,
-} from '../../../projects/contract/index.js';
-import {
-  composeSpine,
-} from '../../../spine/contract/index.js';
 import { fakeKimi } from '../fakeKimi.js';
 
 const root = () => mkdtempSync(path.join(tmpdir(), 'nvk-boot-'));
@@ -121,114 +112,12 @@ async function seedLegacyConversationWithoutThread(dir: string): Promise<void> {
   assert.equal(seeded.ok, true);
 }
 
-async function seedAcceptedArtifactWorkflow(
-  dir: string,
-): Promise<{
-  projectId: string;
-  projects: ReturnType<typeof composeProjects>;
-  spine: ReturnType<typeof composeSpine>;
-}> {
-  const projects = composeProjects({
-    root: dir,
-    principal: 'person_chris',
-  });
-  const project = await projects.operations.createProject(
-    { title: 'Boot recovery proof' },
-    'op_boot_recovery_project' as never,
-  );
-  assert.equal(project.ok, true);
-  if (!project.ok) throw new Error('public Project seed failed');
-
-  const artifacts = composeArtifacts({
-    root: dir,
-    principal: 'person_chris',
-  });
-  const artifact = await artifacts.operations.putArtifact({
-    bytes: Buffer.from('boot recovery artifact', 'utf8'),
-    mimeType: 'text/plain',
-  }, 'op_boot_recovery_artifact' as never);
-  assert.equal(artifact.ok, true);
-  if (!artifact.ok) throw new Error('public Artifact seed failed');
-
-  const dependencies = {
-    messaging: {
-      async getDelivery() {
-        return { kind: 'ok' as const, value: { deliveries: [] } };
-      },
-    },
-    projects: projects.spine,
-    artifacts: artifacts.operations,
-  };
-  const priorFailpoint = process.env.NVK_FAILPOINT;
-  try {
-    process.env.NVK_FAILPOINT = 'spine.journal.accepted.after';
-    const interrupted = await composeSpine({
-      root: dir,
-      principal: 'person_chris',
-      ...dependencies,
-    }).operations.attachArtifactToProject({
-      artifactId: artifact.value.id,
-      projectId: project.value.id,
-    }, 'op_boot_recovery_workflow' as never);
-    assert.equal(interrupted.ok, false);
-    assert.equal(
-      interrupted.ok ? null : interrupted.error.code,
-      'SpineFailpoint',
-    );
-  } finally {
-    if (priorFailpoint === undefined) delete process.env.NVK_FAILPOINT;
-    else process.env.NVK_FAILPOINT = priorFailpoint;
-  }
-
-  const spine = composeSpine({
-    root: dir,
-    principal: 'person_chris',
-    ...dependencies,
-  });
-  const accepted = await spine.boot.scanWorkflows();
-  assert.equal(accepted.ok, true);
-  assert.equal(accepted.ok ? accepted.value.items.length : -1, 1);
-  assert.equal(accepted.ok ? accepted.value.items[0]?.state : null, 'accepted');
-  return { projectId: project.value.id, projects, spine };
-}
-
 test('boot refuses to start without a human principal, and names the runbook', async () => {
   const dir = root();
   const res = await bootServer({ root: dir, port: 0, cwd: dir, watchdogDir: dir });
   if (res.ok) { await res.value.close(); assert.fail('boot must refuse without a human principal'); }
   assert.equal(res.error.code, 'NoHumanPrincipal');
   assert.match(res.error.message, /nvk-token.*mint/s, 'the operator is told exactly what to run');
-});
-
-test('boot discovers accepted Spine work without auto-continuing it', async (t) => {
-  const dir = root();
-  await mintChris(dir);
-  const seeded = await seedAcceptedArtifactWorkflow(dir);
-
-  const server = await boot(dir);
-  t.after(() => server.close());
-
-  const spineStep = server.steps.find(({ name }) => name === 'spine');
-  assert.ok(
-    spineStep,
-    'Server boot must report its public Spine recovery scan',
-  );
-  assert.match(spineStep.detail, /^1 resumable workflow/);
-
-  const pending = await seeded.spine.boot.scanWorkflows();
-  assert.equal(pending.ok, true);
-  assert.equal(pending.ok ? pending.value.items.length : -1, 1);
-  assert.equal(pending.ok ? pending.value.items[0]?.state : null, 'accepted');
-
-  const items = await seeded.projects.operations.getProjectItems(
-    seeded.projectId as never,
-  );
-  assert.equal(items.ok, true);
-  assert.equal(
-    items.ok ? items.value.items.length : -1,
-    0,
-    'boot discovery never executes the pending attachment',
-  );
 });
 
 test('boot composes B2a capabilities in order, traces each step, and serves bootstrap.json', async (t) => {
@@ -239,21 +128,19 @@ test('boot composes B2a capabilities in order, traces each step, and serves boot
 
   assert.deepEqual(
     server.steps.map((s) => s.step),
-    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    [1, 2, 4, 5, 6, 7, 8, 9, 11, 12, 13],
   );
   assert.deepEqual(
     server.steps.map((s) => s.name),
     [
       'config',
       'foundation',
-      'messaging',
       'agents',
       'transcript',
       'shell',
       'sessions',
       'artifacts',
       'projects',
-      'spine',
       'supervision',
       // A4/T-02: the server that serves the Shell IS the B3 Runtime, so its
       // composition is a boot step like every other one — never silent.
@@ -266,7 +153,7 @@ test('boot composes B2a capabilities in order, traces each step, and serves boot
     root: dir,
     dataRoot: canonicalDataRoot(dir),
     capability: 'server',
-    allowedKinds: ['artifact', 'project', 'spineStep'],
+    allowedKinds: ['artifact', 'project'],
     principal: 'sys_spine',
   });
   const traces = await queryTraceBound(engine, {});
@@ -278,7 +165,7 @@ test('boot composes B2a capabilities in order, traces each step, and serves boot
   assert.deepEqual(
     capabilityBootTraces.map((trace) =>
       (trace.meta as { capability: string }).capability),
-    ['artifacts', 'projects', 'spine'],
+    ['artifacts', 'projects'],
   );
 
   const bootstrap = await (await fetch(`${server.url}/bootstrap.json`)).json() as { token: string; protocolVersion: number };
@@ -684,60 +571,6 @@ test('a kimi round-trip is measured from its Novakai transcript copy and backfil
       measuredAt: new Date(1785225000000).toISOString(),
     });
     assert.equal(persisted?.usageUnavailable, null);
-  } finally {
-    await server.close();
-  }
-});
-
-test('M3a: send marks its provider turn generating before the messaging post begins', async () => {
-  const dir = root();
-  await mintChris(dir);
-  const server = await boot(dir, { cliPath: fakeKimi().cliPath });
-  const methods = (await import('../../core/methods.js')).buildMethods(server.runtime);
-  const spawned = await methods.spawnAgentConversation!({ title: 'Kimi' } as never) as
-    { conversation: { id: string }; sessionId: string };
-  let observedClientOpId: string | null = null;
-  server.runtime.human.holder = {
-    personId: 'person_chris',
-    call: async (operation: (session: unknown) => Promise<unknown>) => operation({
-      async sendMessage() {
-        observedClientOpId = (await server.sessions.get(spawned.sessionId))!.inFlight.clientOpId;
-        return { kind: 'ok', value: { threadId: 'thread_ordering', messageId: 'message_ordering' } };
-      },
-    }),
-  } as never;
-
-  const sent = await methods.sendMessage!({
-    conversationId: spawned.conversation.id, text: 'ordering', clientOpId: 'op_ordering',
-  } as never) as { ok: boolean };
-
-  assert.equal(sent.ok, true);
-  assert.equal(observedClientOpId, 'op_ordering',
-    'a crash during the messaging post must still leave this exact provider turn recoverable');
-  await server.runtime.kimiRuntime.drain(spawned.sessionId);
-  await server.close();
-});
-
-test('M3c: provider send refusal closes only that turn and returns a typed failure', async () => {
-  const dir = root();
-  await mintChris(dir);
-  const server = await boot(dir, { cliPath: fakeKimi().cliPath });
-  try {
-    const methods = (await import('../../core/methods.js')).buildMethods(server.runtime);
-    const spawned = await methods.spawnAgentConversation!({ title: 'Kimi' } as never) as
-      { conversation: { id: string }; sessionId: string };
-    server.runtime.agents.sendToSession = async () => false;
-
-    const sent = await methods.sendMessage!({
-      conversationId: spawned.conversation.id, text: 'cannot forward', clientOpId: 'op_refused',
-    } as never) as { ok: boolean; error?: { code?: string; clientOpId?: string } };
-
-    assert.equal(sent.ok, false);
-    assert.deepEqual(sent.error, {
-      code: 'ProviderSendFailed', sessionId: spawned.sessionId, clientOpId: 'op_refused',
-    });
-    const session = await server.sessions.get(spawned.sessionId);
-    assert.equal(session?.inFlight.status, 'none', 'a refused send cannot survive as ReplyInterrupted');
   } finally {
     await server.close();
   }

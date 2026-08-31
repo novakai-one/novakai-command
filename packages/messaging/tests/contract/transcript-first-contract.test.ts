@@ -3,17 +3,18 @@ import { mkdtemp, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import {
-  createMemoryTranscriptStore,
-  createMessagingRuntime,
-  openFoundationTranscriptStore,
-  providerNormalizer,
-  type AgentDirectory,
-  type ProviderSourceGrowth,
-  type ProviderSourceStat,
-  type ProviderTranscriptSource,
-  type TranscriptStore,
-} from "../../contract/index.js";
+import { createMessagingRuntime } from "../../core/runtime/messaging-runtime.js";
+import { createMemoryTranscriptStore } from "../../adapters/stores/memory.js";
+import { openFoundationTranscriptStore } from "../../adapters/stores/jsonl.js";
+import { providerNormalizer } from "../../adapters/provider-transcripts/normalizers/index.js";
+import type { AgentDirectory } from "../../contract/ports/agent-directory.js";
+import type { ProviderSessionId } from "../../contract/types.js";
+import type {
+  ProviderSourceGrowth,
+  ProviderSourceStat,
+  ProviderTranscriptSource,
+} from "../../contract/ports/provider-transcript-source.js";
+import type { TranscriptStore } from "../../contract/ports/transcript-store.js";
 
 const row = JSON.stringify({
   type: "assistant",
@@ -59,7 +60,7 @@ const normalizers = {
 } as const;
 
 function adoption() {
-  let currentProviderSessionId: string | null = null;
+  let currentProviderSessionId: ProviderSessionId | null = null;
   const agentDirectory: AgentDirectory = {
     async get(agentId) {
       return agentId === 'agent_external'
@@ -75,7 +76,7 @@ function adoption() {
     async deliveryReadiness() { return 'idle'; },
     async attachProviderSession(_agentId, providerSessionId) {
       const replay = currentProviderSessionId === providerSessionId;
-      currentProviderSessionId = providerSessionId;
+      currentProviderSessionId = providerSessionId as ProviderSessionId;
       return { ok: true, state: replay ? 'already-attached' : 'attached' };
     },
   };

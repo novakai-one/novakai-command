@@ -4,15 +4,13 @@ import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import {
-  agentIdentityHookCommand,
-  ensureClaudeIdentityHook,
-  ensureCodexIdentityHook,
-  ensureKimiIdentityHook,
-  findAgentIdentityMarker,
-  providerNormalizer,
-  type ProviderLineExtent,
-} from '../../contract/index.js';
+import { agentIdentityHookCommand } from '../../adapters/provider-hooks/agent-identity-hook.js';
+import { ensureClaudeIdentityHook } from '../../adapters/provider-hooks/registrations/claude.js';
+import { ensureCodexIdentityHook } from '../../adapters/provider-hooks/registrations/codex.js';
+import { ensureKimiIdentityHook } from '../../adapters/provider-hooks/registrations/kimi.js';
+import { providerNormalizer } from '../../adapters/provider-transcripts/normalizers/index.js';
+import { findAgentIdentityMarker } from '../../contract/agent-identity.js';
+import type { ProviderLineExtent } from '../../contract/ports/provider-transcript-source.js';
 
 const marker = {
   kind: 'novakai-agent-identity' as const,

@@ -1,6 +1,6 @@
-// The Runtime host composition root (B3a slice of DEC-B3V4-22/27/23).
+// The Runtime host composition root.
 //
-// Three jobs, and nothing else until B3b:
+// Three jobs, and nothing else:
 //   1. hold the OS single-instance lease, so one machine has one runtime;
 //   2. own the durable epoch fence every Runtime-owned mutation carries;
 //   3. reconcile honestly after a restart, without ever claiming a process
@@ -90,7 +90,7 @@ export function composeRuntimeHost(options: ComposeRuntimeHostOptions): RuntimeH
     const taken = options.lease.acquire();
     if (!taken.held) {
       // Another live process owns this machine's runtime. Converge on it:
-      // report its truth, mint nothing, and stay unable to mutate (§13.1).
+      // report its truth, mint nothing, and stay unable to mutate.
       const current = await epochs.active();
       if (!current.ok) return current;
       if (current.value === null) {
@@ -119,7 +119,7 @@ export function composeRuntimeHost(options: ComposeRuntimeHostOptions): RuntimeH
     return statusFrom(advanced.value, true);
   }
 
-  /** DEC-B3V4-23: ask each capability what is honestly true after the restart. */
+  /** Boot recovery: ask each capability what is honestly true after the restart. */
   async function recoverInto(activeEpochId: RuntimeEpochId): Promise<B3Result<null>> {
     for (const capability of capabilities) {
       const reconciled = await capability.reconcile(systemContext(), activeEpochId);
@@ -129,7 +129,7 @@ export function composeRuntimeHost(options: ComposeRuntimeHostOptions): RuntimeH
   }
 
   /**
-   * §13.1 rule 5. Three genuinely different answers, and the difference matters
+   * Three genuinely different answers, and the difference matters
    * to whoever is reading the error:
    *   - no runtime anywhere      → RuntimeUnavailable
    *   - a runtime, but not ours  → StaleRuntimeEpoch (naming the live one)
@@ -215,7 +215,7 @@ interface StopWiring {
 }
 
 /**
- * §13.10: a runtime stop is an explicit, authorised choice — never implied by a
+ * A runtime stop is an explicit, authorised choice — never implied by a
  * window closing. `refuse` changes nothing and names what is still live;
  * `stop-explicitly` stops those sessions through each capability's own
  * lifecycle authority, then drains this epoch.
@@ -271,7 +271,7 @@ async function liveSessionIds(
   return b3ok(live);
 }
 
-/** No Agent Runs exist in B3a, so the Run lists are empty as a fact, not a gap. */
+/** The host stop pre-dates Agent Runs, so the Run lists are empty as a fact, not a gap. */
 function stopOutcome(
   epoch: RuntimeEpoch,
   outcome: {

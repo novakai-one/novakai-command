@@ -1,4 +1,4 @@
-// The individual stages of a spawn (§13.5).
+// The individual stages of a spawn.
 //
 // Split from `spawn.ts` so that file reads as the LADDER and this one reads as
 // what each rung actually does. Every function here is re-entrant: it looks for
@@ -133,8 +133,8 @@ export async function startTerminal(
 }
 
 /**
- * §13.5: "the Agents adapter confirms the EXACT pre-reserved session id; never
- * infer from PID alone or substitute another id." A substitution is refused
+ * The provider adapter must confirm the EXACT pre-reserved session id; never
+ * infer from PID alone or substitute another id. A substitution is refused
  * here and the Run does not become ready — it does not get rebound to whatever
  * the adapter returned.
  */
@@ -155,7 +155,7 @@ export async function bindProviderSession(
     launchFingerprint: effectKeyFor(input.operation.id, 'terminal-live'),
   });
 
-  // §13.5: the adapter confirms the EXACT pre-reserved id. A substitute is
+  // The adapter must confirm the EXACT pre-reserved id. A substitute is
   // refused HERE, before Agents ever hears of it — a rebind is how one Run
   // quietly acquires another Run's provider session.
   if (discovered.ok && discovered.value.providerSessionId !== input.reserved) {
@@ -170,7 +170,7 @@ export async function bindProviderSession(
 
   // A discovery that FAILED still has to leave the Run resolvable, so Agents
   // materialises the same id as `failed-before-discovery` rather than leaving a
-  // final Run pointing at nothing (§5.4, §20).
+  // final Run pointing at nothing.
   const registration = discovered.ok
     ? await core.agents.registerProviderSession({
       expectedProviderSessionId: input.reserved,
@@ -202,17 +202,19 @@ export async function bindProviderSession(
 }
 
 /**
- * A stage whose owning capability does not exist in this slice. Recorded as
- * `not-needed` with the slice that will own it — a ladder with a silent hole is
- * how a later slice discovers nobody ever wired it.
+ * A stage whose owning capability is not composed in this host. Recorded as
+ * `not-needed` with the capability that will own it — a ladder with a silent
+ * hole is how a wire that was never connected goes unnoticed.
  */
 export async function recordDeferredStages(
   core: RunsCore, operation: RunOperation, stages: readonly RunOperation['currentStage'][],
 ): Promise<B3Result<RunOperation>> {
-  // Only stages whose owning capability genuinely does not exist yet. The three
-  // Messaging/Transcript rungs left this table when B3c shipped them: a
-  // deferral naming the slice that already delivered is how a wire that was
-  // never connected reads as deliberate (`spawn-b3c.ts`).
+  // Only stages whose owning capability genuinely does not exist in this host.
+  // The Messaging/Transcript rungs left this table when they were wired for
+  // real: a deferral naming a capability that already delivered is how a wire
+  // that was never connected reads as deliberate (see `custody-stages.ts`).
+  // LOAD-BEARING DATA: `slice` is written into durable journals as
+  // `notNeededBecause`; renaming it would mislabel already-persisted truth.
   const owners: Readonly<Record<string, { owner: string; slice: string }>> = {
     'watchers-installed': { owner: 'supervision', slice: 'B3d' },
   };
@@ -229,13 +231,13 @@ export async function recordDeferredStages(
 }
 
 /**
- * §13.5's watcher rung, for real (B3d).
+ * The watcher rung, for real.
  *
  * A host with no Supervision composed records the rung `not-needed` naming the
  * absent capability, exactly as the Messaging and Transcript rungs did before
- * B3c wired them. A host that HAS Supervision installs, and a failure to
+ * they were wired. A host that HAS Supervision installs, and a failure to
  * install fails the spawn: a Run that reaches `ready` believing it is watched
- * and is not is the state §25-B3d exists to end.
+ * and is not is precisely the state this rung exists to end.
  */
 export async function installWatchers(
   core: RunsCore,
@@ -287,8 +289,7 @@ export async function installWatchers(
  * Two DIFFERENT effects, so two idempotency keys. They used to share the
  * command's, and the store dedupes by (kind, clientOpId): the second create
  * came back as an idempotent replay of the first, the parent never got its
- * grant, and nobody noticed because the result was discarded (§3.2, red gate 6,
- * NVK-KIMI-028 finding 3).
+ * grant, and nobody noticed because the result was discarded.
  *
  * `AuthorityEscalation` and `RoleNotAllowed` are the intersection doing its job
  * — the caller simply held less than it asked for — so they are not failures of

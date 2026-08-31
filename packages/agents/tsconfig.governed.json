@@ -1,0 +1,18 @@
+{
+  "//": "The governed tree is held to a stricter bar than the older agents tree — including noUncheckedIndexedAccess, which the older tree predates. Governed code conforms; the older tree is not retrofitted.",
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2022"],
+    "noEmit": true,
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "types": ["node"]
+  },
+  "include": ["governed/**/*.ts"]
+}

@@ -9,7 +9,7 @@ import {
   type WatchRule,
   type WatchSubject,
 } from '../../supervision/contract/index.js';
-import type { Flags } from '../core/b3/cli-shared.js';
+import type { Flags } from '../core/runtime-host/cli-shared.js';
 
 const missingFlag = (name: string): B3Result<never> => b3fail(validationFailed([{
   path: name,

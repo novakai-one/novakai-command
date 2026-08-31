@@ -26,7 +26,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parseFlags } from '../core/b3/cli-shared.js';
+import { parseFlags } from '../core/runtime-host/cli-shared.js';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 const nvk = path.join(repoRoot, 'scripts', 'nvk.mjs');
