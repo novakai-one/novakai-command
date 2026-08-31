@@ -2,6 +2,7 @@
 
 import { createHash } from 'node:crypto';
 import { listConversationViews } from '../../../shell/contract/conversationView.js';
+import { parseTranscriptLineId } from '../../../messaging/contract/transcript-line-id.js';
 import type { MessagingRuntimeApi } from '../../../messaging/contract/index.js';
 import type { Conversation } from '../methods.js';
 
@@ -22,6 +23,10 @@ export async function hydrateConversations(
   const views = await listConversationViews(driver);
   for (const view of views) {
     const participant = view.agentId ?? view.address?.replace(/^person:/u, '') ?? view.id;
+    // Pre-transcript stores hold legacy message_* read pointers; a pointer that
+    // is not a Transcript Line ID is dropped (the view hydrates as unread)
+    // rather than aborting boot.
+    const lastReadLineId = parseTranscriptLineId(view.lastReadMessageId);
     const imported = await messaging.ensureConversationView({
       conversationId: view.id,
       participantIds: [humanPrincipalId, participant],
@@ -30,7 +35,7 @@ export async function hydrateConversations(
       archived: view.archived,
       lastActivityAt: view.lastActivityAt,
       ...(view.titleOverride === undefined ? {} : { titleOverride: view.titleOverride }),
-      ...(view.lastReadMessageId === undefined ? {} : { lastReadLineId: view.lastReadMessageId }),
+      ...(lastReadLineId === undefined ? {} : { lastReadLineId }),
       ...(view.address === undefined ? {} : { address: view.address }),
       ...(view.agentId === undefined ? {} : { agentId: view.agentId }),
       ...(view.provider === undefined ? {} : { provider: view.provider }),
